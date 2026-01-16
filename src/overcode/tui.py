@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import subprocess
 import sys
+import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical, ScrollableContainer, Horizontal
@@ -1546,6 +1547,8 @@ class SupervisorTUI(App):
         self._status_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
+        # Pending kill confirmation (session name, timestamp)
+        self._pending_kill: tuple[str, float] | None = None
 
     def compose(self) -> ComposeResult:
         """Create child widgets"""
@@ -2364,7 +2367,7 @@ class SupervisorTUI(App):
             self.notify(f"Failed to start Monitor Daemon: {e}", severity="warning")
 
     def action_kill_focused(self) -> None:
-        """Kill the currently focused agent."""
+        """Kill the currently focused agent (requires confirmation)."""
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -2372,7 +2375,30 @@ class SupervisorTUI(App):
 
         session_name = focused.session.name
         session_id = focused.session.id
+        now = time.time()
 
+        # Check if this is a confirmation of a pending kill
+        if self._pending_kill:
+            pending_name, pending_time = self._pending_kill
+            # Confirm if same session and within 3 second window
+            if pending_name == session_name and (now - pending_time) < 3.0:
+                self._pending_kill = None  # Clear pending state
+                self._execute_kill(focused, session_name, session_id)
+                return
+            else:
+                # Different session or expired - start new confirmation
+                self._pending_kill = None
+
+        # First press - request confirmation
+        self._pending_kill = (session_name, now)
+        self.notify(
+            f"Press x again to kill '{session_name}'",
+            severity="warning",
+            timeout=3
+        )
+
+    def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
+        """Execute the actual kill operation after confirmation."""
         # Use launcher to kill the session
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
