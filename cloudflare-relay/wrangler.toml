@@ -1,0 +1,14 @@
+# Cloudflare Worker configuration for Overcode relay
+name = "overcode-relay"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# KV namespace for storing state
+[[kv_namespaces]]
+binding = "STATE"
+id = "3ab334fbf5a342b3bdb240956366e125"
+
+[vars]
+# Set your API key in Cloudflare dashboard under Workers > Settings > Variables
+# Don't put the actual key here - use the dashboard for secrets
+# API_KEY = "set-in-dashboard"

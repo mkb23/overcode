@@ -1,0 +1,11 @@
+#!/bin/bash
+# Wrapper script for overcode CLI
+cd "$(dirname "$0")"
+
+# Use venv if it exists, otherwise fall back to PYTHONPATH
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+    overcode "$@"
+else
+    PYTHONPATH=src python3 -m overcode.cli "$@"
+fi
