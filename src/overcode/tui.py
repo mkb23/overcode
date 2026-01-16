@@ -459,7 +459,7 @@ class HelpOverlay(Static):
 ║                                                                              ║
 ║  SUMMARY DETAIL LEVELS (s key)                                               ║
 ║  ────────────────────────────────────────────────────────────────────────────║
-║  low     Name, tokens, git changes (Δn files), mode, steers, standing orders ║
+║  low     Name, tokens, ctx% (context usage), git Δ, mode, steers, orders     ║
 ║  med     + uptime, running time, stalled time, latency                       ║
 ║  full    + repo:branch, % active, git diff details (+ins -del)               ║
 ║                                                                              ║
@@ -800,6 +800,18 @@ class SessionSummary(Static, can_focus=True):
         # Always show: token usage (from Claude Code)
         if self.claude_stats is not None:
             content.append(f" {format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
+            # Show current context window usage as percentage (assuming 200K max)
+            if self.claude_stats.current_context_tokens > 0:
+                max_context = 200_000  # Claude models have 200K context window
+                ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
+                # Color code: green <50%, yellow 50-80%, red >80%
+                if ctx_pct >= 80:
+                    ctx_style = f"bold red{bg}"
+                elif ctx_pct >= 50:
+                    ctx_style = f"bold yellow{bg}"
+                else:
+                    ctx_style = f"bold green{bg}"
+                content.append(f" ctx:{ctx_pct:>2.0f}%", style=ctx_style)
         else:
             content.append("      -", style=f"dim orange1{bg}")
 
