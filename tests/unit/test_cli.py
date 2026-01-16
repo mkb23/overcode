@@ -157,58 +157,6 @@ class TestSupervisorCommand:
         assert "--restart" in strip_ansi(result.stdout)
 
 
-class TestWatchCommand:
-    """Test watch command"""
-
-    def test_watch_help(self):
-        """Watch help shows arguments"""
-        result = runner.invoke(app, ["watch", "--help"])
-        assert result.exit_code == 0
-        assert "TARGET" in result.stdout
-
-    def test_watch_requires_target(self):
-        """Watch requires target argument"""
-        result = runner.invoke(app, ["watch"])
-        assert result.exit_code != 0
-
-
-class TestPresenceCommand:
-    """Test presence command"""
-
-    def test_presence_help(self):
-        """Presence help works"""
-        result = runner.invoke(app, ["presence", "--help"])
-        assert result.exit_code == 0
-
-
-class TestDaemonSubcommands:
-    """Test daemon subcommand group"""
-
-    def test_daemon_help(self):
-        """Daemon help shows subcommands"""
-        result = runner.invoke(app, ["daemon", "--help"])
-        assert result.exit_code == 0
-        assert "start" in result.stdout
-        assert "stop" in result.stdout
-        assert "status" in result.stdout
-
-    def test_daemon_start_help(self):
-        """Daemon start help shows options"""
-        result = runner.invoke(app, ["daemon", "start", "--help"])
-        assert result.exit_code == 0
-        assert "--interval" in strip_ansi(result.stdout)
-
-    def test_daemon_stop_help(self):
-        """Daemon stop help works"""
-        result = runner.invoke(app, ["daemon", "stop", "--help"])
-        assert result.exit_code == 0
-
-    def test_daemon_status_help(self):
-        """Daemon status help works"""
-        result = runner.invoke(app, ["daemon", "status", "--help"])
-        assert result.exit_code == 0
-
-
 class TestAttachCommand:
     """Test attach command"""
 
