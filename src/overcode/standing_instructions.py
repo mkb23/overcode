@@ -24,8 +24,17 @@ class InstructionPreset:
 
 # Default presets - used to generate initial presets.json
 DEFAULT_PRESETS: Dict[str, InstructionPreset] = {
-    "DEFAULT": InstructionPreset(
-        name="DEFAULT",
+    "DO_NOTHING": InstructionPreset(
+        name="DO_NOTHING",
+        description="Supervisor ignores this agent (default)",
+        instructions=(
+            "Do not interact with this agent at all. Do not approve or reject any prompts. "
+            "Do not send any input. Leave the agent completely alone and let it wait for "
+            "the human user. This agent is not under supervisor control."
+        ),
+    ),
+    "STANDARD": InstructionPreset(
+        name="STANDARD",
         description="General-purpose safe automation",
         instructions=(
             "Approve safe operations within the working directory: file reads/writes/edits, "
@@ -208,11 +217,11 @@ def get_preset_names() -> List[str]:
         List of preset names
     """
     presets = load_presets()
-    # Return in a consistent order (DEFAULT first, then alphabetical)
+    # Return in a consistent order (DO_NOTHING first, then alphabetical)
     names = list(presets.keys())
-    if "DEFAULT" in names:
-        names.remove("DEFAULT")
-        names = ["DEFAULT"] + sorted(names)
+    if "DO_NOTHING" in names:
+        names.remove("DO_NOTHING")
+        names = ["DO_NOTHING"] + sorted(names)
     else:
         names = sorted(names)
     return names
