@@ -10,7 +10,7 @@ Monitor status, costs, and activity across all your agents from a single dashboa
 pip install overcode
 ```
 
-Requires: Python 3.8+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+Requires: Python 3.12+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 
 ## Quick Start
 

@@ -6,7 +6,7 @@ compatibility_date = "2024-01-01"
 # KV namespace for storing state
 [[kv_namespaces]]
 binding = "STATE"
-id = "3ab334fbf5a342b3bdb240956366e125"
+id = "your-kv-namespace-id"  # Create via: wrangler kv:namespace create STATE
 
 [vars]
 # Set your API key in Cloudflare dashboard under Workers > Settings > Variables
