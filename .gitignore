@@ -1,0 +1,62 @@
+
+__pycache__/
+!demo/recipe-book/.gitkeep
+!demo/text-adventure/.gitkeep
+.claude/settings.local.json
+.coverage
+.DS_Store
+.eggs/
+.idea/
+.installed.cfg
+.pytest_cache/
+.Python
+.venv/
+.vscode/
+*.egg
+*.egg-info/
+*.log
+*.py[cod]
+*.pyc
+*.so
+*.swo
+*.swp
+*~
+*$py.class
+# Claude Code local settings (user-specific)
+# Distribution / packaging
+# Editor files
+# IDE
+# Note: sessions/ is for active state, should be in ~/.overcode/
+# OS files
+# Overcode specific
+# Python
+# Python virtual environments
+# Session state (user data)
+# Temporary files
+# Testing
+# tmux logs (if any scripts create them)
+# Virtual environments
+build/
+demo/recipe-book/*
+demo/text-adventure/*
+develop-eggs/
+dist/
+downloads/
+eggs/
+env/
+ENV/
+htmlcov/
+lib/
+lib64/
+parts/
+sdist/
+temp/
+Thumbs.db
+tmp/
+var/
+venv/
+wheels/
+
+# Environment files with secrets
+.env
+.env.local
