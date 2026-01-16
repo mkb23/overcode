@@ -16,6 +16,8 @@ This separation ensures:
 - No duplicate time tracking between TUI and daemon
 - Clean interface contract via MonitorDaemonState
 - Platform-agnostic core (presence is optional)
+
+TODO: Add unit tests (currently 0% coverage)
 """
 
 import os
@@ -26,10 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from rich.console import Console
-from rich.text import Text
-from rich.theme import Theme
-
+from .daemon_logging import BaseDaemonLogger
+from .daemon_utils import create_daemon_helpers
 from .history_reader import get_session_stats
 from .monitor_daemon_state import (
     MonitorDaemonState,
@@ -38,10 +38,7 @@ from .monitor_daemon_state import (
 )
 from .pid_utils import (
     acquire_daemon_lock,
-    get_process_pid,
-    is_process_running,
     remove_pid_file,
-    write_pid_file,
 )
 from .session_manager import SessionManager
 from .settings import (
@@ -83,51 +80,12 @@ INTERVAL_SLOW = DAEMON.interval_slow    # When all agents need user input
 INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
 
 
-def is_monitor_daemon_running(session: str = None) -> bool:
-    """Check if the monitor daemon process is currently running for a session.
-
-    Args:
-        session: tmux session name (default: from config)
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    return is_process_running(get_monitor_daemon_pid_path(session))
-
-
-def get_monitor_daemon_pid(session: str = None) -> Optional[int]:
-    """Get the monitor daemon PID if running, None otherwise.
-
-    Args:
-        session: tmux session name (default: from config)
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    return get_process_pid(get_monitor_daemon_pid_path(session))
-
-
-def stop_monitor_daemon(session: str = None) -> bool:
-    """Stop the monitor daemon process if running.
-
-    Args:
-        session: tmux session name (default: from config)
-
-    Returns True if daemon was stopped, False if it wasn't running.
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    pid_path = get_monitor_daemon_pid_path(session)
-    pid = get_process_pid(pid_path)
-    if pid is None:
-        remove_pid_file(pid_path)
-        return False
-
-    try:
-        os.kill(pid, signal.SIGTERM)
-        remove_pid_file(pid_path)
-        return True
-    except (OSError, ProcessLookupError):
-        remove_pid_file(pid_path)
-        return False
+# Create PID helper functions using factory
+(
+    is_monitor_daemon_running,
+    get_monitor_daemon_pid,
+    stop_monitor_daemon,
+) = create_daemon_helpers(get_monitor_daemon_pid_path, "monitor")
 
 
 def check_activity_signal(session: str = None) -> bool:
@@ -151,71 +109,12 @@ def check_activity_signal(session: str = None) -> bool:
         return False
 
 
-# Rich theme for daemon logs
-MONITOR_THEME = Theme({
-    "info": "cyan",
-    "warn": "yellow",
-    "error": "bold red",
-    "success": "bold green",
-    "dim": "dim white",
-    "highlight": "bold white",
-})
-
-
-class MonitorDaemonLogger:
-    """Simple logger for monitor daemon."""
-
-    def __init__(self, session: str = "agents", log_file: Optional[Path] = None):
-        self.console = Console(theme=MONITOR_THEME, force_terminal=True)
-        # Use session-specific log file
-        if log_file:
-            self.log_file = log_file
-        else:
-            session_dir = ensure_session_dir(session)
-            self.log_file = session_dir / "monitor_daemon.log"
-        self._logged_messages: set = set()
-
-    def _log(self, style: str, prefix: str, message: str):
-        """Log a message with style."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        text = Text()
-        text.append(f"[{timestamp}] ", style="dim")
-        text.append(f"{prefix} ", style=style)
-        text.append(message)
-        self.console.print(text)
-
-        # Also log to file
-        try:
-            with open(self.log_file, 'a') as f:
-                f.write(f"[{timestamp}] {prefix} {message}\n")
-        except OSError:
-            pass
-
-    def info(self, message: str):
-        self._log("info", "●", message)
-
-    def warn(self, message: str):
-        self._log("warn", "⚠", message)
-
-    def error(self, message: str):
-        self._log("error", "✗", message)
-
-    def success(self, message: str):
-        self._log("success", "✓", message)
-
-    def debug(self, message: str):
-        """Log a debug message (only to file, not console)."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        try:
-            with open(self.log_file, 'a') as f:
-                f.write(f"[{timestamp}] DEBUG {message}\n")
-        except OSError:
-            pass
-
-    def section(self, title: str):
-        """Print a section header."""
-        self.console.print()
-        self.console.rule(f"[bold cyan]{title}[/]")
+def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = None) -> BaseDaemonLogger:
+    """Create a logger for the monitor daemon."""
+    if log_file is None:
+        session_dir = ensure_session_dir(session)
+        log_file = session_dir / "monitor_daemon.log"
+    return BaseDaemonLogger(log_file)
 
 
 class PresenceComponent:
@@ -295,7 +194,7 @@ class MonitorDaemon:
         )
 
         # Logging - session-specific log file
-        self.log = MonitorDaemonLogger(session=tmux_session)
+        self.log = _create_monitor_logger(session=tmux_session)
 
         # State tracking
         self.state = MonitorDaemonState(

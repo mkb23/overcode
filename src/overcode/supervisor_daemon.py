@@ -15,10 +15,15 @@ Prerequisites:
 
 Architecture:
     Monitor Daemon (metrics) → monitor_daemon_state.json → Supervisor Daemon (claude)
+
+TODO: Add unit tests (currently 0% coverage)
+TODO: Extract _send_prompt_to_window to a shared tmux utilities module
+(duplicated in launcher.py)
 """
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,20 +33,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from rich.console import Console
-from rich.text import Text
-from rich.theme import Theme
-
+from .daemon_logging import SupervisorDaemonLogger
+from .daemon_utils import create_daemon_helpers
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
     get_monitor_daemon_state,
 )
 from .pid_utils import (
-    get_process_pid,
-    is_process_running,
+    acquire_daemon_lock,
     remove_pid_file,
-    write_pid_file,
 )
 from .session_manager import SessionManager
 from .settings import (
@@ -131,105 +132,6 @@ class SupervisorStats:
             return cls()
 
 
-# Rich theme for supervisor logs
-SUPERVISOR_THEME = Theme({
-    "info": "cyan",
-    "warn": "yellow",
-    "error": "bold red",
-    "success": "bold green",
-    "daemon_claude": "magenta",
-    "dim": "dim white",
-    "highlight": "bold white",
-})
-
-
-class SupervisorLogger:
-    """Rich-based logger for supervisor daemon."""
-
-    def __init__(self, log_file: Path = None):
-        self.log_file = log_file or PATHS.supervisor_log
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        self.console = Console(theme=SUPERVISOR_THEME, force_terminal=True)
-        self._seen_daemon_claude_lines: set = set()
-
-    def _write_to_file(self, message: str, level: str):
-        """Write plain text to log file."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{timestamp}] [{level}] {message}"
-        with open(self.log_file, 'a') as f:
-            f.write(line + '\n')
-
-    def info(self, message: str):
-        """Log info message."""
-        self._write_to_file(message, "INFO")
-        self.console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')}[/dim] [info]INFO[/info]  {message}")
-
-    def warn(self, message: str):
-        """Log warning message."""
-        self._write_to_file(message, "WARN")
-        self.console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')}[/dim] [warn]WARN[/warn]  {message}")
-
-    def error(self, message: str):
-        """Log error message."""
-        self._write_to_file(message, "ERROR")
-        self.console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')}[/dim] [error]ERROR[/error] {message}")
-
-    def success(self, message: str):
-        """Log success message."""
-        self._write_to_file(message, "INFO")
-        self.console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')}[/dim] [success]OK[/success]    {message}")
-
-    def daemon_claude_output(self, lines: List[str]):
-        """Log daemon claude output, showing only new lines."""
-        new_lines = []
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped not in self._seen_daemon_claude_lines:
-                new_lines.append(stripped)
-                self._seen_daemon_claude_lines.add(stripped)
-
-        # Limit set size
-        if len(self._seen_daemon_claude_lines) > 500:
-            current_lines = {line.strip() for line in lines if line.strip()}
-            self._seen_daemon_claude_lines = current_lines
-
-        if new_lines:
-            for line in new_lines:
-                self._write_to_file(f"[DAEMON_CLAUDE] {line}", "INFO")
-                if line.startswith('✓') or 'success' in line.lower():
-                    self.console.print(f"  [success]│[/success] {line}")
-                elif line.startswith('✗') or 'error' in line.lower() or 'fail' in line.lower():
-                    self.console.print(f"  [error]│[/error] {line}")
-                elif line.startswith('>') or line.startswith('$'):
-                    self.console.print(f"  [highlight]│[/highlight] {line}")
-                else:
-                    self.console.print(f"  [daemon_claude]│[/daemon_claude] {line}")
-
-    def section(self, title: str):
-        """Print a section divider."""
-        self._write_to_file(f"=== {title} ===", "INFO")
-        self.console.print()
-        self.console.rule(f"[bold]{title}[/bold]", style="dim")
-
-    def status_summary(self, total: int, green: int, non_green: int, loop: int):
-        """Print a status summary line."""
-        status_text = Text()
-        status_text.append(f"Loop #{loop}: ", style="dim")
-        status_text.append(f"{total} agents ", style="highlight")
-        status_text.append("(", style="dim")
-        status_text.append(f"{green} green", style="success")
-        status_text.append(", ", style="dim")
-        status_text.append(f"{non_green} non-green", style="warn" if non_green else "dim")
-        status_text.append(")", style="dim")
-
-        self._write_to_file(f"Loop #{loop}: {total} agents ({green} green, {non_green} non-green)", "INFO")
-        self.console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')}[/dim] ", end="")
-        self.console.print(status_text)
-
-
 class SupervisorDaemon:
     """Background daemon that orchestrates daemon claude for non-green sessions.
 
@@ -244,7 +146,7 @@ class SupervisorDaemon:
         tmux_session: str = None,
         session_manager: SessionManager = None,
         tmux_manager: TmuxManager = None,
-        logger: SupervisorLogger = None,
+        logger: SupervisorDaemonLogger = None,
     ):
         """Initialize the supervisor daemon.
 
@@ -252,7 +154,7 @@ class SupervisorDaemon:
             tmux_session: Name of the tmux session to manage
             session_manager: Optional SessionManager for dependency injection
             tmux_manager: Optional TmuxManager for dependency injection
-            logger: Optional SupervisorLogger for dependency injection
+            logger: Optional SupervisorDaemonLogger for dependency injection
         """
         self.tmux_session = tmux_session or DAEMON.default_tmux_session
         self.session_manager = session_manager or SessionManager()
@@ -267,7 +169,7 @@ class SupervisorDaemon:
         self.log_path = get_supervisor_log_path(self.tmux_session)
 
         # Logger with session-specific log file
-        self.log = logger or SupervisorLogger(log_file=self.log_path)
+        self.log = logger or SupervisorDaemonLogger(log_file=self.log_path)
 
         # Load persistent supervisor stats
         self.supervisor_stats = SupervisorStats.load(self.stats_path)
@@ -808,19 +710,29 @@ class SupervisorDaemon:
         """
         check_interval = check_interval or DAEMON.interval_fast
 
-        # Check for existing supervisor daemon
-        existing_pid = get_process_pid(self.pid_path)
-        if existing_pid is not None and existing_pid != os.getpid():
-            self.log.error(f"Another supervisor daemon is running (PID {existing_pid})")
+        # Atomically check if already running and acquire lock
+        # This prevents TOCTOU race conditions that could cause multiple daemons
+        acquired, existing_pid = acquire_daemon_lock(self.pid_path)
+        if not acquired:
+            if existing_pid:
+                self.log.error(f"Supervisor daemon already running (PID {existing_pid})")
+            else:
+                self.log.error("Could not acquire daemon lock (another daemon may be starting)")
             sys.exit(1)
-
-        # Write PID file
-        write_pid_file(self.pid_path)
 
         self.log.section("Supervisor Daemon")
         self.log.info(f"PID: {os.getpid()}")
         self.log.info(f"Tmux session: {self.tmux_session}")
         self.log.info(f"Check interval: {check_interval}s")
+
+        # Setup signal handlers for graceful shutdown
+        def handle_shutdown(signum, frame):
+            self.log.info("Shutdown signal received")
+            self._shutdown = True
+
+        signal.signal(signal.SIGTERM, handle_shutdown)
+        signal.signal(signal.SIGINT, handle_shutdown)
+        self._shutdown = False
 
         # Wait for monitor daemon
         self.log.info("Waiting for Monitor Daemon...")
@@ -834,7 +746,7 @@ class SupervisorDaemon:
         self.status = "active"
 
         try:
-            while True:
+            while not self._shutdown:
                 self.loop_count += 1
 
                 # Cleanup orphaned daemon claudes
@@ -914,64 +826,21 @@ class SupervisorDaemon:
 
                 time.sleep(check_interval)
 
-        except KeyboardInterrupt:
-            self.log.section("Shutting Down")
+        except Exception as e:
+            self.log.error(f"Supervisor daemon error: {e}")
+            raise
+        finally:
+            self.log.info("Supervisor daemon shutting down")
             self.status = "stopped"
             remove_pid_file(self.pid_path)
-            self.log.info("Supervisor daemon stopped")
-            sys.exit(0)
-        finally:
-            remove_pid_file(self.pid_path)
 
 
-def is_supervisor_daemon_running(session: str = None) -> bool:
-    """Check if the supervisor daemon is running for a session.
-
-    Args:
-        session: tmux session name (default: from config)
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    return is_process_running(get_supervisor_daemon_pid_path(session))
-
-
-def get_supervisor_daemon_pid(session: str = None) -> Optional[int]:
-    """Get the supervisor daemon PID if running.
-
-    Args:
-        session: tmux session name (default: from config)
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    return get_process_pid(get_supervisor_daemon_pid_path(session))
-
-
-def stop_supervisor_daemon(session: str = None) -> bool:
-    """Stop the supervisor daemon if running.
-
-    Args:
-        session: tmux session name (default: from config)
-
-    Returns:
-        True if daemon was stopped, False if it wasn't running.
-    """
-    import signal
-
-    if session is None:
-        session = DAEMON.default_tmux_session
-    pid_path = get_supervisor_daemon_pid_path(session)
-    pid = get_process_pid(pid_path)
-    if pid is None:
-        remove_pid_file(pid_path)
-        return False
-
-    try:
-        os.kill(pid, signal.SIGTERM)
-        remove_pid_file(pid_path)
-        return True
-    except (OSError, ProcessLookupError):
-        remove_pid_file(pid_path)
-        return False
+# Create PID helper functions using factory
+(
+    is_supervisor_daemon_running,
+    get_supervisor_daemon_pid,
+    stop_supervisor_daemon,
+) = create_daemon_helpers(get_supervisor_daemon_pid_path, "supervisor")
 
 
 def main():

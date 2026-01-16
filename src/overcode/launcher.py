@@ -4,6 +4,9 @@ Launcher for interactive Claude Code sessions in tmux windows.
 All Claude sessions launched by overcode are interactive - users can
 take over at any time. Initial prompts are sent as keystrokes after
 Claude starts, not as CLI arguments.
+
+TODO: Extract _send_prompt_to_window to a shared tmux utilities module
+(duplicated in supervisor_daemon.py)
 """
 
 import time
