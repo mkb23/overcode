@@ -12,9 +12,16 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.12"
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
 ]
 
 dependencies = [
@@ -23,6 +30,11 @@ dependencies = [
     "typer>=0.9.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mkb23/overcode"
+Repository = "https://github.com/mkb23/overcode"
+Issues = "https://github.com/mkb23/overcode/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -51,12 +63,15 @@ overcode = "overcode.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+overcode = ["*.md", "*.sh"]
+
 [tool.black]
 line-length = 100
-target-version = ['py38']
+target-version = ['py312']
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
