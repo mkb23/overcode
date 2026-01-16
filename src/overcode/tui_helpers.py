@@ -96,6 +96,24 @@ def format_tokens(tokens: int) -> str:
         return str(tokens)
 
 
+def format_line_count(count: int) -> str:
+    """Format line count (insertions/deletions) to human readable (K/M).
+
+    Args:
+        count: Number of lines
+
+    Returns:
+        Formatted string like "173K", "1.2M", or "500" for small counts.
+        Uses no decimal for K values to keep display compact.
+    """
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    elif count >= 1_000:
+        return f"{count // 1_000}K"
+    else:
+        return str(count)
+
+
 def calculate_uptime(start_time: str, now: Optional[datetime] = None) -> str:
     """Calculate uptime from ISO format start_time.
 

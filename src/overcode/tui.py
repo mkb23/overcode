@@ -48,6 +48,7 @@ from .tui_helpers import (
     format_ago,
     format_duration,
     format_tokens,
+    format_line_count,
     calculate_uptime,
     presence_state_to_char,
     agent_status_to_char,
@@ -803,21 +804,22 @@ class SessionSummary(Static, can_focus=True):
             content.append("      -", style=f"dim orange1{bg}")
 
         # Git diff stats (outstanding changes since last commit)
-        # ALIGNMENT: Use fixed widths - low/med: 4 chars "Δnn ", full: 15 chars "Δnn +nnnn -nnn"
+        # ALIGNMENT: Use fixed widths - low/med: 4 chars "Δnn ", full: 16 chars "Δnn +nnnn -nnnn"
+        # Large line counts are shortened: 173242 -> "173K", 1234567 -> "1.2M"
         if self.git_diff_stats:
             files, ins, dels = self.git_diff_stats
             if self.summary_detail == "full":
                 # Full: show files and lines with fixed widths
                 content.append(f" Δ{files:>2}", style=f"bold magenta{bg}")
-                content.append(f" +{ins:>4}", style=f"bold green{bg}")
-                content.append(f" -{dels:>3}", style=f"bold red{bg}")
+                content.append(f" +{format_line_count(ins):>4}", style=f"bold green{bg}")
+                content.append(f" -{format_line_count(dels):>4}", style=f"bold red{bg}")
             else:
                 # Compact: just files changed (fixed 4 char width)
                 content.append(f" Δ{files:>2}", style=f"bold magenta{bg}" if files > 0 else f"dim{bg}")
         else:
             # Placeholder matching width for alignment
             if self.summary_detail == "full":
-                content.append("  Δ-  +   -  -", style=f"dim{bg}")
+                content.append("  Δ-  +   -  -  ", style=f"dim{bg}")
             else:
                 content.append("  Δ-", style=f"dim{bg}")
 
