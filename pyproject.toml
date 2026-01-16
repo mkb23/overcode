@@ -24,17 +24,17 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 
-[project.urls]
-Homepage = "https://github.com/mkb23/overcode"
-Repository = "https://github.com/mkb23/overcode"
-Issues = "https://github.com/mkb23/overcode/issues"
-
 dependencies = [
     "textual>=0.40.0",
     "rich>=13.0.0",
     "typer>=0.9.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mkb23/overcode"
+Repository = "https://github.com/mkb23/overcode"
+Issues = "https://github.com/mkb23/overcode/issues"
 
 [project.optional-dependencies]
 dev = [
