@@ -264,7 +264,7 @@ def instruct(
     ] = None,
     instructions: Annotated[
         Optional[List[str]],
-        typer.Argument(help="Instructions or preset name (e.g., DEFAULT, CODING)"),
+        typer.Argument(help="Instructions or preset name (e.g., DO_NOTHING, STANDARD, CODING)"),
     ] = None,
     clear: Annotated[
         bool, typer.Option("--clear", "-c", help="Clear standing instructions")
@@ -276,7 +276,7 @@ def instruct(
 ):
     """Set standing instructions for an agent.
 
-    Use a preset name (DEFAULT, CODING, TESTING, etc.) or provide custom instructions.
+    Use a preset name (DO_NOTHING, STANDARD, CODING, etc.) or provide custom instructions.
     Use --list to see all available presets.
     """
     from .session_manager import SessionManager
@@ -285,7 +285,7 @@ def instruct(
     if list_presets:
         presets_dict = load_presets()
         rprint("\n[bold]Standing Instruction Presets:[/bold]\n")
-        for preset_name in sorted(presets_dict.keys(), key=lambda x: (x != "DEFAULT", x)):
+        for preset_name in sorted(presets_dict.keys(), key=lambda x: (x != "DO_NOTHING", x)):
             preset = presets_dict[preset_name]
             rprint(f"  [cyan]{preset_name:12}[/cyan] {preset.description}")
         rprint("\n[dim]Usage: overcode instruct <agent> <PRESET>[/dim]")

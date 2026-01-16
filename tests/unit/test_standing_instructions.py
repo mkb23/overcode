@@ -40,7 +40,8 @@ class TestDefaultPresets:
     """Tests for default preset definitions."""
 
     def test_default_presets_exist(self):
-        assert "DEFAULT" in DEFAULT_PRESETS
+        assert "DO_NOTHING" in DEFAULT_PRESETS
+        assert "STANDARD" in DEFAULT_PRESETS
         assert "PERMISSIVE" in DEFAULT_PRESETS
         assert "CAUTIOUS" in DEFAULT_PRESETS
         assert "RESEARCH" in DEFAULT_PRESETS
@@ -52,7 +53,7 @@ class TestDefaultPresets:
         assert "MINIMAL" in DEFAULT_PRESETS
 
     def test_default_presets_count(self):
-        assert len(DEFAULT_PRESETS) == 10
+        assert len(DEFAULT_PRESETS) == 11
 
     def test_all_presets_have_required_fields(self):
         for name, preset in DEFAULT_PRESETS.items():
@@ -67,9 +68,9 @@ class TestResolveInstructions:
     """Tests for resolve_instructions function."""
 
     def test_resolve_known_preset(self):
-        instructions, preset_name = resolve_instructions("DEFAULT")
-        assert preset_name == "DEFAULT"
-        assert instructions == DEFAULT_PRESETS["DEFAULT"].instructions
+        instructions, preset_name = resolve_instructions("STANDARD")
+        assert preset_name == "STANDARD"
+        assert instructions == DEFAULT_PRESETS["STANDARD"].instructions
 
     def test_resolve_preset_case_insensitive(self):
         instructions, preset_name = resolve_instructions("coding")
@@ -96,14 +97,14 @@ class TestGetPreset:
     """Tests for get_preset function."""
 
     def test_get_existing_preset(self):
-        preset = get_preset("DEFAULT")
+        preset = get_preset("DO_NOTHING")
         assert preset is not None
-        assert preset.name == "DEFAULT"
+        assert preset.name == "DO_NOTHING"
 
     def test_get_preset_case_insensitive(self):
-        preset = get_preset("default")
+        preset = get_preset("do_nothing")
         assert preset is not None
-        assert preset.name == "DEFAULT"
+        assert preset.name == "DO_NOTHING"
 
     def test_get_nonexistent_preset(self):
         preset = get_preset("NONEXISTENT")
@@ -113,9 +114,9 @@ class TestGetPreset:
 class TestGetPresetNames:
     """Tests for get_preset_names function."""
 
-    def test_default_first(self):
+    def test_do_nothing_first(self):
         names = get_preset_names()
-        assert names[0] == "DEFAULT"
+        assert names[0] == "DO_NOTHING"
 
     def test_rest_alphabetical(self):
         names = get_preset_names()
@@ -146,8 +147,8 @@ class TestLoadAndSavePresets:
             presets = load_presets()
 
         assert temp_presets_path.exists()
-        assert "DEFAULT" in presets
-        assert len(presets) == 10
+        assert "DO_NOTHING" in presets
+        assert len(presets) == 11
 
     def test_load_reads_existing_file(self, temp_presets_path):
         """Loading reads from existing file."""
@@ -274,28 +275,33 @@ class TestResetPresets:
             # Verify custom preset exists
             presets = load_presets()
             assert "CUSTOM" in presets
-            assert "DEFAULT" not in presets
+            assert "DO_NOTHING" not in presets
 
             # Reset
             reset_presets()
 
             # Verify defaults restored
             presets = load_presets()
-            assert "DEFAULT" in presets
+            assert "DO_NOTHING" in presets
             assert "CUSTOM" not in presets
-            assert len(presets) == 10
+            assert len(presets) == 11
 
 
 class TestPresetInstructionsContent:
     """Tests to verify preset instruction content quality."""
 
-    def test_default_mentions_approve_and_reject(self):
-        preset = DEFAULT_PRESETS["DEFAULT"]
+    def test_do_nothing_tells_supervisor_to_ignore(self):
+        preset = DEFAULT_PRESETS["DO_NOTHING"]
+        assert "not" in preset.instructions.lower()
+        assert "alone" in preset.instructions.lower() or "ignore" in preset.instructions.lower()
+
+    def test_standard_mentions_approve_and_reject(self):
+        preset = DEFAULT_PRESETS["STANDARD"]
         assert "approve" in preset.instructions.lower()
         assert "reject" in preset.instructions.lower()
 
     def test_permissive_is_less_restrictive(self):
-        default = DEFAULT_PRESETS["DEFAULT"]
+        standard = DEFAULT_PRESETS["STANDARD"]
         permissive = DEFAULT_PRESETS["PERMISSIVE"]
         # PERMISSIVE should mention trusting the agent
         assert "trust" in permissive.instructions.lower()
