@@ -1,5 +1,11 @@
 """
 Textual TUI for Overcode monitor.
+
+TODO: Split this file into smaller modules for maintainability:
+- tui_core.py: Main App class and core lifecycle
+- tui_panels.py: Panel widgets (StatusPanel, AgentPanel, etc.)
+- tui_commands.py: Command handlers and actions
+- tui_keybindings.py: Key bindings and input handling
 """
 
 from concurrent.futures import ThreadPoolExecutor

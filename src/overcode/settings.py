@@ -8,6 +8,8 @@ Configuration hierarchy:
 1. Environment variables (highest priority)
 2. Config file (~/.overcode/config.yaml)
 3. Default values (lowest priority)
+
+TODO: Make INTERVAL_FAST/SLOW/IDLE configurable via config.yaml
 """
 
 import os
