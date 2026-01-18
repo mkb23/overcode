@@ -150,23 +150,30 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
         return False, None
 
 
-def count_daemon_processes(pattern: str = "monitor_daemon") -> int:
+def count_daemon_processes(pattern: str = "monitor_daemon", session: str = None) -> int:
     """Count running daemon processes matching the pattern.
 
     Uses pgrep to find processes matching the pattern.
 
     Args:
         pattern: Pattern to search for in process names/args
+        session: If provided, only count daemons for this specific session
 
     Returns:
-        Number of matching processes (excluding this check process)
+        Number of matching processes
     """
     import subprocess
+
+    # Build pattern - if session provided, make it session-specific
+    if session:
+        search_pattern = f"{pattern} --session {session}"
+    else:
+        search_pattern = pattern
 
     try:
         # Use pgrep to find matching processes
         result = subprocess.run(
-            ["pgrep", "-f", pattern],
+            ["pgrep", "-f", search_pattern],
             capture_output=True,
             text=True,
             timeout=5.0,
