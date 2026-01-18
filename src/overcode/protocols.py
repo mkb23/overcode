@@ -78,6 +78,18 @@ class TmuxInterface(Protocol):
         """Attach to a tmux session (replaces current process)."""
         ...
 
+    def select_window(self, session: str, window: int) -> bool:
+        """Select a window in a tmux session.
+
+        Args:
+            session: tmux session name
+            window: window number to select
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ...
+
 
 @runtime_checkable
 class FileSystemInterface(Protocol):

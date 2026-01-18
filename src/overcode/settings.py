@@ -369,6 +369,7 @@ class TUIPreferences:
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
     view_mode: str = "tree"  # tree, list_preview
+    tmux_sync: bool = False  # sync navigation to external tmux pane
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -391,6 +392,7 @@ class TUIPreferences:
                     timeline_visible=data.get("timeline_visible", True),
                     daemon_panel_visible=data.get("daemon_panel_visible", False),
                     view_mode=data.get("view_mode", "tree"),
+                    tmux_sync=data.get("tmux_sync", False),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -409,6 +411,7 @@ class TUIPreferences:
                     "timeline_visible": self.timeline_visible,
                     "daemon_panel_visible": self.daemon_panel_visible,
                     "view_mode": self.view_mode,
+                    "tmux_sync": self.tmux_sync,
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

@@ -44,6 +44,7 @@ from .config import get_default_standing_instructions
 from .status_history import read_agent_status_history
 from .presence_logger import read_presence_history
 from .launcher import ClaudeLauncher
+from .implementations import RealTmux
 from .tui_helpers import (
     format_interval,
     format_ago,
@@ -1506,6 +1507,8 @@ class SupervisorTUI(App):
         ("5", "send_5_to_focused", "Send 5"),
         # Copy mode - disable mouse capture for native terminal selection
         ("y", "toggle_copy_mode", "Copy mode"),
+        # Tmux sync - sync navigation to external tmux pane
+        ("p", "toggle_tmux_sync", "Pane sync"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1515,6 +1518,7 @@ class SupervisorTUI(App):
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
+    tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -1557,6 +1561,10 @@ class SupervisorTUI(App):
         self._multiple_daemon_warning_shown = False
         # Pending kill confirmation (session name, timestamp)
         self._pending_kill: tuple[str, float] | None = None
+        # Tmux interface for sync operations
+        self._tmux = RealTmux()
+        # Initialize tmux_sync from preferences
+        self.tmux_sync = self._prefs.tmux_sync
 
     def compose(self) -> ComposeResult:
         """Create child widgets"""
@@ -1569,7 +1577,7 @@ class SupervisorTUI(App):
         yield CommandBar(id="command-bar")
         yield HelpOverlay(id="help-overlay")
         yield Static(
-            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | d:Daemon | t:Timeline | v:Lines",
+            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline",
             id="help-text"
         )
 
@@ -2018,6 +2026,7 @@ class SupervisorTUI(App):
         widgets[self.focused_session_index].focus()
         if self.view_mode == "list_preview":
             self._update_preview()
+        self._sync_tmux_window()
 
     def action_focus_previous_session(self) -> None:
         """Focus the previous session in the list."""
@@ -2028,6 +2037,7 @@ class SupervisorTUI(App):
         widgets[self.focused_session_index].focus()
         if self.view_mode == "list_preview":
             self._update_preview()
+        self._sync_tmux_window()
 
     def action_toggle_view_mode(self) -> None:
         """Toggle between tree and list+preview view modes."""
@@ -2039,6 +2049,35 @@ class SupervisorTUI(App):
         # Save preference
         self._prefs.view_mode = self.view_mode
         self._save_prefs()
+
+    def action_toggle_tmux_sync(self) -> None:
+        """Toggle tmux pane sync - syncs navigation to external tmux pane."""
+        self.tmux_sync = not self.tmux_sync
+
+        # Save preference
+        self._prefs.tmux_sync = self.tmux_sync
+        self._save_prefs()
+
+        # Update subtitle to show sync state
+        self._update_subtitle()
+
+        # If enabling, sync to currently focused session immediately
+        if self.tmux_sync:
+            self._sync_tmux_window()
+
+    def _sync_tmux_window(self) -> None:
+        """Sync external tmux pane to show the focused session's window."""
+        if not self.tmux_sync:
+            return
+
+        try:
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                window_index = focused.session.tmux_window
+                if window_index is not None:
+                    self._tmux.select_window(self.tmux_session, window_index)
+        except Exception:
+            pass  # Silent fail - don't disrupt navigation
 
     def watch_view_mode(self, view_mode: str) -> None:
         """React to view mode changes."""
@@ -2068,10 +2107,11 @@ class SupervisorTUI(App):
     def _update_subtitle(self) -> None:
         """Update the header subtitle to show session and view mode."""
         mode_label = "Tree" if self.view_mode == "tree" else "List+Preview"
+        sync_label = " [Sync]" if self.tmux_sync else ""
         if self.diagnostics:
-            self.sub_title = f"{self.tmux_session} [{mode_label}] [DIAGNOSTICS]"
+            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label} [DIAGNOSTICS]"
         else:
-            self.sub_title = f"{self.tmux_session} [{mode_label}]"
+            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}"
 
     def _select_first_agent(self) -> None:
         """Select the first agent for initial preview pane display."""

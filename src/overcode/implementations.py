@@ -142,6 +142,17 @@ class RealTmux:
     def attach(self, session: str) -> None:
         os.execlp("tmux", "tmux", "attach-session", "-t", session)
 
+    def select_window(self, session: str, window: int) -> bool:
+        """Select a window in a tmux session (for external pane sync)."""
+        try:
+            result = subprocess.run(
+                ["tmux", "select-window", "-t", f"{session}:{window}"],
+                capture_output=True, timeout=5
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return False
+
 
 class RealFileSystem:
     """Production implementation of FileSystemInterface"""
