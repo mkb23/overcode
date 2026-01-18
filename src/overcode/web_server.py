@@ -350,6 +350,8 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/index.html":
             self._serve_analytics_dashboard()
+        elif path == "/static/chart.min.js":
+            self._serve_chartjs()
         elif path == "/api/analytics/sessions":
             self._serve_json(get_analytics_sessions(start, end))
         elif path == "/api/analytics/timeline":
@@ -385,6 +387,21 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(html_bytes)
+        except Exception as e:
+            self.send_error(500, f"Internal error: {e}")
+
+    def _serve_chartjs(self) -> None:
+        """Serve the embedded Chart.js library."""
+        try:
+            from .web_chartjs import CHARTJS_JS
+            js_bytes = CHARTJS_JS.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript")
+            self.send_header("Content-Length", str(len(js_bytes)))
+            # Cache for 1 year - it's a versioned static asset
+            self.send_header("Cache-Control", "public, max-age=31536000")
+            self.end_headers()
+            self.wfile.write(js_bytes)
         except Exception as e:
             self.send_error(500, f"Internal error: {e}")
 

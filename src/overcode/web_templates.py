@@ -572,7 +572,7 @@ def get_analytics_html() -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0f172a">
     <title>Overcode Analytics</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/chart.min.js"></script>
     <style>
         :root {
             --bg-primary: #0f172a;
