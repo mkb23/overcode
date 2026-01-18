@@ -28,6 +28,7 @@ from rich.panel import Panel
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
+from .status_constants import STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -39,6 +40,11 @@ from .pid_utils import count_daemon_processes
 from .supervisor_daemon import (
     is_supervisor_daemon_running,
     stop_supervisor_daemon,
+)
+from .web_server import (
+    is_web_server_running,
+    get_web_server_url,
+    toggle_web_server,
 )
 from .config import get_default_standing_instructions
 from .status_history import read_agent_status_history
@@ -218,6 +224,17 @@ class DaemonStatusBar(Static):
                 content.append("📡", style="red")
             else:
                 content.append("📡", style="dim")
+
+        # Web server status
+        web_running = is_web_server_running(self.tmux_session)
+        if web_running:
+            content.append(" │ ", style="dim")
+            url = get_web_server_url(self.tmux_session)
+            content.append("🌐", style="green")
+            if url:
+                # Just show port
+                port = url.split(":")[-1] if url else ""
+                content.append(f":{port}", style="cyan")
 
         return content
 
@@ -458,6 +475,7 @@ class HelpOverlay(Static):
 ║  ────────────────────────────────────────────────────────────────────────────║
 ║  [       Start supervisor        ]       Stop supervisor                     ║
 ║  \\      Restart monitor         d       Toggle daemon log panel             ║
+║  w       Toggle web dashboard (analytics server)                             ║
 ║                                                                              ║
 ║  SUMMARY DETAIL LEVELS (s key)                                               ║
 ║  ────────────────────────────────────────────────────────────────────────────║
@@ -624,6 +642,8 @@ class SessionSummary(Static, can_focus=True):
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
+        # Track if this is a stalled agent that hasn't been visited yet
+        self.is_unvisited_stalled: bool = False
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -632,6 +652,14 @@ class SessionSummary(Static, can_focus=True):
         self.expanded = not self.expanded
         # Notify parent app to save state
         self.post_message(self.ExpandedChanged(self.session.id, self.expanded))
+        # Mark as visited if this is an unvisited stalled agent
+        if self.is_unvisited_stalled:
+            self.post_message(self.StalledAgentVisited(self.session.id))
+
+    def on_focus(self) -> None:
+        """Handle focus event - mark stalled agent as visited"""
+        if self.is_unvisited_stalled:
+            self.post_message(self.StalledAgentVisited(self.session.id))
 
     class ExpandedChanged(events.Message):
         """Message sent when expanded state changes"""
@@ -639,6 +667,12 @@ class SessionSummary(Static, can_focus=True):
             super().__init__()
             self.session_id = session_id
             self.expanded = expanded
+
+    class StalledAgentVisited(events.Message):
+        """Message sent when user visits a stalled agent (focus or click)"""
+        def __init__(self, session_id: str):
+            super().__init__()
+            self.session_id = session_id
 
     def watch_expanded(self, expanded: bool) -> None:
         """Called when expanded state changes"""
@@ -761,6 +795,12 @@ class SessionSummary(Static, can_focus=True):
 
         # Always show: status symbol, time in state, expand icon, agent name
         content.append(f"{status_symbol} ", style=status_color)
+
+        # Show 🔔 indicator for unvisited stalled agents (needs attention)
+        if self.is_unvisited_stalled:
+            content.append("🔔", style=f"bold blink red{bg}")
+        else:
+            content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
         # Time in current state (directly after status light)
         if stats.state_since:
@@ -1509,6 +1549,8 @@ class SupervisorTUI(App):
         ("y", "toggle_copy_mode", "Copy mode"),
         # Tmux sync - sync navigation to external tmux pane
         ("p", "toggle_tmux_sync", "Pane sync"),
+        # Web server toggle
+        ("w", "toggle_web_server", "Web dashboard"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1551,6 +1593,8 @@ class SupervisorTUI(App):
 
         # Track focused session for navigation
         self.focused_session_index = 0
+        # Track previous status of each session for detecting transitions to stalled state
+        self._previous_statuses: dict[str, str] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
@@ -1651,7 +1695,7 @@ class SupervisorTUI(App):
             pass
 
         # Check for multiple daemon processes (potential time tracking bug)
-        daemon_count = count_daemon_processes("monitor_daemon")
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
         if daemon_count > 1 and not self._multiple_daemon_warning_shown:
             self._multiple_daemon_warning_shown = True
             self.notify(
@@ -1829,6 +1873,8 @@ class SupervisorTUI(App):
         All data has been pre-fetched in background - this just updates widget state.
         No file I/O happens here.
         """
+        prefs_changed = False
+
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
 
@@ -1841,8 +1887,30 @@ class SupervisorTUI(App):
                 status, activity, content = status_results[session_id]
                 claude_stats = stats_results.get(session_id)
                 git_diff = git_diff_results.get(session_id)
+
+                # Detect transitions TO stalled state (waiting_user)
+                prev_status = self._previous_statuses.get(session_id)
+                if status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER:
+                    # Agent just became stalled - mark as unvisited
+                    self._prefs.visited_stalled_agents.discard(session_id)
+                    prefs_changed = True
+
+                # Update previous status for next round
+                self._previous_statuses[session_id] = status
+
+                # Update widget's unvisited state
+                is_unvisited_stalled = (
+                    status == STATUS_WAITING_USER and
+                    session_id not in self._prefs.visited_stalled_agents
+                )
+                widget.is_unvisited_stalled = is_unvisited_stalled
+
                 widget.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
                 widget.refresh()  # Refresh each widget to repaint
+
+        # Save preferences if we marked any agents as unvisited
+        if prefs_changed:
+            self._save_prefs()
 
         # Update preview pane if in list_preview mode
         if self.view_mode == "list_preview":
@@ -1968,6 +2036,19 @@ class SupervisorTUI(App):
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
         self.expanded_states[message.session_id] = message.expanded
+
+    def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
+        """Handle when user visits a stalled agent - mark as visited"""
+        session_id = message.session_id
+        self._prefs.visited_stalled_agents.add(session_id)
+        self._save_prefs()
+
+        # Update the widget's state
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.is_unvisited_stalled = False
+                widget.refresh()
+                break
 
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)"""
@@ -2399,8 +2480,15 @@ class SupervisorTUI(App):
         The Monitor Daemon handles status tracking, time accumulation,
         stats sync, and user presence detection.
         """
+        # Check PID file first
         if is_monitor_daemon_running(self.tmux_session):
             return  # Already running
+
+        # Also check for running processes (in case PID file is stale or daemon is starting)
+        # This prevents race conditions where multiple TUIs start daemons simultaneously
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
+        if daemon_count > 0:
+            return  # Daemon process exists, just PID file might be missing/stale
 
         try:
             subprocess.Popen(
@@ -2413,6 +2501,28 @@ class SupervisorTUI(App):
             self.notify("Monitor Daemon started", severity="information")
         except (OSError, subprocess.SubprocessError) as e:
             self.notify(f"Failed to start Monitor Daemon: {e}", severity="warning")
+
+    def action_toggle_web_server(self) -> None:
+        """Toggle the web analytics dashboard server on/off."""
+        is_running, msg = toggle_web_server(self.tmux_session)
+
+        if is_running:
+            url = get_web_server_url(self.tmux_session)
+            self.notify(f"Web server: {url}", severity="information")
+            try:
+                panel = self.query_one("#daemon-panel", DaemonPanel)
+                panel.log_lines.append(f">>> Web server started: {url}")
+            except NoMatches:
+                pass
+        else:
+            self.notify(f"Web server: {msg}", severity="information")
+            try:
+                panel = self.query_one("#daemon-panel", DaemonPanel)
+                panel.log_lines.append(f">>> Web server: {msg}")
+            except NoMatches:
+                pass
+
+        self.update_daemon_status()
 
     def action_kill_focused(self) -> None:
         """Kill the currently focused agent (requires confirmation)."""

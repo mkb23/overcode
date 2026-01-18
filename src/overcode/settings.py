@@ -21,7 +21,7 @@ import os
 DAEMON_VERSION = 2  # Increment when daemon behavior changes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 import yaml
 
@@ -330,6 +330,16 @@ def get_supervisor_log_path(session: str) -> Path:
     return get_session_dir(session) / "supervisor.log"
 
 
+def get_web_server_pid_path(session: str) -> Path:
+    """Get web server PID file path for a specific session."""
+    return get_session_dir(session) / "web_server.pid"
+
+
+def get_web_server_port_path(session: str) -> Path:
+    """Get web server port file path for a specific session."""
+    return get_session_dir(session) / "web_server.port"
+
+
 def ensure_session_dir(session: str) -> Path:
     """Ensure session directory exists and return it."""
     session_dir = get_session_dir(session)
@@ -370,6 +380,8 @@ class TUIPreferences:
     daemon_panel_visible: bool = False
     view_mode: str = "tree"  # tree, list_preview
     tmux_sync: bool = False  # sync navigation to external tmux pane
+    # Session IDs of stalled agents that have been visited by the user
+    visited_stalled_agents: Set[str] = field(default_factory=set)
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -393,6 +405,7 @@ class TUIPreferences:
                     daemon_panel_visible=data.get("daemon_panel_visible", False),
                     view_mode=data.get("view_mode", "tree"),
                     tmux_sync=data.get("tmux_sync", False),
+                    visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -412,6 +425,7 @@ class TUIPreferences:
                     "daemon_panel_visible": self.daemon_panel_visible,
                     "view_mode": self.view_mode,
                     "tmux_sync": self.tmux_sync,
+                    "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

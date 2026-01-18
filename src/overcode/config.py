@@ -70,3 +70,52 @@ def get_relay_config() -> Optional[dict]:
         "api_key": api_key,
         "interval": relay.get("interval", 30),
     }
+
+
+def get_web_time_presets() -> list:
+    """Get time presets for the web analytics dashboard.
+
+    Returns list of preset dictionaries with name, start, end times.
+    Falls back to defaults if not configured.
+
+    Config format in ~/.overcode/config.yaml:
+        web:
+          time_presets:
+            - name: "Morning"
+              start: "09:00"
+              end: "12:00"
+            - name: "Full Day"
+              start: "09:00"
+              end: "17:00"
+            - name: "Night Owl"
+              start: "22:00"
+              end: "02:00"
+    """
+    config = load_config()
+    web_config = config.get("web", {})
+    presets = web_config.get("time_presets", None)
+
+    if presets and isinstance(presets, list):
+        # Validate and normalize presets
+        valid_presets = []
+        for p in presets:
+            if isinstance(p, dict) and "name" in p:
+                valid_presets.append({
+                    "name": p.get("name", ""),
+                    "start": p.get("start"),
+                    "end": p.get("end"),
+                })
+        if valid_presets:
+            # Always add "All Time" at the end
+            if not any(p["name"] == "All Time" for p in valid_presets):
+                valid_presets.append({"name": "All Time", "start": None, "end": None})
+            return valid_presets
+
+    # Default presets
+    return [
+        {"name": "Morning", "start": "09:00", "end": "12:00"},
+        {"name": "Afternoon", "start": "13:00", "end": "17:00"},
+        {"name": "Full Day", "start": "09:00", "end": "17:00"},
+        {"name": "Evening", "start": "18:00", "end": "22:00"},
+        {"name": "All Time", "start": None, "end": None},
+    ]
