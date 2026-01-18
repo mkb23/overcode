@@ -800,12 +800,12 @@ class SessionSummary(Static, can_focus=True):
 
         # Always show: token usage (from Claude Code)
         if self.claude_stats is not None:
-            content.append(f" {format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
+            content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
             # Show current context window usage as percentage (assuming 200K max)
             if self.claude_stats.current_context_tokens > 0:
                 max_context = 200_000  # Claude models have 200K context window
                 ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
-                content.append(f" @ {ctx_pct:.0f}%", style=f"bold orange1{bg}")
+                content.append(f" c@{ctx_pct:.0f}%", style=f"bold orange1{bg}")
         else:
             content.append("      -", style=f"dim orange1{bg}")
 
