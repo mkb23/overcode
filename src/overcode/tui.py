@@ -28,6 +28,7 @@ from rich.panel import Panel
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
+from .status_constants import STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -623,6 +624,8 @@ class SessionSummary(Static, can_focus=True):
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
+        # Track if this is a stalled agent that hasn't been visited yet
+        self.is_unvisited_stalled: bool = False
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -631,6 +634,14 @@ class SessionSummary(Static, can_focus=True):
         self.expanded = not self.expanded
         # Notify parent app to save state
         self.post_message(self.ExpandedChanged(self.session.id, self.expanded))
+        # Mark as visited if this is an unvisited stalled agent
+        if self.is_unvisited_stalled:
+            self.post_message(self.StalledAgentVisited(self.session.id))
+
+    def on_focus(self) -> None:
+        """Handle focus event - mark stalled agent as visited"""
+        if self.is_unvisited_stalled:
+            self.post_message(self.StalledAgentVisited(self.session.id))
 
     class ExpandedChanged(events.Message):
         """Message sent when expanded state changes"""
@@ -638,6 +649,12 @@ class SessionSummary(Static, can_focus=True):
             super().__init__()
             self.session_id = session_id
             self.expanded = expanded
+
+    class StalledAgentVisited(events.Message):
+        """Message sent when user visits a stalled agent (focus or click)"""
+        def __init__(self, session_id: str):
+            super().__init__()
+            self.session_id = session_id
 
     def watch_expanded(self, expanded: bool) -> None:
         """Called when expanded state changes"""
@@ -760,6 +777,12 @@ class SessionSummary(Static, can_focus=True):
 
         # Always show: status symbol, time in state, expand icon, agent name
         content.append(f"{status_symbol} ", style=status_color)
+
+        # Show ★ indicator for unvisited stalled agents (needs attention)
+        if self.is_unvisited_stalled:
+            content.append("★ ", style=f"bold blink red{bg}")
+        else:
+            content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
         # Time in current state (directly after status light)
         if stats.state_since:
@@ -1547,6 +1570,8 @@ class SupervisorTUI(App):
 
         # Track focused session for navigation
         self.focused_session_index = 0
+        # Track previous status of each session for detecting transitions to stalled state
+        self._previous_statuses: dict[str, str] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
@@ -1821,6 +1846,8 @@ class SupervisorTUI(App):
         All data has been pre-fetched in background - this just updates widget state.
         No file I/O happens here.
         """
+        prefs_changed = False
+
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
 
@@ -1833,8 +1860,30 @@ class SupervisorTUI(App):
                 status, activity, content = status_results[session_id]
                 claude_stats = stats_results.get(session_id)
                 git_diff = git_diff_results.get(session_id)
+
+                # Detect transitions TO stalled state (waiting_user)
+                prev_status = self._previous_statuses.get(session_id)
+                if status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER:
+                    # Agent just became stalled - mark as unvisited
+                    self._prefs.visited_stalled_agents.discard(session_id)
+                    prefs_changed = True
+
+                # Update previous status for next round
+                self._previous_statuses[session_id] = status
+
+                # Update widget's unvisited state
+                is_unvisited_stalled = (
+                    status == STATUS_WAITING_USER and
+                    session_id not in self._prefs.visited_stalled_agents
+                )
+                widget.is_unvisited_stalled = is_unvisited_stalled
+
                 widget.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
                 widget.refresh()  # Refresh each widget to repaint
+
+        # Save preferences if we marked any agents as unvisited
+        if prefs_changed:
+            self._save_prefs()
 
         # Update preview pane if in list_preview mode
         if self.view_mode == "list_preview":
@@ -1960,6 +2009,19 @@ class SupervisorTUI(App):
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
         self.expanded_states[message.session_id] = message.expanded
+
+    def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
+        """Handle when user visits a stalled agent - mark as visited"""
+        session_id = message.session_id
+        self._prefs.visited_stalled_agents.add(session_id)
+        self._save_prefs()
+
+        # Update the widget's state
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.is_unvisited_stalled = False
+                widget.refresh()
+                break
 
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)"""
