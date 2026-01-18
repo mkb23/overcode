@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import subprocess
 import sys
-import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical, ScrollableContainer, Horizontal
@@ -460,7 +459,7 @@ class HelpOverlay(Static):
 ║                                                                              ║
 ║  SUMMARY DETAIL LEVELS (s key)                                               ║
 ║  ────────────────────────────────────────────────────────────────────────────║
-║  low     Name, tokens, ctx% (context usage), git Δ, mode, steers, orders     ║
+║  low     Name, tokens @ ctx%, git Δ, mode, steers, standing orders           ║
 ║  med     + uptime, running time, stalled time, latency                       ║
 ║  full    + repo:branch, % active, git diff details (+ins -del)               ║
 ║                                                                              ║
@@ -800,19 +799,13 @@ class SessionSummary(Static, can_focus=True):
 
         # Always show: token usage (from Claude Code)
         if self.claude_stats is not None:
-            content.append(f" {format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
-            # Show current context window usage as percentage (assuming 200K max)
+            # Show total tokens and context usage percentage together
             if self.claude_stats.current_context_tokens > 0:
                 max_context = 200_000  # Claude models have 200K context window
                 ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
-                # Color code: green <50%, yellow 50-80%, red >80%
-                if ctx_pct >= 80:
-                    ctx_style = f"bold red{bg}"
-                elif ctx_pct >= 50:
-                    ctx_style = f"bold yellow{bg}"
-                else:
-                    ctx_style = f"bold green{bg}"
-                content.append(f" ctx:{ctx_pct:>2.0f}%", style=ctx_style)
+                content.append(f" {format_tokens(self.claude_stats.total_tokens):>6} @ {ctx_pct:.0f}%", style=f"bold orange1{bg}")
+            else:
+                content.append(f" {format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
         else:
             content.append("      -", style=f"dim orange1{bg}")
 
@@ -966,11 +959,8 @@ class PreviewPane(Static):
         if not self.content_lines:
             content.append("(no output)", style="dim italic")
         else:
-            # Calculate available lines based on widget height
-            # Reserve 2 lines for header and some padding
-            available_lines = max(10, self.size.height - 2) if self.size.height > 0 else 30
-            # Show last N lines of output - plain text, no decoration
-            for line in self.content_lines[-available_lines:]:
+            # Show last 30 lines of output - plain text, no decoration
+            for line in self.content_lines[-30:]:
                 # Truncate long lines
                 display_line = line[:200] if len(line) > 200 else line
                 content.append(display_line + "\n")
@@ -1562,8 +1552,6 @@ class SupervisorTUI(App):
         self._status_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
-        # Pending kill confirmation (session name, timestamp)
-        self._pending_kill: tuple[str, float] | None = None
 
     def compose(self) -> ComposeResult:
         """Create child widgets"""
@@ -2382,7 +2370,7 @@ class SupervisorTUI(App):
             self.notify(f"Failed to start Monitor Daemon: {e}", severity="warning")
 
     def action_kill_focused(self) -> None:
-        """Kill the currently focused agent (requires confirmation)."""
+        """Kill the currently focused agent."""
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -2390,30 +2378,7 @@ class SupervisorTUI(App):
 
         session_name = focused.session.name
         session_id = focused.session.id
-        now = time.time()
 
-        # Check if this is a confirmation of a pending kill
-        if self._pending_kill:
-            pending_name, pending_time = self._pending_kill
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_kill = None  # Clear pending state
-                self._execute_kill(focused, session_name, session_id)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_kill = None
-
-        # First press - request confirmation
-        self._pending_kill = (session_name, now)
-        self.notify(
-            f"Press x again to kill '{session_name}'",
-            severity="warning",
-            timeout=3
-        )
-
-    def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
-        """Execute the actual kill operation after confirmation."""
         # Use launcher to kill the session
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
