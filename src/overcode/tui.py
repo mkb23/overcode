@@ -805,14 +805,7 @@ class SessionSummary(Static, can_focus=True):
             if self.claude_stats.current_context_tokens > 0:
                 max_context = 200_000  # Claude models have 200K context window
                 ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
-                # Color code: green <50%, yellow 50-80%, red >80%
-                if ctx_pct >= 80:
-                    ctx_style = f"bold red{bg}"
-                elif ctx_pct >= 50:
-                    ctx_style = f"bold yellow{bg}"
-                else:
-                    ctx_style = f"bold green{bg}"
-                content.append(f" ctx:{ctx_pct:>2.0f}%", style=ctx_style)
+                content.append(f" @ {ctx_pct:.0f}%", style=f"bold orange1{bg}")
         else:
             content.append("      -", style=f"dim orange1{bg}")
 
