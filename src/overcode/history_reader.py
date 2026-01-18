@@ -39,6 +39,7 @@ class ClaudeSessionStats:
     cache_creation_tokens: int
     cache_read_tokens: int
     work_times: List[float]  # seconds per work cycle (prompt to next prompt)
+    current_context_tokens: int = 0  # Most recent input_tokens (current context size)
 
     @property
     def total_tokens(self) -> int:
@@ -249,13 +250,15 @@ def read_token_usage_from_session_file(
         since: Only count tokens from messages after this time
 
     Returns:
-        Dict with input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+        Dict with input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+        and current_context_tokens (most recent input_tokens value)
     """
     totals = {
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
+        "current_context_tokens": 0,  # Most recent input_tokens
     }
 
     if not session_file.exists():
@@ -288,7 +291,8 @@ def read_token_usage_from_session_file(
                         message = data.get("message", {})
                         usage = message.get("usage", {})
                         if usage:
-                            totals["input_tokens"] += usage.get("input_tokens", 0)
+                            input_tokens = usage.get("input_tokens", 0)
+                            totals["input_tokens"] += input_tokens
                             totals["output_tokens"] += usage.get("output_tokens", 0)
                             totals["cache_creation_tokens"] += usage.get(
                                 "cache_creation_input_tokens", 0
@@ -296,6 +300,9 @@ def read_token_usage_from_session_file(
                             totals["cache_read_tokens"] += usage.get(
                                 "cache_read_input_tokens", 0
                             )
+                            # Track most recent context size
+                            if input_tokens > 0:
+                                totals["current_context_tokens"] = input_tokens
                 except (json.JSONDecodeError, KeyError, TypeError):
                     continue
     except IOError:
@@ -422,6 +429,7 @@ def get_session_stats(
     total_output = 0
     total_cache_creation = 0
     total_cache_read = 0
+    current_context = 0  # Track most recent context size
     all_work_times: List[float] = []
 
     for sid in session_ids:
@@ -433,6 +441,9 @@ def get_session_stats(
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
+        # Keep the largest current context (most recent across all session files)
+        if usage["current_context_tokens"] > current_context:
+            current_context = usage["current_context_tokens"]
 
         # Collect work times from this session file
         work_times = read_work_times_from_session_file(session_file, since=session_start)
@@ -445,4 +456,5 @@ def get_session_stats(
         cache_creation_tokens=total_cache_creation,
         cache_read_tokens=total_cache_read,
         work_times=all_work_times,
+        current_context_tokens=current_context,
     )
