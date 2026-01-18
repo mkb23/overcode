@@ -426,13 +426,13 @@ class MonitorDaemon:
         return sorted_times[n // 2]
 
     def calculate_interval(self, sessions: list, all_waiting_user: bool) -> int:
-        """Calculate appropriate loop interval."""
-        if not sessions:
-            return INTERVAL_IDLE
+        """Calculate appropriate loop interval.
 
-        if all_waiting_user:
-            return INTERVAL_SLOW
-
+        The monitor daemon always uses a fixed 10s interval to maintain
+        high-resolution monitoring data. Variable frequency logic is only
+        used by the supervisor daemon.
+        """
+        # Always use fast interval for consistent monitoring resolution
         return INTERVAL_FAST
 
     def _interruptible_sleep(self, total_seconds: int) -> None:
