@@ -21,7 +21,7 @@ import os
 DAEMON_VERSION = 2  # Increment when daemon behavior changes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 import yaml
 
@@ -379,6 +379,8 @@ class TUIPreferences:
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
     view_mode: str = "tree"  # tree, list_preview
+    # Session IDs of stalled agents that have been visited by the user
+    visited_stalled_agents: Set[str] = field(default_factory=set)
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -401,6 +403,7 @@ class TUIPreferences:
                     timeline_visible=data.get("timeline_visible", True),
                     daemon_panel_visible=data.get("daemon_panel_visible", False),
                     view_mode=data.get("view_mode", "tree"),
+                    visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -419,6 +422,7 @@ class TUIPreferences:
                     "timeline_visible": self.timeline_visible,
                     "daemon_panel_visible": self.daemon_panel_visible,
                     "view_mode": self.view_mode,
+                    "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort
