@@ -292,17 +292,17 @@ def read_token_usage_from_session_file(
                         usage = message.get("usage", {})
                         if usage:
                             input_tokens = usage.get("input_tokens", 0)
+                            cache_read = usage.get("cache_read_input_tokens", 0)
                             totals["input_tokens"] += input_tokens
                             totals["output_tokens"] += usage.get("output_tokens", 0)
                             totals["cache_creation_tokens"] += usage.get(
                                 "cache_creation_input_tokens", 0
                             )
-                            totals["cache_read_tokens"] += usage.get(
-                                "cache_read_input_tokens", 0
-                            )
-                            # Track most recent context size
-                            if input_tokens > 0:
-                                totals["current_context_tokens"] = input_tokens
+                            totals["cache_read_tokens"] += cache_read
+                            # Track most recent context size (input + cached context)
+                            context_size = input_tokens + cache_read
+                            if context_size > 0:
+                                totals["current_context_tokens"] = context_size
                 except (json.JSONDecodeError, KeyError, TypeError):
                     continue
     except IOError:
