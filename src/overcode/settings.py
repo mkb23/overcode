@@ -330,6 +330,16 @@ def get_supervisor_log_path(session: str) -> Path:
     return get_session_dir(session) / "supervisor.log"
 
 
+def get_web_server_pid_path(session: str) -> Path:
+    """Get web server PID file path for a specific session."""
+    return get_session_dir(session) / "web_server.pid"
+
+
+def get_web_server_port_path(session: str) -> Path:
+    """Get web server port file path for a specific session."""
+    return get_session_dir(session) / "web_server.port"
+
+
 def ensure_session_dir(session: str) -> Path:
     """Ensure session directory exists and return it."""
     session_dir = get_session_dir(session)
