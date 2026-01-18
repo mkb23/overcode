@@ -405,6 +405,45 @@ def serve(
     run_server(host=host, port=port, tmux_session=session)
 
 
+@app.command()
+def web(
+    host: Annotated[
+        str, typer.Option("--host", "-h", help="Host to bind to")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int, typer.Option("--port", "-p", help="Port to listen on")
+    ] = 8080,
+):
+    """Launch analytics web dashboard for browsing historical data.
+
+    A lightweight web app for exploring session history, timeline
+    visualization, and efficiency metrics. Uses Chart.js for
+    interactive charts with dark theme matching the TUI.
+
+    Features:
+        - Dashboard with summary stats and daily activity charts
+        - Session browser with sortable table
+        - Timeline view with agent status and user presence
+        - Efficiency metrics with cost analysis
+
+    Time range presets can be configured in ~/.overcode/config.yaml:
+
+        web:
+          time_presets:
+            - name: "Morning"
+              start: "09:00"
+              end: "12:00"
+
+    Examples:
+        overcode web                    # Start on localhost:8080
+        overcode web --port 3000        # Custom port
+        overcode web --host 0.0.0.0     # Listen on all interfaces
+    """
+    from .web_server import run_analytics_server
+
+    run_analytics_server(host=host, port=port)
+
+
 
 
 @app.command()

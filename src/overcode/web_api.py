@@ -277,3 +277,344 @@ def get_health_data() -> Dict[str, Any]:
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+# =============================================================================
+# Analytics API Endpoints (for `overcode web` historical analytics dashboard)
+# =============================================================================
+
+
+def get_analytics_sessions(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Get all sessions (active + archived) within a time range.
+
+    Args:
+        start: Filter sessions that started after this time
+        end: Filter sessions that started before this time
+
+    Returns:
+        Dictionary with sessions list and summary stats
+    """
+    from .session_manager import SessionManager
+    from .history_reader import get_session_stats
+
+    sessions_mgr = SessionManager()
+    all_sessions = []
+
+    # Get active sessions
+    for s in sessions_mgr.list_sessions():
+        record = _session_to_analytics_record(s, is_archived=False)
+        # Get detailed stats from Claude Code history
+        stats = get_session_stats(s)
+        if stats:
+            record["work_times"] = stats.work_times
+            record["median_work_time"] = stats.median_work_time
+        all_sessions.append(record)
+
+    # Get archived sessions
+    for s in sessions_mgr.list_archived_sessions():
+        record = _session_to_analytics_record(s, is_archived=True)
+        record["end_time"] = getattr(s, "_end_time", None)
+        all_sessions.append(record)
+
+    # Filter by time range
+    if start or end:
+        filtered = []
+        for s in all_sessions:
+            try:
+                session_start = datetime.fromisoformat(s["start_time"])
+                if start and session_start < start:
+                    continue
+                if end and session_start > end:
+                    continue
+                filtered.append(s)
+            except (ValueError, TypeError):
+                continue
+        all_sessions = filtered
+
+    # Sort by start_time descending (newest first)
+    all_sessions.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+
+    # Calculate summary stats
+    total_tokens = sum(s.get("total_tokens", 0) for s in all_sessions)
+    total_cost = sum(s.get("estimated_cost_usd", 0) for s in all_sessions)
+    total_green_time = sum(s.get("green_time_seconds", 0) for s in all_sessions)
+    total_non_green_time = sum(s.get("non_green_time_seconds", 0) for s in all_sessions)
+    total_time = total_green_time + total_non_green_time
+    avg_green_pct = (total_green_time / total_time * 100) if total_time > 0 else 0
+
+    return {
+        "sessions": all_sessions,
+        "summary": {
+            "session_count": len(all_sessions),
+            "total_tokens": total_tokens,
+            "total_cost_usd": round(total_cost, 2),
+            "total_green_time_seconds": total_green_time,
+            "total_non_green_time_seconds": total_non_green_time,
+            "avg_green_percent": round(avg_green_pct, 1),
+        },
+    }
+
+
+def _session_to_analytics_record(session, is_archived: bool) -> Dict[str, Any]:
+    """Convert a Session to a analytics record dictionary."""
+    stats = session.stats
+    green_time = stats.green_time_seconds
+    non_green_time = stats.non_green_time_seconds
+    total_time = green_time + non_green_time
+    green_pct = (green_time / total_time * 100) if total_time > 0 else 0
+
+    return {
+        "id": session.id,
+        "name": session.name,
+        "start_time": session.start_time,
+        "end_time": None,
+        "repo_name": session.repo_name,
+        "branch": session.branch,
+        "is_archived": is_archived,
+        "interaction_count": stats.interaction_count,
+        "steers_count": stats.steers_count,
+        "total_tokens": stats.total_tokens,
+        "input_tokens": stats.input_tokens,
+        "output_tokens": stats.output_tokens,
+        "cache_creation_tokens": stats.cache_creation_tokens,
+        "cache_read_tokens": stats.cache_read_tokens,
+        "estimated_cost_usd": round(stats.estimated_cost_usd, 4),
+        "green_time_seconds": green_time,
+        "non_green_time_seconds": non_green_time,
+        "green_percent": round(green_pct, 1),
+        "work_times": [],  # Will be populated if available
+        "median_work_time": 0.0,
+    }
+
+
+def get_analytics_timeline(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Get agent status timeline within a time range.
+
+    Args:
+        start: Start of time range
+        end: End of time range
+
+    Returns:
+        Dictionary with timeline events grouped by agent
+    """
+    from .presence_logger import read_presence_history
+
+    # Default to last 24 hours if no range specified
+    if start is None:
+        start = datetime.now() - timedelta(hours=24)
+    if end is None:
+        end = datetime.now()
+
+    hours = (end - start).total_seconds() / 3600.0
+
+    # Get agent status history
+    all_history = read_agent_status_history(hours=hours)
+
+    # Filter to time range and group by agent
+    agent_events: Dict[str, List[Dict[str, Any]]] = {}
+    for ts, agent_name, status, activity in all_history:
+        if ts < start or ts > end:
+            continue
+
+        if agent_name not in agent_events:
+            agent_events[agent_name] = []
+
+        agent_events[agent_name].append({
+            "timestamp": ts.isoformat(),
+            "status": status,
+            "activity": activity[:100] if activity else "",
+            "color": get_web_color(get_status_color(status)),
+        })
+
+    # Get presence history
+    presence_history = read_presence_history(hours=hours)
+    presence_events = []
+    state_names = {1: "locked", 2: "inactive", 3: "active"}
+    presence_colors = {1: "#6b7280", 2: "#eab308", 3: "#22c55e"}
+
+    for ts, state in presence_history:
+        if ts < start or ts > end:
+            continue
+        presence_events.append({
+            "timestamp": ts.isoformat(),
+            "state": state,
+            "state_name": state_names.get(state, "unknown"),
+            "color": presence_colors.get(state, "#6b7280"),
+        })
+
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "agents": agent_events,
+        "presence": presence_events,
+        "status_colors": {k: get_web_color(get_status_color(k)) for k in AGENT_TIMELINE_CHARS},
+    }
+
+
+def get_analytics_stats(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Get aggregate statistics for a time range.
+
+    Args:
+        start: Start of time range
+        end: End of time range
+
+    Returns:
+        Dictionary with aggregate efficiency metrics
+    """
+    # Get sessions in range
+    sessions_data = get_analytics_sessions(start, end)
+    sessions = sessions_data["sessions"]
+    summary = sessions_data["summary"]
+
+    # Calculate efficiency metrics
+    total_interactions = sum(s.get("interaction_count", 0) for s in sessions)
+    total_steers = sum(s.get("steers_count", 0) for s in sessions)
+    total_cost = summary["total_cost_usd"]
+
+    # Cost efficiency
+    cost_per_interaction = (total_cost / total_interactions) if total_interactions > 0 else 0
+    total_hours = (summary["total_green_time_seconds"] + summary["total_non_green_time_seconds"]) / 3600
+    cost_per_hour = (total_cost / total_hours) if total_hours > 0 else 0
+
+    # Spin rate (steers / interactions)
+    spin_rate = (total_steers / total_interactions * 100) if total_interactions > 0 else 0
+
+    # Work time percentiles
+    all_work_times = []
+    for s in sessions:
+        work_times = s.get("work_times", [])
+        if work_times:
+            all_work_times.extend(work_times)
+
+    work_time_stats = _calculate_percentiles(all_work_times)
+
+    return {
+        "time_range": {
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+        },
+        "summary": summary,
+        "efficiency": {
+            "green_percent": summary["avg_green_percent"],
+            "cost_per_interaction": round(cost_per_interaction, 4),
+            "cost_per_hour": round(cost_per_hour, 2),
+            "spin_rate_percent": round(spin_rate, 1),
+        },
+        "interactions": {
+            "total": total_interactions,
+            "human": total_interactions - total_steers,
+            "robot_steers": total_steers,
+        },
+        "work_times": work_time_stats,
+    }
+
+
+def _calculate_percentiles(values: List[float]) -> Dict[str, float]:
+    """Calculate work time percentiles."""
+    if not values:
+        return {
+            "mean": 0.0,
+            "median": 0.0,
+            "p5": 0.0,
+            "p95": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+        }
+
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+
+    def percentile(p: float) -> float:
+        idx = int(p * (n - 1))
+        return sorted_vals[idx]
+
+    return {
+        "mean": round(sum(values) / n, 1),
+        "median": round(percentile(0.5), 1),
+        "p5": round(percentile(0.05), 1),
+        "p95": round(percentile(0.95), 1),
+        "min": round(sorted_vals[0], 1),
+        "max": round(sorted_vals[-1], 1),
+    }
+
+
+def get_analytics_daily(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Get daily aggregated stats for charting.
+
+    Args:
+        start: Start of time range
+        end: End of time range
+
+    Returns:
+        Dictionary with daily stats arrays
+    """
+    # Get sessions in range
+    sessions_data = get_analytics_sessions(start, end)
+    sessions = sessions_data["sessions"]
+
+    # Group sessions by date
+    daily_stats: Dict[str, Dict[str, Any]] = {}
+
+    for s in sessions:
+        try:
+            session_start = datetime.fromisoformat(s["start_time"])
+            date_key = session_start.strftime("%Y-%m-%d")
+
+            if date_key not in daily_stats:
+                daily_stats[date_key] = {
+                    "date": date_key,
+                    "sessions": 0,
+                    "tokens": 0,
+                    "cost_usd": 0.0,
+                    "green_time_seconds": 0.0,
+                    "non_green_time_seconds": 0.0,
+                    "interactions": 0,
+                    "steers": 0,
+                }
+
+            daily_stats[date_key]["sessions"] += 1
+            daily_stats[date_key]["tokens"] += s.get("total_tokens", 0)
+            daily_stats[date_key]["cost_usd"] += s.get("estimated_cost_usd", 0)
+            daily_stats[date_key]["green_time_seconds"] += s.get("green_time_seconds", 0)
+            daily_stats[date_key]["non_green_time_seconds"] += s.get("non_green_time_seconds", 0)
+            daily_stats[date_key]["interactions"] += s.get("interaction_count", 0)
+            daily_stats[date_key]["steers"] += s.get("steers_count", 0)
+        except (ValueError, TypeError):
+            continue
+
+    # Sort by date and convert to list
+    sorted_dates = sorted(daily_stats.keys())
+    daily_list = []
+
+    for date_key in sorted_dates:
+        day = daily_stats[date_key]
+        total_time = day["green_time_seconds"] + day["non_green_time_seconds"]
+        day["green_percent"] = round(
+            (day["green_time_seconds"] / total_time * 100) if total_time > 0 else 0, 1
+        )
+        day["cost_usd"] = round(day["cost_usd"], 2)
+        daily_list.append(day)
+
+    return {
+        "days": daily_list,
+        "labels": sorted_dates,
+    }
+
+
+def get_time_presets() -> List[Dict[str, str]]:
+    """Get configured time presets from config or defaults."""
+    from .config import get_web_time_presets
+
+    return get_web_time_presets()

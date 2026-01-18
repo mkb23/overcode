@@ -40,6 +40,11 @@ from .supervisor_daemon import (
     is_supervisor_daemon_running,
     stop_supervisor_daemon,
 )
+from .web_server import (
+    is_web_server_running,
+    get_web_server_url,
+    toggle_web_server,
+)
 from .config import get_default_standing_instructions
 from .status_history import read_agent_status_history
 from .presence_logger import read_presence_history
@@ -217,6 +222,17 @@ class DaemonStatusBar(Static):
                 content.append("📡", style="red")
             else:
                 content.append("📡", style="dim")
+
+        # Web server status
+        web_running = is_web_server_running(self.tmux_session)
+        if web_running:
+            content.append(" │ ", style="dim")
+            url = get_web_server_url(self.tmux_session)
+            content.append("🌐", style="green")
+            if url:
+                # Just show port
+                port = url.split(":")[-1] if url else ""
+                content.append(f":{port}", style="cyan")
 
         return content
 
@@ -457,6 +473,7 @@ class HelpOverlay(Static):
 ║  ────────────────────────────────────────────────────────────────────────────║
 ║  [       Start supervisor        ]       Stop supervisor                     ║
 ║  \\      Restart monitor         d       Toggle daemon log panel             ║
+║  w       Toggle web dashboard (analytics server)                             ║
 ║                                                                              ║
 ║  SUMMARY DETAIL LEVELS (s key)                                               ║
 ║  ────────────────────────────────────────────────────────────────────────────║
@@ -1506,6 +1523,8 @@ class SupervisorTUI(App):
         ("5", "send_5_to_focused", "Send 5"),
         # Copy mode - disable mouse capture for native terminal selection
         ("y", "toggle_copy_mode", "Copy mode"),
+        # Web server toggle
+        ("w", "toggle_web_server", "Web dashboard"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1643,7 +1662,7 @@ class SupervisorTUI(App):
             pass
 
         # Check for multiple daemon processes (potential time tracking bug)
-        daemon_count = count_daemon_processes("monitor_daemon")
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
         if daemon_count > 1 and not self._multiple_daemon_warning_shown:
             self._multiple_daemon_warning_shown = True
             self.notify(
@@ -2359,8 +2378,15 @@ class SupervisorTUI(App):
         The Monitor Daemon handles status tracking, time accumulation,
         stats sync, and user presence detection.
         """
+        # Check PID file first
         if is_monitor_daemon_running(self.tmux_session):
             return  # Already running
+
+        # Also check for running processes (in case PID file is stale or daemon is starting)
+        # This prevents race conditions where multiple TUIs start daemons simultaneously
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
+        if daemon_count > 0:
+            return  # Daemon process exists, just PID file might be missing/stale
 
         try:
             subprocess.Popen(
@@ -2373,6 +2399,28 @@ class SupervisorTUI(App):
             self.notify("Monitor Daemon started", severity="information")
         except (OSError, subprocess.SubprocessError) as e:
             self.notify(f"Failed to start Monitor Daemon: {e}", severity="warning")
+
+    def action_toggle_web_server(self) -> None:
+        """Toggle the web analytics dashboard server on/off."""
+        is_running, msg = toggle_web_server(self.tmux_session)
+
+        if is_running:
+            url = get_web_server_url(self.tmux_session)
+            self.notify(f"Web server: {url}", severity="information")
+            try:
+                panel = self.query_one("#daemon-panel", DaemonPanel)
+                panel.log_lines.append(f">>> Web server started: {url}")
+            except NoMatches:
+                pass
+        else:
+            self.notify(f"Web server: {msg}", severity="information")
+            try:
+                panel = self.query_one("#daemon-panel", DaemonPanel)
+                panel.log_lines.append(f">>> Web server: {msg}")
+            except NoMatches:
+                pass
+
+        self.update_daemon_status()
 
     def action_kill_focused(self) -> None:
         """Kill the currently focused agent (requires confirmation)."""
