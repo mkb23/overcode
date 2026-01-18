@@ -954,8 +954,11 @@ class PreviewPane(Static):
         if not self.content_lines:
             content.append("(no output)", style="dim italic")
         else:
-            # Show last 30 lines of output - plain text, no decoration
-            for line in self.content_lines[-30:]:
+            # Calculate available lines based on widget height
+            # Reserve 2 lines for header and some padding
+            available_lines = max(10, self.size.height - 2) if self.size.height > 0 else 30
+            # Show last N lines of output - plain text, no decoration
+            for line in self.content_lines[-available_lines:]:
                 # Truncate long lines
                 display_line = line[:200] if len(line) > 200 else line
                 content.append(display_line + "\n")
