@@ -778,9 +778,9 @@ class SessionSummary(Static, can_focus=True):
         # Always show: status symbol, time in state, expand icon, agent name
         content.append(f"{status_symbol} ", style=status_color)
 
-        # Show ★ indicator for unvisited stalled agents (needs attention)
+        # Show 🔔 indicator for unvisited stalled agents (needs attention)
         if self.is_unvisited_stalled:
-            content.append("★ ", style=f"bold blink red{bg}")
+            content.append("🔔", style=f"bold blink red{bg}")
         else:
             content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
