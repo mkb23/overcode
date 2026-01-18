@@ -435,6 +435,8 @@ class TestReadTokenUsageFromSessionFile:
         assert result["output_tokens"] == 500
         assert result["cache_creation_tokens"] == 125
         assert result["cache_read_tokens"] == 75
+        # Current context = last message's input + cache_read: 150 + 50 = 200
+        assert result["current_context_tokens"] == 200
 
     def test_filters_by_timestamp(self, tmp_path):
         """Should only count tokens from messages after 'since' timestamp."""
@@ -460,6 +462,87 @@ class TestReadTokenUsageFromSessionFile:
 
         assert result["input_tokens"] == 150
         assert result["output_tokens"] == 300
+
+    def test_tracks_current_context_from_input_plus_cache_read(self, tmp_path):
+        """Should track current context as input_tokens + cache_read_input_tokens.
+
+        This matches real Claude session files where most context comes from cache.
+        Example: input_tokens=8, cache_read_input_tokens=129736 means 130K context.
+        """
+        from overcode.history_reader import read_token_usage_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        # Real-world format from Claude session files
+        entries = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-16T10:00:00.000Z",
+                "message": {
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 500,
+                        "cache_creation_input_tokens": 3502,
+                        "cache_read_input_tokens": 15760,
+                    }
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-16T10:01:00.000Z",
+                "message": {
+                    "usage": {
+                        "input_tokens": 8,
+                        "cache_creation_input_tokens": 232,
+                        "cache_read_input_tokens": 129504,
+                        "output_tokens": 1200,
+                    }
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = read_token_usage_from_session_file(session_file)
+
+        # Current context should be most recent: 8 + 129504 = 129512
+        assert result["current_context_tokens"] == 129512
+        # Verify it's ~65% of 200K context window
+        assert result["current_context_tokens"] / 200_000 * 100 == pytest.approx(64.756, rel=0.01)
+
+    def test_current_context_uses_last_message(self, tmp_path):
+        """Should use the most recent message for current context."""
+        from overcode.history_reader import read_token_usage_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        entries = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-16T10:00:00.000Z",
+                "message": {
+                    "usage": {
+                        "input_tokens": 50000,
+                        "cache_read_input_tokens": 0,
+                        "output_tokens": 100,
+                    }
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-16T10:01:00.000Z",
+                "message": {
+                    "usage": {
+                        "input_tokens": 1000,
+                        "cache_read_input_tokens": 80000,
+                        "output_tokens": 200,
+                    }
+                },
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = read_token_usage_from_session_file(session_file)
+
+        # Should be last message: 1000 + 80000 = 81000, not first: 50000
+        assert result["current_context_tokens"] == 81000
 
 
 class TestFormatTokens:
