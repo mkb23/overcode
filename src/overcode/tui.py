@@ -48,7 +48,7 @@ from .web_server import (
 )
 from .config import get_default_standing_instructions
 from .status_history import read_agent_status_history
-from .presence_logger import read_presence_history
+from .presence_logger import read_presence_history, MACOS_APIS_AVAILABLE
 from .launcher import ClaudeLauncher
 from .tui_helpers import (
     format_interval,
@@ -353,6 +353,10 @@ class StatusTimeline(Static):
                     content.append(char, style=color)
                 else:
                     content.append("─", style="dim")
+        elif not MACOS_APIS_AVAILABLE:
+            # Show install instructions when presence deps not installed
+            msg = "not installed - pip install overcode[presence]"
+            content.append(msg[:width], style="dim italic")
         else:
             content.append("─" * width, style="dim")
         content.append("\n")
