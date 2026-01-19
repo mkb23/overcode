@@ -1073,6 +1073,10 @@ def get_analytics_html() -> str:
             <div id="efficiency-summary" class="summary-grid"></div>
             <div class="metrics-grid">
                 <div class="metric-card">
+                    <div class="metric-title">Presence Efficiency</div>
+                    <div id="presence-efficiency-metrics"></div>
+                </div>
+                <div class="metric-card">
                     <div class="metric-title">Cost Efficiency</div>
                     <div id="cost-metrics"></div>
                 </div>
@@ -1513,6 +1517,7 @@ def get_analytics_html() -> str:
             const e = stats.efficiency || {};
             const i = stats.interactions || {};
             const w = stats.work_times || {};
+            const p = stats.presence_efficiency || {};
 
             document.getElementById('efficiency-summary').innerHTML = `
                 <div class="summary-card green">
@@ -1532,6 +1537,26 @@ def get_analytics_html() -> str:
                     <div class="summary-label">Median Work Time</div>
                 </div>
             `;
+
+            // Presence efficiency metrics
+            const presenceHasData = p.has_data;
+            const presenceContent = presenceHasData ? `
+                <div class="metric-value" style="color: var(--green)">${p.present_efficiency || 0}%</div>
+                <div class="metric-sub">Green while you're active</div>
+                <table class="work-times-table">
+                    <tr><td>AFK efficiency</td><td style="color: var(--yellow)">${p.afk_efficiency || 0}%</td></tr>
+                    <tr><td>Present samples</td><td>${p.present_samples || 0}</td></tr>
+                    <tr><td>AFK samples</td><td>${p.afk_samples || 0}</td></tr>
+                </table>
+            ` : `
+                <div class="metric-value dim">—</div>
+                <div class="metric-sub">No presence data available</div>
+                <div style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">
+                    Install presence tracking:<br>
+                    <code style="color: var(--cyan)">pip install overcode[presence]</code>
+                </div>
+            `;
+            document.getElementById('presence-efficiency-metrics').innerHTML = presenceContent;
 
             document.getElementById('cost-metrics').innerHTML = `
                 <div class="metric-value">$${s.total_cost_usd || 0}</div>
