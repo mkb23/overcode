@@ -379,6 +379,7 @@ class TUIPreferences:
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
     view_mode: str = "tree"  # tree, list_preview
+    tmux_sync: bool = False  # sync navigation to external tmux pane
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
 
@@ -403,6 +404,7 @@ class TUIPreferences:
                     timeline_visible=data.get("timeline_visible", True),
                     daemon_panel_visible=data.get("daemon_panel_visible", False),
                     view_mode=data.get("view_mode", "tree"),
+                    tmux_sync=data.get("tmux_sync", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
@@ -422,6 +424,7 @@ class TUIPreferences:
                     "timeline_visible": self.timeline_visible,
                     "daemon_panel_visible": self.daemon_panel_visible,
                     "view_mode": self.view_mode,
+                    "tmux_sync": self.tmux_sync,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):

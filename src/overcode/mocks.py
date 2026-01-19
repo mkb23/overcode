@@ -77,6 +77,10 @@ class MockTmux:
     def attach(self, session: str) -> None:
         pass  # No-op in tests
 
+    def select_window(self, session: str, window: int) -> bool:
+        """Select a window - no-op in tests, just return True."""
+        return session in self.sessions
+
 
 class MockFileSystem:
     """Mock implementation of FileSystemInterface for testing"""
