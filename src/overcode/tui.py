@@ -2104,10 +2104,11 @@ class SupervisorTUI(App):
         if not widgets:
             return
         self.focused_session_index = (self.focused_session_index + 1) % len(widgets)
-        widgets[self.focused_session_index].focus()
+        target_widget = widgets[self.focused_session_index]
+        target_widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
-        self._sync_tmux_window()
+        self._sync_tmux_window(target_widget)
 
     def action_focus_previous_session(self) -> None:
         """Focus the previous session in the list."""
@@ -2115,10 +2116,11 @@ class SupervisorTUI(App):
         if not widgets:
             return
         self.focused_session_index = (self.focused_session_index - 1) % len(widgets)
-        widgets[self.focused_session_index].focus()
+        target_widget = widgets[self.focused_session_index]
+        target_widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
-        self._sync_tmux_window()
+        self._sync_tmux_window(target_widget)
 
     def action_toggle_view_mode(self) -> None:
         """Toggle between tree and list+preview view modes."""
@@ -2146,15 +2148,19 @@ class SupervisorTUI(App):
         if self.tmux_sync:
             self._sync_tmux_window()
 
-    def _sync_tmux_window(self) -> None:
-        """Sync external tmux pane to show the focused session's window."""
+    def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
+        """Sync external tmux pane to show the focused session's window.
+
+        Args:
+            widget: The session widget to sync to. If None, uses self.focused.
+        """
         if not self.tmux_sync:
             return
 
         try:
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
-                window_index = focused.session.tmux_window
+            target = widget if widget is not None else self.focused
+            if isinstance(target, SessionSummary):
+                window_index = target.session.tmux_window
                 if window_index is not None:
                     self._tmux.select_window(self.tmux_session, window_index)
         except Exception:
