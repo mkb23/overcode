@@ -497,6 +497,9 @@ def get_analytics_stats(
 
     work_time_stats = _calculate_percentiles(all_work_times)
 
+    # Calculate presence-based efficiency metrics
+    presence_efficiency = _calculate_presence_efficiency(start, end)
+
     return {
         "time_range": {
             "start": start.isoformat() if start else None,
@@ -509,6 +512,7 @@ def get_analytics_stats(
             "cost_per_hour": round(cost_per_hour, 2),
             "spin_rate_percent": round(spin_rate, 1),
         },
+        "presence_efficiency": presence_efficiency,
         "interactions": {
             "total": total_interactions,
             "human": total_interactions - total_steers,
@@ -544,6 +548,135 @@ def _calculate_percentiles(values: List[float]) -> Dict[str, float]:
         "p95": round(percentile(0.95), 1),
         "min": round(sorted_vals[0], 1),
         "max": round(sorted_vals[-1], 1),
+    }
+
+
+def _calculate_presence_efficiency(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    sample_interval_seconds: int = 60,
+) -> Dict[str, Any]:
+    """Calculate agent efficiency metrics segmented by user presence.
+
+    Samples agent status at regular intervals and calculates what percentage
+    of agents were "green" (running) during:
+    - Present periods: user presence state = 3 (active)
+    - AFK periods: user presence state = 1 (locked) or 2 (inactive)
+
+    Args:
+        start: Start of time range
+        end: End of time range
+        sample_interval_seconds: How often to sample (default 60s)
+
+    Returns:
+        Dictionary with presence and AFK efficiency metrics
+    """
+    from .presence_logger import read_presence_history
+
+    # Default to last 24 hours if no range specified
+    if end is None:
+        end = datetime.now()
+    if start is None:
+        start = end - timedelta(hours=24)
+
+    hours = (end - start).total_seconds() / 3600.0
+
+    # Get agent status history: list of (timestamp, agent_name, status, activity)
+    agent_history = read_agent_status_history(hours=hours)
+
+    # Get presence history: list of (timestamp, state)
+    presence_history = read_presence_history(hours=hours)
+
+    # Filter to time range
+    agent_history = [(ts, name, status, act) for ts, name, status, act in agent_history
+                     if start <= ts <= end]
+    presence_history = [(ts, state) for ts, state in presence_history
+                        if start <= ts <= end]
+
+    # If no data, return zeros
+    if not agent_history or not presence_history:
+        return {
+            "present_efficiency": 0.0,
+            "afk_efficiency": 0.0,
+            "present_samples": 0,
+            "afk_samples": 0,
+            "has_data": False,
+        }
+
+    # Sort histories by timestamp
+    agent_history.sort(key=lambda x: x[0])
+    presence_history.sort(key=lambda x: x[0])
+
+    # Get unique agent names
+    agent_names = sorted(set(name for _, name, _, _ in agent_history))
+
+    # Build lookup: for each agent, sorted list of (timestamp, status)
+    agent_status_timeline: Dict[str, List[tuple]] = {name: [] for name in agent_names}
+    for ts, name, status, _ in agent_history:
+        agent_status_timeline[name].append((ts, status))
+
+    # Sample at regular intervals
+    present_green_percents: List[float] = []
+    afk_green_percents: List[float] = []
+
+    current_time = start
+    while current_time <= end:
+        # Find user presence state at this time (most recent entry before current_time)
+        user_state = None
+        for ts, state in reversed(presence_history):
+            if ts <= current_time:
+                user_state = state
+                break
+
+        # If no presence data before this time, skip
+        if user_state is None:
+            current_time += timedelta(seconds=sample_interval_seconds)
+            continue
+
+        # Find agent statuses at this time
+        green_count = 0
+        total_agents = 0
+        for name in agent_names:
+            timeline = agent_status_timeline[name]
+            agent_status = None
+            for ts, status in reversed(timeline):
+                if ts <= current_time:
+                    agent_status = status
+                    break
+
+            if agent_status is not None:
+                total_agents += 1
+                if agent_status == "running":
+                    green_count += 1
+
+        # Calculate green percentage for this sample
+        if total_agents > 0:
+            green_percent = (green_count / total_agents) * 100
+
+            # Bucket by presence state
+            if user_state == 3:  # Active/present
+                present_green_percents.append(green_percent)
+            else:  # state 1 (locked) or 2 (inactive) = AFK
+                afk_green_percents.append(green_percent)
+
+        current_time += timedelta(seconds=sample_interval_seconds)
+
+    # Calculate averages
+    present_efficiency = (
+        sum(present_green_percents) / len(present_green_percents)
+        if present_green_percents else 0.0
+    )
+    afk_efficiency = (
+        sum(afk_green_percents) / len(afk_green_percents)
+        if afk_green_percents else 0.0
+    )
+
+    return {
+        "present_efficiency": round(present_efficiency, 1),
+        "afk_efficiency": round(afk_efficiency, 1),
+        "present_samples": len(present_green_percents),
+        "afk_samples": len(afk_green_percents),
+        "has_data": len(present_green_percents) + len(afk_green_percents) > 0,
     }
 
 
