@@ -4,6 +4,16 @@ A TUI supervisor for managing multiple Claude Code agents in tmux.
 
 Monitor status, costs, and activity across all your agents from a single dashboard.
 
+## Screenshots
+
+**Split-screen with tmux sync** - Monitor agents in the top pane while viewing live agent output below:
+
+![Overcode split-screen with tmux sync](docs/images/overcode-split-screen.png)
+
+**Preview mode** - Collapsed agent list with detailed terminal output preview:
+
+![Overcode preview mode](docs/images/overcode-preview-mode.png)
+
 ## Installation
 
 ```bash
