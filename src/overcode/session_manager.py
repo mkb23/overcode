@@ -88,6 +88,9 @@ class Session:
     # Statistics
     stats: SessionStats = field(default_factory=SessionStats)
 
+    # Sleep mode - agent is paused and excluded from stats
+    is_asleep: bool = False
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict

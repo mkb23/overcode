@@ -17,6 +17,7 @@ STATUS_NO_INSTRUCTIONS = "no_instructions"
 STATUS_WAITING_SUPERVISOR = "waiting_supervisor"
 STATUS_WAITING_USER = "waiting_user"
 STATUS_TERMINATED = "terminated"  # Claude Code exited, shell prompt showing
+STATUS_ASLEEP = "asleep"  # Human marked agent as paused/snoozed (excluded from stats)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -25,6 +26,7 @@ ALL_STATUSES = [
     STATUS_WAITING_SUPERVISOR,
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
+    STATUS_ASLEEP,
 ]
 
 
@@ -60,6 +62,7 @@ STATUS_EMOJIS = {
     STATUS_WAITING_SUPERVISOR: "🟠",
     STATUS_WAITING_USER: "🔴",
     STATUS_TERMINATED: "⚫",  # Black circle - Claude exited
+    STATUS_ASLEEP: "💤",  # Sleeping/snoozed - human marked as paused
 }
 
 
@@ -78,6 +81,7 @@ STATUS_COLORS = {
     STATUS_WAITING_SUPERVISOR: "orange1",
     STATUS_WAITING_USER: "red",
     STATUS_TERMINATED: "dim",  # Grey for terminated
+    STATUS_ASLEEP: "dim",  # Grey for sleeping
 }
 
 
@@ -96,6 +100,7 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_SUPERVISOR: ("🟠", "orange1"),
     STATUS_WAITING_USER: ("🔴", "red"),
     STATUS_TERMINATED: ("⚫", "dim"),
+    STATUS_ASLEEP: ("💤", "dim"),  # Sleeping/snoozed
 }
 
 
@@ -114,6 +119,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_SUPERVISOR: "▒",
     STATUS_WAITING_USER: "░",
     STATUS_TERMINATED: "×",  # Small X - terminated
+    STATUS_ASLEEP: "z",  # Lowercase z for sleeping
 }
 
 
@@ -188,3 +194,8 @@ def is_waiting_status(status: str) -> bool:
 def is_user_blocked(status: str) -> bool:
     """Check if status indicates user intervention is required."""
     return status == STATUS_WAITING_USER
+
+
+def is_asleep(status: str) -> bool:
+    """Check if status indicates agent is asleep (paused by human)."""
+    return status == STATUS_ASLEEP

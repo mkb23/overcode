@@ -99,14 +99,21 @@ class DaemonStatusBar(Static):
     Presence is shown only when available (macOS with monitor daemon running).
     """
 
-    def __init__(self, tmux_session: str = "agents", *args, **kwargs):
+    def __init__(self, tmux_session: str = "agents", session_manager: Optional["SessionManager"] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tmux_session = tmux_session
         self.monitor_state: Optional[MonitorDaemonState] = None
+        self._session_manager = session_manager
+        self._asleep_session_ids: set = set()  # Cache of asleep session IDs
 
     def update_status(self) -> None:
         """Refresh daemon state from file"""
         self.monitor_state = get_monitor_daemon_state(self.tmux_session)
+        # Update cache of asleep session IDs from session manager
+        if self._session_manager:
+            self._asleep_session_ids = {
+                s.id for s in self._session_manager.list_sessions() if s.is_asleep
+            }
         self.refresh()
 
     def render(self) -> Text:
@@ -171,13 +178,18 @@ class DaemonStatusBar(Static):
         # Spin rate stats (only when monitor running with sessions)
         if monitor_running and self.monitor_state.sessions:
             content.append(" │ ", style="dim")
-            sessions = self.monitor_state.sessions
-            total_agents = len(sessions)
-            green_now = self.monitor_state.green_sessions
+            # Filter out sleeping agents from stats
+            all_sessions = self.monitor_state.sessions
+            active_sessions = [s for s in all_sessions if s.session_id not in self._asleep_session_ids]
+            sleeping_count = len(all_sessions) - len(active_sessions)
 
-            # Calculate mean spin rate from green_time percentages
+            total_agents = len(active_sessions)
+            # Recalculate green_now excluding sleeping agents
+            green_now = sum(1 for s in active_sessions if s.current_status == "running")
+
+            # Calculate mean spin rate from green_time percentages (exclude sleeping)
             mean_spin = 0.0
-            for s in sessions:
+            for s in active_sessions:
                 total_time = s.green_time_seconds + s.non_green_time_seconds
                 if total_time > 0:
                     mean_spin += s.green_time_seconds / total_time
@@ -185,11 +197,13 @@ class DaemonStatusBar(Static):
             content.append("Spin: ", style="bold")
             content.append(f"{green_now}", style="bold green" if green_now > 0 else "dim")
             content.append(f"/{total_agents}", style="dim")
+            if sleeping_count > 0:
+                content.append(f" 💤{sleeping_count}", style="dim")  # Show sleeping count
             if mean_spin > 0:
                 content.append(f" μ{mean_spin:.1f}x", style="cyan")
 
-            # Safe break duration (time until 50%+ agents need attention)
-            safe_break = calculate_safe_break_duration(sessions)
+            # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
+            safe_break = calculate_safe_break_duration(active_sessions)
             if safe_break is not None:
                 content.append(" │ ", style="dim")
                 content.append("☕", style="bold")
@@ -738,7 +752,11 @@ class SessionSummary(Static, can_focus=True):
         # Update detected status for display
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
         # The session.stats values are read from what Monitor Daemon has persisted
-        self.detected_status = status
+        # If session is asleep, keep the asleep status instead of the detected status
+        if self.session.is_asleep:
+            self.detected_status = "asleep"
+        else:
+            self.detected_status = status
 
         # Use pre-fetched claude stats (no file I/O on main thread)
         if claude_stats is not None:
@@ -1558,6 +1576,8 @@ class SupervisorTUI(App):
         ("p", "toggle_tmux_sync", "Pane sync"),
         # Web server toggle
         ("w", "toggle_web_server", "Web dashboard"),
+        # Sleep mode toggle - mark agent as paused (excluded from stats)
+        ("z", "toggle_sleep", "Sleep mode"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1620,7 +1640,7 @@ class SupervisorTUI(App):
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
-        yield DaemonStatusBar(tmux_session=self.tmux_session, id="daemon-status")
+        yield DaemonStatusBar(tmux_session=self.tmux_session, session_manager=self.session_manager, id="daemon-status")
         yield StatusTimeline([], id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
         yield ScrollableContainer(id="sessions-container")
@@ -2536,6 +2556,38 @@ class SupervisorTUI(App):
                 pass
 
         self.update_daemon_status()
+
+    def action_toggle_sleep(self) -> None:
+        """Toggle sleep mode for the focused agent.
+
+        Sleep mode marks an agent as 'asleep' (human doesn't want it to do anything).
+        Sleeping agents are excluded from stats calculations.
+        Press z again to wake the agent.
+        """
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        new_asleep_state = not session.is_asleep
+
+        # Update the session in the session manager
+        self.session_manager.update_session(session.id, is_asleep=new_asleep_state)
+
+        # Update the local session object
+        session.is_asleep = new_asleep_state
+
+        # Update the widget's display status if sleeping
+        if new_asleep_state:
+            focused.detected_status = "asleep"
+            self.notify(f"Agent '{session.name}' is now asleep (excluded from stats)", severity="information")
+        else:
+            # Wake up - status will be refreshed on next update cycle
+            self.notify(f"Agent '{session.name}' is now awake", severity="information")
+
+        # Force a refresh
+        focused.refresh()
 
     def action_kill_focused(self) -> None:
         """Kill the currently focused agent (requires confirmation)."""
