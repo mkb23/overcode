@@ -338,6 +338,9 @@ def toggle_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
 class AnalyticsHandler(BaseHTTPRequestHandler):
     """HTTP request handler for analytics dashboard."""
 
+    # Set by run_analytics_server before starting
+    tmux_session: str = "agents"
+
     def do_GET(self) -> None:
         """Handle GET requests."""
         parsed = urlparse(self.path)
@@ -355,9 +358,9 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
         elif path == "/api/analytics/sessions":
             self._serve_json(get_analytics_sessions(start, end))
         elif path == "/api/analytics/timeline":
-            self._serve_json(get_analytics_timeline(start, end))
+            self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
         elif path == "/api/analytics/stats":
-            self._serve_json(get_analytics_stats(start, end))
+            self._serve_json(get_analytics_stats(self.tmux_session, start, end))
         elif path == "/api/analytics/daily":
             self._serve_json(get_analytics_daily(start, end))
         elif path == "/api/analytics/presets":
@@ -434,13 +437,18 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
 def run_analytics_server(
     host: str = "127.0.0.1",
     port: int = 8080,
+    tmux_session: str = "agents",
 ) -> None:
     """Run the analytics web dashboard server.
 
     Args:
         host: Host to bind to (default: 127.0.0.1 for local only)
         port: Port to listen on (default: 8080)
+        tmux_session: tmux session name for session-specific data
     """
+    # Set the tmux session on the handler class
+    AnalyticsHandler.tmux_session = tmux_session
+
     server_address = (host, port)
 
     try:
