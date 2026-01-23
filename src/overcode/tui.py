@@ -675,9 +675,17 @@ class SessionSummary(Static, can_focus=True):
             self.post_message(self.StalledAgentVisited(self.session.id))
 
     def on_focus(self) -> None:
-        """Handle focus event - mark stalled agent as visited"""
+        """Handle focus event - mark stalled agent as visited and update selection"""
         if self.is_unvisited_stalled:
             self.post_message(self.StalledAgentVisited(self.session.id))
+        # Notify app to update selection highlighting
+        self.post_message(self.SessionSelected(self.session.id))
+
+    class SessionSelected(events.Message):
+        """Message sent when a session is selected/focused"""
+        def __init__(self, session_id: str):
+            super().__init__()
+            self.session_id = session_id
 
     class ExpandedChanged(events.Message):
         """Message sent when expanded state changes"""
@@ -1415,6 +1423,12 @@ class SupervisorTUI(App):
         text-style: bold;
     }
 
+    /* .selected class preserves highlight when app loses focus */
+    SessionSummary.selected {
+        background: #2d4a5a;
+        text-style: bold;
+    }
+
     #help-text {
         dock: bottom;
         height: 1;
@@ -2076,6 +2090,15 @@ class SupervisorTUI(App):
                 widget.is_unvisited_stalled = False
                 widget.refresh()
                 break
+
+    def on_session_summary_session_selected(self, message: SessionSummary.SessionSelected) -> None:
+        """Handle session selection - update .selected class to preserve highlight when unfocused"""
+        session_id = message.session_id
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.add_class("selected")
+            else:
+                widget.remove_class("selected")
 
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)"""
