@@ -355,8 +355,8 @@ class StatusTimeline(Static):
                 else:
                     content.append("─", style="dim")
         elif not MACOS_APIS_AVAILABLE:
-            # Show install instructions when presence deps not installed
-            msg = "not installed - pip install overcode[presence]"
+            # Show install instructions when presence deps not installed (macOS only)
+            msg = "macOS only - pip install overcode[presence]"
             content.append(msg[:width], style="dim italic")
         else:
             content.append("─" * width, style="dim")
