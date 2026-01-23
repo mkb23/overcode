@@ -17,27 +17,28 @@ MODEL = "gpt-4o-mini"
 API_URL = "https://api.openai.com/v1/chat/completions"
 
 # Anti-oscillation prompt template
-SUMMARIZE_PROMPT = """You are summarizing a Claude Code agent's terminal output.
+SUMMARIZE_PROMPT = """Summarize a Claude Code agent's terminal output.
 
-## Current Terminal Content (last {lines} lines):
+## Terminal Content (last {lines} lines):
 {pane_content}
 
-## Current Status: {status}
+## Status: {status}
 
 ## Previous Summary:
 {previous_summary}
 
 ## Instructions:
-1. Summarize what the agent has been doing in 1-2 sentences
-2. If not running, explain the halt state (waiting for user input, permission needed, etc.)
-3. IMPORTANT: Only provide a new summary if there's meaningful new information.
-   If the situation is essentially the same as the previous summary, respond with exactly:
-   UNCHANGED
+Write a terse 1-sentence summary. Be direct and action-focused.
 
-Keep summaries concise (under 80 words). Focus on:
-- What task/feature is being worked on
-- Current action (reading files, writing code, running tests, etc.)
-- If halted: why and what's needed to continue"""
+Style guide:
+- NO "The agent is/has..." or "Claude is..." phrasing
+- Start with lowercase verb or noun: "implementing...", "reading...", "tests passing"
+- Use shorthand: "fixed bug, running tests" not "The agent has fixed the bug and is now running tests"
+- Examples: "adding auth middleware, 3 files modified" / "waiting for user approval on delete operation" / "tests green, pushing to remote"
+
+If nothing meaningful changed from previous summary, respond exactly: UNCHANGED
+
+Max 60 chars when possible. Focus on: current action, what's being built/fixed, blockers if halted."""
 
 
 class SummarizerClient:
