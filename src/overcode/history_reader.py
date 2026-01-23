@@ -449,6 +449,19 @@ def get_session_stats(
         work_times = read_work_times_from_session_file(session_file, since=session_start)
         all_work_times.extend(work_times)
 
+        # Check for subagent files in {sessionId}/subagents/
+        encoded = encode_project_path(session.start_directory)
+        subagents_dir = projects_path / encoded / sid / "subagents"
+        if subagents_dir.exists():
+            for subagent_file in subagents_dir.glob("agent-*.jsonl"):
+                sub_usage = read_token_usage_from_session_file(
+                    subagent_file, since=session_start
+                )
+                total_input += sub_usage["input_tokens"]
+                total_output += sub_usage["output_tokens"]
+                total_cache_creation += sub_usage["cache_creation_tokens"]
+                total_cache_read += sub_usage["cache_read_tokens"]
+
     return ClaudeSessionStats(
         interaction_count=interaction_count,
         input_tokens=total_input,
