@@ -254,23 +254,23 @@ def create_mock_tmux_with_content(session: str, window: int, content: str):
 # Spawn failure: claude command not found (bash style)
 PANE_CONTENT_SPAWN_FAILED_BASH = """
 Last login: Thu Jan 23 10:00:00 on ttys001
-mike@macbook ~ % claude code
+user@hostname ~ % claude code
 bash: claude: command not found
-mike@macbook ~ %
+user@hostname ~ %
 """
 
 # Spawn failure: claude command not found (zsh style)
 PANE_CONTENT_SPAWN_FAILED_ZSH = """
 Last login: Thu Jan 23 10:00:00 on ttys001
-mike@macbook ~ % claude code
+user@hostname ~ % claude code
 zsh: command not found: claude
-mike@macbook ~ %
+user@hostname ~ %
 """
 
 # Spawn failure: permission denied
 PANE_CONTENT_SPAWN_FAILED_PERMISSION = """
 Last login: Thu Jan 23 10:00:00 on ttys001
-mike@macbook ~ % claude code
+user@hostname ~ % claude code
 bash: /usr/local/bin/claude: Permission denied
-mike@macbook ~ %
+user@hostname ~ %
 """
