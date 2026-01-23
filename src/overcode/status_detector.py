@@ -116,6 +116,13 @@ class StatusDetector:
 
         last_line = last_lines[-1]
 
+        # Check for spawn failure FIRST (command not found, etc.)
+        # This should be detected before shell prompt check because the error
+        # message appears before the shell prompt returns
+        spawn_error = self._detect_spawn_failure(lines)
+        if spawn_error:
+            return self.STATUS_WAITING_USER, spawn_error, content
+
         # Check for shell prompt (Claude Code has terminated)
         # Shell prompts typically end with $ or % and have username@hostname pattern
         # Also check for absence of Claude Code UI elements
@@ -296,6 +303,37 @@ class StatusDetector:
             if not is_status_bar_line(line, self.patterns)
         ]
         return '\n'.join(filtered)
+
+    def _detect_spawn_failure(self, lines: list) -> str | None:
+        """Detect if the claude command failed to spawn.
+
+        Checks for common error messages like "command not found" that indicate
+        the claude CLI is not installed or not in PATH.
+
+        Args:
+            lines: All lines from the pane content
+
+        Returns:
+            Error message string if spawn failure detected, None otherwise
+        """
+        # Check recent lines for spawn failure patterns
+        # We check the last 20 lines to catch the error message
+        recent_lines = lines[-20:] if len(lines) > 20 else lines
+        recent_text = ' '.join(recent_lines).lower()
+
+        if matches_any(recent_text, self.patterns.spawn_failure_patterns):
+            # Find the specific error line for a better message
+            for line in reversed(recent_lines):
+                line_lower = line.lower()
+                if any(p.lower() in line_lower for p in self.patterns.spawn_failure_patterns):
+                    # Extract just the error part, clean it up
+                    error_msg = line.strip()
+                    if len(error_msg) > 80:
+                        error_msg = error_msg[:77] + "..."
+                    return f"Spawn failed: {error_msg}"
+            return "Spawn failed: claude command not found - is Claude CLI installed?"
+
+        return None
 
     def _is_shell_prompt(self, lines: list) -> bool:
         """Detect if we're at a shell prompt (Claude Code has exited).
