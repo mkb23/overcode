@@ -545,6 +545,159 @@ class TestReadTokenUsageFromSessionFile:
         assert result["current_context_tokens"] == 81000
 
 
+class TestGetSessionStatsWithSubagents:
+    """Test get_session_stats includes subagent token usage."""
+
+    def test_includes_subagent_tokens(self, tmp_path):
+        """Should sum tokens from main session and subagent files."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        # Setup: create history file with session entry
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+        session_id = "main-session-123"
+
+        history_entry = {
+            "display": "test prompt",
+            "timestamp": session_start_ms + 1000,
+            "project": "/test/project",
+            "sessionId": session_id,
+        }
+        history_file.write_text(json.dumps(history_entry))
+
+        # Setup: create projects directory structure
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        # Create main session file with 1000 tokens
+        main_session_file = project_dir / f"{session_id}.jsonl"
+        main_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 500,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 50,
+                }
+            },
+        }
+        main_session_file.write_text(json.dumps(main_entry))
+
+        # Create subagents directory with two subagent files
+        subagents_dir = project_dir / session_id / "subagents"
+        subagents_dir.mkdir(parents=True)
+
+        # Subagent 1: 2000 tokens
+        subagent1_file = subagents_dir / "agent-a86c0d0.jsonl"
+        subagent1_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:02:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 1000,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 100,
+                }
+            },
+        }
+        subagent1_file.write_text(json.dumps(subagent1_entry))
+
+        # Subagent 2: 3000 tokens
+        subagent2_file = subagents_dir / "agent-a1207fb.jsonl"
+        subagent2_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:03:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 1500,
+                    "output_tokens": 1500,
+                    "cache_creation_input_tokens": 300,
+                    "cache_read_input_tokens": 150,
+                }
+            },
+        }
+        subagent2_file.write_text(json.dumps(subagent2_entry))
+
+        # Create session object
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+
+        # Get stats
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Verify totals include main + both subagents
+        # Main: 500 + 500 = 1000, Sub1: 1000 + 1000 = 2000, Sub2: 1500 + 1500 = 3000
+        assert stats.input_tokens == 500 + 1000 + 1500  # 3000
+        assert stats.output_tokens == 500 + 1000 + 1500  # 3000
+        assert stats.total_tokens == 6000
+        assert stats.cache_creation_tokens == 100 + 200 + 300  # 600
+        assert stats.cache_read_tokens == 50 + 100 + 150  # 300
+
+    def test_handles_no_subagents_directory(self, tmp_path):
+        """Should work correctly when no subagents directory exists."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        # Setup history file
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+        session_id = "session-no-subagents"
+
+        history_entry = {
+            "display": "test",
+            "timestamp": session_start_ms + 1000,
+            "project": "/test/project",
+            "sessionId": session_id,
+        }
+        history_file.write_text(json.dumps(history_entry))
+
+        # Setup projects directory with only main session file (no subagents dir)
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        main_session_file = project_dir / f"{session_id}.jsonl"
+        main_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                }
+            },
+        }
+        main_session_file.write_text(json.dumps(main_entry))
+
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Should still work, just with main session tokens
+        assert stats.input_tokens == 1000
+        assert stats.output_tokens == 500
+
+
 class TestFormatTokens:
     """Test token formatting helper."""
 
