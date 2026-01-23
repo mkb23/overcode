@@ -2274,9 +2274,9 @@ class SupervisorTUI(App):
         """Update preview pane with focused session's content."""
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
-                preview.update_from_widget(focused)
+            widgets = self._get_widgets_in_session_order()
+            if widgets and 0 <= self.focused_session_index < len(widgets):
+                preview.update_from_widget(widgets[self.focused_session_index])
         except NoMatches:
             pass
 
