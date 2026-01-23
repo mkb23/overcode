@@ -115,6 +115,18 @@ class StatusPatterns:
     # Format: "  /command-name     Description text"
     command_menu_pattern: str = r"^\s*/[\w-]+\s{2,}\S"
 
+    # Spawn failure patterns - when the claude command fails to start
+    # These indicate the command was not found or failed to execute
+    # Checked against pane content to detect failed spawns
+    spawn_failure_patterns: List[str] = field(default_factory=lambda: [
+        "command not found",
+        "not found:",  # zsh style: "zsh: command not found: claude"
+        "no such file or directory",
+        "permission denied",
+        "cannot execute",
+        "is not recognized",  # Windows-style (for future compatibility)
+    ])
+
 
 # Default patterns instance
 DEFAULT_PATTERNS = StatusPatterns()
