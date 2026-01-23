@@ -614,8 +614,8 @@ class MonitorDaemon:
                     session_state.current_activity = activity
                     session_states.append(session_state)
 
-                    # Log status history
-                    log_agent_status(session.name, status, activity)
+                    # Log status history to session-specific file
+                    log_agent_status(session.name, status, activity, history_file=self.history_path)
 
                     # Track if any session is not waiting for user
                     if status != "waiting_user":

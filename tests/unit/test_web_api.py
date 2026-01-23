@@ -9,6 +9,10 @@ import pytest
 from overcode.web_api import _calculate_presence_efficiency
 
 
+# Test session name for all tests
+TEST_SESSION = "test-session"
+
+
 class TestCalculatePresenceEfficiency:
     """Tests for presence efficiency calculation."""
 
@@ -24,7 +28,7 @@ class TestCalculatePresenceEfficiency:
             ]
             mock_presence.return_value = []
 
-            result = _calculate_presence_efficiency(start, end)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end)
 
             assert result['has_data'] is False
             assert result['present_efficiency'] == 0.0
@@ -40,7 +44,7 @@ class TestCalculatePresenceEfficiency:
             mock_agent.return_value = []
             mock_presence.return_value = []
 
-            result = _calculate_presence_efficiency(start, end)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end)
 
             assert result['has_data'] is False
             assert result['present_efficiency'] == 0.0
@@ -64,7 +68,7 @@ class TestCalculatePresenceEfficiency:
                 (start, 3),
             ]
 
-            result = _calculate_presence_efficiency(start, end, sample_interval_seconds=60)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end, sample_interval_seconds=60)
 
             assert result['has_data'] is True
             assert result['present_efficiency'] == 100.0
@@ -88,7 +92,7 @@ class TestCalculatePresenceEfficiency:
                 (start, 1),
             ]
 
-            result = _calculate_presence_efficiency(start, end, sample_interval_seconds=60)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end, sample_interval_seconds=60)
 
             assert result['has_data'] is True
             assert result['present_efficiency'] == 0.0
@@ -114,7 +118,7 @@ class TestCalculatePresenceEfficiency:
                 (midpoint, 1),  # Then locked
             ]
 
-            result = _calculate_presence_efficiency(start, end, sample_interval_seconds=60)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end, sample_interval_seconds=60)
 
             assert result['has_data'] is True
             # Both should be 100% since agent was running throughout
@@ -140,7 +144,7 @@ class TestCalculatePresenceEfficiency:
                 (start, 3),
             ]
 
-            result = _calculate_presence_efficiency(start, end, sample_interval_seconds=60)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end, sample_interval_seconds=60)
 
             assert result['has_data'] is True
             # 1 of 2 agents running = 50%
@@ -162,7 +166,7 @@ class TestCalculatePresenceEfficiency:
                 (start, 2),
             ]
 
-            result = _calculate_presence_efficiency(start, end, sample_interval_seconds=60)
+            result = _calculate_presence_efficiency(TEST_SESSION, start, end, sample_interval_seconds=60)
 
             assert result['has_data'] is True
             assert result['present_efficiency'] == 0.0
@@ -176,7 +180,7 @@ class TestCalculatePresenceEfficiency:
             mock_agent.return_value = []
             mock_presence.return_value = []
 
-            result = _calculate_presence_efficiency()
+            result = _calculate_presence_efficiency(TEST_SESSION)
 
             # Should not raise, just return empty data
             assert result['has_data'] is False
@@ -214,7 +218,7 @@ class TestGetAnalyticsStatsIncludesPresenceEfficiency:
                 'has_data': True,
             }
 
-            result = get_analytics_stats()
+            result = get_analytics_stats(TEST_SESSION)
 
             assert 'presence_efficiency' in result
             assert result['presence_efficiency']['present_efficiency'] == 75.0

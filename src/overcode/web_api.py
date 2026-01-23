@@ -12,6 +12,7 @@ from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
 )
+from .settings import get_agent_history_path
 from .status_history import read_agent_status_history
 from .tui_helpers import (
     format_duration,
@@ -232,8 +233,9 @@ def get_timeline_data(tmux_session: str, hours: float = 3.0, slots: int = 60) ->
         "status_colors": {k: get_web_color(get_status_color(k)) for k in AGENT_TIMELINE_CHARS},
     }
 
-    # Get agent history
-    all_history = read_agent_status_history(hours=hours)
+    # Get agent history from session-specific file
+    history_path = get_agent_history_path(tmux_session)
+    all_history = read_agent_status_history(hours=hours, history_file=history_path)
 
     # Group by agent
     agent_histories: Dict[str, List] = {}
@@ -391,12 +393,14 @@ def _session_to_analytics_record(session, is_archived: bool) -> Dict[str, Any]:
 
 
 def get_analytics_timeline(
+    tmux_session: str,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Get agent status timeline within a time range.
 
     Args:
+        tmux_session: tmux session name
         start: Start of time range
         end: End of time range
 
@@ -413,8 +417,9 @@ def get_analytics_timeline(
 
     hours = (end - start).total_seconds() / 3600.0
 
-    # Get agent status history
-    all_history = read_agent_status_history(hours=hours)
+    # Get agent status history from session-specific file
+    history_path = get_agent_history_path(tmux_session)
+    all_history = read_agent_status_history(hours=hours, history_file=history_path)
 
     # Filter to time range and group by agent
     agent_events: Dict[str, List[Dict[str, Any]]] = {}
@@ -458,12 +463,14 @@ def get_analytics_timeline(
 
 
 def get_analytics_stats(
+    tmux_session: str,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Get aggregate statistics for a time range.
 
     Args:
+        tmux_session: tmux session name
         start: Start of time range
         end: End of time range
 
@@ -498,7 +505,7 @@ def get_analytics_stats(
     work_time_stats = _calculate_percentiles(all_work_times)
 
     # Calculate presence-based efficiency metrics
-    presence_efficiency = _calculate_presence_efficiency(start, end)
+    presence_efficiency = _calculate_presence_efficiency(tmux_session, start, end)
 
     return {
         "time_range": {
@@ -552,6 +559,7 @@ def _calculate_percentiles(values: List[float]) -> Dict[str, float]:
 
 
 def _calculate_presence_efficiency(
+    tmux_session: str,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
     sample_interval_seconds: int = 60,
@@ -564,6 +572,7 @@ def _calculate_presence_efficiency(
     - AFK periods: user presence state = 1 (locked) or 2 (inactive)
 
     Args:
+        tmux_session: tmux session name
         start: Start of time range
         end: End of time range
         sample_interval_seconds: How often to sample (default 60s)
@@ -581,8 +590,9 @@ def _calculate_presence_efficiency(
 
     hours = (end - start).total_seconds() / 3600.0
 
-    # Get agent status history: list of (timestamp, agent_name, status, activity)
-    agent_history = read_agent_status_history(hours=hours)
+    # Get agent status history from session-specific file
+    history_path = get_agent_history_path(tmux_session)
+    agent_history = read_agent_status_history(hours=hours, history_file=history_path)
 
     # Get presence history: list of (timestamp, state)
     presence_history = read_presence_history(hours=hours)

@@ -30,7 +30,7 @@ from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
 from .status_constants import STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
-from .settings import signal_activity, get_session_dir, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
+from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
@@ -266,9 +266,10 @@ class StatusTimeline(Static):
     MIN_TIMELINE = 20     # Minimum timeline width
     DEFAULT_TIMELINE = 60 # Fallback if can't detect width
 
-    def __init__(self, sessions: list, *args, **kwargs):
+    def __init__(self, sessions: list, tmux_session: str = "agents", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.sessions = sessions
+        self.tmux_session = tmux_session
         self._presence_history = []
         self._agent_histories = {}
 
@@ -295,8 +296,9 @@ class StatusTimeline(Static):
         # Get agent names from sessions
         agent_names = [s.name for s in sessions]
 
-        # Read all agent history and group by agent
-        all_history = read_agent_status_history(hours=self.TIMELINE_HOURS)
+        # Read agent history from session-specific file and group by agent
+        history_path = get_agent_history_path(self.tmux_session)
+        all_history = read_agent_status_history(hours=self.TIMELINE_HOURS, history_file=history_path)
         for ts, agent, status, activity in all_history:
             if agent not in self._agent_histories:
                 self._agent_histories[agent] = []
@@ -1641,7 +1643,7 @@ class SupervisorTUI(App):
         """Create child widgets"""
         yield Header(show_clock=True)
         yield DaemonStatusBar(tmux_session=self.tmux_session, session_manager=self.session_manager, id="daemon-status")
-        yield StatusTimeline([], id="timeline")
+        yield StatusTimeline([], tmux_session=self.tmux_session, id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
