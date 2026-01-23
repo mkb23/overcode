@@ -481,3 +481,64 @@ class TestStatusDetectorNewPermissionFormat:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestStatusDetectorSpawnFailure:
+    """Test detection of spawn failures (command not found, etc.)"""
+
+    def test_detects_spawn_failure_bash_style(self):
+        """bash: command not found should be detected as spawn failure."""
+        from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_BASH
+
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_BASH)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_WAITING_USER, (
+            f"Spawn failure should be waiting_user, got {status}"
+        )
+        assert "spawn failed" in activity.lower(), (
+            f"Activity should mention spawn failure, got: {activity}"
+        )
+        assert "command not found" in activity.lower(), (
+            f"Activity should include the error message, got: {activity}"
+        )
+
+    def test_detects_spawn_failure_zsh_style(self):
+        """zsh: command not found: claude should be detected as spawn failure."""
+        from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_ZSH
+
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_ZSH)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_WAITING_USER, (
+            f"Spawn failure should be waiting_user, got {status}"
+        )
+        assert "spawn failed" in activity.lower(), (
+            f"Activity should mention spawn failure, got: {activity}"
+        )
+
+    def test_detects_spawn_failure_permission_denied(self):
+        """Permission denied should be detected as spawn failure."""
+        from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_PERMISSION
+
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_PERMISSION)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_WAITING_USER, (
+            f"Spawn failure should be waiting_user, got {status}"
+        )
+        assert "spawn failed" in activity.lower(), (
+            f"Activity should mention spawn failure, got: {activity}"
+        )
+        assert "permission denied" in activity.lower(), (
+            f"Activity should include 'permission denied', got: {activity}"
+        )
