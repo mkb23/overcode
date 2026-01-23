@@ -1026,10 +1026,13 @@ class PreviewPane(Static):
 
     def render(self) -> Text:
         content = Text()
-        # Header with session name
+        # Use widget width for layout, with sensible fallback
+        pane_width = self.size.width if self.size.width > 0 else 80
+
+        # Header with session name - pad to full pane width
         header = f"─── {self.session_name} " if self.session_name else "─── Preview "
         content.append(header, style="bold cyan")
-        content.append("─" * max(0, 60 - len(header)), style="dim")
+        content.append("─" * max(0, pane_width - len(header)), style="dim")
         content.append("\n")
 
         if not self.content_lines:
@@ -1039,9 +1042,11 @@ class PreviewPane(Static):
             # Reserve 2 lines for header and some padding
             available_lines = max(10, self.size.height - 2) if self.size.height > 0 else 30
             # Show last N lines of output - plain text, no decoration
+            # Truncate lines to pane width to match tmux display
+            max_line_len = max(pane_width - 1, 40)  # Leave room for newline, minimum 40
             for line in self.content_lines[-available_lines:]:
-                # Truncate long lines
-                display_line = line[:200] if len(line) > 200 else line
+                # Truncate long lines to pane width
+                display_line = line[:max_line_len] if len(line) > max_line_len else line
                 content.append(display_line + "\n")
 
         return content
