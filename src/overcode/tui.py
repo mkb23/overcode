@@ -483,6 +483,7 @@ class HelpOverlay(Static):
 ║  e       Expand all agents       c       Collapse all agents                 ║
 ║  space   Toggle focused agent    i/:     Focus command bar                   ║
 ║  n       Create new agent        x       Kill focused agent                  ║
+║  g       Show/hide killed agents (ghost mode)                                ║
 ║  H       Handover all (2x) - commit, push, write HANDOVER.md                 ║
 ║  click   Toggle agent expand/collapse                                        ║
 ║                                                                              ║
@@ -1437,6 +1438,17 @@ class SupervisorTUI(App):
         text-style: bold;
     }
 
+    /* Terminated/killed sessions shown as ghosts */
+    SessionSummary.terminated {
+        background: #1a1a1a;
+        color: #666666;
+        text-style: italic;
+    }
+
+    SessionSummary.terminated:focus {
+        background: #2a2a2a;
+    }
+
     #help-text {
         dock: bottom;
         height: 1;
@@ -1600,6 +1612,8 @@ class SupervisorTUI(App):
         ("w", "toggle_web_server", "Web dashboard"),
         # Sleep mode toggle - mark agent as paused (excluded from stats)
         ("z", "toggle_sleep", "Sleep mode"),
+        # Show terminated/killed sessions (ghost mode)
+        ("g", "toggle_show_terminated", "Show killed"),
         # Transport/handover - prepare all sessions for handoff (double-press)
         ("H", "transport_all", "Handover all"),
     ]
@@ -1612,6 +1626,7 @@ class SupervisorTUI(App):
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
+    show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -1662,6 +1677,10 @@ class SupervisorTUI(App):
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
         self.tmux_sync = self._prefs.tmux_sync
+        # Initialize show_terminated from preferences
+        self.show_terminated = self._prefs.show_terminated
+        # Cache of terminated sessions (killed during this TUI session)
+        self._terminated_sessions: dict[str, Session] = {}
 
     def compose(self) -> ComposeResult:
         """Create child widgets"""
@@ -1674,7 +1693,7 @@ class SupervisorTUI(App):
         yield CommandBar(id="command-bar")
         yield HelpOverlay(id="help-overlay")
         yield Static(
-            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | H:Handover | m:Mode | p:Sync | d:Daemon | t:Timeline",
+            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | H:Handover | g:Killed | m:Mode | p:Sync | d:Daemon | t:Timeline",
             id="help-text"
         )
 
@@ -1977,9 +1996,19 @@ class SupervisorTUI(App):
         """
         container = self.query_one("#sessions-container", ScrollableContainer)
 
+        # Build the list of sessions to display
+        # Include terminated sessions if show_terminated is enabled
+        display_sessions = list(self.sessions)
+        if self.show_terminated:
+            # Add terminated sessions that aren't already in the active list
+            active_ids = {s.id for s in self.sessions}
+            for session in self._terminated_sessions.values():
+                if session.id not in active_ids:
+                    display_sessions.append(session)
+
         # Get existing widgets and their session IDs
         existing_widgets = {w.session.id: w for w in self.query(SessionSummary)}
-        new_session_ids = {s.id for s in self.sessions}
+        new_session_ids = {s.id for s in display_sessions}
         existing_session_ids = set(existing_widgets.keys())
 
         # Check if we have an empty message widget that needs removal
@@ -1995,10 +2024,15 @@ class SupervisorTUI(App):
 
         if not sessions_added and not sessions_removed and not has_empty_message:
             # No structural changes needed - just update session data in existing widgets
-            session_map = {s.id: s for s in self.sessions}
+            session_map = {s.id: s for s in display_sessions}
             for widget in existing_widgets.values():
                 if widget.session.id in session_map:
                     widget.session = session_map[widget.session.id]
+                    # Update terminated visual state
+                    if widget.session.status == "terminated":
+                        widget.add_class("terminated")
+                    else:
+                        widget.remove_class("terminated")
             return
 
         # Remove widgets for deleted sessions
@@ -2007,11 +2041,11 @@ class SupervisorTUI(App):
             widget.remove()
 
         # Clear empty message if we now have sessions
-        if has_empty_message and self.sessions:
+        if has_empty_message and display_sessions:
             container.remove_children()
 
         # Handle empty state
-        if not self.sessions:
+        if not display_sessions:
             if not has_empty_message:
                 container.remove_children()
                 container.mount(Static(
@@ -2021,7 +2055,7 @@ class SupervisorTUI(App):
             return
 
         # Add widgets for new sessions
-        for session in self.sessions:
+        for session in display_sessions:
             if session.id in sessions_added:
                 widget = SessionSummary(session, self.status_detector)
                 # Restore expanded state if we have it saved
@@ -2035,11 +2069,14 @@ class SupervisorTUI(App):
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
                     widget.expanded = False  # Force collapsed in list mode
+                # Mark terminated sessions with visual styling
+                if session.status == "terminated":
+                    widget.add_class("terminated")
                 container.mount(widget)
                 # NOTE: Don't call update_status() here - it does blocking tmux calls
                 # The 250ms interval (update_all_statuses) will update status shortly
 
-        # Reorder widgets to match self.sessions order
+        # Reorder widgets to match display_sessions order
         # New widgets are appended at end, but should appear in correct position
         if sessions_added:
             self._reorder_session_widgets(container)
@@ -2136,18 +2173,26 @@ class SupervisorTUI(App):
         return widgets
 
     def _reorder_session_widgets(self, container: ScrollableContainer) -> None:
-        """Reorder session widgets in container to match self.sessions order.
+        """Reorder session widgets in container to match session display order.
 
         When new widgets are mounted, they're appended at the end.
-        This method reorders them to match self.sessions order.
+        This method reorders them to match the display order (active + terminated).
         """
         widgets = {w.session.id: w for w in self.query(SessionSummary)}
         if not widgets:
             return
 
-        # Get desired order from self.sessions
+        # Build display sessions list (active + terminated if enabled)
+        display_sessions = list(self.sessions)
+        if self.show_terminated:
+            active_ids = {s.id for s in self.sessions}
+            for session in self._terminated_sessions.values():
+                if session.id not in active_ids:
+                    display_sessions.append(session)
+
+        # Get desired order from display_sessions
         ordered_widgets = []
-        for session in self.sessions:
+        for session in display_sessions:
             if session.id in widgets:
                 ordered_widgets.append(widgets[session.id])
 
@@ -2209,6 +2254,27 @@ class SupervisorTUI(App):
         # If enabling, sync to currently focused session immediately
         if self.tmux_sync:
             self._sync_tmux_window()
+
+    def action_toggle_show_terminated(self) -> None:
+        """Toggle showing killed/terminated sessions in the timeline."""
+        self.show_terminated = not self.show_terminated
+
+        # Save preference
+        self._prefs.show_terminated = self.show_terminated
+        self._save_prefs()
+
+        # Update subtitle to show state
+        self._update_subtitle()
+
+        # Refresh session widgets to show/hide terminated sessions
+        self.update_session_widgets()
+
+        status = "visible" if self.show_terminated else "hidden"
+        count = len(self._terminated_sessions)
+        if count > 0:
+            self.notify(f"Killed sessions: {status} ({count})", severity="information")
+        else:
+            self.notify(f"Killed sessions: {status}", severity="information")
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
@@ -2657,6 +2723,12 @@ class SupervisorTUI(App):
 
     def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
         """Execute the actual kill operation after confirmation."""
+        # Save a copy of the session for showing when show_terminated is True
+        session_copy = focused.session
+        # Mark it as terminated for display purposes
+        from dataclasses import replace
+        terminated_session = replace(session_copy, status="terminated")
+
         # Use launcher to kill the session
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
@@ -2665,13 +2737,21 @@ class SupervisorTUI(App):
 
         if launcher.kill_session(session_name):
             self.notify(f"Killed agent: {session_name}", severity="information")
-            # Remove the widget and refresh
+
+            # Store in terminated sessions cache for ghost mode
+            self._terminated_sessions[session_id] = terminated_session
+
+            # Remove the widget (will be re-added if show_terminated is True)
             focused.remove()
             # Update session cache
             if session_id in self._sessions_cache:
                 del self._sessions_cache[session_id]
             if session_id in self.expanded_states:
                 del self.expanded_states[session_id]
+
+            # If showing terminated sessions, refresh to add it back
+            if self.show_terminated:
+                self.update_session_widgets()
             # Clear preview pane and focus next agent if in list_preview mode
             if self.view_mode == "list_preview":
                 try:
