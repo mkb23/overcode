@@ -484,6 +484,7 @@ class HelpOverlay(Static):
 ║  space   Toggle focused agent    i/:     Focus command bar                   ║
 ║  n       Create new agent        x       Kill focused agent                  ║
 ║  g       Show/hide killed agents (ghost mode)                                ║
+║  H       Handover all (2x) - commit, push, write HANDOVER.md                 ║
 ║  click   Toggle agent expand/collapse                                        ║
 ║                                                                              ║
 ║  COMMAND BAR (i or : to focus)                                               ║
@@ -1613,6 +1614,8 @@ class SupervisorTUI(App):
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
         ("g", "toggle_show_terminated", "Show killed"),
+        # Transport/handover - prepare all sessions for handoff (double-press)
+        ("H", "transport_all", "Handover all"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1668,6 +1671,8 @@ class SupervisorTUI(App):
         self._multiple_daemon_warning_shown = False
         # Pending kill confirmation (session name, timestamp)
         self._pending_kill: tuple[str, float] | None = None
+        # Pending transport/handover confirmation (timestamp)
+        self._pending_transport: float | None = None
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
@@ -1688,7 +1693,7 @@ class SupervisorTUI(App):
         yield CommandBar(id="command-bar")
         yield HelpOverlay(id="help-overlay")
         yield Static(
-            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline | g:Killed",
+            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | H:Handover | g:Killed | m:Mode | p:Sync | d:Daemon | t:Timeline",
             id="help-text"
         )
 
@@ -2764,6 +2769,77 @@ class SupervisorTUI(App):
                     pass
         else:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
+
+    def action_transport_all(self) -> None:
+        """Prepare all sessions for transport/handover (requires double-press confirmation).
+
+        Sends instructions to all active agents to:
+        - Commit their current changes
+        - Push to their branch
+        - Write a HANDOVER.md summary
+        """
+        now = time.time()
+
+        # Get active (non-terminated) sessions
+        active_sessions = [s for s in self.sessions if s.status != "terminated"]
+        if not active_sessions:
+            self.notify("No active sessions to prepare", severity="warning")
+            return
+
+        # Check if this is a confirmation of a pending transport
+        if self._pending_transport is not None:
+            if (now - self._pending_transport) < 3.0:
+                self._pending_transport = None  # Clear pending state
+                self._execute_transport_all(active_sessions)
+                return
+            else:
+                # Expired - start new confirmation
+                self._pending_transport = None
+
+        # First press - request confirmation
+        self._pending_transport = now
+        count = len(active_sessions)
+        self.notify(
+            f"Press H again to send handover instructions to {count} agent(s)",
+            severity="warning",
+            timeout=3
+        )
+
+    def _execute_transport_all(self, sessions: list) -> None:
+        """Execute transport/handover instructions to all sessions."""
+        # The handover instruction to send to each agent
+        handover_instruction = (
+            "Please prepare for handover:\n"
+            "1. Commit all your current changes with a descriptive commit message\n"
+            "2. Push to your current branch\n"
+            "3. Create a HANDOVER.md file in the project root summarizing:\n"
+            "   - What you've accomplished\n"
+            "   - Current state of the work\n"
+            "   - Any pending tasks or next steps\n"
+            "   - Known issues or blockers"
+        )
+
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+
+        success_count = 0
+        for session in sessions:
+            if launcher.send_to_session(session.name, handover_instruction):
+                success_count += 1
+
+        if success_count == len(sessions):
+            self.notify(
+                f"Sent handover instructions to {success_count} agent(s)",
+                severity="information"
+            )
+        else:
+            failed = len(sessions) - success_count
+            self.notify(
+                f"Sent to {success_count}, failed {failed} agent(s)",
+                severity="warning"
+            )
 
     def action_new_agent(self) -> None:
         """Prompt for directory and name to create a new agent.
