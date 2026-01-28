@@ -1259,9 +1259,13 @@ class CommandBar(Static):
         if directory:
             dir_path = Path(directory).expanduser().resolve()
             if not dir_path.exists():
-                # Try to create it or warn
-                self.app.notify(f"Directory does not exist: {dir_path}", severity="warning")
-                return
+                # Create the directory
+                try:
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                    self.app.notify(f"Created directory: {dir_path}", severity="information")
+                except OSError as e:
+                    self.app.notify(f"Failed to create directory: {e}", severity="error")
+                    return
             if not dir_path.is_dir():
                 self.app.notify(f"Not a directory: {dir_path}", severity="error")
                 return
