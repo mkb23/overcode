@@ -301,8 +301,12 @@ class StatusTimeline(Static):
         try:
             # Try to get terminal size directly - most reliable
             term_width = shutil.get_terminal_size().columns
-            # Subtract dynamic label width (+ 3 for "  " prefix and " " suffix) and percentage display (+ 6)
-            available = term_width - self.label_width - 3 - 6
+            # Subtract:
+            #   - label_width (agent name)
+            #   - 3 for "  " prefix and " " suffix around label
+            #   - 5 for percentage display " XXX%"
+            #   - 2 for CSS padding (padding: 0 1 = 1 char each side)
+            available = term_width - self.label_width - 3 - 5 - 2
             return max(self.MIN_TIMELINE, min(available, 200))
         except (OSError, ValueError):
             # No terminal available or invalid size
