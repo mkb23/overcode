@@ -259,9 +259,11 @@ class StatusTimeline(Static):
     Shows the last N hours with each character representing a time slice.
     - User presence: green=active, yellow=inactive, red/gray=locked/away
     - Agent status: green=running, red=waiting, grey=terminated
+
+    Timeline hours configurable via ~/.overcode/config.yaml or OVERCODE_TIMELINE_HOURS env var.
     """
 
-    TIMELINE_HOURS = 3.0  # Default hours (configurable via OVERCODE_TIMELINE_HOURS env var)
+    TIMELINE_HOURS = 3.0  # Default hours
     MIN_NAME_WIDTH = 6    # Minimum width for agent names
     MAX_NAME_WIDTH = 30   # Maximum width for agent names
     MIN_TIMELINE = 20     # Minimum timeline width
@@ -273,12 +275,10 @@ class StatusTimeline(Static):
         self.tmux_session = tmux_session
         self._presence_history = []
         self._agent_histories = {}
-        # Check for configurable timeline hours
-        import os
-        try:
-            self.timeline_hours = float(os.environ.get("OVERCODE_TIMELINE_HOURS", self.TIMELINE_HOURS))
-        except (ValueError, TypeError):
-            self.timeline_hours = self.TIMELINE_HOURS
+        # Get timeline hours from config (config file > env var > default)
+        from .config import get_timeline_config
+        timeline_config = get_timeline_config()
+        self.timeline_hours = timeline_config["hours"]
 
     @property
     def label_width(self) -> int:
