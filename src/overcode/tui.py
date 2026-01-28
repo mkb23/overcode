@@ -260,7 +260,7 @@ class StatusTimeline(Static):
     - User presence: green=active, yellow=inactive, red/gray=locked/away
     - Agent status: green=running, red=waiting, grey=terminated
 
-    Timeline hours configurable via ~/.overcode/config.yaml or OVERCODE_TIMELINE_HOURS env var.
+    Timeline hours configurable via ~/.overcode/config.yaml (timeline.hours).
     """
 
     TIMELINE_HOURS = 3.0  # Default hours

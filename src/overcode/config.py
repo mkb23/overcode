@@ -75,36 +75,18 @@ def get_relay_config() -> Optional[dict]:
 def get_timeline_config() -> dict:
     """Get timeline display configuration.
 
-    Config file takes precedence, environment variables are fallback.
-
     Config format in ~/.overcode/config.yaml:
         timeline:
           hours: 3.0  # How many hours of history to show
 
-    Environment variable fallback:
-        OVERCODE_TIMELINE_HOURS
-
     Returns:
         Dict with timeline settings (hours)
     """
-    import os
-
     default_hours = 3.0
 
     config = load_config()
     timeline = config.get("timeline", {})
-
-    # Config file takes precedence, env var is fallback
-    hours = timeline.get("hours")
-    if hours is None:
-        env_hours = os.environ.get("OVERCODE_TIMELINE_HOURS")
-        if env_hours:
-            try:
-                hours = float(env_hours)
-            except (ValueError, TypeError):
-                hours = default_hours
-        else:
-            hours = default_hours
+    hours = timeline.get("hours", default_hours)
 
     return {
         "hours": hours,
