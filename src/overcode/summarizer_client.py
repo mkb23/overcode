@@ -3,38 +3,29 @@ OpenAI API client for agent summarization.
 
 Uses GPT-4o-mini for cost-effective, high-frequency summaries.
 
-Configuration via environment variables (for corporate API gateways):
-- OVERCODE_SUMMARIZER_API_URL: Custom API endpoint (default: OpenAI)
-- OVERCODE_SUMMARIZER_MODEL: Custom model name (default: gpt-4o-mini)
-- OVERCODE_SUMMARIZER_API_KEY_VAR: Env var name containing API key (default: OPENAI_API_KEY)
+Configuration via ~/.overcode/config.yaml (preferred) or environment variables (fallback):
+
+Config file format:
+    summarizer:
+      api_url: https://api.openai.com/v1/chat/completions
+      model: gpt-4o-mini
+      api_key_var: OPENAI_API_KEY
+
+Environment variable fallbacks:
+    OVERCODE_SUMMARIZER_API_URL
+    OVERCODE_SUMMARIZER_MODEL
+    OVERCODE_SUMMARIZER_API_KEY_VAR
 """
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 from typing import Optional
 
+from .config import get_summarizer_config
+
 logger = logging.getLogger(__name__)
-
-# Configurable defaults
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions"
-DEFAULT_API_KEY_VAR = "OPENAI_API_KEY"
-
-
-def get_summarizer_config() -> tuple:
-    """Get summarizer configuration from environment.
-
-    Returns:
-        Tuple of (api_url, model, api_key)
-    """
-    api_url = os.environ.get("OVERCODE_SUMMARIZER_API_URL", DEFAULT_API_URL)
-    model = os.environ.get("OVERCODE_SUMMARIZER_MODEL", DEFAULT_MODEL)
-    api_key_var = os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR", DEFAULT_API_KEY_VAR)
-    api_key = os.environ.get(api_key_var)
-    return api_url, model, api_key
 
 # Anti-oscillation prompt template
 SUMMARIZE_PROMPT = """Summarize a Claude Code agent's terminal output.
@@ -64,19 +55,19 @@ Max 60 chars when possible. Focus on: current action, what's being built/fixed, 
 class SummarizerClient:
     """Client for OpenAI-compatible API to generate agent summaries.
 
-    Supports custom API endpoints for corporate gateways via environment variables.
+    Supports custom API endpoints for corporate gateways via config file or env vars.
     """
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the client.
 
         Args:
-            api_key: API key. If None, reads from configured env var.
+            api_key: API key. If None, reads from config file or env var.
         """
-        api_url, model, configured_key = get_summarizer_config()
-        self.api_url = api_url
-        self.model = model
-        self.api_key = api_key or configured_key
+        config = get_summarizer_config()
+        self.api_url = config["api_url"]
+        self.model = config["model"]
+        self.api_key = api_key or config["api_key"]
         self._available = bool(self.api_key)
 
     @property
@@ -159,6 +150,6 @@ class SummarizerClient:
 
     @staticmethod
     def is_available() -> bool:
-        """Check if API key is set in environment."""
-        _, _, api_key = get_summarizer_config()
-        return bool(api_key)
+        """Check if API key is available (from config or environment)."""
+        config = get_summarizer_config()
+        return bool(config["api_key"])
