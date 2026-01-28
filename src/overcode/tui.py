@@ -202,6 +202,11 @@ class DaemonStatusBar(Static):
             if mean_spin > 0:
                 content.append(f" μ{mean_spin:.1f}x", style="cyan")
 
+            # Total tokens across all sessions (include sleeping agents - they used tokens too)
+            total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
+            if total_tokens > 0:
+                content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+
             # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
             safe_break = calculate_safe_break_duration(active_sessions)
             if safe_break is not None:
