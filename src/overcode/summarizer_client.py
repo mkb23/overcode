@@ -2,6 +2,11 @@
 OpenAI API client for agent summarization.
 
 Uses GPT-4o-mini for cost-effective, high-frequency summaries.
+
+Configuration via environment variables (for corporate API gateways):
+- OVERCODE_SUMMARIZER_API_URL: Custom API endpoint (default: OpenAI)
+- OVERCODE_SUMMARIZER_MODEL: Custom model name (default: gpt-4o-mini)
+- OVERCODE_SUMMARIZER_API_KEY_VAR: Env var name containing API key (default: OPENAI_API_KEY)
 """
 
 import json
@@ -13,8 +18,23 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-MODEL = "gpt-4o-mini"
-API_URL = "https://api.openai.com/v1/chat/completions"
+# Configurable defaults
+DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions"
+DEFAULT_API_KEY_VAR = "OPENAI_API_KEY"
+
+
+def get_summarizer_config() -> tuple:
+    """Get summarizer configuration from environment.
+
+    Returns:
+        Tuple of (api_url, model, api_key)
+    """
+    api_url = os.environ.get("OVERCODE_SUMMARIZER_API_URL", DEFAULT_API_URL)
+    model = os.environ.get("OVERCODE_SUMMARIZER_MODEL", DEFAULT_MODEL)
+    api_key_var = os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR", DEFAULT_API_KEY_VAR)
+    api_key = os.environ.get(api_key_var)
+    return api_url, model, api_key
 
 # Anti-oscillation prompt template
 SUMMARIZE_PROMPT = """Summarize a Claude Code agent's terminal output.
@@ -42,15 +62,21 @@ Max 60 chars when possible. Focus on: current action, what's being built/fixed, 
 
 
 class SummarizerClient:
-    """Client for OpenAI API to generate agent summaries."""
+    """Client for OpenAI-compatible API to generate agent summaries.
+
+    Supports custom API endpoints for corporate gateways via environment variables.
+    """
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the client.
 
         Args:
-            api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
+            api_key: API key. If None, reads from configured env var.
         """
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        api_url, model, configured_key = get_summarizer_config()
+        self.api_url = api_url
+        self.model = model
+        self.api_key = api_key or configured_key
         self._available = bool(self.api_key)
 
     @property
@@ -89,14 +115,14 @@ class SummarizerClient:
         )
 
         payload = json.dumps({
-            "model": MODEL,
+            "model": self.model,
             "max_tokens": max_tokens,
             "temperature": 0.3,  # Low temperature for consistent summaries
             "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            API_URL,
+            self.api_url,
             data=payload,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -133,5 +159,6 @@ class SummarizerClient:
 
     @staticmethod
     def is_available() -> bool:
-        """Check if OPENAI_API_KEY is set in environment."""
-        return bool(os.environ.get("OPENAI_API_KEY"))
+        """Check if API key is set in environment."""
+        _, _, api_key = get_summarizer_config()
+        return bool(api_key)
