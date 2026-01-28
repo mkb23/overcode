@@ -2839,8 +2839,13 @@ class SupervisorTUI(App):
         else:
             self.notify(f"Failed to send Enter to {session_name}", severity="error")
 
-    def _send_key_to_focused(self, key: str) -> None:
-        """Send a key to the focused agent."""
+    def _send_key_to_focused(self, key: str, open_prompt: bool = False) -> None:
+        """Send a key to the focused agent.
+
+        Args:
+            key: The key to send
+            open_prompt: If True, open the command bar after sending (for "tell claude what to do" options)
+        """
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -2855,6 +2860,9 @@ class SupervisorTUI(App):
         # Send the key followed by Enter (to select the numbered option)
         if launcher.send_to_session(session_name, key, enter=True):
             self.notify(f"Sent '{key}' to {session_name}", severity="information")
+            # Optionally open command bar for free-text input (#72)
+            if open_prompt:
+                self.action_focus_command_bar()
         else:
             self.notify(f"Failed to send '{key}' to {session_name}", severity="error")
 
@@ -2875,8 +2883,12 @@ class SupervisorTUI(App):
         self._send_key_to_focused("4")
 
     def action_send_5_to_focused(self) -> None:
-        """Send '5' to focused agent."""
-        self._send_key_to_focused("5")
+        """Send '5' to focused agent and open command bar.
+
+        Option 5 is typically "tell claude what to do instead", so we
+        automatically open the instruction prompt after sending (#72).
+        """
+        self._send_key_to_focused("5", open_prompt=True)
 
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
