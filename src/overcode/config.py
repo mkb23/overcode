@@ -117,6 +117,27 @@ def get_summarizer_config() -> dict:
     }
 
 
+def get_timeline_config() -> dict:
+    """Get timeline display configuration.
+
+    Config format in ~/.overcode/config.yaml:
+        timeline:
+          hours: 3.0  # How many hours of history to show
+
+    Returns:
+        Dict with timeline settings (hours)
+    """
+    default_hours = 3.0
+
+    config = load_config()
+    timeline = config.get("timeline", {})
+    hours = timeline.get("hours", default_hours)
+
+    return {
+        "hours": hours,
+    }
+
+
 def get_web_time_presets() -> list:
     """Get time presets for the web analytics dashboard.
 

@@ -261,13 +261,16 @@ class DaemonStatusBar(Static):
 class StatusTimeline(Static):
     """Widget displaying historical status timelines for user presence and agents.
 
-    Shows the last 3 hours with each character representing a time slice.
+    Shows the last N hours with each character representing a time slice.
     - User presence: green=active, yellow=inactive, red/gray=locked/away
     - Agent status: green=running, red=waiting, grey=terminated
+
+    Timeline hours configurable via ~/.overcode/config.yaml (timeline.hours).
     """
 
-    TIMELINE_HOURS = 3.0  # Show last 3 hours
-    LABEL_WIDTH = 12      # Width of labels like "  User:   " or "  agent:  "
+    TIMELINE_HOURS = 3.0  # Default hours
+    MIN_NAME_WIDTH = 6    # Minimum width for agent names
+    MAX_NAME_WIDTH = 30   # Maximum width for agent names
     MIN_TIMELINE = 20     # Minimum timeline width
     DEFAULT_TIMELINE = 60 # Fallback if can't detect width
 
@@ -277,17 +280,30 @@ class StatusTimeline(Static):
         self.tmux_session = tmux_session
         self._presence_history = []
         self._agent_histories = {}
+        # Get timeline hours from config (config file > env var > default)
+        from .config import get_timeline_config
+        timeline_config = get_timeline_config()
+        self.timeline_hours = timeline_config["hours"]
+
+    @property
+    def label_width(self) -> int:
+        """Calculate label width based on longest agent name (#75)."""
+        if not self.sessions:
+            return self.MIN_NAME_WIDTH
+        longest = max(len(s.name) for s in self.sessions)
+        # Clamp to min/max and add padding for "  " prefix and " " suffix
+        return min(self.MAX_NAME_WIDTH, max(self.MIN_NAME_WIDTH, longest))
 
     @property
     def timeline_width(self) -> int:
-        """Calculate timeline width based on available space."""
+        """Calculate timeline width based on available space after labels (#75)."""
         import shutil
         try:
             # Try to get terminal size directly - most reliable
             term_width = shutil.get_terminal_size().columns
-            # Subtract label width and some padding
-            available = term_width - self.LABEL_WIDTH - 6
-            return max(self.MIN_TIMELINE, min(available, 120))
+            # Subtract dynamic label width (+ 3 for "  " prefix and " " suffix) and percentage display (+ 6)
+            available = term_width - self.label_width - 3 - 6
+            return max(self.MIN_TIMELINE, min(available, 200))
         except (OSError, ValueError):
             # No terminal available or invalid size
             return self.DEFAULT_TIMELINE
@@ -295,7 +311,7 @@ class StatusTimeline(Static):
     def update_history(self, sessions: list) -> None:
         """Refresh history data from log files."""
         self.sessions = sessions
-        self._presence_history = read_presence_history(hours=self.TIMELINE_HOURS)
+        self._presence_history = read_presence_history(hours=self.timeline_hours)
         self._agent_histories = {}
 
         # Get agent names from sessions
@@ -303,7 +319,7 @@ class StatusTimeline(Static):
 
         # Read agent history from session-specific file and group by agent
         history_path = get_agent_history_path(self.tmux_session)
-        all_history = read_agent_status_history(hours=self.TIMELINE_HOURS, history_file=history_path)
+        all_history = read_agent_status_history(hours=self.timeline_hours, history_file=history_path)
         for ts, agent, status, activity in all_history:
             if agent not in self._agent_histories:
                 self._agent_histories[agent] = []
@@ -327,8 +343,8 @@ class StatusTimeline(Static):
             return "─" * width
 
         now = datetime.now()
-        start_time = now - timedelta(hours=self.TIMELINE_HOURS)
-        slot_duration = timedelta(hours=self.TIMELINE_HOURS) / width
+        start_time = now - timedelta(hours=self.timeline_hours)
+        slot_duration = timedelta(hours=self.timeline_hours) / width
 
         # Initialize timeline with empty slots
         timeline = ["─"] * width
@@ -352,19 +368,20 @@ class StatusTimeline(Static):
         width = self.timeline_width
 
         # Time scale header
+        label_w = self.label_width
         content.append("Timeline: ", style="bold")
-        content.append(f"-{self.TIMELINE_HOURS:.0f}h", style="dim")
+        content.append(f"-{self.timeline_hours:.0f}h", style="dim")
         header_padding = max(0, width - 10)
         content.append(" " * header_padding, style="dim")
         content.append("now", style="dim")
         content.append("\n")
 
         # User presence timeline - group by time slots like agent timelines
-        # Align with agent names (14 chars): "  " + name + " " = 17 chars total
-        content.append(f"  {'User:':<14} ", style="cyan")
+        # Align with agent names using dynamic label width (#75)
+        content.append(f"  {'User:':<{label_w}} ", style="cyan")
         if self._presence_history:
             slot_states = build_timeline_slots(
-                self._presence_history, width, self.TIMELINE_HOURS, now
+                self._presence_history, width, self.timeline_hours, now
             )
             # Render timeline with colors
             for i in range(width):
@@ -388,14 +405,14 @@ class StatusTimeline(Static):
             agent_name = session.name
             history = self._agent_histories.get(agent_name, [])
 
-            # Truncate name to fit
-            display_name = truncate_name(agent_name)
+            # Use dynamic label width (#75)
+            display_name = truncate_name(agent_name, max_len=label_w)
             content.append(f"  {display_name} ", style="cyan")
 
             green_slots = 0
             total_slots = 0
             if history:
-                slot_states = build_timeline_slots(history, width, self.TIMELINE_HOURS, now)
+                slot_states = build_timeline_slots(history, width, self.timeline_hours, now)
                 # Render timeline with colors
                 for i in range(width):
                     if i in slot_states:
