@@ -670,6 +670,9 @@ class SessionSummary(Static, can_focus=True):
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
+        # Track when status last changed (for immediate time-in-state updates)
+        self._status_changed_at: Optional[datetime] = None
+        self._last_known_status: str = self.detected_status
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -769,10 +772,14 @@ class SessionSummary(Static, can_focus=True):
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
         # The session.stats values are read from what Monitor Daemon has persisted
         # If session is asleep, keep the asleep status instead of the detected status
-        if self.session.is_asleep:
-            self.detected_status = "asleep"
-        else:
-            self.detected_status = status
+        new_status = "asleep" if self.session.is_asleep else status
+
+        # Track status changes for immediate time-in-state reset (#73)
+        if new_status != self._last_known_status:
+            self._status_changed_at = datetime.now()
+            self._last_known_status = new_status
+
+        self.detected_status = new_status
 
         # Use pre-fetched claude stats (no file I/O on main thread)
         if claude_stats is not None:
@@ -841,13 +848,21 @@ class SessionSummary(Static, can_focus=True):
             content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
         # Time in current state (directly after status light)
+        # Use locally tracked change time if more recent than daemon's state_since (#73)
+        state_start = None
+        if self._status_changed_at:
+            state_start = self._status_changed_at
         if stats.state_since:
             try:
-                state_start = datetime.fromisoformat(stats.state_since)
-                elapsed = (datetime.now() - state_start).total_seconds()
-                content.append(f"{format_duration(elapsed):>5} ", style=status_color)
+                daemon_state_start = datetime.fromisoformat(stats.state_since)
+                # Use whichever is more recent (our local detection or daemon's record)
+                if state_start is None or daemon_state_start > state_start:
+                    state_start = daemon_state_start
             except (ValueError, TypeError):
-                content.append("    - ", style=f"dim{bg}")
+                pass
+        if state_start:
+            elapsed = (datetime.now() - state_start).total_seconds()
+            content.append(f"{format_duration(elapsed):>5} ", style=status_color)
         else:
             content.append("    - ", style=f"dim{bg}")
 
