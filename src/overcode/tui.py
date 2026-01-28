@@ -202,6 +202,11 @@ class DaemonStatusBar(Static):
             if mean_spin > 0:
                 content.append(f" μ{mean_spin:.1f}x", style="cyan")
 
+            # Total tokens across all sessions (include sleeping agents - they used tokens too)
+            total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
+            if total_tokens > 0:
+                content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+
             # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
             safe_break = calculate_safe_break_duration(active_sessions)
             if safe_break is not None:
@@ -682,6 +687,9 @@ class SessionSummary(Static, can_focus=True):
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
+        # Track when status last changed (for immediate time-in-state updates)
+        self._status_changed_at: Optional[datetime] = None
+        self._last_known_status: str = self.detected_status
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -781,10 +789,14 @@ class SessionSummary(Static, can_focus=True):
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
         # The session.stats values are read from what Monitor Daemon has persisted
         # If session is asleep, keep the asleep status instead of the detected status
-        if self.session.is_asleep:
-            self.detected_status = "asleep"
-        else:
-            self.detected_status = status
+        new_status = "asleep" if self.session.is_asleep else status
+
+        # Track status changes for immediate time-in-state reset (#73)
+        if new_status != self._last_known_status:
+            self._status_changed_at = datetime.now()
+            self._last_known_status = new_status
+
+        self.detected_status = new_status
 
         # Use pre-fetched claude stats (no file I/O on main thread)
         if claude_stats is not None:
@@ -853,13 +865,21 @@ class SessionSummary(Static, can_focus=True):
             content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
         # Time in current state (directly after status light)
+        # Use locally tracked change time if more recent than daemon's state_since (#73)
+        state_start = None
+        if self._status_changed_at:
+            state_start = self._status_changed_at
         if stats.state_since:
             try:
-                state_start = datetime.fromisoformat(stats.state_since)
-                elapsed = (datetime.now() - state_start).total_seconds()
-                content.append(f"{format_duration(elapsed):>5} ", style=status_color)
+                daemon_state_start = datetime.fromisoformat(stats.state_since)
+                # Use whichever is more recent (our local detection or daemon's record)
+                if state_start is None or daemon_state_start > state_start:
+                    state_start = daemon_state_start
             except (ValueError, TypeError):
-                content.append("    - ", style=f"dim{bg}")
+                pass
+        if state_start:
+            elapsed = (datetime.now() - state_start).total_seconds()
+            content.append(f"{format_duration(elapsed):>5} ", style=status_color)
         else:
             content.append("    - ", style=f"dim{bg}")
 
@@ -1276,9 +1296,13 @@ class CommandBar(Static):
         if directory:
             dir_path = Path(directory).expanduser().resolve()
             if not dir_path.exists():
-                # Try to create it or warn
-                self.app.notify(f"Directory does not exist: {dir_path}", severity="warning")
-                return
+                # Create the directory
+                try:
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                    self.app.notify(f"Created directory: {dir_path}", severity="information")
+                except OSError as e:
+                    self.app.notify(f"Failed to create directory: {e}", severity="error")
+                    return
             if not dir_path.is_dir():
                 self.app.notify(f"Not a directory: {dir_path}", severity="error")
                 return
@@ -1630,6 +1654,8 @@ class SupervisorTUI(App):
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
         ("g", "toggle_show_terminated", "Show killed"),
+        # Jump to sessions needing attention (bell/red)
+        ("b", "jump_to_attention", "Jump attention"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
     ]
@@ -1686,6 +1712,9 @@ class SupervisorTUI(App):
         self._status_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
+        # Track attention jump state (for 'b' key cycling)
+        self._attention_jump_index = 0
+        self._attention_jump_list: list = []  # Cached list of sessions needing attention
         # Pending kill confirmation (session name, timestamp)
         self._pending_kill: tuple[str, float] | None = None
         # Tmux interface for sync operations
@@ -2282,6 +2311,69 @@ class SupervisorTUI(App):
         # Save preference
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
+
+    def action_jump_to_attention(self) -> None:
+        """Jump to next session needing attention.
+
+        Cycles through sessions with waiting_user status first (red/bell),
+        then through other non-green statuses (no_instructions, waiting_supervisor).
+        """
+        from .status_constants import STATUS_WAITING_USER, STATUS_NO_INSTRUCTIONS, STATUS_WAITING_SUPERVISOR, STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP
+
+        widgets = self._get_widgets_in_session_order()
+        if not widgets:
+            return
+
+        # Build prioritized list of sessions needing attention
+        # Priority: waiting_user (red) > no_instructions (yellow) > waiting_supervisor (orange)
+        attention_sessions = []
+        for i, widget in enumerate(widgets):
+            status = getattr(widget, 'current_status', STATUS_RUNNING)
+            if status == STATUS_WAITING_USER:
+                attention_sessions.append((0, i, widget))  # Highest priority
+            elif status == STATUS_NO_INSTRUCTIONS:
+                attention_sessions.append((1, i, widget))
+            elif status == STATUS_WAITING_SUPERVISOR:
+                attention_sessions.append((2, i, widget))
+            # Skip running, terminated, asleep
+
+        if not attention_sessions:
+            self.notify("No sessions need attention", severity="information")
+            return
+
+        # Sort by priority, then by original index
+        attention_sessions.sort(key=lambda x: (x[0], x[1]))
+
+        # Check if our cached list changed (sessions may have changed state)
+        current_widget_ids = [id(w) for _, _, w in attention_sessions]
+        cached_widget_ids = [id(w) for w in self._attention_jump_list]
+
+        if current_widget_ids != cached_widget_ids:
+            # List changed, reset index
+            self._attention_jump_list = [w for _, _, w in attention_sessions]
+            self._attention_jump_index = 0
+        else:
+            # Cycle to next
+            self._attention_jump_index = (self._attention_jump_index + 1) % len(self._attention_jump_list)
+
+        # Focus the target widget
+        target_widget = self._attention_jump_list[self._attention_jump_index]
+        # Find its index in the full widget list
+        for i, w in enumerate(widgets):
+            if w is target_widget:
+                self.focused_session_index = i
+                break
+
+        target_widget.focus()
+        if self.view_mode == "list_preview":
+            self._update_preview()
+        self._sync_tmux_window(target_widget)
+
+        # Show position indicator
+        pos = self._attention_jump_index + 1
+        total = len(self._attention_jump_list)
+        status = getattr(target_widget, 'current_status', 'unknown')
+        self.notify(f"Attention {pos}/{total}: {target_widget.session.name} ({status})", severity="information")
 
         # Update subtitle to show state
         self._update_subtitle()

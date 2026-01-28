@@ -72,6 +72,51 @@ def get_relay_config() -> Optional[dict]:
     }
 
 
+def get_summarizer_config() -> dict:
+    """Get summarizer configuration for AI summaries.
+
+    Config file takes precedence, environment variables are fallback.
+
+    Config format in ~/.overcode/config.yaml:
+        summarizer:
+          api_url: https://api.openai.com/v1/chat/completions
+          model: gpt-4o-mini
+          api_key_var: OPENAI_API_KEY  # env var name containing the key
+
+    Environment variable fallbacks:
+        OVERCODE_SUMMARIZER_API_URL
+        OVERCODE_SUMMARIZER_MODEL
+        OVERCODE_SUMMARIZER_API_KEY_VAR
+
+    Returns:
+        Dict with api_url, model, and api_key (resolved from env var)
+    """
+    import os
+
+    # Defaults
+    default_api_url = "https://api.openai.com/v1/chat/completions"
+    default_model = "gpt-4o-mini"
+    default_api_key_var = "OPENAI_API_KEY"
+
+    config = load_config()
+    summarizer = config.get("summarizer", {})
+
+    # Config file takes precedence, env vars are fallback
+    api_url = summarizer.get("api_url") or os.environ.get("OVERCODE_SUMMARIZER_API_URL") or default_api_url
+    model = summarizer.get("model") or os.environ.get("OVERCODE_SUMMARIZER_MODEL") or default_model
+    api_key_var = summarizer.get("api_key_var") or os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR") or default_api_key_var
+
+    # Resolve the actual API key from the configured env var
+    api_key = os.environ.get(api_key_var)
+
+    return {
+        "api_url": api_url,
+        "model": model,
+        "api_key": api_key,
+        "api_key_var": api_key_var,
+    }
+
+
 def get_timeline_config() -> dict:
     """Get timeline display configuration.
 
