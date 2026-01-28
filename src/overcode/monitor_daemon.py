@@ -663,6 +663,8 @@ class MonitorDaemon:
                     if summary:
                         session_state.activity_summary = summary.text
                         session_state.activity_summary_updated = summary.updated_at
+                        session_state.activity_summary_context = summary.context
+                        session_state.activity_summary_context_updated = summary.context_updated_at
 
                 # Calculate interval
                 interval = self.calculate_interval(sessions, all_waiting_user)

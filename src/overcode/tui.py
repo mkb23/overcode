@@ -687,6 +687,9 @@ class SessionSummary(Static, can_focus=True):
         # Initialize from persisted session state, not hardcoded "running"
         self.detected_status = session.stats.current_state if session.stats.current_state else "running"
         self.current_activity = "Initializing..."
+        # AI-generated summaries (from daemon's SummarizerComponent)
+        self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
+        self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
@@ -1027,9 +1030,20 @@ class SessionSummary(Static, can_focus=True):
                     content.append(display_text[:remaining], style=style)
                 else:
                     content.append("(no standing orders)", style=f"dim italic{bg}")
+            elif mode == "ai_long":
+                # ai_long: show context summary (wider context from AI)
+                if self.ai_summary_context:
+                    content.append(self.ai_summary_context[:remaining], style=f"bold italic{bg}")
+                elif self.ai_summary_short:
+                    content.append(self.ai_summary_short[:remaining], style=f"italic{bg}")
+                else:
+                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
             else:
-                # ai_short or ai_long: show current activity (AI summary)
-                content.append(self.current_activity[:remaining], style=f"bold italic{bg}")
+                # ai_short: show short summary (current activity from AI)
+                if self.ai_summary_short:
+                    content.append(self.ai_summary_short[:remaining], style=f"bold italic{bg}")
+                else:
+                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
 
             # Pad to fill terminal width
             current_len = len(content.plain)
@@ -2126,18 +2140,29 @@ class SupervisorTUI(App):
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
 
+            # Read daemon state for AI summaries (if available)
+            ai_summaries = {}
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            if daemon_state:
+                for ds in daemon_state.sessions:
+                    ai_summaries[ds.session_id] = (
+                        ds.activity_summary or "",
+                        ds.activity_summary_context or "",
+                    )
+
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions)
+            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions, ai_summaries)
         finally:
             self._status_update_in_progress = False
 
-    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict) -> None:
+    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
         """Apply fetched status results to widgets (runs on main thread).
 
         All data has been pre-fetched in background - this just updates widget state.
         No file I/O happens here.
         """
         prefs_changed = False
+        ai_summaries = ai_summaries or {}
 
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
@@ -2145,6 +2170,10 @@ class SupervisorTUI(App):
             # Update widget's session with fresh data
             if session_id in fresh_sessions:
                 widget.session = fresh_sessions[session_id]
+
+            # Update AI summaries from daemon state (if available)
+            if session_id in ai_summaries:
+                widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
 
             # Apply status and stats if we have results for this widget
             if session_id in status_results:

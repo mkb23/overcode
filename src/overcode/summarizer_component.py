@@ -26,9 +26,14 @@ logger = logging.getLogger(__name__)
 class AgentSummary:
     """Summary for a single agent."""
 
+    # Short summary - current activity (~50 chars)
     text: str = ""
     updated_at: Optional[str] = None  # ISO timestamp
     tokens_used: int = 0
+
+    # Context summary - wider context (~80 chars)
+    context: str = ""
+    context_updated_at: Optional[str] = None  # ISO timestamp
 
 
 @dataclass
@@ -36,7 +41,8 @@ class SummarizerConfig:
     """Configuration for the summarizer."""
 
     enabled: bool = False  # Off by default
-    interval: float = 5.0  # Seconds between updates per agent
+    interval: float = 5.0  # Seconds between short summary updates per agent
+    context_interval: float = 30.0  # Seconds between context summary updates (less frequent)
     lines: int = 200  # Pane lines to capture
     max_tokens: int = 150  # Max response tokens
 
@@ -78,8 +84,9 @@ class SummarizerComponent:
         # Per-agent summaries
         self.summaries: Dict[str, AgentSummary] = {}
 
-        # Rate limiting per session
+        # Rate limiting per session (separate for short and context)
         self._last_update: Dict[str, datetime] = {}
+        self._last_context_update: Dict[str, datetime] = {}
 
         # Content hashes for change detection (avoid API calls when nothing changed)
         self._last_content_hash: Dict[str, int] = {}
@@ -152,7 +159,11 @@ class SummarizerComponent:
         return self.summaries
 
     def _update_session(self, session) -> None:
-        """Update summary for a single session.
+        """Update summaries for a single session.
+
+        Generates two types of summaries:
+        - Short: current activity (updated frequently)
+        - Context: wider context (updated less frequently)
 
         Args:
             session: Session object with id, tmux_window, current_status
@@ -163,12 +174,18 @@ class SummarizerComponent:
         session_id = session.id
         now = datetime.now()
 
-        # Rate limiting - don't call API too frequently for same session
-        last_update = self._last_update.get(session_id)
-        if last_update:
-            elapsed = (now - last_update).total_seconds()
-            if elapsed < self.config.interval:
-                return
+        # Check rate limits for each summary type
+        last_short = self._last_update.get(session_id)
+        last_context = self._last_context_update.get(session_id)
+
+        short_elapsed = (now - last_short).total_seconds() if last_short else float('inf')
+        context_elapsed = (now - last_context).total_seconds() if last_context else float('inf')
+
+        need_short = short_elapsed >= self.config.interval
+        need_context = context_elapsed >= self.config.context_interval
+
+        if not need_short and not need_context:
+            return
 
         # Skip terminated sessions
         current_status = getattr(session, 'stats', None)
@@ -184,47 +201,88 @@ class SummarizerComponent:
 
         # Check if content has actually changed (avoid unnecessary API calls)
         content_hash = hash(content)
+        content_changed = True
         if session_id in self._last_content_hash:
             if self._last_content_hash[session_id] == content_hash:
-                # Content hasn't changed - skip API call
-                return
+                content_changed = False
+
+        # If content hasn't changed, skip short summary but still allow context
+        # (context changes less often so we're more lenient)
+        if not content_changed and not need_context:
+            return
 
         self._last_content_hash[session_id] = content_hash
 
-        # Get previous summary for anti-oscillation
+        # Get or create summary object
         prev_summary = self.summaries.get(session_id)
-        prev_text = prev_summary.text if prev_summary else ""
+        if not prev_summary:
+            prev_summary = AgentSummary()
+            self.summaries[session_id] = prev_summary
 
         # Get current detected status
         status = "unknown"
         if current_status:
             status = getattr(current_status, 'current_state', 'unknown')
 
-        # Call API
+        # Update short summary if needed and content changed
+        if need_short and content_changed:
+            self._update_short_summary(session, prev_summary, content, status, now)
+
+        # Update context summary if needed (less frequent, runs even if content same)
+        if need_context:
+            self._update_context_summary(session, prev_summary, content, status, now)
+
+    def _update_short_summary(
+        self, session, summary: AgentSummary, content: str, status: str, now: datetime
+    ) -> None:
+        """Update the short (current activity) summary."""
         try:
             result = self._client.summarize(
                 pane_content=content,
-                previous_summary=prev_text,
+                previous_summary=summary.text,
                 current_status=status,
                 lines=self.config.lines,
-                max_tokens=self.config.max_tokens,
+                max_tokens=100,
+                mode="short",
             )
 
             self.total_calls += 1
 
             if result and result.strip().upper() != "UNCHANGED":
-                # New summary
-                self.summaries[session_id] = AgentSummary(
-                    text=result.strip(),
-                    updated_at=now.isoformat(),
-                )
-                logger.debug(f"Updated summary for {session.name}: {result[:50]}...")
-            # If "UNCHANGED", keep the old summary
+                summary.text = result.strip()
+                summary.updated_at = now.isoformat()
+                logger.debug(f"Updated short summary for {session.name}: {result[:50]}...")
 
-            self._last_update[session_id] = now
+            self._last_update[session.id] = now
 
         except Exception as e:
-            logger.warning(f"Summarizer error for {session.name}: {e}")
+            logger.warning(f"Short summary error for {session.name}: {e}")
+
+    def _update_context_summary(
+        self, session, summary: AgentSummary, content: str, status: str, now: datetime
+    ) -> None:
+        """Update the context (wider context) summary."""
+        try:
+            result = self._client.summarize(
+                pane_content=content,
+                previous_summary=summary.context,
+                current_status=status,
+                lines=self.config.lines,
+                max_tokens=150,
+                mode="context",
+            )
+
+            self.total_calls += 1
+
+            if result and result.strip().upper() != "UNCHANGED":
+                summary.context = result.strip()
+                summary.context_updated_at = now.isoformat()
+                logger.debug(f"Updated context summary for {session.name}: {result[:50]}...")
+
+            self._last_context_update[session.id] = now
+
+        except Exception as e:
+            logger.warning(f"Context summary error for {session.name}: {e}")
 
     def _capture_pane(self, window: int) -> Optional[str]:
         """Capture pane content for summarization.
