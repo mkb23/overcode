@@ -1613,6 +1613,8 @@ class SupervisorTUI(App):
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
         ("g", "toggle_show_terminated", "Show killed"),
+        # Hide sleeping agents from display
+        ("Z", "toggle_hide_asleep", "Hide sleeping"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1624,6 +1626,7 @@ class SupervisorTUI(App):
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
+    hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -1674,6 +1677,8 @@ class SupervisorTUI(App):
         self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
         self.show_terminated = self._prefs.show_terminated
+        # Initialize hide_asleep from preferences
+        self.hide_asleep = self._prefs.hide_asleep
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -1992,8 +1997,11 @@ class SupervisorTUI(App):
         container = self.query_one("#sessions-container", ScrollableContainer)
 
         # Build the list of sessions to display
-        # Include terminated sessions if show_terminated is enabled
+        # Filter out sleeping agents if hide_asleep is enabled (#69)
         display_sessions = list(self.sessions)
+        if self.hide_asleep:
+            display_sessions = [s for s in display_sessions if not s.is_asleep]
+        # Include terminated sessions if show_terminated is enabled
         if self.show_terminated:
             # Add terminated sessions that aren't already in the active list
             active_ids = {s.id for s in self.sessions}
@@ -2270,6 +2278,27 @@ class SupervisorTUI(App):
             self.notify(f"Killed sessions: {status} ({count})", severity="information")
         else:
             self.notify(f"Killed sessions: {status}", severity="information")
+
+    def action_toggle_hide_asleep(self) -> None:
+        """Toggle hiding sleeping agents from display."""
+        self.hide_asleep = not self.hide_asleep
+
+        # Save preference
+        self._prefs.hide_asleep = self.hide_asleep
+        self._save_prefs()
+
+        # Update subtitle to show state
+        self._update_subtitle()
+
+        # Refresh session widgets to show/hide sleeping agents
+        self.update_session_widgets()
+
+        # Count sleeping agents
+        asleep_count = sum(1 for s in self.sessions if s.is_asleep)
+        if self.hide_asleep:
+            self.notify(f"Sleeping agents hidden ({asleep_count})", severity="information")
+        else:
+            self.notify(f"Sleeping agents visible ({asleep_count})", severity="information")
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
