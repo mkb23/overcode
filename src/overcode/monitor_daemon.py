@@ -213,6 +213,10 @@ class MonitorDaemon:
         self._last_stats_sync = datetime.now()
         self._stats_sync_interval = 60  # seconds
 
+        # TUI activity tracking (for summarizer cost control - #66)
+        self._last_tui_activity = datetime.min
+        self._tui_activity_timeout = 120  # seconds - summarizer pauses after this
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -448,6 +452,7 @@ class MonitorDaemon:
 
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
+                self._last_tui_activity = datetime.now()  # Track for summarizer (#66)
                 self.state.current_interval = INTERVAL_FAST
                 self.state.save(self.state_path)
                 return
@@ -636,8 +641,20 @@ class MonitorDaemon:
                         self.sync_claude_code_stats(session)
                     self._last_stats_sync = now
 
-                # Update summaries (if enabled)
-                summaries = self.summarizer.update(sessions)
+                # Update summaries (if enabled and TUI active with user present - #66)
+                # Only run summarizer when:
+                # 1. TUI was active recently (within timeout)
+                # 2. User is not locked (presence_state != 1)
+                tui_recently_active = (now - self._last_tui_activity).total_seconds() < self._tui_activity_timeout
+                # Get current presence state for summarizer check (also used in _publish_state)
+                presence_state, _, _ = self.presence.get_current_state()
+                user_not_locked = presence_state != 1  # 1 = locked/screen off
+                should_summarize = tui_recently_active and user_not_locked
+
+                if should_summarize:
+                    summaries = self.summarizer.update(sessions)
+                else:
+                    summaries = {}
                 for session_state in session_states:
                     summary = summaries.get(session_state.session_id)
                     if summary:
