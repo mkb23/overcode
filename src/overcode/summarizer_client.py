@@ -27,8 +27,8 @@ from .config import get_summarizer_config
 
 logger = logging.getLogger(__name__)
 
-# Anti-oscillation prompt template
-SUMMARIZE_PROMPT = """Summarize a Claude Code agent's terminal output.
+# Short summary prompt - focuses on CURRENT activity (what's happening right now)
+SUMMARIZE_PROMPT_SHORT = """Summarize a Claude Code agent's CURRENT activity from terminal output.
 
 ## Terminal Content (last {lines} lines):
 {pane_content}
@@ -39,17 +39,41 @@ SUMMARIZE_PROMPT = """Summarize a Claude Code agent's terminal output.
 {previous_summary}
 
 ## Instructions:
-Write a terse 1-sentence summary. Be direct and action-focused.
+Write a terse summary of what the agent is doing RIGHT NOW. Focus on the immediate action.
 
 Style guide:
 - NO "The agent is/has..." or "Claude is..." phrasing
-- Start with lowercase verb or noun: "implementing...", "reading...", "tests passing"
-- Use shorthand: "fixed bug, running tests" not "The agent has fixed the bug and is now running tests"
-- Examples: "adding auth middleware, 3 files modified" / "waiting for user approval on delete operation" / "tests green, pushing to remote"
+- Start with lowercase verb: "reading...", "writing...", "running tests"
+- Use shorthand: "editing auth.py" not "The agent is currently editing the auth.py file"
+- Examples: "reading config files" / "running pytest" / "waiting for user input" / "writing migration"
 
 If nothing meaningful changed from previous summary, respond exactly: UNCHANGED
 
-Max 60 chars when possible. Focus on: current action, what's being built/fixed, blockers if halted."""
+Max 50 chars. Focus on: the single current action happening now."""
+
+# Context summary prompt - focuses on WIDER context (what's being worked on overall)
+SUMMARIZE_PROMPT_CONTEXT = """Summarize the OVERALL CONTEXT of what a Claude Code agent is working on.
+
+## Terminal Content (last {lines} lines):
+{pane_content}
+
+## Status: {status}
+
+## Previous Summary:
+{previous_summary}
+
+## Instructions:
+Write a terse summary of the BROADER TASK being worked on. What's the goal? What problem is being solved?
+
+Style guide:
+- NO "The agent is/has..." or "Claude is..." phrasing
+- Focus on the objective, not the current action
+- Use shorthand: "auth system refactor, JWT migration" not "Working on refactoring authentication"
+- Examples: "implementing user search with pagination" / "fixing race condition in worker pool" / "adding dark mode to settings page"
+
+If nothing meaningful changed from previous summary, respond exactly: UNCHANGED
+
+Max 80 chars. Focus on: the task/feature/bug being addressed, not the immediate action."""
 
 
 class SummarizerClient:
@@ -82,6 +106,7 @@ class SummarizerClient:
         current_status: str,
         lines: int = 200,
         max_tokens: int = 150,
+        mode: str = "short",
     ) -> Optional[str]:
         """Get summary from GPT-4o-mini.
 
@@ -91,6 +116,7 @@ class SummarizerClient:
             current_status: Current agent status (running, waiting_user, etc.)
             lines: Number of lines being summarized (for prompt context)
             max_tokens: Maximum tokens in response
+            mode: "short" for current activity, "context" for wider context
 
         Returns:
             New summary text, "UNCHANGED" if no update needed, or None on error
@@ -98,7 +124,10 @@ class SummarizerClient:
         if not self.available:
             return None
 
-        prompt = SUMMARIZE_PROMPT.format(
+        # Select prompt based on mode
+        prompt_template = SUMMARIZE_PROMPT_CONTEXT if mode == "context" else SUMMARIZE_PROMPT_SHORT
+
+        prompt = prompt_template.format(
             lines=lines,
             pane_content=pane_content,
             status=current_status,

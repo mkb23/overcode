@@ -71,9 +71,13 @@ class SessionDaemonState:
     # Agent priority value (#61)
     agent_value: int = 1000  # Default 1000, higher = more important
 
-    # Activity summary (from SummarizerComponent)
+    # Activity summaries (from SummarizerComponent)
+    # Short: current activity - what's happening right now (~50 chars)
     activity_summary: str = ""
     activity_summary_updated: Optional[str] = None  # ISO timestamp
+    # Context: wider context - what's being worked on overall (~80 chars)
+    activity_summary_context: str = ""
+    activity_summary_context_updated: Optional[str] = None  # ISO timestamp
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -104,6 +108,8 @@ class SessionDaemonState:
             "agent_value": self.agent_value,
             "activity_summary": self.activity_summary,
             "activity_summary_updated": self.activity_summary_updated,
+            "activity_summary_context": self.activity_summary_context,
+            "activity_summary_context_updated": self.activity_summary_context_updated,
         }
 
     @classmethod
@@ -136,6 +142,8 @@ class SessionDaemonState:
             agent_value=data.get("agent_value", 1000),
             activity_summary=data.get("activity_summary", ""),
             activity_summary_updated=data.get("activity_summary_updated"),
+            activity_summary_context=data.get("activity_summary_context", ""),
+            activity_summary_context_updated=data.get("activity_summary_context_updated"),
         )
 
 
