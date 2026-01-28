@@ -95,6 +95,9 @@ class Session:
     # Default 1000, higher = more important
     agent_value: int = 1000
 
+    # Human annotation - user's notes about this agent (#74)
+    human_annotation: str = ""
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
@@ -620,3 +623,7 @@ class SessionManager:
             value: Priority value (default 1000, higher = more important)
         """
         self.update_session(session_id, agent_value=value)
+
+    def set_human_annotation(self, session_id: str, annotation: str):
+        """Set human annotation for a session (#74)."""
+        self.update_session(session_id, human_annotation=annotation)

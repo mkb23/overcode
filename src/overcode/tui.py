@@ -678,6 +678,7 @@ class SessionSummary(Static, can_focus=True):
     expanded: reactive[bool] = reactive(True)  # Start expanded
     detail_lines: reactive[int] = reactive(5)  # Lines of output to show (5, 10, 20, 50)
     summary_detail: reactive[str] = reactive("low")  # low, med, full
+    summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
 
     def __init__(self, session: Session, status_detector: StatusDetector, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -812,6 +813,10 @@ class SessionSummary(Static, can_focus=True):
 
     def watch_summary_detail(self, summary_detail: str) -> None:
         """Called when summary_detail changes"""
+        self.refresh()
+
+    def watch_summary_content_mode(self, summary_content_mode: str) -> None:
+        """Called when summary_content_mode changes (#74)"""
         self.refresh()
 
     def render(self) -> Text:
@@ -991,27 +996,41 @@ class SessionSummary(Static, can_focus=True):
                 content.append(" ➖", style=f"dim{bg}")  # Normal
 
         if not self.expanded:
-            # Compact view: show standing orders or current activity
+            # Compact view: show content based on summary_content_mode (#74)
             content.append(" │ ", style=f"bold dim{bg}")
-            # Calculate remaining space for standing orders/activity
+            # Calculate remaining space for content
             current_len = len(content.plain)
             remaining = max(20, term_width - current_len - 2)
 
-            if s.standing_instructions:
-                # Show standing orders with completion indicator
-                if s.standing_orders_complete:
-                    style = f"bold green{bg}"
-                    prefix = "✓ "
-                elif s.standing_instructions_preset:
-                    style = f"bold cyan{bg}"
-                    prefix = f"{s.standing_instructions_preset}: "
+            # Determine what to show based on mode
+            mode = self.summary_content_mode
+
+            if mode == "annotation":
+                # Show human annotation
+                if s.human_annotation:
+                    content.append(f"✏ {s.human_annotation[:remaining-2]}", style=f"bold magenta{bg}")
                 else:
-                    style = f"bold italic yellow{bg}"
-                    prefix = ""
-                display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
-                content.append(display_text[:remaining], style=style)
+                    content.append("(no annotation)", style=f"dim italic{bg}")
+            elif mode == "orders":
+                # Show standing orders
+                if s.standing_instructions:
+                    if s.standing_orders_complete:
+                        style = f"bold green{bg}"
+                        prefix = "✓ "
+                    elif s.standing_instructions_preset:
+                        style = f"bold cyan{bg}"
+                        prefix = f"{s.standing_instructions_preset}: "
+                    else:
+                        style = f"bold italic yellow{bg}"
+                        prefix = ""
+                    display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
+                    content.append(display_text[:remaining], style=style)
+                else:
+                    content.append("(no standing orders)", style=f"dim italic{bg}")
             else:
+                # ai_short or ai_long: show current activity (AI summary)
                 content.append(self.current_activity[:remaining], style=f"bold italic{bg}")
+
             # Pad to fill terminal width
             current_len = len(content.plain)
             if current_len < term_width:
@@ -1166,6 +1185,13 @@ class CommandBar(Static):
             self.session_name = session_name
             self.value = value
 
+    class AnnotationUpdated(Message):
+        """Message sent when user updates human annotation (#74)."""
+        def __init__(self, session_name: str, annotation: str):
+            super().__init__()
+            self.session_name = session_name
+            self.annotation = annotation
+
     def compose(self) -> ComposeResult:
         """Create command bar widgets."""
         with Horizontal(id="cmd-bar-container"):
@@ -1207,6 +1233,12 @@ class CommandBar(Static):
             else:
                 label.update("[Value] ")
             input_widget.placeholder = "Enter priority value (1000 = normal, higher = more important)..."
+        elif self.mode == "annotation":
+            if self.target_session:
+                label.update(f"[{self.target_session} Annotation] ")
+            else:
+                label.update("[Annotation] ")
+            input_widget.placeholder = "Enter human annotation (or empty to clear)..."
         elif self.target_session:
             label.update(f"[{self.target_session}] ")
             input_widget.placeholder = "Type instruction (Enter to send)..."
@@ -1308,6 +1340,12 @@ class CommandBar(Static):
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
+            elif self.mode == "annotation":
+                # Set human annotation (empty string clears it)
+                self._set_annotation(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
 
             # Default "send" mode
             if not text:
@@ -1395,6 +1433,12 @@ class CommandBar(Static):
         except ValueError:
             # Invalid input, notify user but don't crash
             self.app.notify("Invalid value - please enter a number", severity="error")
+
+    def _set_annotation(self, text: str) -> None:
+        """Set human annotation (empty string clears it) (#74)."""
+        if not self.target_session:
+            return
+        self.post_message(self.AnnotationUpdated(self.target_session, text.strip()))
 
     def action_toggle_expand(self) -> None:
         """Toggle between single and multi-line mode."""
@@ -1710,6 +1754,10 @@ class SupervisorTUI(App):
         ("S", "cycle_sort_mode", "Sort mode"),
         # Edit agent value (#61)
         ("V", "edit_agent_value", "Edit value"),
+        # Cycle summary content mode (#74)
+        ("l", "cycle_summary_content", "Summary content"),
+        # Edit human annotation (#74)
+        ("I", "focus_human_annotation", "Annotation"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1718,12 +1766,15 @@ class SupervisorTUI(App):
     SUMMARY_LEVELS = ["low", "med", "full"]
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value"]
+    # Summary content modes: what to show in the summary line (#74)
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation"]
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
+    summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -2267,6 +2318,54 @@ class SupervisorTUI(App):
 
         self.notify(f"Summary: {new_level}", severity="information")
 
+    def action_cycle_summary_content(self) -> None:
+        """Cycle through summary content modes (ai_short, ai_long, orders, annotation) (#74)."""
+        modes = self.SUMMARY_CONTENT_MODES
+        current_idx = modes.index(self.summary_content_mode) if self.summary_content_mode in modes else 0
+        new_idx = (current_idx + 1) % len(modes)
+        self.summary_content_mode = modes[new_idx]
+
+        # Update all session widgets
+        for widget in self.query(SessionSummary):
+            widget.summary_content_mode = self.summary_content_mode
+
+        mode_names = {
+            "ai_short": "AI Summary (short)",
+            "ai_long": "AI Summary (context)",
+            "orders": "Standing Orders",
+            "annotation": "Human Annotation",
+        }
+        self.notify(f"Content: {mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
+
+    def action_focus_human_annotation(self) -> None:
+        """Focus input for editing human annotation (#74)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+
+            # Show the command bar
+            cmd_bar.add_class("visible")
+
+            # Get the currently focused session (if any)
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                # Pre-fill with existing annotation
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = focused.session.human_annotation or ""
+            elif not cmd_bar.target_session and self.sessions:
+                # Default to first session if none focused
+                cmd_bar.set_target(self.sessions[0].name)
+
+            # Set mode to annotation editing
+            cmd_bar.set_mode("annotation")
+
+            # Enable and focus the input
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
+
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
         self.expanded_states[message.session_id] = message.expanded
@@ -2722,6 +2821,20 @@ class SupervisorTUI(App):
             self.session_manager.set_agent_value(session.id, message.value)
             self.notify(f"Value set to {message.value} for {message.session_name}")
             # Refresh and re-sort session list
+            self.refresh_sessions()
+        else:
+            self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_annotation_updated(self, message: CommandBar.AnnotationUpdated) -> None:
+        """Handle human annotation update from command bar (#74)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session:
+            self.session_manager.set_human_annotation(session.id, message.annotation)
+            if message.annotation:
+                self.notify(f"Annotation set for {message.session_name}")
+            else:
+                self.notify(f"Annotation cleared for {message.session_name}")
+            # Refresh session list to show updated annotation
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
