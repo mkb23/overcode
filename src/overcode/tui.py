@@ -976,6 +976,20 @@ class SessionSummary(Static, can_focus=True):
         else:
             content.append(" ➖", style=f"bold dim{bg}")  # No instructions indicator
 
+        # Agent value indicator (#61)
+        # Full detail: show numeric value
+        # Short/med: show emoticon (🔥 high, ➖ normal, 🧊 low)
+        if self.summary_detail == "full":
+            content.append(f" ⭐{s.agent_value:>4}", style=f"bold magenta{bg}")
+        else:
+            # Emoticon based on value relative to default 1000
+            if s.agent_value > 1000:
+                content.append(" 🔥", style=f"bold red{bg}")  # High priority
+            elif s.agent_value < 1000:
+                content.append(" 🧊", style=f"bold blue{bg}")  # Low priority
+            else:
+                content.append(" ➖", style=f"dim{bg}")  # Normal
+
         if not self.expanded:
             # Compact view: show standing orders or current activity
             content.append(" │ ", style=f"bold dim{bg}")
@@ -1145,6 +1159,13 @@ class CommandBar(Static):
             self.directory = directory
             self.bypass_permissions = bypass_permissions
 
+    class ValueUpdated(Message):
+        """Message sent when user updates agent value (#61)."""
+        def __init__(self, session_name: str, value: int):
+            super().__init__()
+            self.session_name = session_name
+            self.value = value
+
     def compose(self) -> ComposeResult:
         """Create command bar widgets."""
         with Horizontal(id="cmd-bar-container"):
@@ -1180,6 +1201,12 @@ class CommandBar(Static):
             else:
                 label.update("[Standing Orders] ")
             input_widget.placeholder = "Enter standing orders (or empty to clear)..."
+        elif self.mode == "value":
+            if self.target_session:
+                label.update(f"[{self.target_session} Value] ")
+            else:
+                label.update("[Value] ")
+            input_widget.placeholder = "Enter priority value (1000 = normal, higher = more important)..."
         elif self.target_session:
             label.update(f"[{self.target_session}] ")
             input_widget.placeholder = "Type instruction (Enter to send)..."
@@ -1275,6 +1302,12 @@ class CommandBar(Static):
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
+            elif self.mode == "value":
+                # Set agent value (#61)
+                self._set_value(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
 
             # Default "send" mode
             if not text:
@@ -1351,6 +1384,17 @@ class CommandBar(Static):
         if not self.target_session or not text.strip():
             return
         self.post_message(self.StandingOrderRequested(self.target_session, text.strip()))
+
+    def _set_value(self, text: str) -> None:
+        """Set agent value (#61)."""
+        if not self.target_session:
+            return
+        try:
+            value = int(text.strip()) if text.strip() else 1000
+            self.post_message(self.ValueUpdated(self.target_session, value))
+        except ValueError:
+            # Invalid input, notify user but don't crash
+            self.app.notify("Invalid value - please enter a number", severity="error")
 
     def action_toggle_expand(self) -> None:
         """Toggle between single and multi-line mode."""
@@ -1662,12 +1706,18 @@ class SupervisorTUI(App):
         ("b", "jump_to_attention", "Jump attention"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
+        # Sort mode cycle (#61)
+        ("S", "cycle_sort_mode", "Sort mode"),
+        # Edit agent value (#61)
+        ("V", "edit_agent_value", "Edit value"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
     DETAIL_LEVELS = [5, 10, 20, 50]
     # Summary detail levels: low (minimal), med (timing), full (all + repo)
     SUMMARY_LEVELS = ["low", "med", "full"]
+    # Sort modes (#61)
+    SORT_MODES = ["alphabetical", "by_status", "by_value"]
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
@@ -1886,6 +1936,8 @@ class SupervisorTUI(App):
         """
         self._invalidate_sessions_cache()  # Force cache refresh
         self.sessions = self.launcher.list_sessions()
+        # Apply sorting (#61)
+        self._sort_sessions()
         # Calculate max repo:branch width for alignment in full detail mode
         self.max_repo_info_width = max(
             (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in self.sessions),
@@ -1895,6 +1947,45 @@ class SupervisorTUI(App):
         self.update_session_widgets()
         # NOTE: Don't call update_timeline() here - it has its own 30s interval
         # and reading log files during session refresh causes UI stutter
+
+    def _sort_sessions(self) -> None:
+        """Sort sessions based on current sort mode (#61)."""
+        mode = self._prefs.sort_mode
+
+        if mode == "alphabetical":
+            self.sessions.sort(key=lambda s: s.name.lower())
+        elif mode == "by_status":
+            # Sort by status priority: waiting_user first (red), then running (green), etc.
+            status_order = {
+                "waiting_user": 0,
+                "waiting_supervisor": 1,
+                "no_instructions": 2,
+                "error": 3,
+                "running": 4,
+                "terminated": 5,
+                "asleep": 6,
+            }
+            self.sessions.sort(key=lambda s: (
+                status_order.get(s.stats.current_state or "running", 4),
+                s.name.lower()
+            ))
+        elif mode == "by_value":
+            # Sort by value descending (higher = more important), then alphabetically
+            # Non-green agents first (by value), then green agents (by value)
+            status_order = {
+                "waiting_user": 0,
+                "waiting_supervisor": 0,
+                "no_instructions": 0,
+                "error": 0,
+                "running": 1,
+                "terminated": 2,
+                "asleep": 2,
+            }
+            self.sessions.sort(key=lambda s: (
+                status_order.get(s.stats.current_state or "running", 1),
+                -s.agent_value,  # Descending by value
+                s.name.lower()
+            ))
 
     def _get_cached_sessions(self) -> dict[str, Session]:
         """Get sessions with caching to reduce disk I/O.
@@ -2413,6 +2504,26 @@ class SupervisorTUI(App):
         else:
             self.notify(f"Sleeping agents visible ({asleep_count})", severity="information")
 
+    def action_cycle_sort_mode(self) -> None:
+        """Cycle through sort modes (#61)."""
+        modes = self.SORT_MODES
+        current_idx = modes.index(self._prefs.sort_mode) if self._prefs.sort_mode in modes else 0
+        new_idx = (current_idx + 1) % len(modes)
+        self._prefs.sort_mode = modes[new_idx]
+        self._save_prefs()
+
+        # Re-sort and refresh
+        self._sort_sessions()
+        self.update_session_widgets()
+        self._update_subtitle()
+
+        mode_names = {
+            "alphabetical": "Alphabetical",
+            "by_status": "By Status",
+            "by_value": "By Value (priority)",
+        }
+        self.notify(f"Sort: {mode_names.get(self._prefs.sort_mode, self._prefs.sort_mode)}", severity="information")
+
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
 
@@ -2540,6 +2651,37 @@ class SupervisorTUI(App):
         except NoMatches:
             pass
 
+    def action_edit_agent_value(self) -> None:
+        """Focus the command bar for editing agent value (#61)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+
+            # Show the command bar
+            cmd_bar.add_class("visible")
+
+            # Get the currently focused session (if any)
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                # Pre-fill with existing value
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = str(focused.session.agent_value)
+            elif not cmd_bar.target_session and self.sessions:
+                # Default to first session if none focused
+                cmd_bar.set_target(self.sessions[0].name)
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = "1000"
+
+            # Set mode to value
+            cmd_bar.set_mode("value")
+
+            # Enable and focus the input
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
+
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
         from datetime import datetime
@@ -2569,6 +2711,17 @@ class SupervisorTUI(App):
             self.session_manager.set_standing_instructions(session.id, message.text)
             self.notify(f"Standing order set for {message.session_name}")
             # Refresh session list to show updated standing order
+            self.refresh_sessions()
+        else:
+            self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_value_updated(self, message: CommandBar.ValueUpdated) -> None:
+        """Handle agent value update from command bar (#61)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session:
+            self.session_manager.set_agent_value(session.id, message.value)
+            self.notify(f"Value set to {message.value} for {message.session_name}")
+            # Refresh and re-sort session list
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")

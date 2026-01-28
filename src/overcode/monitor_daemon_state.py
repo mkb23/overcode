@@ -68,6 +68,9 @@ class SessionDaemonState:
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
 
+    # Agent priority value (#61)
+    agent_value: int = 1000  # Default 1000, higher = more important
+
     # Activity summary (from SummarizerComponent)
     activity_summary: str = ""
     activity_summary_updated: Optional[str] = None  # ISO timestamp
@@ -98,6 +101,7 @@ class SessionDaemonState:
             "start_time": self.start_time,
             "permissiveness_mode": self.permissiveness_mode,
             "start_directory": self.start_directory,
+            "agent_value": self.agent_value,
             "activity_summary": self.activity_summary,
             "activity_summary_updated": self.activity_summary_updated,
         }
@@ -129,6 +133,7 @@ class SessionDaemonState:
             start_time=data.get("start_time"),
             permissiveness_mode=data.get("permissiveness_mode", "normal"),
             start_directory=data.get("start_directory"),
+            agent_value=data.get("agent_value", 1000),
             activity_summary=data.get("activity_summary", ""),
             activity_summary_updated=data.get("activity_summary_updated"),
         )

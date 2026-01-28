@@ -382,6 +382,7 @@ class TUIPreferences:
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
+    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
 
@@ -409,6 +410,7 @@ class TUIPreferences:
                     tmux_sync=data.get("tmux_sync", False),
                     show_terminated=data.get("show_terminated", False),
                     hide_asleep=data.get("hide_asleep", False),
+                    sort_mode=data.get("sort_mode", "alphabetical"),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
@@ -431,6 +433,7 @@ class TUIPreferences:
                     "tmux_sync": self.tmux_sync,
                     "show_terminated": self.show_terminated,
                     "hide_asleep": self.hide_asleep,
+                    "sort_mode": self.sort_mode,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):
