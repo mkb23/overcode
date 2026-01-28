@@ -297,6 +297,7 @@ class MonitorDaemon:
             start_time=session.start_time,
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
+            is_asleep=session.is_asleep,
             agent_value=session.agent_value,
         )
 

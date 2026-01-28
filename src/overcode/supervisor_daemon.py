@@ -678,11 +678,27 @@ class SupervisorDaemon:
         self,
         monitor_state: MonitorDaemonState
     ) -> List[SessionDaemonState]:
-        """Get sessions that are not in running state from monitor daemon state."""
-        return [
-            s for s in monitor_state.sessions
-            if s.current_status != STATUS_RUNNING and s.name != 'daemon_claude'
-        ]
+        """Get sessions that are not in running state from monitor daemon state.
+
+        Filters out:
+        - Running (green) sessions
+        - The daemon_claude session itself
+        - Asleep sessions (#70)
+        - Sessions with DO_NOTHING standing orders (#70)
+        """
+        result = []
+        for s in monitor_state.sessions:
+            # Skip green sessions and daemon_claude
+            if s.current_status == STATUS_RUNNING or s.name == 'daemon_claude':
+                continue
+            # Skip asleep sessions
+            if s.is_asleep:
+                continue
+            # Skip sessions with DO_NOTHING standing orders
+            if s.standing_instructions and 'DO_NOTHING' in s.standing_instructions.upper():
+                continue
+            result.append(s)
+        return result
 
     def wait_for_monitor_daemon(self, timeout: int = 30, poll_interval: int = 2) -> bool:
         """Wait for monitor daemon to be running.
