@@ -202,6 +202,11 @@ class DaemonStatusBar(Static):
             if mean_spin > 0:
                 content.append(f" μ{mean_spin:.1f}x", style="cyan")
 
+            # Total tokens across all sessions (include sleeping agents - they used tokens too)
+            total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
+            if total_tokens > 0:
+                content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+
             # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
             safe_break = calculate_safe_break_duration(active_sessions)
             if safe_break is not None:
@@ -256,13 +261,16 @@ class DaemonStatusBar(Static):
 class StatusTimeline(Static):
     """Widget displaying historical status timelines for user presence and agents.
 
-    Shows the last 3 hours with each character representing a time slice.
+    Shows the last N hours with each character representing a time slice.
     - User presence: green=active, yellow=inactive, red/gray=locked/away
     - Agent status: green=running, red=waiting, grey=terminated
+
+    Timeline hours configurable via ~/.overcode/config.yaml (timeline.hours).
     """
 
-    TIMELINE_HOURS = 3.0  # Show last 3 hours
-    LABEL_WIDTH = 12      # Width of labels like "  User:   " or "  agent:  "
+    TIMELINE_HOURS = 3.0  # Default hours
+    MIN_NAME_WIDTH = 6    # Minimum width for agent names
+    MAX_NAME_WIDTH = 30   # Maximum width for agent names
     MIN_TIMELINE = 20     # Minimum timeline width
     DEFAULT_TIMELINE = 60 # Fallback if can't detect width
 
@@ -272,17 +280,34 @@ class StatusTimeline(Static):
         self.tmux_session = tmux_session
         self._presence_history = []
         self._agent_histories = {}
+        # Get timeline hours from config (config file > env var > default)
+        from .config import get_timeline_config
+        timeline_config = get_timeline_config()
+        self.timeline_hours = timeline_config["hours"]
+
+    @property
+    def label_width(self) -> int:
+        """Calculate label width based on longest agent name (#75)."""
+        if not self.sessions:
+            return self.MIN_NAME_WIDTH
+        longest = max(len(s.name) for s in self.sessions)
+        # Clamp to min/max and add padding for "  " prefix and " " suffix
+        return min(self.MAX_NAME_WIDTH, max(self.MIN_NAME_WIDTH, longest))
 
     @property
     def timeline_width(self) -> int:
-        """Calculate timeline width based on available space."""
+        """Calculate timeline width based on available space after labels (#75)."""
         import shutil
         try:
             # Try to get terminal size directly - most reliable
             term_width = shutil.get_terminal_size().columns
-            # Subtract label width and some padding
-            available = term_width - self.LABEL_WIDTH - 6
-            return max(self.MIN_TIMELINE, min(available, 120))
+            # Subtract:
+            #   - label_width (agent name)
+            #   - 3 for "  " prefix and " " suffix around label
+            #   - 5 for percentage display " XXX%"
+            #   - 2 for CSS padding (padding: 0 1 = 1 char each side)
+            available = term_width - self.label_width - 3 - 5 - 2
+            return max(self.MIN_TIMELINE, min(available, 200))
         except (OSError, ValueError):
             # No terminal available or invalid size
             return self.DEFAULT_TIMELINE
@@ -290,7 +315,7 @@ class StatusTimeline(Static):
     def update_history(self, sessions: list) -> None:
         """Refresh history data from log files."""
         self.sessions = sessions
-        self._presence_history = read_presence_history(hours=self.TIMELINE_HOURS)
+        self._presence_history = read_presence_history(hours=self.timeline_hours)
         self._agent_histories = {}
 
         # Get agent names from sessions
@@ -298,7 +323,7 @@ class StatusTimeline(Static):
 
         # Read agent history from session-specific file and group by agent
         history_path = get_agent_history_path(self.tmux_session)
-        all_history = read_agent_status_history(hours=self.TIMELINE_HOURS, history_file=history_path)
+        all_history = read_agent_status_history(hours=self.timeline_hours, history_file=history_path)
         for ts, agent, status, activity in all_history:
             if agent not in self._agent_histories:
                 self._agent_histories[agent] = []
@@ -322,8 +347,8 @@ class StatusTimeline(Static):
             return "─" * width
 
         now = datetime.now()
-        start_time = now - timedelta(hours=self.TIMELINE_HOURS)
-        slot_duration = timedelta(hours=self.TIMELINE_HOURS) / width
+        start_time = now - timedelta(hours=self.timeline_hours)
+        slot_duration = timedelta(hours=self.timeline_hours) / width
 
         # Initialize timeline with empty slots
         timeline = ["─"] * width
@@ -347,19 +372,20 @@ class StatusTimeline(Static):
         width = self.timeline_width
 
         # Time scale header
+        label_w = self.label_width
         content.append("Timeline: ", style="bold")
-        content.append(f"-{self.TIMELINE_HOURS:.0f}h", style="dim")
+        content.append(f"-{self.timeline_hours:.0f}h", style="dim")
         header_padding = max(0, width - 10)
         content.append(" " * header_padding, style="dim")
         content.append("now", style="dim")
         content.append("\n")
 
         # User presence timeline - group by time slots like agent timelines
-        # Align with agent names (14 chars): "  " + name + " " = 17 chars total
-        content.append(f"  {'User:':<14} ", style="cyan")
+        # Align with agent names using dynamic label width (#75)
+        content.append(f"  {'User:':<{label_w}} ", style="cyan")
         if self._presence_history:
             slot_states = build_timeline_slots(
-                self._presence_history, width, self.TIMELINE_HOURS, now
+                self._presence_history, width, self.timeline_hours, now
             )
             # Render timeline with colors
             for i in range(width):
@@ -383,14 +409,14 @@ class StatusTimeline(Static):
             agent_name = session.name
             history = self._agent_histories.get(agent_name, [])
 
-            # Truncate name to fit
-            display_name = truncate_name(agent_name)
+            # Use dynamic label width (#75)
+            display_name = truncate_name(agent_name, max_len=label_w)
             content.append(f"  {display_name} ", style="cyan")
 
             green_slots = 0
             total_slots = 0
             if history:
-                slot_states = build_timeline_slots(history, width, self.TIMELINE_HOURS, now)
+                slot_states = build_timeline_slots(history, width, self.timeline_hours, now)
                 # Render timeline with colors
                 for i in range(width):
                     if i in slot_states:
@@ -652,6 +678,7 @@ class SessionSummary(Static, can_focus=True):
     expanded: reactive[bool] = reactive(True)  # Start expanded
     detail_lines: reactive[int] = reactive(5)  # Lines of output to show (5, 10, 20, 50)
     summary_detail: reactive[str] = reactive("low")  # low, med, full
+    summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
 
     def __init__(self, session: Session, status_detector: StatusDetector, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -660,11 +687,17 @@ class SessionSummary(Static, can_focus=True):
         # Initialize from persisted session state, not hardcoded "running"
         self.detected_status = session.stats.current_state if session.stats.current_state else "running"
         self.current_activity = "Initializing..."
+        # AI-generated summaries (from daemon's SummarizerComponent)
+        self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
+        self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
+        # Track when status last changed (for immediate time-in-state updates)
+        self._status_changed_at: Optional[datetime] = None
+        self._last_known_status: str = self.detected_status
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -764,10 +797,14 @@ class SessionSummary(Static, can_focus=True):
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
         # The session.stats values are read from what Monitor Daemon has persisted
         # If session is asleep, keep the asleep status instead of the detected status
-        if self.session.is_asleep:
-            self.detected_status = "asleep"
-        else:
-            self.detected_status = status
+        new_status = "asleep" if self.session.is_asleep else status
+
+        # Track status changes for immediate time-in-state reset (#73)
+        if new_status != self._last_known_status:
+            self._status_changed_at = datetime.now()
+            self._last_known_status = new_status
+
+        self.detected_status = new_status
 
         # Use pre-fetched claude stats (no file I/O on main thread)
         if claude_stats is not None:
@@ -779,6 +816,10 @@ class SessionSummary(Static, can_focus=True):
 
     def watch_summary_detail(self, summary_detail: str) -> None:
         """Called when summary_detail changes"""
+        self.refresh()
+
+    def watch_summary_content_mode(self, summary_content_mode: str) -> None:
+        """Called when summary_content_mode changes (#74)"""
         self.refresh()
 
     def render(self) -> Text:
@@ -836,13 +877,21 @@ class SessionSummary(Static, can_focus=True):
             content.append("  ", style=f"dim{bg}")  # Maintain alignment
 
         # Time in current state (directly after status light)
+        # Use locally tracked change time if more recent than daemon's state_since (#73)
+        state_start = None
+        if self._status_changed_at:
+            state_start = self._status_changed_at
         if stats.state_since:
             try:
-                state_start = datetime.fromisoformat(stats.state_since)
-                elapsed = (datetime.now() - state_start).total_seconds()
-                content.append(f"{format_duration(elapsed):>5} ", style=status_color)
+                daemon_state_start = datetime.fromisoformat(stats.state_since)
+                # Use whichever is more recent (our local detection or daemon's record)
+                if state_start is None or daemon_state_start > state_start:
+                    state_start = daemon_state_start
             except (ValueError, TypeError):
-                content.append("    - ", style=f"dim{bg}")
+                pass
+        if state_start:
+            elapsed = (datetime.now() - state_start).total_seconds()
+            content.append(f"{format_duration(elapsed):>5} ", style=status_color)
         else:
             content.append("    - ", style=f"dim{bg}")
 
@@ -935,28 +984,67 @@ class SessionSummary(Static, can_focus=True):
         else:
             content.append(" ➖", style=f"bold dim{bg}")  # No instructions indicator
 
+        # Agent value indicator (#61)
+        # Full detail: show numeric value
+        # Short/med: show emoticon (🔥 high, ➖ normal, 🧊 low)
+        if self.summary_detail == "full":
+            content.append(f" ⭐{s.agent_value:>4}", style=f"bold magenta{bg}")
+        else:
+            # Emoticon based on value relative to default 1000
+            if s.agent_value > 1000:
+                content.append(" 🔥", style=f"bold red{bg}")  # High priority
+            elif s.agent_value < 1000:
+                content.append(" 🧊", style=f"bold blue{bg}")  # Low priority
+            else:
+                content.append(" ➖", style=f"dim{bg}")  # Normal
+
         if not self.expanded:
-            # Compact view: show standing orders or current activity
+            # Compact view: show content based on summary_content_mode (#74)
             content.append(" │ ", style=f"bold dim{bg}")
-            # Calculate remaining space for standing orders/activity
+            # Calculate remaining space for content
             current_len = len(content.plain)
             remaining = max(20, term_width - current_len - 2)
 
-            if s.standing_instructions:
-                # Show standing orders with completion indicator
-                if s.standing_orders_complete:
-                    style = f"bold green{bg}"
-                    prefix = "✓ "
-                elif s.standing_instructions_preset:
-                    style = f"bold cyan{bg}"
-                    prefix = f"{s.standing_instructions_preset}: "
+            # Determine what to show based on mode
+            mode = self.summary_content_mode
+
+            if mode == "annotation":
+                # Show human annotation
+                if s.human_annotation:
+                    content.append(f"✏ {s.human_annotation[:remaining-2]}", style=f"bold magenta{bg}")
                 else:
-                    style = f"bold italic yellow{bg}"
-                    prefix = ""
-                display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
-                content.append(display_text[:remaining], style=style)
+                    content.append("(no annotation)", style=f"dim italic{bg}")
+            elif mode == "orders":
+                # Show standing orders
+                if s.standing_instructions:
+                    if s.standing_orders_complete:
+                        style = f"bold green{bg}"
+                        prefix = "✓ "
+                    elif s.standing_instructions_preset:
+                        style = f"bold cyan{bg}"
+                        prefix = f"{s.standing_instructions_preset}: "
+                    else:
+                        style = f"bold italic yellow{bg}"
+                        prefix = ""
+                    display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
+                    content.append(display_text[:remaining], style=style)
+                else:
+                    content.append("(no standing orders)", style=f"dim italic{bg}")
+            elif mode == "ai_long":
+                # ai_long: show context summary (wider context from AI)
+                if self.ai_summary_context:
+                    content.append(self.ai_summary_context[:remaining], style=f"bold italic{bg}")
+                elif self.ai_summary_short:
+                    content.append(self.ai_summary_short[:remaining], style=f"italic{bg}")
+                else:
+                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
             else:
-                content.append(self.current_activity[:remaining], style=f"bold italic{bg}")
+                # ai_short: show short summary (current activity from AI)
+                if self.ai_summary_short:
+                    content.append(self.ai_summary_short[:remaining], style=f"bold italic{bg}")
+                else:
+                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
+
             # Pad to fill terminal width
             current_len = len(content.plain)
             if current_len < term_width:
@@ -1104,6 +1192,20 @@ class CommandBar(Static):
             self.directory = directory
             self.bypass_permissions = bypass_permissions
 
+    class ValueUpdated(Message):
+        """Message sent when user updates agent value (#61)."""
+        def __init__(self, session_name: str, value: int):
+            super().__init__()
+            self.session_name = session_name
+            self.value = value
+
+    class AnnotationUpdated(Message):
+        """Message sent when user updates human annotation (#74)."""
+        def __init__(self, session_name: str, annotation: str):
+            super().__init__()
+            self.session_name = session_name
+            self.annotation = annotation
+
     def compose(self) -> ComposeResult:
         """Create command bar widgets."""
         with Horizontal(id="cmd-bar-container"):
@@ -1139,6 +1241,18 @@ class CommandBar(Static):
             else:
                 label.update("[Standing Orders] ")
             input_widget.placeholder = "Enter standing orders (or empty to clear)..."
+        elif self.mode == "value":
+            if self.target_session:
+                label.update(f"[{self.target_session} Value] ")
+            else:
+                label.update("[Value] ")
+            input_widget.placeholder = "Enter priority value (1000 = normal, higher = more important)..."
+        elif self.mode == "annotation":
+            if self.target_session:
+                label.update(f"[{self.target_session} Annotation] ")
+            else:
+                label.update("[Annotation] ")
+            input_widget.placeholder = "Enter human annotation (or empty to clear)..."
         elif self.target_session:
             label.update(f"[{self.target_session}] ")
             input_widget.placeholder = "Type instruction (Enter to send)..."
@@ -1234,6 +1348,18 @@ class CommandBar(Static):
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
+            elif self.mode == "value":
+                # Set agent value (#61)
+                self._set_value(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "annotation":
+                # Set human annotation (empty string clears it)
+                self._set_annotation(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
 
             # Default "send" mode
             if not text:
@@ -1259,9 +1385,13 @@ class CommandBar(Static):
         if directory:
             dir_path = Path(directory).expanduser().resolve()
             if not dir_path.exists():
-                # Try to create it or warn
-                self.app.notify(f"Directory does not exist: {dir_path}", severity="warning")
-                return
+                # Create the directory
+                try:
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                    self.app.notify(f"Created directory: {dir_path}", severity="information")
+                except OSError as e:
+                    self.app.notify(f"Failed to create directory: {e}", severity="error")
+                    return
             if not dir_path.is_dir():
                 self.app.notify(f"Not a directory: {dir_path}", severity="error")
                 return
@@ -1306,6 +1436,23 @@ class CommandBar(Static):
         if not self.target_session or not text.strip():
             return
         self.post_message(self.StandingOrderRequested(self.target_session, text.strip()))
+
+    def _set_value(self, text: str) -> None:
+        """Set agent value (#61)."""
+        if not self.target_session:
+            return
+        try:
+            value = int(text.strip()) if text.strip() else 1000
+            self.post_message(self.ValueUpdated(self.target_session, value))
+        except ValueError:
+            # Invalid input, notify user but don't crash
+            self.app.notify("Invalid value - please enter a number", severity="error")
+
+    def _set_annotation(self, text: str) -> None:
+        """Set human annotation (empty string clears it) (#74)."""
+        if not self.target_session:
+            return
+        self.post_message(self.AnnotationUpdated(self.target_session, text.strip()))
 
     def action_toggle_expand(self) -> None:
         """Toggle between single and multi-line mode."""
@@ -1613,17 +1760,35 @@ class SupervisorTUI(App):
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
         ("g", "toggle_show_terminated", "Show killed"),
+        # Jump to sessions needing attention (bell/red)
+        ("b", "jump_to_attention", "Jump attention"),
+        # Hide sleeping agents from display
+        ("Z", "toggle_hide_asleep", "Hide sleeping"),
+        # Sort mode cycle (#61)
+        ("S", "cycle_sort_mode", "Sort mode"),
+        # Edit agent value (#61)
+        ("V", "edit_agent_value", "Edit value"),
+        # Cycle summary content mode (#74)
+        ("l", "cycle_summary_content", "Summary content"),
+        # Edit human annotation (#74)
+        ("I", "focus_human_annotation", "Annotation"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
     DETAIL_LEVELS = [5, 10, 20, 50]
     # Summary detail levels: low (minimal), med (timing), full (all + repo)
     SUMMARY_LEVELS = ["low", "med", "full"]
+    # Sort modes (#61)
+    SORT_MODES = ["alphabetical", "by_status", "by_value"]
+    # Summary content modes: what to show in the summary line (#74)
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation"]
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
+    hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
+    summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -1666,6 +1831,9 @@ class SupervisorTUI(App):
         self._status_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
+        # Track attention jump state (for 'b' key cycling)
+        self._attention_jump_index = 0
+        self._attention_jump_list: list = []  # Cached list of sessions needing attention
         # Pending kill confirmation (session name, timestamp)
         self._pending_kill: tuple[str, float] | None = None
         # Tmux interface for sync operations
@@ -1674,6 +1842,8 @@ class SupervisorTUI(App):
         self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
         self.show_terminated = self._prefs.show_terminated
+        # Initialize hide_asleep from preferences
+        self.hide_asleep = self._prefs.hide_asleep
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -1831,6 +2001,8 @@ class SupervisorTUI(App):
         """
         self._invalidate_sessions_cache()  # Force cache refresh
         self.sessions = self.launcher.list_sessions()
+        # Apply sorting (#61)
+        self._sort_sessions()
         # Calculate max repo:branch width for alignment in full detail mode
         self.max_repo_info_width = max(
             (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in self.sessions),
@@ -1840,6 +2012,45 @@ class SupervisorTUI(App):
         self.update_session_widgets()
         # NOTE: Don't call update_timeline() here - it has its own 30s interval
         # and reading log files during session refresh causes UI stutter
+
+    def _sort_sessions(self) -> None:
+        """Sort sessions based on current sort mode (#61)."""
+        mode = self._prefs.sort_mode
+
+        if mode == "alphabetical":
+            self.sessions.sort(key=lambda s: s.name.lower())
+        elif mode == "by_status":
+            # Sort by status priority: waiting_user first (red), then running (green), etc.
+            status_order = {
+                "waiting_user": 0,
+                "waiting_supervisor": 1,
+                "no_instructions": 2,
+                "error": 3,
+                "running": 4,
+                "terminated": 5,
+                "asleep": 6,
+            }
+            self.sessions.sort(key=lambda s: (
+                status_order.get(s.stats.current_state or "running", 4),
+                s.name.lower()
+            ))
+        elif mode == "by_value":
+            # Sort by value descending (higher = more important), then alphabetically
+            # Non-green agents first (by value), then green agents (by value)
+            status_order = {
+                "waiting_user": 0,
+                "waiting_supervisor": 0,
+                "no_instructions": 0,
+                "error": 0,
+                "running": 1,
+                "terminated": 2,
+                "asleep": 2,
+            }
+            self.sessions.sort(key=lambda s: (
+                status_order.get(s.stats.current_state or "running", 1),
+                -s.agent_value,  # Descending by value
+                s.name.lower()
+            ))
 
     def _get_cached_sessions(self) -> dict[str, Session]:
         """Get sessions with caching to reduce disk I/O.
@@ -1929,18 +2140,29 @@ class SupervisorTUI(App):
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
 
+            # Read daemon state for AI summaries (if available)
+            ai_summaries = {}
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            if daemon_state:
+                for ds in daemon_state.sessions:
+                    ai_summaries[ds.session_id] = (
+                        ds.activity_summary or "",
+                        ds.activity_summary_context or "",
+                    )
+
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions)
+            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions, ai_summaries)
         finally:
             self._status_update_in_progress = False
 
-    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict) -> None:
+    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
         """Apply fetched status results to widgets (runs on main thread).
 
         All data has been pre-fetched in background - this just updates widget state.
         No file I/O happens here.
         """
         prefs_changed = False
+        ai_summaries = ai_summaries or {}
 
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
@@ -1948,6 +2170,10 @@ class SupervisorTUI(App):
             # Update widget's session with fresh data
             if session_id in fresh_sessions:
                 widget.session = fresh_sessions[session_id]
+
+            # Update AI summaries from daemon state (if available)
+            if session_id in ai_summaries:
+                widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
 
             # Apply status and stats if we have results for this widget
             if session_id in status_results:
@@ -1992,8 +2218,11 @@ class SupervisorTUI(App):
         container = self.query_one("#sessions-container", ScrollableContainer)
 
         # Build the list of sessions to display
-        # Include terminated sessions if show_terminated is enabled
+        # Filter out sleeping agents if hide_asleep is enabled (#69)
         display_sessions = list(self.sessions)
+        if self.hide_asleep:
+            display_sessions = [s for s in display_sessions if not s.is_asleep]
+        # Include terminated sessions if show_terminated is enabled
         if self.show_terminated:
             # Add terminated sessions that aren't already in the active list
             active_ids = {s.id for s in self.sessions}
@@ -2117,6 +2346,54 @@ class SupervisorTUI(App):
         self._save_prefs()
 
         self.notify(f"Summary: {new_level}", severity="information")
+
+    def action_cycle_summary_content(self) -> None:
+        """Cycle through summary content modes (ai_short, ai_long, orders, annotation) (#74)."""
+        modes = self.SUMMARY_CONTENT_MODES
+        current_idx = modes.index(self.summary_content_mode) if self.summary_content_mode in modes else 0
+        new_idx = (current_idx + 1) % len(modes)
+        self.summary_content_mode = modes[new_idx]
+
+        # Update all session widgets
+        for widget in self.query(SessionSummary):
+            widget.summary_content_mode = self.summary_content_mode
+
+        mode_names = {
+            "ai_short": "AI Summary (short)",
+            "ai_long": "AI Summary (context)",
+            "orders": "Standing Orders",
+            "annotation": "Human Annotation",
+        }
+        self.notify(f"Content: {mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
+
+    def action_focus_human_annotation(self) -> None:
+        """Focus input for editing human annotation (#74)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+
+            # Show the command bar
+            cmd_bar.add_class("visible")
+
+            # Get the currently focused session (if any)
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                # Pre-fill with existing annotation
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = focused.session.human_annotation or ""
+            elif not cmd_bar.target_session and self.sessions:
+                # Default to first session if none focused
+                cmd_bar.set_target(self.sessions[0].name)
+
+            # Set mode to annotation editing
+            cmd_bar.set_mode("annotation")
+
+            # Enable and focus the input
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
 
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
@@ -2258,6 +2535,69 @@ class SupervisorTUI(App):
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
 
+    def action_jump_to_attention(self) -> None:
+        """Jump to next session needing attention.
+
+        Cycles through sessions with waiting_user status first (red/bell),
+        then through other non-green statuses (no_instructions, waiting_supervisor).
+        """
+        from .status_constants import STATUS_WAITING_USER, STATUS_NO_INSTRUCTIONS, STATUS_WAITING_SUPERVISOR, STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP
+
+        widgets = self._get_widgets_in_session_order()
+        if not widgets:
+            return
+
+        # Build prioritized list of sessions needing attention
+        # Priority: waiting_user (red) > no_instructions (yellow) > waiting_supervisor (orange)
+        attention_sessions = []
+        for i, widget in enumerate(widgets):
+            status = getattr(widget, 'current_status', STATUS_RUNNING)
+            if status == STATUS_WAITING_USER:
+                attention_sessions.append((0, i, widget))  # Highest priority
+            elif status == STATUS_NO_INSTRUCTIONS:
+                attention_sessions.append((1, i, widget))
+            elif status == STATUS_WAITING_SUPERVISOR:
+                attention_sessions.append((2, i, widget))
+            # Skip running, terminated, asleep
+
+        if not attention_sessions:
+            self.notify("No sessions need attention", severity="information")
+            return
+
+        # Sort by priority, then by original index
+        attention_sessions.sort(key=lambda x: (x[0], x[1]))
+
+        # Check if our cached list changed (sessions may have changed state)
+        current_widget_ids = [id(w) for _, _, w in attention_sessions]
+        cached_widget_ids = [id(w) for w in self._attention_jump_list]
+
+        if current_widget_ids != cached_widget_ids:
+            # List changed, reset index
+            self._attention_jump_list = [w for _, _, w in attention_sessions]
+            self._attention_jump_index = 0
+        else:
+            # Cycle to next
+            self._attention_jump_index = (self._attention_jump_index + 1) % len(self._attention_jump_list)
+
+        # Focus the target widget
+        target_widget = self._attention_jump_list[self._attention_jump_index]
+        # Find its index in the full widget list
+        for i, w in enumerate(widgets):
+            if w is target_widget:
+                self.focused_session_index = i
+                break
+
+        target_widget.focus()
+        if self.view_mode == "list_preview":
+            self._update_preview()
+        self._sync_tmux_window(target_widget)
+
+        # Show position indicator
+        pos = self._attention_jump_index + 1
+        total = len(self._attention_jump_list)
+        status = getattr(target_widget, 'current_status', 'unknown')
+        self.notify(f"Attention {pos}/{total}: {target_widget.session.name} ({status})", severity="information")
+
         # Update subtitle to show state
         self._update_subtitle()
 
@@ -2270,6 +2610,47 @@ class SupervisorTUI(App):
             self.notify(f"Killed sessions: {status} ({count})", severity="information")
         else:
             self.notify(f"Killed sessions: {status}", severity="information")
+
+    def action_toggle_hide_asleep(self) -> None:
+        """Toggle hiding sleeping agents from display."""
+        self.hide_asleep = not self.hide_asleep
+
+        # Save preference
+        self._prefs.hide_asleep = self.hide_asleep
+        self._save_prefs()
+
+        # Update subtitle to show state
+        self._update_subtitle()
+
+        # Refresh session widgets to show/hide sleeping agents
+        self.update_session_widgets()
+
+        # Count sleeping agents
+        asleep_count = sum(1 for s in self.sessions if s.is_asleep)
+        if self.hide_asleep:
+            self.notify(f"Sleeping agents hidden ({asleep_count})", severity="information")
+        else:
+            self.notify(f"Sleeping agents visible ({asleep_count})", severity="information")
+
+    def action_cycle_sort_mode(self) -> None:
+        """Cycle through sort modes (#61)."""
+        modes = self.SORT_MODES
+        current_idx = modes.index(self._prefs.sort_mode) if self._prefs.sort_mode in modes else 0
+        new_idx = (current_idx + 1) % len(modes)
+        self._prefs.sort_mode = modes[new_idx]
+        self._save_prefs()
+
+        # Re-sort and refresh
+        self._sort_sessions()
+        self.update_session_widgets()
+        self._update_subtitle()
+
+        mode_names = {
+            "alphabetical": "Alphabetical",
+            "by_status": "By Status",
+            "by_value": "By Value (priority)",
+        }
+        self.notify(f"Sort: {mode_names.get(self._prefs.sort_mode, self._prefs.sort_mode)}", severity="information")
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
@@ -2398,6 +2779,37 @@ class SupervisorTUI(App):
         except NoMatches:
             pass
 
+    def action_edit_agent_value(self) -> None:
+        """Focus the command bar for editing agent value (#61)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+
+            # Show the command bar
+            cmd_bar.add_class("visible")
+
+            # Get the currently focused session (if any)
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                # Pre-fill with existing value
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = str(focused.session.agent_value)
+            elif not cmd_bar.target_session and self.sessions:
+                # Default to first session if none focused
+                cmd_bar.set_target(self.sessions[0].name)
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                cmd_input.value = "1000"
+
+            # Set mode to value
+            cmd_bar.set_mode("value")
+
+            # Enable and focus the input
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
+
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
         from datetime import datetime
@@ -2427,6 +2839,31 @@ class SupervisorTUI(App):
             self.session_manager.set_standing_instructions(session.id, message.text)
             self.notify(f"Standing order set for {message.session_name}")
             # Refresh session list to show updated standing order
+            self.refresh_sessions()
+        else:
+            self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_value_updated(self, message: CommandBar.ValueUpdated) -> None:
+        """Handle agent value update from command bar (#61)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session:
+            self.session_manager.set_agent_value(session.id, message.value)
+            self.notify(f"Value set to {message.value} for {message.session_name}")
+            # Refresh and re-sort session list
+            self.refresh_sessions()
+        else:
+            self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_annotation_updated(self, message: CommandBar.AnnotationUpdated) -> None:
+        """Handle human annotation update from command bar (#74)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session:
+            self.session_manager.set_human_annotation(session.id, message.annotation)
+            if message.annotation:
+                self.notify(f"Annotation set for {message.session_name}")
+            else:
+                self.notify(f"Annotation cleared for {message.session_name}")
+            # Refresh session list to show updated annotation
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")

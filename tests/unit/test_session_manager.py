@@ -189,6 +189,56 @@ class TestSessionManagerUpdates:
         updated = manager.get_session(session.id)
         assert updated.permissiveness_mode == "permissive"
 
+    def test_set_agent_value(self, tmp_path):
+        """Can set agent value (#61)"""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Default value is 1000
+        assert session.agent_value == 1000
+
+        # Set high priority
+        manager.set_agent_value(session.id, 2000)
+
+        updated = manager.get_session(session.id)
+        assert updated.agent_value == 2000
+
+        # Set low priority
+        manager.set_agent_value(session.id, 500)
+
+        updated = manager.get_session(session.id)
+        assert updated.agent_value == 500
+
+    def test_set_human_annotation(self, tmp_path):
+        """Can set human annotation (#74)"""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Initially empty
+        assert session.human_annotation == ""
+
+        # Set annotation
+        manager.set_human_annotation(session.id, "working on auth refactor")
+
+        updated = manager.get_session(session.id)
+        assert updated.human_annotation == "working on auth refactor"
+
+        # Clear annotation
+        manager.set_human_annotation(session.id, "")
+
+        cleared = manager.get_session(session.id)
+        assert cleared.human_annotation == ""
+
 
 class TestSessionStats:
     """Test session statistics tracking"""

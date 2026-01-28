@@ -1,142 +1,166 @@
 """
 Real implementations of protocol interfaces.
 
-These are production implementations that make actual subprocess calls
-to tmux, perform real file I/O, etc.
+These are production implementations that use libtmux for tmux operations
+and perform real file I/O.
 """
 
 import json
-import subprocess
 import os
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+import libtmux
+from libtmux.exc import LibTmuxException
+from libtmux._internal.query_list import ObjectDoesNotExist
+
 
 class RealTmux:
-    """Production implementation of TmuxInterface using subprocess"""
+    """Production implementation of TmuxInterface using libtmux"""
+
+    def __init__(self, socket_name: Optional[str] = None):
+        """Initialize with optional socket name for test isolation.
+
+        If no socket_name is provided, checks OVERCODE_TMUX_SOCKET env var.
+        """
+        # Support OVERCODE_TMUX_SOCKET env var for testing
+        self._socket_name = socket_name or os.environ.get("OVERCODE_TMUX_SOCKET")
+        self._server: Optional[libtmux.Server] = None
+
+    @property
+    def server(self) -> libtmux.Server:
+        """Lazy-load the tmux server connection."""
+        if self._server is None:
+            if self._socket_name:
+                self._server = libtmux.Server(socket_name=self._socket_name)
+            else:
+                self._server = libtmux.Server()
+        return self._server
+
+    def _get_session(self, session: str) -> Optional[libtmux.Session]:
+        """Get a session by name, or None if it doesn't exist."""
+        try:
+            return self.server.sessions.get(session_name=session)
+        except (LibTmuxException, ObjectDoesNotExist):
+            return None
+
+    def _get_window(self, session: str, window: int) -> Optional[libtmux.Window]:
+        """Get a window by session name and window index."""
+        sess = self._get_session(session)
+        if sess is None:
+            return None
+        try:
+            return sess.windows.get(window_index=str(window))
+        except (LibTmuxException, ObjectDoesNotExist):
+            return None
+
+    def _get_pane(self, session: str, window: int) -> Optional[libtmux.Pane]:
+        """Get the first pane of a window."""
+        win = self._get_window(session, window)
+        if win is None or not win.panes:
+            return None
+        return win.panes[0]
 
     def capture_pane(self, session: str, window: int, lines: int = 100) -> Optional[str]:
         try:
-            result = subprocess.run(
-                ["tmux", "capture-pane", "-t", f"{session}:{window}",
-                 "-p", "-S", f"-{lines}"],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                return result.stdout
-            return None
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            pane = self._get_pane(session, window)
+            if pane is None:
+                return None
+            # capture_pane returns list of lines
+            captured = pane.capture_pane(start=-lines)
+            if isinstance(captured, list):
+                return '\n'.join(captured)
+            return captured
+        except LibTmuxException:
             return None
 
     def send_keys(self, session: str, window: int, keys: str, enter: bool = True) -> bool:
         try:
+            pane = self._get_pane(session, window)
+            if pane is None:
+                return False
+
             # For Claude Code: text and Enter must be sent as SEPARATE commands
             # with a small delay, otherwise Claude Code doesn't process the Enter.
-            target = f"{session}:{window}"
-
-            # Send text first (if any)
             if keys:
-                result = subprocess.run(
-                    ["tmux", "send-keys", "-t", target, keys],
-                    timeout=5, capture_output=True
-                )
-                if result.returncode != 0:
-                    return False
+                pane.send_keys(keys, enter=False)
                 # Small delay for Claude Code to process text
                 time.sleep(0.1)
 
-            # Send Enter separately
             if enter:
-                result = subprocess.run(
-                    ["tmux", "send-keys", "-t", target, "Enter"],
-                    timeout=5, capture_output=True
-                )
-                if result.returncode != 0:
-                    return False
+                pane.send_keys('', enter=True)
 
             return True
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+        except LibTmuxException:
             return False
 
     def has_session(self, session: str) -> bool:
         try:
-            result = subprocess.run(
-                ["tmux", "has-session", "-t", session],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return self.server.has_session(session)
+        except LibTmuxException:
             return False
 
     def new_session(self, session: str) -> bool:
         try:
-            result = subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            self.server.new_session(session_name=session, attach=False)
+            return True
+        except LibTmuxException:
             return False
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
                    cwd: Optional[str] = None) -> Optional[int]:
         try:
-            cmd = ["tmux", "new-window", "-t", session, "-n", name, "-P", "-F", "#{window_index}"]
-            if cwd:
-                cmd.extend(["-c", cwd])
-            if command:
-                cmd.append(" ".join(command))
+            sess = self._get_session(session)
+            if sess is None:
+                return None
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                return int(result.stdout.strip())
-            return None
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError):
+            kwargs: Dict[str, Any] = {'window_name': name, 'attach': False}
+            if cwd:
+                kwargs['start_directory'] = cwd
+            if command:
+                kwargs['window_shell'] = ' '.join(command)
+
+            window = sess.new_window(**kwargs)
+            return int(window.window_index)
+        except (LibTmuxException, ValueError):
             return None
 
     def kill_window(self, session: str, window: int) -> bool:
         try:
-            result = subprocess.run(
-                ["tmux", "kill-window", "-t", f"{session}:{window}"],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            win = self._get_window(session, window)
+            if win is None:
+                return False
+            win.kill()
+            return True
+        except LibTmuxException:
             return False
 
     def kill_session(self, session: str) -> bool:
         try:
-            result = subprocess.run(
-                ["tmux", "kill-session", "-t", session],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            sess = self._get_session(session)
+            if sess is None:
+                return False
+            sess.kill()
+            return True
+        except LibTmuxException:
             return False
 
     def list_windows(self, session: str) -> List[Dict[str, Any]]:
         try:
-            result = subprocess.run(
-                ["tmux", "list-windows", "-t", session, "-F",
-                 "#{window_index}:#{window_name}:#{window_active}"],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode != 0:
+            sess = self._get_session(session)
+            if sess is None:
                 return []
 
             windows = []
-            for line in result.stdout.strip().split('\n'):
-                if line:
-                    parts = line.split(':')
-                    if len(parts) >= 3:
-                        windows.append({
-                            'index': int(parts[0]),
-                            'name': parts[1],
-                            'active': parts[2] == '1'
-                        })
+            for win in sess.windows:
+                windows.append({
+                    'index': int(win.window_index),
+                    'name': win.window_name,
+                    'active': win.window_active == '1'
+                })
             return windows
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+        except LibTmuxException:
             return []
 
     def attach(self, session: str) -> None:
@@ -145,12 +169,12 @@ class RealTmux:
     def select_window(self, session: str, window: int) -> bool:
         """Select a window in a tmux session (for external pane sync)."""
         try:
-            result = subprocess.run(
-                ["tmux", "select-window", "-t", f"{session}:{window}"],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            win = self._get_window(session, window)
+            if win is None:
+                return False
+            win.select()
+            return True
+        except LibTmuxException:
             return False
 
 

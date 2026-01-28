@@ -69,9 +69,16 @@ class SessionDaemonState:
     start_directory: Optional[str] = None  # For git diff stats
     is_asleep: bool = False  # Agent is paused and excluded from stats (#70)
 
-    # Activity summary (from SummarizerComponent)
+    # Agent priority value (#61)
+    agent_value: int = 1000  # Default 1000, higher = more important
+
+    # Activity summaries (from SummarizerComponent)
+    # Short: current activity - what's happening right now (~50 chars)
     activity_summary: str = ""
     activity_summary_updated: Optional[str] = None  # ISO timestamp
+    # Context: wider context - what's being worked on overall (~80 chars)
+    activity_summary_context: str = ""
+    activity_summary_context_updated: Optional[str] = None  # ISO timestamp
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -100,8 +107,11 @@ class SessionDaemonState:
             "permissiveness_mode": self.permissiveness_mode,
             "start_directory": self.start_directory,
             "is_asleep": self.is_asleep,
+            "agent_value": self.agent_value,
             "activity_summary": self.activity_summary,
             "activity_summary_updated": self.activity_summary_updated,
+            "activity_summary_context": self.activity_summary_context,
+            "activity_summary_context_updated": self.activity_summary_context_updated,
         }
 
     @classmethod
@@ -132,8 +142,11 @@ class SessionDaemonState:
             permissiveness_mode=data.get("permissiveness_mode", "normal"),
             start_directory=data.get("start_directory"),
             is_asleep=data.get("is_asleep", False),
+            agent_value=data.get("agent_value", 1000),
             activity_summary=data.get("activity_summary", ""),
             activity_summary_updated=data.get("activity_summary_updated"),
+            activity_summary_context=data.get("activity_summary_context", ""),
+            activity_summary_context_updated=data.get("activity_summary_context_updated"),
         )
 
 

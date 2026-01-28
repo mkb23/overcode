@@ -53,7 +53,7 @@ from .settings import (
     get_supervisor_stats_path,
 )
 from .config import get_relay_config
-from .status_constants import STATUS_RUNNING, STATUS_TERMINATED
+from .status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
 from .summarizer_component import SummarizerComponent, SummarizerConfig
@@ -213,6 +213,10 @@ class MonitorDaemon:
         self._last_stats_sync = datetime.now()
         self._stats_sync_interval = 60  # seconds
 
+        # TUI activity tracking (for summarizer cost control - #66)
+        self._last_tui_activity = datetime.min
+        self._tui_activity_timeout = 120  # seconds - summarizer pauses after this
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -294,6 +298,7 @@ class MonitorDaemon:
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
             is_asleep=session.is_asleep,
+            agent_value=session.agent_value,
         )
 
     def _update_state_time(self, session, status: str, now: datetime) -> None:
@@ -333,10 +338,10 @@ class MonitorDaemon:
 
         if status == STATUS_RUNNING:
             green_time += elapsed
-        elif status != STATUS_TERMINATED:
-            # Only count non-green time for non-terminated states
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+            # Only count non-green time for non-terminated/non-asleep states (#68)
             non_green_time += elapsed
-        # else: terminated - don't accumulate time
+        # else: terminated or asleep - don't accumulate time
 
         # INVARIANT CHECK: accumulated time should never exceed uptime
         # This catches bugs like multiple daemons running simultaneously
@@ -449,6 +454,7 @@ class MonitorDaemon:
 
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
+                self._last_tui_activity = datetime.now()  # Track for summarizer (#66)
                 self.state.current_interval = INTERVAL_FAST
                 self.state.save(self.state_path)
                 return
@@ -611,12 +617,14 @@ class MonitorDaemon:
                         continue
 
                     # Track stats and build state
-                    session_state = self.track_session_stats(session, status)
+                    # Use "asleep" status if session is marked as sleeping (#68)
+                    effective_status = STATUS_ASLEEP if session.is_asleep else status
+                    session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)
 
                     # Log status history to session-specific file
-                    log_agent_status(session.name, status, activity, history_file=self.history_path)
+                    log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
 
                     # Track if any session is not waiting for user
                     if status != "waiting_user":
@@ -637,13 +645,27 @@ class MonitorDaemon:
                         self.sync_claude_code_stats(session)
                     self._last_stats_sync = now
 
-                # Update summaries (if enabled)
-                summaries = self.summarizer.update(sessions)
+                # Update summaries (if enabled and TUI active with user present - #66)
+                # Only run summarizer when:
+                # 1. TUI was active recently (within timeout)
+                # 2. User is not locked (presence_state != 1)
+                tui_recently_active = (now - self._last_tui_activity).total_seconds() < self._tui_activity_timeout
+                # Get current presence state for summarizer check (also used in _publish_state)
+                presence_state, _, _ = self.presence.get_current_state()
+                user_not_locked = presence_state != 1  # 1 = locked/screen off
+                should_summarize = tui_recently_active and user_not_locked
+
+                if should_summarize:
+                    summaries = self.summarizer.update(sessions)
+                else:
+                    summaries = {}
                 for session_state in session_states:
                     summary = summaries.get(session_state.session_id)
                     if summary:
                         session_state.activity_summary = summary.text
                         session_state.activity_summary_updated = summary.updated_at
+                        session_state.activity_summary_context = summary.context
+                        session_state.activity_summary_context_updated = summary.context_updated_at
 
                 # Calculate interval
                 interval = self.calculate_interval(sessions, all_waiting_user)
