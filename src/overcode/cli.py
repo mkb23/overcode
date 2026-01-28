@@ -194,6 +194,33 @@ def cleanup(session: SessionOption = "agents"):
         rprint("[dim]No terminated sessions to clean up[/dim]")
 
 
+@app.command(name="set-value")
+def set_value(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    value: Annotated[int, typer.Argument(help="Priority value (default 1000, higher = more important)")],
+    session: SessionOption = "agents",
+):
+    """Set agent priority value for sorting (#61).
+
+    Higher values indicate higher priority. Default is 1000.
+
+    Examples:
+        overcode set-value my-agent 2000    # High priority
+        overcode set-value my-agent 500     # Low priority
+        overcode set-value my-agent 1000    # Reset to default
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    manager.set_agent_value(agent.id, value)
+    rprint(f"[green]✓ Set {name} value to {value}[/green]")
+
+
 @app.command()
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],

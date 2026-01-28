@@ -91,6 +91,10 @@ class Session:
     # Sleep mode - agent is paused and excluded from stats
     is_asleep: bool = False
 
+    # Agent value - priority indicator for sorting/attention (#61)
+    # Default 1000, higher = more important
+    agent_value: int = 1000
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
@@ -607,3 +611,12 @@ class SessionManager:
     def set_permissiveness(self, session_id: str, mode: str):
         """Set permissiveness mode (normal, permissive, strict)"""
         self.update_session(session_id, permissiveness_mode=mode)
+
+    def set_agent_value(self, session_id: str, value: int):
+        """Set agent value for priority sorting (#61).
+
+        Args:
+            session_id: The session ID
+            value: Priority value (default 1000, higher = more important)
+        """
+        self.update_session(session_id, agent_value=value)
