@@ -678,11 +678,27 @@ class SupervisorDaemon:
         self,
         monitor_state: MonitorDaemonState
     ) -> List[SessionDaemonState]:
-        """Get sessions that are not in running state from monitor daemon state."""
-        return [
-            s for s in monitor_state.sessions
-            if s.current_status != STATUS_RUNNING and s.name != 'daemon_claude'
-        ]
+        """Get sessions that are not in running state from monitor daemon state.
+
+        Filters out:
+        - Running (green) sessions
+        - The daemon_claude session itself
+        - Asleep sessions (#70)
+        - Sessions with DO_NOTHING standing orders (#70)
+        """
+        result = []
+        for s in monitor_state.sessions:
+            # Skip green sessions and daemon_claude
+            if s.current_status == STATUS_RUNNING or s.name == 'daemon_claude':
+                continue
+            # Skip asleep sessions
+            if s.is_asleep:
+                continue
+            # Skip sessions with DO_NOTHING standing orders
+            if s.standing_instructions and 'DO_NOTHING' in s.standing_instructions.upper():
+                continue
+            result.append(s)
+        return result
 
     def wait_for_monitor_daemon(self, timeout: int = 30, poll_interval: int = 2) -> bool:
         """Wait for monitor daemon to be running.
@@ -702,11 +718,12 @@ class SupervisorDaemon:
             time.sleep(poll_interval)
         return False
 
-    def run(self, check_interval: int = None):
+    def run(self, check_interval: int = None, once: bool = False):
         """Main supervisor daemon loop.
 
         Args:
             check_interval: Override check interval (default from settings)
+            once: If True, make one pass through all agents and exit (#70)
         """
         check_interval = check_interval or DAEMON.interval_fast
 
@@ -815,14 +832,30 @@ class SupervisorDaemon:
                                 session_names = [s.name for s in non_green]
                                 self.update_intervention_counts(session_names)
                                 self._sync_daemon_claude_tokens()
+                                # Exit after one pass if --once flag was set (#70)
+                                if once:
+                                    self.log.success("One pass completed (--once mode)")
+                                    break
                             else:
                                 self.log.warn("Daemon claude still working, continuing...")
+                                # In --once mode, wait longer for daemon claude to complete
+                                if once:
+                                    self.log.info("Waiting for daemon claude to finish in --once mode...")
+                                    continue
                 else:
                     if total > 0:
                         self.status = "idle"
                         self.log.success("All sessions GREEN")
+                        # Exit if all green in --once mode (#70)
+                        if once:
+                            self.log.success("All sessions green (--once mode)")
+                            break
                     else:
                         self.status = "no_agents"
+                        # Exit if no agents in --once mode (#70)
+                        if once:
+                            self.log.info("No agents to process (--once mode)")
+                            break
 
                 time.sleep(check_interval)
 
@@ -858,11 +891,16 @@ def main():
         default=None,
         help=f"Check interval in seconds (default: {DAEMON.interval_fast})"
     )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Make one pass through all agents and exit (#70)"
+    )
 
     args = parser.parse_args()
 
     daemon = SupervisorDaemon(tmux_session=args.session)
-    daemon.run(check_interval=args.interval)
+    daemon.run(check_interval=args.interval, once=args.once)
 
 
 if __name__ == "__main__":

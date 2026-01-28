@@ -293,6 +293,7 @@ class MonitorDaemon:
             start_time=session.start_time,
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
+            is_asleep=session.is_asleep,
         )
 
     def _update_state_time(self, session, status: str, now: datetime) -> None:
