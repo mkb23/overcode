@@ -1009,41 +1009,41 @@ class SessionSummary(Static, can_focus=True):
             mode = self.summary_content_mode
 
             if mode == "annotation":
-                # Show human annotation
+                # Show human annotation (✏️ icon)
                 if s.human_annotation:
-                    content.append(f"✏ {s.human_annotation[:remaining-2]}", style=f"bold magenta{bg}")
+                    content.append(f"✏️ {s.human_annotation[:remaining-3]}", style=f"bold magenta{bg}")
                 else:
-                    content.append("(no annotation)", style=f"dim italic{bg}")
+                    content.append("✏️ (no annotation)", style=f"dim italic{bg}")
             elif mode == "orders":
-                # Show standing orders
+                # Show standing orders (🎯 icon, ✓ if complete)
                 if s.standing_instructions:
                     if s.standing_orders_complete:
                         style = f"bold green{bg}"
-                        prefix = "✓ "
+                        prefix = "🎯✓ "
                     elif s.standing_instructions_preset:
                         style = f"bold cyan{bg}"
-                        prefix = f"{s.standing_instructions_preset}: "
+                        prefix = f"🎯 {s.standing_instructions_preset}: "
                     else:
                         style = f"bold italic yellow{bg}"
-                        prefix = ""
+                        prefix = "🎯 "
                     display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
                     content.append(display_text[:remaining], style=style)
                 else:
-                    content.append("(no standing orders)", style=f"dim italic{bg}")
+                    content.append("🎯 (no standing orders)", style=f"dim italic{bg}")
             elif mode == "ai_long":
-                # ai_long: show context summary (wider context from AI)
+                # ai_long: show context summary (📖 icon - wider context from AI)
                 if self.ai_summary_context:
-                    content.append(self.ai_summary_context[:remaining], style=f"bold italic{bg}")
+                    content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=f"bold italic{bg}")
                 elif self.ai_summary_short:
-                    content.append(self.ai_summary_short[:remaining], style=f"italic{bg}")
+                    content.append(f"📖 {self.ai_summary_short[:remaining-3]}", style=f"italic{bg}")
                 else:
-                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
+                    content.append(f"📖 {self.current_activity[:remaining-3]}", style=f"dim italic{bg}")
             else:
-                # ai_short: show short summary (current activity from AI)
+                # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:
-                    content.append(self.ai_summary_short[:remaining], style=f"bold italic{bg}")
+                    content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=f"bold italic{bg}")
                 else:
-                    content.append(self.current_activity[:remaining], style=f"dim italic{bg}")
+                    content.append(f"💬 {self.current_activity[:remaining-3]}", style=f"dim italic{bg}")
 
             # Pad to fill terminal width
             current_len = len(content.plain)
@@ -2359,12 +2359,12 @@ class SupervisorTUI(App):
             widget.summary_content_mode = self.summary_content_mode
 
         mode_names = {
-            "ai_short": "AI Summary (short)",
-            "ai_long": "AI Summary (context)",
-            "orders": "Standing Orders",
-            "annotation": "Human Annotation",
+            "ai_short": "💬 AI Summary (short)",
+            "ai_long": "📖 AI Summary (context)",
+            "orders": "🎯 Standing Orders",
+            "annotation": "✏️ Human Annotation",
         }
-        self.notify(f"Content: {mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
+        self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
 
     def action_focus_human_annotation(self) -> None:
         """Focus input for editing human annotation (#74)."""
