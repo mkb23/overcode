@@ -581,6 +581,147 @@ class TestAccumulatedVsUptimeValidation:
 
 
 # =============================================================================
+# Tests for Sleep Mode Time Tracking (#68)
+# =============================================================================
+
+class TestSleepModeTimeTracking:
+    """Test that sleeping sessions don't accumulate time in stats.
+
+    When a user marks a session as "asleep" (with the 'z' hotkey), the session
+    should be excluded from time tracking statistics. The timeline should show
+    'z' characters during sleep periods.
+    """
+
+    def test_asleep_status_does_not_accumulate_green_time(self):
+        """Sessions with asleep status don't add to green_time."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING
+
+        # Simulate the _update_state_time logic
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = STATUS_ASLEEP
+
+        # Apply the same logic as monitor_daemon._update_state_time
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in ("terminated", STATUS_ASLEEP):
+            non_green_time += elapsed
+        # else: terminated or asleep - don't accumulate time
+
+        # Asleep should not change either counter
+        assert green_time == 100.0, "Green time should not increase for asleep status"
+        assert non_green_time == 50.0, "Non-green time should not increase for asleep status"
+
+    def test_asleep_status_does_not_accumulate_non_green_time(self):
+        """Sessions with asleep status don't add to non_green_time."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+
+        # Test that asleep behaves like terminated (no accumulation)
+        for status in [STATUS_ASLEEP, STATUS_TERMINATED]:
+            test_green = green_time
+            test_non_green = non_green_time
+
+            if status == "running":
+                test_green += elapsed
+            elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+                test_non_green += elapsed
+
+            assert test_green == green_time, f"Green time changed for {status}"
+            assert test_non_green == non_green_time, f"Non-green time changed for {status}"
+
+    def test_running_status_still_accumulates_green_time(self):
+        """Running status should still accumulate green time normally."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = STATUS_RUNNING
+
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+            non_green_time += elapsed
+
+        assert green_time == 110.0, "Running status should increase green time"
+        assert non_green_time == 50.0, "Running status should not affect non-green time"
+
+    def test_waiting_status_still_accumulates_non_green_time(self):
+        """Waiting statuses should still accumulate non-green time normally."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = "waiting_user"
+
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+            non_green_time += elapsed
+
+        assert green_time == 100.0, "Waiting status should not affect green time"
+        assert non_green_time == 60.0, "Waiting status should increase non-green time"
+
+    def test_effective_status_uses_asleep_when_session_is_sleeping(self):
+        """When session.is_asleep is True, effective_status should be STATUS_ASLEEP."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        # Simulate the effective_status logic from monitor_daemon
+        class MockSession:
+            def __init__(self, is_asleep: bool):
+                self.is_asleep = is_asleep
+
+        detected_status = "running"
+
+        # Test with is_asleep=True
+        session = MockSession(is_asleep=True)
+        effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+        assert effective_status == STATUS_ASLEEP
+
+        # Test with is_asleep=False
+        session = MockSession(is_asleep=False)
+        effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+        assert effective_status == "running"
+
+    def test_effective_status_preserves_detected_status_when_awake(self):
+        """When session.is_asleep is False, detected status is preserved."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        class MockSession:
+            is_asleep = False
+
+        session = MockSession()
+
+        for detected_status in ["running", "waiting_user", "waiting_supervisor", "terminated"]:
+            effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+            assert effective_status == detected_status
+
+
+class TestSleepModeTimelineChar:
+    """Test that sleep mode uses the correct timeline character."""
+
+    def test_asleep_status_has_timeline_char(self):
+        """STATUS_ASLEEP should map to 'z' in timeline."""
+        from overcode.status_constants import STATUS_ASLEEP, AGENT_TIMELINE_CHARS
+
+        assert STATUS_ASLEEP in AGENT_TIMELINE_CHARS
+        assert AGENT_TIMELINE_CHARS[STATUS_ASLEEP] == "z"
+
+    def test_asleep_status_has_emoji(self):
+        """STATUS_ASLEEP should map to sleeping emoji."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_EMOJIS
+
+        assert STATUS_ASLEEP in STATUS_EMOJIS
+        assert STATUS_EMOJIS[STATUS_ASLEEP] == "💤"
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

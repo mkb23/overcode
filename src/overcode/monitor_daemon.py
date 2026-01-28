@@ -53,7 +53,7 @@ from .settings import (
     get_supervisor_stats_path,
 )
 from .config import get_relay_config
-from .status_constants import STATUS_RUNNING, STATUS_TERMINATED
+from .status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
 from .summarizer_component import SummarizerComponent, SummarizerConfig
@@ -332,7 +332,7 @@ class MonitorDaemon:
 
         if status == STATUS_RUNNING:
             green_time += elapsed
-        elif status not in (STATUS_TERMINATED, "asleep"):
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
             # Only count non-green time for non-terminated/non-asleep states (#68)
             non_green_time += elapsed
         # else: terminated or asleep - don't accumulate time
@@ -611,7 +611,7 @@ class MonitorDaemon:
 
                     # Track stats and build state
                     # Use "asleep" status if session is marked as sleeping (#68)
-                    effective_status = "asleep" if session.is_asleep else status
+                    effective_status = STATUS_ASLEEP if session.is_asleep else status
                     session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)
