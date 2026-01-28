@@ -332,10 +332,10 @@ class MonitorDaemon:
 
         if status == STATUS_RUNNING:
             green_time += elapsed
-        elif status != STATUS_TERMINATED:
-            # Only count non-green time for non-terminated states
+        elif status not in (STATUS_TERMINATED, "asleep"):
+            # Only count non-green time for non-terminated/non-asleep states (#68)
             non_green_time += elapsed
-        # else: terminated - don't accumulate time
+        # else: terminated or asleep - don't accumulate time
 
         # INVARIANT CHECK: accumulated time should never exceed uptime
         # This catches bugs like multiple daemons running simultaneously
@@ -610,12 +610,14 @@ class MonitorDaemon:
                         continue
 
                     # Track stats and build state
-                    session_state = self.track_session_stats(session, status)
+                    # Use "asleep" status if session is marked as sleeping (#68)
+                    effective_status = "asleep" if session.is_asleep else status
+                    session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)
 
                     # Log status history to session-specific file
-                    log_agent_status(session.name, status, activity, history_file=self.history_path)
+                    log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
 
                     # Track if any session is not waiting for user
                     if status != "waiting_user":
