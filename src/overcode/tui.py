@@ -3254,8 +3254,52 @@ class SupervisorTUI(App):
         else:
             self.notify(f"Failed to send Enter to {session_name}", severity="error")
 
+    def _is_freetext_option(self, pane_content: str, key: str) -> bool:
+        """Check if a numbered menu option is a free-text instruction option.
+
+        Scans the pane content for patterns like "5. Tell Claude what to do"
+        or "3) Give custom instructions" to determine if selecting this option
+        should open the command bar for user input.
+
+        Args:
+            pane_content: The tmux pane content to scan
+            key: The number key being pressed (e.g., "5")
+
+        Returns:
+            True if this option expects free-text input
+        """
+        import re
+
+        # Claude Code v2.x only has one freetext option format:
+        # "3. No, and tell Claude what to do differently (esc)"
+        # This appears on all permission prompts (Bash, Read, Write, etc.)
+        freetext_patterns = [
+            r"tell\s+claude\s+what\s+to\s+do",
+        ]
+
+        # Look for the numbered option in the content
+        # Match patterns like "5. text", "5) text", "5: text"
+        option_pattern = rf"^\s*{key}[\.\)\:]\s*(.+)$"
+
+        for line in pane_content.split('\n'):
+            match = re.match(option_pattern, line.strip(), re.IGNORECASE)
+            if match:
+                option_text = match.group(1).lower()
+                # Check if this option matches any freetext pattern
+                for pattern in freetext_patterns:
+                    if re.search(pattern, option_text):
+                        return True
+        return False
+
     def _send_key_to_focused(self, key: str) -> None:
-        """Send a key to the focused agent."""
+        """Send a key to the focused agent.
+
+        If the key selects a "free text instruction" menu option (detected by
+        scanning the pane content), automatically opens the command bar (#72).
+
+        Args:
+            key: The key to send
+        """
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -3267,9 +3311,16 @@ class SupervisorTUI(App):
             session_manager=self.session_manager
         )
 
+        # Check if this option is a free-text instruction option before sending
+        pane_content = self.status_detector.get_pane_content(focused.session.tmux_window) or ""
+        is_freetext = self._is_freetext_option(pane_content, key)
+
         # Send the key followed by Enter (to select the numbered option)
         if launcher.send_to_session(session_name, key, enter=True):
             self.notify(f"Sent '{key}' to {session_name}", severity="information")
+            # Open command bar if this was a free-text instruction option (#72)
+            if is_freetext:
+                self.action_focus_command_bar()
         else:
             self.notify(f"Failed to send '{key}' to {session_name}", severity="error")
 
