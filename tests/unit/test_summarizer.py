@@ -441,6 +441,129 @@ class TestSummarizerClientMethods:
         # Should not raise
         client.close()
 
+    def test_init_reads_config(self):
+        """__init__ should read config and set attributes."""
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            client = SummarizerClient()
+
+            assert client.api_url is not None
+            assert client.model is not None
+            assert client.api_key == 'test-key'
+            assert client._available is True
+
+    def test_init_with_explicit_api_key(self):
+        """__init__ should accept explicit API key."""
+        client = SummarizerClient(api_key='explicit-key')
+
+        assert client.api_key == 'explicit-key'
+        assert client._available is True
+
+    def test_init_without_api_key(self):
+        """__init__ should be unavailable without API key."""
+        with patch.dict(os.environ, {}, clear=True):
+            # Remove env var if present
+            os.environ.pop('OPENAI_API_KEY', None)
+
+            with patch('overcode.summarizer_client.get_summarizer_config') as mock_config:
+                mock_config.return_value = {
+                    'api_url': 'http://api.test',
+                    'model': 'test-model',
+                    'api_key': None,
+                }
+                client = SummarizerClient()
+
+                assert client._available is False
+
+    def test_available_property(self):
+        """available property should return _available."""
+        client = SummarizerClient.__new__(SummarizerClient)
+        client._available = True
+        assert client.available is True
+
+        client._available = False
+        assert client.available is False
+
+    @patch('overcode.summarizer_client.urllib.request.urlopen')
+    def test_summarize_handles_non_200_response(self, mock_urlopen):
+        """summarize should handle non-200 responses."""
+        mock_response = MagicMock()
+        mock_response.status = 500
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        client = SummarizerClient.__new__(SummarizerClient)
+        client.api_url = "http://test"
+        client.model = "test"
+        client.api_key = "test-key"
+        client._available = True
+
+        result = client.summarize(
+            pane_content="test",
+            previous_summary="",
+            current_status="running",
+        )
+
+        assert result is None
+
+    @patch('overcode.summarizer_client.urllib.request.urlopen')
+    def test_summarize_handles_url_error(self, mock_urlopen):
+        """summarize should handle URLError."""
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        client = SummarizerClient.__new__(SummarizerClient)
+        client.api_url = "http://test"
+        client.model = "test"
+        client.api_key = "test-key"
+        client._available = True
+
+        result = client.summarize(
+            pane_content="test",
+            previous_summary="",
+            current_status="running",
+        )
+
+        assert result is None
+
+    @patch('overcode.summarizer_client.urllib.request.urlopen')
+    def test_summarize_handles_timeout(self, mock_urlopen):
+        """summarize should handle timeout."""
+        mock_urlopen.side_effect = TimeoutError()
+
+        client = SummarizerClient.__new__(SummarizerClient)
+        client.api_url = "http://test"
+        client.model = "test"
+        client.api_key = "test-key"
+        client._available = True
+
+        result = client.summarize(
+            pane_content="test",
+            previous_summary="",
+            current_status="running",
+        )
+
+        assert result is None
+
+    @patch('overcode.summarizer_client.urllib.request.urlopen')
+    def test_summarize_handles_generic_exception(self, mock_urlopen):
+        """summarize should handle generic exceptions."""
+        mock_urlopen.side_effect = Exception("Unknown error")
+
+        client = SummarizerClient.__new__(SummarizerClient)
+        client.api_url = "http://test"
+        client.model = "test"
+        client.api_key = "test-key"
+        client._available = True
+
+        result = client.summarize(
+            pane_content="test",
+            previous_summary="",
+            current_status="running",
+        )
+
+        assert result is None
+
 
 class TestSummarizerComponentUpdateSession:
     """Tests for _update_session and related methods."""
