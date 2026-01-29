@@ -27,57 +27,50 @@ from .config import get_summarizer_config
 
 logger = logging.getLogger(__name__)
 
-# Short summary prompt - focuses on CURRENT activity (what's happening right now)
-SUMMARIZE_PROMPT_SHORT = """Summarize a Claude Code agent's CURRENT activity.
+# Short summary prompt - focuses on IMMEDIATE ACTION (verb-first, what's happening this second)
+SUMMARIZE_PROMPT_SHORT = """What is the agent doing RIGHT NOW? Answer with the immediate action only.
 
-## Terminal Content (last {lines} lines):
+## Terminal (last {lines} lines):
 {pane_content}
 
-## Status: {status}
-
-## Previous Summary:
+## Previous:
 {previous_summary}
 
-## Instructions:
-Write ONE terse phrase (not a sentence). Be direct. No filler words.
+FORMAT: Start with a verb. Examples:
+- "reading src/auth.py"
+- "running pytest -v"
+- "waiting for approval"
+- "writing migration file"
+- "editing line 45"
 
-STRICT RULES:
-- NO "The agent is/has..." or "Claude is..." or "Currently..."
-- Start with lowercase verb: "reading...", "writing...", "running..."
-- NO articles (a, an, the) unless essential
-- Use shorthand: "editing auth.py" not "editing the auth.py file"
+RULES:
+- Verb first, always (reading/writing/running/waiting/editing/fixing)
+- Name the specific file or command if visible
+- Max 40 chars
+- If unchanged: UNCHANGED"""
 
-Examples (note brevity): "reading config" / "running pytest" / "waiting: user input" / "writing migration"
+# Context summary prompt - focuses on THE TASK (noun-first, the feature/bug/goal)
+SUMMARIZE_PROMPT_CONTEXT = """What TASK or FEATURE is being worked on? Not the current action - the goal.
 
-If nothing changed, respond: UNCHANGED
-
-CRITICAL: Max 40 chars. Shorter is better."""
-
-# Context summary prompt - focuses on WIDER context (what's being worked on overall)
-SUMMARIZE_PROMPT_CONTEXT = """Summarize the OVERALL GOAL of what a Claude Code agent is working on.
-
-## Terminal Content (last {lines} lines):
+## Terminal (last {lines} lines):
 {pane_content}
 
-## Status: {status}
-
-## Previous Summary:
+## Previous:
 {previous_summary}
 
-## Instructions:
-Write ONE terse phrase describing the task/feature/bug. Not current action - the objective.
+FORMAT: Describe the task/feature/bug. Examples:
+- "JWT auth migration"
+- "user search pagination"
+- "fix: race condition in queue"
+- "PR #42 review comments"
+- "new settings dark mode"
 
-STRICT RULES:
-- NO "The agent is/has..." or "Claude is..." or "Working on..."
-- NO articles (a, an, the) unless essential
-- Use shorthand: "auth refactor, JWT migration" not "refactoring the authentication system"
-- Focus on WHAT not HOW
-
-Examples (note brevity): "user search with pagination" / "race condition fix in worker pool" / "dark mode for settings"
-
-If nothing changed, respond: UNCHANGED
-
-CRITICAL: Max 60 chars. Shorter is better."""
+RULES:
+- Noun/task first (not a verb like "implementing")
+- Include ticket/PR numbers if mentioned
+- Focus on WHAT is being built/fixed, not HOW
+- Max 60 chars
+- If unchanged: UNCHANGED"""
 
 
 class SummarizerClient:

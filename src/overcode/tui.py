@@ -1035,19 +1035,17 @@ class SessionSummary(Static, can_focus=True):
                 else:
                     content.append("🎯 (no standing orders)", style=f"dim italic{bg}")
             elif mode == "ai_long":
-                # ai_long: show context summary (📖 icon - wider context from AI)
+                # ai_long: show context summary (📖 icon - wider context/goal from AI)
                 if self.ai_summary_context:
                     content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=f"bold italic{bg}")
-                elif self.ai_summary_short:
-                    content.append(f"📖 {self.ai_summary_short[:remaining-3]}", style=f"italic{bg}")
                 else:
-                    content.append(f"📖 {self.current_activity[:remaining-3]}", style=f"dim italic{bg}")
+                    content.append("📖 (awaiting context...)", style=f"dim italic{bg}")
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:
                     content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=f"bold italic{bg}")
                 else:
-                    content.append(f"💬 {self.current_activity[:remaining-3]}", style=f"dim italic{bg}")
+                    content.append("💬 (awaiting summary...)", style=f"dim italic{bg}")
 
             # Pad to fill terminal width
             current_len = len(content.plain)
@@ -3027,7 +3025,7 @@ class SupervisorTUI(App):
         # Check if summarizer is available (OPENAI_API_KEY set)
         state = get_monitor_daemon_state(self.tmux_session)
         if not state or not state.summarizer_available:
-            self.notify("AI Summarizer unavailable (OPENAI_API_KEY not set)", severity="warning")
+            self.notify("AI Summarizer unavailable - set OPENAI_API_KEY and press \\ to restart daemon", severity="warning")
             return
 
         # Toggle the state
