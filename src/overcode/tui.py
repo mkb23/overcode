@@ -42,6 +42,10 @@ from .supervisor_daemon import (
     is_supervisor_daemon_running,
     stop_supervisor_daemon,
 )
+from .summarizer_component import (
+    set_summarizer_enabled,
+    is_summarizer_enabled,
+)
 from .web_server import (
     is_web_server_running,
     get_web_server_url,
@@ -175,6 +179,23 @@ class DaemonStatusBar(Static):
         else:
             content.append("○ ", style="red")
             content.append("stopped", style="red")
+
+        # AI Summarizer status
+        content.append(" │ ", style="dim")
+        content.append("AI: ", style="bold")
+        if monitor_running and self.monitor_state.summarizer_available:
+            if self.monitor_state.summarizer_enabled:
+                content.append("● ", style="green")
+                if self.monitor_state.summarizer_calls > 0:
+                    content.append(f"{self.monitor_state.summarizer_calls}", style="cyan")
+                else:
+                    content.append("on", style="green")
+            else:
+                content.append("○ ", style="dim")
+                content.append("off", style="dim")
+        else:
+            content.append("○ ", style="red")
+            content.append("n/a", style="red dim")
 
         # Spin rate stats (only when monitor running with sessions)
         if monitor_running and self.monitor_state.sessions:
@@ -1719,6 +1740,7 @@ class SupervisorTUI(App):
         ("left_square_bracket", "supervisor_start", "Start supervisor"),
         ("right_square_bracket", "supervisor_stop", "Stop supervisor"),
         ("backslash", "monitor_restart", "Restart monitor"),
+        ("a", "toggle_summarizer", "AI summarizer"),
         # Manual refresh (useful in diagnostics mode)
         ("r", "manual_refresh", "Refresh"),
         # Agent management
@@ -2991,6 +3013,27 @@ class SupervisorTUI(App):
             self.notify("Failed to stop Supervisor Daemon", severity="error")
 
         self.update_daemon_status()
+
+    def action_toggle_summarizer(self) -> None:
+        """Toggle the AI Summarizer on/off."""
+        # Check if summarizer is available (OPENAI_API_KEY set)
+        state = get_monitor_daemon_state(self.tmux_session)
+        if not state or not state.summarizer_available:
+            self.notify("AI Summarizer unavailable (OPENAI_API_KEY not set)", severity="warning")
+            return
+
+        # Toggle the state
+        currently_enabled = is_summarizer_enabled(self.tmux_session)
+        new_state = not currently_enabled
+        set_summarizer_enabled(self.tmux_session, new_state)
+
+        if new_state:
+            self.notify("AI Summarizer enabled", severity="information")
+        else:
+            self.notify("AI Summarizer disabled", severity="information")
+
+        # Refresh status bar after a short delay (let daemon pick up the change)
+        self.set_timer(1.0, self.update_daemon_status)
 
     def action_monitor_restart(self) -> None:
         """Restart the Monitor Daemon (handles metrics/state tracking)."""
