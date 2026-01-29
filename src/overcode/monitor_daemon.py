@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
-from .history_reader import get_session_stats
+from .history_reader import get_session_stats, get_current_session_id_for_directory
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
@@ -376,6 +376,19 @@ class MonitorDaemon:
     def sync_claude_code_stats(self, session) -> None:
         """Sync token/interaction stats from Claude Code history files."""
         try:
+            # Capture current Claude sessionId if not already tracked (#119)
+            # This ensures accurate context window calculation for this agent
+            if session.start_directory:
+                try:
+                    session_start = datetime.fromisoformat(session.start_time)
+                    current_id = get_current_session_id_for_directory(
+                        session.start_directory, session_start
+                    )
+                    if current_id:
+                        self.session_manager.add_claude_session_id(session.id, current_id)
+                except (ValueError, TypeError):
+                    pass
+
             stats = get_session_stats(session)
             if stats is None:
                 return
