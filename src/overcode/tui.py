@@ -2263,6 +2263,8 @@ class SupervisorTUI(App):
                         widget.add_class("terminated")
                     else:
                         widget.remove_class("terminated")
+            # Still reorder widgets to handle sort mode changes
+            self._reorder_session_widgets(container)
             return
 
         # Remove widgets for deleted sessions
@@ -2307,9 +2309,8 @@ class SupervisorTUI(App):
                 # The 250ms interval (update_all_statuses) will update status shortly
 
         # Reorder widgets to match display_sessions order
-        # New widgets are appended at end, but should appear in correct position
-        if sessions_added:
-            self._reorder_session_widgets(container)
+        # This must run after any structural changes AND after sort mode changes
+        self._reorder_session_widgets(container)
 
     def action_expand_all(self) -> None:
         """Expand all sessions"""
