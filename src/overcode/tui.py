@@ -1432,8 +1432,8 @@ class CommandBar(Static):
         self._update_target_label()
 
     def _set_standing_order(self, text: str) -> None:
-        """Set text as standing order."""
-        if not self.target_session or not text.strip():
+        """Set text as standing order (empty string clears orders)."""
+        if not self.target_session:
             return
         self.post_message(self.StandingOrderRequested(self.target_session, text.strip()))
 
@@ -2847,7 +2847,10 @@ class SupervisorTUI(App):
         session = self.session_manager.get_session_by_name(message.session_name)
         if session:
             self.session_manager.set_standing_instructions(session.id, message.text)
-            self.notify(f"Standing order set for {message.session_name}")
+            if message.text:
+                self.notify(f"Standing order set for {message.session_name}")
+            else:
+                self.notify(f"Standing order cleared for {message.session_name}")
             # Refresh session list to show updated standing order
             self.refresh_sessions()
         else:
