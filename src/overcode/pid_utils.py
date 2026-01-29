@@ -88,6 +88,10 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
     Uses file locking to prevent TOCTOU race conditions when multiple
     processes try to start the daemon simultaneously.
 
+    IMPORTANT: The lock is held for the daemon's entire lifetime. The lock
+    file descriptor is stored in a module-level variable and released
+    automatically when the process exits (normal or crash).
+
     Args:
         pid_file: Path to the PID file
 
@@ -96,6 +100,8 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
         - (True, None) if lock was acquired and PID file written
         - (False, existing_pid) if another daemon is already running
     """
+    global _held_lock_fd
+
     pid_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Use a separate lock file to avoid truncation issues
@@ -110,12 +116,14 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
             # We have the lock - now check if another daemon is running
+            # (handles case where previous daemon crashed without releasing lock)
             if pid_file.exists():
                 try:
                     existing_pid = int(pid_file.read_text().strip())
                     # Check if process is still alive
                     os.kill(existing_pid, 0)
                     # Process exists - another daemon is running
+                    # This shouldn't happen if locking works, but check anyway
                     fcntl.flock(fd, fcntl.LOCK_UN)
                     os.close(fd)
                     return False, existing_pid
@@ -127,9 +135,10 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
             current_pid = os.getpid()
             pid_file.write_text(str(current_pid))
 
-            # Release the lock (but keep file for tracking)
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+            # IMPORTANT: Keep the lock held for the daemon's entire lifetime!
+            # The OS will automatically release it when the process exits.
+            # Store fd in module-level variable to prevent garbage collection.
+            _held_lock_fd = fd
 
             return True, None
 
@@ -148,6 +157,11 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
     except OSError:
         # Could not open lock file
         return False, None
+
+
+# Module-level variable to hold the lock file descriptor.
+# This prevents garbage collection from closing the fd and releasing the lock.
+_held_lock_fd: Optional[int] = None
 
 
 def count_daemon_processes(pattern: str = "monitor_daemon", session: str = None) -> int:
