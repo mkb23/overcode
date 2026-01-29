@@ -68,7 +68,8 @@ class RealTmux:
             if pane is None:
                 return None
             # capture_pane returns list of lines
-            captured = pane.capture_pane(start=-lines)
+            # escape_sequences=True preserves ANSI color codes for TUI rendering
+            captured = pane.capture_pane(start=-lines, escape_sequences=True)
             if isinstance(captured, list):
                 return '\n'.join(captured)
             return captured
