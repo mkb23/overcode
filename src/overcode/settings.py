@@ -383,6 +383,7 @@ class TUIPreferences:
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
+    summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation (#98)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
 
@@ -411,6 +412,7 @@ class TUIPreferences:
                     show_terminated=data.get("show_terminated", False),
                     hide_asleep=data.get("hide_asleep", False),
                     sort_mode=data.get("sort_mode", "alphabetical"),
+                    summary_content_mode=data.get("summary_content_mode", "ai_short"),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
@@ -434,6 +436,7 @@ class TUIPreferences:
                     "show_terminated": self.show_terminated,
                     "hide_asleep": self.hide_asleep,
                     "sort_mode": self.sort_mode,
+                    "summary_content_mode": self.summary_content_mode,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):

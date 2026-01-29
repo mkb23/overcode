@@ -1822,6 +1822,8 @@ class SupervisorTUI(App):
         self.show_terminated = self._prefs.show_terminated
         # Initialize hide_asleep from preferences
         self.hide_asleep = self._prefs.hide_asleep
+        # Initialize summary_content_mode from preferences (#98)
+        self.summary_content_mode = self._prefs.summary_content_mode
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -2331,6 +2333,10 @@ class SupervisorTUI(App):
         current_idx = modes.index(self.summary_content_mode) if self.summary_content_mode in modes else 0
         new_idx = (current_idx + 1) % len(modes)
         self.summary_content_mode = modes[new_idx]
+
+        # Save preference (#98)
+        self._prefs.summary_content_mode = self.summary_content_mode
+        self._save_prefs()
 
         # Update all session widgets
         for widget in self.query(SessionSummary):
