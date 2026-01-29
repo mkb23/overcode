@@ -472,6 +472,8 @@ class StatusTimeline(Static):
         content.append("inactive ", style="dim")
         content.append("░", style="red")
         content.append("waiting/away ", style="dim")
+        content.append("░", style="dim")
+        content.append("asleep ", style="dim")
         content.append("×", style="dim")
         content.append("terminated", style="dim")
 
