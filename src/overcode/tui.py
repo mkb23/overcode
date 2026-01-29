@@ -2007,6 +2007,10 @@ class SupervisorTUI(App):
         Uses launcher.list_sessions() to detect terminated sessions
         (tmux windows that no longer exist, e.g., after machine reboot).
         """
+        # Remember the currently focused session before refreshing/sorting
+        focused = self.focused
+        focused_session_id = focused.session.id if isinstance(focused, SessionSummary) else None
+
         self._invalidate_sessions_cache()  # Force cache refresh
         self.sessions = self.launcher.list_sessions()
         # Apply sorting (#61)
@@ -2018,6 +2022,14 @@ class SupervisorTUI(App):
         )
         self.max_repo_info_width = max(self.max_repo_info_width, 10)  # Minimum 10 chars
         self.update_session_widgets()
+
+        # Update focused_session_index to follow the same session at its new position
+        if focused_session_id:
+            widgets = self._get_widgets_in_session_order()
+            for i, widget in enumerate(widgets):
+                if widget.session.id == focused_session_id:
+                    self.focused_session_index = i
+                    break
         # NOTE: Don't call update_timeline() here - it has its own 30s interval
         # and reading log files during session refresh causes UI stutter
 
@@ -2745,12 +2757,17 @@ class SupervisorTUI(App):
             pass
 
     def _update_preview(self) -> None:
-        """Update preview pane with focused session's content."""
+        """Update preview pane with focused session's content.
+
+        Uses self.focused directly to ensure the preview always shows the
+        actually-focused widget, regardless of any index tracking issues
+        that might occur during sorting or session refresh.
+        """
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
-            widgets = self._get_widgets_in_session_order()
-            if widgets and 0 <= self.focused_session_index < len(widgets):
-                preview.update_from_widget(widgets[self.focused_session_index])
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                preview.update_from_widget(focused)
         except NoMatches:
             pass
 
