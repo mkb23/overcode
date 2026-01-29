@@ -707,11 +707,11 @@ class TestSleepModeTimelineChar:
     """Test that sleep mode uses the correct timeline character."""
 
     def test_asleep_status_has_timeline_char(self):
-        """STATUS_ASLEEP should map to 'z' in timeline."""
+        """STATUS_ASLEEP should map to light shade hatching in timeline."""
         from overcode.status_constants import STATUS_ASLEEP, AGENT_TIMELINE_CHARS
 
         assert STATUS_ASLEEP in AGENT_TIMELINE_CHARS
-        assert AGENT_TIMELINE_CHARS[STATUS_ASLEEP] == "z"
+        assert AGENT_TIMELINE_CHARS[STATUS_ASLEEP] == "░"
 
     def test_asleep_status_has_emoji(self):
         """STATUS_ASLEEP should map to sleeping emoji."""
