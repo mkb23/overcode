@@ -418,11 +418,14 @@ def get_session_stats(
     interactions = get_interactions_for_session(session, history_path)
     interaction_count = len(interactions)
 
-    # Get unique session IDs
+    # Get unique session IDs and find the most recent one
+    # (interactions are in chronological order from history file)
     session_ids = set()
+    most_recent_session_id = None
     for entry in interactions:
         if entry.session_id:
             session_ids.add(entry.session_id)
+            most_recent_session_id = entry.session_id  # Last one wins
 
     # Sum token usage and work times across all session files
     total_input = 0
@@ -441,8 +444,9 @@ def get_session_stats(
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
-        # Keep the largest current context (most recent across all session files)
-        if usage["current_context_tokens"] > current_context:
+        # Use context from the most recent session (not the max across all)
+        # This ensures /clear resets the context display correctly
+        if sid == most_recent_session_id:
             current_context = usage["current_context_tokens"]
 
         # Collect work times from this session file
