@@ -993,13 +993,14 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" 💰{s.agent_value:>4}", style=f"bold magenta{bg}")
         else:
             # Priority icon based on value relative to default 1000
-            # All emoji use variation selector (U+FE0F) for consistent width
+            # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
+            # a trailing space to ⏹️ for alignment
             if s.agent_value > 1000:
                 content.append(" ⏫️", style=f"bold red{bg}")  # High priority
             elif s.agent_value < 1000:
                 content.append(" ⏬️", style=f"bold blue{bg}")  # Low priority
             else:
-                content.append(" ⏹️", style=f"dim{bg}")  # Normal
+                content.append(" ⏹️ ", style=f"dim{bg}")  # Normal (extra space for alignment)
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
