@@ -10,8 +10,27 @@ Claude's current state. Centralizing these makes them:
 Each pattern set includes documentation about when it's used and what it matches.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import List
+
+# Regex to match ANSI escape sequences (colors, cursor movement, etc.)
+ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text.
+
+    This is needed because tmux capture_pane with escape_sequences=True
+    preserves color codes, but pattern matching needs plain text.
+
+    Args:
+        text: Text potentially containing ANSI escape sequences
+
+    Returns:
+        Text with all ANSI escape sequences removed
+    """
+    return ANSI_ESCAPE_PATTERN.sub('', text)
 
 
 @dataclass

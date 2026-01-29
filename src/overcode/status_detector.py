@@ -19,6 +19,7 @@ from .status_patterns import (
     is_command_menu_line,
     count_command_menu_lines,
     clean_line,
+    strip_ansi,
     StatusPatterns,
 )
 
@@ -94,12 +95,17 @@ class StatusDetector:
         if not content:
             return self.STATUS_WAITING_USER, "Unable to read pane", ""
 
+        # Strip ANSI escape sequences for pattern matching
+        # The raw content (with colors) is returned for display, but pattern
+        # matching needs plain text since escape codes break string matching
+        clean_content = strip_ansi(content)
+
         # Content change detection - if content is changing, Claude is actively working
         # Key by session.id, not window index, to avoid stale hashes when windows are recycled
         # IMPORTANT: Filter out status bar lines before hashing to avoid false positives
         # from dynamic status bar elements (token counts, elapsed time) that update when idle
         session_id = session.id
-        content_for_hash = self._filter_status_bar_for_hash(content)
+        content_for_hash = self._filter_status_bar_for_hash(clean_content)
         content_hash = hash(content_for_hash)
         content_changed = False
         if session_id in self._previous_content:
@@ -107,7 +113,7 @@ class StatusDetector:
         self._previous_content[session_id] = content_hash
         self._content_changed[session_id] = content_changed
 
-        lines = content.strip().split('\n')
+        lines = clean_content.strip().split('\n')
         # Get more lines for better context (menu prompts can be 5+ lines)
         last_lines = [l.strip() for l in lines[-10:] if l.strip()]
 
