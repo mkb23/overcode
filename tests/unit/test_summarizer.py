@@ -56,7 +56,6 @@ class TestSummarizerPrompts:
         for prompt in [SUMMARIZE_PROMPT_SHORT, SUMMARIZE_PROMPT_CONTEXT]:
             assert "{lines}" in prompt
             assert "{pane_content}" in prompt
-            assert "{status}" in prompt
             assert "{previous_summary}" in prompt
 
 
@@ -115,8 +114,8 @@ class TestSummarizerClientMode:
         # Check that the request was made with short prompt content
         call_args = mock_urlopen.call_args
         request = call_args[0][0]
-        # The prompt should contain "CURRENT" (from short prompt)
-        assert b"CURRENT" in request.data or b"current" in request.data.lower()
+        # The prompt should contain "RIGHT NOW" (from short prompt - immediate action)
+        assert b"RIGHT NOW" in request.data or b"right now" in request.data.lower()
 
     @patch('overcode.summarizer_client.urllib.request.urlopen')
     def test_context_mode_uses_context_prompt(self, mock_urlopen):
@@ -143,9 +142,9 @@ class TestSummarizerClientMode:
 
         call_args = mock_urlopen.call_args
         request = call_args[0][0]
-        # The prompt should contain "CONTEXT" or "OVERALL" (from context prompt)
+        # The prompt should contain "TASK" or "FEATURE" (from context prompt - goal focused)
         data_lower = request.data.lower()
-        assert b"context" in data_lower or b"overall" in data_lower
+        assert b"task" in data_lower or b"feature" in data_lower
 
 
 class TestAgentSummaryDataclass:
@@ -192,8 +191,8 @@ class TestSummarizerConfig:
         config = SummarizerConfig()
         # Short interval should be frequent (5s default)
         assert config.interval == 5.0
-        # Context interval should be less frequent (30s default)
-        assert config.context_interval == 30.0
+        # Context interval should be less frequent (15s default)
+        assert config.context_interval == 15.0
         # Context should be slower than short
         assert config.context_interval > config.interval
 
