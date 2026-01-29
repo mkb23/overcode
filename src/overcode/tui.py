@@ -987,10 +987,10 @@ class SessionSummary(Static, can_focus=True):
             content.append(" ➖", style=f"bold dim{bg}")  # No instructions indicator
 
         # Agent value indicator (#61)
-        # Full detail: show numeric value
-        # Short/med: show emoticon (🔥 high, ➖ normal, 🧊 low)
+        # Full detail: show numeric value with money bag
+        # Short/med: show priority chevrons (⏫ high, ⏹ normal, ⏬ low)
         if self.summary_detail == "full":
-            content.append(f" ⭐{s.agent_value:>4}", style=f"bold magenta{bg}")
+            content.append(f" 💰{s.agent_value:>4}", style=f"bold magenta{bg}")
         else:
             # Priority icon based on value relative to default 1000
             if s.agent_value > 1000:
@@ -998,7 +998,7 @@ class SessionSummary(Static, can_focus=True):
             elif s.agent_value < 1000:
                 content.append(" ⏬", style=f"bold blue{bg}")  # Low priority
             else:
-                content.append(" ━", style=f"dim{bg}")  # Normal
+                content.append(" ⏹️", style=f"dim{bg}")  # Normal
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
