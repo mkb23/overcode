@@ -2612,6 +2612,17 @@ class SupervisorTUI(App):
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
 
+        # Refresh session widgets to show/hide terminated sessions
+        self.update_session_widgets()
+
+        # Notify user
+        status = "visible" if self.show_terminated else "hidden"
+        count = len(self._terminated_sessions)
+        if count > 0:
+            self.notify(f"Killed sessions: {status} ({count})", severity="information")
+        else:
+            self.notify(f"Killed sessions: {status}", severity="information")
+
     def action_jump_to_attention(self) -> None:
         """Jump to next session needing attention.
 
@@ -2674,19 +2685,6 @@ class SupervisorTUI(App):
         total = len(self._attention_jump_list)
         status = getattr(target_widget, 'current_status', 'unknown')
         self.notify(f"Attention {pos}/{total}: {target_widget.session.name} ({status})", severity="information")
-
-        # Update subtitle to show state
-        self._update_subtitle()
-
-        # Refresh session widgets to show/hide terminated sessions
-        self.update_session_widgets()
-
-        status = "visible" if self.show_terminated else "hidden"
-        count = len(self._terminated_sessions)
-        if count > 0:
-            self.notify(f"Killed sessions: {status} ({count})", severity="information")
-        else:
-            self.notify(f"Killed sessions: {status}", severity="information")
 
     def action_toggle_hide_asleep(self) -> None:
         """Toggle hiding sleeping agents from display."""
