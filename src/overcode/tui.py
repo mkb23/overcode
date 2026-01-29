@@ -1421,6 +1421,9 @@ class CommandBar(Static):
             return
         try:
             value = int(text.strip()) if text.strip() else 1000
+            if value < 0 or value > 9999:
+                self.app.notify("Value must be between 0 and 9999", severity="error")
+                return
             self.post_message(self.ValueUpdated(self.target_session, value))
         except ValueError:
             # Invalid input, notify user but don't crash
