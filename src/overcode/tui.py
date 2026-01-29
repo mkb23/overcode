@@ -25,6 +25,7 @@ from textual.message import Message
 from rich.text import Text
 from rich.panel import Panel
 
+from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
@@ -1842,7 +1843,7 @@ class SupervisorTUI(App):
 
     def on_mount(self) -> None:
         """Called when app starts"""
-        self.title = "Overcode Monitor"
+        self.title = f"Overcode v{__version__}"
         self._update_subtitle()
 
         # Auto-start Monitor Daemon if not running
