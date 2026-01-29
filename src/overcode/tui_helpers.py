@@ -18,6 +18,7 @@ from .status_constants import (
     get_presence_timeline_char as _get_presence_timeline_char,
     get_presence_color as _get_presence_color,
     get_daemon_status_style as _get_daemon_status_style,
+    STATUS_ASLEEP,
     STATUS_RUNNING,
     STATUS_TERMINATED,
 )
@@ -254,10 +255,10 @@ def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[floa
             if current_elapsed > 0:
                 if stats.current_state == STATUS_RUNNING:
                     green_time += current_elapsed
-                elif stats.current_state != STATUS_TERMINATED:
-                    # Only count non-green time for non-terminated states
+                elif stats.current_state not in (STATUS_TERMINATED, STATUS_ASLEEP):
+                    # Only count non-green time for non-terminated/non-asleep states (#68)
                     non_green_time += current_elapsed
-                # else: terminated state - time is frozen, don't accumulate
+                # else: terminated or asleep - time is frozen, don't accumulate
         except (ValueError, AttributeError, TypeError):
             pass
 
