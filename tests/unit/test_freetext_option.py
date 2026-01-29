@@ -147,16 +147,11 @@ class TestIsFreetextOption:
 
         def _is_freetext_option(pane_content: str, key: str) -> bool:
             """Check if a numbered menu option is a free-text instruction option."""
-            # Patterns that indicate free-text instruction options
+            # Claude Code v2.x only has one freetext option format:
+            # "3. No, and tell Claude what to do differently (esc)"
+            # This appears on all permission prompts (Bash, Read, Write, etc.)
             freetext_patterns = [
                 r"tell\s+claude\s+what\s+to\s+do",
-                r"what\s+to\s+do\s+instead",
-                r"custom\s+instruction",
-                r"give\s+instruction",
-                r"provide\s+instruction",
-                r"type\s+a\s+message",
-                r"enter\s+a\s+message",
-                r"say\s+something\s+else",
             ]
 
             # Look for the numbered option in the content
