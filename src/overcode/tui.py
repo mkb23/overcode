@@ -993,10 +993,11 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" 💰{s.agent_value:>4}", style=f"bold magenta{bg}")
         else:
             # Priority icon based on value relative to default 1000
+            # All emoji use variation selector (U+FE0F) for consistent width
             if s.agent_value > 1000:
-                content.append(" ⏫", style=f"bold red{bg}")  # High priority
+                content.append(" ⏫️", style=f"bold red{bg}")  # High priority
             elif s.agent_value < 1000:
-                content.append(" ⏬", style=f"bold blue{bg}")  # Low priority
+                content.append(" ⏬️", style=f"bold blue{bg}")  # Low priority
             else:
                 content.append(" ⏹️", style=f"dim{bg}")  # Normal
 
