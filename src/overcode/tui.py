@@ -2647,6 +2647,12 @@ class SupervisorTUI(App):
 
     def action_cycle_sort_mode(self) -> None:
         """Cycle through sort modes (#61)."""
+        # Remember the currently focused session before sorting
+        widgets = self._get_widgets_in_session_order()
+        focused_session_id = None
+        if widgets and 0 <= self.focused_session_index < len(widgets):
+            focused_session_id = widgets[self.focused_session_index].session.id
+
         modes = self.SORT_MODES
         current_idx = modes.index(self._prefs.sort_mode) if self._prefs.sort_mode in modes else 0
         new_idx = (current_idx + 1) % len(modes)
@@ -2657,6 +2663,14 @@ class SupervisorTUI(App):
         self._sort_sessions()
         self.update_session_widgets()
         self._update_subtitle()
+
+        # Update focused_session_index to follow the same session at its new position
+        if focused_session_id:
+            widgets = self._get_widgets_in_session_order()
+            for i, widget in enumerate(widgets):
+                if widget.session.id == focused_session_id:
+                    self.focused_session_index = i
+                    break
 
         mode_names = {
             "alphabetical": "Alphabetical",
