@@ -3,18 +3,17 @@ Summarizer component for generating agent activity summaries.
 
 Uses GPT-4o-mini to summarize what each agent has been doing and
 their current halt state if not running.
+
+Note: The summarizer now lives in the TUI, not the daemon.
+This ensures zero API costs when the TUI is closed (no one would see the summaries anyway).
 """
 
-import json
 import logging
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
 
 from .summarizer_client import SummarizerClient
-from .settings import get_session_dir
 
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface
@@ -95,9 +94,6 @@ class SummarizerComponent:
         self.total_calls = 0
         self.total_tokens = 0
 
-        # Control file path
-        self._control_file = get_session_dir(tmux_session) / "summarizer_control.json"
-
     @property
     def available(self) -> bool:
         """Check if summarizer is available (API key present)."""
@@ -108,36 +104,6 @@ class SummarizerComponent:
         """Check if summarizer is currently enabled."""
         return self.config.enabled and self._client is not None
 
-    def check_control_file(self) -> None:
-        """Check control file for enable/disable commands."""
-        if not self._control_file.exists():
-            return
-
-        try:
-            with open(self._control_file) as f:
-                data = json.load(f)
-
-            should_enable = data.get("enabled", False)
-
-            if should_enable and not self.config.enabled:
-                # Enable requested
-                if SummarizerClient.is_available():
-                    self.config.enabled = True
-                    self._client = SummarizerClient()
-                    logger.info("Summarizer enabled via control file")
-                else:
-                    logger.warning("Summarizer enable requested but OPENAI_API_KEY not set")
-            elif not should_enable and self.config.enabled:
-                # Disable requested
-                self.config.enabled = False
-                if self._client:
-                    self._client.close()
-                    self._client = None
-                logger.info("Summarizer disabled via control file")
-
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Error reading summarizer control file: {e}")
-
     def update(self, sessions) -> Dict[str, AgentSummary]:
         """Update summaries for all sessions.
 
@@ -147,9 +113,6 @@ class SummarizerComponent:
         Returns:
             Dict mapping session_id to AgentSummary
         """
-        # Check control file for enable/disable
-        self.check_control_file()
-
         if not self.enabled:
             return self.summaries
 
@@ -327,44 +290,3 @@ class SummarizerComponent:
         if self._client:
             self._client.close()
             self._client = None
-
-
-def get_summarizer_control_path(session: str) -> Path:
-    """Get the summarizer control file path for a session."""
-    return get_session_dir(session) / "summarizer_control.json"
-
-
-def set_summarizer_enabled(session: str, enabled: bool) -> None:
-    """Set summarizer enabled state via control file.
-
-    The daemon reads this file each loop and adjusts accordingly.
-
-    Args:
-        session: tmux session name
-        enabled: Whether to enable or disable
-    """
-    control_path = get_summarizer_control_path(session)
-    control_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(control_path, 'w') as f:
-        json.dump({"enabled": enabled}, f)
-
-
-def is_summarizer_enabled(session: str) -> bool:
-    """Check if summarizer is enabled for a session.
-
-    Args:
-        session: tmux session name
-
-    Returns:
-        True if enabled, False otherwise
-    """
-    control_path = get_summarizer_control_path(session)
-    if not control_path.exists():
-        return False
-
-    try:
-        with open(control_path) as f:
-            data = json.load(f)
-        return data.get("enabled", False)
-    except (json.JSONDecodeError, OSError):
-        return False

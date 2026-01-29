@@ -196,12 +196,6 @@ class MonitorDaemonState:
     relay_last_push: Optional[str] = None  # ISO timestamp of last successful push
     relay_last_status: str = "disabled"  # "ok", "error", "disabled"
 
-    # Summarizer status
-    summarizer_enabled: bool = False
-    summarizer_available: bool = False  # True if OPENAI_API_KEY is set
-    summarizer_calls: int = 0
-    summarizer_cost_usd: float = 0.0
-
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -229,10 +223,6 @@ class MonitorDaemonState:
             "relay_enabled": self.relay_enabled,
             "relay_last_push": self.relay_last_push,
             "relay_last_status": self.relay_last_status,
-            "summarizer_enabled": self.summarizer_enabled,
-            "summarizer_available": self.summarizer_available,
-            "summarizer_calls": self.summarizer_calls,
-            "summarizer_cost_usd": self.summarizer_cost_usd,
         }
 
     @classmethod
@@ -268,10 +258,6 @@ class MonitorDaemonState:
             relay_enabled=data.get("relay_enabled", False),
             relay_last_push=data.get("relay_last_push"),
             relay_last_status=data.get("relay_last_status", "disabled"),
-            summarizer_enabled=data.get("summarizer_enabled", False),
-            summarizer_available=data.get("summarizer_available", False),
-            summarizer_calls=data.get("summarizer_calls", 0),
-            summarizer_cost_usd=data.get("summarizer_cost_usd", 0.0),
         )
 
     def update_summaries(self) -> None:

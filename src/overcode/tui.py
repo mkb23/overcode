@@ -43,9 +43,11 @@ from .supervisor_daemon import (
     stop_supervisor_daemon,
 )
 from .summarizer_component import (
-    set_summarizer_enabled,
-    is_summarizer_enabled,
+    SummarizerComponent,
+    SummarizerConfig,
+    AgentSummary,
 )
+from .summarizer_client import SummarizerClient
 from .web_server import (
     is_web_server_running,
     get_web_server_url,
@@ -180,14 +182,21 @@ class DaemonStatusBar(Static):
             content.append("○ ", style="red")
             content.append("stopped", style="red")
 
-        # AI Summarizer status
+        # AI Summarizer status (from TUI's local summarizer, not daemon)
         content.append(" │ ", style="dim")
         content.append("AI: ", style="bold")
-        if monitor_running and self.monitor_state.summarizer_available:
-            if self.monitor_state.summarizer_enabled:
+        # Get summarizer state from parent app
+        summarizer_available = SummarizerClient.is_available()
+        summarizer_enabled = False
+        summarizer_calls = 0
+        if hasattr(self.app, '_summarizer'):
+            summarizer_enabled = self.app._summarizer.enabled
+            summarizer_calls = self.app._summarizer.total_calls
+        if summarizer_available:
+            if summarizer_enabled:
                 content.append("● ", style="green")
-                if self.monitor_state.summarizer_calls > 0:
-                    content.append(f"{self.monitor_state.summarizer_calls}", style="cyan")
+                if summarizer_calls > 0:
+                    content.append(f"{summarizer_calls}", style="cyan")
                 else:
                     content.append("on", style="green")
             else:
@@ -1855,6 +1864,13 @@ class SupervisorTUI(App):
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
+        # AI Summarizer - owned by TUI, not daemon (zero cost when TUI closed)
+        self._summarizer = SummarizerComponent(
+            tmux_session=tmux_session,
+            config=SummarizerConfig(enabled=False),  # Disabled by default
+        )
+        self._summaries: dict[str, AgentSummary] = {}
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
@@ -1930,6 +1946,8 @@ class SupervisorTUI(App):
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds
             self.set_interval(30, self.update_timeline)
+            # Update AI summaries every 5 seconds (only runs if enabled)
+            self.set_interval(5, self._update_summaries_async)
 
     def update_daemon_status(self) -> None:
         """Update daemon status bar"""
@@ -2160,15 +2178,13 @@ class SupervisorTUI(App):
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
 
-            # Read daemon state for AI summaries (if available)
+            # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}
-            daemon_state = get_monitor_daemon_state(self.tmux_session)
-            if daemon_state:
-                for ds in daemon_state.sessions:
-                    ai_summaries[ds.session_id] = (
-                        ds.activity_summary or "",
-                        ds.activity_summary_context or "",
-                    )
+            for session_id, summary in self._summaries.items():
+                ai_summaries[session_id] = (
+                    summary.text or "",
+                    summary.context or "",
+                )
 
             # Update UI on main thread
             self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions, ai_summaries)
@@ -2228,6 +2244,39 @@ class SupervisorTUI(App):
         # Update preview pane if in list_preview mode
         if self.view_mode == "list_preview":
             self._update_preview()
+
+    @work(thread=True, exclusive=True, name="summarizer")
+    def _update_summaries_async(self) -> None:
+        """Background thread for AI summarization.
+
+        Only runs if summarizer is enabled. Updates are applied to widgets
+        via call_from_thread.
+        """
+        if not self._summarizer.enabled:
+            return
+
+        # Get fresh session list
+        sessions = self.session_manager.list_sessions()
+        if not sessions:
+            return
+
+        # Update summaries (this makes API calls)
+        summaries = self._summarizer.update(sessions)
+
+        # Apply to widgets on main thread
+        self.call_from_thread(self._apply_summaries, summaries)
+
+    def _apply_summaries(self, summaries: dict) -> None:
+        """Apply AI summaries to session widgets (runs on main thread)."""
+        self._summaries = summaries
+
+        for widget in self.query(SessionSummary):
+            session_id = widget.session.id
+            if session_id in summaries:
+                summary = summaries[session_id]
+                widget.ai_summary_short = summary.text or ""
+                widget.ai_summary_context = summary.context or ""
+                widget.refresh()
 
     def update_session_widgets(self) -> None:
         """Update the session display incrementally.
@@ -3054,23 +3103,29 @@ class SupervisorTUI(App):
     def action_toggle_summarizer(self) -> None:
         """Toggle the AI Summarizer on/off."""
         # Check if summarizer is available (OPENAI_API_KEY set)
-        state = get_monitor_daemon_state(self.tmux_session)
-        if not state or not state.summarizer_available:
-            self.notify("AI Summarizer unavailable - set OPENAI_API_KEY and press \\ to restart daemon", severity="warning")
+        if not SummarizerClient.is_available():
+            self.notify("AI Summarizer unavailable - set OPENAI_API_KEY", severity="warning")
             return
 
         # Toggle the state
-        currently_enabled = is_summarizer_enabled(self.tmux_session)
-        new_state = not currently_enabled
-        set_summarizer_enabled(self.tmux_session, new_state)
+        self._summarizer.config.enabled = not self._summarizer.config.enabled
 
-        if new_state:
+        if self._summarizer.config.enabled:
+            # Enable: create client if needed
+            if not self._summarizer._client:
+                self._summarizer._client = SummarizerClient()
             self.notify("AI Summarizer enabled", severity="information")
+            # Trigger an immediate update
+            self._update_summaries_async()
         else:
+            # Disable: close client to release resources
+            if self._summarizer._client:
+                self._summarizer._client.close()
+                self._summarizer._client = None
             self.notify("AI Summarizer disabled", severity="information")
 
-        # Refresh status bar after a short delay (let daemon pick up the change)
-        self.set_timer(1.0, self.update_daemon_status)
+        # Refresh status bar
+        self.update_daemon_status()
 
     def action_monitor_restart(self) -> None:
         """Restart the Monitor Daemon (handles metrics/state tracking)."""
@@ -3441,6 +3496,9 @@ class SupervisorTUI(App):
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""
         import sys
+        # Stop the summarizer (release API client resources)
+        self._summarizer.stop()
+
         # Ensure mouse tracking is disabled
         sys.stdout.write('\033[?1000l')  # Disable mouse tracking
         sys.stdout.write('\033[?1002l')  # Disable cell motion tracking
