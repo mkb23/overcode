@@ -119,7 +119,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_SUPERVISOR: "▒",
     STATUS_WAITING_USER: "░",
     STATUS_TERMINATED: "×",  # Small X - terminated
-    STATUS_ASLEEP: "z",  # Lowercase z for sleeping
+    STATUS_ASLEEP: "░",  # Light shade hatching (grey) - sleeping/paused
 }
 
 
