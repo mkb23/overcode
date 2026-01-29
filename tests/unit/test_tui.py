@@ -929,12 +929,14 @@ class TestHelpOverlayRender:
     """Test HelpOverlay.render() output"""
 
     def test_render_contains_keyboard_shortcuts(self):
-        """Help text contains keyboard shortcuts"""
+        """Help text contains keyboard shortcut sections"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
         result = widget.render()
         plain = result.plain
-        assert "KEYBOARD SHORTCUTS" in plain
+        # Check for reorganized section headers
+        assert "NAVIGATION & VIEW" in plain
+        assert "AGENT CONTROL" in plain
         assert "Quit" in plain
 
     def test_render_contains_status_colors(self):
@@ -944,7 +946,7 @@ class TestHelpOverlayRender:
         result = widget.render()
         plain = result.plain
         assert "Running" in plain
-        assert "Wait User" in plain
+        assert "Wait user" in plain
 
 
 class TestStatusTimelineRender:
