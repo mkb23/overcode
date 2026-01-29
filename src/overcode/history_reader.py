@@ -202,6 +202,44 @@ def get_session_ids_for_session(
     return sorted(session_ids)
 
 
+def get_current_session_id_for_directory(
+    directory: str,
+    since: datetime,
+    history_path: Path = CLAUDE_HISTORY_PATH
+) -> Optional[str]:
+    """Get the most recent Claude sessionId for a directory since a given time.
+
+    This is used to discover new Claude sessionIds that should be tracked
+    by an overcode agent running in that directory (#119).
+
+    Args:
+        directory: The project directory path
+        since: Only consider entries after this time
+        history_path: Path to history file
+
+    Returns:
+        The most recent sessionId, or None if no matching entries
+    """
+    entries = read_history(history_path)
+    session_dir = str(Path(directory).resolve())
+    since_ms = int(since.timestamp() * 1000)
+
+    latest_session_id = None
+    latest_timestamp = 0
+
+    for entry in entries:
+        if entry.timestamp_ms < since_ms:
+            continue
+        if entry.project:
+            entry_dir = str(Path(entry.project).resolve())
+            if entry_dir == session_dir and entry.session_id:
+                if entry.timestamp_ms > latest_timestamp:
+                    latest_timestamp = entry.timestamp_ms
+                    latest_session_id = entry.session_id
+
+    return latest_session_id
+
+
 def encode_project_path(path: str) -> str:
     """Encode a project path to Claude Code's directory naming format.
 
@@ -397,6 +435,10 @@ def get_session_stats(
 
     Combines interaction counting with token usage from session files.
 
+    For context window calculation, only owned sessionIds are used to avoid
+    cross-contamination when multiple agents run in the same directory (#119).
+    Total token counting still uses all matched sessionIds.
+
     Args:
         session: The overcode Session
         history_path: Path to history.jsonl
@@ -418,21 +460,25 @@ def get_session_stats(
     interactions = get_interactions_for_session(session, history_path)
     interaction_count = len(interactions)
 
-    # Get unique session IDs
-    session_ids = set()
+    # Get unique session IDs from interactions (for total token counting)
+    all_session_ids = set()
     for entry in interactions:
         if entry.session_id:
-            session_ids.add(entry.session_id)
+            all_session_ids.add(entry.session_id)
+
+    # Get owned sessionIds for context calculation (#119)
+    # Only use explicitly tracked sessionIds to avoid showing wrong agent's context
+    owned_session_ids = getattr(session, 'claude_session_ids', None) or []
 
     # Sum token usage and work times across all session files
     total_input = 0
     total_output = 0
     total_cache_creation = 0
     total_cache_read = 0
-    current_context = 0  # Track most recent context size
+    current_context = 0  # Track most recent context size (only from owned sessions)
     all_work_times: List[float] = []
 
-    for sid in session_ids:
+    for sid in all_session_ids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
         )
@@ -441,9 +487,11 @@ def get_session_stats(
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
-        # Keep the largest current context (most recent across all session files)
-        if usage["current_context_tokens"] > current_context:
-            current_context = usage["current_context_tokens"]
+
+        # Only track context from OWNED sessionIds to avoid cross-contamination (#119)
+        if sid in owned_session_ids:
+            if usage["current_context_tokens"] > current_context:
+                current_context = usage["current_context_tokens"]
 
         # Collect work times from this session file
         work_times = read_work_times_from_session_file(session_file, since=session_start)

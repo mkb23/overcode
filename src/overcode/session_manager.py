@@ -98,6 +98,10 @@ class Session:
     # Human annotation - user's notes about this agent (#74)
     human_annotation: str = ""
 
+    # Claude sessionIds owned by this overcode session (#119)
+    # Used to accurately calculate context window for this specific agent
+    claude_session_ids: List[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
@@ -627,3 +631,32 @@ class SessionManager:
     def set_human_annotation(self, session_id: str, annotation: str):
         """Set human annotation for a session (#74)."""
         self.update_session(session_id, human_annotation=annotation)
+
+    def add_claude_session_id(self, session_id: str, claude_session_id: str) -> bool:
+        """Add a Claude sessionId to a session's owned list if not already present.
+
+        This tracks which Claude sessionIds belong to this overcode agent,
+        enabling accurate context window calculation when multiple agents
+        run in the same directory (#119).
+
+        Args:
+            session_id: The overcode session ID
+            claude_session_id: The Claude Code sessionId to add
+
+        Returns:
+            True if the sessionId was added, False if already present or session not found
+        """
+        session = self.get_session(session_id)
+        if not session or claude_session_id in session.claude_session_ids:
+            return False
+
+        def do_update(state):
+            if session_id in state:
+                ids = state[session_id].get('claude_session_ids', [])
+                if claude_session_id not in ids:
+                    ids.append(claude_session_id)
+                    state[session_id]['claude_session_ids'] = ids
+            return state
+
+        self._atomic_update(do_update)
+        return True
