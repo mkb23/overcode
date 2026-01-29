@@ -2230,10 +2230,11 @@ class SupervisorTUI(App):
                 # Update previous status for next round
                 self._previous_statuses[session_id] = status
 
-                # Update widget's unvisited state
+                # Update widget's unvisited state (never show bell on asleep sessions #120)
                 is_unvisited_stalled = (
                     status == STATUS_WAITING_USER and
-                    session_id not in self._prefs.visited_stalled_agents
+                    session_id not in self._prefs.visited_stalled_agents and
+                    not widget.session.is_asleep
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
