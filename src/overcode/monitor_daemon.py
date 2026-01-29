@@ -56,7 +56,6 @@ from .config import get_relay_config
 from .status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
-from .summarizer_component import SummarizerComponent, SummarizerConfig
 
 
 # Check for macOS presence APIs (optional)
@@ -187,12 +186,6 @@ class MonitorDaemon:
         # Presence tracking (graceful degradation)
         self.presence = PresenceComponent()
 
-        # Summarizer component (graceful degradation if no API key)
-        self.summarizer = SummarizerComponent(
-            tmux_session=tmux_session,
-            config=SummarizerConfig(enabled=False),  # Off by default, enable via CLI
-        )
-
         # Logging - session-specific log file
         self.log = _create_monitor_logger(session=tmux_session)
 
@@ -212,10 +205,6 @@ class MonitorDaemon:
         # Stats sync throttling - start with min time to force immediate sync on first loop
         self._last_stats_sync = datetime.min
         self._stats_sync_interval = 60  # seconds
-
-        # TUI activity tracking (for summarizer cost control - #66)
-        self._last_tui_activity = datetime.min
-        self._tui_activity_timeout = 120  # seconds - summarizer pauses after this
 
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
@@ -454,7 +443,6 @@ class MonitorDaemon:
 
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
-                self._last_tui_activity = datetime.now()  # Track for summarizer (#66)
                 self.state.current_interval = INTERVAL_FAST
                 self.state.save(self.state_path)
                 return
@@ -487,13 +475,6 @@ class MonitorDaemon:
                 self.state.supervisor_claude_total_run_seconds = stats.get("supervisor_claude_total_run_seconds", 0.0)
             except (json.JSONDecodeError, OSError):
                 pass
-
-        # Update summarizer stats
-        self.state.summarizer_available = self.summarizer.available
-        self.state.summarizer_enabled = self.summarizer.enabled
-        self.state.summarizer_calls = self.summarizer.total_calls
-        # Estimate cost: ~$0.0007 per call (4K input tokens + 150 output tokens)
-        self.state.summarizer_cost_usd = round(self.summarizer.total_calls * 0.0007, 4)
 
         self.state.save(self.state_path)
 
@@ -646,30 +627,6 @@ class MonitorDaemon:
                 for stale_id in stale_ids:
                     del self.previous_states[stale_id]
 
-                # Update summaries (if enabled and TUI active with user present - #66)
-                # Only run summarizer when:
-                # 1. TUI was active recently (within timeout)
-                # 2. User is not locked (presence_state != 1)
-                tui_recently_active = (now - self._last_tui_activity).total_seconds() < self._tui_activity_timeout
-                # Get current presence state for summarizer check (also used in _publish_state)
-                presence_state, _, _ = self.presence.get_current_state()
-                user_not_locked = presence_state != 1  # 1 = locked/screen off
-                should_summarize = tui_recently_active and user_not_locked
-
-                if should_summarize:
-                    summaries = self.summarizer.update(sessions)
-                else:
-                    # Still use persisted summaries, just don't update them
-                    # This prevents AI summaries from disappearing when TUI is briefly inactive
-                    summaries = self.summarizer.summaries
-                for session_state in session_states:
-                    summary = summaries.get(session_state.session_id)
-                    if summary:
-                        session_state.activity_summary = summary.text
-                        session_state.activity_summary_updated = summary.updated_at
-                        session_state.activity_summary_context = summary.context
-                        session_state.activity_summary_context_updated = summary.context_updated_at
-
                 # Calculate interval
                 interval = self.calculate_interval(sessions, all_waiting_user)
                 self.state.current_interval = interval
@@ -699,7 +656,6 @@ class MonitorDaemon:
         finally:
             self.log.info("Monitor daemon shutting down")
             self.presence.stop()
-            self.summarizer.stop()
             self.state.status = "stopped"
             self.state.save(self.state_path)
             remove_pid_file(self.pid_path)
