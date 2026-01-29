@@ -3021,7 +3021,7 @@ class SupervisorTUI(App):
         # Check if summarizer is available (OPENAI_API_KEY set)
         state = get_monitor_daemon_state(self.tmux_session)
         if not state or not state.summarizer_available:
-            self.notify("AI Summarizer unavailable (OPENAI_API_KEY not set)", severity="warning")
+            self.notify("AI Summarizer unavailable - set OPENAI_API_KEY and press \\ to restart daemon", severity="warning")
             return
 
         # Toggle the state
