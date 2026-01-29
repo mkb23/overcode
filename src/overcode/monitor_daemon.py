@@ -209,8 +209,8 @@ class MonitorDaemon:
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
 
-        # Stats sync throttling
-        self._last_stats_sync = datetime.now()
+        # Stats sync throttling - start with min time to force immediate sync on first loop
+        self._last_stats_sync = datetime.min
         self._stats_sync_interval = 60  # seconds
 
         # TUI activity tracking (for summarizer cost control - #66)
@@ -594,6 +594,13 @@ class MonitorDaemon:
                 # Get all sessions
                 sessions = self.session_manager.list_sessions()
 
+                # Sync Claude Code stats BEFORE building session_states so token counts are fresh
+                # This ensures the first loop has accurate data (fixes #103)
+                if (now - self._last_stats_sync).total_seconds() >= self._stats_sync_interval:
+                    for session in sessions:
+                        self.sync_claude_code_stats(session)
+                    self._last_stats_sync = now
+
                 # Detect status and track stats for each session
                 session_states = []
                 all_waiting_user = True
@@ -638,12 +645,6 @@ class MonitorDaemon:
                 stale_ids = set(self.previous_states.keys()) - current_session_ids
                 for stale_id in stale_ids:
                     del self.previous_states[stale_id]
-
-                # Sync Claude Code stats periodically (git context is refreshed every loop above)
-                if (now - self._last_stats_sync).total_seconds() >= self._stats_sync_interval:
-                    for session in sessions:
-                        self.sync_claude_code_stats(session)
-                    self._last_stats_sync = now
 
                 # Update summaries (if enabled and TUI active with user present - #66)
                 # Only run summarizer when:
