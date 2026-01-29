@@ -659,7 +659,9 @@ class MonitorDaemon:
                 if should_summarize:
                     summaries = self.summarizer.update(sessions)
                 else:
-                    summaries = {}
+                    # Still use persisted summaries, just don't update them
+                    # This prevents AI summaries from disappearing when TUI is briefly inactive
+                    summaries = self.summarizer.summaries
                 for session_state in session_states:
                     summary = summaries.get(session_state.session_id)
                     if summary:
