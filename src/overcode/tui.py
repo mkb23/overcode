@@ -1132,13 +1132,14 @@ class PreviewPane(Static):
             # Calculate available lines based on widget height
             # Reserve 2 lines for header and some padding
             available_lines = max(10, self.size.height - 2) if self.size.height > 0 else 30
-            # Show last N lines of output - plain text, no decoration
+            # Show last N lines of output with ANSI color support
             # Truncate lines to pane width to match tmux display
             max_line_len = max(pane_width - 1, 40)  # Leave room for newline, minimum 40
             for line in self.content_lines[-available_lines:]:
                 # Truncate long lines to pane width
                 display_line = line[:max_line_len] if len(line) > max_line_len else line
-                content.append(display_line + "\n")
+                # Parse ANSI escape sequences to preserve colors from tmux
+                content.append(Text.from_ansi(display_line + "\n"))
 
         return content
 
