@@ -2,8 +2,8 @@
 Unit tests for the summarizer client and component.
 
 Tests the two-prompt summarizer system that generates:
-- Short summaries: current activity (~50 chars)
-- Context summaries: wider goal (~80 chars)
+- Short summaries: current activity (~40 chars)
+- Context summaries: wider goal (~60 chars)
 """
 
 import pytest
@@ -43,13 +43,13 @@ class TestSummarizerPrompts:
         """Short prompt emphasizes current/immediate action."""
         prompt_lower = SUMMARIZE_PROMPT_SHORT.lower()
         assert "current" in prompt_lower or "right now" in prompt_lower
-        assert "50 char" in prompt_lower or "50char" in prompt_lower.replace(" ", "")
+        assert "40 char" in prompt_lower or "40char" in prompt_lower.replace(" ", "")
 
     def test_context_prompt_focuses_on_wider_goal(self):
         """Context prompt emphasizes broader task/goal."""
         prompt_lower = SUMMARIZE_PROMPT_CONTEXT.lower()
-        assert "context" in prompt_lower or "overall" in prompt_lower or "broader" in prompt_lower
-        assert "80 char" in prompt_lower or "80char" in prompt_lower.replace(" ", "")
+        assert "context" in prompt_lower or "overall" in prompt_lower or "goal" in prompt_lower
+        assert "60 char" in prompt_lower or "60char" in prompt_lower.replace(" ", "")
 
     def test_prompts_have_placeholders(self):
         """Both prompts have required placeholders."""

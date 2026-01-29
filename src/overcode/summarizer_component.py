@@ -242,7 +242,7 @@ class SummarizerComponent:
                 previous_summary=summary.text,
                 current_status=status,
                 lines=self.config.lines,
-                max_tokens=100,
+                max_tokens=50,  # Aggressive limit for terse output
                 mode="short",
             )
 
@@ -268,7 +268,7 @@ class SummarizerComponent:
                 previous_summary=summary.context,
                 current_status=status,
                 lines=self.config.lines,
-                max_tokens=150,
+                max_tokens=75,  # Aggressive limit for terse output
                 mode="context",
             )
 

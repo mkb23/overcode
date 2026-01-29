@@ -28,7 +28,7 @@ from .config import get_summarizer_config
 logger = logging.getLogger(__name__)
 
 # Short summary prompt - focuses on CURRENT activity (what's happening right now)
-SUMMARIZE_PROMPT_SHORT = """Summarize a Claude Code agent's CURRENT activity from terminal output.
+SUMMARIZE_PROMPT_SHORT = """Summarize a Claude Code agent's CURRENT activity.
 
 ## Terminal Content (last {lines} lines):
 {pane_content}
@@ -39,20 +39,22 @@ SUMMARIZE_PROMPT_SHORT = """Summarize a Claude Code agent's CURRENT activity fro
 {previous_summary}
 
 ## Instructions:
-Write a terse summary of what the agent is doing RIGHT NOW. Focus on the immediate action.
+Write ONE terse phrase (not a sentence). Be direct. No filler words.
 
-Style guide:
-- NO "The agent is/has..." or "Claude is..." phrasing
-- Start with lowercase verb: "reading...", "writing...", "running tests"
-- Use shorthand: "editing auth.py" not "The agent is currently editing the auth.py file"
-- Examples: "reading config files" / "running pytest" / "waiting for user input" / "writing migration"
+STRICT RULES:
+- NO "The agent is/has..." or "Claude is..." or "Currently..."
+- Start with lowercase verb: "reading...", "writing...", "running..."
+- NO articles (a, an, the) unless essential
+- Use shorthand: "editing auth.py" not "editing the auth.py file"
 
-If nothing meaningful changed from previous summary, respond exactly: UNCHANGED
+Examples (note brevity): "reading config" / "running pytest" / "waiting: user input" / "writing migration"
 
-Max 50 chars. Focus on: the single current action happening now."""
+If nothing changed, respond: UNCHANGED
+
+CRITICAL: Max 40 chars. Shorter is better."""
 
 # Context summary prompt - focuses on WIDER context (what's being worked on overall)
-SUMMARIZE_PROMPT_CONTEXT = """Summarize the OVERALL CONTEXT of what a Claude Code agent is working on.
+SUMMARIZE_PROMPT_CONTEXT = """Summarize the OVERALL GOAL of what a Claude Code agent is working on.
 
 ## Terminal Content (last {lines} lines):
 {pane_content}
@@ -63,17 +65,19 @@ SUMMARIZE_PROMPT_CONTEXT = """Summarize the OVERALL CONTEXT of what a Claude Cod
 {previous_summary}
 
 ## Instructions:
-Write a terse summary of the BROADER TASK being worked on. What's the goal? What problem is being solved?
+Write ONE terse phrase describing the task/feature/bug. Not current action - the objective.
 
-Style guide:
-- NO "The agent is/has..." or "Claude is..." phrasing
-- Focus on the objective, not the current action
-- Use shorthand: "auth system refactor, JWT migration" not "Working on refactoring authentication"
-- Examples: "implementing user search with pagination" / "fixing race condition in worker pool" / "adding dark mode to settings page"
+STRICT RULES:
+- NO "The agent is/has..." or "Claude is..." or "Working on..."
+- NO articles (a, an, the) unless essential
+- Use shorthand: "auth refactor, JWT migration" not "refactoring the authentication system"
+- Focus on WHAT not HOW
 
-If nothing meaningful changed from previous summary, respond exactly: UNCHANGED
+Examples (note brevity): "user search with pagination" / "race condition fix in worker pool" / "dark mode for settings"
 
-Max 80 chars. Focus on: the task/feature/bug being addressed, not the immediate action."""
+If nothing changed, respond: UNCHANGED
+
+CRITICAL: Max 60 chars. Shorter is better."""
 
 
 class SummarizerClient:
