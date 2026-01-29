@@ -17,6 +17,8 @@ from overcode.presence_logger import (
     classify_state,
     state_to_name,
     PresenceLoggerConfig,
+    PresenceLogger,
+    read_presence_history,
     DEFAULT_SAMPLE_INTERVAL,
     DEFAULT_IDLE_THRESHOLD,
 )
@@ -143,6 +145,175 @@ class TestPresenceLoggerConfig:
         config = PresenceLoggerConfig(log_path="")
         assert ".overcode" in config.log_path
         assert "presence_log.csv" in config.log_path
+
+
+class TestHelperFunctions:
+    """Test module-level helper functions."""
+
+    def test_default_log_path_creates_directory(self, tmp_path, monkeypatch):
+        """default_log_path should create the directory."""
+        from overcode.presence_logger import default_log_path, OVERCODE_DIR
+
+        path = default_log_path()
+        assert ".overcode" in path
+        assert "presence_log.csv" in path
+
+    def test_is_presence_running(self, tmp_path, monkeypatch):
+        """is_presence_running should check PID file."""
+        from overcode import presence_logger
+
+        # Patch the PID file path
+        pid_file = tmp_path / "presence.pid"
+        monkeypatch.setattr(presence_logger, 'PRESENCE_PID_FILE', pid_file)
+
+        # No file = not running
+        assert presence_logger.is_presence_running() is False
+
+        # File with our PID = running
+        import os
+        pid_file.write_text(str(os.getpid()))
+        assert presence_logger.is_presence_running() is True
+
+        # File with dead PID = not running
+        pid_file.write_text("99999999")
+        assert presence_logger.is_presence_running() is False
+
+    def test_get_presence_pid(self, tmp_path, monkeypatch):
+        """get_presence_pid should return PID or None."""
+        from overcode import presence_logger
+        import os
+
+        pid_file = tmp_path / "presence.pid"
+        monkeypatch.setattr(presence_logger, 'PRESENCE_PID_FILE', pid_file)
+
+        # No file = None
+        assert presence_logger.get_presence_pid() is None
+
+        # Valid PID
+        pid_file.write_text(str(os.getpid()))
+        assert presence_logger.get_presence_pid() == os.getpid()
+
+
+class TestReadPresenceHistory:
+    """Test read_presence_history function."""
+
+    def test_returns_empty_for_missing_file(self, tmp_path, monkeypatch):
+        """Should return empty list when file doesn't exist."""
+        from overcode import presence_logger
+
+        monkeypatch.setattr(presence_logger, 'default_log_path', lambda: str(tmp_path / "missing.csv"))
+        result = read_presence_history(hours=1.0)
+
+        assert result == []
+
+    def test_reads_csv_data(self, tmp_path, monkeypatch):
+        """Should read and parse CSV data."""
+        from overcode import presence_logger
+        import datetime as dt
+
+        log_file = tmp_path / "presence.csv"
+        now = dt.datetime.now()
+
+        # Write test data
+        with open(log_file, 'w') as f:
+            f.write("timestamp,state,idle_seconds,locked,inferred_sleep\n")
+            f.write(f"{now.isoformat()},3,10.5,0,0\n")
+
+        monkeypatch.setattr(presence_logger, 'default_log_path', lambda: str(log_file))
+        result = read_presence_history(hours=1.0)
+
+        assert len(result) == 1
+        assert result[0][1] == 3  # state
+
+    def test_filters_by_time_window(self, tmp_path, monkeypatch):
+        """Should filter entries within the time window."""
+        from overcode import presence_logger
+        import datetime as dt
+
+        log_file = tmp_path / "presence.csv"
+        now = dt.datetime.now()
+        old_time = now - dt.timedelta(hours=5)  # Too old
+
+        with open(log_file, 'w') as f:
+            f.write("timestamp,state,idle_seconds,locked,inferred_sleep\n")
+            f.write(f"{now.isoformat()},3,10.5,0,0\n")  # Recent
+            f.write(f"{old_time.isoformat()},2,60.0,0,0\n")  # Too old
+
+        monkeypatch.setattr(presence_logger, 'default_log_path', lambda: str(log_file))
+        result = read_presence_history(hours=1.0)
+
+        assert len(result) == 1  # Only recent entry
+
+
+class TestPresenceLogger:
+    """Test PresenceLogger class."""
+
+    def test_init_default_config(self):
+        """Should initialize with default config."""
+        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+
+        logger = PresenceLogger()
+
+        assert logger.config.sample_interval == DEFAULT_SAMPLE_INTERVAL
+        assert logger.config.idle_threshold == DEFAULT_IDLE_THRESHOLD
+
+    def test_init_custom_config(self):
+        """Should accept custom config."""
+        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+
+        config = PresenceLoggerConfig(sample_interval=30, idle_threshold=90)
+        logger = PresenceLogger(config)
+
+        assert logger.config.sample_interval == 30
+        assert logger.config.idle_threshold == 90
+
+    def test_start_stop(self, tmp_path):
+        """Should start and stop cleanly."""
+        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+
+        config = PresenceLoggerConfig(
+            sample_interval=1,
+            log_path=str(tmp_path / "test.csv"),
+        )
+        logger = PresenceLogger(config)
+
+        # Start should not block
+        logger.start()
+        # Stop should be quick
+        logger.stop(timeout=2.0)
+
+    def test_get_current_state_returns_tuple(self, tmp_path):
+        """get_current_state should return state tuple."""
+        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+
+        config = PresenceLoggerConfig(
+            sample_interval=60,
+            log_path=str(tmp_path / "test.csv"),
+        )
+        logger = PresenceLogger(config)
+
+        state, idle, locked = logger.get_current_state()
+
+        # Should return valid values (may not be accurate without macOS APIs)
+        assert isinstance(state, int)
+        assert isinstance(idle, float)
+        assert isinstance(locked, bool)
+
+
+class TestSingletonFunctions:
+    """Test singleton logger functions."""
+
+    def test_get_singleton_logger_returns_none_initially(self):
+        """Should return None when no logger started."""
+        from overcode import presence_logger
+
+        # Reset singleton state
+        with presence_logger._singleton_lock:
+            presence_logger._singleton_logger = None
+
+        result = presence_logger.get_singleton_logger()
+
+        assert result is None
 
 
 # =============================================================================

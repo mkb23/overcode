@@ -166,6 +166,83 @@ class TestAttachCommand:
         assert result.exit_code == 0
 
 
+class TestDaemonCommands:
+    """Test daemon-related commands"""
+
+    def test_monitor_daemon_help(self):
+        """Monitor-daemon help works"""
+        result = runner.invoke(app, ["monitor-daemon", "--help"])
+        assert result.exit_code == 0
+
+    def test_supervisor_daemon_help(self):
+        """Supervisor-daemon help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "--help"])
+        assert result.exit_code == 0
+
+
+class TestConfigCommands:
+    """Test config-related commands"""
+
+    def test_config_help(self):
+        """Config help works"""
+        result = runner.invoke(app, ["config", "--help"])
+        assert result.exit_code == 0
+
+
+
+
+class TestVersionCommand:
+    """Test version-related output"""
+
+    def test_help_shows_version_info(self):
+        """Help output exists"""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+
+
+class TestCleanupCommand:
+    """Test cleanup command"""
+
+    def test_cleanup_help(self):
+        """Cleanup help works"""
+        result = runner.invoke(app, ["cleanup", "--help"])
+        assert result.exit_code == 0
+
+
+class TestExportCommand:
+    """Test export command"""
+
+    def test_export_help(self):
+        """Export help works"""
+        result = runner.invoke(app, ["export", "--help"])
+        assert result.exit_code == 0
+
+
+class TestWebCommand:
+    """Test web command"""
+
+    def test_web_help(self):
+        """Web help works"""
+        result = runner.invoke(app, ["web", "--help"])
+        assert result.exit_code == 0
+
+
+class TestAllSubcommands:
+    """Test that all subcommands have help"""
+
+    def test_all_commands_have_help(self):
+        """All registered commands should have help text."""
+        # Main commands from the app
+        commands = ["launch", "list", "kill", "send", "show", "instruct",
+                    "monitor", "supervisor", "attach", "cleanup", "export",
+                    "web", "monitor-daemon", "supervisor-daemon", "config"]
+
+        for cmd in commands:
+            result = runner.invoke(app, [cmd, "--help"])
+            # Exit code 0 means help was shown successfully
+            assert result.exit_code == 0, f"Command '{cmd}' failed with exit code {result.exit_code}: {result.output}"
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

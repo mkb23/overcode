@@ -6,6 +6,7 @@ Tests the two-prompt summarizer system that generates:
 - Context summaries: wider goal (~60 chars)
 """
 
+import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
@@ -274,6 +275,171 @@ class TestMonitorDaemonStateFields:
         state = SessionDaemonState.from_dict(data)
         assert state.activity_summary == "writing tests"
         assert state.activity_summary_context == "fixing bug in login"
+
+
+class TestSummarizerComponentMethods:
+    """Tests for SummarizerComponent instance methods."""
+
+    def test_available_property(self):
+        """Should check if API key is available."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+
+        with patch.object(SummarizerClient, 'is_available', return_value=True):
+            assert component.available is True
+
+        with patch.object(SummarizerClient, 'is_available', return_value=False):
+            assert component.available is False
+
+    def test_enabled_property_false_when_disabled(self):
+        """Should return False when config.enabled is False."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+        assert component.enabled is False
+
+    def test_enabled_property_false_when_no_client(self):
+        """Should return False when client is None."""
+        with patch.object(SummarizerClient, 'is_available', return_value=False):
+            component = SummarizerComponent(
+                tmux_session="test",
+                config=SummarizerConfig(enabled=True),
+            )
+            assert component.enabled is False
+
+    def test_update_returns_summaries_when_disabled(self):
+        """Should return existing summaries when disabled."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+        component.summaries = {"test-id": AgentSummary(text="existing")}
+
+        result = component.update([])
+
+        assert result == {"test-id": AgentSummary(text="existing")}
+
+    def test_get_summary_returns_existing(self):
+        """Should return existing summary for session."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+        expected = AgentSummary(text="test summary")
+        component.summaries["test-id"] = expected
+
+        result = component.get_summary("test-id")
+
+        assert result == expected
+
+    def test_get_summary_returns_none_for_unknown(self):
+        """Should return None for unknown session."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+
+        result = component.get_summary("unknown-id")
+
+        assert result is None
+
+    def test_stop_closes_client(self):
+        """Should close client on stop."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+        mock_client = Mock()
+        component._client = mock_client
+
+        component.stop()
+
+        mock_client.close.assert_called_once()
+        assert component._client is None
+
+    def test_stop_handles_no_client(self):
+        """Should handle stop when no client exists."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            config=SummarizerConfig(enabled=False),
+        )
+        component._client = None
+
+        # Should not raise
+        component.stop()
+
+    def test_capture_pane_returns_content(self):
+        """Should return pane content."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = "line1\nline2\nline3\n\n"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=False, lines=100),
+        )
+
+        result = component._capture_pane(1)
+
+        assert result == "line1\nline2\nline3"
+        mock_tmux.capture_pane.assert_called_once()
+
+    def test_capture_pane_returns_none_on_error(self):
+        """Should return None when capture fails."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.side_effect = Exception("tmux error")
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=False),
+        )
+
+        result = component._capture_pane(1)
+
+        assert result is None
+
+    def test_capture_pane_returns_none_for_empty_content(self):
+        """Should return None when pane content is empty."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = None
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=False),
+        )
+
+        result = component._capture_pane(1)
+
+        assert result is None
+
+
+class TestSummarizerClientMethods:
+    """Tests for SummarizerClient methods."""
+
+    def test_is_available_returns_true_with_api_key(self):
+        """Should return True when API key is available."""
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            # Re-check availability
+            assert SummarizerClient.is_available() is True
+
+    def test_is_available_checks_env_and_config(self):
+        """Should check environment and config for API key."""
+        # Just verify the method exists and returns a boolean
+        result = SummarizerClient.is_available()
+        assert isinstance(result, bool)
+
+    def test_close_is_noop(self):
+        """Close should be a no-op."""
+        client = SummarizerClient.__new__(SummarizerClient)
+        client.api_key = None
+
+        # Should not raise
+        client.close()
 
 
 # =============================================================================
