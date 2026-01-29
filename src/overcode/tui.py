@@ -1148,7 +1148,9 @@ class PreviewPane(Static):
                 # Truncate long lines to pane width
                 display_line = line[:max_line_len] if len(line) > max_line_len else line
                 # Parse ANSI escape sequences to preserve colors from tmux
-                content.append(Text.from_ansi(display_line + "\n"))
+                # Note: Text.from_ansi() strips trailing newlines, so add newline separately
+                content.append(Text.from_ansi(display_line))
+                content.append("\n")
 
         return content
 
