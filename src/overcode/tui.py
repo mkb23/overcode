@@ -1031,13 +1031,12 @@ class SessionSummary(Static, can_focus=True):
                 else:
                     content.append("🎯 (no standing orders)", style=f"dim italic{bg}")
             elif mode == "ai_long":
-                # ai_long: show context summary (📖 icon - wider context from AI)
+                # ai_long: show context summary (📖 icon - wider context/goal from AI)
                 if self.ai_summary_context:
                     content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=f"bold italic{bg}")
-                elif self.ai_summary_short:
-                    content.append(f"📖 {self.ai_summary_short[:remaining-3]}", style=f"italic{bg}")
                 else:
-                    content.append(f"📖 {self.current_activity[:remaining-3]}", style=f"dim italic{bg}")
+                    # Don't fall back to short - show placeholder to distinguish modes
+                    content.append("📖 (awaiting context...)", style=f"dim italic{bg}")
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:
