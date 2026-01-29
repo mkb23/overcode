@@ -58,7 +58,7 @@ class NavigationActionsMixin:
         # Priority: waiting_user (red) > no_instructions (yellow) > waiting_supervisor (orange)
         attention_sessions = []
         for i, widget in enumerate(widgets):
-            status = getattr(widget, 'current_status', STATUS_RUNNING)
+            status = getattr(widget, 'detected_status', STATUS_RUNNING)
             if status == STATUS_WAITING_USER:
                 attention_sessions.append((0, i, widget))  # Highest priority
             elif status == STATUS_NO_INSTRUCTIONS:
@@ -102,5 +102,5 @@ class NavigationActionsMixin:
         # Show position indicator
         pos = self._attention_jump_index + 1
         total = len(self._attention_jump_list)
-        status = getattr(target_widget, 'current_status', 'unknown')
+        status = getattr(target_widget, 'detected_status', 'unknown')
         self.notify(f"Attention {pos}/{total}: {target_widget.session.name} ({status})", severity="information")
