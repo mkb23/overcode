@@ -442,6 +442,320 @@ class TestSummarizerClientMethods:
         client.close()
 
 
+class TestSummarizerComponentUpdateSession:
+    """Tests for _update_session and related methods."""
+
+    def test_update_session_skips_when_no_client(self):
+        """Should skip when no client."""
+        mock_tmux = Mock()
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=False),
+        )
+        component._client = None
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+
+        component._update_session(mock_session)
+
+        # Should not capture pane or update summaries
+        mock_tmux.capture_pane.assert_not_called()
+
+    def test_update_session_respects_rate_limits(self):
+        """Should respect rate limits for updates."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True, interval=5.0, context_interval=15.0),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.tmux_window = 1
+        mock_session.name = "test-agent"
+        mock_session.stats = Mock(current_state="running")
+
+        # Set last update to now - should skip due to rate limit
+        now = datetime.now()
+        component._last_update["test-id"] = now
+        component._last_context_update["test-id"] = now
+
+        component._update_session(mock_session)
+
+        # Should not capture pane due to rate limit
+        mock_tmux.capture_pane.assert_not_called()
+
+    def test_update_session_skips_terminated(self):
+        """Should skip terminated sessions."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.tmux_window = 1
+        mock_session.name = "test-agent"
+        mock_session.stats = Mock(current_state="terminated")
+
+        component._update_session(mock_session)
+
+        # Should not capture pane for terminated sessions
+        mock_tmux.capture_pane.assert_not_called()
+
+    def test_update_session_skips_empty_content(self):
+        """Should skip when pane content is empty."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = None
+        mock_client = Mock()
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.tmux_window = 1
+        mock_session.name = "test-agent"
+        mock_session.stats = Mock(current_state="running")
+
+        component._update_session(mock_session)
+
+        # Should capture pane but not call client
+        mock_tmux.capture_pane.assert_called_once()
+        mock_client.summarize.assert_not_called()
+
+    def test_update_session_calls_client(self):
+        """Should call client when content is available."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = "line1\nline2\nline3"
+        mock_client = Mock()
+        mock_client.summarize.return_value = "test summary"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True, interval=0.0, context_interval=0.0),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.tmux_window = 1
+        mock_session.name = "test-agent"
+        mock_session.stats = Mock(current_state="running")
+
+        component._update_session(mock_session)
+
+        # Should call client
+        assert mock_client.summarize.call_count >= 1
+
+    def test_update_calls_update_session_for_each(self):
+        """Update should call _update_session for each session."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = "content"
+        mock_client = Mock()
+        mock_client.summarize.return_value = "summary"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True, interval=0.0, context_interval=0.0),
+        )
+        component._client = mock_client
+
+        sessions = []
+        for i in range(3):
+            session = Mock()
+            session.id = f"session-{i}"
+            session.tmux_window = i
+            session.name = f"agent-{i}"
+            session.stats = Mock(current_state="running")
+            sessions.append(session)
+
+        result = component.update(sessions)
+
+        # Should have captured pane for each session
+        assert mock_tmux.capture_pane.call_count == 3
+
+    def test_update_short_summary_updates_summary(self):
+        """_update_short_summary should update summary text."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+        mock_client.summarize.return_value = "new short summary"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+
+        summary = AgentSummary()
+        now = datetime.now()
+
+        component._update_short_summary(mock_session, summary, "content", "running", now)
+
+        assert summary.text == "new short summary"
+        assert summary.updated_at is not None
+
+    def test_update_short_summary_handles_unchanged(self):
+        """_update_short_summary should handle UNCHANGED response."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+        mock_client.summarize.return_value = "UNCHANGED"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+
+        summary = AgentSummary(text="original")
+        now = datetime.now()
+
+        component._update_short_summary(mock_session, summary, "content", "running", now)
+
+        # Should not change summary text
+        assert summary.text == "original"
+
+    def test_update_short_summary_handles_exception(self):
+        """_update_short_summary should handle exceptions."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+        mock_client.summarize.side_effect = Exception("API error")
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+
+        summary = AgentSummary(text="original")
+        now = datetime.now()
+
+        # Should not raise
+        component._update_short_summary(mock_session, summary, "content", "running", now)
+
+        # Summary should be unchanged
+        assert summary.text == "original"
+
+    def test_update_context_summary_updates_context(self):
+        """_update_context_summary should update context text."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+        mock_client.summarize.return_value = "new context summary"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+
+        summary = AgentSummary()
+        now = datetime.now()
+
+        component._update_context_summary(mock_session, summary, "content", "running", now)
+
+        assert summary.context == "new context summary"
+        assert summary.context_updated_at is not None
+
+    def test_update_context_summary_handles_exception(self):
+        """_update_context_summary should handle exceptions."""
+        mock_tmux = Mock()
+        mock_client = Mock()
+        mock_client.summarize.side_effect = Exception("API error")
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+
+        summary = AgentSummary(context="original")
+        now = datetime.now()
+
+        # Should not raise
+        component._update_context_summary(mock_session, summary, "content", "running", now)
+
+        # Context should be unchanged
+        assert summary.context == "original"
+
+    def test_content_change_detection(self):
+        """Should detect content changes to avoid unnecessary API calls."""
+        mock_tmux = Mock()
+        mock_tmux.capture_pane.return_value = "same content"
+        mock_client = Mock()
+        mock_client.summarize.return_value = "summary"
+
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=mock_tmux,
+            config=SummarizerConfig(enabled=True, interval=0.0, context_interval=100.0),
+        )
+        component._client = mock_client
+
+        mock_session = Mock()
+        mock_session.id = "test-id"
+        mock_session.tmux_window = 1
+        mock_session.name = "test-agent"
+        mock_session.stats = Mock(current_state="running")
+
+        # First call should update
+        component._update_session(mock_session)
+        first_call_count = mock_client.summarize.call_count
+
+        # Set content hash to same value
+        component._last_content_hash["test-id"] = hash("same content")
+        # Reset timing to allow update
+        component._last_update.pop("test-id", None)
+
+        # Second call with same content should skip short update
+        component._update_session(mock_session)
+        second_call_count = mock_client.summarize.call_count
+
+        # Call count should be same (skipped due to unchanged content)
+        assert second_call_count == first_call_count
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

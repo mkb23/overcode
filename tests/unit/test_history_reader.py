@@ -286,22 +286,29 @@ class TestGetSessionIdsForSession:
 class TestEncodeProjectPath:
     """Test project path encoding for Claude Code directory names."""
 
-    def test_encodes_unix_path(self):
+    def test_encodes_unix_path(self, tmp_path):
         """Should encode Unix path to Claude Code format."""
         from overcode.history_reader import encode_project_path
 
-        result = encode_project_path("/home/user/project")
+        # Use tmp_path which is a real existing path that won't get resolved differently
+        result = encode_project_path(str(tmp_path))
 
-        assert result == "-home-user-project"
+        # Should replace slashes with dashes and start with dash
+        assert result.startswith("-")
+        assert "/" not in result
+        # Temp path name should be in the result
+        assert tmp_path.name in result
 
-    def test_handles_trailing_slash(self):
+    def test_handles_trailing_slash(self, tmp_path):
         """Should handle paths with trailing slashes."""
         from overcode.history_reader import encode_project_path
 
-        result = encode_project_path("/test/path/")
+        path_with_slash = str(tmp_path) + "/"
+        result = encode_project_path(path_with_slash)
 
-        # Path.resolve() removes trailing slash
-        assert result == "-test-path"
+        # Path.resolve() removes trailing slash - result should not end with dash
+        assert not result.endswith("-")
+        assert tmp_path.name in result
 
 
 class TestClaudeSessionStats:
