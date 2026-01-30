@@ -415,6 +415,110 @@ class TestConcurrency:
         assert "stats" in data[session.id]
 
 
+class TestClaudeSessionIds:
+    """Test Claude session ID tracking."""
+
+    def test_add_claude_session_id(self, tmp_path):
+        """Can add Claude session ID."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        result = manager.add_claude_session_id(session.id, "claude-session-abc")
+
+        assert result is True
+        updated = manager.get_session(session.id)
+        assert "claude-session-abc" in updated.claude_session_ids
+
+    def test_add_duplicate_claude_session_id_returns_false(self, tmp_path):
+        """Adding duplicate Claude session ID returns False."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.add_claude_session_id(session.id, "claude-session-abc")
+        result = manager.add_claude_session_id(session.id, "claude-session-abc")
+
+        assert result is False
+
+    def test_add_claude_session_id_nonexistent_session(self, tmp_path):
+        """Adding to nonexistent session returns False."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        result = manager.add_claude_session_id("nonexistent", "claude-abc")
+
+        assert result is False
+
+
+class TestSessionTimers:
+    """Test session timer tracking."""
+
+    def test_update_green_and_non_green_time(self, tmp_path):
+        """Can update green and non-green time."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_stats(
+            session.id,
+            green_time_seconds=300.0,
+            non_green_time_seconds=60.0
+        )
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.green_time_seconds == 300.0
+        assert updated.stats.non_green_time_seconds == 60.0
+
+
+class TestSessionQuery:
+    """Test session query methods."""
+
+    def test_list_sessions_returns_all(self, tmp_path):
+        """List sessions returns all sessions."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        manager.create_session(name="s1", tmux_session="agents", tmux_window=1, command=["claude"])
+        manager.create_session(name="s2", tmux_session="agents", tmux_window=2, command=["claude"])
+        manager.create_session(name="s3", tmux_session="other", tmux_window=1, command=["claude"])
+
+        sessions = manager.list_sessions()
+
+        assert len(sessions) == 3
+        names = {s.name for s in sessions}
+        assert names == {"s1", "s2", "s3"}
+
+
+class TestAtomicUpdate:
+    """Test atomic update mechanism."""
+
+    def test_atomic_update_updates_state(self, tmp_path):
+        """Atomic update correctly modifies state."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Use update_stats which uses atomic update internally
+        manager.update_stats(session.id, interaction_count=42)
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.interaction_count == 42
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================
