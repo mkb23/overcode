@@ -209,3 +209,76 @@ class TestCommandBarWithSessions:
 
             # Should target the session
             assert cmd_bar.target_session == "test-agent"
+
+
+class TestUniqueAgentName:
+    """Test unique agent name generation (#131)"""
+
+    @pytest.mark.asyncio
+    async def test_unique_name_no_conflict(self, tmp_path):
+        """When no conflict, returns base name unchanged"""
+        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.session_manager import SessionManager
+
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        app = SupervisorTUI(tmux_session="test")
+        app.session_manager = session_manager
+
+        async with app.run_test() as pilot:
+            cmd_bar = app.query_one("#command-bar", CommandBar)
+            # No sessions exist, so name should be unchanged
+            result = cmd_bar._get_unique_agent_name("myagent")
+            assert result == "myagent"
+
+    @pytest.mark.asyncio
+    async def test_unique_name_with_one_conflict(self, tmp_path):
+        """When name exists, returns name2"""
+        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.session_manager import SessionManager
+
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session_manager.create_session(
+            name="foo",
+            tmux_session="test",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        app = SupervisorTUI(tmux_session="test")
+        app.session_manager = session_manager
+
+        async with app.run_test() as pilot:
+            cmd_bar = app.query_one("#command-bar", CommandBar)
+            # "foo" exists, so should get "foo2"
+            result = cmd_bar._get_unique_agent_name("foo")
+            assert result == "foo2"
+
+    @pytest.mark.asyncio
+    async def test_unique_name_with_multiple_conflicts(self, tmp_path):
+        """When name and name2 exist, returns name3"""
+        from overcode.tui import SupervisorTUI, CommandBar
+        from overcode.session_manager import SessionManager
+
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session_manager.create_session(
+            name="bar",
+            tmux_session="test",
+            tmux_window=1,
+            command=["claude"]
+        )
+        session_manager.create_session(
+            name="bar2",
+            tmux_session="test",
+            tmux_window=2,
+            command=["claude"]
+        )
+
+        app = SupervisorTUI(tmux_session="test")
+        app.session_manager = session_manager
+
+        async with app.run_test() as pilot:
+            cmd_bar = app.query_one("#command-bar", CommandBar)
+            # "bar" and "bar2" exist, so should get "bar3"
+            result = cmd_bar._get_unique_agent_name("bar")
+            assert result == "bar3"
