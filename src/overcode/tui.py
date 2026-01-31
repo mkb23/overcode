@@ -691,9 +691,11 @@ class SupervisorTUI(
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
                     widget.expanded = False  # Force collapsed in list mode
-                # Mark terminated sessions with visual styling
+                # Mark terminated sessions with visual styling and status
                 if session.status == "terminated":
                     widget.add_class("terminated")
+                    widget.detected_status = "terminated"
+                    widget.current_activity = "(tmux window no longer exists)"
                 container.mount(widget)
                 # NOTE: Don't call update_status() here - it does blocking tmux calls
                 # The 250ms interval (update_all_statuses) will update status shortly
