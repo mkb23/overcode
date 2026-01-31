@@ -123,7 +123,6 @@ class DaemonActionsMixin:
         """Restart the Monitor Daemon (handles metrics/state tracking)."""
         from ..monitor_daemon import is_monitor_daemon_running, stop_monitor_daemon
         from ..tui_widgets import DaemonPanel
-        import time
 
         try:
             panel = self.query_one("#daemon-panel", DaemonPanel)
@@ -134,9 +133,17 @@ class DaemonActionsMixin:
         # Stop if running
         if is_monitor_daemon_running(self.tmux_session):
             stop_monitor_daemon(self.tmux_session)
-            time.sleep(0.5)
+            # Use non-blocking timer to wait before starting
+            # (avoids blocking the event loop which caused double-press issue)
+            self.set_timer(0.5, self._start_monitor_daemon)
+        else:
+            # Not running, start immediately
+            self._start_monitor_daemon()
 
-        # Start fresh
+    def _start_monitor_daemon(self) -> None:
+        """Start the monitor daemon (called by action_monitor_restart)."""
+        from ..tui_widgets import DaemonPanel
+
         try:
             subprocess.Popen(
                 [sys.executable, "-m", "overcode.monitor_daemon",
