@@ -184,6 +184,10 @@ class SupervisorTUI(
         ("l", "cycle_summary_content", "Summary content"),
         # Edit human annotation (#74)
         ("I", "focus_human_annotation", "Annotation"),
+        # Baseline time adjustment for mean spin calculation
+        ("comma", "baseline_back", "Baseline -15m"),
+        ("period", "baseline_forward", "Baseline +15m"),
+        ("0", "baseline_reset", "Reset baseline"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -201,6 +205,7 @@ class SupervisorTUI(
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
+    baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -258,6 +263,8 @@ class SupervisorTUI(
         self.hide_asleep = self._prefs.hide_asleep
         # Initialize summary_content_mode from preferences (#98)
         self.summary_content_mode = self._prefs.summary_content_mode
+        # Initialize baseline_minutes from preferences (for mean spin calculation)
+        self.baseline_minutes = self._prefs.baseline_minutes
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 

@@ -8,6 +8,7 @@ All functions are pure - they take data as input and return new data.
 No side effects, no mutations of input data.
 """
 
+from datetime import datetime, timedelta
 from typing import List, Set, Optional, TypeVar, Protocol, Tuple
 from dataclasses import dataclass
 
@@ -258,6 +259,58 @@ def calculate_spin_stats(
         mean_spin=mean_spin,
         total_tokens=total_tokens,
     )
+
+
+def calculate_mean_spin_from_history(
+    history: List[Tuple[datetime, str, str, str]],
+    agent_names: List[str],
+    baseline_minutes: int,
+    now: Optional[datetime] = None,
+) -> Tuple[float, int]:
+    """Calculate mean spin rate from CSV history within a time window.
+
+    This provides a time-windowed average of how many agents were running,
+    as opposed to the cumulative calculation in calculate_spin_stats().
+
+    Args:
+        history: List of (timestamp, agent, status, activity) tuples from CSV
+        agent_names: List of active (non-sleeping) agent names to include
+        baseline_minutes: Minutes back from now (0 = instantaneous, not used)
+        now: Reference time (defaults to datetime.now())
+
+    Returns:
+        Tuple of (mean_spin, sample_count) where:
+        - mean_spin: Average number of agents in "running" state during window
+        - sample_count: Total samples in the window (0 if no data)
+    """
+    if now is None:
+        now = datetime.now()
+
+    if baseline_minutes <= 0 or not agent_names:
+        return (0.0, 0)
+
+    cutoff = now - timedelta(minutes=baseline_minutes)
+
+    # Filter to window and active agents only
+    window_history = [
+        (ts, agent, status)
+        for ts, agent, status, _ in history
+        if cutoff <= ts <= now and agent in agent_names
+    ]
+
+    if not window_history:
+        return (0.0, 0)
+
+    running_count = sum(1 for _, _, status in window_history if status == "running")
+    total_count = len(window_history)
+
+    # mean_spin = (fraction of samples that were "running") * num_agents
+    # This gives "average number of agents running at any point in time"
+    # Example: 2 agents, 50% of samples are "running" -> mean_spin = 1.0
+    num_agents = len(agent_names)
+    mean_spin = (running_count / total_count) * num_agents if total_count > 0 else 0.0
+
+    return (mean_spin, total_count)
 
 
 def calculate_green_percentage(green_time: float, non_green_time: float) -> float:

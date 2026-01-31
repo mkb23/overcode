@@ -36,6 +36,7 @@ class HelpOverlay(Static):
 ║  S       Cycle sort mode         (alpha → status → value)                    ║
 ║  t       Toggle timeline         d       Toggle daemon panel                 ║
 ║  g       Show killed agents      Z       Hide sleeping agents                ║
+║  ,/.     Baseline time -/+15m    0       Reset baseline to now               ║
 ║                                                                              ║
 ║  AGENT CONTROL                                                               ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║

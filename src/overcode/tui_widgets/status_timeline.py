@@ -135,6 +135,15 @@ class StatusTimeline(Static):
         now = datetime.now()
         width = self.timeline_width
 
+        # Calculate baseline slot position if baseline > 0
+        baseline_minutes = getattr(self.app, 'baseline_minutes', 0)
+        baseline_slot = None
+        if baseline_minutes > 0:
+            baseline_hours = baseline_minutes / 60.0
+            if baseline_hours <= self.timeline_hours:
+                # Position from right (now = width-1, -3h = 0)
+                baseline_slot = width - 1 - int((baseline_hours / self.timeline_hours) * (width - 1))
+
         # Time scale header
         label_w = self.label_width
         content.append("Timeline: ", style="bold")
@@ -151,9 +160,11 @@ class StatusTimeline(Static):
             slot_states = build_timeline_slots(
                 self._presence_history, width, self.timeline_hours, now
             )
-            # Render timeline with colors
+            # Render timeline with colors, including baseline marker
             for i in range(width):
-                if i in slot_states:
+                if i == baseline_slot:
+                    content.append("|", style="bold cyan")
+                elif i in slot_states:
                     state = slot_states[i]
                     char = presence_state_to_char(state)
                     color = get_presence_color(state)
@@ -165,7 +176,12 @@ class StatusTimeline(Static):
             msg = "macOS only - pip install overcode[presence]"
             content.append(msg[:width], style="dim italic")
         else:
-            content.append("─" * width, style="dim")
+            # Empty timeline but still show baseline marker
+            for i in range(width):
+                if i == baseline_slot:
+                    content.append("|", style="bold cyan")
+                else:
+                    content.append("─", style="dim")
         content.append("\n")
 
         # Agent timelines
@@ -181,9 +197,16 @@ class StatusTimeline(Static):
             total_slots = 0
             if history:
                 slot_states = build_timeline_slots(history, width, self.timeline_hours, now)
-                # Render timeline with colors
+                # Render timeline with colors, including baseline marker
                 for i in range(width):
-                    if i in slot_states:
+                    if i == baseline_slot:
+                        content.append("|", style="bold cyan")
+                        # Still count the underlying slot for percentage
+                        if i in slot_states:
+                            total_slots += 1
+                            if slot_states[i] == "running":
+                                green_slots += 1
+                    elif i in slot_states:
                         status = slot_states[i]
                         char = agent_status_to_char(status)
                         color = get_agent_timeline_color(status)
@@ -194,7 +217,12 @@ class StatusTimeline(Static):
                     else:
                         content.append("─", style="dim")
             else:
-                content.append("─" * width, style="dim")
+                # Empty timeline but still show baseline marker
+                for i in range(width):
+                    if i == baseline_slot:
+                        content.append("|", style="bold cyan")
+                    else:
+                        content.append("─", style="dim")
 
             # Show percentage green in last 3 hours
             if total_slots > 0:

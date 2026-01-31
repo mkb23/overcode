@@ -245,3 +245,45 @@ class ViewActionsMixin:
             self._driver._enable_mouse_support()
             self.refresh()
             self.notify("Copy mode OFF", severity="information")
+
+    def action_baseline_back(self) -> None:
+        """Move baseline back by 15 minutes (max 180 = 3 hours)."""
+        new_baseline = min(self.baseline_minutes + 15, 180)
+        self.baseline_minutes = new_baseline
+        self._prefs.baseline_minutes = new_baseline
+        self._save_prefs()
+        self._notify_baseline_change()
+
+    def action_baseline_forward(self) -> None:
+        """Move baseline forward by 15 minutes (min 0 = now)."""
+        new_baseline = max(self.baseline_minutes - 15, 0)
+        self.baseline_minutes = new_baseline
+        self._prefs.baseline_minutes = new_baseline
+        self._save_prefs()
+        self._notify_baseline_change()
+
+    def action_baseline_reset(self) -> None:
+        """Reset baseline to now (instantaneous)."""
+        self.baseline_minutes = 0
+        self._prefs.baseline_minutes = 0
+        self._save_prefs()
+        self._notify_baseline_change()
+
+    def _notify_baseline_change(self) -> None:
+        """Notify user and trigger UI updates after baseline change."""
+        if self.baseline_minutes == 0:
+            label = "now"
+        elif self.baseline_minutes < 60:
+            label = f"-{self.baseline_minutes}m"
+        else:
+            hours = self.baseline_minutes // 60
+            mins = self.baseline_minutes % 60
+            if mins == 0:
+                label = f"-{hours}h"
+            else:
+                label = f"-{hours}h{mins}m"
+        self.notify(f"Baseline: {label}", severity="information")
+        # Trigger status bar refresh to show updated mean spin
+        self.update_daemon_status()
+        # Trigger timeline refresh to show baseline marker
+        self.update_timeline()

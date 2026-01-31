@@ -14,7 +14,9 @@ from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from ..supervisor_daemon import is_supervisor_daemon_running
 from ..summarizer_client import SummarizerClient
 from ..web_server import is_web_server_running, get_web_server_url
-from ..settings import DAEMON_VERSION
+from ..settings import DAEMON_VERSION, get_agent_history_path
+from ..status_history import read_agent_status_history
+from ..tui_logic import calculate_mean_spin_from_history
 from ..tui_helpers import (
     format_interval,
     format_duration,
@@ -146,20 +148,39 @@ class DaemonStatusBar(Static):
             # Recalculate green_now excluding sleeping agents
             green_now = sum(1 for s in active_sessions if s.current_status == "running")
 
-            # Calculate mean spin rate from green_time percentages (exclude sleeping)
-            mean_spin = 0.0
-            for s in active_sessions:
-                total_time = s.green_time_seconds + s.non_green_time_seconds
-                if total_time > 0:
-                    mean_spin += s.green_time_seconds / total_time
-
             content.append("Spin: ", style="bold")
             content.append(f"{green_now}", style="bold green" if green_now > 0 else "dim")
             content.append(f"/{total_agents}", style="dim")
             if sleeping_count > 0:
                 content.append(f" 💤{sleeping_count}", style="dim")  # Show sleeping count
-            if mean_spin > 0:
-                content.append(f" μ{mean_spin:.1f}x", style="cyan")
+
+            # Mean spin rate - use history-based calculation if baseline > 0
+            baseline_minutes = getattr(self.app, 'baseline_minutes', 0)
+            if baseline_minutes > 0:
+                # History-based calculation for time window
+                history = read_agent_status_history(
+                    hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
+                    history_file=get_agent_history_path(self.tmux_session)
+                )
+                agent_names = [s.name for s in active_sessions]
+                mean_spin, sample_count = calculate_mean_spin_from_history(
+                    history, agent_names, baseline_minutes
+                )
+
+                if sample_count > 0:
+                    # Format window label: "15m", "1h", "1h30m"
+                    if baseline_minutes < 60:
+                        window_label = f"{baseline_minutes}m"
+                    else:
+                        hours = baseline_minutes // 60
+                        mins = baseline_minutes % 60
+                        window_label = f"{hours}h" if mins == 0 else f"{hours}h{mins}m"
+                    content.append(f" μ{mean_spin:.1f} ({window_label})", style="cyan")
+                else:
+                    content.append(" μ-- (no data)", style="dim")
+            else:
+                # Instantaneous: show current running count as the mean
+                content.append(f" μ{green_now}", style="cyan")
 
             # Total tokens across all sessions (include sleeping agents - they used tokens too)
             total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)

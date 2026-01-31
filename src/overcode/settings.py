@@ -384,6 +384,7 @@ class TUIPreferences:
     hide_asleep: bool = False  # hide sleeping agents from display
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation (#98)
+    baseline_minutes: int = 0  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
 
@@ -413,6 +414,7 @@ class TUIPreferences:
                     hide_asleep=data.get("hide_asleep", False),
                     sort_mode=data.get("sort_mode", "alphabetical"),
                     summary_content_mode=data.get("summary_content_mode", "ai_short"),
+                    baseline_minutes=data.get("baseline_minutes", 0),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
@@ -437,6 +439,7 @@ class TUIPreferences:
                     "hide_asleep": self.hide_asleep,
                     "sort_mode": self.sort_mode,
                     "summary_content_mode": self.summary_content_mode,
+                    "baseline_minutes": self.baseline_minutes,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):

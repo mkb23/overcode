@@ -10,6 +10,8 @@ from unittest.mock import Mock
 from dataclasses import dataclass
 from typing import Optional
 
+from datetime import datetime, timedelta
+
 from overcode.tui_logic import (
     sort_sessions_alphabetical,
     sort_sessions_by_status,
@@ -19,6 +21,7 @@ from overcode.tui_logic import (
     get_sort_mode_display_name,
     cycle_sort_mode,
     calculate_spin_stats,
+    calculate_mean_spin_from_history,
     calculate_green_percentage,
     calculate_human_interaction_count,
     SpinStats,
@@ -413,6 +416,119 @@ class TestCalculateSpinStats:
 
         # mean_spin is sum of ratios, not average
         assert result.mean_spin == 1.5  # 1.0 + 0.5
+
+
+class TestCalculateMeanSpinFromHistory:
+    """Tests for history-based mean spin calculation."""
+
+    def test_empty_history_returns_zero(self):
+        """Empty history should return 0.0 with 0 samples."""
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=[],
+            agent_names=["agent1", "agent2"],
+            baseline_minutes=30,
+        )
+        assert mean_spin == 0.0
+        assert sample_count == 0
+
+    def test_zero_baseline_returns_zero(self):
+        """baseline_minutes=0 should return 0.0 (instantaneous mode)."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=5), "agent1", "running", ""),
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=["agent1"],
+            baseline_minutes=0,
+        )
+        assert mean_spin == 0.0
+        assert sample_count == 0
+
+    def test_all_running_returns_agent_count(self):
+        """If all samples are running, mean_spin should equal num_agents."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=10), "agent1", "running", ""),
+            (now - timedelta(minutes=10), "agent2", "running", ""),
+            (now - timedelta(minutes=5), "agent1", "running", ""),
+            (now - timedelta(minutes=5), "agent2", "running", ""),
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=["agent1", "agent2"],
+            baseline_minutes=30,
+            now=now,
+        )
+        assert mean_spin == 2.0  # 100% of 2 agents
+        assert sample_count == 4
+
+    def test_half_running_returns_half_agents(self):
+        """If 50% of samples are running, mean_spin should be 0.5 * num_agents."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=10), "agent1", "running", ""),
+            (now - timedelta(minutes=10), "agent2", "waiting_user", ""),
+            (now - timedelta(minutes=5), "agent1", "waiting_user", ""),
+            (now - timedelta(minutes=5), "agent2", "running", ""),
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=["agent1", "agent2"],
+            baseline_minutes=30,
+            now=now,
+        )
+        assert mean_spin == 1.0  # 50% of 2 agents = 1.0
+        assert sample_count == 4
+
+    def test_filters_by_agent_names(self):
+        """Should only include samples from specified agents."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=10), "agent1", "running", ""),
+            (now - timedelta(minutes=10), "agent2", "running", ""),  # excluded
+            (now - timedelta(minutes=5), "agent1", "running", ""),
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=["agent1"],  # only agent1
+            baseline_minutes=30,
+            now=now,
+        )
+        assert mean_spin == 1.0  # 100% of 1 agent
+        assert sample_count == 2
+
+    def test_filters_by_time_window(self):
+        """Should only include samples within the baseline window."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=60), "agent1", "running", ""),  # outside 30m window
+            (now - timedelta(minutes=10), "agent1", "waiting_user", ""),  # inside
+            (now - timedelta(minutes=5), "agent1", "waiting_user", ""),  # inside
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=["agent1"],
+            baseline_minutes=30,  # only last 30 minutes
+            now=now,
+        )
+        assert mean_spin == 0.0  # 0% running
+        assert sample_count == 2  # only 2 samples in window
+
+    def test_empty_agent_names_returns_zero(self):
+        """Empty agent_names list should return 0."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=5), "agent1", "running", ""),
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=history,
+            agent_names=[],  # no agents
+            baseline_minutes=30,
+            now=now,
+        )
+        assert mean_spin == 0.0
+        assert sample_count == 0
 
 
 class TestCalculateGreenPercentage:
