@@ -687,6 +687,8 @@ class SupervisorTUI(
                 widget.detail_lines = self.DETAIL_LEVELS[self.detail_level_index]
                 # Apply current summary detail level
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
+                # Apply current summary content mode (#140)
+                widget.summary_content_mode = self.summary_content_mode
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
