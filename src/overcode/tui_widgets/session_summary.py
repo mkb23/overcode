@@ -70,6 +70,7 @@ class SessionSummary(Static, can_focus=True):
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+        self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
@@ -426,12 +427,16 @@ class SessionSummary(Static, can_focus=True):
                 # ai_long: show context summary (📖 icon - wider context/goal from AI)
                 if self.ai_summary_context:
                     content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=mono(f"bold italic{bg}", "bold"))
+                elif not self.summarizer_enabled:
+                    content.append("📖 (summarizer disabled - press 'a')", style=mono(f"dim italic{bg}", "dim"))
                 else:
                     content.append("📖 (awaiting context...)", style=mono(f"dim italic{bg}", "dim"))
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:
                     content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=mono(f"bold italic{bg}", "bold"))
+                elif not self.summarizer_enabled:
+                    content.append("💬 (summarizer disabled - press 'a')", style=mono(f"dim italic{bg}", "dim"))
                 else:
                     content.append("💬 (awaiting summary...)", style=mono(f"dim italic{bg}", "dim"))
 

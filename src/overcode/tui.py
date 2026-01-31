@@ -613,14 +613,16 @@ class SupervisorTUI(
     def _apply_summaries(self, summaries: dict) -> None:
         """Apply AI summaries to session widgets (runs on main thread)."""
         self._summaries = summaries
+        is_enabled = self._summarizer.config.enabled
 
         for widget in self.query(SessionSummary):
+            widget.summarizer_enabled = is_enabled
             session_id = widget.session.id
             if session_id in summaries:
                 summary = summaries[session_id]
                 widget.ai_summary_short = summary.text or ""
                 widget.ai_summary_context = summary.context or ""
-                widget.refresh()
+            widget.refresh()
 
     def update_session_widgets(self) -> None:
         """Update the session display incrementally.
@@ -712,6 +714,13 @@ class SupervisorTUI(
                     widget.add_class("terminated")
                     widget.detected_status = "terminated"
                     widget.current_activity = "(tmux window no longer exists)"
+                # Set summarizer enabled state
+                widget.summarizer_enabled = self._summarizer.config.enabled
+                # Apply existing summary if available
+                if session.id in self._summaries:
+                    summary = self._summaries[session.id]
+                    widget.ai_summary_short = summary.text or ""
+                    widget.ai_summary_context = summary.context or ""
                 container.mount(widget)
                 # NOTE: Don't call update_status() here - it does blocking tmux calls
                 # The 250ms interval (update_all_statuses) will update status shortly
