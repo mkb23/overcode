@@ -69,6 +69,7 @@ class SessionSummary(Static, can_focus=True):
         # AI-generated summaries (from daemon's SummarizerComponent)
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
+        self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
@@ -208,6 +209,10 @@ class SessionSummary(Static, can_focus=True):
         stats = s.stats
         term_width = shutil.get_terminal_size().columns
 
+        # Helper for monochrome styling - returns simplified style when monochrome enabled
+        def mono(colored: str, simple: str = "bold") -> str:
+            return simple if self.monochrome else colored
+
         # Expansion indicator
         expand_icon = "▼" if self.expanded else "▶"
 
@@ -221,9 +226,15 @@ class SessionSummary(Static, can_focus=True):
 
         # Status indicator - larger emoji circles based on detected status
         # Blue background matching Textual header/footer style
-        bg = " on #0d2137"
-        status_symbol, base_color = get_status_symbol(self.detected_status)
-        status_color = f"bold {base_color}{bg}"
+        # In monochrome mode, use no colors (just bold/dim for emphasis)
+        if self.monochrome:
+            bg = ""
+            status_symbol, _ = get_status_symbol(self.detected_status)
+            status_color = "bold"
+        else:
+            bg = " on #0d2137"
+            status_symbol, base_color = get_status_symbol(self.detected_status)
+            status_color = f"bold {base_color}{bg}"
 
         # Permissiveness mode with emoji
         if s.permissiveness_mode == "bypass":
@@ -251,9 +262,9 @@ class SessionSummary(Static, can_focus=True):
 
         # Show 🔔 indicator for unvisited stalled agents (needs attention)
         if self.is_unvisited_stalled:
-            content.append("🔔", style=f"bold blink red{bg}")
+            content.append("🔔", style=mono(f"bold blink red{bg}", "bold"))
         else:
-            content.append("  ", style=f"dim{bg}")  # Maintain alignment
+            content.append("  ", style=mono(f"dim{bg}", "dim"))  # Maintain alignment
 
         # Time in current state (directly after status light)
         # Use locally tracked change time if more recent than daemon's state_since (#73)
@@ -272,7 +283,7 @@ class SessionSummary(Static, can_focus=True):
             elapsed = (datetime.now() - state_start).total_seconds()
             content.append(f"{format_duration(elapsed):>5} ", style=status_color)
         else:
-            content.append("    - ", style=f"dim{bg}")
+            content.append("    - ", style=mono(f"dim{bg}", "dim"))
 
         # In list-mode, show focus indicator instead of expand icon
         if "list-mode" in self.classes:
@@ -282,37 +293,37 @@ class SessionSummary(Static, can_focus=True):
                 content.append("  ", style=status_color)
         else:
             content.append(f"{expand_icon} ", style=status_color)
-        content.append(f"{display_name}", style=f"bold cyan{bg}")
+        content.append(f"{display_name}", style=mono(f"bold cyan{bg}", "bold"))
 
         # Full detail: add repo:branch (padded to longest across all sessions)
         if self.summary_detail == "full":
             repo_width = getattr(self.app, 'max_repo_info_width', 18)
-            content.append(f" {repo_info:<{repo_width}} ", style=f"bold dim{bg}")
+            content.append(f" {repo_info:<{repo_width}} ", style=mono(f"bold dim{bg}", "dim"))
 
         # Med/Full detail: add uptime, running time, stalled time
         if self.summary_detail in ("med", "full"):
-            content.append(f" ↑{uptime:>5}", style=f"bold white{bg}")
-            content.append(f" ▶{format_duration(green_time):>5}", style=f"bold green{bg}")
-            content.append(f" ⏸{format_duration(non_green_time):>5}", style=f"bold red{bg}")
+            content.append(f" ↑{uptime:>5}", style=mono(f"bold white{bg}", "bold"))
+            content.append(f" ▶{format_duration(green_time):>5}", style=mono(f"bold green{bg}", "bold"))
+            content.append(f" ⏸{format_duration(non_green_time):>5}", style=mono(f"bold red{bg}", "dim"))
             # Full detail: show percentage active
             if self.summary_detail == "full":
                 total_time = green_time + non_green_time
                 pct = (green_time / total_time * 100) if total_time > 0 else 0
-                content.append(f" {pct:>3.0f}%", style=f"bold green{bg}" if pct >= 50 else f"bold red{bg}")
+                content.append(f" {pct:>3.0f}%", style=mono(f"bold green{bg}" if pct >= 50 else f"bold red{bg}", "bold"))
 
         # Always show: token usage (from Claude Code)
         # ALIGNMENT: context indicator is always 7 chars " c@NNN%" (or placeholder)
         if self.claude_stats is not None:
-            content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=f"bold orange1{bg}")
+            content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
             # Show current context window usage as percentage (assuming 200K max)
             if self.claude_stats.current_context_tokens > 0:
                 max_context = 200_000  # Claude models have 200K context window
                 ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
-                content.append(f" c@{ctx_pct:>3.0f}%", style=f"bold orange1{bg}")
+                content.append(f" c@{ctx_pct:>3.0f}%", style=mono(f"bold orange1{bg}", "bold"))
             else:
-                content.append(" c@  -%", style=f"dim orange1{bg}")
+                content.append(" c@  -%", style=mono(f"dim orange1{bg}", "dim"))
         else:
-            content.append("      - c@  -%", style=f"dim orange1{bg}")
+            content.append("      - c@  -%", style=mono(f"dim orange1{bg}", "dim"))
 
         # Git diff stats (outstanding changes since last commit)
         # ALIGNMENT: Use fixed widths - low/med: 4 chars "Δnn ", full: 16 chars "Δnn +nnnn -nnnn"
@@ -321,67 +332,67 @@ class SessionSummary(Static, can_focus=True):
             files, ins, dels = self.git_diff_stats
             if self.summary_detail == "full":
                 # Full: show files and lines with fixed widths
-                content.append(f" Δ{files:>2}", style=f"bold magenta{bg}")
-                content.append(f" +{format_line_count(ins):>4}", style=f"bold green{bg}")
-                content.append(f" -{format_line_count(dels):>4}", style=f"bold red{bg}")
+                content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}", "bold"))
+                content.append(f" +{format_line_count(ins):>4}", style=mono(f"bold green{bg}", "bold"))
+                content.append(f" -{format_line_count(dels):>4}", style=mono(f"bold red{bg}", "dim"))
             else:
                 # Compact: just files changed (fixed 4 char width)
-                content.append(f" Δ{files:>2}", style=f"bold magenta{bg}" if files > 0 else f"dim{bg}")
+                content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}" if files > 0 else f"dim{bg}", "bold" if files > 0 else "dim"))
         else:
             # Placeholder matching width for alignment
             if self.summary_detail == "full":
-                content.append("  Δ-  +   -  -  ", style=f"dim{bg}")
+                content.append("  Δ-  +   -  -  ", style=mono(f"dim{bg}", "dim"))
             else:
-                content.append("  Δ-", style=f"dim{bg}")
+                content.append("  Δ-", style=mono(f"dim{bg}", "dim"))
 
         # Med/Full detail: add median work time (p50 autonomous work duration)
         if self.summary_detail in ("med", "full"):
             work_str = format_duration(median_work) if median_work > 0 else "0s"
-            content.append(f" ⏱{work_str:>5}", style=f"bold blue{bg}")
+            content.append(f" ⏱{work_str:>5}", style=mono(f"bold blue{bg}", "bold"))
 
         # Always show: permission mode, human interactions, robot supervisions
-        content.append(f" {perm_emoji}", style=f"bold white{bg}")
+        content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))
         # Human interaction count = total interactions - robot interventions
         if self.claude_stats is not None:
             human_count = max(0, self.claude_stats.interaction_count - stats.steers_count)
-            content.append(f" 👤{human_count:>3}", style=f"bold yellow{bg}")
+            content.append(f" 👤{human_count:>3}", style=mono(f"bold yellow{bg}", "bold"))
         else:
-            content.append(" 👤  -", style=f"dim yellow{bg}")
+            content.append(" 👤  -", style=mono(f"dim yellow{bg}", "dim"))
         # Robot supervision count (from daemon steers) - 3 digit padding
-        content.append(f" 🤖{stats.steers_count:>3}", style=f"bold cyan{bg}")
+        content.append(f" 🤖{stats.steers_count:>3}", style=mono(f"bold cyan{bg}", "bold"))
 
         # Standing orders indicator (after supervision count) - always show for alignment
         if s.standing_instructions:
             if s.standing_orders_complete:
-                content.append(" ✓", style=f"bold green{bg}")
+                content.append(" ✓", style=mono(f"bold green{bg}", "bold"))
             elif s.standing_instructions_preset:
                 # Show preset name (truncated to fit)
                 preset_display = f" {s.standing_instructions_preset[:8]}"
-                content.append(preset_display, style=f"bold cyan{bg}")
+                content.append(preset_display, style=mono(f"bold cyan{bg}", "bold"))
             else:
-                content.append(" 📋", style=f"bold yellow{bg}")
+                content.append(" 📋", style=mono(f"bold yellow{bg}", "bold"))
         else:
-            content.append(" ➖", style=f"bold dim{bg}")  # No instructions indicator
+            content.append(" ➖", style=mono(f"bold dim{bg}", "dim"))  # No instructions indicator
 
         # Agent value indicator (#61)
         # Full detail: show numeric value with money bag
         # Short/med: show priority chevrons (⏫ high, ⏹ normal, ⏬ low)
         if self.summary_detail == "full":
-            content.append(f" 💰{s.agent_value:>4}", style=f"bold magenta{bg}")
+            content.append(f" 💰{s.agent_value:>4}", style=mono(f"bold magenta{bg}", "bold"))
         else:
             # Priority icon based on value relative to default 1000
             # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
             # a trailing space to ⏹️ for alignment
             if s.agent_value > 1000:
-                content.append(" ⏫️", style=f"bold red{bg}")  # High priority
+                content.append(" ⏫️", style=mono(f"bold red{bg}", "bold"))  # High priority
             elif s.agent_value < 1000:
-                content.append(" ⏬️", style=f"bold blue{bg}")  # Low priority
+                content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
             else:
-                content.append(" ⏹️ ", style=f"dim{bg}")  # Normal (extra space for alignment)
+                content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
-            content.append(" │ ", style=f"bold dim{bg}")
+            content.append(" │ ", style=mono(f"bold dim{bg}", "dim"))
             # Calculate remaining space for content
             current_len = len(content.plain)
             remaining = max(20, term_width - current_len - 2)
@@ -392,48 +403,48 @@ class SessionSummary(Static, can_focus=True):
             if mode == "annotation":
                 # Show human annotation (✏️ icon)
                 if s.human_annotation:
-                    content.append(f"✏️ {s.human_annotation[:remaining-3]}", style=f"bold magenta{bg}")
+                    content.append(f"✏️ {s.human_annotation[:remaining-3]}", style=mono(f"bold magenta{bg}", "bold"))
                 else:
-                    content.append("✏️ (no annotation)", style=f"dim italic{bg}")
+                    content.append("✏️ (no annotation)", style=mono(f"dim italic{bg}", "dim"))
             elif mode == "orders":
                 # Show standing orders (🎯 icon, ✓ if complete)
                 if s.standing_instructions:
                     if s.standing_orders_complete:
-                        style = f"bold green{bg}"
+                        order_style = mono(f"bold green{bg}", "bold")
                         prefix = "🎯✓ "
                     elif s.standing_instructions_preset:
-                        style = f"bold cyan{bg}"
+                        order_style = mono(f"bold cyan{bg}", "bold")
                         prefix = f"🎯 {s.standing_instructions_preset}: "
                     else:
-                        style = f"bold italic yellow{bg}"
+                        order_style = mono(f"bold italic yellow{bg}", "bold")
                         prefix = "🎯 "
                     display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
-                    content.append(display_text[:remaining], style=style)
+                    content.append(display_text[:remaining], style=order_style)
                 else:
-                    content.append("🎯 (no standing orders)", style=f"dim italic{bg}")
+                    content.append("🎯 (no standing orders)", style=mono(f"dim italic{bg}", "dim"))
             elif mode == "ai_long":
                 # ai_long: show context summary (📖 icon - wider context/goal from AI)
                 if self.ai_summary_context:
-                    content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=f"bold italic{bg}")
+                    content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=mono(f"bold italic{bg}", "bold"))
                 else:
-                    content.append("📖 (awaiting context...)", style=f"dim italic{bg}")
+                    content.append("📖 (awaiting context...)", style=mono(f"dim italic{bg}", "dim"))
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:
-                    content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=f"bold italic{bg}")
+                    content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=mono(f"bold italic{bg}", "bold"))
                 else:
-                    content.append("💬 (awaiting summary...)", style=f"dim italic{bg}")
+                    content.append("💬 (awaiting summary...)", style=mono(f"dim italic{bg}", "dim"))
 
             # Pad to fill terminal width
             current_len = len(content.plain)
             if current_len < term_width:
-                content.append(" " * (term_width - current_len), style=f"{bg}")
+                content.append(" " * (term_width - current_len), style=mono(f"{bg}", ""))
             return content
 
         # Pad header line to full width before adding expanded content
         current_len = len(content.plain)
         if current_len < term_width:
-            content.append(" " * (term_width - current_len), style=f"{bg}")
+            content.append(" " * (term_width - current_len), style=mono(f"{bg}", ""))
 
         # Expanded view: show standing instructions first if set
         if s.standing_instructions:
@@ -441,17 +452,17 @@ class SessionSummary(Static, can_focus=True):
             content.append("  ")
             display_instr = format_standing_instructions(s.standing_instructions)
             if s.standing_orders_complete:
-                content.append("│ ", style="bold green")
-                content.append("✓ ", style="bold green")
-                content.append(display_instr, style="green")
+                content.append("│ ", style=mono("bold green", "bold"))
+                content.append("✓ ", style=mono("bold green", "bold"))
+                content.append(display_instr, style=mono("green", ""))
             elif s.standing_instructions_preset:
-                content.append("│ ", style="cyan")
-                content.append(f"{s.standing_instructions_preset}: ", style="bold cyan")
-                content.append(display_instr, style="cyan")
+                content.append("│ ", style=mono("cyan", "dim"))
+                content.append(f"{s.standing_instructions_preset}: ", style=mono("bold cyan", "bold"))
+                content.append(display_instr, style=mono("cyan", ""))
             else:
-                content.append("│ ", style="cyan")
-                content.append("📋 ", style="yellow")
-                content.append(display_instr, style="italic yellow")
+                content.append("│ ", style=mono("cyan", "dim"))
+                content.append("📋 ", style=mono("yellow", "bold"))
+                content.append(display_instr, style=mono("italic yellow", "italic"))
 
         # Expanded view: show pane content based on detail_lines setting
         lines_to_show = self.detail_lines
@@ -476,7 +487,7 @@ class SessionSummary(Static, can_focus=True):
         if not pane_lines and not s.standing_instructions:
             content.append("\n")
             content.append("  ")  # Indent
-            content.append("│ ", style="cyan")
-            content.append("(no output)", style="dim italic")
+            content.append("│ ", style=mono("cyan", "dim"))
+            content.append("(no output)", style=mono("dim italic", "dim"))
 
         return content

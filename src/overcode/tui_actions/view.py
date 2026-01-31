@@ -287,3 +287,35 @@ class ViewActionsMixin:
         self.update_daemon_status()
         # Trigger timeline refresh to show baseline marker
         self.update_timeline()
+
+    def action_toggle_monochrome(self) -> None:
+        """Toggle monochrome (B&W) mode for terminals with ANSI issues (#138).
+
+        When enabled:
+        - Removes color styling from session widgets
+        - Uses simple gray/white text only
+        - Helps with terminals that garble ANSI color codes
+        """
+        from ..tui_widgets import SessionSummary
+
+        self.monochrome = not self.monochrome
+
+        # Save preference
+        self._prefs.monochrome = self.monochrome
+        self._save_prefs()
+
+        # Toggle CSS class on the app for any CSS-based styling changes
+        if self.monochrome:
+            self.add_class("monochrome")
+        else:
+            self.remove_class("monochrome")
+
+        # Update all session widgets to use monochrome rendering
+        for widget in self.query(SessionSummary):
+            widget.monochrome = self.monochrome
+            widget.refresh()
+
+        self.notify(
+            "Monochrome mode ON" if self.monochrome else "Monochrome mode OFF",
+            severity="information"
+        )

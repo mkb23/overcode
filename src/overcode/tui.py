@@ -188,6 +188,8 @@ class SupervisorTUI(
         ("comma", "baseline_back", "Baseline -15m"),
         ("period", "baseline_forward", "Baseline +15m"),
         ("0", "baseline_reset", "Reset baseline"),
+        # Monochrome mode for terminals with ANSI issues (#138)
+        ("M", "toggle_monochrome", "Monochrome"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -206,6 +208,7 @@ class SupervisorTUI(
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
+    monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -265,6 +268,8 @@ class SupervisorTUI(
         self.summary_content_mode = self._prefs.summary_content_mode
         # Initialize baseline_minutes from preferences (for mean spin calculation)
         self.baseline_minutes = self._prefs.baseline_minutes
+        # Initialize monochrome from preferences (#138)
+        self.monochrome = self._prefs.monochrome
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -696,6 +701,8 @@ class SupervisorTUI(
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
                 widget.summary_content_mode = self.summary_content_mode
+                # Apply monochrome mode (#138)
+                widget.monochrome = self.monochrome
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")

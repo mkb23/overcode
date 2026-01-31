@@ -54,6 +54,7 @@ class HelpOverlay(Static):
 ║  OTHER                                                                       ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║
 ║  y       Copy mode (mouse sel)   p       Sync to tmux pane                   ║
+║  M       Monochrome mode         (for terminals with ANSI issues)            ║
 ║                                                                              ║
 ║  COMMAND BAR (i or :)                                                        ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║
