@@ -169,5 +169,87 @@ class TestAttentionPriorityOrder:
         assert [w.name for w in result] == ["Agent 1", "Agent 2", "Agent 3"]
 
 
+class TestIntegrationScenarios:
+    """Test realistic usage scenarios."""
+
+    def test_new_stalled_agent_gets_bell(self):
+        """
+        Scenario: Agent becomes stalled (waiting_user) for the first time.
+        Expected: Should have bell indicator and be top priority for 'b' key.
+        """
+        widgets = [
+            MockWidget("Agent A", STATUS_RUNNING, is_unvisited_stalled=False),
+            MockWidget("Agent B", STATUS_WAITING_USER, is_unvisited_stalled=True),  # New stall!
+        ]
+
+        result = build_attention_list_fixed(widgets)
+
+        assert len(result) == 1
+        assert result[0].name == "Agent B"
+        assert result[0].is_unvisited_stalled == True
+
+    def test_visited_stalled_agent_loses_bell(self):
+        """
+        Scenario: User navigates to a stalled agent (via 'b' or j/k).
+        Expected: Bell should be cleared, but still show as needing attention (red).
+        """
+        # Before visiting - has bell
+        agent_b = MockWidget("Agent B", STATUS_WAITING_USER, is_unvisited_stalled=True)
+
+        # Simulate focus() clearing the bell (this is what on_focus does)
+        agent_b.is_unvisited_stalled = False  # Bell cleared on visit
+
+        widgets = [
+            MockWidget("Agent A", STATUS_RUNNING, is_unvisited_stalled=False),
+            agent_b,  # Still waiting_user but no bell
+        ]
+
+        result = build_attention_list_fixed(widgets)
+
+        # Still shows up (red status), but with lower priority than bell
+        assert len(result) == 1
+        assert result[0].name == "Agent B"
+        assert result[0].is_unvisited_stalled == False
+
+    def test_multiple_agents_stall_in_sequence(self):
+        """
+        Scenario: Multiple agents stall one after another.
+        User visits first, then second agent stalls.
+        Expected: Unvisited one (bell) should be higher priority.
+        """
+        widgets = [
+            MockWidget("Agent A", STATUS_WAITING_USER, is_unvisited_stalled=False),  # Visited already
+            MockWidget("Agent B", STATUS_WAITING_USER, is_unvisited_stalled=True),   # New stall!
+            MockWidget("Agent C", STATUS_RUNNING, is_unvisited_stalled=False),
+        ]
+
+        result = build_attention_list_fixed(widgets)
+
+        assert len(result) == 2
+        assert result[0].name == "Agent B"  # Bell = first
+        assert result[1].name == "Agent A"  # Red no bell = second
+
+    def test_cycling_through_attention_list(self):
+        """
+        Scenario: User presses 'b' multiple times.
+        Expected: Should cycle through bell sessions first, then red sessions.
+        """
+        widgets = [
+            MockWidget("Agent A", STATUS_WAITING_USER, is_unvisited_stalled=False),
+            MockWidget("Agent B", STATUS_WAITING_USER, is_unvisited_stalled=True),
+            MockWidget("Agent C", STATUS_WAITING_USER, is_unvisited_stalled=True),
+            MockWidget("Agent D", STATUS_NO_INSTRUCTIONS, is_unvisited_stalled=False),
+        ]
+
+        result = build_attention_list_fixed(widgets)
+
+        # Order should be: B, C (bells), A (red no bell), D (yellow)
+        assert [w.name for w in result] == ["Agent B", "Agent C", "Agent A", "Agent D"]
+
+        # Simulating pressing 'b' 4 times should cycle through all 4
+        for i, expected in enumerate(["Agent B", "Agent C", "Agent A", "Agent D"]):
+            assert result[i].name == expected
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
