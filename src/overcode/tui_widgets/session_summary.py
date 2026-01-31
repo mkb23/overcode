@@ -59,9 +59,13 @@ class SessionSummary(Static, can_focus=True):
         super().__init__(*args, **kwargs)
         self.session = session
         self.status_detector = status_detector
-        # Initialize from persisted session state, not hardcoded "running"
-        self.detected_status = session.stats.current_state if session.stats.current_state else "running"
-        self.current_activity = "Initializing..."
+        # Initialize from session status (for terminated) or persisted state
+        if session.status == "terminated":
+            self.detected_status = "terminated"
+            self.current_activity = "(tmux window no longer exists)"
+        else:
+            self.detected_status = session.stats.current_state if session.stats.current_state else "running"
+            self.current_activity = "Initializing..."
         # AI-generated summaries (from daemon's SummarizerComponent)
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
