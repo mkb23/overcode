@@ -40,8 +40,11 @@ class NavigationActionsMixin:
     def action_jump_to_attention(self) -> None:
         """Jump to next session needing attention.
 
-        Cycles through sessions with waiting_user status first (red/bell),
-        then through other non-green statuses (no_instructions, waiting_supervisor).
+        Cycles through sessions prioritized by:
+        1. Bell indicator (is_unvisited_stalled=True) - highest priority
+        2. waiting_user status (red, no bell)
+        3. no_instructions status (yellow)
+        4. waiting_supervisor status (orange)
         """
         from ..status_constants import (
             STATUS_WAITING_USER,
@@ -55,16 +58,22 @@ class NavigationActionsMixin:
             return
 
         # Build prioritized list of sessions needing attention
-        # Priority: waiting_user (red) > no_instructions (yellow) > waiting_supervisor (orange)
+        # Priority: bell > waiting_user > no_instructions > waiting_supervisor
         attention_sessions = []
         for i, widget in enumerate(widgets):
             status = getattr(widget, 'detected_status', STATUS_RUNNING)
-            if status == STATUS_WAITING_USER:
-                attention_sessions.append((0, i, widget))  # Highest priority
+            is_bell = getattr(widget, 'is_unvisited_stalled', False)
+
+            # Bell indicator takes highest priority - these are the sessions
+            # that truly need attention (user hasn't seen them yet)
+            if is_bell:
+                attention_sessions.append((0, i, widget))  # Bell = highest priority
+            elif status == STATUS_WAITING_USER:
+                attention_sessions.append((1, i, widget))  # Red but no bell (already visited)
             elif status == STATUS_NO_INSTRUCTIONS:
-                attention_sessions.append((1, i, widget))
-            elif status == STATUS_WAITING_SUPERVISOR:
                 attention_sessions.append((2, i, widget))
+            elif status == STATUS_WAITING_SUPERVISOR:
+                attention_sessions.append((3, i, widget))
             # Skip running, terminated, asleep
 
         if not attention_sessions:
@@ -103,4 +112,6 @@ class NavigationActionsMixin:
         pos = self._attention_jump_index + 1
         total = len(self._attention_jump_list)
         status = getattr(target_widget, 'detected_status', 'unknown')
-        self.notify(f"Attention {pos}/{total}: {target_widget.session.name} ({status})", severity="information")
+        is_bell = getattr(target_widget, 'is_unvisited_stalled', False)
+        bell_indicator = "🔔 " if is_bell else ""
+        self.notify(f"Attention {pos}/{total}: {bell_indicator}{target_widget.session.name} ({status})", severity="information")
