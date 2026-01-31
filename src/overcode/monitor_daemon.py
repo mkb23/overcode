@@ -271,6 +271,7 @@ class MonitorDaemon:
             status_since=stats.state_since,
             green_time_seconds=stats.green_time_seconds,
             non_green_time_seconds=stats.non_green_time_seconds,
+            sleep_time_seconds=stats.sleep_time_seconds,
             interaction_count=stats.interaction_count,
             input_tokens=stats.input_tokens,
             output_tokens=stats.output_tokens,
@@ -324,13 +325,15 @@ class MonitorDaemon:
         # Accumulate time based on state
         green_time = current_stats.green_time_seconds
         non_green_time = current_stats.non_green_time_seconds
+        sleep_time = current_stats.sleep_time_seconds
 
         if status == STATUS_RUNNING:
             green_time += elapsed
-        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
-            # Only count non-green time for non-terminated/non-asleep states (#68)
+        elif status == STATUS_ASLEEP:
+            sleep_time += elapsed  # Track sleep time separately (#141)
+        elif status != STATUS_TERMINATED:
             non_green_time += elapsed
-        # else: terminated or asleep - don't accumulate time
+        # else: terminated - don't accumulate time
 
         # INVARIANT CHECK: accumulated time should never exceed uptime
         # This catches bugs like multiple daemons running simultaneously
@@ -338,13 +341,14 @@ class MonitorDaemon:
             try:
                 session_start = datetime.fromisoformat(session.start_time)
                 max_allowed = (now - session_start).total_seconds()
-                total_accumulated = green_time + non_green_time
+                total_accumulated = green_time + non_green_time + sleep_time
 
                 if total_accumulated > max_allowed * 1.1:  # 10% tolerance for timing jitter
                     # Reset to sane values based on ratio
                     ratio = max_allowed / total_accumulated if total_accumulated > 0 else 1.0
                     green_time = green_time * ratio
                     non_green_time = non_green_time * ratio
+                    sleep_time = sleep_time * ratio
                     self.log.warn(
                         f"[{session.name}] Time tracking reset: "
                         f"accumulated {total_accumulated/3600:.1f}h > uptime {max_allowed/3600:.1f}h"
@@ -368,6 +372,7 @@ class MonitorDaemon:
             state_since=state_since,
             green_time_seconds=green_time,
             non_green_time_seconds=non_green_time,
+            sleep_time_seconds=sleep_time,
             last_time_accumulation=now.isoformat(),
         )
 

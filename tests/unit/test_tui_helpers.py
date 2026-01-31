@@ -280,15 +280,17 @@ class TestGetCurrentStateTimes:
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=25.0,
             last_time_accumulation=None,
             state_since=None,
             current_state="running",
         )
 
-        green, non_green = get_current_state_times(stats)
+        green, non_green, sleep = get_current_state_times(stats)
 
         assert green == 100.0
         assert non_green == 50.0
+        assert sleep == 25.0
 
     def test_adds_elapsed_for_running_state(self):
         """Should add elapsed time for running state."""
@@ -297,15 +299,17 @@ class TestGetCurrentStateTimes:
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=0.0,
             last_time_accumulation=anchor,
             state_since=anchor,
             current_state="running",
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green > 100.0  # Should have added ~60 seconds
         assert non_green == 50.0
+        assert sleep == 0.0
 
     def test_adds_elapsed_for_non_green_state(self):
         """Should add elapsed time for non-green states like waiting_user."""
@@ -314,15 +318,17 @@ class TestGetCurrentStateTimes:
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=0.0,
             last_time_accumulation=anchor,
             state_since=anchor,
             current_state="waiting_user",
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green == 100.0  # Green unchanged
         assert non_green > 50.0  # Should have added ~60 seconds
+        assert sleep == 0.0
 
     def test_terminated_state_freezes_time(self):
         """Should not accumulate time for terminated state."""
@@ -331,47 +337,53 @@ class TestGetCurrentStateTimes:
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=0.0,
             last_time_accumulation=anchor,
             state_since=anchor,
             current_state="terminated",
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green == 100.0  # Unchanged
         assert non_green == 50.0  # Unchanged
+        assert sleep == 0.0
 
-    def test_asleep_state_freezes_time(self):
-        """Should not accumulate time for asleep state."""
+    def test_asleep_state_accumulates_sleep_time(self):
+        """Should accumulate sleep time for asleep state (#141)."""
         now = datetime.now()
         anchor = (now - timedelta(seconds=60)).isoformat()
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=30.0,
             last_time_accumulation=anchor,
             state_since=anchor,
             current_state="asleep",
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green == 100.0  # Unchanged
         assert non_green == 50.0  # Unchanged
+        assert sleep > 30.0  # Should have added ~60 seconds
 
     def test_handles_invalid_time_anchor(self):
         """Should handle invalid time anchor gracefully."""
         stats = Mock(
             green_time_seconds=100.0,
             non_green_time_seconds=50.0,
+            sleep_time_seconds=0.0,
             last_time_accumulation="invalid",
             state_since=None,
             current_state="running",
         )
 
-        green, non_green = get_current_state_times(stats)
+        green, non_green, sleep = get_current_state_times(stats)
 
         assert green == 100.0
         assert non_green == 50.0
+        assert sleep == 0.0
 
 
 class TestBuildTimelineSlots:

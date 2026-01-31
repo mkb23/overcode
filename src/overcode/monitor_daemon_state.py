@@ -46,6 +46,7 @@ class SessionDaemonState:
     # Time tracking (authoritative - only Monitor Daemon updates these)
     green_time_seconds: float = 0.0
     non_green_time_seconds: float = 0.0
+    sleep_time_seconds: float = 0.0
 
     # Claude Code stats (synced from ~/.claude/projects/)
     interaction_count: int = 0
@@ -91,6 +92,7 @@ class SessionDaemonState:
             "status_since": self.status_since,
             "green_time_seconds": self.green_time_seconds,
             "non_green_time_seconds": self.non_green_time_seconds,
+            "sleep_time_seconds": self.sleep_time_seconds,
             "interaction_count": self.interaction_count,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -126,6 +128,7 @@ class SessionDaemonState:
             status_since=data.get("status_since"),
             green_time_seconds=data.get("green_time_seconds", 0.0),
             non_green_time_seconds=data.get("non_green_time_seconds", 0.0),
+            sleep_time_seconds=data.get("sleep_time_seconds", 0.0),
             interaction_count=data.get("interaction_count", 0),
             input_tokens=data.get("input_tokens", 0),
             output_tokens=data.get("output_tokens", 0),
@@ -178,6 +181,7 @@ class MonitorDaemonState:
     # Summary metrics (computed from sessions)
     total_green_time: float = 0.0
     total_non_green_time: float = 0.0
+    total_sleep_time: float = 0.0
     green_sessions: int = 0
     non_green_sessions: int = 0
 
@@ -212,6 +216,7 @@ class MonitorDaemonState:
             "presence_idle_seconds": self.presence_idle_seconds,
             "total_green_time": self.total_green_time,
             "total_non_green_time": self.total_non_green_time,
+            "total_sleep_time": self.total_sleep_time,
             "green_sessions": self.green_sessions,
             "non_green_sessions": self.non_green_sessions,
             "total_supervisions": self.total_supervisions,
@@ -247,6 +252,7 @@ class MonitorDaemonState:
             presence_idle_seconds=data.get("presence_idle_seconds"),
             total_green_time=data.get("total_green_time", 0.0),
             total_non_green_time=data.get("total_non_green_time", 0.0),
+            total_sleep_time=data.get("total_sleep_time", 0.0),
             green_sessions=data.get("green_sessions", 0),
             non_green_sessions=data.get("non_green_sessions", 0),
             total_supervisions=data.get("total_supervisions", 0),
@@ -264,6 +270,7 @@ class MonitorDaemonState:
         """Recompute summary metrics from session data."""
         self.total_green_time = sum(s.green_time_seconds for s in self.sessions)
         self.total_non_green_time = sum(s.non_green_time_seconds for s in self.sessions)
+        self.total_sleep_time = sum(s.sleep_time_seconds for s in self.sessions)
         self.green_sessions = sum(1 for s in self.sessions if s.current_status == "running")
         self.non_green_sessions = len(self.sessions) - self.green_sessions
         self.total_supervisions = sum(s.steers_count for s in self.sessions)
