@@ -133,9 +133,23 @@ class TmuxManager:
 
             # Send text first (if any)
             if keys:
-                pane.send_keys(keys, enter=False)
-                # Small delay for Claude Code to process text
-                time.sleep(0.1)
+                # Special handling for ! commands (#139)
+                # Claude Code requires ! to be sent separately to trigger mode switch
+                # to bash mode before receiving the rest of the command
+                if keys.startswith('!') and len(keys) > 1:
+                    # Send ! first
+                    pane.send_keys('!', enter=False)
+                    # Wait for mode switch to process
+                    time.sleep(0.15)
+                    # Send the rest (without the !)
+                    rest = keys[1:]
+                    if rest:
+                        pane.send_keys(rest, enter=False)
+                        time.sleep(0.1)
+                else:
+                    pane.send_keys(keys, enter=False)
+                    # Small delay for Claude Code to process text
+                    time.sleep(0.1)
 
             # Send Enter separately
             if enter:
