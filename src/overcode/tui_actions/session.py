@@ -92,6 +92,41 @@ class SessionActionsMixin:
             timeout=3
         )
 
+    def action_restart_focused(self) -> None:
+        """Restart the currently focused agent (requires confirmation).
+
+        Sends Ctrl-C to kill the current Claude process, then restarts it
+        with the same configuration (directory, permissions).
+        """
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session_name = focused.session.name
+        now = time.time()
+
+        # Check if this is a confirmation of a pending restart
+        if self._pending_restart:
+            pending_name, pending_time = self._pending_restart
+            # Confirm if same session and within 3 second window
+            if pending_name == session_name and (now - pending_time) < 3.0:
+                self._pending_restart = None  # Clear pending state
+                self._execute_restart(focused)
+                return
+            else:
+                # Different session or expired - start new confirmation
+                self._pending_restart = None
+
+        # First press - request confirmation
+        self._pending_restart = (session_name, now)
+        self.notify(
+            f"Press R again to restart '{session_name}'",
+            severity="warning",
+            timeout=3
+        )
+
     def action_new_agent(self) -> None:
         """Prompt for directory and name to create a new agent.
 
