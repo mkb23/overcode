@@ -546,6 +546,15 @@ class SupervisorTUI(
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
+        # Recalculate max_repo_info_width from fresh session data (#143)
+        # This ensures alignment is correct when agents change branches
+        if fresh_sessions:
+            self.max_repo_info_width = max(
+                (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in fresh_sessions.values()),
+                default=18
+            )
+            self.max_repo_info_width = max(self.max_repo_info_width, 10)
+
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
 

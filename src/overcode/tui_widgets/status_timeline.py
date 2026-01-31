@@ -139,7 +139,7 @@ class StatusTimeline(Static):
         try:
             baseline_minutes = getattr(self.app, 'baseline_minutes', 0)
         except Exception:
-            baseline_minutes = 0
+            baseline_minutes = 0  # No app context (e.g., in tests)
         baseline_slot = None
         if baseline_minutes > 0:
             baseline_hours = baseline_minutes / 60.0
