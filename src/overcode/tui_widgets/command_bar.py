@@ -271,8 +271,10 @@ class CommandBar(Static):
             # Use current working directory if none specified
             self.new_agent_dir = str(Path.cwd())
 
-        # Derive default agent name from directory basename
-        default_name = Path(self.new_agent_dir).name
+        # Derive default agent name from directory basename (#131)
+        # If an agent with that name exists, increment (foo -> foo2 -> foo3)
+        base_name = Path(self.new_agent_dir).name
+        default_name = self._get_unique_agent_name(base_name)
 
         # Transition to name step
         self.mode = "new_agent_name"
@@ -281,6 +283,30 @@ class CommandBar(Static):
         # Pre-fill the input with the default name
         input_widget = self.query_one("#cmd-input", Input)
         input_widget.value = default_name
+
+    def _get_unique_agent_name(self, base_name: str) -> str:
+        """Get a unique agent name by incrementing suffix if needed (#131).
+
+        Args:
+            base_name: The base name to start with (e.g., directory name)
+
+        Returns:
+            A unique name: base_name if available, else base_name2, base_name3, etc.
+        """
+        # Check if base name is available
+        if not self.app.session_manager.get_session_by_name(base_name):
+            return base_name
+
+        # Try incrementing suffix until we find an unused name
+        suffix = 2
+        while suffix < 100:  # Reasonable limit
+            candidate = f"{base_name}{suffix}"
+            if not self.app.session_manager.get_session_by_name(candidate):
+                return candidate
+            suffix += 1
+
+        # Fallback (very unlikely to reach)
+        return f"{base_name}_{suffix}"
 
     def _handle_new_agent_name(self, name: str) -> None:
         """Handle name input for new agent creation.
