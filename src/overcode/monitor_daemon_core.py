@@ -17,6 +17,7 @@ class TimeAccumulationResult:
     """Result of time accumulation calculation."""
     green_seconds: float
     non_green_seconds: float
+    sleep_seconds: float  # Track sleep time separately (#141)
     state_changed: bool
     was_capped: bool  # True if time was capped to uptime
 
@@ -27,11 +28,12 @@ def calculate_time_accumulation(
     elapsed_seconds: float,
     current_green: float,
     current_non_green: float,
+    current_sleep: float,
     session_start: Optional[datetime],
     now: datetime,
     tolerance: float = 1.1,  # 10% tolerance for timing jitter
 ) -> TimeAccumulationResult:
-    """Calculate accumulated green/non-green time based on current status.
+    """Calculate accumulated green/non-green/sleep time based on current status.
 
     Pure function - no side effects, fully testable.
 
@@ -41,6 +43,7 @@ def calculate_time_accumulation(
         elapsed_seconds: Seconds since last observation
         current_green: Current accumulated green time
         current_non_green: Current accumulated non-green time
+        current_sleep: Current accumulated sleep time (#141)
         session_start: When the session started (for cap calculation)
         now: Current time
         tolerance: How much accumulated time can exceed uptime (1.1 = 10%)
@@ -52,32 +55,36 @@ def calculate_time_accumulation(
         return TimeAccumulationResult(
             green_seconds=current_green,
             non_green_seconds=current_non_green,
+            sleep_seconds=current_sleep,
             state_changed=False,
             was_capped=False,
         )
 
     green = current_green
     non_green = current_non_green
+    sleep = current_sleep
 
     # Accumulate based on status
     if current_status == STATUS_RUNNING:
         green += elapsed_seconds
-    elif current_status not in (STATUS_TERMINATED, STATUS_ASLEEP):
-        # Only count non-green time for non-terminated/non-asleep states
+    elif current_status == STATUS_ASLEEP:
+        sleep += elapsed_seconds  # Track sleep time separately (#141)
+    elif current_status != STATUS_TERMINATED:
         non_green += elapsed_seconds
-    # else: terminated or asleep - don't accumulate time
+    # else: terminated - don't accumulate time
 
     # Cap accumulated time to session uptime
     was_capped = False
     if session_start is not None:
         max_allowed = (now - session_start).total_seconds()
-        total_accumulated = green + non_green
+        total_accumulated = green + non_green + sleep
 
         if total_accumulated > max_allowed * tolerance:
             # Scale down to sane values
             ratio = max_allowed / total_accumulated if total_accumulated > 0 else 1.0
             green = green * ratio
             non_green = non_green * ratio
+            sleep = sleep * ratio
             was_capped = True
 
     state_changed = previous_status is not None and previous_status != current_status
@@ -85,6 +92,7 @@ def calculate_time_accumulation(
     return TimeAccumulationResult(
         green_seconds=green,
         non_green_seconds=non_green,
+        sleep_seconds=sleep,
         state_changed=state_changed,
         was_capped=was_capped,
     )

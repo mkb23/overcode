@@ -279,6 +279,7 @@ class MonitorDaemon:
             status_since=stats.state_since,
             green_time_seconds=stats.green_time_seconds,
             non_green_time_seconds=stats.non_green_time_seconds,
+            sleep_time_seconds=stats.sleep_time_seconds,
             interaction_count=stats.interaction_count,
             input_tokens=stats.input_tokens,
             output_tokens=stats.output_tokens,
@@ -325,7 +326,7 @@ class MonitorDaemon:
         # Get session start time for capping
         session_start = parse_datetime_safe(session.start_time)
 
-        # Use pure function for time accumulation
+        # Use pure function for time accumulation (with sleep time tracking #141)
         prev_status = self.previous_states.get(session_id, status)
         result = calculate_time_accumulation(
             current_status=status,
@@ -333,12 +334,13 @@ class MonitorDaemon:
             elapsed_seconds=elapsed,
             current_green=current_stats.green_time_seconds,
             current_non_green=current_stats.non_green_time_seconds,
+            current_sleep=current_stats.sleep_time_seconds,
             session_start=session_start,
             now=now,
         )
 
         if result.was_capped:
-            total = current_stats.green_time_seconds + current_stats.non_green_time_seconds
+            total = current_stats.green_time_seconds + current_stats.non_green_time_seconds + current_stats.sleep_time_seconds
             max_allowed = (now - session_start).total_seconds() if session_start else 0
             self.log.warn(
                 f"[{session.name}] Time tracking reset: "
@@ -360,6 +362,7 @@ class MonitorDaemon:
             state_since=state_since,
             green_time_seconds=result.green_seconds,
             non_green_time_seconds=result.non_green_seconds,
+            sleep_time_seconds=result.sleep_seconds,
             last_time_accumulation=now.isoformat(),
         )
 

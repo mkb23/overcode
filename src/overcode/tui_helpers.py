@@ -246,25 +246,26 @@ def get_standing_orders_indicator(session) -> str:
         return "📋"
 
 
-def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[float, float]:
-    """Get current green and non-green times including ongoing state.
+def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[float, float, float]:
+    """Get current green, non-green, and sleep times including ongoing state.
 
     Adds the time elapsed since the last daemon accumulation to the accumulated times.
     This provides real-time updates between daemon polling cycles.
 
     Args:
         stats: SessionStats object with green_time_seconds, non_green_time_seconds,
-               last_time_accumulation, and current_state
+               sleep_time_seconds, last_time_accumulation, and current_state
         now: Reference time (defaults to datetime.now())
 
     Returns:
-        Tuple of (green_time, non_green_time) in seconds
+        Tuple of (green_time, non_green_time, sleep_time) in seconds
     """
     if now is None:
         now = datetime.now()
 
     green_time = stats.green_time_seconds
     non_green_time = stats.non_green_time_seconds
+    sleep_time = getattr(stats, 'sleep_time_seconds', 0.0)
 
     # Add elapsed time since the daemon last accumulated times
     # Use last_time_accumulation (when daemon last updated), NOT state_since (when state started)
@@ -279,14 +280,15 @@ def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[floa
             if current_elapsed > 0:
                 if stats.current_state == STATUS_RUNNING:
                     green_time += current_elapsed
-                elif stats.current_state not in (STATUS_TERMINATED, STATUS_ASLEEP):
-                    # Only count non-green time for non-terminated/non-asleep states (#68)
+                elif stats.current_state == STATUS_ASLEEP:
+                    sleep_time += current_elapsed  # Accumulate sleep time (#141)
+                elif stats.current_state != STATUS_TERMINATED:
                     non_green_time += current_elapsed
-                # else: terminated or asleep - time is frozen, don't accumulate
+                # else: terminated - time is frozen, don't accumulate
         except (ValueError, AttributeError, TypeError):
             pass
 
-    return green_time, non_green_time
+    return green_time, non_green_time, sleep_time
 
 
 def build_timeline_slots(

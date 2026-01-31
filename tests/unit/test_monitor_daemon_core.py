@@ -31,6 +31,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=60.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -48,6 +49,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=30.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -63,6 +65,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=60.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -70,20 +73,22 @@ class TestCalculateTimeAccumulation:
         assert result.green_seconds == 300.0  # unchanged
         assert result.non_green_seconds == 100.0  # unchanged
 
-    def test_asleep_status_does_not_accumulate(self):
-        """Asleep status should not accumulate any time."""
+    def test_asleep_status_accumulates_sleep_time(self):
+        """Asleep status should accumulate sleep time, not green/non-green (#141)."""
         result = calculate_time_accumulation(
             current_status="asleep",
             previous_status="asleep",
             elapsed_seconds=60.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=50.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
 
-        assert result.green_seconds == 300.0
-        assert result.non_green_seconds == 100.0
+        assert result.green_seconds == 300.0  # unchanged
+        assert result.non_green_seconds == 100.0  # unchanged
+        assert result.sleep_seconds == 110.0  # 50 + 60
 
     def test_state_changed_detected(self):
         """Should detect when state changes."""
@@ -93,6 +98,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=10.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -107,6 +113,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=10.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -121,6 +128,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=10.0,
             current_green=0.0,
             current_non_green=0.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -136,6 +144,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=100.0,
             current_green=700.0,  # Already more than uptime
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),  # 10 min = 600s
         )
@@ -153,6 +162,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=10.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),  # 600s uptime
         )
@@ -167,6 +177,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=0.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -182,6 +193,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=-10.0,
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=datetime(2024, 1, 1, 10, 0, 0),
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
@@ -197,6 +209,7 @@ class TestCalculateTimeAccumulation:
             elapsed_seconds=10000.0,  # Huge elapsed time
             current_green=300.0,
             current_non_green=100.0,
+            current_sleep=0.0,
             session_start=None,
             now=datetime(2024, 1, 1, 10, 10, 0),
         )
