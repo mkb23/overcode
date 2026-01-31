@@ -93,6 +93,7 @@ class DaemonActionsMixin:
     def action_toggle_summarizer(self) -> None:
         """Toggle the AI Summarizer on/off."""
         from ..summarizer_client import SummarizerClient
+        from ..tui_widgets import SessionSummary
 
         # Check if summarizer is available (OPENAI_API_KEY set)
         if not SummarizerClient.is_available():
@@ -107,6 +108,9 @@ class DaemonActionsMixin:
             if not self._summarizer._client:
                 self._summarizer._client = SummarizerClient()
             self.notify("AI Summarizer enabled", severity="information")
+            # Update all widgets to show summarizer is enabled
+            for widget in self.query(SessionSummary):
+                widget.summarizer_enabled = True
             # Trigger an immediate update
             self._update_summaries_async()
         else:
@@ -114,6 +118,14 @@ class DaemonActionsMixin:
             if self._summarizer._client:
                 self._summarizer._client.close()
                 self._summarizer._client = None
+            # Clear cached summaries
+            self._summaries = {}
+            # Update all widgets to clear summaries and show disabled state
+            for widget in self.query(SessionSummary):
+                widget.ai_summary_short = ""
+                widget.ai_summary_context = ""
+                widget.summarizer_enabled = False
+                widget.refresh()
             self.notify("AI Summarizer disabled", severity="information")
 
         # Refresh status bar
