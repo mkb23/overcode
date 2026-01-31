@@ -384,7 +384,7 @@ class TUIPreferences:
     hide_asleep: bool = False  # hide sleeping agents from display
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation (#98)
-    baseline_minutes: int = 0  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
+    baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)

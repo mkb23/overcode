@@ -187,7 +187,7 @@ class SupervisorTUI(
         ("I", "focus_human_annotation", "Annotation"),
         # Baseline time adjustment for mean spin calculation
         ("comma", "baseline_back", "Baseline -15m"),
-        ("period", "baseline_forward", "Baseline +15m"),
+        ("full_stop", "baseline_forward", "Baseline +15m"),
         ("0", "baseline_reset", "Reset baseline"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
