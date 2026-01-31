@@ -44,6 +44,7 @@ class SessionStats:
     state_since: Optional[str] = None  # ISO timestamp when current state started
     green_time_seconds: float = 0.0  # time spent in "running" state
     non_green_time_seconds: float = 0.0  # time spent in non-running states
+    sleep_time_seconds: float = 0.0  # time spent in "asleep" state
     last_time_accumulation: Optional[str] = None  # ISO timestamp when times were last accumulated
 
     def to_dict(self) -> dict:
