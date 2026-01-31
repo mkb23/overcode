@@ -153,6 +153,7 @@ class SupervisorTUI(
         ("r", "manual_refresh", "Refresh"),
         # Agent management
         ("x", "kill_focused", "Kill agent"),
+        ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
         # Send Enter to focused agent (for approvals)
         ("enter", "send_enter_to_focused", "Send Enter"),
@@ -256,6 +257,8 @@ class SupervisorTUI(
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
         # Pending kill confirmation (session name, timestamp)
         self._pending_kill: tuple[str, float] | None = None
+        # Pending restart confirmation (session name, timestamp) (#133)
+        self._pending_restart: tuple[str, float] | None = None
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
@@ -1083,6 +1086,56 @@ class SupervisorTUI(
                     pass
         else:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
+
+    def _execute_restart(self, focused: "SessionSummary") -> None:
+        """Execute the actual restart operation after confirmation (#133).
+
+        Sends Ctrl-C to kill the current Claude process, then restarts it
+        with the same configuration (directory, permissions).
+        """
+        import os
+        session = focused.session
+        session_name = session.name
+
+        # Build the claude command based on permissiveness mode
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        if claude_command == "claude":
+            cmd_parts = ["claude", "code"]
+        else:
+            cmd_parts = [claude_command]
+
+        if session.permissiveness_mode == "bypass":
+            cmd_parts.append("--dangerously-skip-permissions")
+        elif session.permissiveness_mode == "permissive":
+            cmd_parts.extend(["--permission-mode", "dontAsk"])
+
+        cmd_str = " ".join(cmd_parts)
+
+        # Get tmux manager
+        from .tmux_manager import TmuxManager
+        tmux = TmuxManager(self.tmux_session)
+
+        # Send Ctrl-C to kill the current process
+        if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
+            self.notify(f"Failed to send Ctrl-C to '{session_name}'", severity="error")
+            return
+
+        # Brief delay to allow process to terminate
+        import time
+        time.sleep(0.5)
+
+        # Send the claude command to restart
+        if tmux.send_keys(session.tmux_window, cmd_str, enter=True):
+            self.notify(f"Restarted agent: {session_name}", severity="information")
+            # Reset session stats for fresh start
+            self.session_manager.update_stats(
+                session.id,
+                current_task="Restarting..."
+            )
+            # Clear the claude session IDs since this is a new claude instance
+            self.session_manager.update_session(session.id, claude_session_ids=[])
+        else:
+            self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
