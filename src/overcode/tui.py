@@ -352,8 +352,11 @@ class SupervisorTUI(
             # Normal mode: Set up all timers
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
-            # Update status very frequently for real-time detail view
-            self.set_interval(0.5, self.update_all_statuses)
+            # Tiered status updates for CPU efficiency:
+            # - Focused agent: 250ms (responsive preview pane)
+            # - Background agents: 1s (reduced overhead)
+            self.set_interval(0.25, self.update_focused_status)
+            self.set_interval(1.0, self.update_background_statuses)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds
@@ -454,11 +457,53 @@ class SupervisorTUI(
         """Invalidate the sessions cache to force reload on next access."""
         self._sessions_cache_time = 0
 
+    def update_focused_status(self) -> None:
+        """Update only the focused session's status (fast path, 250ms).
+
+        This provides responsive updates for the session being viewed
+        while reducing CPU overhead for background sessions.
+        """
+        # Skip if an update is already in progress
+        if self._status_update_in_progress:
+            return
+
+        # Only update the focused widget
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            return
+
+        self._status_update_in_progress = True
+        self._fetch_statuses_async([focused])
+
+    def update_background_statuses(self) -> None:
+        """Update non-focused sessions' statuses (slow path, 1s).
+
+        Updates all sessions except the focused one, which gets
+        faster updates via update_focused_status.
+        """
+        # Skip if an update is already in progress
+        if self._status_update_in_progress:
+            return
+
+        # Gather all widgets except the focused one
+        focused = self.focused
+        focused_id = focused.session.id if isinstance(focused, SessionSummary) else None
+
+        widgets = [w for w in self.query(SessionSummary) if w.session.id != focused_id]
+        if not widgets:
+            return
+
+        self._status_update_in_progress = True
+        self._fetch_statuses_async(widgets)
+
     def update_all_statuses(self) -> None:
         """Trigger async status update for all session widgets.
 
         This is NON-BLOCKING - it kicks off a background worker that fetches
         all statuses in parallel, then updates widgets when done.
+
+        Note: Primarily used for manual refresh ('r' key) and initial load.
+        Regular updates use tiered update_focused_status/update_background_statuses.
         """
         # Skip if an update is already in progress
         if self._status_update_in_progress:
