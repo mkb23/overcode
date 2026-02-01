@@ -53,7 +53,7 @@ def _clear_state() -> None:
 @app.command()
 def start(
     command: Annotated[str, typer.Argument(help="Command to run in the TUI")],
-    size: Annotated[str, typer.Option(help="Terminal size as WIDTHxHEIGHT")] = "120x40",
+    size: Annotated[str, typer.Option(help="Terminal size as WIDTHxHEIGHT")] = "220x40",
     session: Annotated[str, typer.Option(help="tmux session name")] = DEFAULT_SESSION,
 ) -> None:
     """Start a TUI application in a tmux session."""
@@ -90,8 +90,8 @@ def screenshot(
     output: Annotated[
         str, typer.Argument(help="Output PNG file path")
     ] = "/tmp/tui-screenshot.png",
-    width: Annotated[int, typer.Option(help="Terminal width for rendering")] = 120,
-    height: Annotated[int, typer.Option(help="Terminal height for rendering")] = 40,
+    width: Annotated[int, typer.Option(help="Terminal width for rendering")] = 220,
+    height: Annotated[int, typer.Option(help="Terminal height for rendering")] = 45,
 ) -> None:
     """Capture a screenshot of the TUI as a PNG image."""
     driver = _get_driver()

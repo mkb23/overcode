@@ -135,8 +135,9 @@ def render_terminal_to_png(
     Returns:
         Path to the saved image
     """
-    # Create pyte screen and stream
-    screen = pyte.Screen(width, height)
+    # Use a large internal buffer to prevent scrolling, then crop to actual content
+    internal_height = max(height, 200)
+    screen = pyte.Screen(width, internal_height)
     stream = pyte.Stream(screen)
 
     # Normalize line endings: \n -> \r\n for proper terminal emulation
@@ -146,6 +147,24 @@ def render_terminal_to_png(
     # Feed the ANSI text through the terminal emulator
     stream.feed(normalized_text)
 
+    # Find actual content bounds (non-empty rows)
+    first_row = 0
+    last_row = internal_height - 1
+    for y in range(internal_height):
+        row_has_content = any(
+            screen.buffer[y][x].data.strip()
+            for x in range(width)
+            if hasattr(screen.buffer[y][x], 'data')
+        )
+        if row_has_content:
+            if first_row == 0:
+                first_row = y
+            last_row = y
+
+    # Use the requested height - the large internal buffer prevents scrolling,
+    # and we render from first_row for `height` rows
+    render_height = height
+
     # Load font and calculate dimensions
     font = _find_monospace_font(font_size)
 
@@ -154,18 +173,21 @@ def render_terminal_to_png(
     char_width = bbox[2] - bbox[0]
     char_height = int(font_size * 1.4)  # Line height
 
-    # Calculate image dimensions
+    # Calculate image dimensions based on actual content
     img_width = width * char_width + 2 * padding
-    img_height = height * char_height + 2 * padding
+    img_height = render_height * char_height + 2 * padding
 
     # Create image with dark background
     img = Image.new("RGB", (img_width, img_height), color=BG_COLOR)
     draw = ImageDraw.Draw(img)
 
-    # Render each character
-    for y in range(height):
+    # Render each character from content area
+    for y in range(render_height):
+        buffer_y = first_row + y
+        if buffer_y >= internal_height:
+            break
         for x in range(width):
-            char = screen.buffer[y][x]
+            char = screen.buffer[buffer_y][x]
 
             # Get character and style
             char_data = char.data if hasattr(char, "data") else str(char)
