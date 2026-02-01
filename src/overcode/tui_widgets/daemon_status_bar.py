@@ -21,6 +21,7 @@ from ..tui_helpers import (
     format_interval,
     format_duration,
     format_tokens,
+    format_cost,
     get_daemon_status_style,
     calculate_safe_break_duration,
 )
@@ -42,6 +43,7 @@ class DaemonStatusBar(Static):
         self.monitor_state: Optional[MonitorDaemonState] = None
         self._session_manager = session_manager
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
+        self.show_cost: bool = False  # Show $ cost instead of token counts
 
     def update_status(self) -> None:
         """Refresh daemon state from file"""
@@ -182,10 +184,15 @@ class DaemonStatusBar(Static):
                 # Instantaneous: show current running count as the mean
                 content.append(f" μ{green_now}", style="cyan")
 
-            # Total tokens across all sessions (include sleeping agents - they used tokens too)
-            total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
-            if total_tokens > 0:
-                content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+            # Total tokens/cost across all sessions (include sleeping agents - they used tokens too)
+            if self.show_cost:
+                total_cost = sum(s.estimated_cost_usd for s in all_sessions)
+                if total_cost > 0:
+                    content.append(f" {format_cost(total_cost)}", style="orange1")
+            else:
+                total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
+                if total_tokens > 0:
+                    content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
 
             # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
             safe_break = calculate_safe_break_duration(active_sessions)

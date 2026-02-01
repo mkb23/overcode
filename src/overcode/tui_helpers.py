@@ -97,6 +97,30 @@ def format_tokens(tokens: int) -> str:
         return str(tokens)
 
 
+def format_cost(cost_usd: float) -> str:
+    """Format cost in USD to human readable with stable width.
+
+    Uses 1 decimal place and K/M suffixes for large amounts.
+    Prefixed with $ symbol.
+
+    Args:
+        cost_usd: Cost in US dollars
+
+    Returns:
+        Formatted string like "$0.1", "$12.3", "$1.2K", "$3.5M"
+    """
+    if cost_usd >= 1_000_000:
+        return f"${cost_usd / 1_000_000:.1f}M"
+    elif cost_usd >= 1_000:
+        return f"${cost_usd / 1_000:.1f}K"
+    elif cost_usd >= 100:
+        return f"${cost_usd:.0f}"
+    elif cost_usd >= 10:
+        return f"${cost_usd:.1f}"
+    else:
+        return f"${cost_usd:.2f}"
+
+
 def format_line_count(count: int) -> str:
     """Format line count (insertions/deletions) to human readable (K/M).
 

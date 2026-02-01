@@ -401,12 +401,14 @@ class MonitorDaemon:
                 stats.cache_read_tokens
             )
 
-            # Estimate cost
+            # Estimate cost using configured pricing (defaults to Opus 4.5)
+            from .settings import get_user_config
+            pricing = get_user_config()
             cost_estimate = (
-                (stats.input_tokens / 1_000_000) * 3.0 +
-                (stats.output_tokens / 1_000_000) * 15.0 +
-                (stats.cache_creation_tokens / 1_000_000) * 3.75 +
-                (stats.cache_read_tokens / 1_000_000) * 0.30
+                (stats.input_tokens / 1_000_000) * pricing.price_input +
+                (stats.output_tokens / 1_000_000) * pricing.price_output +
+                (stats.cache_creation_tokens / 1_000_000) * pricing.price_cache_write +
+                (stats.cache_read_tokens / 1_000_000) * pricing.price_cache_read
             )
 
             self.session_manager.update_stats(
