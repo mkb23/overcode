@@ -216,6 +216,12 @@ class UserConfig:
     default_standing_instructions: str = ""
     tmux_session: str = "agents"
 
+    # Token pricing (per million tokens) - defaults to Opus 4.5
+    price_input: float = 5.0        # $/MTok for input tokens
+    price_output: float = 25.0      # $/MTok for output tokens
+    price_cache_write: float = 6.25  # $/MTok for cache creation
+    price_cache_read: float = 0.50   # $/MTok for cache reads
+
     @classmethod
     def load(cls) -> "UserConfig":
         """Load configuration from config file."""
@@ -230,11 +236,18 @@ class UserConfig:
                 if not isinstance(data, dict):
                     return cls()
 
+                # Load pricing config (nested under 'pricing' key)
+                pricing = data.get("pricing", {})
+
                 return cls(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
                     ),
                     tmux_session=data.get("tmux_session", "agents"),
+                    price_input=pricing.get("input", 5.0),
+                    price_output=pricing.get("output", 25.0),
+                    price_cache_write=pricing.get("cache_write", 6.25),
+                    price_cache_read=pricing.get("cache_read", 0.50),
                 )
         except (yaml.YAMLError, IOError):
             return cls()
