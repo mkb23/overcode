@@ -354,7 +354,7 @@ class SupervisorTUI(
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
             # Update status very frequently for real-time detail view
-            self.set_interval(0.25, self.update_all_statuses)
+            self.set_interval(0.5, self.update_all_statuses)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds

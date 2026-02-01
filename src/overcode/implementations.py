@@ -17,7 +17,14 @@ from libtmux._internal.query_list import ObjectDoesNotExist
 
 
 class RealTmux:
-    """Production implementation of TmuxInterface using libtmux"""
+    """Production implementation of TmuxInterface using libtmux.
+
+    Includes caching to reduce subprocess overhead. libtmux spawns a new
+    subprocess for every tmux command, which is expensive at high frequencies.
+    """
+
+    # Cache TTL in seconds - pane objects rarely change
+    _CACHE_TTL = 30.0
 
     def __init__(self, socket_name: Optional[str] = None):
         """Initialize with optional socket name for test isolation.
@@ -27,6 +34,10 @@ class RealTmux:
         # Support OVERCODE_TMUX_SOCKET env var for testing
         self._socket_name = socket_name or os.environ.get("OVERCODE_TMUX_SOCKET")
         self._server: Optional[libtmux.Server] = None
+        # Cache: (session_name, window_index) -> (pane, timestamp)
+        self._pane_cache: Dict[tuple, tuple] = {}
+        # Cache: session_name -> (session_obj, timestamp)
+        self._session_cache: Dict[str, tuple] = {}
 
     @property
     def server(self) -> libtmux.Server:
@@ -39,9 +50,17 @@ class RealTmux:
         return self._server
 
     def _get_session(self, session: str) -> Optional[libtmux.Session]:
-        """Get a session by name, or None if it doesn't exist."""
+        """Get a session by name, with caching."""
+        now = time.time()
+        if session in self._session_cache:
+            cached_session, cached_time = self._session_cache[session]
+            if now - cached_time < self._CACHE_TTL:
+                return cached_session
+
         try:
-            return self.server.sessions.get(session_name=session)
+            sess = self.server.sessions.get(session_name=session)
+            self._session_cache[session] = (sess, now)
+            return sess
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
@@ -56,11 +75,42 @@ class RealTmux:
             return None
 
     def _get_pane(self, session: str, window: int) -> Optional[libtmux.Pane]:
-        """Get the first pane of a window."""
+        """Get the first pane of a window, with caching."""
+        cache_key = (session, window)
+        now = time.time()
+
+        # Check cache first
+        if cache_key in self._pane_cache:
+            cached_pane, cached_time = self._pane_cache[cache_key]
+            if now - cached_time < self._CACHE_TTL:
+                return cached_pane
+
+        # Cache miss - fetch from tmux
         win = self._get_window(session, window)
         if win is None or not win.panes:
             return None
-        return win.panes[0]
+        pane = win.panes[0]
+        self._pane_cache[cache_key] = (pane, now)
+        return pane
+
+    def invalidate_cache(self, session: str = None, window: int = None) -> None:
+        """Invalidate cached objects.
+
+        Args:
+            session: If provided, invalidate only this session's cache
+            window: If provided with session, invalidate only this window's pane
+        """
+        if session is None:
+            self._pane_cache.clear()
+            self._session_cache.clear()
+        elif window is not None:
+            self._pane_cache.pop((session, window), None)
+        else:
+            self._session_cache.pop(session, None)
+            # Remove all panes for this session
+            keys_to_remove = [k for k in self._pane_cache if k[0] == session]
+            for k in keys_to_remove:
+                del self._pane_cache[k]
 
     def capture_pane(self, session: str, window: int, lines: int = 100) -> Optional[str]:
         try:
@@ -74,6 +124,8 @@ class RealTmux:
                 return '\n'.join(captured)
             return captured
         except LibTmuxException:
+            # Pane may have been killed - invalidate cache and retry once
+            self.invalidate_cache(session, window)
             return None
 
     def send_keys(self, session: str, window: int, keys: str, enter: bool = True) -> bool:
