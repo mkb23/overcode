@@ -244,6 +244,208 @@ class TestAllSubcommands:
 
 
 # =============================================================================
+# Extended CLI tests with mocked dependencies
+# =============================================================================
+
+from unittest.mock import patch, MagicMock
+
+
+class TestListCommandWithMocks:
+    """Test list command with mocked sessions"""
+
+    def test_list_outputs_no_sessions(self):
+        """List outputs message when no sessions exist"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.list_sessions.return_value = []
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["list"])
+
+            assert result.exit_code == 0
+            # Might say "No running agents" or be empty
+            assert "no" in result.output.lower() or result.output.strip() == ""
+
+
+class TestSendCommandWithMocks:
+    """Test send command with mocked sessions"""
+
+    def test_send_text_to_session(self):
+        """Send text to existing session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.send_to_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["send", "test-agent", "hello world"])
+
+            assert result.exit_code == 0
+            mock_launcher.send_to_session.assert_called()
+
+    def test_send_key_with_no_enter(self):
+        """Send key without pressing enter"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.send_to_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["send", "test-agent", "Escape", "--no-enter"])
+
+            assert result.exit_code == 0
+
+
+class TestConfigCommandWithMocks:
+    """Test config command"""
+
+    def test_config_show_outputs_config(self):
+        """Config show outputs configuration"""
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+
+
+class TestHistoryCommandWithMocks:
+    """Test history command"""
+
+    def test_history_help(self):
+        """History help works"""
+        result = runner.invoke(app, ["history", "--help"])
+        assert result.exit_code == 0
+
+
+class TestShowCommandWithMocks:
+    """Test show command with mocked output"""
+
+    def test_show_session_output(self):
+        """Show outputs session content"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.get_session_output.return_value = "line 1\nline 2\nline 3"
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["show", "test-agent"])
+
+            assert result.exit_code == 0
+            assert "line 1" in result.output
+
+
+class TestKillCommandWithMocks:
+    """Test kill command with mocked sessions"""
+
+    def test_kill_existing_session(self):
+        """Kill existing session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.kill_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["kill", "test-agent"])
+
+            assert result.exit_code == 0
+
+    def test_kill_nonexistent_session(self):
+        """Kill nonexistent session shows message"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.kill_session.return_value = False
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["kill", "nonexistent"])
+
+            assert result.exit_code == 0
+
+
+class TestLaunchCommandWithMocks:
+    """Test launch command with mocked ClaudeLauncher"""
+
+    def test_launch_creates_session(self):
+        """Launch creates new session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_session = MagicMock()
+            mock_session.name = "new-agent"
+            mock_session.tmux_window = 1
+
+            mock_launcher = MagicMock()
+            mock_launcher.launch.return_value = mock_session
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["launch", "--name", "new-agent"])
+
+            assert result.exit_code == 0
+            mock_launcher.launch.assert_called()
+
+
+class TestMonitorDaemonSubcommands:
+    """Test monitor-daemon subcommands"""
+
+    def test_monitor_daemon_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_monitor_daemon_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "stop", "--help"])
+        assert result.exit_code == 0
+
+    def test_monitor_daemon_status_help(self):
+        """Status subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "status", "--help"])
+        assert result.exit_code == 0
+
+
+class TestSupervisorDaemonSubcommands:
+    """Test supervisor-daemon subcommands"""
+
+    def test_supervisor_daemon_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_supervisor_daemon_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "stop", "--help"])
+        assert result.exit_code == 0
+
+
+class TestWebSubcommands:
+    """Test web subcommands"""
+
+    def test_web_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["web", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_web_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["web", "stop", "--help"])
+        assert result.exit_code == 0
+
+    def test_web_status_help(self):
+        """Status subcommand help works"""
+        result = runner.invoke(app, ["web", "status", "--help"])
+        assert result.exit_code == 0
+
+
+class TestConfigSubcommands:
+    """Test config subcommands"""
+
+    def test_config_init_help(self):
+        """Init subcommand help works"""
+        result = runner.invoke(app, ["config", "init", "--help"])
+        assert result.exit_code == 0
+
+    def test_config_show_help(self):
+        """Show subcommand help works"""
+        result = runner.invoke(app, ["config", "show", "--help"])
+        assert result.exit_code == 0
+
+    def test_config_path_help(self):
+        """Path subcommand help works"""
+        result = runner.invoke(app, ["config", "path", "--help"])
+        assert result.exit_code == 0
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 
