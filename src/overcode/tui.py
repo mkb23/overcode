@@ -191,6 +191,8 @@ class SupervisorTUI(
         ("0", "baseline_reset", "Reset baseline"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
+        # Toggle between token count and dollar cost display
+        ("dollar_sign", "toggle_cost_display", "Show $"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -210,6 +212,7 @@ class SupervisorTUI(
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
+    show_cost: reactive[bool] = reactive(False)  # Show $ cost instead of token counts
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()
@@ -273,6 +276,8 @@ class SupervisorTUI(
         self.baseline_minutes = self._prefs.baseline_minutes
         # Initialize monochrome from preferences (#138)
         self.monochrome = self._prefs.monochrome
+        # Initialize show_cost from preferences
+        self.show_cost = self._prefs.show_cost
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -326,6 +331,13 @@ class SupervisorTUI(
         try:
             daemon_panel = self.query_one("#daemon-panel", DaemonPanel)
             daemon_panel.display = self._prefs.daemon_panel_visible
+        except NoMatches:
+            pass
+
+        # Apply show_cost preference to daemon status bar
+        try:
+            status_bar = self.query_one("#daemon-status", DaemonStatusBar)
+            status_bar.show_cost = self._prefs.show_cost
         except NoMatches:
             pass
 
@@ -717,6 +729,8 @@ class SupervisorTUI(
                 widget.summary_content_mode = self.summary_content_mode
                 # Apply monochrome mode (#138)
                 widget.monochrome = self.monochrome
+                # Apply cost display mode
+                widget.show_cost = self.show_cost
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
