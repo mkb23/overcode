@@ -4,6 +4,7 @@ Session action methods for TUI.
 Handles agent/session operations like kill, new, sleep, command bar focus.
 """
 
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -126,6 +127,73 @@ class SessionActionsMixin:
             severity="warning",
             timeout=3
         )
+
+    def action_sync_to_main_and_clear(self) -> None:
+        """Switch to main branch, pull, and clear agent context.
+
+        This action:
+        1. Sends Ctrl-C to stop the current Claude process
+        2. Runs git checkout main && git pull
+        3. Restarts Claude for a fresh context
+        """
+        from ..tui_widgets import SessionSummary
+        from ..tmux_manager import TmuxManager
+
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        session_name = session.name
+
+        # Get tmux manager
+        tmux = TmuxManager(self.tmux_session)
+
+        # Step 1: Send Ctrl-C to kill the current Claude process
+        if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
+            self.notify(f"Failed to send Ctrl-C to '{session_name}'", severity="error")
+            return
+
+        self.notify(f"Syncing '{session_name}' to main...", severity="information")
+
+        # Brief delay to allow process to terminate
+        time.sleep(0.5)
+
+        # Step 2: Run git checkout main && git pull
+        git_commands = "git checkout main && git pull"
+        if not tmux.send_keys(session.tmux_window, git_commands, enter=True):
+            self.notify(f"Failed to run git commands for '{session_name}'", severity="error")
+            return
+
+        # Wait for git operations to complete
+        time.sleep(2.0)
+
+        # Step 3: Restart Claude with same configuration
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        if claude_command == "claude":
+            cmd_parts = ["claude", "code"]
+        else:
+            cmd_parts = [claude_command]
+
+        if session.permissiveness_mode == "bypass":
+            cmd_parts.append("--dangerously-skip-permissions")
+        elif session.permissiveness_mode == "permissive":
+            cmd_parts.extend(["--permission-mode", "dontAsk"])
+
+        cmd_str = " ".join(cmd_parts)
+
+        if tmux.send_keys(session.tmux_window, cmd_str, enter=True):
+            self.notify(f"Synced '{session_name}' to main with fresh context", severity="information")
+            # Reset session stats for fresh start
+            self.session_manager.update_stats(
+                session.id,
+                current_task="Synced to main"
+            )
+            # Clear the claude session IDs since this is a new claude instance
+            self.session_manager.update_session(session.id, claude_session_ids=[])
+        else:
+            self.notify(f"Failed to restart Claude for '{session_name}'", severity="error")
 
     def action_new_agent(self) -> None:
         """Prompt for directory and name to create a new agent.

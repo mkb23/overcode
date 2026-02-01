@@ -131,7 +131,8 @@ class SupervisorTUI(
         ("v", "cycle_detail", "Cycle detail"),
         ("s", "cycle_summary", "Summary detail"),
         ("e", "expand_all", "Expand all"),
-        ("c", "collapse_all", "Collapse all"),
+        ("C", "collapse_all", "Collapse all"),
+        ("c", "sync_to_main_and_clear", "Sync main+clear"),
         ("space", "toggle_focused", "Toggle"),
         # Navigation between agents
         ("j", "focus_next_session", "Next"),
