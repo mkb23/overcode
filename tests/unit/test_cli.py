@@ -589,10 +589,13 @@ class TestServeCommand:
 
     def test_serve_help(self):
         """Should show help with host and port options."""
+        import re
         result = runner.invoke(app, ["serve", "--help"])
         assert result.exit_code == 0
-        assert "--host" in result.output
-        assert "--port" in result.output
+        # Strip ANSI codes for reliable matching (CI has different formatting)
+        clean_output = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+        assert "--host" in clean_output
+        assert "--port" in clean_output
 
 
 class TestAttachCommand:
