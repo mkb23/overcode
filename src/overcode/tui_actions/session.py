@@ -150,25 +150,22 @@ class SessionActionsMixin:
 
         self.notify(f"Syncing '{session_name}' to main...", severity="information")
 
-        # Step 1: Run git checkout main && git pull using Claude's bash command prefix
+        # Send git commands - Claude will execute and return to prompt
         git_commands = "!git checkout main && git pull"
         if not tmux.send_keys(session.tmux_window, git_commands, enter=True):
             self.notify(f"Failed to send git commands to '{session_name}'", severity="error")
             return
 
-        # Wait for git operations to complete
-        time.sleep(2.0)
-
-        # Step 2: Send /clear to reset the conversation context
+        # Send /clear - tmux queues this, Claude processes after git completes
         if tmux.send_keys(session.tmux_window, "/clear", enter=True):
-            self.notify(f"Synced '{session_name}' to main with fresh context", severity="information")
+            self.notify(f"Syncing '{session_name}' to main with fresh context", severity="information")
             # Reset session stats for fresh start
             self.session_manager.update_stats(
                 session.id,
                 current_task="Synced to main"
             )
         else:
-            self.notify(f"Failed to clear context for '{session_name}'", severity="error")
+            self.notify(f"Failed to send /clear to '{session_name}'", severity="error")
 
     def action_new_agent(self) -> None:
         """Prompt for directory and name to create a new agent.
