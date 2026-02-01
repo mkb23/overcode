@@ -445,6 +445,165 @@ class TestConfigSubcommands:
         assert result.exit_code == 0
 
 
+class TestInstructCommandWithMocks:
+    """Test instruct command with mocked dependencies."""
+
+    def test_instruct_list_presets(self):
+        """Should list available presets."""
+        with patch('overcode.standing_instructions.load_presets') as mock_presets:
+            mock_presets.return_value = {
+                "DO_NOTHING": MagicMock(description="Do nothing"),
+                "STANDARD": MagicMock(description="Standard mode"),
+            }
+
+            result = runner.invoke(app, ["instruct", "--list"])
+
+            assert result.exit_code == 0
+            assert "DO_NOTHING" in result.output
+            assert "STANDARD" in result.output
+
+    def test_instruct_requires_name_without_list(self):
+        """Should require agent name when not listing."""
+        result = runner.invoke(app, ["instruct"])
+
+        assert result.exit_code == 1
+        assert "Agent name required" in result.output
+
+    def test_instruct_agent_not_found(self):
+        """Should error when agent not found."""
+        with patch('overcode.session_manager.SessionManager') as mock_sm:
+            mock_instance = MagicMock()
+            mock_instance.get_session_by_name.return_value = None
+            mock_sm.return_value = mock_instance
+
+            result = runner.invoke(app, ["instruct", "nonexistent", "DO_NOTHING"])
+
+            assert result.exit_code == 1
+            assert "not found" in result.output
+
+    def test_instruct_clears_instructions(self):
+        """Should clear instructions with --clear flag."""
+        with patch('overcode.session_manager.SessionManager') as mock_sm:
+            mock_session = MagicMock()
+            mock_session.id = "test-id"
+
+            mock_instance = MagicMock()
+            mock_instance.get_session_by_name.return_value = mock_session
+            mock_sm.return_value = mock_instance
+
+            result = runner.invoke(app, ["instruct", "test-agent", "--clear"])
+
+            assert result.exit_code == 0
+            assert "Cleared" in result.output
+            mock_instance.set_standing_instructions.assert_called_with("test-id", "", preset_name=None)
+
+
+class TestCleanupCommandWithMocks:
+    """Test cleanup command with mocked dependencies."""
+
+    def test_cleanup_removes_terminated_sessions(self):
+        """Should remove terminated sessions."""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 3
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup"])
+
+            assert result.exit_code == 0
+            assert "Cleaned up 3" in result.output
+
+    def test_cleanup_no_terminated_sessions(self):
+        """Should show message when no terminated sessions."""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 0
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup"])
+
+            assert result.exit_code == 0
+            assert "No terminated sessions" in result.output
+
+
+class TestSetValueCommand:
+    """Test set-value command."""
+
+    def test_set_value_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["set-value", "--help"])
+        assert result.exit_code == 0
+        assert "Priority value" in result.output or "priority" in result.output.lower()
+
+    def test_set_value_requires_name(self):
+        """Should require agent name."""
+        result = runner.invoke(app, ["set-value"])
+        assert result.exit_code != 0
+
+
+class TestExportCommand:
+    """Test export command."""
+
+    def test_export_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["export", "--help"])
+        assert result.exit_code == 0
+        assert "parquet" in result.output.lower()
+
+    def test_export_requires_output_path(self):
+        """Should require output path."""
+        result = runner.invoke(app, ["export"])
+        assert result.exit_code != 0
+
+
+class TestHistoryCommand:
+    """Test history command."""
+
+    def test_history_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["history", "--help"])
+        assert result.exit_code == 0
+
+
+class TestMonitorDaemonWatch:
+    """Test monitor-daemon watch command."""
+
+    def test_watch_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["monitor-daemon", "watch", "--help"])
+        assert result.exit_code == 0
+        assert "Watch" in result.output or "watch" in result.output.lower() or "log" in result.output.lower()
+
+
+class TestSupervisorDaemonWatch:
+    """Test supervisor-daemon watch command."""
+
+    def test_watch_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["supervisor-daemon", "watch", "--help"])
+        assert result.exit_code == 0
+
+
+class TestServeCommand:
+    """Test serve command."""
+
+    def test_serve_help(self):
+        """Should show help with host and port options."""
+        result = runner.invoke(app, ["serve", "--help"])
+        assert result.exit_code == 0
+        assert "--host" in result.output
+        assert "--port" in result.output
+
+
+class TestAttachCommand:
+    """Test attach command."""
+
+    def test_attach_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["attach", "--help"])
+        assert result.exit_code == 0
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================
