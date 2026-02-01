@@ -16,7 +16,7 @@ Prerequisites:
 Architecture:
     Monitor Daemon (metrics) → monitor_daemon_state.json → Supervisor Daemon (claude)
 
-TODO: Add unit tests (currently 0% coverage)
+Pure business logic is extracted to supervisor_daemon_core.py for testability.
 TODO: Extract _send_prompt_to_window to a shared tmux utilities module
 (duplicated in launcher.py)
 """
@@ -60,6 +60,13 @@ from .status_constants import (
 )
 from .tmux_manager import TmuxManager
 from .history_reader import encode_project_path, read_token_usage_from_session_file
+from .supervisor_daemon_core import (
+    build_daemon_claude_context as _build_daemon_claude_context,
+    filter_non_green_sessions,
+    calculate_daemon_claude_run_seconds,
+    should_launch_daemon_claude,
+    parse_intervention_log_line,
+)
 
 
 @dataclass
@@ -473,14 +480,14 @@ class SupervisorDaemon:
     def _mark_daemon_claude_stopped(self) -> None:
         """Mark daemon claude as stopped and accumulate run time."""
         if self.supervisor_stats.supervisor_claude_running:
-            # Calculate run duration
-            if self.supervisor_stats.supervisor_claude_started_at:
-                try:
-                    started_at = datetime.fromisoformat(self.supervisor_stats.supervisor_claude_started_at)
-                    run_seconds = (datetime.now() - started_at).total_seconds()
-                    self.supervisor_stats.supervisor_claude_total_run_seconds += run_seconds
-                except (ValueError, TypeError):
-                    pass
+            # Calculate total run time using pure function
+            self.supervisor_stats.supervisor_claude_total_run_seconds = (
+                calculate_daemon_claude_run_seconds(
+                    started_at_iso=self.supervisor_stats.supervisor_claude_started_at,
+                    now_iso=datetime.now().isoformat(),
+                    previous_total=self.supervisor_stats.supervisor_claude_total_run_seconds,
+                )
+            )
 
             self.supervisor_stats.supervisor_claude_running = False
             self.supervisor_stats.supervisor_claude_started_at = None
@@ -555,31 +562,18 @@ class SupervisorDaemon:
         non_green_sessions: List[SessionDaemonState]
     ) -> str:
         """Build initial context for daemon claude."""
-        context_parts = []
-
-        context_parts.append("You are the Overcode daemon claude agent.")
-        context_parts.append("Your mission: Make all RED/YELLOW/ORANGE sessions GREEN.")
-        context_parts.append("")
-        context_parts.append(f"TMUX SESSION: {self.tmux_session}")
-        context_parts.append(f"Sessions needing attention: {len(non_green_sessions)}")
-        context_parts.append("")
-
-        for session in non_green_sessions:
-            emoji = get_status_emoji(session.current_status)
-            context_parts.append(f"{emoji} {session.name} (window {session.tmux_window})")
-            if session.standing_instructions:
-                context_parts.append(f"   Autopilot: {session.standing_instructions}")
-            else:
-                context_parts.append(f"   No autopilot instructions set")
-            if session.repo_name:
-                context_parts.append(f"   Repo: {session.repo_name}")
-            context_parts.append("")
-
-        context_parts.append("Read the daemon claude skill for how to control sessions via tmux.")
-        context_parts.append("Start by reading ~/.overcode/sessions/sessions.json to see full state.")
-        context_parts.append("Then check each non-green session and help them make progress.")
-
-        return "\n".join(context_parts)
+        # Convert dataclass objects to dicts for pure function
+        session_dicts = [
+            {
+                "name": s.name,
+                "tmux_window": s.tmux_window,
+                "current_status": s.current_status,
+                "standing_instructions": s.standing_instructions,
+                "repo_name": s.repo_name,
+            }
+            for s in non_green_sessions
+        ]
+        return _build_daemon_claude_context(self.tmux_session, session_dicts)
 
     def _send_prompt_to_window(self, window_index: int, prompt: str) -> bool:
         """Send a large prompt to a tmux window via load-buffer/paste-buffer."""
@@ -686,19 +680,26 @@ class SupervisorDaemon:
         - Asleep sessions (#70)
         - Sessions with DO_NOTHING standing orders (#70)
         """
-        result = []
-        for s in monitor_state.sessions:
-            # Skip green sessions and daemon_claude
-            if s.current_status == STATUS_RUNNING or s.name == 'daemon_claude':
-                continue
-            # Skip asleep sessions
-            if s.is_asleep:
-                continue
-            # Skip sessions with DO_NOTHING standing orders
-            if s.standing_instructions and 'DO_NOTHING' in s.standing_instructions.upper():
-                continue
-            result.append(s)
-        return result
+        # Convert to dicts for pure function
+        session_dicts = [
+            {
+                "name": s.name,
+                "current_status": s.current_status,
+                "is_asleep": s.is_asleep,
+                "standing_instructions": s.standing_instructions,
+                "_session": s,  # Keep reference to original
+            }
+            for s in monitor_state.sessions
+        ]
+
+        # Filter using pure function
+        filtered = filter_non_green_sessions(
+            session_dicts,
+            exclude_names=["daemon_claude"],
+        )
+
+        # Return original SessionDaemonState objects
+        return [d["_session"] for d in filtered]
 
     def wait_for_monitor_daemon(self, timeout: int = 30, poll_interval: int = 2) -> bool:
         """Wait for monitor daemon to be running.
