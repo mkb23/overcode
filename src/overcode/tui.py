@@ -785,8 +785,6 @@ class SupervisorTUI(
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
                 widget.summary_content_mode = self.summary_content_mode
-                # Apply monochrome mode (#138)
-                widget.monochrome = self.monochrome
                 # Apply cost display mode
                 widget.show_cost = self.show_cost
                 # Apply list-mode class if in list_preview view
