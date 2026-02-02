@@ -39,6 +39,15 @@ supervisor_daemon_app = typer.Typer(
 )
 app.add_typer(supervisor_daemon_app, name="supervisor-daemon")
 
+# Config subcommand group
+config_app = typer.Typer(
+    name="config",
+    help="Manage configuration",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
+app.add_typer(config_app, name="config")
+
 # Console for rich output
 console = Console()
 
@@ -192,6 +201,33 @@ def cleanup(session: SessionOption = "agents"):
         rprint(f"[green]✓ Cleaned up {count} terminated session(s)[/green]")
     else:
         rprint("[dim]No terminated sessions to clean up[/dim]")
+
+
+@app.command(name="set-value")
+def set_value(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    value: Annotated[int, typer.Argument(help="Priority value (default 1000, higher = more important)")],
+    session: SessionOption = "agents",
+):
+    """Set agent priority value for sorting (#61).
+
+    Higher values indicate higher priority. Default is 1000.
+
+    Examples:
+        overcode set-value my-agent 2000    # High priority
+        overcode set-value my-agent 500     # Low priority
+        overcode set-value my-agent 1000    # Reset to default
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    manager.set_agent_value(agent.id, value)
+    rprint(f"[green]✓ Set {name} value to {value}[/green]")
 
 
 @app.command()
@@ -771,70 +807,132 @@ def supervisor_daemon_watch(session: SessionOption = "agents"):
 
 
 # =============================================================================
-# Summarizer Commands
+# Config Commands
 # =============================================================================
 
+CONFIG_TEMPLATE = """\
+# Overcode configuration
+# Location: ~/.overcode/config.yaml
 
-@app.command()
-def summarizer(
-    action: Annotated[
-        str, typer.Argument(help="Action: on, off, or status")
-    ] = "status",
-    session: SessionOption = "agents",
+# Default instructions sent to new agents
+# default_standing_instructions: "Be concise. Ask before making large changes."
+
+# AI summarizer settings (for corporate API gateways)
+# summarizer:
+#   api_url: https://api.openai.com/v1/chat/completions
+#   model: gpt-4o-mini
+#   api_key_var: OPENAI_API_KEY  # env var containing the API key
+
+# Cloud relay for remote monitoring
+# relay:
+#   enabled: false
+#   url: https://your-worker.workers.dev/update
+#   api_key: your-secret-key
+#   interval: 30  # seconds between pushes
+
+# Web dashboard time presets
+# web:
+#   time_presets:
+#     - name: "Morning"
+#       start: "09:00"
+#       end: "12:00"
+#     - name: "Full Day"
+#       start: "09:00"
+#       end: "17:00"
+"""
+
+
+@config_app.callback(invoke_without_command=True)
+def config_default(ctx: typer.Context):
+    """Show current configuration (default when no subcommand given)."""
+    if ctx.invoked_subcommand is None:
+        _config_show()
+
+
+@config_app.command("init")
+def config_init(
+    force: Annotated[
+        bool, typer.Option("--force", "-f", help="Overwrite existing config file")
+    ] = False,
 ):
-    """Control the agent activity summarizer.
+    """Create a config file with documented defaults.
 
-    The summarizer uses GPT-4o-mini to generate human-readable summaries
-    of what each agent has been doing. Requires OPENAI_API_KEY env var.
-
-    Examples:
-        overcode summarizer status  # Check current state
-        overcode summarizer on      # Enable summarizer
-        overcode summarizer off     # Disable summarizer
+    Creates ~/.overcode/config.yaml with all options commented out.
+    Use --force to overwrite an existing config file.
     """
-    from .summarizer_component import (
-        set_summarizer_enabled,
-        is_summarizer_enabled,
-        SummarizerClient,
-    )
-    from .monitor_daemon_state import get_monitor_daemon_state
+    from .config import CONFIG_PATH
 
-    action = action.lower()
+    # Ensure directory exists
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    if action == "status":
-        # Check if API key is available
-        api_available = SummarizerClient.is_available()
-        enabled = is_summarizer_enabled(session)
-
-        # Get stats from daemon state
-        state = get_monitor_daemon_state(session)
-
-        rprint(f"[bold]Summarizer Status ({session}):[/bold]")
-        rprint(f"  API key: {'[green]available[/green]' if api_available else '[red]not set[/red] (export OPENAI_API_KEY=...)'}")
-        rprint(f"  Enabled: {'[green]yes[/green]' if enabled else '[dim]no[/dim]'}")
-
-        if state:
-            rprint(f"  API calls: {state.summarizer_calls}")
-            rprint(f"  Est. cost: ${state.summarizer_cost_usd:.4f}")
-
-    elif action == "on":
-        if not SummarizerClient.is_available():
-            rprint("[red]Error:[/red] OPENAI_API_KEY environment variable not set")
-            rprint("[dim]Export your API key: export OPENAI_API_KEY='sk-...'[/dim]")
-            raise typer.Exit(1)
-
-        set_summarizer_enabled(session, True)
-        rprint(f"[green]✓[/green] Summarizer enabled for session '{session}'")
-        rprint("[dim]Summaries will appear in the web dashboard and TUI[/dim]")
-
-    elif action == "off":
-        set_summarizer_enabled(session, False)
-        rprint(f"[green]✓[/green] Summarizer disabled for session '{session}'")
-
-    else:
-        rprint(f"[red]Unknown action:[/red] {action}")
-        rprint("[dim]Use: on, off, or status[/dim]")
+    if CONFIG_PATH.exists() and not force:
+        rprint(f"[yellow]Config file already exists:[/yellow] {CONFIG_PATH}")
+        rprint("[dim]Use --force to overwrite[/dim]")
         raise typer.Exit(1)
+
+    CONFIG_PATH.write_text(CONFIG_TEMPLATE)
+    rprint(f"[green]✓[/green] Created config file: [bold]{CONFIG_PATH}[/bold]")
+    rprint("[dim]Edit to customize your settings[/dim]")
+
+
+@config_app.command("show")
+def config_show():
+    """Show current configuration."""
+    _config_show()
+
+
+def _config_show():
+    """Internal function to display current config."""
+    from .config import CONFIG_PATH, load_config
+
+    if not CONFIG_PATH.exists():
+        rprint(f"[dim]No config file found at {CONFIG_PATH}[/dim]")
+        rprint("[dim]Run 'overcode config init' to create one[/dim]")
+        return
+
+    config = load_config()
+    if not config:
+        rprint(f"[dim]Config file is empty: {CONFIG_PATH}[/dim]")
+        return
+
+    rprint(f"[bold]Configuration[/bold] ({CONFIG_PATH}):\n")
+
+    # Show each configured section
+    if "default_standing_instructions" in config:
+        instr = config["default_standing_instructions"]
+        display = instr[:60] + "..." if len(instr) > 60 else instr
+        rprint(f"  default_standing_instructions: \"{display}\"")
+
+    if "summarizer" in config:
+        s = config["summarizer"]
+        rprint("  summarizer:")
+        if "api_url" in s:
+            rprint(f"    api_url: {s['api_url']}")
+        if "model" in s:
+            rprint(f"    model: {s['model']}")
+        if "api_key_var" in s:
+            rprint(f"    api_key_var: {s['api_key_var']}")
+
+    if "relay" in config:
+        r = config["relay"]
+        rprint("  relay:")
+        rprint(f"    enabled: {r.get('enabled', False)}")
+        if "url" in r:
+            rprint(f"    url: {r['url']}")
+        if "interval" in r:
+            rprint(f"    interval: {r['interval']}s")
+
+    if "web" in config:
+        w = config["web"]
+        if "time_presets" in w:
+            rprint(f"  web.time_presets: {len(w['time_presets'])} presets")
+
+
+@config_app.command("path")
+def config_path():
+    """Show the config file path."""
+    from .config import CONFIG_PATH
+    print(CONFIG_PATH)
 
 
 # =============================================================================

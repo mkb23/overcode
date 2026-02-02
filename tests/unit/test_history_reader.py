@@ -286,22 +286,29 @@ class TestGetSessionIdsForSession:
 class TestEncodeProjectPath:
     """Test project path encoding for Claude Code directory names."""
 
-    def test_encodes_unix_path(self):
+    def test_encodes_unix_path(self, tmp_path):
         """Should encode Unix path to Claude Code format."""
         from overcode.history_reader import encode_project_path
 
-        result = encode_project_path("/home/user/project")
+        # Use tmp_path which is a real existing path that won't get resolved differently
+        result = encode_project_path(str(tmp_path))
 
-        assert result == "-home-user-project"
+        # Should replace slashes with dashes and start with dash
+        assert result.startswith("-")
+        assert "/" not in result
+        # Temp path name should be in the result
+        assert tmp_path.name in result
 
-    def test_handles_trailing_slash(self):
+    def test_handles_trailing_slash(self, tmp_path):
         """Should handle paths with trailing slashes."""
         from overcode.history_reader import encode_project_path
 
-        result = encode_project_path("/test/path/")
+        path_with_slash = str(tmp_path) + "/"
+        result = encode_project_path(path_with_slash)
 
-        # Path.resolve() removes trailing slash
-        assert result == "-test-path"
+        # Path.resolve() removes trailing slash - result should not end with dash
+        assert not result.endswith("-")
+        assert tmp_path.name in result
 
 
 class TestClaudeSessionStats:
@@ -723,6 +730,283 @@ class TestFormatTokens:
         assert format_tokens(500) == "500"
         assert format_tokens(0) == "0"
         assert format_tokens(999) == "999"
+
+
+class TestGetCurrentSessionIdForDirectory:
+    """Test get_current_session_id_for_directory function."""
+
+    def test_returns_most_recent_session_id(self, tmp_path):
+        """Should return the most recent sessionId for the directory."""
+        from overcode.history_reader import get_current_session_id_for_directory
+
+        history_file = tmp_path / "history.jsonl"
+        since = datetime(2024, 1, 15, 10, 0, 0)
+        since_ms = int(since.timestamp() * 1000)
+
+        entries = [
+            {"display": "1", "timestamp": since_ms + 1000, "project": "/test/project", "sessionId": "old-session"},
+            {"display": "2", "timestamp": since_ms + 5000, "project": "/test/project", "sessionId": "new-session"},
+            {"display": "3", "timestamp": since_ms + 3000, "project": "/test/project", "sessionId": "middle-session"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = get_current_session_id_for_directory("/test/project", since, history_file)
+
+        assert result == "new-session"
+
+    def test_returns_none_when_no_matching_entries(self, tmp_path):
+        """Should return None when no entries match."""
+        from overcode.history_reader import get_current_session_id_for_directory
+
+        history_file = tmp_path / "history.jsonl"
+        since = datetime(2024, 1, 15, 10, 0, 0)
+        since_ms = int(since.timestamp() * 1000)
+
+        # Entry before cutoff
+        entries = [
+            {"display": "1", "timestamp": since_ms - 1000, "project": "/test/project", "sessionId": "old-session"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = get_current_session_id_for_directory("/test/project", since, history_file)
+
+        assert result is None
+
+    def test_filters_by_directory(self, tmp_path):
+        """Should only match entries for the specified directory."""
+        from overcode.history_reader import get_current_session_id_for_directory
+
+        history_file = tmp_path / "history.jsonl"
+        since = datetime(2024, 1, 15, 10, 0, 0)
+        since_ms = int(since.timestamp() * 1000)
+
+        entries = [
+            {"display": "1", "timestamp": since_ms + 1000, "project": "/other/project", "sessionId": "other-session"},
+            {"display": "2", "timestamp": since_ms + 2000, "project": "/test/project", "sessionId": "correct-session"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = get_current_session_id_for_directory("/test/project", since, history_file)
+
+        assert result == "correct-session"
+
+
+class TestReadWorkTimesFromSessionFile:
+    """Test read_work_times_from_session_file function."""
+
+    def test_returns_empty_for_nonexistent_file(self, tmp_path):
+        """Should return empty list for nonexistent file."""
+        from overcode.history_reader import read_work_times_from_session_file
+
+        result = read_work_times_from_session_file(tmp_path / "nonexistent.jsonl")
+
+        assert result == []
+
+    def test_calculates_work_times_between_prompts(self, tmp_path):
+        """Should calculate duration between user prompts."""
+        from overcode.history_reader import read_work_times_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:00:00.000Z",
+                "message": {"content": "first prompt"}
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2024-01-15T10:00:30.000Z",
+                "message": {"content": "response 1"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:01:00.000Z",
+                "message": {"content": "second prompt"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:03:00.000Z",
+                "message": {"content": "third prompt"}
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = read_work_times_from_session_file(session_file)
+
+        # Between first and second prompt: 60 seconds
+        # Between second and third prompt: 120 seconds
+        assert len(result) == 2
+        assert result[0] == 60.0
+        assert result[1] == 120.0
+
+    def test_skips_tool_results(self, tmp_path):
+        """Should skip tool result entries (not real user prompts)."""
+        from overcode.history_reader import read_work_times_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:00:00.000Z",
+                "message": {"content": "first prompt"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:00:30.000Z",
+                "message": {"content": [{"type": "tool_result", "content": "tool output"}]}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:01:00.000Z",
+                "message": {"content": "second prompt"}
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        result = read_work_times_from_session_file(session_file)
+
+        # Only one work time between first real prompt and second real prompt
+        assert len(result) == 1
+        assert result[0] == 60.0
+
+    def test_filters_by_since_timestamp(self, tmp_path):
+        """Should only include work times after the since timestamp."""
+        from overcode.history_reader import read_work_times_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        entries = [
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T09:00:00.000Z",
+                "message": {"content": "before cutoff"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T09:30:00.000Z",
+                "message": {"content": "also before cutoff"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:30:00.000Z",
+                "message": {"content": "after cutoff 1"}
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-15T10:31:00.000Z",
+                "message": {"content": "after cutoff 2"}
+            },
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        since = datetime(2024, 1, 15, 10, 0, 0)
+        result = read_work_times_from_session_file(session_file, since=since)
+
+        # Only one work time between the two entries after cutoff
+        assert len(result) == 1
+        assert result[0] == 60.0
+
+    def test_handles_io_error(self, tmp_path):
+        """Should return empty list on IO errors."""
+        from overcode.history_reader import read_work_times_from_session_file
+
+        # Create a directory instead of a file to cause IO error
+        dir_path = tmp_path / "not_a_file.jsonl"
+        dir_path.mkdir()
+
+        result = read_work_times_from_session_file(dir_path)
+
+        assert result == []
+
+
+class TestGetSessionStatsOwnership:
+    """Test get_session_stats with owned vs unowned sessions."""
+
+    def test_only_uses_owned_session_ids_for_context(self, tmp_path):
+        """Context window should only use owned sessionIds."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        # Setup history file
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+
+        # Two sessions in same directory
+        entries = [
+            {"display": "1", "timestamp": session_start_ms + 1000, "project": "/test/project", "sessionId": "owned-session"},
+            {"display": "2", "timestamp": session_start_ms + 2000, "project": "/test/project", "sessionId": "unowned-session"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        # Setup session files
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        # Owned session with small context
+        owned_file = project_dir / "owned-session.jsonl"
+        owned_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {"usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 500}}
+        }
+        owned_file.write_text(json.dumps(owned_entry))
+
+        # Unowned session with large context (should not be used for context calc)
+        unowned_file = project_dir / "unowned-session.jsonl"
+        unowned_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:02:00.000Z",
+            "message": {"usage": {"input_tokens": 50000, "output_tokens": 100, "cache_read_input_tokens": 100000}}
+        }
+        unowned_file.write_text(json.dumps(unowned_entry))
+
+        # Create session with only owned-session tracked
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+        # Simulate session.claude_session_ids = ["owned-session"]
+        session.claude_session_ids = ["owned-session"]
+
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Context should be from owned session only: 100 + 500 = 600
+        assert stats.current_context_tokens == 600
+        # But total tokens should include both sessions
+        assert stats.input_tokens == 100 + 50000
+
+
+class TestHistoryEntryEdgeCases:
+    """Test edge cases in HistoryEntry and history reading."""
+
+    def test_handles_zero_timestamp(self):
+        """Should handle zero timestamp gracefully."""
+        entry = HistoryEntry(
+            display="test",
+            timestamp_ms=0,
+            project=None,
+            session_id=None
+        )
+
+        ts = entry.timestamp
+        assert isinstance(ts, datetime)
+        assert ts.year == 1970  # Epoch
+
+    def test_read_history_handles_io_error(self, tmp_path):
+        """Should return empty list on IO error."""
+        # Create a directory instead of a file
+        dir_path = tmp_path / "not_a_file.jsonl"
+        dir_path.mkdir()
+
+        result = read_history(dir_path)
+
+        # Should return empty list, not raise
+        assert result == []
 
 
 if __name__ == "__main__":

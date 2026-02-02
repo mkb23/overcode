@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "overcode"
-version = "0.1.2"
+version = "0.1.4"
 description = "A supervisor for managing multiple Claude Code instances in tmux"
 authors = [
     {name = "Mike Bond"}
@@ -45,6 +45,8 @@ dev = [
     "pytest-timeout>=2.1.0",
     "black>=23.0.0",
     "mypy>=1.0.0",
+    "pyte>=0.8.0",
+    "pillow>=10.0.0",
 ]
 
 # macOS presence detection (optional)
@@ -60,6 +62,7 @@ export = [
 
 [project.scripts]
 overcode = "overcode.cli:main"
+tui-eye = "overcode.testing.tui_eye:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

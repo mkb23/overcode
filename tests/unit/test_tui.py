@@ -929,12 +929,14 @@ class TestHelpOverlayRender:
     """Test HelpOverlay.render() output"""
 
     def test_render_contains_keyboard_shortcuts(self):
-        """Help text contains keyboard shortcuts"""
+        """Help text contains keyboard shortcut sections"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
         result = widget.render()
         plain = result.plain
-        assert "KEYBOARD SHORTCUTS" in plain
+        # Check for reorganized section headers
+        assert "NAVIGATION & VIEW" in plain
+        assert "AGENT CONTROL" in plain
         assert "Quit" in plain
 
     def test_render_contains_status_colors(self):
@@ -944,7 +946,7 @@ class TestHelpOverlayRender:
         result = widget.render()
         plain = result.plain
         assert "Running" in plain
-        assert "Wait User" in plain
+        assert "Wait user" in plain
 
 
 class TestStatusTimelineRender:
@@ -1428,36 +1430,36 @@ class TestFormatStandingInstructions:
 
     def test_returns_empty_for_empty_input(self):
         """Empty input returns empty string"""
-        from overcode.tui import format_standing_instructions
+        from overcode.tui_widgets.session_summary import format_standing_instructions
         assert format_standing_instructions("") == ""
         assert format_standing_instructions(None) == ""
 
     def test_returns_default_when_matching(self):
         """Returns [DEFAULT] when instructions match configured default"""
-        from overcode.tui import format_standing_instructions
+        from overcode.tui_widgets.session_summary import format_standing_instructions
         from unittest.mock import patch
 
-        with patch('overcode.tui.get_default_standing_instructions') as mock:
+        with patch('overcode.config.get_default_standing_instructions') as mock:
             mock.return_value = "Approve file writes"
             result = format_standing_instructions("Approve file writes")
             assert result == "[DEFAULT]"
 
     def test_returns_instructions_when_different(self):
         """Returns actual instructions when different from default"""
-        from overcode.tui import format_standing_instructions
+        from overcode.tui_widgets.session_summary import format_standing_instructions
         from unittest.mock import patch
 
-        with patch('overcode.tui.get_default_standing_instructions') as mock:
+        with patch('overcode.config.get_default_standing_instructions') as mock:
             mock.return_value = "Approve file writes"
             result = format_standing_instructions("Custom instructions here")
             assert result == "Custom instructions here"
 
     def test_truncates_long_instructions(self):
         """Truncates instructions that exceed max_len"""
-        from overcode.tui import format_standing_instructions
+        from overcode.tui_widgets.session_summary import format_standing_instructions
         from unittest.mock import patch
 
-        with patch('overcode.tui.get_default_standing_instructions') as mock:
+        with patch('overcode.config.get_default_standing_instructions') as mock:
             mock.return_value = ""
             long_text = "x" * 100
             result = format_standing_instructions(long_text, max_len=50)

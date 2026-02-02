@@ -216,6 +216,12 @@ class UserConfig:
     default_standing_instructions: str = ""
     tmux_session: str = "agents"
 
+    # Token pricing (per million tokens) - defaults to Opus 4.5
+    price_input: float = 5.0        # $/MTok for input tokens
+    price_output: float = 25.0      # $/MTok for output tokens
+    price_cache_write: float = 6.25  # $/MTok for cache creation
+    price_cache_read: float = 0.50   # $/MTok for cache reads
+
     @classmethod
     def load(cls) -> "UserConfig":
         """Load configuration from config file."""
@@ -230,11 +236,18 @@ class UserConfig:
                 if not isinstance(data, dict):
                     return cls()
 
+                # Load pricing config (nested under 'pricing' key)
+                pricing = data.get("pricing", {})
+
                 return cls(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
                     ),
                     tmux_session=data.get("tmux_session", "agents"),
+                    price_input=pricing.get("input", 5.0),
+                    price_output=pricing.get("output", 25.0),
+                    price_cache_write=pricing.get("cache_write", 6.25),
+                    price_cache_read=pricing.get("cache_read", 0.50),
                 )
         except (yaml.YAMLError, IOError):
             return cls()
@@ -381,6 +394,12 @@ class TUIPreferences:
     view_mode: str = "tree"  # tree, list_preview
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
+    hide_asleep: bool = False  # hide sleeping agents from display
+    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
+    summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation (#98)
+    baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
+    monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+    show_cost: bool = False  # Show $ cost instead of token counts
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
 
@@ -407,6 +426,11 @@ class TUIPreferences:
                     view_mode=data.get("view_mode", "tree"),
                     tmux_sync=data.get("tmux_sync", False),
                     show_terminated=data.get("show_terminated", False),
+                    hide_asleep=data.get("hide_asleep", False),
+                    sort_mode=data.get("sort_mode", "alphabetical"),
+                    summary_content_mode=data.get("summary_content_mode", "ai_short"),
+                    baseline_minutes=data.get("baseline_minutes", 0),
+                    show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
         except (json.JSONDecodeError, IOError):
@@ -428,6 +452,11 @@ class TUIPreferences:
                     "view_mode": self.view_mode,
                     "tmux_sync": self.tmux_sync,
                     "show_terminated": self.show_terminated,
+                    "hide_asleep": self.hide_asleep,
+                    "sort_mode": self.sort_mode,
+                    "summary_content_mode": self.summary_content_mode,
+                    "baseline_minutes": self.baseline_minutes,
+                    "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)
         except (IOError, OSError):

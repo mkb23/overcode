@@ -18,6 +18,7 @@ from .status_constants import (
     get_presence_timeline_char as _get_presence_timeline_char,
     get_presence_color as _get_presence_color,
     get_daemon_status_style as _get_daemon_status_style,
+    STATUS_ASLEEP,
     STATUS_RUNNING,
     STATUS_TERMINATED,
 )
@@ -94,6 +95,30 @@ def format_tokens(tokens: int) -> str:
         return f"{tokens / 1_000:.1f}K"
     else:
         return str(tokens)
+
+
+def format_cost(cost_usd: float) -> str:
+    """Format cost in USD to human readable with stable width.
+
+    Uses 1 decimal place and K/M suffixes for large amounts.
+    Prefixed with $ symbol.
+
+    Args:
+        cost_usd: Cost in US dollars
+
+    Returns:
+        Formatted string like "$0.1", "$12.3", "$1.2K", "$3.5M"
+    """
+    if cost_usd >= 1_000_000:
+        return f"${cost_usd / 1_000_000:.1f}M"
+    elif cost_usd >= 1_000:
+        return f"${cost_usd / 1_000:.1f}K"
+    elif cost_usd >= 100:
+        return f"${cost_usd:.0f}"
+    elif cost_usd >= 10:
+        return f"${cost_usd:.1f}"
+    else:
+        return f"${cost_usd:.2f}"
 
 
 def format_line_count(count: int) -> str:
@@ -254,10 +279,10 @@ def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[floa
             if current_elapsed > 0:
                 if stats.current_state == STATUS_RUNNING:
                     green_time += current_elapsed
-                elif stats.current_state != STATUS_TERMINATED:
-                    # Only count non-green time for non-terminated states
+                elif stats.current_state not in (STATUS_TERMINATED, STATUS_ASLEEP):
+                    # Only count non-green time for non-terminated/non-asleep states (#68)
                     non_green_time += current_elapsed
-                # else: terminated state - time is frozen, don't accumulate
+                # else: terminated or asleep - time is frozen, don't accumulate
         except (ValueError, AttributeError, TypeError):
             pass
 

@@ -189,6 +189,56 @@ class TestSessionManagerUpdates:
         updated = manager.get_session(session.id)
         assert updated.permissiveness_mode == "permissive"
 
+    def test_set_agent_value(self, tmp_path):
+        """Can set agent value (#61)"""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Default value is 1000
+        assert session.agent_value == 1000
+
+        # Set high priority
+        manager.set_agent_value(session.id, 2000)
+
+        updated = manager.get_session(session.id)
+        assert updated.agent_value == 2000
+
+        # Set low priority
+        manager.set_agent_value(session.id, 500)
+
+        updated = manager.get_session(session.id)
+        assert updated.agent_value == 500
+
+    def test_set_human_annotation(self, tmp_path):
+        """Can set human annotation (#74)"""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Initially empty
+        assert session.human_annotation == ""
+
+        # Set annotation
+        manager.set_human_annotation(session.id, "working on auth refactor")
+
+        updated = manager.get_session(session.id)
+        assert updated.human_annotation == "working on auth refactor"
+
+        # Clear annotation
+        manager.set_human_annotation(session.id, "")
+
+        cleared = manager.get_session(session.id)
+        assert cleared.human_annotation == ""
+
 
 class TestSessionStats:
     """Test session statistics tracking"""
@@ -363,6 +413,509 @@ class TestConcurrency:
         with open(state_file) as f:
             data = json.load(f)
         assert "stats" in data[session.id]
+
+
+class TestClaudeSessionIds:
+    """Test Claude session ID tracking."""
+
+    def test_add_claude_session_id(self, tmp_path):
+        """Can add Claude session ID."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        result = manager.add_claude_session_id(session.id, "claude-session-abc")
+
+        assert result is True
+        updated = manager.get_session(session.id)
+        assert "claude-session-abc" in updated.claude_session_ids
+
+    def test_add_duplicate_claude_session_id_returns_false(self, tmp_path):
+        """Adding duplicate Claude session ID returns False."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.add_claude_session_id(session.id, "claude-session-abc")
+        result = manager.add_claude_session_id(session.id, "claude-session-abc")
+
+        assert result is False
+
+    def test_add_claude_session_id_nonexistent_session(self, tmp_path):
+        """Adding to nonexistent session returns False."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        result = manager.add_claude_session_id("nonexistent", "claude-abc")
+
+        assert result is False
+
+
+class TestSessionTimers:
+    """Test session timer tracking."""
+
+    def test_update_green_and_non_green_time(self, tmp_path):
+        """Can update green and non-green time."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_stats(
+            session.id,
+            green_time_seconds=300.0,
+            non_green_time_seconds=60.0
+        )
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.green_time_seconds == 300.0
+        assert updated.stats.non_green_time_seconds == 60.0
+
+
+class TestSessionQuery:
+    """Test session query methods."""
+
+    def test_list_sessions_returns_all(self, tmp_path):
+        """List sessions returns all sessions."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        manager.create_session(name="s1", tmux_session="agents", tmux_window=1, command=["claude"])
+        manager.create_session(name="s2", tmux_session="agents", tmux_window=2, command=["claude"])
+        manager.create_session(name="s3", tmux_session="other", tmux_window=1, command=["claude"])
+
+        sessions = manager.list_sessions()
+
+        assert len(sessions) == 3
+        names = {s.name for s in sessions}
+        assert names == {"s1", "s2", "s3"}
+
+
+class TestAtomicUpdate:
+    """Test atomic update mechanism."""
+
+    def test_atomic_update_updates_state(self, tmp_path):
+        """Atomic update correctly modifies state."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        # Use update_stats which uses atomic update internally
+        manager.update_stats(session.id, interaction_count=42)
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.interaction_count == 42
+
+
+class TestSessionManagerArchive:
+    """Test session archiving functionality."""
+
+    def test_list_archived_sessions_empty(self, tmp_path):
+        """List archived returns empty when no archives."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        archived = manager.list_archived_sessions()
+        assert archived == []
+
+
+class TestSessionUpdateMethods:
+    """Test various session update methods."""
+
+    def test_set_standing_instructions(self, tmp_path):
+        """Can set standing instructions."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_standing_instructions(session.id, "Always write tests")
+
+        updated = manager.get_session(session.id)
+        assert updated.standing_instructions == "Always write tests"
+
+    def test_clear_standing_instructions(self, tmp_path):
+        """Can clear standing instructions."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+        manager.set_standing_instructions(session.id, "Instructions")
+
+        manager.set_standing_instructions(session.id, None)
+
+        updated = manager.get_session(session.id)
+        assert updated.standing_instructions is None
+
+    def test_set_permissiveness_mode(self, tmp_path):
+        """Can set permissiveness mode."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_permissiveness(session.id, "bypass")
+
+        updated = manager.get_session(session.id)
+        assert updated.permissiveness_mode == "bypass"
+
+    def test_set_agent_value(self, tmp_path):
+        """Can set agent value."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_agent_value(session.id, 5)
+
+        updated = manager.get_session(session.id)
+        assert updated.agent_value == 5
+
+    def test_set_human_annotation(self, tmp_path):
+        """Can set human annotation."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_human_annotation(session.id, "Important task")
+
+        updated = manager.get_session(session.id)
+        assert updated.human_annotation == "Important task"
+
+    def test_set_standing_orders_complete(self, tmp_path):
+        """Can mark standing orders complete."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_standing_orders_complete(session.id, True)
+
+        updated = manager.get_session(session.id)
+        assert updated.standing_orders_complete is True
+
+
+class TestSessionStatsUpdate:
+    """Test session statistics update methods."""
+
+    def test_update_multiple_stats(self, tmp_path):
+        """Can update multiple stats at once."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_stats(
+            session.id,
+            interaction_count=10,
+            input_tokens=5000,
+            output_tokens=2000,
+            estimated_cost_usd=0.15
+        )
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.interaction_count == 10
+        assert updated.stats.input_tokens == 5000
+        assert updated.stats.output_tokens == 2000
+        assert updated.stats.estimated_cost_usd == 0.15
+
+    def test_update_operation_times(self, tmp_path):
+        """Can update operation times."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_stats(session.id, operation_times=[30.0, 45.0, 60.0])
+
+        updated = manager.get_session(session.id)
+        assert updated.stats.operation_times == [30.0, 45.0, 60.0]
+
+
+class TestSessionLookup:
+    """Test session lookup methods."""
+
+    def test_get_session_by_name(self, tmp_path):
+        """Can get session by name."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="findme",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        found = manager.get_session_by_name("findme")
+
+        assert found is not None
+        assert found.id == session.id
+
+    def test_get_session_by_name_not_found(self, tmp_path):
+        """Returns None when session name not found."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        found = manager.get_session_by_name("nonexistent")
+
+        assert found is None
+
+
+class TestSessionDelete:
+    """Test session deletion."""
+
+    def test_delete_session(self, tmp_path):
+        """Can delete a session."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="to-delete",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.delete_session(session.id)
+
+        assert manager.get_session(session.id) is None
+
+    def test_delete_nonexistent_session_no_error(self, tmp_path):
+        """Deleting nonexistent session doesn't raise error."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        # Should not raise
+        manager.delete_session("nonexistent-id")
+
+
+class TestGitContextDetection:
+    """Test git context detection."""
+
+    def test_detect_git_context_with_none_directory(self, tmp_path):
+        """Returns None when directory is None."""
+        manager = SessionManager(state_dir=tmp_path)
+        repo, branch = manager._detect_git_context(None)
+
+        assert repo is None
+        assert branch is None
+
+    def test_detect_git_context_with_nonexistent_directory(self, tmp_path):
+        """Returns None when directory doesn't exist."""
+        manager = SessionManager(state_dir=tmp_path)
+        repo, branch = manager._detect_git_context("/nonexistent/path")
+
+        assert repo is None
+        assert branch is None
+
+    def test_detect_git_context_with_non_git_directory(self, tmp_path):
+        """Returns None when directory is not a git repo."""
+        manager = SessionManager(state_dir=tmp_path)
+        non_git_dir = tmp_path / "not-a-repo"
+        non_git_dir.mkdir()
+
+        repo, branch = manager._detect_git_context(str(non_git_dir))
+
+        assert repo is None
+        assert branch is None
+
+    def test_refresh_git_context_nonexistent_session(self, tmp_path):
+        """Returns False for nonexistent session."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        result = manager.refresh_git_context("nonexistent")
+
+        assert result is False
+
+    def test_refresh_git_context_no_directory(self, tmp_path):
+        """Returns False when session has no start_directory."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory=None
+        )
+
+        result = manager.refresh_git_context(session.id)
+
+        assert result is False
+
+
+class TestSessionListArchived:
+    """Test listing archived sessions."""
+
+    def test_list_archived_empty_when_no_archives(self, tmp_path):
+        """Returns empty list when no archives exist."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        archived = manager.list_archived_sessions()
+
+        assert archived == []
+
+    def test_list_archived_ignores_active_sessions(self, tmp_path):
+        """Active sessions are not included in archived list."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        manager.create_session(
+            name="active-session",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        archived = manager.list_archived_sessions()
+
+        assert archived == []
+
+
+class TestSessionUpdateEdgeCases:
+    """Test edge cases in session updates."""
+
+    def test_update_session_nonexistent(self, tmp_path):
+        """Updating nonexistent session returns gracefully."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        # Should not raise
+        result = manager.update_session("nonexistent", repo_name="test")
+        # Method might return None or False, just ensure no exception
+        assert result is None or result is False or result is True
+
+    def test_update_stats_nonexistent(self, tmp_path):
+        """Updating stats for nonexistent session returns gracefully."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        # Should not raise
+        manager.update_stats("nonexistent", interaction_count=5)
+
+    def test_set_standing_instructions_nonexistent(self, tmp_path):
+        """Setting instructions for nonexistent session doesn't raise."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        # Should not raise
+        manager.set_standing_instructions("nonexistent", "test")
+
+
+class TestSessionWithInstructions:
+    """Test session creation with standing instructions."""
+
+    def test_create_session_with_standing_instructions(self, tmp_path):
+        """Can create session with standing instructions."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            standing_instructions="DO_NOTHING preset"
+        )
+
+        assert session.standing_instructions == "DO_NOTHING preset"
+
+    def test_set_standing_instructions_updates_session(self, tmp_path):
+        """Setting standing instructions updates the session."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.set_standing_instructions(session.id, "New instructions")
+
+        updated = manager.get_session(session.id)
+        assert updated.standing_instructions == "New instructions"
+
+
+class TestSessionIsAsleep:
+    """Test session sleep state."""
+
+    def test_update_is_asleep(self, tmp_path):
+        """Can update is_asleep state."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_session(session.id, is_asleep=True)
+
+        updated = manager.get_session(session.id)
+        assert updated.is_asleep is True
+
+    def test_wake_up_session(self, tmp_path):
+        """Can wake up a sleeping session."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+        manager.update_session(session.id, is_asleep=True)
+
+        manager.update_session(session.id, is_asleep=False)
+
+        updated = manager.get_session(session.id)
+        assert updated.is_asleep is False
+
+
+class TestSessionManagerReload:
+    """Test session manager state reloading."""
+
+    def test_reload_from_disk(self, tmp_path):
+        """Can reload state from disk."""
+        # Create manager and add session
+        manager1 = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager1.create_session(
+            name="persistent",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+        session_id = session.id
+
+        # Create new manager instance (simulating restart)
+        manager2 = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        # Should see the persisted session
+        loaded = manager2.get_session(session_id)
+        assert loaded is not None
+        assert loaded.name == "persistent"
 
 
 # =============================================================================

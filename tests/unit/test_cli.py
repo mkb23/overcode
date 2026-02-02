@@ -166,6 +166,447 @@ class TestAttachCommand:
         assert result.exit_code == 0
 
 
+class TestDaemonCommands:
+    """Test daemon-related commands"""
+
+    def test_monitor_daemon_help(self):
+        """Monitor-daemon help works"""
+        result = runner.invoke(app, ["monitor-daemon", "--help"])
+        assert result.exit_code == 0
+
+    def test_supervisor_daemon_help(self):
+        """Supervisor-daemon help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "--help"])
+        assert result.exit_code == 0
+
+
+class TestConfigCommands:
+    """Test config-related commands"""
+
+    def test_config_help(self):
+        """Config help works"""
+        result = runner.invoke(app, ["config", "--help"])
+        assert result.exit_code == 0
+
+
+
+
+class TestVersionCommand:
+    """Test version-related output"""
+
+    def test_help_shows_version_info(self):
+        """Help output exists"""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+
+
+class TestCleanupCommand:
+    """Test cleanup command"""
+
+    def test_cleanup_help(self):
+        """Cleanup help works"""
+        result = runner.invoke(app, ["cleanup", "--help"])
+        assert result.exit_code == 0
+
+
+class TestExportCommand:
+    """Test export command"""
+
+    def test_export_help(self):
+        """Export help works"""
+        result = runner.invoke(app, ["export", "--help"])
+        assert result.exit_code == 0
+
+
+class TestWebCommand:
+    """Test web command"""
+
+    def test_web_help(self):
+        """Web help works"""
+        result = runner.invoke(app, ["web", "--help"])
+        assert result.exit_code == 0
+
+
+class TestAllSubcommands:
+    """Test that all subcommands have help"""
+
+    def test_all_commands_have_help(self):
+        """All registered commands should have help text."""
+        # Main commands from the app
+        commands = ["launch", "list", "kill", "send", "show", "instruct",
+                    "monitor", "supervisor", "attach", "cleanup", "export",
+                    "web", "monitor-daemon", "supervisor-daemon", "config"]
+
+        for cmd in commands:
+            result = runner.invoke(app, [cmd, "--help"])
+            # Exit code 0 means help was shown successfully
+            assert result.exit_code == 0, f"Command '{cmd}' failed with exit code {result.exit_code}: {result.output}"
+
+
+# =============================================================================
+# Extended CLI tests with mocked dependencies
+# =============================================================================
+
+from unittest.mock import patch, MagicMock
+
+
+class TestListCommandWithMocks:
+    """Test list command with mocked sessions"""
+
+    def test_list_outputs_no_sessions(self):
+        """List outputs message when no sessions exist"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.list_sessions.return_value = []
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["list"])
+
+            assert result.exit_code == 0
+            # Might say "No running agents" or be empty
+            assert "no" in result.output.lower() or result.output.strip() == ""
+
+
+class TestSendCommandWithMocks:
+    """Test send command with mocked sessions"""
+
+    def test_send_text_to_session(self):
+        """Send text to existing session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.send_to_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["send", "test-agent", "hello world"])
+
+            assert result.exit_code == 0
+            mock_launcher.send_to_session.assert_called()
+
+    def test_send_key_with_no_enter(self):
+        """Send key without pressing enter"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.send_to_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["send", "test-agent", "Escape", "--no-enter"])
+
+            assert result.exit_code == 0
+
+
+class TestConfigCommandWithMocks:
+    """Test config command"""
+
+    def test_config_show_outputs_config(self):
+        """Config show outputs configuration"""
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+
+
+class TestHistoryCommandWithMocks:
+    """Test history command"""
+
+    def test_history_help(self):
+        """History help works"""
+        result = runner.invoke(app, ["history", "--help"])
+        assert result.exit_code == 0
+
+
+class TestShowCommandWithMocks:
+    """Test show command with mocked output"""
+
+    def test_show_session_output(self):
+        """Show outputs session content"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.get_session_output.return_value = "line 1\nline 2\nline 3"
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["show", "test-agent"])
+
+            assert result.exit_code == 0
+            assert "line 1" in result.output
+
+
+class TestKillCommandWithMocks:
+    """Test kill command with mocked sessions"""
+
+    def test_kill_existing_session(self):
+        """Kill existing session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.kill_session.return_value = True
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["kill", "test-agent"])
+
+            assert result.exit_code == 0
+
+    def test_kill_nonexistent_session(self):
+        """Kill nonexistent session shows message"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.kill_session.return_value = False
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["kill", "nonexistent"])
+
+            assert result.exit_code == 0
+
+
+class TestLaunchCommandWithMocks:
+    """Test launch command with mocked ClaudeLauncher"""
+
+    def test_launch_creates_session(self):
+        """Launch creates new session"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_session = MagicMock()
+            mock_session.name = "new-agent"
+            mock_session.tmux_window = 1
+
+            mock_launcher = MagicMock()
+            mock_launcher.launch.return_value = mock_session
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["launch", "--name", "new-agent"])
+
+            assert result.exit_code == 0
+            mock_launcher.launch.assert_called()
+
+
+class TestMonitorDaemonSubcommands:
+    """Test monitor-daemon subcommands"""
+
+    def test_monitor_daemon_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_monitor_daemon_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "stop", "--help"])
+        assert result.exit_code == 0
+
+    def test_monitor_daemon_status_help(self):
+        """Status subcommand help works"""
+        result = runner.invoke(app, ["monitor-daemon", "status", "--help"])
+        assert result.exit_code == 0
+
+
+class TestSupervisorDaemonSubcommands:
+    """Test supervisor-daemon subcommands"""
+
+    def test_supervisor_daemon_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_supervisor_daemon_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["supervisor-daemon", "stop", "--help"])
+        assert result.exit_code == 0
+
+
+class TestWebSubcommands:
+    """Test web subcommands"""
+
+    def test_web_start_help(self):
+        """Start subcommand help works"""
+        result = runner.invoke(app, ["web", "start", "--help"])
+        assert result.exit_code == 0
+
+    def test_web_stop_help(self):
+        """Stop subcommand help works"""
+        result = runner.invoke(app, ["web", "stop", "--help"])
+        assert result.exit_code == 0
+
+    def test_web_status_help(self):
+        """Status subcommand help works"""
+        result = runner.invoke(app, ["web", "status", "--help"])
+        assert result.exit_code == 0
+
+
+class TestConfigSubcommands:
+    """Test config subcommands"""
+
+    def test_config_init_help(self):
+        """Init subcommand help works"""
+        result = runner.invoke(app, ["config", "init", "--help"])
+        assert result.exit_code == 0
+
+    def test_config_show_help(self):
+        """Show subcommand help works"""
+        result = runner.invoke(app, ["config", "show", "--help"])
+        assert result.exit_code == 0
+
+    def test_config_path_help(self):
+        """Path subcommand help works"""
+        result = runner.invoke(app, ["config", "path", "--help"])
+        assert result.exit_code == 0
+
+
+class TestInstructCommandWithMocks:
+    """Test instruct command with mocked dependencies."""
+
+    def test_instruct_list_presets(self):
+        """Should list available presets."""
+        with patch('overcode.standing_instructions.load_presets') as mock_presets:
+            mock_presets.return_value = {
+                "DO_NOTHING": MagicMock(description="Do nothing"),
+                "STANDARD": MagicMock(description="Standard mode"),
+            }
+
+            result = runner.invoke(app, ["instruct", "--list"])
+
+            assert result.exit_code == 0
+            assert "DO_NOTHING" in result.output
+            assert "STANDARD" in result.output
+
+    def test_instruct_requires_name_without_list(self):
+        """Should require agent name when not listing."""
+        result = runner.invoke(app, ["instruct"])
+
+        assert result.exit_code == 1
+        assert "Agent name required" in result.output
+
+    def test_instruct_agent_not_found(self):
+        """Should error when agent not found."""
+        with patch('overcode.session_manager.SessionManager') as mock_sm:
+            mock_instance = MagicMock()
+            mock_instance.get_session_by_name.return_value = None
+            mock_sm.return_value = mock_instance
+
+            result = runner.invoke(app, ["instruct", "nonexistent", "DO_NOTHING"])
+
+            assert result.exit_code == 1
+            assert "not found" in result.output
+
+    def test_instruct_clears_instructions(self):
+        """Should clear instructions with --clear flag."""
+        with patch('overcode.session_manager.SessionManager') as mock_sm:
+            mock_session = MagicMock()
+            mock_session.id = "test-id"
+
+            mock_instance = MagicMock()
+            mock_instance.get_session_by_name.return_value = mock_session
+            mock_sm.return_value = mock_instance
+
+            result = runner.invoke(app, ["instruct", "test-agent", "--clear"])
+
+            assert result.exit_code == 0
+            assert "Cleared" in result.output
+            mock_instance.set_standing_instructions.assert_called_with("test-id", "", preset_name=None)
+
+
+class TestCleanupCommandWithMocks:
+    """Test cleanup command with mocked dependencies."""
+
+    def test_cleanup_removes_terminated_sessions(self):
+        """Should remove terminated sessions."""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 3
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup"])
+
+            assert result.exit_code == 0
+            assert "Cleaned up 3" in result.output
+
+    def test_cleanup_no_terminated_sessions(self):
+        """Should show message when no terminated sessions."""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 0
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup"])
+
+            assert result.exit_code == 0
+            assert "No terminated sessions" in result.output
+
+
+class TestSetValueCommand:
+    """Test set-value command."""
+
+    def test_set_value_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["set-value", "--help"])
+        assert result.exit_code == 0
+        assert "Priority value" in result.output or "priority" in result.output.lower()
+
+    def test_set_value_requires_name(self):
+        """Should require agent name."""
+        result = runner.invoke(app, ["set-value"])
+        assert result.exit_code != 0
+
+
+class TestExportCommand:
+    """Test export command."""
+
+    def test_export_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["export", "--help"])
+        assert result.exit_code == 0
+        assert "parquet" in result.output.lower()
+
+    def test_export_requires_output_path(self):
+        """Should require output path."""
+        result = runner.invoke(app, ["export"])
+        assert result.exit_code != 0
+
+
+class TestHistoryCommand:
+    """Test history command."""
+
+    def test_history_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["history", "--help"])
+        assert result.exit_code == 0
+
+
+class TestMonitorDaemonWatch:
+    """Test monitor-daemon watch command."""
+
+    def test_watch_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["monitor-daemon", "watch", "--help"])
+        assert result.exit_code == 0
+        assert "Watch" in result.output or "watch" in result.output.lower() or "log" in result.output.lower()
+
+
+class TestSupervisorDaemonWatch:
+    """Test supervisor-daemon watch command."""
+
+    def test_watch_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["supervisor-daemon", "watch", "--help"])
+        assert result.exit_code == 0
+
+
+class TestServeCommand:
+    """Test serve command."""
+
+    def test_serve_help(self):
+        """Should show help with host and port options."""
+        import re
+        result = runner.invoke(app, ["serve", "--help"])
+        assert result.exit_code == 0
+        # Strip ANSI codes for reliable matching (CI has different formatting)
+        clean_output = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+        assert "--host" in clean_output
+        assert "--port" in clean_output
+
+
+class TestAttachCommand:
+    """Test attach command."""
+
+    def test_attach_help(self):
+        """Should show help."""
+        result = runner.invoke(app, ["attach", "--help"])
+        assert result.exit_code == 0
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

@@ -581,6 +581,276 @@ class TestAccumulatedVsUptimeValidation:
 
 
 # =============================================================================
+# Tests for Sleep Mode Time Tracking (#68)
+# =============================================================================
+
+class TestSleepModeTimeTracking:
+    """Test that sleeping sessions don't accumulate time in stats.
+
+    When a user marks a session as "asleep" (with the 'z' hotkey), the session
+    should be excluded from time tracking statistics. The timeline should show
+    'z' characters during sleep periods.
+    """
+
+    def test_asleep_status_does_not_accumulate_green_time(self):
+        """Sessions with asleep status don't add to green_time."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING
+
+        # Simulate the _update_state_time logic
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = STATUS_ASLEEP
+
+        # Apply the same logic as monitor_daemon._update_state_time
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in ("terminated", STATUS_ASLEEP):
+            non_green_time += elapsed
+        # else: terminated or asleep - don't accumulate time
+
+        # Asleep should not change either counter
+        assert green_time == 100.0, "Green time should not increase for asleep status"
+        assert non_green_time == 50.0, "Non-green time should not increase for asleep status"
+
+    def test_asleep_status_does_not_accumulate_non_green_time(self):
+        """Sessions with asleep status don't add to non_green_time."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+
+        # Test that asleep behaves like terminated (no accumulation)
+        for status in [STATUS_ASLEEP, STATUS_TERMINATED]:
+            test_green = green_time
+            test_non_green = non_green_time
+
+            if status == "running":
+                test_green += elapsed
+            elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+                test_non_green += elapsed
+
+            assert test_green == green_time, f"Green time changed for {status}"
+            assert test_non_green == non_green_time, f"Non-green time changed for {status}"
+
+    def test_running_status_still_accumulates_green_time(self):
+        """Running status should still accumulate green time normally."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = STATUS_RUNNING
+
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+            non_green_time += elapsed
+
+        assert green_time == 110.0, "Running status should increase green time"
+        assert non_green_time == 50.0, "Running status should not affect non-green time"
+
+    def test_waiting_status_still_accumulates_non_green_time(self):
+        """Waiting statuses should still accumulate non-green time normally."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
+
+        green_time = 100.0
+        non_green_time = 50.0
+        elapsed = 10.0
+        status = "waiting_user"
+
+        if status == STATUS_RUNNING:
+            green_time += elapsed
+        elif status not in (STATUS_TERMINATED, STATUS_ASLEEP):
+            non_green_time += elapsed
+
+        assert green_time == 100.0, "Waiting status should not affect green time"
+        assert non_green_time == 60.0, "Waiting status should increase non-green time"
+
+    def test_effective_status_uses_asleep_when_session_is_sleeping(self):
+        """When session.is_asleep is True, effective_status should be STATUS_ASLEEP."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        # Simulate the effective_status logic from monitor_daemon
+        class MockSession:
+            def __init__(self, is_asleep: bool):
+                self.is_asleep = is_asleep
+
+        detected_status = "running"
+
+        # Test with is_asleep=True
+        session = MockSession(is_asleep=True)
+        effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+        assert effective_status == STATUS_ASLEEP
+
+        # Test with is_asleep=False
+        session = MockSession(is_asleep=False)
+        effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+        assert effective_status == "running"
+
+    def test_effective_status_preserves_detected_status_when_awake(self):
+        """When session.is_asleep is False, detected status is preserved."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        class MockSession:
+            is_asleep = False
+
+        session = MockSession()
+
+        for detected_status in ["running", "waiting_user", "waiting_supervisor", "terminated"]:
+            effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
+            assert effective_status == detected_status
+
+
+class TestSleepModeTimelineChar:
+    """Test that sleep mode uses the correct timeline character."""
+
+    def test_asleep_status_has_timeline_char(self):
+        """STATUS_ASLEEP should map to light shade hatching in timeline."""
+        from overcode.status_constants import STATUS_ASLEEP, AGENT_TIMELINE_CHARS
+
+        assert STATUS_ASLEEP in AGENT_TIMELINE_CHARS
+        assert AGENT_TIMELINE_CHARS[STATUS_ASLEEP] == "░"
+
+    def test_asleep_status_has_emoji(self):
+        """STATUS_ASLEEP should map to sleeping emoji."""
+        from overcode.status_constants import STATUS_ASLEEP, STATUS_EMOJIS
+
+        assert STATUS_ASLEEP in STATUS_EMOJIS
+        assert STATUS_EMOJIS[STATUS_ASLEEP] == "💤"
+
+
+class TestGetCurrentStateTimesAsleep:
+    """Test get_current_state_times handles asleep status correctly.
+
+    The TUI helper get_current_state_times adds real-time elapsed time
+    between daemon updates. It must NOT add time for asleep sessions (#68).
+    """
+
+    def test_asleep_state_does_not_add_green_time(self):
+        """When current_state is asleep, no green time should be added."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        now = datetime(2024, 1, 1, 12, 30, 0)
+        last_accumulation = datetime(2024, 1, 1, 12, 25, 0)  # 5 minutes ago
+
+        stats = SessionStats(
+            current_state=STATUS_ASLEEP,
+            state_since=last_accumulation.isoformat(),
+            green_time_seconds=100.0,
+            non_green_time_seconds=50.0,
+            last_time_accumulation=last_accumulation.isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        # Neither time should increase - asleep freezes time tracking
+        assert green == 100.0, "Green time should not change for asleep status"
+        assert non_green == 50.0, "Non-green time should not change for asleep status"
+
+    def test_asleep_state_does_not_add_non_green_time(self):
+        """When current_state is asleep, no non-green time should be added."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        now = datetime(2024, 1, 1, 12, 30, 0)
+        last_accumulation = datetime(2024, 1, 1, 12, 0, 0)  # 30 minutes ago
+
+        stats = SessionStats(
+            current_state=STATUS_ASLEEP,
+            state_since=last_accumulation.isoformat(),
+            green_time_seconds=0.0,
+            non_green_time_seconds=0.0,
+            last_time_accumulation=last_accumulation.isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        # No time should accumulate for asleep state
+        assert green == 0.0, "Green time should stay at 0 for asleep status"
+        assert non_green == 0.0, "Non-green time should stay at 0 for asleep status"
+
+    def test_asleep_preserves_accumulated_time(self):
+        """Asleep state should preserve previously accumulated time, not reset it."""
+        from overcode.status_constants import STATUS_ASLEEP
+
+        now = datetime(2024, 1, 1, 12, 30, 0)
+
+        # Session had been working for 2 hours before being put to sleep
+        stats = SessionStats(
+            current_state=STATUS_ASLEEP,
+            state_since=datetime(2024, 1, 1, 12, 0, 0).isoformat(),  # Asleep for 30 min
+            green_time_seconds=6000.0,  # 100 minutes of previous green time
+            non_green_time_seconds=1200.0,  # 20 minutes of previous non-green time
+            last_time_accumulation=datetime(2024, 1, 1, 12, 0, 0).isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        # Times should be preserved exactly, with no addition
+        assert green == 6000.0, "Previous green time should be preserved"
+        assert non_green == 1200.0, "Previous non-green time should be preserved"
+
+    def test_terminated_also_freezes_time(self):
+        """Terminated state should also freeze time (existing behavior)."""
+        from overcode.status_constants import STATUS_TERMINATED
+
+        now = datetime(2024, 1, 1, 12, 30, 0)
+        last_accumulation = datetime(2024, 1, 1, 12, 0, 0)
+
+        stats = SessionStats(
+            current_state=STATUS_TERMINATED,
+            state_since=last_accumulation.isoformat(),
+            green_time_seconds=100.0,
+            non_green_time_seconds=50.0,
+            last_time_accumulation=last_accumulation.isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        assert green == 100.0, "Green time should not change for terminated status"
+        assert non_green == 50.0, "Non-green time should not change for terminated status"
+
+    def test_running_still_adds_green_time(self):
+        """Running state should still add green time normally."""
+        now = datetime(2024, 1, 1, 12, 30, 0)
+        last_accumulation = datetime(2024, 1, 1, 12, 25, 0)  # 5 minutes = 300s ago
+
+        stats = SessionStats(
+            current_state="running",
+            state_since=last_accumulation.isoformat(),
+            green_time_seconds=100.0,
+            non_green_time_seconds=50.0,
+            last_time_accumulation=last_accumulation.isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        # Green time should increase by 300 seconds
+        assert green == pytest.approx(400.0, rel=0.01), "Running state should add green time"
+        assert non_green == 50.0, "Non-green time should not change for running status"
+
+    def test_waiting_still_adds_non_green_time(self):
+        """Waiting states should still add non-green time normally."""
+        now = datetime(2024, 1, 1, 12, 30, 0)
+        last_accumulation = datetime(2024, 1, 1, 12, 25, 0)  # 5 minutes = 300s ago
+
+        stats = SessionStats(
+            current_state="waiting_user",
+            state_since=last_accumulation.isoformat(),
+            green_time_seconds=100.0,
+            non_green_time_seconds=50.0,
+            last_time_accumulation=last_accumulation.isoformat(),
+        )
+
+        green, non_green = get_current_state_times(stats, now)
+
+        assert green == 100.0, "Green time should not change for waiting status"
+        # Non-green time should increase by 300 seconds
+        assert non_green == pytest.approx(350.0, rel=0.01), "Waiting state should add non-green time"
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

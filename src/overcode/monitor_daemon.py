@@ -17,7 +17,7 @@ This separation ensures:
 - Clean interface contract via MonitorDaemonState
 - Platform-agnostic core (presence is optional)
 
-TODO: Add unit tests (currently 0% coverage)
+Pure business logic is extracted to monitor_daemon_core.py for testability.
 """
 
 import os
@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
-from .history_reader import get_session_stats
+from .history_reader import get_session_stats, get_current_session_id_for_directory
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
@@ -53,10 +53,17 @@ from .settings import (
     get_supervisor_stats_path,
 )
 from .config import get_relay_config
-from .status_constants import STATUS_RUNNING, STATUS_TERMINATED
+from .status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
-from .summarizer_component import SummarizerComponent, SummarizerConfig
+from .monitor_daemon_core import (
+    calculate_time_accumulation,
+    calculate_cost_estimate,
+    calculate_total_tokens,
+    calculate_median,
+    should_sync_stats,
+    parse_datetime_safe,
+)
 
 
 # Check for macOS presence APIs (optional)
@@ -187,12 +194,6 @@ class MonitorDaemon:
         # Presence tracking (graceful degradation)
         self.presence = PresenceComponent()
 
-        # Summarizer component (graceful degradation if no API key)
-        self.summarizer = SummarizerComponent(
-            tmux_session=tmux_session,
-            config=SummarizerConfig(enabled=False),  # Off by default, enable via CLI
-        )
-
         # Logging - session-specific log file
         self.log = _create_monitor_logger(session=tmux_session)
 
@@ -209,8 +210,8 @@ class MonitorDaemon:
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
 
-        # Stats sync throttling
-        self._last_stats_sync = datetime.now()
+        # Stats sync throttling - None forces immediate sync on first loop
+        self._last_stats_sync: Optional[datetime] = None
         self._stats_sync_interval = 60  # seconds
 
         # Relay configuration (for pushing state to cloud)
@@ -293,6 +294,8 @@ class MonitorDaemon:
             start_time=session.start_time,
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
+            is_asleep=session.is_asleep,
+            agent_value=session.agent_value,
         )
 
     def _update_state_time(self, session, status: str, now: datetime) -> None:
@@ -305,18 +308,11 @@ class MonitorDaemon:
         if last_time is None:
             # First observation after daemon (re)start - use last_time_accumulation
             # to avoid re-adding time that was already accumulated before restart
-            if current_stats.last_time_accumulation:
-                try:
-                    last_time = datetime.fromisoformat(current_stats.last_time_accumulation)
-                except ValueError:
-                    last_time = now
-            elif current_stats.state_since:
+            last_time = parse_datetime_safe(current_stats.last_time_accumulation)
+            if last_time is None:
                 # Fallback for sessions without last_time_accumulation
-                try:
-                    last_time = datetime.fromisoformat(current_stats.state_since)
-                except ValueError:
-                    last_time = now
-            else:
+                last_time = parse_datetime_safe(current_stats.state_since)
+            if last_time is None:
                 last_time = now
             self.last_state_times[session_id] = last_time
             return  # Don't accumulate on first observation
@@ -326,41 +322,32 @@ class MonitorDaemon:
         if elapsed <= 0:
             return
 
-        # Accumulate time based on state
-        green_time = current_stats.green_time_seconds
-        non_green_time = current_stats.non_green_time_seconds
+        # Get session start time for capping
+        session_start = parse_datetime_safe(session.start_time)
 
-        if status == STATUS_RUNNING:
-            green_time += elapsed
-        elif status != STATUS_TERMINATED:
-            # Only count non-green time for non-terminated states
-            non_green_time += elapsed
-        # else: terminated - don't accumulate time
+        # Use pure function for time accumulation
+        prev_status = self.previous_states.get(session_id, status)
+        result = calculate_time_accumulation(
+            current_status=status,
+            previous_status=prev_status,
+            elapsed_seconds=elapsed,
+            current_green=current_stats.green_time_seconds,
+            current_non_green=current_stats.non_green_time_seconds,
+            session_start=session_start,
+            now=now,
+        )
 
-        # INVARIANT CHECK: accumulated time should never exceed uptime
-        # This catches bugs like multiple daemons running simultaneously
-        if session.start_time:
-            try:
-                session_start = datetime.fromisoformat(session.start_time)
-                max_allowed = (now - session_start).total_seconds()
-                total_accumulated = green_time + non_green_time
-
-                if total_accumulated > max_allowed * 1.1:  # 10% tolerance for timing jitter
-                    # Reset to sane values based on ratio
-                    ratio = max_allowed / total_accumulated if total_accumulated > 0 else 1.0
-                    green_time = green_time * ratio
-                    non_green_time = non_green_time * ratio
-                    self.log.warn(
-                        f"[{session.name}] Time tracking reset: "
-                        f"accumulated {total_accumulated/3600:.1f}h > uptime {max_allowed/3600:.1f}h"
-                    )
-            except (ValueError, TypeError):
-                pass
+        if result.was_capped:
+            total = current_stats.green_time_seconds + current_stats.non_green_time_seconds
+            max_allowed = (now - session_start).total_seconds() if session_start else 0
+            self.log.warn(
+                f"[{session.name}] Time tracking reset: "
+                f"accumulated {total/3600:.1f}h > uptime {max_allowed/3600:.1f}h"
+            )
 
         # Update state tracking
-        prev_status = self.previous_states.get(session_id, status)
         state_since = current_stats.state_since
-        if prev_status != status:
+        if result.state_changed:
             state_since = now.isoformat()
         elif not state_since:
             # Initialize state_since if never set (e.g., new session)
@@ -371,8 +358,8 @@ class MonitorDaemon:
             session_id,
             current_state=status,
             state_since=state_since,
-            green_time_seconds=green_time,
-            non_green_time_seconds=non_green_time,
+            green_time_seconds=result.green_seconds,
+            non_green_time_seconds=result.non_green_seconds,
             last_time_accumulation=now.isoformat(),
         )
 
@@ -381,24 +368,43 @@ class MonitorDaemon:
     def sync_claude_code_stats(self, session) -> None:
         """Sync token/interaction stats from Claude Code history files."""
         try:
+            # Capture current Claude sessionId if not already tracked (#119)
+            # This ensures accurate context window calculation for this agent
+            if session.start_directory:
+                try:
+                    session_start = datetime.fromisoformat(session.start_time)
+                    current_id = get_current_session_id_for_directory(
+                        session.start_directory, session_start
+                    )
+                    if current_id:
+                        self.session_manager.add_claude_session_id(session.id, current_id)
+                except (ValueError, TypeError):
+                    pass
+
             stats = get_session_stats(session)
             if stats is None:
                 return
 
             now = datetime.now()
-            total_tokens = (
-                stats.input_tokens +
-                stats.output_tokens +
-                stats.cache_creation_tokens +
-                stats.cache_read_tokens
+            total_tokens = calculate_total_tokens(
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.cache_creation_tokens,
+                stats.cache_read_tokens,
             )
 
-            # Estimate cost
-            cost_estimate = (
-                (stats.input_tokens / 1_000_000) * 3.0 +
-                (stats.output_tokens / 1_000_000) * 15.0 +
-                (stats.cache_creation_tokens / 1_000_000) * 3.75 +
-                (stats.cache_read_tokens / 1_000_000) * 0.30
+            # Estimate cost using configured pricing (defaults to Opus 4.5)
+            from .settings import get_user_config
+            pricing = get_user_config()
+            cost_estimate = calculate_cost_estimate(
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.cache_creation_tokens,
+                stats.cache_read_tokens,
+                price_input=pricing.price_input,
+                price_output=pricing.price_output,
+                price_cache_write=pricing.price_cache_write,
+                price_cache_read=pricing.price_cache_read,
             )
 
             self.session_manager.update_stats(
@@ -417,13 +423,7 @@ class MonitorDaemon:
 
     def _calculate_median_work_time(self, operation_times: List[float]) -> float:
         """Calculate median operation time."""
-        if not operation_times:
-            return 0.0
-        sorted_times = sorted(operation_times)
-        n = len(sorted_times)
-        if n % 2 == 0:
-            return (sorted_times[n // 2 - 1] + sorted_times[n // 2]) / 2
-        return sorted_times[n // 2]
+        return calculate_median(operation_times)
 
     def calculate_interval(self, sessions: list, all_waiting_user: bool) -> int:
         """Calculate appropriate loop interval.
@@ -480,13 +480,6 @@ class MonitorDaemon:
                 self.state.supervisor_claude_total_run_seconds = stats.get("supervisor_claude_total_run_seconds", 0.0)
             except (json.JSONDecodeError, OSError):
                 pass
-
-        # Update summarizer stats
-        self.state.summarizer_available = self.summarizer.available
-        self.state.summarizer_enabled = self.summarizer.enabled
-        self.state.summarizer_calls = self.summarizer.total_calls
-        # Estimate cost: ~$0.0007 per call (4K input tokens + 150 output tokens)
-        self.state.summarizer_cost_usd = round(self.summarizer.total_calls * 0.0007, 4)
 
         self.state.save(self.state_path)
 
@@ -587,6 +580,13 @@ class MonitorDaemon:
                 # Get all sessions
                 sessions = self.session_manager.list_sessions()
 
+                # Sync Claude Code stats BEFORE building session_states so token counts are fresh
+                # This ensures the first loop has accurate data (fixes #103)
+                if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
+                    for session in sessions:
+                        self.sync_claude_code_stats(session)
+                    self._last_stats_sync = now
+
                 # Detect status and track stats for each session
                 session_states = []
                 all_waiting_user = True
@@ -610,12 +610,14 @@ class MonitorDaemon:
                         continue
 
                     # Track stats and build state
-                    session_state = self.track_session_stats(session, status)
+                    # Use "asleep" status if session is marked as sleeping (#68)
+                    effective_status = STATUS_ASLEEP if session.is_asleep else status
+                    session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)
 
                     # Log status history to session-specific file
-                    log_agent_status(session.name, status, activity, history_file=self.history_path)
+                    log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
 
                     # Track if any session is not waiting for user
                     if status != "waiting_user":
@@ -629,20 +631,6 @@ class MonitorDaemon:
                 stale_ids = set(self.previous_states.keys()) - current_session_ids
                 for stale_id in stale_ids:
                     del self.previous_states[stale_id]
-
-                # Sync Claude Code stats periodically (git context is refreshed every loop above)
-                if (now - self._last_stats_sync).total_seconds() >= self._stats_sync_interval:
-                    for session in sessions:
-                        self.sync_claude_code_stats(session)
-                    self._last_stats_sync = now
-
-                # Update summaries (if enabled)
-                summaries = self.summarizer.update(sessions)
-                for session_state in session_states:
-                    summary = summaries.get(session_state.session_id)
-                    if summary:
-                        session_state.activity_summary = summary.text
-                        session_state.activity_summary_updated = summary.updated_at
 
                 # Calculate interval
                 interval = self.calculate_interval(sessions, all_waiting_user)
@@ -673,7 +661,6 @@ class MonitorDaemon:
         finally:
             self.log.info("Monitor daemon shutting down")
             self.presence.stop()
-            self.summarizer.stop()
             self.state.status = "stopped"
             self.state.save(self.state_path)
             remove_pid_file(self.pid_path)

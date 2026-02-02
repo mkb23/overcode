@@ -67,10 +67,18 @@ class SessionDaemonState:
     start_time: Optional[str] = None  # ISO timestamp when session started
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
+    is_asleep: bool = False  # Agent is paused and excluded from stats (#70)
 
-    # Activity summary (from SummarizerComponent)
+    # Agent priority value (#61)
+    agent_value: int = 1000  # Default 1000, higher = more important
+
+    # Activity summaries (from SummarizerComponent)
+    # Short: current activity - what's happening right now (~50 chars)
     activity_summary: str = ""
     activity_summary_updated: Optional[str] = None  # ISO timestamp
+    # Context: wider context - what's being worked on overall (~80 chars)
+    activity_summary_context: str = ""
+    activity_summary_context_updated: Optional[str] = None  # ISO timestamp
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -98,8 +106,12 @@ class SessionDaemonState:
             "start_time": self.start_time,
             "permissiveness_mode": self.permissiveness_mode,
             "start_directory": self.start_directory,
+            "is_asleep": self.is_asleep,
+            "agent_value": self.agent_value,
             "activity_summary": self.activity_summary,
             "activity_summary_updated": self.activity_summary_updated,
+            "activity_summary_context": self.activity_summary_context,
+            "activity_summary_context_updated": self.activity_summary_context_updated,
         }
 
     @classmethod
@@ -129,8 +141,12 @@ class SessionDaemonState:
             start_time=data.get("start_time"),
             permissiveness_mode=data.get("permissiveness_mode", "normal"),
             start_directory=data.get("start_directory"),
+            is_asleep=data.get("is_asleep", False),
+            agent_value=data.get("agent_value", 1000),
             activity_summary=data.get("activity_summary", ""),
             activity_summary_updated=data.get("activity_summary_updated"),
+            activity_summary_context=data.get("activity_summary_context", ""),
+            activity_summary_context_updated=data.get("activity_summary_context_updated"),
         )
 
 
@@ -180,12 +196,6 @@ class MonitorDaemonState:
     relay_last_push: Optional[str] = None  # ISO timestamp of last successful push
     relay_last_status: str = "disabled"  # "ok", "error", "disabled"
 
-    # Summarizer status
-    summarizer_enabled: bool = False
-    summarizer_available: bool = False  # True if OPENAI_API_KEY is set
-    summarizer_calls: int = 0
-    summarizer_cost_usd: float = 0.0
-
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -213,10 +223,6 @@ class MonitorDaemonState:
             "relay_enabled": self.relay_enabled,
             "relay_last_push": self.relay_last_push,
             "relay_last_status": self.relay_last_status,
-            "summarizer_enabled": self.summarizer_enabled,
-            "summarizer_available": self.summarizer_available,
-            "summarizer_calls": self.summarizer_calls,
-            "summarizer_cost_usd": self.summarizer_cost_usd,
         }
 
     @classmethod
@@ -252,10 +258,6 @@ class MonitorDaemonState:
             relay_enabled=data.get("relay_enabled", False),
             relay_last_push=data.get("relay_last_push"),
             relay_last_status=data.get("relay_last_status", "disabled"),
-            summarizer_enabled=data.get("summarizer_enabled", False),
-            summarizer_available=data.get("summarizer_available", False),
-            summarizer_calls=data.get("summarizer_calls", 0),
-            summarizer_cost_usd=data.get("summarizer_cost_usd", 0.0),
         )
 
     def update_summaries(self) -> None:

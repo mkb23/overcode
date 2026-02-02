@@ -376,3 +376,114 @@ class TestExportToParquet:
 
         # Should add .parquet extension
         assert (tmp_path / "export.parquet").exists()
+
+    def test_export_without_timeline(self, tmp_path, sample_session):
+        """Test export with timeline disabled."""
+        pytest.importorskip("pyarrow")
+
+        output_path = str(tmp_path / "export.parquet")
+
+        with patch("overcode.data_export.SessionManager") as mock_sm:
+            mock_instance = MagicMock()
+            mock_instance.list_sessions.return_value = [sample_session]
+            mock_instance.list_archived_sessions.return_value = []
+            mock_sm.return_value = mock_instance
+
+            with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
+                mock_timeline.return_value = []
+                with patch("overcode.data_export.read_presence_history") as mock_presence:
+                    mock_presence.return_value = []
+
+                    result = export_to_parquet(output_path, include_timeline=False)
+
+        assert result["timeline_rows"] == 0
+        # Timeline file should not exist
+        timeline_path = tmp_path / "export_timeline.parquet"
+        assert not timeline_path.exists()
+
+    def test_export_without_presence(self, tmp_path, sample_session):
+        """Test export with presence disabled."""
+        pytest.importorskip("pyarrow")
+
+        output_path = str(tmp_path / "export.parquet")
+
+        with patch("overcode.data_export.SessionManager") as mock_sm:
+            mock_instance = MagicMock()
+            mock_instance.list_sessions.return_value = [sample_session]
+            mock_instance.list_archived_sessions.return_value = []
+            mock_sm.return_value = mock_instance
+
+            with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
+                mock_timeline.return_value = []
+                with patch("overcode.data_export.read_presence_history") as mock_presence:
+                    mock_presence.return_value = []
+
+                    result = export_to_parquet(output_path, include_presence=False)
+
+        assert result["presence_rows"] == 0
+        # Presence file should not exist
+        presence_path = tmp_path / "export_presence.parquet"
+        assert not presence_path.exists()
+
+    def test_export_without_archived(self, tmp_path, sample_session):
+        """Test export without archived sessions."""
+        pytest.importorskip("pyarrow")
+
+        output_path = str(tmp_path / "export.parquet")
+
+        with patch("overcode.data_export.SessionManager") as mock_sm:
+            mock_instance = MagicMock()
+            mock_instance.list_sessions.return_value = [sample_session]
+            mock_instance.list_archived_sessions.return_value = [sample_session]
+            mock_sm.return_value = mock_instance
+
+            with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
+                mock_timeline.return_value = []
+                with patch("overcode.data_export.read_presence_history") as mock_presence:
+                    mock_presence.return_value = []
+
+                    result = export_to_parquet(output_path, include_archived=False)
+
+        assert result["sessions_count"] == 1
+        assert result["archived_count"] == 0
+
+
+class TestBuildTimelineRecordsWithActivity:
+    """Additional tests for timeline record building."""
+
+    def test_handles_string_timestamps(self):
+        """Should handle timestamps that are already strings."""
+        with patch("overcode.data_export.read_agent_status_history") as mock_read:
+            mock_read.return_value = [
+                ("2024-01-01T12:00:00", "agent1", "running", "activity1"),
+            ]
+            records = _build_timeline_records()
+
+            assert len(records) == 1
+            assert records[0]["timestamp"] == "2024-01-01T12:00:00"
+
+
+class TestBuildPresenceRecordsStateMapping:
+    """Test presence state name mapping."""
+
+    def test_unknown_state_maps_to_unknown(self):
+        """Unknown state values should map to 'unknown'."""
+        with patch("overcode.data_export.read_presence_history") as mock_read:
+            mock_read.return_value = [
+                (datetime(2024, 1, 1, 12, 0), 99),  # Unknown state
+            ]
+            records = _build_presence_records()
+
+            assert len(records) == 1
+            assert records[0]["state_name"] == "unknown"
+
+    def test_inactive_state_maps_correctly(self):
+        """State 2 should map to 'inactive'."""
+        with patch("overcode.data_export.read_presence_history") as mock_read:
+            mock_read.return_value = [
+                (datetime(2024, 1, 1, 12, 0), 2),
+            ]
+            records = _build_presence_records()
+
+            assert len(records) == 1
+            assert records[0]["state_name"] == "inactive"
