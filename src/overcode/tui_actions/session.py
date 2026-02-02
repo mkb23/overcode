@@ -128,24 +128,48 @@ class SessionActionsMixin:
         )
 
     def action_sync_to_main_and_clear(self) -> None:
-        """Switch to main branch, pull, and clear agent context.
+        """Switch to main branch, pull, and clear agent context (requires confirmation).
 
         This action:
         1. Runs git checkout main && git pull via Claude's bash command
         2. Sends /clear to reset the conversation context
         """
         from ..tui_widgets import SessionSummary
-        from ..tmux_manager import TmuxManager
 
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
             return
 
-        session = focused.session
-        session_name = session.name
+        session_name = focused.session.name
+        now = time.time()
 
-        # Get tmux manager
+        # Check if this is a confirmation of a pending sync
+        if self._pending_sync:
+            pending_name, pending_time = self._pending_sync
+            # Confirm if same session and within 3 second window
+            if pending_name == session_name and (now - pending_time) < 3.0:
+                self._pending_sync = None  # Clear pending state
+                self._execute_sync(focused)
+                return
+            else:
+                # Different session or expired - start new confirmation
+                self._pending_sync = None
+
+        # First press - request confirmation
+        self._pending_sync = (session_name, now)
+        self.notify(
+            f"Press c again to sync '{session_name}' to main",
+            severity="warning",
+            timeout=3
+        )
+
+    def _execute_sync(self, widget: "SessionSummary") -> None:
+        """Execute the actual sync operation after confirmation."""
+        from ..tmux_manager import TmuxManager
+
+        session = widget.session
+        session_name = session.name
         tmux = TmuxManager(self.tmux_session)
 
         self.notify(f"Syncing '{session_name}' to main...", severity="information")
@@ -158,7 +182,7 @@ class SessionActionsMixin:
 
         # Send /clear - tmux queues this, Claude processes after git completes
         if tmux.send_keys(session.tmux_window, "/clear", enter=True):
-            self.notify(f"Syncing '{session_name}' to main with fresh context", severity="information")
+            self.notify(f"Synced '{session_name}' to main with fresh context", severity="information")
             # Reset session stats for fresh start
             self.session_manager.update_stats(
                 session.id,

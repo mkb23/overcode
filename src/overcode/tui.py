@@ -259,6 +259,8 @@ class SupervisorTUI(
         self._pending_kill: tuple[str, float] | None = None
         # Pending restart confirmation (session name, timestamp) (#133)
         self._pending_restart: tuple[str, float] | None = None
+        # Pending sync-to-main confirmation (session name, timestamp) (#156)
+        self._pending_sync: tuple[str, float] | None = None
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
