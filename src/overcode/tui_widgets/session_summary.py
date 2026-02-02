@@ -311,10 +311,12 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" ▶{format_duration(green_time):>5}", style=mono(f"bold green{bg}", "bold"))
             content.append(f" ⏸{format_duration(non_green_time):>5}", style=mono(f"bold red{bg}", "dim"))
             # Show sleep time (#141) - always show for alignment, dim when 0
-            if sleep_time > 0:
-                content.append(f" 💤{format_duration(sleep_time):>5}", style=mono(f"bold cyan{bg}", "bold"))
-            else:
-                content.append("   💤    -", style=mono(f"dim{bg}", "dim"))
+            # Build complete column string with explicit padding to ensure consistent width
+            # Use 8 total cells: space(1) + emoji(2) + value(5) = 8
+            sleep_str = format_duration(sleep_time) if sleep_time > 0 else "-"
+            sleep_col = f" 💤{sleep_str:>5}"  # This should be 8 cells
+            sleep_style = mono(f"bold cyan{bg}", "bold") if sleep_time > 0 else mono(f"dim cyan{bg}", "dim")
+            content.append(sleep_col, style=sleep_style)
             # Full detail: show percentage active (excludes sleep time from total)
             if self.summary_detail == "full":
                 active_time = green_time + non_green_time
