@@ -16,6 +16,7 @@ from .tui_helpers import (
     format_interval,
     format_duration,
     format_tokens,
+    format_cost,
     format_line_count,
     get_status_symbol,
     get_daemon_status_style,
@@ -149,12 +150,14 @@ def render_ai_summarizer_section(
 def render_spin_stats(
     sessions: List,  # List of SessionDaemonState
     asleep_session_ids: set,
+    show_cost: bool = False,
 ) -> Text:
     """Render spin rate statistics.
 
     Args:
         sessions: List of session daemon states
         asleep_session_ids: Set of session IDs that are asleep
+        show_cost: Show $ cost instead of token counts
 
     Returns:
         Rich Text for spin stats section
@@ -185,10 +188,15 @@ def render_spin_stats(
     if mean_spin > 0:
         content.append(f" μ{mean_spin:.1f}x", style="cyan")
 
-    # Total tokens (include sleeping agents)
-    total_tokens = sum(s.input_tokens + s.output_tokens for s in sessions)
-    if total_tokens > 0:
-        content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+    # Total tokens/cost (include sleeping agents)
+    if show_cost:
+        total_cost = sum(s.estimated_cost_usd for s in sessions)
+        if total_cost > 0:
+            content.append(f" {format_cost(total_cost)}", style="orange1")
+    else:
+        total_tokens = sum(s.input_tokens + s.output_tokens for s in sessions)
+        if total_tokens > 0:
+            content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
 
     return content
 
@@ -243,6 +251,8 @@ def render_session_summary_line(
     has_focus: bool,
     is_list_mode: bool,
     max_repo_info_width: int = 18,
+    show_cost: bool = False,
+    estimated_cost_usd: float = 0.0,
 ) -> Text:
     """Render a single session summary line.
 
@@ -272,6 +282,8 @@ def render_session_summary_line(
         has_focus: Whether this widget has focus
         is_list_mode: Whether in list view mode
         max_repo_info_width: Width for repo info column
+        show_cost: Show $ cost instead of token counts
+        estimated_cost_usd: Estimated cost in USD
 
     Returns:
         Rich Text object for the summary line
@@ -352,9 +364,12 @@ def render_session_summary_line(
             pct_style = f"bold green{bg}" if pct >= 50 else f"bold red{bg}"
             content.append(f" {pct:>3.0f}%", style=pct_style)
 
-    # Token usage
+    # Token usage or cost
     if total_tokens is not None:
-        content.append(f" Σ{format_tokens(total_tokens):>6}", style=f"bold orange1{bg}")
+        if show_cost:
+            content.append(f" {format_cost(estimated_cost_usd):>7}", style=f"bold orange1{bg}")
+        else:
+            content.append(f" Σ{format_tokens(total_tokens):>6}", style=f"bold orange1{bg}")
         if current_context_tokens and current_context_tokens > 0:
             max_context = 200_000
             ctx_pct = min(100, current_context_tokens / max_context * 100)

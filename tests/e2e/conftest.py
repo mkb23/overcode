@@ -2,6 +2,7 @@
 E2E test fixtures for Overcode.
 
 These fixtures set up mock claude environment for fast, deterministic testing.
+Includes subprocess coverage collection support for combined unit+e2e coverage.
 """
 
 import os
@@ -21,6 +22,7 @@ TESTS_DIR = Path(__file__).parent.parent
 MOCK_CLAUDE = TESTS_DIR / "mock_claude.py"
 PROJECT_ROOT = TESTS_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
+COVERAGERC = PROJECT_ROOT / ".coveragerc"
 
 # Test tmux socket (isolated from user's tmux)
 TEST_TMUX_SOCKET = "overcode-test"
@@ -152,6 +154,15 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(SRC_DIR)
 
+    # Propagate coverage settings to subprocesses for combined coverage
+    # This allows e2e subprocess coverage to be collected alongside unit tests
+    if COVERAGERC.exists():
+        env["COVERAGE_PROCESS_START"] = str(COVERAGERC)
+    # Propagate pytest-cov's subprocess coverage vars if present
+    for cov_var in ["COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE"]:
+        if cov_var in os.environ:
+            env[cov_var] = os.environ[cov_var]
+
     # Save original values to restore later
     orig_state_dir = os.environ.get("OVERCODE_STATE_DIR")
     orig_tmux_socket = os.environ.get("OVERCODE_TMUX_SOCKET")
@@ -197,9 +208,17 @@ def overcode_cli(clean_test_env: dict):
     """Helper to run overcode CLI commands.
 
     Returns function that runs overcode with test environment.
+    When running under coverage, uses 'coverage run' to collect subprocess coverage.
     """
     def run_cli(*args, timeout: int = 10, **kwargs) -> subprocess.CompletedProcess:
-        cmd = ["python", "-m", "overcode.cli"] + list(args)
+        # Use coverage run when collecting coverage (COVERAGE_PROCESS_START is set)
+        if "COVERAGE_PROCESS_START" in clean_test_env["env"]:
+            cmd = [
+                "coverage", "run", "--parallel-mode",
+                "-m", "overcode.cli"
+            ] + list(args)
+        else:
+            cmd = ["python", "-m", "overcode.cli"] + list(args)
         return subprocess.run(
             cmd,
             capture_output=True,

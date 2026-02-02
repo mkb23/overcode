@@ -101,6 +101,31 @@ else:
         content.append("  Δ-", style=f"dim{bg}")
 ```
 
+## Git Guidelines
+
+### Never Force Push to Shared Branches
+
+**Never use `git push --force` or `git push --force-with-lease` unless explicitly asked by the user.**
+
+Force pushing is destructive and can blow away other people's or agents' work. If you find yourself wanting to force push, it usually means something has gone wrong with your assumptions:
+
+- Another agent may be working on the same branch
+- The branch may have commits you don't know about
+- Your local state may be out of sync
+
+**What to do instead:**
+1. Stop and reassess the situation
+2. Use `git fetch` and `git log origin/branch` to see what's on remote
+3. Ask the user how they want to proceed
+4. Consider creating a new branch instead of modifying the existing one
+
+**The only acceptable force push scenarios:**
+- User explicitly requests it
+- You created the branch yourself in this session AND no one else could have touched it
+- Rebasing your own feature branch that you know is not shared
+
+When in doubt, don't force push. Create a new branch instead.
+
 ## Other Guidelines
 
 ### Never Commit API Keys or Secrets

@@ -8,7 +8,7 @@ all launcher operations without requiring real tmux or Claude.
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -447,6 +447,200 @@ class TestSessionNameValidation:
         for name in invalid_names:
             session = launcher.launch(name=name)
             assert session is None, f"Name '{name}' should be invalid"
+
+
+class TestSendPromptToWindow:
+    """Test _send_prompt_to_window prompt batching"""
+
+    def test_sends_prompt_in_batches(self, tmp_path):
+        """Large prompts are batched for tmux buffer limits"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        # Create a session first
+        session = launcher.launch(name="test-agent")
+        window_idx = session.tmux_window
+
+        # Send a multi-line prompt (more than batch_size lines)
+        large_prompt = "\n".join([f"line {i}" for i in range(25)])
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("time.sleep"):
+                result = launcher._send_prompt_to_window(window_idx, large_prompt, startup_delay=0)
+
+        assert result is True
+        # Should have multiple load-buffer and paste-buffer calls
+        call_count = mock_run.call_count
+        assert call_count > 2  # At least some batches plus final Enter
+
+    def test_handles_single_line_prompt(self, tmp_path):
+        """Single line prompts work correctly"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        session = launcher.launch(name="test-agent")
+        window_idx = session.tmux_window
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("time.sleep"):
+                result = launcher._send_prompt_to_window(window_idx, "hello world", startup_delay=0)
+
+        assert result is True
+
+
+class TestListSessionsKillUntracked:
+    """Test list_sessions with kill_untracked option"""
+
+    def test_list_sessions_with_kill_untracked_flag(self, tmp_path):
+        """kill_untracked=True should be accepted as parameter"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        # Launch a tracked session
+        launcher.launch(name="tracked-agent")
+
+        # List with kill_untracked=True should work without error
+        sessions = launcher.list_sessions(kill_untracked=True)
+
+        assert len(sessions) == 1
+        assert sessions[0].name == "tracked-agent"
+
+
+class TestGetSessionOutput:
+    """Test get_session_output subprocess handling"""
+
+    def test_returns_output_on_success(self, tmp_path):
+        """Should return captured pane content on success"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        session = launcher.launch(name="test-agent")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="line 1\nline 2\nline 3\n"
+            )
+
+            output = launcher.get_session_output("test-agent", lines=50)
+
+        assert output == "line 1\nline 2\nline 3"
+        # Verify capture-pane was called with correct args
+        call_args = mock_run.call_args[0][0]
+        assert "capture-pane" in call_args
+        assert "-50" in call_args
+
+    def test_returns_none_on_failure(self, tmp_path):
+        """Should return None on subprocess failure"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        session = launcher.launch(name="test-agent")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1)
+
+            output = launcher.get_session_output("test-agent")
+
+        assert output is None
+
+    def test_returns_none_for_nonexistent_session(self, tmp_path):
+        """Should return None for nonexistent session"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        output = launcher.get_session_output("nonexistent")
+
+        assert output is None
+
+    def test_handles_subprocess_timeout(self, tmp_path):
+        """Should return None on subprocess timeout"""
+        import subprocess
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        session = launcher.launch(name="test-agent")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired("tmux", 5)
+
+            output = launcher.get_session_output("test-agent")
+
+        assert output is None
+
+
+class TestAttach:
+    """Test attach functionality"""
+
+    def test_attach_prints_error_when_no_session(self, tmp_path, capsys):
+        """Should print error when tmux session doesn't exist"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        # Don't create any sessions
+        launcher.attach()
+
+        captured = capsys.readouterr()
+        assert "does not exist" in captured.out
 
 
 # =============================================================================

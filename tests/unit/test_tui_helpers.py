@@ -14,6 +14,7 @@ from overcode.tui_helpers import (
     format_ago,
     format_duration,
     format_tokens,
+    format_cost,
     format_line_count,
     calculate_uptime,
     calculate_percentiles,
@@ -130,6 +131,39 @@ class TestFormatTokens:
         """Should format millions with M."""
         assert format_tokens(1000000) == "1.0M"
         assert format_tokens(2500000) == "2.5M"
+
+
+class TestFormatCost:
+    """Tests for format_cost function."""
+
+    def test_small_costs(self):
+        """Should format small costs with 2 decimals and $ prefix."""
+        assert format_cost(0.05) == "$0.05"
+        assert format_cost(1.23) == "$1.23"
+        assert format_cost(9.99) == "$9.99"
+
+    def test_tens(self):
+        """Should format tens with 1 decimal."""
+        assert format_cost(10.0) == "$10.0"
+        assert format_cost(12.34) == "$12.3"
+        assert format_cost(99.95) == "$100.0"
+
+    def test_hundreds(self):
+        """Should format hundreds with no decimal."""
+        assert format_cost(100.0) == "$100"
+        assert format_cost(123.45) == "$123"
+        assert format_cost(999.99) == "$1000"
+
+    def test_thousands(self):
+        """Should format thousands with K suffix."""
+        assert format_cost(1000) == "$1.0K"
+        assert format_cost(1500) == "$1.5K"
+        assert format_cost(12345) == "$12.3K"
+
+    def test_millions(self):
+        """Should format millions with M suffix."""
+        assert format_cost(1000000) == "$1.0M"
+        assert format_cost(2500000) == "$2.5M"
 
 
 class TestFormatLineCount:

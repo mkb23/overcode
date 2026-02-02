@@ -318,3 +318,37 @@ class ViewActionsMixin:
             "Monochrome mode ON" if self.monochrome else "Monochrome mode OFF",
             severity="information"
         )
+
+    def action_toggle_cost_display(self) -> None:
+        """Toggle between showing token counts and dollar costs.
+
+        When enabled:
+        - Shows estimated cost in USD instead of token counts
+        - Format: $X.XX for small amounts, $X.XK/$X.XM for large
+        - Uses Sonnet 3.5 pricing model
+        """
+        from ..tui_widgets import SessionSummary, DaemonStatusBar
+
+        self.show_cost = not self.show_cost
+
+        # Save preference
+        self._prefs.show_cost = self.show_cost
+        self._save_prefs()
+
+        # Update all session widgets
+        for widget in self.query(SessionSummary):
+            widget.show_cost = self.show_cost
+            widget.refresh()
+
+        # Update daemon status bar
+        try:
+            status_bar = self.query_one(DaemonStatusBar)
+            status_bar.show_cost = self.show_cost
+            status_bar.refresh()
+        except NoMatches:
+            pass
+
+        self.notify(
+            "Showing $ cost" if self.show_cost else "Showing tokens",
+            severity="information"
+        )

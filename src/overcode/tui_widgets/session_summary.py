@@ -18,6 +18,7 @@ from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
     format_duration,
     format_tokens,
+    format_cost,
     format_line_count,
     calculate_uptime,
     get_current_state_times,
@@ -70,6 +71,7 @@ class SessionSummary(Static, can_focus=True):
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+        self.show_cost: bool = False  # Show $ cost instead of token counts
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
@@ -312,10 +314,15 @@ class SessionSummary(Static, can_focus=True):
                 pct = (green_time / total_time * 100) if total_time > 0 else 0
                 content.append(f" {pct:>3.0f}%", style=mono(f"bold green{bg}" if pct >= 50 else f"bold red{bg}", "bold"))
 
-        # Always show: token usage (from Claude Code)
+        # Always show: token usage or cost (from Claude Code)
         # ALIGNMENT: context indicator is always 7 chars " c@NNN%" (or placeholder)
         if self.claude_stats is not None:
-            content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
+            if self.show_cost:
+                # Show estimated cost instead of tokens
+                cost = s.stats.estimated_cost_usd
+                content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
+            else:
+                content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
             # Show current context window usage as percentage (assuming 200K max)
             if self.claude_stats.current_context_tokens > 0:
                 max_context = 200_000  # Claude models have 200K context window

@@ -1,0 +1,22 @@
+[run]
+# Source directories to measure
+source = overcode
+branch = True
+# Enable subprocess coverage collection
+parallel = True
+# Include subprocesses that call python -m
+concurrency = multiprocessing
+
+[paths]
+# Map paths from subprocess to parent process view
+source =
+    src/overcode
+    */site-packages/overcode
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
