@@ -484,7 +484,7 @@ class HelpOverlay(Static):
 ║  space   Toggle focused agent    i/:     Focus command bar                   ║
 ║  n       Create new agent        x       Kill focused agent                  ║
 ║  g       Show/hide killed agents (ghost mode)                                ║
-║  H       Handover all (2x) - commit, push, write HANDOVER.md                 ║
+║  H       Handover all (2x) - commit, push, create/update draft PR            ║
 ║  click   Toggle agent expand/collapse                                        ║
 ║                                                                              ║
 ║  COMMAND BAR (i or : to focus)                                               ║
@@ -2773,17 +2773,24 @@ class SupervisorTUI(App):
     def action_transport_all(self) -> None:
         """Prepare all sessions for transport/handover (requires double-press confirmation).
 
-        Sends instructions to all active agents to:
+        Sends instructions to all active (non-sleeping) agents to:
+        - Create a new branch if on main/master
         - Commit their current changes
         - Push to their branch
-        - Write a HANDOVER.md summary
+        - Create a draft PR if none exists
+        - Post handover summary as a PR comment
+
+        Sleeping agents are excluded from handover.
         """
         now = time.time()
 
-        # Get active (non-terminated) sessions
-        active_sessions = [s for s in self.sessions if s.status != "terminated"]
+        # Get active sessions (exclude terminated and sleeping)
+        active_sessions = [
+            s for s in self.sessions
+            if s.status != "terminated" and not s.is_asleep
+        ]
         if not active_sessions:
-            self.notify("No active sessions to prepare", severity="warning")
+            self.notify("No active sessions to prepare (sleeping sessions excluded)", severity="warning")
             return
 
         # Check if this is a confirmation of a pending transport
@@ -2809,10 +2816,17 @@ class SupervisorTUI(App):
         """Execute transport/handover instructions to all sessions."""
         # The handover instruction to send to each agent
         handover_instruction = (
-            "Please prepare for handover:\n"
-            "1. Commit all your current changes with a descriptive commit message\n"
-            "2. Push to your current branch\n"
-            "3. Create a HANDOVER.md file in the project root summarizing:\n"
+            "Please prepare for handover. Follow these steps in order:\n\n"
+            "1. Check your current branch with `git branch --show-current`\n"
+            "   - If on main or master, create and switch to a new branch:\n"
+            "     `git checkout -b handover/<brief-task-description>`\n"
+            "   - Never push directly to main/master\n\n"
+            "2. Commit all your current changes with a descriptive commit message\n\n"
+            "3. Push to your branch: `git push -u origin <branch-name>`\n\n"
+            "4. Check if a PR exists: `gh pr list --head $(git branch --show-current)`\n"
+            "   - If no PR exists, create a draft PR:\n"
+            "     `gh pr create --draft --title '<brief title>' --body 'WIP'`\n\n"
+            "5. Post a handover comment on the PR using `gh pr comment` with:\n"
             "   - What you've accomplished\n"
             "   - Current state of the work\n"
             "   - Any pending tasks or next steps\n"
