@@ -748,3 +748,107 @@ class TestRealTmux:
             result = tmux.select_window("test_session", 99)
 
             assert result is False
+
+    def test_pane_caching_reduces_lookups(self):
+        """Should cache pane lookups to reduce tmux subprocess calls."""
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_pane = MagicMock()
+            mock_pane.capture_pane.return_value = ["line1", "line2"]
+            mock_window = MagicMock()
+            mock_window.panes = [mock_pane]
+            mock_session = MagicMock()
+            mock_session.windows.get.return_value = mock_window
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+
+            # First call - should hit tmux
+            result1 = tmux.capture_pane("test_session", 1)
+            # Second call - should use cache
+            result2 = tmux.capture_pane("test_session", 1)
+
+            assert result1 == "line1\nline2"
+            assert result2 == "line1\nline2"
+            # Session lookup should only happen once (cached)
+            assert mock_server.sessions.get.call_count == 1
+
+    def test_session_caching_reduces_lookups(self):
+        """Should cache session lookups."""
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_pane = MagicMock()
+            mock_pane.capture_pane.return_value = ["line"]
+            mock_window = MagicMock()
+            mock_window.panes = [mock_pane]
+            mock_session = MagicMock()
+            mock_session.windows.get.return_value = mock_window
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+
+            # Multiple capture_pane calls for different windows in same session
+            tmux.capture_pane("test_session", 1)
+            tmux.capture_pane("test_session", 2)
+            tmux.capture_pane("test_session", 3)
+
+            # Session should only be looked up once
+            assert mock_server.sessions.get.call_count == 1
+
+    def test_invalidate_cache_clears_all(self):
+        """Should clear all cached objects when invalidate_cache() called."""
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_pane = MagicMock()
+            mock_pane.capture_pane.return_value = ["line"]
+            mock_window = MagicMock()
+            mock_window.panes = [mock_pane]
+            mock_session = MagicMock()
+            mock_session.windows.get.return_value = mock_window
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+
+            # First call - populates cache
+            tmux.capture_pane("test_session", 1)
+            assert mock_server.sessions.get.call_count == 1
+
+            # Invalidate all caches
+            tmux.invalidate_cache()
+
+            # Next call should hit tmux again
+            tmux.capture_pane("test_session", 1)
+            assert mock_server.sessions.get.call_count == 2
+
+    def test_invalidate_cache_specific_window(self):
+        """Should clear only specific window's cache when specified."""
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_pane = MagicMock()
+            mock_pane.capture_pane.return_value = ["line"]
+            mock_window = MagicMock()
+            mock_window.panes = [mock_pane]
+            mock_session = MagicMock()
+            mock_session.windows.get.return_value = mock_window
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+
+            # Populate cache for two windows
+            tmux.capture_pane("test_session", 1)
+            tmux.capture_pane("test_session", 2)
+
+            # Invalidate only window 1
+            tmux.invalidate_cache("test_session", 1)
+
+            # Window 2 should still be cached, window 1 should refetch
+            initial_window_calls = mock_session.windows.get.call_count
+            tmux.capture_pane("test_session", 2)  # Should use cache
+            tmux.capture_pane("test_session", 1)  # Should refetch
+
+            # Only window 1 should have caused a new lookup
+            assert mock_session.windows.get.call_count == initial_window_calls + 1
