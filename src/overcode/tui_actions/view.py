@@ -291,11 +291,11 @@ class ViewActionsMixin:
         """Toggle monochrome (B&W) mode for terminals with ANSI issues (#138).
 
         When enabled:
-        - Removes color styling from session widgets
-        - Uses simple gray/white text only
+        - Strips ANSI color codes from preview pane and tmux output
+        - Uses plain text rendering for terminal content
         - Helps with terminals that garble ANSI color codes
         """
-        from ..tui_widgets import SessionSummary
+        from ..tui_widgets import SessionSummary, PreviewPane
 
         self.monochrome = not self.monochrome
 
@@ -309,7 +309,15 @@ class ViewActionsMixin:
         else:
             self.remove_class("monochrome")
 
-        # Update all session widgets to use monochrome rendering
+        # Update preview pane to use monochrome rendering
+        try:
+            preview = self.query_one("#preview-pane", PreviewPane)
+            preview.monochrome = self.monochrome
+            preview.refresh()
+        except NoMatches:
+            pass
+
+        # Update all session widgets to use monochrome rendering for expanded pane content
         for widget in self.query(SessionSummary):
             widget.monochrome = self.monochrome
             widget.refresh()

@@ -430,6 +430,7 @@ class TUIPreferences:
                     sort_mode=data.get("sort_mode", "alphabetical"),
                     summary_content_mode=data.get("summary_content_mode", "ai_short"),
                     baseline_minutes=data.get("baseline_minutes", 0),
+                    monochrome=data.get("monochrome", False),
                     show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                 )
@@ -456,6 +457,7 @@ class TUIPreferences:
                     "sort_mode": self.sort_mode,
                     "summary_content_mode": self.summary_content_mode,
                     "baseline_minutes": self.baseline_minutes,
+                    "monochrome": self.monochrome,
                     "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                 }, f, indent=2)

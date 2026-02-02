@@ -18,6 +18,7 @@ class PreviewPane(Static):
     """Preview pane showing focused agent's terminal output in list+preview mode."""
 
     content_lines: reactive[List[str]] = reactive(list, init=False)
+    monochrome: reactive[bool] = reactive(False)
     session_name: str = ""
 
     def __init__(self, **kwargs):
@@ -31,8 +32,10 @@ class PreviewPane(Static):
 
         # Header with session name - pad to full pane width
         header = f"─── {self.session_name} " if self.session_name else "─── Preview "
-        content.append(header, style="bold cyan")
-        content.append("─" * max(0, pane_width - len(header)), style="dim")
+        header_style = "bold" if self.monochrome else "bold cyan"
+        border_style = "dim" if self.monochrome else "dim"
+        content.append(header, style=header_style)
+        content.append("─" * max(0, pane_width - len(header)), style=border_style)
         content.append("\n")
 
         if not self.content_lines:
@@ -47,9 +50,14 @@ class PreviewPane(Static):
             for line in self.content_lines[-available_lines:]:
                 # Truncate long lines to pane width
                 display_line = line[:max_line_len] if len(line) > max_line_len else line
-                # Parse ANSI escape sequences to preserve colors from tmux
-                # Note: Text.from_ansi() strips trailing newlines, so add newline separately
-                content.append(Text.from_ansi(display_line))
+                if self.monochrome:
+                    # Strip ANSI colors - use plain text only
+                    parsed = Text.from_ansi(display_line)
+                    content.append(parsed.plain)
+                else:
+                    # Parse ANSI escape sequences to preserve colors from tmux
+                    # Note: Text.from_ansi() strips trailing newlines, so add newline separately
+                    content.append(Text.from_ansi(display_line))
                 content.append("\n")
 
         return content
