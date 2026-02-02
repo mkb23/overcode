@@ -246,7 +246,7 @@ def get_standing_orders_indicator(session) -> str:
         return "📋"
 
 
-def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[float, float, float]:
+def get_current_state_times(stats, now: Optional[datetime] = None, is_asleep: bool = False) -> Tuple[float, float, float]:
     """Get current green, non-green, and sleep times including ongoing state.
 
     Adds the time elapsed since the last daemon accumulation to the accumulated times.
@@ -256,6 +256,9 @@ def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[floa
         stats: SessionStats object with green_time_seconds, non_green_time_seconds,
                sleep_time_seconds, last_time_accumulation, and current_state
         now: Reference time (defaults to datetime.now())
+        is_asleep: If True, treat session as asleep regardless of stats.current_state.
+                   This handles the case where user toggles sleep but daemon hasn't
+                   updated stats.current_state yet (#141).
 
     Returns:
         Tuple of (green_time, non_green_time, sleep_time) in seconds
@@ -278,11 +281,14 @@ def get_current_state_times(stats, now: Optional[datetime] = None) -> Tuple[floa
 
             # Only add positive elapsed time
             if current_elapsed > 0:
-                if stats.current_state == STATUS_RUNNING:
+                # Use is_asleep parameter to override stats.current_state when user
+                # has toggled sleep but daemon hasn't updated yet (#141)
+                effective_state = STATUS_ASLEEP if is_asleep else stats.current_state
+                if effective_state == STATUS_RUNNING:
                     green_time += current_elapsed
-                elif stats.current_state == STATUS_ASLEEP:
+                elif effective_state == STATUS_ASLEEP:
                     sleep_time += current_elapsed  # Accumulate sleep time (#141)
-                elif stats.current_state != STATUS_TERMINATED:
+                elif effective_state != STATUS_TERMINATED:
                     non_green_time += current_elapsed
                 # else: terminated - time is frozen, don't accumulate
         except (ValueError, AttributeError, TypeError):

@@ -402,6 +402,36 @@ class TestGetCurrentStateTimes:
         assert non_green == 50.0  # Unchanged
         assert sleep > 30.0  # Should have added ~60 seconds
 
+    def test_is_asleep_parameter_overrides_current_state(self):
+        """is_asleep parameter should override stats.current_state (#141).
+
+        This handles the case where user toggles sleep but daemon hasn't
+        updated stats.current_state yet. The TUI passes is_asleep=True
+        to ensure sleep time is accumulated immediately.
+        """
+        now = datetime.now()
+        anchor = (now - timedelta(seconds=60)).isoformat()
+        stats = Mock(
+            green_time_seconds=100.0,
+            non_green_time_seconds=50.0,
+            sleep_time_seconds=0.0,
+            last_time_accumulation=anchor,
+            state_since=anchor,
+            current_state="running",  # Daemon hasn't updated yet
+        )
+
+        # Without is_asleep, would add to green_time (because current_state is "running")
+        green, non_green, sleep = get_current_state_times(stats, now, is_asleep=False)
+        assert green > 100.0  # Added ~60 seconds
+        assert non_green == 50.0
+        assert sleep == 0.0
+
+        # With is_asleep=True, should add to sleep_time instead
+        green, non_green, sleep = get_current_state_times(stats, now, is_asleep=True)
+        assert green == 100.0  # Unchanged
+        assert non_green == 50.0  # Unchanged
+        assert sleep > 0.0  # Added ~60 seconds
+
     def test_handles_invalid_time_anchor(self):
         """Should handle invalid time anchor gracefully."""
         stats = Mock(

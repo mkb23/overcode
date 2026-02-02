@@ -222,7 +222,9 @@ class SessionSummary(Static, can_focus=True):
         # Calculate all values (only use what we need per level)
         uptime = calculate_uptime(self.session.start_time)
         repo_info = f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}"
-        green_time, non_green_time, sleep_time = get_current_state_times(self.session.stats)
+        green_time, non_green_time, sleep_time = get_current_state_times(
+            self.session.stats, is_asleep=self.session.is_asleep
+        )
 
         # Get median work time from claude stats (or 0 if unavailable)
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
@@ -308,9 +310,11 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" ↑{uptime:>5}", style=mono(f"bold white{bg}", "bold"))
             content.append(f" ▶{format_duration(green_time):>5}", style=mono(f"bold green{bg}", "bold"))
             content.append(f" ⏸{format_duration(non_green_time):>5}", style=mono(f"bold red{bg}", "dim"))
-            # Show sleep time if agent has slept (#141)
+            # Show sleep time (#141) - always show for alignment, dim when 0
             if sleep_time > 0:
                 content.append(f" 💤{format_duration(sleep_time):>5}", style=mono(f"bold cyan{bg}", "bold"))
+            else:
+                content.append("   💤    -", style=mono(f"dim{bg}", "dim"))
             # Full detail: show percentage active (excludes sleep time from total)
             if self.summary_detail == "full":
                 active_time = green_time + non_green_time

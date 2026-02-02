@@ -150,7 +150,7 @@ def list_agents(session: SessionOption = "agents"):
         uptime = calculate_uptime(sess.start_time) if sess.start_time else "?"
 
         # Get state times using shared helper
-        green_time, non_green_time, sleep_time = get_current_state_times(sess.stats)
+        green_time, non_green_time, sleep_time = get_current_state_times(sess.stats, is_asleep=sess.is_asleep)
 
         # Get stats from Claude Code history and session files
         stats = get_session_stats(sess)
