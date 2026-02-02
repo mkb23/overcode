@@ -130,8 +130,8 @@ class SupervisorTUI(
         ("t", "toggle_timeline", "Toggle timeline"),
         ("v", "cycle_detail", "Cycle detail"),
         ("s", "cycle_summary", "Summary detail"),
-        ("e", "expand_all", "Expand all"),
-        ("c", "collapse_all", "Collapse all"),
+        ("e", "toggle_expand_all", "Expand/Collapse"),
+        ("c", "sync_to_main_and_clear", "Sync main+clear"),
         ("space", "toggle_focused", "Toggle"),
         # Navigation between agents
         ("j", "focus_next_session", "Next"),
@@ -262,6 +262,8 @@ class SupervisorTUI(
         self._pending_kill: tuple[str, float] | None = None
         # Pending restart confirmation (session name, timestamp) (#133)
         self._pending_restart: tuple[str, float] | None = None
+        # Pending sync-to-main confirmation (session name, timestamp) (#156)
+        self._pending_sync: tuple[str, float] | None = None
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
