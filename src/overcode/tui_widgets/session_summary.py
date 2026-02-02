@@ -500,9 +500,15 @@ class SessionSummary(Static, can_focus=True):
             content.append("  ")  # Indent
             # Truncate long lines and style based on content
             display_line = line[:100] + "..." if len(line) > 100 else line
-            prefix_style, content_style = style_pane_line(line)
-            content.append("│ ", style=prefix_style)
-            content.append(display_line, style=content_style)
+            if self.monochrome:
+                # Strip ANSI codes and use plain styling
+                plain_line = Text.from_ansi(display_line).plain
+                content.append("│ ", style="dim")
+                content.append(plain_line)
+            else:
+                prefix_style, content_style = style_pane_line(line)
+                content.append("│ ", style=prefix_style)
+                content.append(display_line, style=content_style)
 
         # If no pane content and no standing instructions shown above, show placeholder
         if not pane_lines and not s.standing_instructions:

@@ -347,6 +347,13 @@ class SupervisorTUI(
         except NoMatches:
             pass
 
+        # Apply monochrome preference to preview pane (#138)
+        try:
+            preview = self.query_one("#preview-pane", PreviewPane)
+            preview.monochrome = self._prefs.monochrome
+        except NoMatches:
+            pass
+
         # Set view_mode from preferences (triggers watch_view_mode)
         self.view_mode = self._prefs.view_mode
 
