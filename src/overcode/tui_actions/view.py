@@ -48,19 +48,18 @@ class ViewActionsMixin:
         self.update_timeline()
         self.notify("Refreshed", severity="information", timeout=2)
 
-    def action_expand_all(self) -> None:
-        """Expand all sessions."""
+    def action_toggle_expand_all(self) -> None:
+        """Toggle expand/collapse all sessions."""
         from ..tui_widgets import SessionSummary
-        for widget in self.query(SessionSummary):
-            widget.expanded = True
-            self.expanded_states[widget.session.id] = True
-
-    def action_collapse_all(self) -> None:
-        """Collapse all sessions."""
-        from ..tui_widgets import SessionSummary
-        for widget in self.query(SessionSummary):
-            widget.expanded = False
-            self.expanded_states[widget.session.id] = False
+        widgets = list(self.query(SessionSummary))
+        if not widgets:
+            return
+        # If any are expanded, collapse all; otherwise expand all
+        any_expanded = any(w.expanded for w in widgets)
+        new_state = not any_expanded
+        for widget in widgets:
+            widget.expanded = new_state
+            self.expanded_states[widget.session.id] = new_state
 
     def action_cycle_detail(self) -> None:
         """Cycle through detail levels (5, 10, 20, 50 lines)."""

@@ -130,8 +130,7 @@ class SupervisorTUI(
         ("t", "toggle_timeline", "Toggle timeline"),
         ("v", "cycle_detail", "Cycle detail"),
         ("s", "cycle_summary", "Summary detail"),
-        ("e", "expand_all", "Expand all"),
-        ("C", "collapse_all", "Collapse all"),
+        ("e", "toggle_expand_all", "Expand/Collapse"),
         ("c", "sync_to_main_and_clear", "Sync main+clear"),
         ("space", "toggle_focused", "Toggle"),
         # Navigation between agents

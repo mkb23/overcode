@@ -24,7 +24,7 @@ class HelpOverlay(Static):
 ║  ──────────────────────────────────────────────────────────────────────────  ║
 ║  j/↓     Next agent              k/↑     Previous agent                      ║
 ║  space   Toggle expand           m       Toggle tree/list mode               ║
-║  e       Expand all              c       Collapse all                        ║
+║  e       Expand/Collapse all     c       Sync to main + clear                ║
 ║  h/?     Toggle help             r       Refresh                             ║
 ║  q       Quit                                                                ║
 ║                                                                              ║
