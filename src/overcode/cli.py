@@ -150,7 +150,7 @@ def list_agents(session: SessionOption = "agents"):
         uptime = calculate_uptime(sess.start_time) if sess.start_time else "?"
 
         # Get state times using shared helper
-        green_time, non_green_time = get_current_state_times(sess.stats)
+        green_time, non_green_time, sleep_time = get_current_state_times(sess.stats, is_asleep=sess.is_asleep)
 
         # Get stats from Claude Code history and session files
         stats = get_session_stats(sess)
@@ -159,9 +159,14 @@ def list_agents(session: SessionOption = "agents"):
         else:
             stats_display = " -i     -"
 
+        # Build time display - show sleep time if agent has slept
+        time_display = f"▶{format_duration(green_time):>5} ⏸{format_duration(non_green_time):>5}"
+        if sleep_time > 0:
+            time_display += f" 💤{format_duration(sleep_time):>5}"
+
         print(
             f"{symbol} {sess.name:<16} ↑{uptime:>5}  "
-            f"▶{format_duration(green_time):>5} ⏸{format_duration(non_green_time):>5}  "
+            f"{time_display}  "
             f"{stats_display}  {activity[:50]}"
         )
 

@@ -222,7 +222,9 @@ class SessionSummary(Static, can_focus=True):
         # Calculate all values (only use what we need per level)
         uptime = calculate_uptime(self.session.start_time)
         repo_info = f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}"
-        green_time, non_green_time = get_current_state_times(self.session.stats)
+        green_time, non_green_time, sleep_time = get_current_state_times(
+            self.session.stats, is_asleep=self.session.is_asleep
+        )
 
         # Get median work time from claude stats (or 0 if unavailable)
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
@@ -303,15 +305,22 @@ class SessionSummary(Static, can_focus=True):
             repo_width = getattr(self.app, 'max_repo_info_width', 18)
             content.append(f" {repo_info:<{repo_width}} ", style=mono(f"bold dim{bg}", "dim"))
 
-        # Med/Full detail: add uptime, running time, stalled time
+        # Med/Full detail: add uptime, running time, stalled time, sleep time
         if self.summary_detail in ("med", "full"):
             content.append(f" ↑{uptime:>5}", style=mono(f"bold white{bg}", "bold"))
             content.append(f" ▶{format_duration(green_time):>5}", style=mono(f"bold green{bg}", "bold"))
             content.append(f" ⏸{format_duration(non_green_time):>5}", style=mono(f"bold red{bg}", "dim"))
-            # Full detail: show percentage active
+            # Show sleep time (#141) - always show for alignment, dim when 0
+            # Build complete column string with explicit padding to ensure consistent width
+            # Use 8 total cells: space(1) + emoji(2) + value(5) = 8
+            sleep_str = format_duration(sleep_time) if sleep_time > 0 else "-"
+            sleep_col = f" 💤{sleep_str:>5}"  # This should be 8 cells
+            sleep_style = mono(f"bold cyan{bg}", "bold") if sleep_time > 0 else mono(f"dim cyan{bg}", "dim")
+            content.append(sleep_col, style=sleep_style)
+            # Full detail: show percentage active (excludes sleep time from total)
             if self.summary_detail == "full":
-                total_time = green_time + non_green_time
-                pct = (green_time / total_time * 100) if total_time > 0 else 0
+                active_time = green_time + non_green_time
+                pct = (green_time / active_time * 100) if active_time > 0 else 0
                 content.append(f" {pct:>3.0f}%", style=mono(f"bold green{bg}" if pct >= 50 else f"bold red{bg}", "bold"))
 
         # Always show: token usage or cost (from Claude Code)

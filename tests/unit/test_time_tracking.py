@@ -32,7 +32,7 @@ class TestGetCurrentStateTimes:
             non_green_time_seconds=0.0,
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Should show 30 minutes (1800 seconds)
         assert green == pytest.approx(1800.0, rel=0.01)
@@ -62,7 +62,7 @@ class TestGetCurrentStateTimes:
             last_time_accumulation=now.isoformat(),  # Daemon just updated
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # With last_time_accumulation = now, no extra time should be added
         # Expected: exactly 1800 seconds (30 minutes)
@@ -95,7 +95,7 @@ class TestGetCurrentStateTimes:
             last_time_accumulation=last_daemon_run.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Should be close to 30 minutes (29 accumulated + 1 minute since last daemon)
         expected_approx = 1800.0  # ~30 minutes
@@ -119,7 +119,7 @@ class TestGetCurrentStateTimes:
             last_time_accumulation=now.isoformat(),  # Daemon just updated
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Should be exactly 30 minutes (no extra time to add)
         assert green == 0.0
@@ -143,7 +143,7 @@ class TestGetCurrentStateTimes:
             non_green_time_seconds=0.0,  # Just transitioned, daemon hasn't accumulated yet
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Green should stay at 25 minutes (no longer in running state)
         # Non-green should be ~5 minutes (time since state change)
@@ -180,7 +180,7 @@ class TestTimeMismatchScenario:
             last_time_accumulation=last_daemon_run.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
         total = green + non_green
         uptime_seconds = (now - session_start).total_seconds()
 
@@ -207,7 +207,7 @@ class TestTimeMismatchScenario:
             last_time_accumulation=None,  # Not set yet
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Should use state_since as fallback and show 30 minutes
         assert green == pytest.approx(1800.0, rel=0.01)
@@ -743,7 +743,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=last_accumulation.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Neither time should increase - asleep freezes time tracking
         assert green == 100.0, "Green time should not change for asleep status"
@@ -764,7 +764,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=last_accumulation.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # No time should accumulate for asleep state
         assert green == 0.0, "Green time should stay at 0 for asleep status"
@@ -785,7 +785,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=datetime(2024, 1, 1, 12, 0, 0).isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Times should be preserved exactly, with no addition
         assert green == 6000.0, "Previous green time should be preserved"
@@ -806,7 +806,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=last_accumulation.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green == 100.0, "Green time should not change for terminated status"
         assert non_green == 50.0, "Non-green time should not change for terminated status"
@@ -824,7 +824,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=last_accumulation.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         # Green time should increase by 300 seconds
         assert green == pytest.approx(400.0, rel=0.01), "Running state should add green time"
@@ -843,7 +843,7 @@ class TestGetCurrentStateTimesAsleep:
             last_time_accumulation=last_accumulation.isoformat(),
         )
 
-        green, non_green = get_current_state_times(stats, now)
+        green, non_green, sleep = get_current_state_times(stats, now)
 
         assert green == 100.0, "Green time should not change for waiting status"
         # Non-green time should increase by 300 seconds
