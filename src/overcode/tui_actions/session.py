@@ -33,8 +33,11 @@ class SessionActionsMixin:
         Sleep mode marks an agent as 'asleep' (human doesn't want it to do anything).
         Sleeping agents are excluded from stats calculations.
         Press z again to wake the agent.
+
+        Note: Cannot put a running agent to sleep (#158).
         """
         from ..tui_widgets import SessionSummary
+        from ..status_constants import STATUS_RUNNING
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -42,6 +45,11 @@ class SessionActionsMixin:
 
         session = focused.session
         new_asleep_state = not session.is_asleep
+
+        # Prevent putting a running agent to sleep (#158)
+        if new_asleep_state and focused.detected_status == STATUS_RUNNING:
+            self.notify("Cannot put a running agent to sleep", severity="warning")
+            return
 
         # Update the session in the session manager
         self.session_manager.update_session(session.id, is_asleep=new_asleep_state)
