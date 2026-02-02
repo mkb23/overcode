@@ -193,6 +193,8 @@ class SupervisorTUI(
         ("M", "toggle_monochrome", "Monochrome"),
         # Toggle between token count and dollar cost display
         ("dollar_sign", "toggle_cost_display", "Show $"),
+        # Transport/handover - prepare all sessions for handoff (double-press)
+        ("H", "transport_all", "Handover all"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -264,6 +266,8 @@ class SupervisorTUI(
         self._pending_restart: tuple[str, float] | None = None
         # Pending sync-to-main confirmation (session name, timestamp) (#156)
         self._pending_sync: tuple[str, float] | None = None
+        # Pending transport/handover confirmation (timestamp)
+        self._pending_transport: float | None = None
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences

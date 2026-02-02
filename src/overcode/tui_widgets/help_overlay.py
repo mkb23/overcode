@@ -45,7 +45,7 @@ class HelpOverlay(Static):
 ║  1-5     Send number             n       New agent                           ║
 ║  x       Kill agent              R       Restart agent                       ║
 ║  z       Toggle sleep            V       Edit agent value                    ║
-║  b       Jump to red/attention                                               ║
+║  b       Jump to red/attention   H       Handover all (2x) → draft PR        ║
 ║                                                                              ║
 ║  DAEMON CONTROL                                                              ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║

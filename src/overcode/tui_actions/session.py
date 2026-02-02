@@ -6,13 +6,14 @@ Handles agent/session operations like kill, new, sleep, command bar focus.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from textual.css.query import NoMatches
 from textual.widgets import Input
 
 if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary, CommandBar, PreviewPane
+    from ..session_manager import Session
 
 
 class SessionActionsMixin:
@@ -338,3 +339,90 @@ class SessionActionsMixin:
             cmd_input.focus()
         except NoMatches:
             pass
+
+    def action_transport_all(self) -> None:
+        """Prepare all sessions for transport/handover (requires double-press confirmation).
+
+        Sends instructions to all active (non-sleeping) agents to:
+        - Create a new branch if on main/master
+        - Commit their current changes
+        - Push to their branch
+        - Create a draft PR if none exists
+        - Post handover summary as a PR comment
+
+        Sleeping agents are excluded from handover.
+        """
+        now = time.time()
+
+        # Get active sessions (exclude terminated and sleeping)
+        active_sessions = [
+            s for s in self.sessions
+            if s.status != "terminated" and not s.is_asleep
+        ]
+        if not active_sessions:
+            self.notify("No active sessions to prepare (sleeping sessions excluded)", severity="warning")
+            return
+
+        # Check if this is a confirmation of a pending transport
+        if self._pending_transport is not None:
+            if (now - self._pending_transport) < 3.0:
+                self._pending_transport = None  # Clear pending state
+                self._execute_transport_all(active_sessions)
+                return
+            else:
+                # Expired - start new confirmation
+                self._pending_transport = None
+
+        # First press - request confirmation
+        self._pending_transport = now
+        count = len(active_sessions)
+        self.notify(
+            f"Press H again to send handover instructions to {count} agent(s)",
+            severity="warning",
+            timeout=3
+        )
+
+    def _execute_transport_all(self, sessions: List["Session"]) -> None:
+        """Execute transport/handover instructions to all sessions."""
+        from ..launcher import ClaudeLauncher
+
+        # The handover instruction to send to each agent
+        handover_instruction = (
+            "Please prepare for handover. Follow these steps in order:\n\n"
+            "1. Check your current branch with `git branch --show-current`\n"
+            "   - If on main or master, create and switch to a new branch:\n"
+            "     `git checkout -b handover/<brief-task-description>`\n"
+            "   - Never push directly to main/master\n\n"
+            "2. Commit all your current changes with a descriptive commit message\n\n"
+            "3. Push to your branch: `git push -u origin <branch-name>`\n\n"
+            "4. Check if a PR exists: `gh pr list --head $(git branch --show-current)`\n"
+            "   - If no PR exists, create a draft PR:\n"
+            "     `gh pr create --draft --title '<brief title>' --body 'WIP'`\n\n"
+            "5. Post a handover comment on the PR using `gh pr comment` with:\n"
+            "   - What you've accomplished\n"
+            "   - Current state of the work\n"
+            "   - Any pending tasks or next steps\n"
+            "   - Known issues or blockers"
+        )
+
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+
+        success_count = 0
+        for session in sessions:
+            if launcher.send_to_session(session.name, handover_instruction):
+                success_count += 1
+
+        if success_count == len(sessions):
+            self.notify(
+                f"Sent handover instructions to {success_count} agent(s)",
+                severity="information"
+            )
+        else:
+            failed = len(sessions) - success_count
+            self.notify(
+                f"Sent to {success_count}, failed {failed} agent(s)",
+                severity="warning"
+            )
