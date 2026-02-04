@@ -1358,7 +1358,12 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
-            # Starts at index 0 ("low")
+            # Starts at index 2 ("full") - the new default
+            assert app.summary_level_index == 2
+            assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
+
+            # Cycle to "low"
+            await pilot.press("s")
             assert app.summary_level_index == 0
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "low"
 
@@ -1367,15 +1372,10 @@ class TestSupervisorTUIPilot:
             assert app.summary_level_index == 1
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "med"
 
-            # Cycle to "full"
+            # Cycle back to "full"
             await pilot.press("s")
             assert app.summary_level_index == 2
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
-
-            # Cycle back to "low"
-            await pilot.press("s")
-            assert app.summary_level_index == 0
-            assert app.SUMMARY_LEVELS[app.summary_level_index] == "low"
 
     @pytest.mark.asyncio
     async def test_widgets_mounted(self):
