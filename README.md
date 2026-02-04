@@ -2,7 +2,16 @@
 
 A TUI supervisor for managing multiple Claude Code agents in tmux.
 
-Monitor status, costs, and activity across all your agents from a single dashboard.
+Launch autonomous coding agents, monitor their progress in real-time, track costs and activity, and coordinate work across your projects—all from a single dashboard.
+
+## Why overcode?
+
+Running multiple Claude Code agents is powerful, but managing them gets chaotic fast. Overcode solves this by giving you:
+
+- **Unified visibility** - See all agents at a glance: what they're working on, whether they need input, and how much they're costing you
+- **Smart orchestration** - An optional supervisor daemon can approve prompts and keep agents moving without constant attention
+- **Efficiency metrics** - Track "green time" (Claude actively working) vs idle time to understand where time goes
+- **Session persistence** - Agents run in tmux, surviving terminal disconnects. Pick up where you left off
 
 ## Screenshots
 
@@ -22,38 +31,80 @@ Monitor status, costs, and activity across all your agents from a single dashboa
 pip install overcode
 ```
 
-Requires: Python 3.12+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+**Requirements:**
+- Python 3.12+
+- tmux
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 
 ## Quick Start
 
 ```bash
-# Launch an agent
+# Launch your first agent
 overcode launch --name my-agent --directory ~/myproject
 
-# Open the supervisor dashboard
-overcode supervisor
+# Open the dashboard
+overcode monitor
 
-# List running agents
-overcode list
+# Or launch with the supervisor daemon for automated oversight
+overcode supervisor
 ```
+
+See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 
 ## Features
 
-- **Real-time TUI dashboard** - Monitor all agents at a glance
-- **Cost tracking** - See estimated API costs per agent
-- **Activity detection** - Know when agents need input or are working
-- **Time tracking** - Green time (working) vs idle time metrics
-- **Git-aware** - Auto-detects repo and branch for each agent
+### Real-time Dashboard
+The TUI displays all agents with live status updates, showing:
+- Current activity and AI-generated summaries
+- Status indicators (running/waiting/stalled)
+- Cost and token usage per agent
+- Git repo and branch information
+- Timeline showing status history
+
+### Agent Management
+- **Launch agents** with custom prompts and permission settings
+- **Send instructions** directly from the dashboard
+- **Standing orders** - persistent instructions that guide agent behavior
+- **Sleep mode** - pause agents and exclude them from stats
+- **Priority sorting** - organize agents by importance
+
+### Supervisor Daemon
+An optional Claude-powered orchestrator that:
+- Monitors agents for prompts requiring approval
+- Automatically handles routine confirmations
+- Follows per-agent standing orders
+- Tracks interventions and steering decisions
+
+### Analytics & Export
+- **Web dashboard** - mobile-friendly monitoring from any device
+- **Historical analytics** - browse session history with charts
+- **Parquet export** - analyze data in Jupyter notebooks
+- **Presence tracking** - correlate activity with your availability (macOS)
 
 ## TUI Controls
 
 | Key | Action |
 |-----|--------|
 | `j/k` or `↑/↓` | Navigate agents |
-| `Enter` | Attach to agent's tmux pane |
-| `f` | Focus agent (full screen) |
-| `k` | Kill selected agent |
+| `Enter` | Approve/send Enter to agent |
+| `i` or `:` | Send instruction |
+| `m` | Toggle list+preview mode |
+| `t` | Toggle timeline |
+| `z` | Toggle sleep mode |
+| `x` | Kill agent (double-press) |
+| `b` | Jump to next agent needing attention |
+| `h` or `?` | Show all shortcuts |
 | `q` | Quit |
+
+See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) - Installation and first steps
+- [CLI Reference](docs/cli-reference.md) - All commands and options
+- [TUI Guide](docs/tui-guide.md) - Keyboard shortcuts and display modes
+- [Configuration](docs/configuration.md) - Config file and environment variables
+- [Advanced Features](docs/advanced-features.md) - Sleep mode, handover, remote monitoring
 
 ## License
 
