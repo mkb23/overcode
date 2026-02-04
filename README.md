@@ -25,29 +25,19 @@ Running multiple Claude Code agents is powerful, but managing them gets chaotic 
 
 ![Overcode preview mode](docs/images/overcode-preview-mode.png)
 
-## Installation
-
-```bash
-pip install overcode
-```
-
-**Requirements:**
-- Python 3.12+
-- tmux
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-
 ## Quick Start
 
+Try it instantly with [uvx](https://docs.astral.sh/uv/):
+
 ```bash
-# Launch your first agent
-overcode launch --name my-agent --directory ~/myproject
-
-# Open the dashboard
-overcode monitor
-
-# Or launch with the supervisor daemon for automated oversight
-overcode supervisor
+uvx overcode monitor
 ```
+
+This opens the dashboard. Press `n` to create your first agent—give it a name, point it at a project directory, and optionally provide an initial prompt. Create a few agents to see them work in parallel.
+
+**Requirements:** Python 3.12+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+
+For permanent installation: `pip install overcode`
 
 See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 

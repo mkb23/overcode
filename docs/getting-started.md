@@ -1,10 +1,10 @@
 # Getting Started
 
-This guide walks you through installing overcode and launching your first supervised Claude Code agent.
+This guide walks you through trying overcode and launching your first agents.
 
 ## Prerequisites
 
-Before installing overcode, ensure you have:
+Before using overcode, ensure you have:
 
 1. **Python 3.12+** - Check with `python --version`
 2. **tmux** - Install via `brew install tmux` (macOS) or `apt install tmux` (Linux)
@@ -15,9 +15,34 @@ Verify Claude Code is working:
 claude --version
 ```
 
-## Installation
+## Quick Start
 
-Install overcode from PyPI:
+The fastest way to try overcode is with `uvx` (comes with [uv](https://docs.astral.sh/uv/)):
+
+```bash
+uvx overcode monitor
+```
+
+This launches the dashboard immediately. You'll see an empty list since no agents are running yet.
+
+### Creating Your First Agents
+
+From inside the dashboard, press `n` to create a new agent. You'll be prompted for:
+- **Name**: Give it a descriptive name (e.g., `frontend`)
+- **Directory**: The project directory to work in
+- **Prompt**: An initial task (optional)
+
+Try creating three agents to experiment with:
+
+1. Press `n`, name it `explorer`, point it at a project, prompt: "Explore the codebase and summarize the architecture"
+2. Press `n`, name it `tests`, same project, prompt: "Find and run the test suite"
+3. Press `n`, name it `docs`, same project, prompt: "Review the README and suggest improvements"
+
+Now you have three agents working in parallel. Use `j/k` to navigate between them and watch their progress in the preview pane.
+
+## Installation (Optional)
+
+If you prefer a permanent installation:
 
 ```bash
 pip install overcode
@@ -28,15 +53,20 @@ Or with pipx for isolated installation:
 pipx install overcode
 ```
 
-## Launching Your First Agent
+Then run with just:
+```bash
+overcode monitor
+```
 
-Start a Claude Code agent in a new tmux window:
+## Launching Agents from CLI
+
+You can also launch agents from the command line:
 
 ```bash
 overcode launch --name my-agent --directory ~/myproject
 ```
 
-This creates a tmux session called `agents` (if it doesn't exist) and starts Claude Code in a new window named `my-agent`.
+This creates a tmux session called `agents` (if it doesn't exist) and starts Claude Code in a new window.
 
 ### Launch Options
 
@@ -54,27 +84,26 @@ overcode launch -n my-agent -d ~/myproject --bypass-permissions
 overcode launch -n my-agent -d ~/myproject --session myteam
 ```
 
-## Opening the Dashboard
+## Dashboard Overview
 
-Launch the TUI monitor to see all your agents:
-
-```bash
-overcode monitor
-```
-
-You'll see a dashboard showing:
-- Agent names and status indicators
-- Current activity summaries
-- Token usage and estimated costs
-- Git repository and branch info
+The dashboard shows all your agents with:
+- **Status indicator** - Green (working), red (needs input), yellow (no orders)
+- **Preview pane** - Live terminal output from the selected agent
+- **Activity summary** - What the agent is currently doing
+- **Costs** - Token usage and estimated API costs
 
 ### Basic Navigation
 
-- `j/k` or arrow keys - Move between agents
-- `Enter` - Send Enter to the selected agent (approve prompts)
-- `i` - Open command bar to send instructions
-- `m` - Toggle between tree view and list+preview mode
-- `q` - Quit the monitor
+| Key | Action |
+|-----|--------|
+| `j/k` or `↑/↓` | Navigate between agents |
+| `Enter` | Send Enter to agent (approve prompts) |
+| `i` | Send an instruction |
+| `n` | Create a new agent |
+| `x` | Kill agent (double-press) |
+| `m` | Toggle tree/preview mode |
+| `h` or `?` | Show all shortcuts |
+| `q` | Quit |
 
 Press `h` or `?` to see all available shortcuts.
 

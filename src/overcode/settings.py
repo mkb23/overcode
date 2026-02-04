@@ -387,11 +387,11 @@ def get_tui_preferences_path(session: str) -> Path:
 class TUIPreferences:
     """TUI preferences that persist between launches."""
 
-    summary_detail: str = "low"  # low, med, full
+    summary_detail: str = "full"  # low, med, full
     detail_lines: int = 5  # 5, 10, 20, 50
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
-    view_mode: str = "tree"  # tree, list_preview
+    view_mode: str = "list_preview"  # tree, list_preview
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
