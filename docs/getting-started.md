@@ -40,6 +40,14 @@ Try creating three agents to experiment with:
 
 Now you have three agents working in parallel. Use `j/k` to navigate between them and watch their progress in the preview pane.
 
+### Interacting with Agents
+
+As agents work, you can guide them:
+
+- **Send instructions**: Press `i` to open the command bar, type your message, and press Enter. For example: "Focus on the authentication module" or "Skip the database tests for now"
+- **Approve prompts**: When an agent asks for permission (status turns red), press `Enter` to approve
+- **Jump to attention**: Press `b` to quickly jump to the next agent that needs your input
+
 ## Installation (Optional)
 
 If you prefer a permanent installation:
