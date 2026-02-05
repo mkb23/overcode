@@ -40,7 +40,7 @@ tmux split-window -v -p 66 -t "$CONTROLLER_SESSION:0"
 tmux send-keys -t "$CONTROLLER_SESSION:0.0" "PYTHONUNBUFFERED=1 python -m overcode.tui $SESSION_NAME" C-m
 
 # Bottom pane: Launch Claude (no auto-prompt - let user interact naturally)
-tmux send-keys -t "$CONTROLLER_SESSION:0.1" "claude code" C-m
+tmux send-keys -t "$CONTROLLER_SESSION:0.1" "claude" C-m
 
 # Set pane titles
 tmux select-pane -t "$CONTROLLER_SESSION:0.0" -T "Overcode Monitor"
