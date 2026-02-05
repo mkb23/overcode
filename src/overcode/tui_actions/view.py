@@ -114,6 +114,7 @@ class ViewActionsMixin:
             "ai_long": "AI Summary (context)",
             "orders": "Standing Orders",
             "annotation": "Human Annotation",
+            "heartbeat": "Heartbeat Instruction",
         }
         self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
 

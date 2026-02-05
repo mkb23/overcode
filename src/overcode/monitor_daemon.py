@@ -53,7 +53,12 @@ from .settings import (
     get_supervisor_stats_path,
 )
 from .config import get_relay_config
-from .status_constants import STATUS_ASLEEP, STATUS_RUNNING, STATUS_TERMINATED
+from .status_constants import (
+    STATUS_ASLEEP,
+    STATUS_RUNNING,
+    STATUS_RUNNING_HEARTBEAT,
+    STATUS_TERMINATED,
+)
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
 from .monitor_daemon_core import (
@@ -64,6 +69,7 @@ from .monitor_daemon_core import (
     should_sync_stats,
     parse_datetime_safe,
 )
+from .tmux_utils import send_text_to_tmux_window
 
 
 # Check for macOS presence APIs (optional)
@@ -223,6 +229,9 @@ class MonitorDaemon:
         # Shutdown flag
         self._shutdown = False
 
+        # Heartbeat tracking (#171)
+        self._heartbeat_triggered_sessions: set = set()  # Session IDs that received heartbeat this loop
+
     def track_session_stats(self, session, status: str) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
 
@@ -270,6 +279,21 @@ class MonitorDaemon:
 
         # Build session state for publishing
         stats = session.stats
+
+        # Calculate next heartbeat due time (#171)
+        next_heartbeat_due = None
+        if session.heartbeat_enabled and not session.heartbeat_paused:
+            last_hb = parse_datetime_safe(session.last_heartbeat_time)
+            if last_hb is None:
+                last_hb = parse_datetime_safe(session.start_time)
+            if last_hb:
+                from datetime import timedelta
+                next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
+                next_heartbeat_due = next_due.isoformat()
+
+        # Check if this session was just triggered by heartbeat
+        running_from_heartbeat = session_id in self._heartbeat_triggered_sessions
+
         return SessionDaemonState(
             session_id=session_id,
             name=session.name,
@@ -297,7 +321,64 @@ class MonitorDaemon:
             start_directory=session.start_directory,
             is_asleep=session.is_asleep,
             agent_value=session.agent_value,
+            # Heartbeat state (#171)
+            heartbeat_enabled=session.heartbeat_enabled,
+            heartbeat_frequency_seconds=session.heartbeat_frequency_seconds,
+            heartbeat_paused=session.heartbeat_paused,
+            last_heartbeat_time=session.last_heartbeat_time,
+            next_heartbeat_due=next_heartbeat_due,
+            running_from_heartbeat=running_from_heartbeat,
         )
+
+    def check_and_send_heartbeats(self, sessions: list) -> set:
+        """Check all sessions and send heartbeats if due.
+
+        Args:
+            sessions: List of Session objects to check
+
+        Returns:
+            Set of session IDs that received heartbeats this loop
+        """
+        now = datetime.now()
+        triggered = set()
+
+        for session in sessions:
+            # Skip if heartbeat not enabled or paused
+            if not session.heartbeat_enabled or session.heartbeat_paused:
+                continue
+            # Skip sleeping agents
+            if session.is_asleep:
+                continue
+            # Skip if no instruction configured
+            if not session.heartbeat_instruction:
+                continue
+
+            # Check if heartbeat is due
+            last_hb = parse_datetime_safe(session.last_heartbeat_time)
+            if last_hb is None:
+                # Use session start time as initial reference
+                last_hb = parse_datetime_safe(session.start_time)
+            if last_hb is None:
+                continue
+
+            elapsed = (now - last_hb).total_seconds()
+            if elapsed >= session.heartbeat_frequency_seconds:
+                # Send the heartbeat instruction
+                if send_text_to_tmux_window(
+                    session.tmux_session,
+                    session.tmux_window,
+                    session.heartbeat_instruction,
+                    send_enter=True,
+                ):
+                    # Update last heartbeat time
+                    self.session_manager.update_session(
+                        session.id,
+                        last_heartbeat_time=now.isoformat()
+                    )
+                    triggered.add(session.id)
+                    self.log.info(f"[{session.name}] Heartbeat sent")
+
+        return triggered
 
     def _update_state_time(self, session, status: str, now: datetime) -> None:
         """Update green_time_seconds and non_green_time_seconds."""
@@ -589,6 +670,9 @@ class MonitorDaemon:
                     for session in sessions:
                         self.sync_claude_code_stats(session)
                     self._last_stats_sync = now
+
+                # Send heartbeats before status detection (#171)
+                self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
 
                 # Detect status and track stats for each session
                 session_states = []

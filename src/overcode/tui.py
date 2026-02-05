@@ -196,7 +196,9 @@ class SupervisorTUI(
         # Toggle between token count and dollar cost display
         ("dollar_sign", "toggle_cost_display", "Show $"),
         # Transport/handover - prepare all sessions for handoff (double-press)
-        ("H", "transport_all", "Handover all"),
+        ("T", "transport_all", "Handover all"),
+        # Heartbeat configuration (#171)
+        ("H", "configure_heartbeat", "Heartbeat config"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -206,7 +208,7 @@ class SupervisorTUI(
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value"]
     # Summary content modes: what to show in the summary line (#74)
-    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation"]
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat"]
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
@@ -1027,6 +1029,29 @@ class SupervisorTUI(
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_heartbeat_updated(self, message: CommandBar.HeartbeatUpdated) -> None:
+        """Handle heartbeat configuration update from command bar (#171)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if not session:
+            self.notify(f"Session not found: {message.session_name}", severity="error")
+            return
+
+        self.session_manager.update_session(
+            session.id,
+            heartbeat_enabled=message.enabled,
+            heartbeat_frequency_seconds=message.frequency,
+            heartbeat_instruction=message.instruction,
+        )
+
+        if message.enabled:
+            freq_str = format_duration(message.frequency)
+            self.notify(f"Heartbeat enabled: every {freq_str}", severity="information")
+        else:
+            self.notify("Heartbeat disabled", severity="information")
+
+        # Refresh session list to show updated heartbeat config
+        self.refresh_sessions()
 
     def on_command_bar_clear_requested(self, message: CommandBar.ClearRequested) -> None:
         """Handle clear request - hide and unfocus command bar."""

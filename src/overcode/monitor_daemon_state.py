@@ -81,6 +81,14 @@ class SessionDaemonState:
     activity_summary_context: str = ""
     activity_summary_context_updated: Optional[str] = None  # ISO timestamp
 
+    # Heartbeat state (#171)
+    heartbeat_enabled: bool = False
+    heartbeat_frequency_seconds: int = 300
+    heartbeat_paused: bool = False
+    last_heartbeat_time: Optional[str] = None
+    next_heartbeat_due: Optional[str] = None  # Computed
+    running_from_heartbeat: bool = False  # True if agent started running from heartbeat
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -114,6 +122,13 @@ class SessionDaemonState:
             "activity_summary_updated": self.activity_summary_updated,
             "activity_summary_context": self.activity_summary_context,
             "activity_summary_context_updated": self.activity_summary_context_updated,
+            # Heartbeat state (#171)
+            "heartbeat_enabled": self.heartbeat_enabled,
+            "heartbeat_frequency_seconds": self.heartbeat_frequency_seconds,
+            "heartbeat_paused": self.heartbeat_paused,
+            "last_heartbeat_time": self.last_heartbeat_time,
+            "next_heartbeat_due": self.next_heartbeat_due,
+            "running_from_heartbeat": self.running_from_heartbeat,
         }
 
     @classmethod
@@ -150,6 +165,13 @@ class SessionDaemonState:
             activity_summary_updated=data.get("activity_summary_updated"),
             activity_summary_context=data.get("activity_summary_context", ""),
             activity_summary_context_updated=data.get("activity_summary_context_updated"),
+            # Heartbeat state (#171)
+            heartbeat_enabled=data.get("heartbeat_enabled", False),
+            heartbeat_frequency_seconds=data.get("heartbeat_frequency_seconds", 300),
+            heartbeat_paused=data.get("heartbeat_paused", False),
+            last_heartbeat_time=data.get("last_heartbeat_time"),
+            next_heartbeat_due=data.get("next_heartbeat_due"),
+            running_from_heartbeat=data.get("running_from_heartbeat", False),
         )
 
 

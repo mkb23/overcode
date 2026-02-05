@@ -447,6 +447,18 @@ class SessionSummary(Static, can_focus=True):
                     content.append("📖 (summarizer disabled - press 'a')", style=mono(f"dim italic{bg}", "dim"))
                 else:
                     content.append("📖 (awaiting context...)", style=mono(f"dim italic{bg}", "dim"))
+            elif mode == "heartbeat":
+                # heartbeat: show heartbeat instruction (💓 icon)
+                if s.heartbeat_enabled:
+                    freq_str = format_duration(s.heartbeat_frequency_seconds)
+                    if s.heartbeat_paused:
+                        hb_text = f"💓⏸ (paused): {s.heartbeat_instruction}"
+                    else:
+                        hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
+                    display_text = hb_text[:remaining]
+                    content.append(display_text, style=mono(f"bold magenta{bg}", "bold"))
+                else:
+                    content.append("💓 (no heartbeat configured - press H)", style=mono(f"dim{bg}", "dim"))
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:

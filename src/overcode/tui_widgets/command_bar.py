@@ -33,9 +33,10 @@ class CommandBar(Static):
 
     expanded = reactive(False)  # Toggle single/multi-line mode
     target_session: Optional[str] = None
-    mode: str = "send"  # "send", "standing_orders", "new_agent_dir", "new_agent_name", or "new_agent_perms"
+    mode: str = "send"  # "send", "standing_orders", "new_agent_*", "heartbeat_freq", "heartbeat_instruction", etc.
     new_agent_dir: Optional[str] = None  # Store directory between steps
     new_agent_name: Optional[str] = None  # Store name between steps
+    heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
@@ -72,6 +73,15 @@ class CommandBar(Static):
             super().__init__()
             self.session_name = session_name
             self.annotation = annotation
+
+    class HeartbeatUpdated(Message):
+        """Message sent when user configures heartbeat (#171)."""
+        def __init__(self, session_name: str, enabled: bool, frequency: int, instruction: str):
+            super().__init__()
+            self.session_name = session_name
+            self.enabled = enabled
+            self.frequency = frequency
+            self.instruction = instruction
 
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
@@ -124,6 +134,18 @@ class CommandBar(Static):
             else:
                 label.update("[Annotation] ")
             input_widget.placeholder = "Enter human annotation (or empty to clear)..."
+        elif self.mode == "heartbeat_freq":
+            if self.target_session:
+                label.update(f"[{self.target_session} Heartbeat: Frequency] ")
+            else:
+                label.update("[Heartbeat: Frequency] ")
+            input_widget.placeholder = "Enter interval (e.g., 300, 5m, 1h) or 'off' to disable..."
+        elif self.mode == "heartbeat_instruction":
+            if self.target_session:
+                label.update(f"[{self.target_session} Heartbeat: Instruction] ")
+            else:
+                label.update("[Heartbeat: Instruction] ")
+            input_widget.placeholder = "Enter instruction to send at each heartbeat..."
         elif self.target_session:
             label.update(f"[{self.target_session}] ")
             input_widget.placeholder = "Type instruction (Enter to send)..."
@@ -228,6 +250,17 @@ class CommandBar(Static):
             elif self.mode == "annotation":
                 # Set human annotation (empty string clears it)
                 self._set_annotation(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "heartbeat_freq":
+                # Handle frequency input for heartbeat configuration (#171)
+                self._handle_heartbeat_freq(text)
+                event.input.value = ""
+                return
+            elif self.mode == "heartbeat_instruction":
+                # Handle instruction input for heartbeat configuration (#171)
+                self._handle_heartbeat_instruction(text)
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -388,6 +421,7 @@ class CommandBar(Static):
         self.mode = "send"
         self.new_agent_dir = None
         self.new_agent_name = None
+        self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus
         self.post_message(self.ClearRequested())
@@ -397,3 +431,59 @@ class CommandBar(Static):
         input_widget = self.query_one("#cmd-input", Input)
         input_widget.disabled = False
         input_widget.focus()
+
+    def _parse_duration(self, text: str) -> Optional[int]:
+        """Parse duration string like '5m', '1h', '300' into seconds (#171)."""
+        text = text.strip().lower()
+        if not text:
+            return None
+        try:
+            if text.endswith('s'):
+                return int(text[:-1])
+            elif text.endswith('m'):
+                return int(text[:-1]) * 60
+            elif text.endswith('h'):
+                return int(text[:-1]) * 3600
+            else:
+                return int(text)
+        except ValueError:
+            return None
+
+    def _handle_heartbeat_freq(self, text: str) -> None:
+        """Handle frequency input for heartbeat configuration (#171)."""
+        if text.lower().strip() in ('off', 'disable', '0', 'no', 'false'):
+            # Disable heartbeat
+            if self.target_session:
+                self.post_message(self.HeartbeatUpdated(
+                    self.target_session, enabled=False, frequency=0, instruction=""
+                ))
+            self.action_clear_and_unfocus()
+            return
+
+        freq = self._parse_duration(text) if text else 300  # Default 5 min
+        if freq is None:
+            self.app.notify("Invalid format. Use: 300, 5m, or 1h", severity="error")
+            return
+        if freq < 30:
+            self.app.notify("Minimum heartbeat interval is 30 seconds", severity="error")
+            return
+
+        self.heartbeat_freq = freq
+        self.mode = "heartbeat_instruction"
+        self._update_target_label()
+
+    def _handle_heartbeat_instruction(self, text: str) -> None:
+        """Handle instruction input for heartbeat configuration (#171)."""
+        if not self.target_session:
+            return
+        if not text.strip():
+            self.app.notify("Heartbeat instruction cannot be empty", severity="error")
+            return
+
+        self.post_message(self.HeartbeatUpdated(
+            self.target_session,
+            enabled=True,
+            frequency=self.heartbeat_freq or 300,
+            instruction=text.strip()
+        ))
+        self.heartbeat_freq = None

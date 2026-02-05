@@ -375,6 +375,154 @@ def instruct(
             rprint(f"[dim]Tip: Use 'overcode presets' to see available presets[/dim]")
 
 
+@app.command()
+def heartbeat(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    enable: Annotated[
+        bool, typer.Option("--enable", "-e", help="Enable heartbeat")
+    ] = False,
+    disable: Annotated[
+        bool, typer.Option("--disable", "-d", help="Disable heartbeat")
+    ] = False,
+    pause: Annotated[
+        bool, typer.Option("--pause", help="Pause heartbeat (keep config)")
+    ] = False,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Resume paused heartbeat")
+    ] = False,
+    frequency: Annotated[
+        Optional[str], typer.Option("--frequency", "-f", help="Interval (e.g., 300, 5m, 1h)")
+    ] = None,
+    instruction: Annotated[
+        Optional[str], typer.Option("--instruction", "-i", help="Instruction to send")
+    ] = None,
+    show: Annotated[
+        bool, typer.Option("--show", "-s", help="Show current heartbeat config")
+    ] = False,
+    session: SessionOption = "agents",
+):
+    """Configure heartbeat for an agent (#171).
+
+    Heartbeat sends a periodic instruction to keep agents active or provide
+    regular status updates. The instruction is sent at the configured frequency.
+
+    Examples:
+        overcode heartbeat my-agent --show              # Show current config
+        overcode heartbeat my-agent -e -f 5m -i "Status check"  # Enable
+        overcode heartbeat my-agent --pause             # Temporarily pause
+        overcode heartbeat my-agent --resume            # Resume
+        overcode heartbeat my-agent --disable           # Disable completely
+    """
+    from .session_manager import SessionManager
+    from .tui_helpers import format_duration
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    # Parse frequency if provided
+    freq_seconds = None
+    if frequency:
+        freq = frequency.strip().lower()
+        try:
+            if freq.endswith('s'):
+                freq_seconds = int(freq[:-1])
+            elif freq.endswith('m'):
+                freq_seconds = int(freq[:-1]) * 60
+            elif freq.endswith('h'):
+                freq_seconds = int(freq[:-1]) * 3600
+            else:
+                freq_seconds = int(freq)
+        except ValueError:
+            rprint(f"[red]Error: Invalid frequency format '{frequency}'[/red]")
+            rprint("[dim]Use: 300, 5m, or 1h[/dim]")
+            raise typer.Exit(code=1)
+
+        if freq_seconds < 30:
+            rprint("[red]Error: Minimum heartbeat interval is 30 seconds[/red]")
+            raise typer.Exit(code=1)
+
+    # Show current config
+    if show or (not enable and not disable and not pause and not resume
+                and not frequency and not instruction):
+        if agent.heartbeat_enabled:
+            freq_str = format_duration(agent.heartbeat_frequency_seconds)
+            status = "[yellow]paused[/yellow]" if agent.heartbeat_paused else "[green]enabled[/green]"
+            rprint(f"Heartbeat for '[bold]{name}[/bold]': {status}")
+            rprint(f"  Frequency: {freq_str}")
+            rprint(f"  Instruction: {agent.heartbeat_instruction or '(none)'}")
+            if agent.last_heartbeat_time:
+                rprint(f"  Last sent: {agent.last_heartbeat_time}")
+        else:
+            rprint(f"Heartbeat for '[bold]{name}[/bold]': [dim]disabled[/dim]")
+        return
+
+    # Disable
+    if disable:
+        manager.update_session(
+            agent.id,
+            heartbeat_enabled=False,
+            heartbeat_paused=False,
+            heartbeat_instruction="",
+        )
+        rprint(f"[green]✓ Heartbeat disabled for {name}[/green]")
+        return
+
+    # Pause
+    if pause:
+        if not agent.heartbeat_enabled:
+            rprint(f"[yellow]Heartbeat is not enabled for {name}[/yellow]")
+            return
+        manager.update_session(agent.id, heartbeat_paused=True)
+        rprint(f"[green]✓ Heartbeat paused for {name}[/green]")
+        return
+
+    # Resume
+    if resume:
+        if not agent.heartbeat_enabled:
+            rprint(f"[yellow]Heartbeat is not enabled for {name}[/yellow]")
+            return
+        manager.update_session(agent.id, heartbeat_paused=False)
+        rprint(f"[green]✓ Heartbeat resumed for {name}[/green]")
+        return
+
+    # Enable with frequency and instruction
+    if enable:
+        if not instruction:
+            rprint("[red]Error: --instruction required when enabling heartbeat[/red]")
+            raise typer.Exit(code=1)
+
+        final_freq = freq_seconds or 300  # Default 5 minutes
+        manager.update_session(
+            agent.id,
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            heartbeat_frequency_seconds=final_freq,
+            heartbeat_instruction=instruction,
+        )
+        rprint(f"[green]✓ Heartbeat enabled for {name}[/green]")
+        rprint(f"  Frequency: {format_duration(final_freq)}")
+        rprint(f"  Instruction: {instruction}")
+        return
+
+    # Update frequency or instruction without full enable
+    updates = {}
+    if freq_seconds:
+        updates['heartbeat_frequency_seconds'] = freq_seconds
+    if instruction:
+        updates['heartbeat_instruction'] = instruction
+
+    if updates:
+        manager.update_session(agent.id, **updates)
+        rprint(f"[green]✓ Heartbeat config updated for {name}[/green]")
+        if freq_seconds:
+            rprint(f"  Frequency: {format_duration(freq_seconds)}")
+        if instruction:
+            rprint(f"  Instruction: {instruction}")
+
+
 # =============================================================================
 # Monitoring Commands
 # =============================================================================
