@@ -218,6 +218,33 @@ class TestCalculateTimeAccumulation:
         assert result.green_seconds == 10300.0
         assert result.was_capped is False
 
+    def test_individual_components_clamped_to_uptime(self):
+        """Individual time components should not exceed uptime (#154).
+
+        Even when total is within tolerance, non_green shouldn't exceed
+        uptime - green, to prevent display anomalies like paused > uptime.
+        """
+        # Session uptime is 600s, but we have near-zero green and excessive non_green
+        # Total (10 + 650 = 660) is within 10% tolerance of 600, but non_green alone exceeds uptime
+        result = calculate_time_accumulation(
+            current_status="waiting_user",
+            previous_status="waiting_user",
+            elapsed_seconds=50.0,
+            current_green=10.0,  # Very low green time
+            current_non_green=600.0,  # More than uptime!
+            current_sleep=0.0,
+            session_start=datetime(2024, 1, 1, 10, 0, 0),
+            now=datetime(2024, 1, 1, 10, 10, 0),  # 10 min = 600s uptime
+        )
+
+        # green should be clamped to uptime (600)
+        assert result.green_seconds <= 600.0
+        # non_green should be clamped to (uptime - green)
+        assert result.non_green_seconds <= 600.0 - result.green_seconds
+        # Total should not exceed uptime
+        total = result.green_seconds + result.non_green_seconds + result.sleep_seconds
+        assert total <= 600.0
+
 
 class TestCalculateCostEstimate:
     """Tests for calculate_cost_estimate function."""
