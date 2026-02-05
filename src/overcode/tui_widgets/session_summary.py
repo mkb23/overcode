@@ -374,14 +374,12 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" ⏱{work_str:>5}", style=mono(f"bold blue{bg}", "bold"))
 
         # Subagent count (#176) and background task count (#177) - show in full detail only
-        if self.summary_detail == "full" and self.claude_stats is not None:
-            sub_count = self.claude_stats.subagent_count
-            task_count = self.claude_stats.background_task_count
-            if sub_count > 0 or task_count > 0:
-                # Show subagents with 🔀 icon
-                content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
-                # Show background tasks with ⚡ icon
-                content.append(f" ⚡{task_count:>2}", style=mono(f"bold yellow{bg}", "bold") if task_count > 0 else mono(f"dim{bg}", "dim"))
+        if self.summary_detail == "full":
+            sub_count = getattr(self.claude_stats, 'subagent_count', 0) if self.claude_stats else 0
+            task_count = getattr(self.claude_stats, 'background_task_count', 0) if self.claude_stats else 0
+            # Always show columns for alignment, dim if zero
+            content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
+            content.append(f" ⚡{task_count:>2}", style=mono(f"bold yellow{bg}", "bold") if task_count > 0 else mono(f"dim{bg}", "dim"))
 
         # Always show: permission mode, human interactions, robot supervisions
         content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))

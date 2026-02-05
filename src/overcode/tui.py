@@ -1234,38 +1234,40 @@ class SupervisorTUI(
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
     def on_key(self, event: events.Key) -> None:
-        """Handle keypresses and signal activity to daemon.
-
-        When help overlay is visible (#175):
-        - h/? toggle help (close it)
-        - q quits the app
-        - Escape closes help
-        - All other keys close help without performing their action
-        """
+        """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
 
-        # Check if help overlay is visible (#175)
+        # Handle Escape to close help overlay (#175)
+        try:
+            from .tui_widgets import HelpOverlay
+            help_overlay = self.query_one("#help-overlay", HelpOverlay)
+            if help_overlay.has_class("visible") and event.key == "escape":
+                help_overlay.remove_class("visible")
+                event.stop()
+        except Exception:
+            pass
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Check if an action should be allowed (#175).
+
+        When help overlay is visible, only allow help toggle and quit.
+        Other actions are blocked - pressing those keys just closes help.
+        """
+        # Only intercept when help is visible
         try:
             from .tui_widgets import HelpOverlay
             help_overlay = self.query_one("#help-overlay", HelpOverlay)
             if help_overlay.has_class("visible"):
-                # Allow h/? to toggle help (close it)
-                if event.key in ("h", "question_mark"):
-                    return  # Let normal binding handle it
-                # Allow q to quit
-                if event.key == "q":
-                    return  # Let normal binding handle it
-                # Escape also closes help
-                if event.key == "escape":
-                    help_overlay.remove_class("visible")
-                    event.stop()
-                    return
-                # All other keys: close help and don't perform the action
+                # Allow these actions when help is visible
+                if action in ("toggle_help", "quit"):
+                    return True
+                # Block all other actions - close help instead
                 help_overlay.remove_class("visible")
-                event.stop()
-                return
+                return False
         except Exception:
-            pass  # If query fails, proceed normally
+            pass
+        # Default: allow the action
+        return True
 
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""
