@@ -24,15 +24,24 @@ class InputActionsMixin:
         Returns:
             True if the agent was woken, False if it wasn't sleeping
         """
-        if not session.is_asleep:
+        # Check both the session object and widget's detected status
+        is_sleeping = session.is_asleep
+        if widget and widget.detected_status == "asleep":
+            is_sleeping = True
+
+        if not is_sleeping:
             return False
 
-        # Wake the agent
+        # Wake the agent - persist to disk
         self.session_manager.update_session(session.id, is_asleep=False)
         session.is_asleep = False
 
-        # Update widget display if provided
+        # Update widget display immediately (don't wait for next refresh cycle)
         if widget:
+            widget.session.is_asleep = False
+            # Clear the asleep status so it shows detected status on next refresh
+            if widget.detected_status == "asleep":
+                widget.detected_status = "running"  # Will be corrected on next status update
             widget.refresh()
 
         self.notify(f"Woke agent '{session.name}' to send command", severity="information")

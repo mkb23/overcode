@@ -975,6 +975,14 @@ class SupervisorTUI(
         session = self.session_manager.get_session_by_name(message.session_name)
         if session and session.is_asleep:
             self.session_manager.update_session(session.id, is_asleep=False)
+            # Update widget display immediately
+            for widget in self.query(SessionSummary):
+                if widget.session.id == session.id:
+                    widget.session.is_asleep = False
+                    if widget.detected_status == "asleep":
+                        widget.detected_status = "running"
+                    widget.refresh()
+                    break
             self.notify(f"Woke agent '{message.session_name}' to send command", severity="information")
 
         launcher = ClaudeLauncher(
