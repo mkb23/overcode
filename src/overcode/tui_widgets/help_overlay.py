@@ -42,10 +42,11 @@ class HelpOverlay(Static):
 ║  ──────────────────────────────────────────────────────────────────────────  ║
 ║  i/:     Send instruction        o       Set standing orders                 ║
 ║  I       Edit annotation         Enter   Approve (send Enter)                ║
-║  1-5     Send number             n       New agent                           ║
-║  x       Kill agent              R       Restart agent                       ║
-║  z       Toggle sleep            V       Edit agent value                    ║
-║  b       Jump to red/attention   H       Handover all (2x) → draft PR        ║
+║  1-5     Send number             Esc     Interrupt agent                     ║
+║  n       New agent               x       Kill agent                          ║
+║  R       Restart agent           z       Toggle sleep                        ║
+║  V       Edit agent value        b       Jump to red/attention               ║
+║  H       Handover all (2x) → draft PR                                        ║
 ║                                                                              ║
 ║  DAEMON CONTROL                                                              ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║
