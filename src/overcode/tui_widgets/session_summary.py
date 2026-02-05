@@ -79,7 +79,13 @@ class SessionSummary(Static, can_focus=True):
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
         # Track when status last changed (for immediate time-in-state updates)
+        # Initialize from daemon's persisted state_since to survive TUI restarts (#132)
         self._status_changed_at: Optional[datetime] = None
+        if session.stats.state_since:
+            try:
+                self._status_changed_at = datetime.fromisoformat(session.stats.state_since)
+            except (ValueError, TypeError):
+                pass
         self._last_known_status: str = self.detected_status
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
@@ -366,6 +372,16 @@ class SessionSummary(Static, can_focus=True):
         if self.summary_detail in ("med", "full"):
             work_str = format_duration(median_work) if median_work > 0 else "0s"
             content.append(f" ⏱{work_str:>5}", style=mono(f"bold blue{bg}", "bold"))
+
+        # Subagent count (#176) and background task count (#177) - show in full detail only
+        if self.summary_detail == "full" and self.claude_stats is not None:
+            sub_count = self.claude_stats.subagent_count
+            task_count = self.claude_stats.background_task_count
+            if sub_count > 0 or task_count > 0:
+                # Show subagents with 🔀 icon
+                content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
+                # Show background tasks with ⚡ icon
+                content.append(f" ⚡{task_count:>2}", style=mono(f"bold yellow{bg}", "bold") if task_count > 0 else mono(f"dim{bg}", "dim"))
 
         # Always show: permission mode, human interactions, robot supervisions
         content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))
