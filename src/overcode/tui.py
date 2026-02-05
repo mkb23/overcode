@@ -157,6 +157,8 @@ class SupervisorTUI(
         ("n", "new_agent", "New agent"),
         # Send Enter to focused agent (for approvals)
         ("enter", "send_enter_to_focused", "Send Enter"),
+        # Send Escape to focused agent (for interrupting)
+        ("escape", "send_escape_to_focused", "Send Escape"),
         # Send number keys 1-5 to focused agent (for numbered prompts)
         ("1", "send_1_to_focused", "Send 1"),
         ("2", "send_2_to_focused", "Send 2"),

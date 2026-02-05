@@ -36,6 +36,27 @@ class InputActionsMixin:
         else:
             self.notify(f"Failed to send Enter to {session_name}", severity="error")
 
+    def action_send_escape_to_focused(self) -> None:
+        """Send Escape keypress to the focused agent (for interrupting)."""
+        from ..tui_widgets import SessionSummary
+        from ..launcher import ClaudeLauncher
+
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session_name = focused.session.name
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+
+        if launcher.send_to_session(session_name, "escape"):
+            self.notify(f"Sent Escape to {session_name}", severity="information")
+        else:
+            self.notify(f"Failed to send Escape to {session_name}", severity="error")
+
     def _is_freetext_option(self, pane_content: str, key: str) -> bool:
         """Check if a numbered menu option is a free-text instruction option.
 
