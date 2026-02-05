@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "overcode"
-version = "0.1.4"
+version = "0.1.5"
 description = "A supervisor for managing multiple Claude Code instances in tmux"
 authors = [
     {name = "Mike Bond"}
@@ -68,7 +68,7 @@ tui-eye = "overcode.testing.tui_eye:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-overcode = ["*.md", "*.sh"]
+overcode = ["*.md", "*.sh", "*.tcss"]
 
 [tool.black]
 line-length = 100
