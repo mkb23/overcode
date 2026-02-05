@@ -14,6 +14,30 @@ if TYPE_CHECKING:
 class InputActionsMixin:
     """Mixin providing input/send actions for SupervisorTUI."""
 
+    def _auto_wake_if_sleeping(self, session, widget=None) -> bool:
+        """Auto-wake a sleeping agent when sending a command (#168).
+
+        Args:
+            session: The session to potentially wake
+            widget: Optional SessionSummary widget to update
+
+        Returns:
+            True if the agent was woken, False if it wasn't sleeping
+        """
+        if not session.is_asleep:
+            return False
+
+        # Wake the agent
+        self.session_manager.update_session(session.id, is_asleep=False)
+        session.is_asleep = False
+
+        # Update widget display if provided
+        if widget:
+            widget.refresh()
+
+        self.notify(f"Woke agent '{session.name}' to send command", severity="information")
+        return True
+
     def action_send_enter_to_focused(self) -> None:
         """Send Enter keypress to the focused agent (for approvals)."""
         from ..tui_widgets import SessionSummary
@@ -24,7 +48,12 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        session_name = focused.session.name
+        session = focused.session
+        session_name = session.name
+
+        # Auto-wake sleeping agent (#168)
+        self._auto_wake_if_sleeping(session, focused)
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
@@ -109,7 +138,12 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        session_name = focused.session.name
+        session = focused.session
+        session_name = session.name
+
+        # Auto-wake sleeping agent (#168)
+        self._auto_wake_if_sleeping(session, focused)
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager

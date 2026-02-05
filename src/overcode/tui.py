@@ -971,6 +971,12 @@ class SupervisorTUI(
         """Handle send request from command bar."""
         from datetime import datetime
 
+        # Auto-wake sleeping agent if needed (#168)
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session and session.is_asleep:
+            self.session_manager.update_session(session.id, is_asleep=False)
+            self.notify(f"Woke agent '{message.session_name}' to send command", severity="information")
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
@@ -1228,8 +1234,38 @@ class SupervisorTUI(
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
     def on_key(self, event: events.Key) -> None:
-        """Signal activity to daemon on any keypress."""
+        """Handle keypresses and signal activity to daemon.
+
+        When help overlay is visible (#175):
+        - h/? toggle help (close it)
+        - q quits the app
+        - Escape closes help
+        - All other keys close help without performing their action
+        """
         signal_activity(self.tmux_session)
+
+        # Check if help overlay is visible (#175)
+        try:
+            from .tui_widgets import HelpOverlay
+            help_overlay = self.query_one("#help-overlay", HelpOverlay)
+            if help_overlay.has_class("visible"):
+                # Allow h/? to toggle help (close it)
+                if event.key in ("h", "question_mark"):
+                    return  # Let normal binding handle it
+                # Allow q to quit
+                if event.key == "q":
+                    return  # Let normal binding handle it
+                # Escape also closes help
+                if event.key == "escape":
+                    help_overlay.remove_class("visible")
+                    event.stop()
+                    return
+                # All other keys: close help and don't perform the action
+                help_overlay.remove_class("visible")
+                event.stop()
+                return
+        except Exception:
+            pass  # If query fails, proceed normally
 
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""

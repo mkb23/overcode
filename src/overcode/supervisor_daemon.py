@@ -653,7 +653,7 @@ class SupervisorDaemon:
         self.daemon_claude_launch_time = datetime.now()
 
         # Start Claude with auto-permissions
-        claude_cmd = "claude code --dangerously-skip-permissions"
+        claude_cmd = "claude --dangerously-skip-permissions"
         if not self.tmux.send_keys(window_index, claude_cmd, enter=True):
             self.log.error("Failed to start Claude in daemon claude window")
             return False
