@@ -472,18 +472,32 @@ class CommandBar(Static):
         self.mode = "heartbeat_instruction"
         self._update_target_label()
 
+        # Pre-fill with existing heartbeat instruction if available
+        if self.target_session:
+            session = self.app.session_manager.get_session_by_name(self.target_session)
+            if session and session.heartbeat_instruction:
+                input_widget = self.query_one("#cmd-input", Input)
+                input_widget.value = session.heartbeat_instruction
+
     def _handle_heartbeat_instruction(self, text: str) -> None:
         """Handle instruction input for heartbeat configuration (#171)."""
         if not self.target_session:
             return
-        if not text.strip():
-            self.app.notify("Heartbeat instruction cannot be empty", severity="error")
-            return
+
+        instruction = text.strip()
+        # If empty, keep the existing instruction (user just hit Enter to confirm)
+        if not instruction:
+            session = self.app.session_manager.get_session_by_name(self.target_session)
+            if session and session.heartbeat_instruction:
+                instruction = session.heartbeat_instruction
+            else:
+                self.app.notify("Heartbeat instruction cannot be empty", severity="error")
+                return
 
         self.post_message(self.HeartbeatUpdated(
             self.target_session,
             enabled=True,
             frequency=self.heartbeat_freq or 300,
-            instruction=text.strip()
+            instruction=instruction
         ))
         self.heartbeat_freq = None
