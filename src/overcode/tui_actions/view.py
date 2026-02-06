@@ -290,6 +290,26 @@ class ViewActionsMixin:
         # Trigger timeline refresh to show baseline marker
         self.update_timeline()
 
+    def action_cycle_timeline_hours(self) -> None:
+        """Cycle timeline scope through presets: 1h → 3h → 6h → 12h → 24h (#191)."""
+        from ..tui_widgets.status_timeline import StatusTimeline
+        presets = self.TIMELINE_PRESETS
+        current = self._prefs.timeline_hours
+        # Find current index (snap to nearest preset if not exact)
+        try:
+            idx = presets.index(current)
+        except ValueError:
+            idx = 0
+        new_hours = presets[(idx + 1) % len(presets)]
+        self._prefs.timeline_hours = new_hours
+        self._save_prefs()
+        try:
+            timeline = self.query_one("#timeline", StatusTimeline)
+            timeline.set_hours(new_hours, self.sessions)
+        except Exception:
+            pass
+        self.notify(f"Timeline: {new_hours:.0f}h", severity="information")
+
     def action_toggle_monochrome(self) -> None:
         """Toggle monochrome (B&W) mode for terminals with ANSI issues (#138).
 

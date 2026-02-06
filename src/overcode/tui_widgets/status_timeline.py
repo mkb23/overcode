@@ -77,6 +77,11 @@ class StatusTimeline(Static):
             # No terminal available or invalid size
             return self.DEFAULT_TIMELINE
 
+    def set_hours(self, hours: float, sessions: list) -> None:
+        """Change timeline scope and refresh (#191)."""
+        self.timeline_hours = hours
+        self.update_history(sessions)
+
     def update_history(self, sessions: list) -> None:
         """Refresh history data from log files."""
         self.sessions = sessions

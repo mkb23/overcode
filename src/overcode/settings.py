@@ -400,6 +400,7 @@ class TUIPreferences:
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     show_cost: bool = False  # Show $ cost instead of token counts
+    timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
     # Column group visibility (group_id -> enabled) for summary line (#178)
@@ -444,6 +445,7 @@ class TUIPreferences:
                     show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                     summary_groups=data.get("summary_groups", default_summary_groups),
+                    timeline_hours=data.get("timeline_hours", 3.0),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -472,6 +474,7 @@ class TUIPreferences:
                     "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                     "summary_groups": self.summary_groups,
+                    "timeline_hours": self.timeline_hours,
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

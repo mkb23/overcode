@@ -195,6 +195,8 @@ class SupervisorTUI(
         ("comma", "baseline_back", "Baseline -15m"),
         ("full_stop", "baseline_forward", "Baseline +15m"),
         ("0", "baseline_reset", "Reset baseline"),
+        # Timeline scope cycle (#191)
+        ("less_than_sign", "cycle_timeline_hours", "Timeline scope"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
         # Toggle between token count and dollar cost display
@@ -211,6 +213,8 @@ class SupervisorTUI(
 
     # Detail level cycles through 5, 10, 20, 50 lines
     DETAIL_LEVELS = [5, 10, 20, 50]
+    # Timeline scope presets in hours (#191)
+    TIMELINE_PRESETS = [1, 3, 6, 12, 24]
     # Summary detail levels: low (minimal), med (timing), full (all + repo), custom (user-configured)
     SUMMARY_LEVELS = ["low", "med", "full", "custom"]
     # Sort modes (#61)
@@ -346,6 +350,7 @@ class SupervisorTUI(
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
             timeline.display = self._prefs.timeline_visible
+            timeline.timeline_hours = self._prefs.timeline_hours
         except NoMatches:
             pass
 
