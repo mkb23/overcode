@@ -168,6 +168,7 @@ class TestTrackSessionStats:
         mock_session.start_directory = "/tmp/test"
         mock_session.is_asleep = False
         mock_session.agent_value = 1.0
+        mock_session.cost_budget_usd = 0.0
 
         mock_stats = Mock()
         mock_stats.current_task = "doing stuff"

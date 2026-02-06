@@ -686,6 +686,7 @@ class SupervisorDaemon:
                 "name": s.name,
                 "current_status": s.current_status,
                 "is_asleep": s.is_asleep,
+                "budget_exceeded": s.budget_exceeded,
                 "standing_instructions": s.standing_instructions,
                 "_session": s,  # Keep reference to original
             }

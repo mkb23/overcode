@@ -360,7 +360,20 @@ class SessionSummary(Static, can_focus=True):
                 if self.show_cost:
                     # Show estimated cost instead of tokens
                     cost = s.stats.estimated_cost_usd
-                    content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
+                    budget = s.cost_budget_usd
+                    if budget > 0:
+                        cost_str = format_cost(cost)
+                        budget_str = format_cost(budget)
+                        display = f"{cost_str}/{budget_str}"
+                        if cost >= budget:
+                            style = mono(f"bold red{bg}", "bold")
+                        elif cost >= budget * 0.8:
+                            style = mono(f"bold yellow{bg}", "bold")
+                        else:
+                            style = mono(f"bold orange1{bg}", "bold")
+                        content.append(f" {display:>14}", style=style)
+                    else:
+                        content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
                 else:
                     content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
                 # Show current context window usage as percentage (assuming 200K max)

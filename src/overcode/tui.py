@@ -187,6 +187,8 @@ class SupervisorTUI(
         ("S", "cycle_sort_mode", "Sort mode"),
         # Edit agent value (#61)
         ("V", "edit_agent_value", "Edit value"),
+        # Cost budget (#173)
+        ("B", "edit_cost_budget", "Cost budget"),
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
         # Edit human annotation (#74)
@@ -1070,6 +1072,19 @@ class SupervisorTUI(
             self.session_manager.set_agent_value(session.id, message.value)
             self.notify(f"Value set to {message.value} for {message.session_name}")
             # Refresh and re-sort session list
+            self.refresh_sessions()
+        else:
+            self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_budget_updated(self, message: CommandBar.BudgetUpdated) -> None:
+        """Handle cost budget update from command bar (#173)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session:
+            self.session_manager.set_cost_budget(session.id, message.budget_usd)
+            if message.budget_usd > 0:
+                self.notify(f"Budget set to ${message.budget_usd:.2f} for {message.session_name}")
+            else:
+                self.notify(f"Budget cleared for {message.session_name}")
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")

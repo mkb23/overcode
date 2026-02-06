@@ -344,6 +344,12 @@ class MonitorDaemon:
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
+            # Cost budget (#173)
+            cost_budget_usd=session.cost_budget_usd,
+            budget_exceeded=(
+                session.cost_budget_usd > 0
+                and stats.estimated_cost_usd >= session.cost_budget_usd
+            ),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -364,6 +370,10 @@ class MonitorDaemon:
                 continue
             # Skip sleeping agents
             if session.is_asleep:
+                continue
+            # Skip budget-exceeded agents (#173)
+            if (session.cost_budget_usd > 0
+                    and session.stats.estimated_cost_usd >= session.cost_budget_usd):
                 continue
             # Skip if no instruction configured
             if not session.heartbeat_instruction:
