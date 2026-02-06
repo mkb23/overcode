@@ -406,8 +406,8 @@ class SessionSummary(Static, can_focus=True):
             # Use live background bash count from status bar (not disk-based count)
             bash_count = self.background_bash_count
             # Always show columns for alignment, dim if zero
-            content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
-            content.append(f" ⚡{bash_count:>2}", style=mono(f"bold yellow{bg}", "bold") if bash_count > 0 else mono(f"dim{bg}", "dim"))
+            content.append(f" 🤿{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
+            content.append(f" 🐚{bash_count:>2}", style=mono(f"bold yellow{bg}", "bold") if bash_count > 0 else mono(f"dim{bg}", "dim"))
 
         # Supervision: permission mode, human interactions, robot supervisions - toggleable
         if self.group_enabled("supervision"):

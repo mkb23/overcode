@@ -417,7 +417,7 @@ def show(
             print(f"Git:       Δ{files} files +{format_line_count(ins)} -{format_line_count(dels)}")
 
         # Subagents & background bashes (live counts from status bar)
-        print(f"Agents:    🔀 {live_sub_count} subagents  ⚡ {bg_bash_count} background bashes")
+        print(f"Agents:    🤿 {live_sub_count} subagents  🐚 {bg_bash_count} background bashes")
 
         # Standing orders
         if sess.standing_instructions:
