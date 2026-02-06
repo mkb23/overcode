@@ -325,3 +325,15 @@ Some more output here
 ────────────────────────────
   ⏵⏵ bypass permissions on · 2 bashes · esc to interrupt"""
         assert extract_background_bash_count(content) == 2
+
+    def test_handles_ansi_codes_in_status_bar(self):
+        """Should detect bashes even when status bar has ANSI escape codes."""
+        # Real tmux capture includes ANSI color codes around the status bar
+        content = """Some output
+\x1b[36m⏵⏵ bypass permissions on · 3 bashes · esc to interrupt\x1b[0m"""
+        assert extract_background_bash_count(content) == 3
+
+    def test_handles_ansi_codes_single_bash(self):
+        """Should detect single bash with ANSI codes."""
+        content = """\x1b[1;36m⏵⏵ auto-approve · sleep 120 (running) · esc\x1b[0m"""
+        assert extract_background_bash_count(content) == 1
