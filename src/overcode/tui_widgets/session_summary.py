@@ -87,8 +87,24 @@ class SessionSummary(Static, can_focus=True):
             except (ValueError, TypeError):
                 pass
         self._last_known_status: str = self.detected_status
+        # Column group visibility (#178)
+        self.summary_groups: dict = {
+            "time": True, "tokens": True, "git": True,
+            "supervision": True, "priority": True, "performance": True
+        }
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
+
+    def group_enabled(self, group_id: str) -> bool:
+        """Check if a column group is enabled for display.
+
+        Only applies custom visibility settings when in 'custom' mode.
+        In low/med/full modes, all groups are enabled (visibility is
+        controlled by the mode itself, not the group settings).
+        """
+        if self.summary_detail != "custom":
+            return True
+        return self.summary_groups.get(group_id, True)
 
     def on_click(self) -> None:
         """Toggle expanded state on click"""
@@ -262,7 +278,7 @@ class SessionSummary(Static, can_focus=True):
             name_width = 24
         elif self.summary_detail == "med":
             name_width = 20
-        else:  # full
+        else:  # full or custom
             name_width = 16
 
         # Truncate name if needed
@@ -306,13 +322,13 @@ class SessionSummary(Static, can_focus=True):
             content.append(f"{expand_icon} ", style=status_color)
         content.append(f"{display_name}", style=mono(f"bold cyan{bg}", "bold"))
 
-        # Full detail: add repo:branch (padded to longest across all sessions)
-        if self.summary_detail == "full":
+        # Full/Custom detail: add repo:branch (padded to longest across all sessions)
+        if self.summary_detail in ("full", "custom") and self.group_enabled("git"):
             repo_width = getattr(self.app, 'max_repo_info_width', 18)
             content.append(f" {repo_info:<{repo_width}} ", style=mono(f"bold dim{bg}", "dim"))
 
-        # Med/Full detail: add uptime, running time, stalled time, sleep time
-        if self.summary_detail in ("med", "full"):
+        # Med/Full/Custom detail: add uptime, running time, stalled time, sleep time
+        if self.summary_detail in ("med", "full", "custom") and self.group_enabled("time"):
             content.append(f" ↑{uptime:>5}", style=mono(f"bold white{bg}", "bold"))
             content.append(f" ▶{format_duration(green_time):>5}", style=mono(f"bold green{bg}", "bold"))
             content.append(f" ⏸{format_duration(non_green_time):>5}", style=mono(f"bold red{bg}", "dim"))
@@ -323,103 +339,107 @@ class SessionSummary(Static, can_focus=True):
             sleep_col = f" 💤{sleep_str:>5}"  # This should be 8 cells
             sleep_style = mono(f"bold cyan{bg}", "bold") if sleep_time > 0 else mono(f"dim cyan{bg}", "dim")
             content.append(sleep_col, style=sleep_style)
-            # Full detail: show percentage active (excludes sleep time from total)
-            if self.summary_detail == "full":
+            # Full/Custom detail: show percentage active (excludes sleep time from total)
+            if self.summary_detail in ("full", "custom"):
                 active_time = green_time + non_green_time
                 pct = (green_time / active_time * 100) if active_time > 0 else 0
                 content.append(f" {pct:>3.0f}%", style=mono(f"bold green{bg}" if pct >= 50 else f"bold red{bg}", "bold"))
 
-        # Always show: token usage or cost (from Claude Code)
+        # Token usage or cost (from Claude Code) - toggleable via tokens group
         # ALIGNMENT: context indicator is always 7 chars " c@NNN%" (or placeholder)
-        if self.claude_stats is not None:
-            if self.show_cost:
-                # Show estimated cost instead of tokens
-                cost = s.stats.estimated_cost_usd
-                content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
+        if self.group_enabled("tokens"):
+            if self.claude_stats is not None:
+                if self.show_cost:
+                    # Show estimated cost instead of tokens
+                    cost = s.stats.estimated_cost_usd
+                    content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
+                else:
+                    content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
+                # Show current context window usage as percentage (assuming 200K max)
+                if self.claude_stats.current_context_tokens > 0:
+                    max_context = 200_000  # Claude models have 200K context window
+                    ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
+                    content.append(f" c@{ctx_pct:>3.0f}%", style=mono(f"bold orange1{bg}", "bold"))
+                else:
+                    content.append(" c@  -%", style=mono(f"dim orange1{bg}", "dim"))
             else:
-                content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
-            # Show current context window usage as percentage (assuming 200K max)
-            if self.claude_stats.current_context_tokens > 0:
-                max_context = 200_000  # Claude models have 200K context window
-                ctx_pct = min(100, self.claude_stats.current_context_tokens / max_context * 100)
-                content.append(f" c@{ctx_pct:>3.0f}%", style=mono(f"bold orange1{bg}", "bold"))
-            else:
-                content.append(" c@  -%", style=mono(f"dim orange1{bg}", "dim"))
-        else:
-            content.append("      - c@  -%", style=mono(f"dim orange1{bg}", "dim"))
+                content.append("      - c@  -%", style=mono(f"dim orange1{bg}", "dim"))
 
-        # Git diff stats (outstanding changes since last commit)
+        # Git diff stats (outstanding changes since last commit) - toggleable via git group
         # ALIGNMENT: Use fixed widths - low/med: 4 chars "Δnn ", full: 16 chars "Δnn +nnnn -nnnn"
         # Large line counts are shortened: 173242 -> "173K", 1234567 -> "1.2M"
-        if self.git_diff_stats:
-            files, ins, dels = self.git_diff_stats
-            if self.summary_detail == "full":
-                # Full: show files and lines with fixed widths
-                content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}", "bold"))
-                content.append(f" +{format_line_count(ins):>4}", style=mono(f"bold green{bg}", "bold"))
-                content.append(f" -{format_line_count(dels):>4}", style=mono(f"bold red{bg}", "dim"))
+        if self.group_enabled("git"):
+            if self.git_diff_stats:
+                files, ins, dels = self.git_diff_stats
+                if self.summary_detail in ("full", "custom"):
+                    # Full/Custom: show files and lines with fixed widths
+                    content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}", "bold"))
+                    content.append(f" +{format_line_count(ins):>4}", style=mono(f"bold green{bg}", "bold"))
+                    content.append(f" -{format_line_count(dels):>4}", style=mono(f"bold red{bg}", "dim"))
+                else:
+                    # Compact: just files changed (fixed 4 char width)
+                    content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}" if files > 0 else f"dim{bg}", "bold" if files > 0 else "dim"))
             else:
-                # Compact: just files changed (fixed 4 char width)
-                content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}" if files > 0 else f"dim{bg}", "bold" if files > 0 else "dim"))
-        else:
-            # Placeholder matching width for alignment
-            if self.summary_detail == "full":
-                content.append("  Δ-  +   -  -  ", style=mono(f"dim{bg}", "dim"))
-            else:
-                content.append("  Δ-", style=mono(f"dim{bg}", "dim"))
+                # Placeholder matching width for alignment
+                if self.summary_detail in ("full", "custom"):
+                    content.append("  Δ-  +   -  -  ", style=mono(f"dim{bg}", "dim"))
+                else:
+                    content.append("  Δ-", style=mono(f"dim{bg}", "dim"))
 
-        # Med/Full detail: add median work time (p50 autonomous work duration)
-        if self.summary_detail in ("med", "full"):
+        # Med/Full/Custom detail: add median work time (p50 autonomous work duration) - toggleable via performance group
+        if self.summary_detail in ("med", "full", "custom") and self.group_enabled("performance"):
             work_str = format_duration(median_work) if median_work > 0 else "0s"
             content.append(f" ⏱{work_str:>5}", style=mono(f"bold blue{bg}", "bold"))
 
-        # Subagent count (#176) and background task count (#177) - show in full detail only
-        if self.summary_detail == "full":
+        # Subagent count (#176) and background task count (#177) - show in full/custom detail only
+        if self.summary_detail in ("full", "custom"):
             sub_count = getattr(self.claude_stats, 'subagent_count', 0) if self.claude_stats else 0
             task_count = getattr(self.claude_stats, 'background_task_count', 0) if self.claude_stats else 0
             # Always show columns for alignment, dim if zero
             content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
             content.append(f" ⚡{task_count:>2}", style=mono(f"bold yellow{bg}", "bold") if task_count > 0 else mono(f"dim{bg}", "dim"))
 
-        # Always show: permission mode, human interactions, robot supervisions
-        content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))
-        # Human interaction count = total interactions - robot interventions
-        if self.claude_stats is not None:
-            human_count = max(0, self.claude_stats.interaction_count - stats.steers_count)
-            content.append(f" 👤{human_count:>3}", style=mono(f"bold yellow{bg}", "bold"))
-        else:
-            content.append(" 👤  -", style=mono(f"dim yellow{bg}", "dim"))
-        # Robot supervision count (from daemon steers) - 3 digit padding
-        content.append(f" 🤖{stats.steers_count:>3}", style=mono(f"bold cyan{bg}", "bold"))
-
-        # Standing orders indicator (after supervision count) - always show for alignment
-        if s.standing_instructions:
-            if s.standing_orders_complete:
-                content.append(" ✓", style=mono(f"bold green{bg}", "bold"))
-            elif s.standing_instructions_preset:
-                # Show preset name (truncated to fit)
-                preset_display = f" {s.standing_instructions_preset[:8]}"
-                content.append(preset_display, style=mono(f"bold cyan{bg}", "bold"))
+        # Supervision: permission mode, human interactions, robot supervisions - toggleable
+        if self.group_enabled("supervision"):
+            content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))
+            # Human interaction count = total interactions - robot interventions
+            if self.claude_stats is not None:
+                human_count = max(0, self.claude_stats.interaction_count - stats.steers_count)
+                content.append(f" 👤{human_count:>3}", style=mono(f"bold yellow{bg}", "bold"))
             else:
-                content.append(" 📋", style=mono(f"bold yellow{bg}", "bold"))
-        else:
-            content.append(" ➖", style=mono(f"bold dim{bg}", "dim"))  # No instructions indicator
+                content.append(" 👤  -", style=mono(f"dim yellow{bg}", "dim"))
+            # Robot supervision count (from daemon steers) - 3 digit padding
+            content.append(f" 🤖{stats.steers_count:>3}", style=mono(f"bold cyan{bg}", "bold"))
 
-        # Agent value indicator (#61)
-        # Full detail: show numeric value with money bag
+            # Standing orders indicator (after supervision count) - always show for alignment
+            if s.standing_instructions:
+                if s.standing_orders_complete:
+                    content.append(" ✓", style=mono(f"bold green{bg}", "bold"))
+                elif s.standing_instructions_preset:
+                    # Show preset name (truncated to fit)
+                    preset_display = f" {s.standing_instructions_preset[:8]}"
+                    content.append(preset_display, style=mono(f"bold cyan{bg}", "bold"))
+                else:
+                    content.append(" 📋", style=mono(f"bold yellow{bg}", "bold"))
+            else:
+                content.append(" ➖", style=mono(f"bold dim{bg}", "dim"))  # No instructions indicator
+
+        # Agent value indicator (#61) - toggleable via priority group
+        # Full/Custom detail: show numeric value with money bag
         # Short/med: show priority chevrons (⏫ high, ⏹ normal, ⏬ low)
-        if self.summary_detail == "full":
-            content.append(f" 💰{s.agent_value:>4}", style=mono(f"bold magenta{bg}", "bold"))
-        else:
-            # Priority icon based on value relative to default 1000
-            # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
-            # a trailing space to ⏹️ for alignment
-            if s.agent_value > 1000:
-                content.append(" ⏫️", style=mono(f"bold red{bg}", "bold"))  # High priority
-            elif s.agent_value < 1000:
-                content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
+        if self.group_enabled("priority"):
+            if self.summary_detail in ("full", "custom"):
+                content.append(f" 💰{s.agent_value:>4}", style=mono(f"bold magenta{bg}", "bold"))
             else:
-                content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
+                # Priority icon based on value relative to default 1000
+                # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
+                # a trailing space to ⏹️ for alignment
+                if s.agent_value > 1000:
+                    content.append(" ⏫️", style=mono(f"bold red{bg}", "bold"))  # High priority
+                elif s.agent_value < 1000:
+                    content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
+                else:
+                    content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)

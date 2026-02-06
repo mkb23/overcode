@@ -95,6 +95,7 @@ from .tui_widgets import (
     StatusTimeline,
     SessionSummary,
     CommandBar,
+    SummaryConfigModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -197,12 +198,14 @@ class SupervisorTUI(
         ("dollar_sign", "toggle_cost_display", "Show $"),
         # Transport/handover - prepare all sessions for handoff (double-press)
         ("H", "transport_all", "Handover all"),
+        # Column configuration modal (#178)
+        ("C", "open_column_config", "Columns"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
     DETAIL_LEVELS = [5, 10, 20, 50]
-    # Summary detail levels: low (minimal), med (timing), full (all + repo)
-    SUMMARY_LEVELS = ["low", "med", "full"]
+    # Summary detail levels: low (minimal), med (timing), full (all + repo), custom (user-configured)
+    SUMMARY_LEVELS = ["low", "med", "full", "custom"]
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value"]
     # Summary content modes: what to show in the summary line (#74)
@@ -305,6 +308,8 @@ class SupervisorTUI(
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
         yield CommandBar(id="command-bar")
+        # Modal for column configuration (positioned programmatically)
+        yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal")
         yield HelpOverlay(id="help-overlay")
         yield Static(
             "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline | g:Killed",
@@ -789,6 +794,8 @@ class SupervisorTUI(
                 widget.summary_content_mode = self.summary_content_mode
                 # Apply cost display mode
                 widget.show_cost = self.show_cost
+                # Apply column group visibility (#178)
+                widget.summary_groups = self._prefs.summary_groups
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
@@ -1240,6 +1247,49 @@ class SupervisorTUI(
             self.session_manager.update_session(session.id, claude_session_ids=[])
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
+
+    def action_open_column_config(self) -> None:
+        """Open the column configuration modal (#178)."""
+        try:
+            modal = self.query_one("#summary-config-modal", SummaryConfigModal)
+            # Save original state for cancel
+            self._column_config_original_detail = self._prefs.summary_detail
+            self._column_config_original_index = self.summary_level_index
+            # Switch to custom mode immediately so live summary lines update
+            self._prefs.summary_detail = "custom"
+            self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
+            for widget in self.query(SessionSummary):
+                widget.summary_detail = "custom"
+                widget.summary_groups = self._prefs.summary_groups
+            modal.show(self._prefs.summary_groups, self)
+        except NoMatches:
+            pass
+
+    def on_summary_config_modal_config_changed(self, message: SummaryConfigModal.ConfigChanged) -> None:
+        """Handle column configuration changes from modal (#178)."""
+        self._prefs.summary_groups = message.summary_groups
+        # Switch to "custom" summary detail level
+        self._prefs.summary_detail = "custom"
+        self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
+        self._save_prefs()
+
+        # Update all session widgets with new group visibility and custom mode
+        for widget in self.query(SessionSummary):
+            widget.summary_groups = message.summary_groups
+            widget.summary_detail = "custom"
+            widget.refresh()
+
+        self.notify("Custom column config saved (press 's' to cycle modes)", severity="information")
+
+    def on_summary_config_modal_cancelled(self, message: SummaryConfigModal.Cancelled) -> None:
+        """Handle modal cancellation (#178)."""
+        # Restore original detail level
+        if hasattr(self, '_column_config_original_detail'):
+            self._prefs.summary_detail = self._column_config_original_detail
+            self.summary_level_index = self._column_config_original_index
+            for widget in self.query(SessionSummary):
+                widget.summary_detail = self._column_config_original_detail
+                widget.refresh()
 
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
