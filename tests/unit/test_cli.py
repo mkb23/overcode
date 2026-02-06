@@ -236,7 +236,8 @@ class TestAllSubcommands:
         # Main commands from the app
         commands = ["launch", "list", "kill", "send", "show", "instruct",
                     "monitor", "supervisor", "attach", "cleanup", "export",
-                    "web", "monitor-daemon", "supervisor-daemon", "config"]
+                    "web", "monitor-daemon", "supervisor-daemon", "config",
+                    "install-hook"]
 
         for cmd in commands:
             result = runner.invoke(app, [cmd, "--help"])

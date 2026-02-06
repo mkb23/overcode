@@ -57,7 +57,8 @@ class HelpOverlay(Static):
         row("n", "New agent", "x", "Kill agent")
         row("R", "Restart agent", "z", "Toggle sleep")
         row("V", "Edit agent value", "b", "Jump to attention")
-        row("H", "Handover all (2x) → draft PR")
+        row("H", "Heartbeat config", "F", "Toggle time context")
+        row("T", "Handover all (2x) → draft PR")
         t.append("\n")
 
         section("DAEMON CONTROL")

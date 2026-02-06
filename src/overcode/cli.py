@@ -479,6 +479,45 @@ def time_context():
     print(line)
 
 
+@app.command("install-hook")
+def install_hook(
+    project: Annotated[
+        bool,
+        typer.Option("--project", "-p", help="Install to project-level .claude/settings.json instead of user-level"),
+    ] = False,
+):
+    """Install the time-context hook into Claude Code settings.
+
+    By default installs to user-level settings (~/.claude/settings.json).
+    Use --project to install to the current project's .claude/settings.json.
+
+    The hook runs 'overcode time-context' on every prompt, giving Claude
+    continuous awareness of clock, presence, office hours, and uptime.
+    """
+    from .claude_config import ClaudeConfigEditor
+
+    if project:
+        editor = ClaudeConfigEditor.project_level()
+        level = "project"
+    else:
+        editor = ClaudeConfigEditor.user_level()
+        level = "user"
+
+    try:
+        added = editor.add_hook("UserPromptSubmit", "overcode time-context")
+    except ValueError as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    if added:
+        rprint(f"[green]\u2713[/green] Installed time-context hook in {level} settings")
+        rprint(f"  [dim]{editor.path}[/dim]")
+        rprint(f"\n  [dim]The hook runs 'overcode time-context' on every prompt.[/dim]")
+        rprint(f"  [dim]Toggle per-agent with F in the TUI.[/dim]")
+    else:
+        rprint(f"[green]\u2713[/green] Hook already installed in {level} settings ({editor.path})")
+
+
 @app.command()
 def instruct(
     name: Annotated[
