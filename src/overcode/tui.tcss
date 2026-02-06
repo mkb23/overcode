@@ -199,3 +199,19 @@ SessionSummary.list-mode {
 SessionSummary:focus.list-mode {
     background: $accent;
 }
+
+/* Summary Config Modal - floats above content */
+SummaryConfigModal {
+    display: none;
+    layer: above;
+    offset: 27 30;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+SummaryConfigModal.visible {
+    display: block;
+}

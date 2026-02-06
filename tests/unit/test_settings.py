@@ -449,6 +449,47 @@ class TestTUIPreferences:
             assert loaded.show_terminated is True
             assert loaded.view_mode == "list_preview"
 
+    def test_has_summary_groups(self):
+        """TUIPreferences should have summary_groups field for column visibility (#178)."""
+        from overcode.settings import TUIPreferences
+
+        prefs = TUIPreferences()
+        assert hasattr(prefs, 'summary_groups')
+        assert isinstance(prefs.summary_groups, dict)
+        # All toggleable groups should be present
+        expected_groups = ["time", "tokens", "git", "supervision", "priority", "performance"]
+        for group_id in expected_groups:
+            assert group_id in prefs.summary_groups
+            assert isinstance(prefs.summary_groups[group_id], bool)
+
+    def test_summary_groups_persist(self, tmp_path):
+        """TUIPreferences should persist summary_groups settings (#178)."""
+        from overcode.settings import TUIPreferences, ensure_session_dir
+
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("test-session")
+
+            # Save preferences with modified summary_groups
+            original = TUIPreferences()
+            original.summary_groups = {
+                "time": False,
+                "tokens": True,
+                "git": False,
+                "supervision": True,
+                "priority": False,
+                "performance": True,
+            }
+            original.save("test-session")
+
+            # Load and verify
+            loaded = TUIPreferences.load("test-session")
+            assert loaded.summary_groups["time"] is False
+            assert loaded.summary_groups["tokens"] is True
+            assert loaded.summary_groups["git"] is False
+            assert loaded.summary_groups["supervision"] is True
+            assert loaded.summary_groups["priority"] is False
+            assert loaded.summary_groups["performance"] is True
+
 
 # =============================================================================
 # Run tests directly
