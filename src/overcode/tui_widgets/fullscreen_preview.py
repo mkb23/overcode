@@ -5,9 +5,11 @@ Displays a scrollable fullscreen view of an agent's terminal output
 with up to 500 lines of scrollback history.
 """
 
-from typing import List
+from typing import List, Optional
 
+from textual.binding import Binding
 from textual.widgets import Static
+from textual.widget import Widget
 from textual import events
 from rich.text import Text
 from rich.panel import Panel
@@ -17,11 +19,21 @@ from rich import box
 class FullscreenPreview(Static, can_focus=True):
     """Fullscreen scrollable preview of an agent's terminal output."""
 
+    BINDINGS = [
+        Binding("up", "scroll_up", "Scroll Up", show=False),
+        Binding("down", "scroll_down", "Scroll Down", show=False),
+        Binding("pageup", "page_up", "Page Up", show=False),
+        Binding("pagedown", "page_down", "Page Down", show=False),
+        Binding("home", "scroll_home", "Scroll Home", show=False),
+        Binding("end", "scroll_end", "Scroll End", show=False),
+    ]
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._content_lines: List[str] = []
         self._session_name: str = ""
         self._monochrome: bool = False
+        self._previous_focus: Optional[Widget] = None
 
     def render(self) -> Panel:
         content = Text()
@@ -46,7 +58,7 @@ class FullscreenPreview(Static, can_focus=True):
         return Panel(
             content,
             title=title,
-            subtitle=Text("Press Esc/f/q to close", style="dim"),
+            subtitle=Text("Esc/f/q close · ↑↓/PgUp/PgDn scroll", style="dim"),
             border_style="bright_cyan",
             box=box.DOUBLE,
         )
@@ -56,13 +68,17 @@ class FullscreenPreview(Static, can_focus=True):
         self._content_lines = lines
         self._session_name = session_name
         self._monochrome = monochrome
+        self._previous_focus = self.app.focused
         self.add_class("visible")
         self.refresh()
         self.focus()
 
     def hide(self) -> None:
-        """Hide the fullscreen preview."""
+        """Hide the fullscreen preview and restore previous focus."""
         self.remove_class("visible")
+        if self._previous_focus is not None:
+            self._previous_focus.focus()
+            self._previous_focus = None
 
     def on_key(self, event: events.Key) -> None:
         """Handle keyboard input — Esc/f/q close the overlay."""
