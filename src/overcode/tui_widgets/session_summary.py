@@ -439,26 +439,8 @@ class SessionSummary(Static, can_focus=True):
             else:
                 content.append(" ➖", style=mono(f"bold dim{bg}", "dim"))  # No instructions indicator
 
-        # Agent value indicator (#61) - toggleable via priority group
-        # Full/Custom detail: show numeric value with money bag
-        # Short/med: show priority chevrons (⏫ high, ⏹ normal, ⏬ low)
-        if self.group_enabled("priority"):
-            if self.summary_detail in ("full", "custom"):
-                content.append(f" 💰{s.agent_value:>4}", style=mono(f"bold magenta{bg}", "bold"))
-            else:
-                # Priority icon based on value relative to default 1000
-                # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
-                # a trailing space to ⏹️ for alignment
-                if s.agent_value > 1000:
-                    content.append(" ⏫️", style=mono(f"bold red{bg}", "bold"))  # High priority
-                elif s.agent_value < 1000:
-                    content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
-                else:
-                    content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
-
-        # Heartbeat columns (med/full detail) (#171)
-        # Column 1: interval (e.g., "5m"), Column 2: 24hr clock time of next beat
-        if self.summary_detail in ("med", "full"):
+            # Heartbeat columns - always show for alignment (#171)
+            # Column 1: interval (e.g., "5m"), Column 2: 24hr clock time of next beat
             if s.heartbeat_enabled and not s.heartbeat_paused:
                 freq_str = format_duration(s.heartbeat_frequency_seconds)
                 content.append(f" 💓{freq_str:>5}", style=mono(f"bold magenta{bg}", "bold"))
@@ -485,7 +467,25 @@ class SessionSummary(Static, can_focus=True):
                         content.append(" @--:--", style=mono(f"dim{bg}", "dim"))
             elif s.heartbeat_enabled and s.heartbeat_paused:
                 content.append(" 💓⏸    @--:--", style=mono(f"dim yellow{bg}", "dim"))
-            # No placeholder when heartbeat disabled - keeps display cleaner
+            else:
+                content.append(" 💓    - @--:--", style=mono(f"dim{bg}", "dim"))
+
+        # Agent value indicator (#61) - toggleable via priority group
+        # Full/Custom detail: show numeric value with money bag
+        # Short/med: show priority chevrons (⏫ high, ⏹ normal, ⏬ low)
+        if self.group_enabled("priority"):
+            if self.summary_detail in ("full", "custom"):
+                content.append(f" 💰{s.agent_value:>4}", style=mono(f"bold magenta{bg}", "bold"))
+            else:
+                # Priority icon based on value relative to default 1000
+                # Note: Rich measures ⏹️ as 2 cells but ⏫️/⏬️ as 3 cells, so we add
+                # a trailing space to ⏹️ for alignment
+                if s.agent_value > 1000:
+                    content.append(" ⏫️", style=mono(f"bold red{bg}", "bold"))  # High priority
+                elif s.agent_value < 1000:
+                    content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
+                else:
+                    content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
