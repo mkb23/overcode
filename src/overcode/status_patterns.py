@@ -266,6 +266,43 @@ def count_command_menu_lines(lines: List[str], patterns: StatusPatterns = None) 
     return sum(1 for line in lines if is_command_menu_line(line, patterns))
 
 
+def extract_background_bash_count(content: str, patterns: StatusPatterns = None) -> int:
+    """Extract the number of background bash tasks from pane content.
+
+    Claude Code shows background task counts in the status bar:
+    - "2 bashes" when there are 2+ background tasks
+    - "command... (running)" when there is 1 background task
+    - Nothing when there are 0 background tasks
+
+    Args:
+        content: Raw pane content (can include ANSI codes)
+        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+
+    Returns:
+        Number of active background bash tasks (0 if none detected)
+    """
+    patterns = patterns or DEFAULT_PATTERNS
+
+    # Look for status bar line (starts with ⏵⏵)
+    for line in content.split('\n'):
+        stripped = line.strip()
+        if not any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
+            continue
+
+        # Found status bar line - check for bash count patterns
+        # Pattern 1: "N bashes" for 2+ background tasks
+        match = re.search(r'(\d+)\s+bashes', stripped)
+        if match:
+            return int(match.group(1))
+
+        # Pattern 2: "(running)" without "bashes" = 1 background task
+        # This appears when a single command is running in background
+        if '(running)' in stripped and 'bashes' not in stripped:
+            return 1
+
+    return 0
+
+
 def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80) -> str:
     """Clean a line for display.
 
