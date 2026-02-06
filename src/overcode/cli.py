@@ -16,7 +16,8 @@ from .launcher import ClaudeLauncher
 app = typer.Typer(
     name="overcode",
     help="Manage and supervise Claude Code agents",
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
     rich_markup_mode="rich",
 )
 
@@ -60,6 +61,15 @@ SessionOption = Annotated[
         help="Tmux session name for agents",
     ),
 ]
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(ctx: typer.Context):
+    """Launch the TUI monitor when no command is given."""
+    if ctx.invoked_subcommand is None:
+        from .tui import run_tui
+
+        run_tui("agents")
 
 
 # =============================================================================
@@ -383,11 +393,25 @@ def instruct(
 @app.command()
 def monitor(
     session: SessionOption = "agents",
+    restart: Annotated[
+        bool, typer.Option("--restart", help="Restart the monitor daemon before launching")
+    ] = False,
     diagnostics: Annotated[
         bool, typer.Option("--diagnostics", help="Diagnostic mode: disable all auto-refresh timers")
     ] = False,
 ):
     """Launch the standalone TUI monitor."""
+    if restart:
+        from .monitor_daemon import stop_monitor_daemon, is_monitor_daemon_running, get_monitor_daemon_pid
+
+        if is_monitor_daemon_running(session):
+            pid = get_monitor_daemon_pid(session)
+            if stop_monitor_daemon(session):
+                rprint(f"[green]✓[/green] Monitor daemon stopped (was PID {pid})")
+            else:
+                rprint("[red]Failed to stop monitor daemon[/red]")
+                raise typer.Exit(1)
+
     from .tui import run_tui
 
     run_tui(session, diagnostics=diagnostics)
