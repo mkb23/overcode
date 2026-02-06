@@ -568,3 +568,679 @@ class TestGetTimelineData:
             # Should have both agents
             assert "agent1" in result["agents"]
             assert "agent2" in result["agents"]
+
+    def test_timeline_slot_content_has_expected_fields(self):
+        """Each slot should have index, status, char, and color."""
+        from overcode.web_api import get_timeline_data
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history, \
+             patch('overcode.web_api.get_agent_history_path') as mock_path:
+            mock_path.return_value = "/fake/path"
+            mock_history.return_value = [
+                (now - timedelta(minutes=30), "agent1", "running", "working"),
+            ]
+
+            result = get_timeline_data("test-session", hours=1.0, slots=10)
+
+            agent_data = result["agents"]["agent1"]
+            assert "slots" in agent_data
+            assert "percent_green" in agent_data
+            # There should be at least one slot populated
+            assert len(agent_data["slots"]) > 0
+            slot = agent_data["slots"][0]
+            assert "index" in slot
+            assert "status" in slot
+            assert "char" in slot
+            assert "color" in slot
+
+    def test_timeline_slot_running_status_is_green(self):
+        """Slots with 'running' status should be counted as green."""
+        from overcode.web_api import get_timeline_data
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history, \
+             patch('overcode.web_api.get_agent_history_path') as mock_path:
+            mock_path.return_value = "/fake/path"
+            # Agent running for the entire hour
+            mock_history.return_value = [
+                (now - timedelta(minutes=59), "agent1", "running", "working"),
+            ]
+
+            result = get_timeline_data("test-session", hours=1.0, slots=10)
+
+            agent_data = result["agents"]["agent1"]
+            # All populated slots should be "running"
+            for slot in agent_data["slots"]:
+                assert slot["status"] == "running"
+            assert agent_data["percent_green"] == 100
+
+    def test_timeline_slot_waiting_status_not_green(self):
+        """Slots with 'waiting_user' status should not be counted as green."""
+        from overcode.web_api import get_timeline_data
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history, \
+             patch('overcode.web_api.get_agent_history_path') as mock_path:
+            mock_path.return_value = "/fake/path"
+            # Agent waiting the entire hour
+            mock_history.return_value = [
+                (now - timedelta(minutes=59), "agent1", "waiting_user", "blocked"),
+            ]
+
+            result = get_timeline_data("test-session", hours=1.0, slots=10)
+
+            agent_data = result["agents"]["agent1"]
+            # All populated slots should be "waiting_user"
+            for slot in agent_data["slots"]:
+                assert slot["status"] == "waiting_user"
+            assert agent_data["percent_green"] == 0
+
+
+class TestCalculatePercentiles:
+    """Tests for _calculate_percentiles function."""
+
+    def test_empty_list_returns_all_zeros(self):
+        """Should return all zeros for empty input."""
+        from overcode.web_api import _calculate_percentiles
+
+        result = _calculate_percentiles([])
+
+        assert result["mean"] == 0.0
+        assert result["median"] == 0.0
+        assert result["p5"] == 0.0
+        assert result["p95"] == 0.0
+        assert result["min"] == 0.0
+        assert result["max"] == 0.0
+
+    def test_single_value(self):
+        """Should return the single value for all percentiles."""
+        from overcode.web_api import _calculate_percentiles
+
+        result = _calculate_percentiles([42.0])
+
+        assert result["mean"] == 42.0
+        assert result["median"] == 42.0
+        assert result["p5"] == 42.0
+        assert result["p95"] == 42.0
+        assert result["min"] == 42.0
+        assert result["max"] == 42.0
+
+    def test_symmetric_distribution(self):
+        """Should calculate correct stats for a symmetric distribution."""
+        from overcode.web_api import _calculate_percentiles
+
+        values = [10.0, 20.0, 30.0, 40.0, 50.0]
+        result = _calculate_percentiles(values)
+
+        assert result["mean"] == 30.0
+        assert result["median"] == 30.0
+        assert result["min"] == 10.0
+        assert result["max"] == 50.0
+
+    def test_unsorted_input(self):
+        """Should handle unsorted input correctly."""
+        from overcode.web_api import _calculate_percentiles
+
+        values = [50.0, 10.0, 30.0, 20.0, 40.0]
+        result = _calculate_percentiles(values)
+
+        assert result["min"] == 10.0
+        assert result["max"] == 50.0
+        assert result["mean"] == 30.0
+
+    def test_large_list_p5_p95(self):
+        """Should calculate p5 and p95 on a larger list."""
+        from overcode.web_api import _calculate_percentiles
+
+        # 100 values from 1 to 100
+        values = [float(i) for i in range(1, 101)]
+        result = _calculate_percentiles(values)
+
+        assert result["min"] == 1.0
+        assert result["max"] == 100.0
+        assert result["mean"] == 50.5
+        assert result["median"] == 50.0  # index 49 -> value 50
+        # p5: index int(0.05 * 99) = 4 -> value 5
+        assert result["p5"] == 5.0
+        # p95: index int(0.95 * 99) = 94 -> value 95
+        assert result["p95"] == 95.0
+
+    def test_values_are_rounded(self):
+        """Should round results to 1 decimal place."""
+        from overcode.web_api import _calculate_percentiles
+
+        values = [1.123, 2.456, 3.789]
+        result = _calculate_percentiles(values)
+
+        # Check all values are rounded to 1 decimal
+        assert result["mean"] == round(sum(values) / len(values), 1)
+        assert result["min"] == 1.1
+        assert result["max"] == 3.8
+
+
+class TestGetHealthData:
+    """Tests for get_health_data function."""
+
+    def test_returns_ok_status(self):
+        """Should return status 'ok'."""
+        from overcode.web_api import get_health_data
+
+        result = get_health_data()
+
+        assert result["status"] == "ok"
+
+    def test_returns_timestamp(self):
+        """Should include an ISO format timestamp."""
+        from overcode.web_api import get_health_data
+
+        result = get_health_data()
+
+        assert "timestamp" in result
+        # Verify it's a valid ISO timestamp
+        datetime.fromisoformat(result["timestamp"])
+
+    def test_returns_only_expected_keys(self):
+        """Should return only status and timestamp."""
+        from overcode.web_api import get_health_data
+
+        result = get_health_data()
+
+        assert set(result.keys()) == {"status", "timestamp"}
+
+
+class TestGetAnalyticsDaily:
+    """Tests for get_analytics_daily function."""
+
+    def test_empty_sessions_returns_empty_days(self):
+        """Should return empty days list when no sessions."""
+        from overcode.web_api import get_analytics_daily
+
+        with patch('overcode.web_api.get_analytics_sessions') as mock_sessions:
+            mock_sessions.return_value = {
+                'sessions': [],
+                'summary': {
+                    'session_count': 0,
+                    'total_tokens': 0,
+                    'total_cost_usd': 0,
+                    'total_green_time_seconds': 0,
+                    'total_non_green_time_seconds': 0,
+                    'avg_green_percent': 0,
+                },
+            }
+
+            result = get_analytics_daily()
+
+            assert result["days"] == []
+            assert result["labels"] == []
+
+    def test_groups_sessions_by_date(self):
+        """Should group sessions by date and aggregate stats."""
+        from overcode.web_api import get_analytics_daily
+
+        with patch('overcode.web_api.get_analytics_sessions') as mock_sessions:
+            mock_sessions.return_value = {
+                'sessions': [
+                    {
+                        'start_time': '2024-01-15T10:00:00',
+                        'total_tokens': 1000,
+                        'estimated_cost_usd': 0.50,
+                        'green_time_seconds': 3600.0,
+                        'non_green_time_seconds': 600.0,
+                        'interaction_count': 5,
+                        'steers_count': 1,
+                    },
+                    {
+                        'start_time': '2024-01-15T14:00:00',
+                        'total_tokens': 2000,
+                        'estimated_cost_usd': 1.00,
+                        'green_time_seconds': 1800.0,
+                        'non_green_time_seconds': 200.0,
+                        'interaction_count': 3,
+                        'steers_count': 0,
+                    },
+                    {
+                        'start_time': '2024-01-16T09:00:00',
+                        'total_tokens': 500,
+                        'estimated_cost_usd': 0.25,
+                        'green_time_seconds': 900.0,
+                        'non_green_time_seconds': 100.0,
+                        'interaction_count': 2,
+                        'steers_count': 1,
+                    },
+                ],
+                'summary': {},
+            }
+
+            result = get_analytics_daily()
+
+            assert len(result["days"]) == 2
+            assert result["labels"] == ["2024-01-15", "2024-01-16"]
+
+            # First day: two sessions aggregated
+            day1 = result["days"][0]
+            assert day1["date"] == "2024-01-15"
+            assert day1["sessions"] == 2
+            assert day1["tokens"] == 3000
+            assert day1["cost_usd"] == 1.50
+            assert day1["green_time_seconds"] == 5400.0
+            assert day1["non_green_time_seconds"] == 800.0
+            assert day1["interactions"] == 8
+            assert day1["steers"] == 1
+
+            # Second day: one session
+            day2 = result["days"][1]
+            assert day2["date"] == "2024-01-16"
+            assert day2["sessions"] == 1
+            assert day2["tokens"] == 500
+
+    def test_calculates_green_percent_per_day(self):
+        """Should calculate green_percent for each day."""
+        from overcode.web_api import get_analytics_daily
+
+        with patch('overcode.web_api.get_analytics_sessions') as mock_sessions:
+            mock_sessions.return_value = {
+                'sessions': [
+                    {
+                        'start_time': '2024-01-15T10:00:00',
+                        'total_tokens': 100,
+                        'estimated_cost_usd': 0.10,
+                        'green_time_seconds': 750.0,
+                        'non_green_time_seconds': 250.0,
+                        'interaction_count': 1,
+                        'steers_count': 0,
+                    },
+                ],
+                'summary': {},
+            }
+
+            result = get_analytics_daily()
+
+            day = result["days"][0]
+            # 750 / (750+250) * 100 = 75.0%
+            assert day["green_percent"] == 75.0
+
+    def test_handles_invalid_start_time(self):
+        """Should skip sessions with invalid start_time."""
+        from overcode.web_api import get_analytics_daily
+
+        with patch('overcode.web_api.get_analytics_sessions') as mock_sessions:
+            mock_sessions.return_value = {
+                'sessions': [
+                    {
+                        'start_time': 'not-a-date',
+                        'total_tokens': 100,
+                        'estimated_cost_usd': 0.10,
+                        'green_time_seconds': 100.0,
+                        'non_green_time_seconds': 0.0,
+                        'interaction_count': 1,
+                        'steers_count': 0,
+                    },
+                    {
+                        'start_time': '2024-01-15T10:00:00',
+                        'total_tokens': 200,
+                        'estimated_cost_usd': 0.20,
+                        'green_time_seconds': 200.0,
+                        'non_green_time_seconds': 0.0,
+                        'interaction_count': 1,
+                        'steers_count': 0,
+                    },
+                ],
+                'summary': {},
+            }
+
+            result = get_analytics_daily()
+
+            # Only the valid session should be included
+            assert len(result["days"]) == 1
+            assert result["days"][0]["tokens"] == 200
+
+    def test_passes_time_range_to_get_analytics_sessions(self):
+        """Should pass start/end to get_analytics_sessions."""
+        from overcode.web_api import get_analytics_daily
+
+        start = datetime(2024, 1, 1)
+        end = datetime(2024, 1, 31)
+
+        with patch('overcode.web_api.get_analytics_sessions') as mock_sessions:
+            mock_sessions.return_value = {'sessions': [], 'summary': {}}
+
+            get_analytics_daily(start=start, end=end)
+
+            mock_sessions.assert_called_once_with(start, end)
+
+
+class TestGetAnalyticsSessions:
+    """Tests for get_analytics_sessions function."""
+
+    def test_returns_empty_when_no_sessions(self):
+        """Should return empty sessions list and zero summary."""
+        from overcode.web_api import get_analytics_sessions
+
+        with patch('overcode.session_manager.SessionManager') as MockSM:
+            mgr = MockSM.return_value
+            mgr.list_sessions.return_value = []
+            mgr.list_archived_sessions.return_value = []
+
+            result = get_analytics_sessions()
+
+            assert result["sessions"] == []
+            assert result["summary"]["session_count"] == 0
+            assert result["summary"]["total_tokens"] == 0
+            assert result["summary"]["total_cost_usd"] == 0
+
+    def test_includes_active_and_archived_sessions(self):
+        """Should include both active and archived sessions."""
+        from overcode.web_api import get_analytics_sessions
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeStats:
+            interaction_count: int = 5
+            steers_count: int = 1
+            total_tokens: int = 1000
+            input_tokens: int = 700
+            output_tokens: int = 300
+            cache_creation_tokens: int = 0
+            cache_read_tokens: int = 0
+            estimated_cost_usd: float = 0.50
+            green_time_seconds: float = 3600.0
+            non_green_time_seconds: float = 600.0
+
+        @dataclass
+        class FakeSession:
+            id: str = "sess-1"
+            name: str = "agent1"
+            start_time: str = "2024-01-15T10:00:00"
+            repo_name: str = "test-repo"
+            branch: str = "main"
+            stats: FakeStats = field(default_factory=FakeStats)
+
+        active = FakeSession(id="sess-1", name="active-agent")
+        archived = FakeSession(id="sess-2", name="archived-agent")
+
+        with patch('overcode.session_manager.SessionManager') as MockSM, \
+             patch('overcode.history_reader.get_session_stats') as mock_stats:
+            mgr = MockSM.return_value
+            mgr.list_sessions.return_value = [active]
+            mgr.list_archived_sessions.return_value = [archived]
+            mock_stats.return_value = None
+
+            result = get_analytics_sessions()
+
+            assert result["summary"]["session_count"] == 2
+            names = [s["name"] for s in result["sessions"]]
+            assert "active-agent" in names
+            assert "archived-agent" in names
+
+    def test_filters_by_start_time(self):
+        """Should filter sessions by start time range."""
+        from overcode.web_api import get_analytics_sessions
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeStats:
+            interaction_count: int = 0
+            steers_count: int = 0
+            total_tokens: int = 100
+            input_tokens: int = 70
+            output_tokens: int = 30
+            cache_creation_tokens: int = 0
+            cache_read_tokens: int = 0
+            estimated_cost_usd: float = 0.10
+            green_time_seconds: float = 100.0
+            non_green_time_seconds: float = 0.0
+
+        @dataclass
+        class FakeSession:
+            id: str = "sess-1"
+            name: str = "agent1"
+            start_time: str = "2024-01-15T10:00:00"
+            repo_name: str = "test-repo"
+            branch: str = "main"
+            stats: FakeStats = field(default_factory=FakeStats)
+
+        early = FakeSession(id="s1", name="early", start_time="2024-01-10T10:00:00")
+        middle = FakeSession(id="s2", name="middle", start_time="2024-01-15T10:00:00")
+        late = FakeSession(id="s3", name="late", start_time="2024-01-20T10:00:00")
+
+        with patch('overcode.session_manager.SessionManager') as MockSM, \
+             patch('overcode.history_reader.get_session_stats') as mock_stats:
+            mgr = MockSM.return_value
+            mgr.list_sessions.return_value = [early, middle, late]
+            mgr.list_archived_sessions.return_value = []
+            mock_stats.return_value = None
+
+            # Filter: only sessions between Jan 12 and Jan 18
+            start = datetime(2024, 1, 12)
+            end = datetime(2024, 1, 18)
+            result = get_analytics_sessions(start=start, end=end)
+
+            assert result["summary"]["session_count"] == 1
+            assert result["sessions"][0]["name"] == "middle"
+
+    def test_calculates_summary_stats(self):
+        """Should calculate correct summary statistics."""
+        from overcode.web_api import get_analytics_sessions
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeStats:
+            interaction_count: int = 0
+            steers_count: int = 0
+            total_tokens: int = 500
+            input_tokens: int = 300
+            output_tokens: int = 200
+            cache_creation_tokens: int = 0
+            cache_read_tokens: int = 0
+            estimated_cost_usd: float = 0.25
+            green_time_seconds: float = 900.0
+            non_green_time_seconds: float = 100.0
+
+        @dataclass
+        class FakeSession:
+            id: str = "sess-1"
+            name: str = "agent1"
+            start_time: str = "2024-01-15T10:00:00"
+            repo_name: str = "test-repo"
+            branch: str = "main"
+            stats: FakeStats = field(default_factory=FakeStats)
+
+        s1 = FakeSession(id="s1", name="a1", stats=FakeStats(total_tokens=1000, estimated_cost_usd=1.00, green_time_seconds=3600.0, non_green_time_seconds=400.0))
+        s2 = FakeSession(id="s2", name="a2", stats=FakeStats(total_tokens=2000, estimated_cost_usd=2.00, green_time_seconds=1800.0, non_green_time_seconds=200.0))
+
+        with patch('overcode.session_manager.SessionManager') as MockSM, \
+             patch('overcode.history_reader.get_session_stats') as mock_stats:
+            mgr = MockSM.return_value
+            mgr.list_sessions.return_value = [s1, s2]
+            mgr.list_archived_sessions.return_value = []
+            mock_stats.return_value = None
+
+            result = get_analytics_sessions()
+
+            summary = result["summary"]
+            assert summary["total_tokens"] == 3000
+            assert summary["total_cost_usd"] == 3.00
+            assert summary["total_green_time_seconds"] == 5400.0
+            assert summary["total_non_green_time_seconds"] == 600.0
+            # 5400 / 6000 * 100 = 90.0
+            assert summary["avg_green_percent"] == 90.0
+
+    def test_sessions_sorted_newest_first(self):
+        """Should sort sessions by start_time descending."""
+        from overcode.web_api import get_analytics_sessions
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class FakeStats:
+            interaction_count: int = 0
+            steers_count: int = 0
+            total_tokens: int = 100
+            input_tokens: int = 70
+            output_tokens: int = 30
+            cache_creation_tokens: int = 0
+            cache_read_tokens: int = 0
+            estimated_cost_usd: float = 0.10
+            green_time_seconds: float = 100.0
+            non_green_time_seconds: float = 0.0
+
+        @dataclass
+        class FakeSession:
+            id: str = "sess-1"
+            name: str = "agent1"
+            start_time: str = "2024-01-15T10:00:00"
+            repo_name: str = "test-repo"
+            branch: str = "main"
+            stats: FakeStats = field(default_factory=FakeStats)
+
+        s1 = FakeSession(id="s1", name="oldest", start_time="2024-01-10T10:00:00")
+        s2 = FakeSession(id="s2", name="newest", start_time="2024-01-20T10:00:00")
+        s3 = FakeSession(id="s3", name="middle", start_time="2024-01-15T10:00:00")
+
+        with patch('overcode.session_manager.SessionManager') as MockSM, \
+             patch('overcode.history_reader.get_session_stats') as mock_stats:
+            mgr = MockSM.return_value
+            mgr.list_sessions.return_value = [s1, s2, s3]
+            mgr.list_archived_sessions.return_value = []
+            mock_stats.return_value = None
+
+            result = get_analytics_sessions()
+
+            names = [s["name"] for s in result["sessions"]]
+            assert names == ["newest", "middle", "oldest"]
+
+
+class TestSessionToAnalyticsRecord:
+    """Tests for _session_to_analytics_record function."""
+
+    def test_converts_session_to_record(self):
+        """Should convert a Session object to an analytics dict."""
+        from overcode.web_api import _session_to_analytics_record
+
+        mock_session = MagicMock()
+        mock_session.id = "test-id"
+        mock_session.name = "test-agent"
+        mock_session.start_time = "2024-01-15T10:00:00"
+        mock_session.repo_name = "my-repo"
+        mock_session.branch = "main"
+
+        mock_stats = MagicMock()
+        mock_stats.interaction_count = 10
+        mock_stats.steers_count = 2
+        mock_stats.total_tokens = 5000
+        mock_stats.input_tokens = 3000
+        mock_stats.output_tokens = 2000
+        mock_stats.cache_creation_tokens = 100
+        mock_stats.cache_read_tokens = 500
+        mock_stats.estimated_cost_usd = 1.2345
+        mock_stats.green_time_seconds = 3600.0
+        mock_stats.non_green_time_seconds = 400.0
+        mock_session.stats = mock_stats
+
+        result = _session_to_analytics_record(mock_session, is_archived=False)
+
+        assert result["id"] == "test-id"
+        assert result["name"] == "test-agent"
+        assert result["start_time"] == "2024-01-15T10:00:00"
+        assert result["repo_name"] == "my-repo"
+        assert result["branch"] == "main"
+        assert result["is_archived"] is False
+        assert result["interaction_count"] == 10
+        assert result["steers_count"] == 2
+        assert result["total_tokens"] == 5000
+        assert result["estimated_cost_usd"] == 1.2345
+        assert result["green_time_seconds"] == 3600.0
+        assert result["non_green_time_seconds"] == 400.0
+        # 3600 / 4000 * 100 = 90.0
+        assert result["green_percent"] == 90.0
+
+    def test_archived_flag(self):
+        """Should set is_archived correctly."""
+        from overcode.web_api import _session_to_analytics_record
+
+        mock_session = MagicMock()
+        mock_session.id = "arch-1"
+        mock_session.name = "archived"
+        mock_session.start_time = "2024-01-15T10:00:00"
+        mock_session.repo_name = None
+        mock_session.branch = None
+
+        mock_stats = MagicMock()
+        mock_stats.green_time_seconds = 0.0
+        mock_stats.non_green_time_seconds = 0.0
+        mock_stats.estimated_cost_usd = 0.0
+        mock_stats.interaction_count = 0
+        mock_stats.steers_count = 0
+        mock_stats.total_tokens = 0
+        mock_stats.input_tokens = 0
+        mock_stats.output_tokens = 0
+        mock_stats.cache_creation_tokens = 0
+        mock_stats.cache_read_tokens = 0
+        mock_session.stats = mock_stats
+
+        result = _session_to_analytics_record(mock_session, is_archived=True)
+
+        assert result["is_archived"] is True
+
+    def test_zero_total_time_gives_zero_green_percent(self):
+        """Should return 0% green when total time is zero."""
+        from overcode.web_api import _session_to_analytics_record
+
+        mock_session = MagicMock()
+        mock_session.id = "z"
+        mock_session.name = "zero"
+        mock_session.start_time = "2024-01-15T10:00:00"
+        mock_session.repo_name = None
+        mock_session.branch = None
+
+        mock_stats = MagicMock()
+        mock_stats.green_time_seconds = 0.0
+        mock_stats.non_green_time_seconds = 0.0
+        mock_stats.estimated_cost_usd = 0.0
+        mock_stats.interaction_count = 0
+        mock_stats.steers_count = 0
+        mock_stats.total_tokens = 0
+        mock_stats.input_tokens = 0
+        mock_stats.output_tokens = 0
+        mock_stats.cache_creation_tokens = 0
+        mock_stats.cache_read_tokens = 0
+        mock_session.stats = mock_stats
+
+        result = _session_to_analytics_record(mock_session, is_archived=False)
+
+        assert result["green_percent"] == 0
+
+    def test_record_has_empty_work_times_by_default(self):
+        """Should have empty work_times and zero median_work_time."""
+        from overcode.web_api import _session_to_analytics_record
+
+        mock_session = MagicMock()
+        mock_session.id = "t"
+        mock_session.name = "test"
+        mock_session.start_time = "2024-01-15T10:00:00"
+        mock_session.repo_name = None
+        mock_session.branch = None
+
+        mock_stats = MagicMock()
+        mock_stats.green_time_seconds = 100.0
+        mock_stats.non_green_time_seconds = 0.0
+        mock_stats.estimated_cost_usd = 0.0
+        mock_stats.interaction_count = 0
+        mock_stats.steers_count = 0
+        mock_stats.total_tokens = 0
+        mock_stats.input_tokens = 0
+        mock_stats.output_tokens = 0
+        mock_stats.cache_creation_tokens = 0
+        mock_stats.cache_read_tokens = 0
+        mock_session.stats = mock_stats
+
+        result = _session_to_analytics_record(mock_session, is_archived=False)
+
+        assert result["work_times"] == []
+        assert result["median_work_time"] == 0.0
