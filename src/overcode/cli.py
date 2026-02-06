@@ -293,19 +293,164 @@ def show(
     lines: Annotated[
         int, typer.Option("--lines", "-n", help="Number of lines to show")
     ] = 50,
+    no_stats: Annotated[
+        bool, typer.Option("--no-stats", help="Skip stats, show only pane output")
+    ] = False,
     session: SessionOption = "agents",
 ):
-    """Show recent output from an agent."""
+    """Show agent details and recent output."""
+    from .status_detector import StatusDetector
+    from .history_reader import get_session_stats
+    from .status_patterns import extract_background_bash_count, strip_ansi
+    from .tui_helpers import (
+        calculate_uptime, format_duration, format_tokens, format_cost,
+        format_line_count, get_current_state_times, get_status_symbol,
+        get_git_diff_stats,
+    )
+    from .monitor_daemon_state import get_monitor_daemon_state
+
     launcher = ClaudeLauncher(session)
 
-    output = launcher.get_session_output(name, lines=lines)
-    if output is not None:
+    # Get the Session object
+    sess = launcher.sessions.get_session_by_name(name)
+    if sess is None:
+        rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
+        raise typer.Exit(1)
+
+    # Detect live status (gets status + pane content with ANSI for bash count)
+    pane_content_raw = ""
+    if sess.status == "terminated":
+        status = "terminated"
+        activity = "(tmux window no longer exists)"
+    else:
+        status_detector = StatusDetector(session)
+        status, activity, pane_content_raw = status_detector.detect_status(sess)
+
+    if sess.is_asleep:
+        status = "asleep"
+
+    if not no_stats:
+        # Gather all stats
+        bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
+
+        claude_stats = None
+        try:
+            claude_stats = get_session_stats(sess)
+        except Exception:
+            pass
+
+        git_diff = None
+        try:
+            if sess.start_directory:
+                git_diff = get_git_diff_stats(sess.start_directory)
+        except Exception:
+            pass
+
+        uptime = calculate_uptime(sess.start_time) if sess.start_time else "-"
+        green_time, non_green_time, sleep_time = get_current_state_times(
+            sess.stats, is_asleep=sess.is_asleep
+        )
+        active_time = green_time + non_green_time
+        active_pct = (green_time / active_time * 100) if active_time > 0 else 0
+
+        ai_short = ""
+        ai_context = ""
+        try:
+            daemon_state = get_monitor_daemon_state(session)
+            if daemon_state:
+                ds = daemon_state.get_session_by_name(name)
+                if ds:
+                    ai_short = ds.activity_summary or ""
+                    ai_context = ds.activity_summary_context or ""
+        except Exception:
+            pass
+
+        # Status line
+        symbol, _ = get_status_symbol(status)
+        time_in_state = ""
+        if sess.stats.state_since:
+            try:
+                from datetime import datetime
+                elapsed = (datetime.now() - datetime.fromisoformat(sess.stats.state_since)).total_seconds()
+                time_in_state = f" ({format_duration(elapsed)})"
+            except (ValueError, TypeError):
+                pass
+
+        # Permissiveness emoji
+        perm_map = {"bypass": "🔥 bypass", "permissive": "🏃 permissive", "normal": "👮 normal"}
+        perm_display = perm_map.get(sess.permissiveness_mode, sess.permissiveness_mode)
+
+        # Render stats
+        print(f"=== {name} ===")
+        print(f"Status:    {symbol} {status}{time_in_state:<16} Uptime:  {uptime}")
+        repo_info = f"{sess.repo_name or '-'}:{sess.branch or '-'}"
+        print(f"Repo:      {repo_info:<28} Mode:    {perm_display}")
+
+        # Time
+        time_str = f"▶ {format_duration(green_time):>5} active  ⏸ {format_duration(non_green_time):>5} stalled  💤 {format_duration(sleep_time):>5} sleep  ({active_pct:.0f}%)"
+        print(f"Time:      {time_str}")
+
+        # Tokens & cost
+        if claude_stats:
+            token_str = f"Σ {format_tokens(claude_stats.total_tokens)}"
+            if claude_stats.current_context_tokens > 0:
+                ctx_pct = min(100, claude_stats.current_context_tokens / 200_000 * 100)
+                token_str += f" (context {ctx_pct:.0f}%)"
+            cost = sess.stats.estimated_cost_usd
+            print(f"Tokens:    {token_str:<28} Cost:    {format_cost(cost)}")
+
+            # Work & interactions
+            median_work = claude_stats.median_work_time
+            work_str = format_duration(median_work) if median_work > 0 else "-"
+            human_count = max(0, claude_stats.interaction_count - sess.stats.steers_count)
+            print(f"Work:      ⏱ {work_str} median{'':<18} Interactions: 👤 {human_count} human 🤖 {sess.stats.steers_count} robot")
+        else:
+            print(f"Tokens:    -")
+
+        # Git
+        if git_diff:
+            files, ins, dels = git_diff
+            print(f"Git:       Δ{files} files +{format_line_count(ins)} -{format_line_count(dels)}")
+
+        # Subagents & background bashes
+        sub_count = claude_stats.subagent_count if claude_stats else 0
+        print(f"Agents:    🔀 {sub_count} subagents  ⚡ {bg_bash_count} background bashes")
+
+        # Standing orders
+        if sess.standing_instructions:
+            prefix = "✓ " if sess.standing_orders_complete else ""
+            instr = sess.standing_instructions[:80]
+            print(f"Orders:    📋 {prefix}{instr}")
+
+        # AI summaries
+        if ai_short:
+            print(f"AI:        {ai_short}")
+        if ai_context:
+            print(f"Context:   {ai_context}")
+
+        # Activity from status detector
+        if activity:
+            print(f"Activity:  {activity[:100]}")
+
+        print()
+
+    # Pane output section
+    if pane_content_raw:
+        clean_content = strip_ansi(pane_content_raw)
+        content_lines = clean_content.rstrip().split('\n')
+        display_lines = content_lines[-lines:] if len(content_lines) > lines else content_lines
         print(f"=== {name} (last {lines} lines) ===")
-        print(output)
+        print('\n'.join(display_lines))
         print(f"=== end {name} ===")
     else:
-        rprint(f"[red]✗[/red] Could not get output from '[bold]{name}[/bold]'")
-        raise typer.Exit(1)
+        # Fallback for terminated sessions
+        output = launcher.get_session_output(name, lines=lines)
+        if output is not None:
+            print(f"=== {name} (last {lines} lines) ===")
+            print(output)
+            print(f"=== end {name} ===")
+        else:
+            rprint(f"[dim]No pane output available[/dim]")
 
 
 @app.command()
