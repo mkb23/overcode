@@ -349,6 +349,18 @@ Some more output here
         content = """\x1b[0m  \x1b[38;2;255;107;128m⏵⏵\x1b[39m \x1b[38;2;255;107;128mbypass\x1b[39m \x1b[38;2;255;107;128mpermissions\x1b[39m \x1b[38;2;255;107;128mon\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;0;204;204m3\x1b[39m \x1b[38;2;0;204;204mbashes\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;153;153;153mctrl+t\x1b[39m"""
         assert extract_background_bash_count(content) == 3
 
+    def test_uses_last_status_bar_line(self):
+        """Should use the LAST status bar line, not the first.
+
+        Old status bar lines persist in tmux scrollback. The current/active
+        status bar is always at the bottom of the pane capture.
+        """
+        content = """Some output
+⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt
+more output here
+⏵⏵ bypass permissions on · 3 bashes · esc to interrupt"""
+        assert extract_background_bash_count(content) == 3
+
 
 class TestExtractLiveSubagentCount:
     """Tests for extract_live_subagent_count function."""
@@ -389,3 +401,13 @@ class TestExtractLiveSubagentCount:
         content = """⏵⏵ bypass permissions on · 2 local agents · 3 bashes · esc"""
         assert extract_live_subagent_count(content) == 2
         assert extract_background_bash_count(content) == 3
+
+    def test_uses_last_status_bar_line(self):
+        """Should use the LAST status bar line for agent count.
+
+        Old status bar lines persist in scrollback — only the bottom one is current.
+        """
+        content = """⏵⏵ bypass permissions on · esc to interrupt
+some output
+⏵⏵ bypass permissions on · 2 local agents · esc to interrupt"""
+        assert extract_live_subagent_count(content) == 2

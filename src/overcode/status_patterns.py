@@ -267,7 +267,10 @@ def count_command_menu_lines(lines: List[str], patterns: StatusPatterns = None) 
 
 
 def _find_status_bar_line(content: str, patterns: StatusPatterns = None) -> str | None:
-    """Find and return the stripped status bar line from pane content.
+    """Find and return the LAST status bar line from pane content.
+
+    Uses the last match because old status bar lines can persist in scrollback.
+    The current/active status bar is always at the bottom of the pane.
 
     Args:
         content: Raw pane content (can include ANSI codes)
@@ -279,7 +282,9 @@ def _find_status_bar_line(content: str, patterns: StatusPatterns = None) -> str 
     patterns = patterns or DEFAULT_PATTERNS
 
     # Must strip ANSI codes first since pane content is captured with escape_sequences=True
-    for line in content.split('\n'):
+    # Search from bottom up — old status bar lines persist in scrollback,
+    # but the current one is always at the bottom of the pane.
+    for line in reversed(content.split('\n')):
         stripped = strip_ansi(line).strip()
         if any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
             return stripped
