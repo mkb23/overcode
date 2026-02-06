@@ -18,7 +18,7 @@ class HelpOverlay(Static):
 ║  STATUS COLORS                                                               ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║
 ║  🟢 Running      🟡 No orders      🟠 Wait supervisor      🔴 Wait user      ║
-║  💤 Asleep       ⚫ Terminated                                               ║
+║  💤 Asleep       ⚫ Terminated    🔀 Subagents             ⚡ Bashes (bg)     ║
 ║                                                                              ║
 ║  NAVIGATION & VIEW                                                           ║
 ║  ──────────────────────────────────────────────────────────────────────────  ║
@@ -34,6 +34,7 @@ class HelpOverlay(Static):
 ║  l       Cycle summary content   (💬 short → 📖 context → 🎯 orders → ✏️ note)║
 ║  v       Cycle detail lines      (5 → 10 → 20 → 50)                          ║
 ║  S       Cycle sort mode         (alpha → status → value)                    ║
+║  C       Column config modal     (toggle summary column groups)              ║
 ║  t       Toggle timeline         d       Toggle daemon panel                 ║
 ║  g       Show killed agents      Z       Hide sleeping agents                ║
 ║  ,/.     Baseline time -/+15m    0       Reset baseline to now               ║

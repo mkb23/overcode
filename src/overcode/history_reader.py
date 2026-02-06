@@ -40,6 +40,8 @@ class ClaudeSessionStats:
     cache_read_tokens: int
     work_times: List[float]  # seconds per work cycle (prompt to next prompt)
     current_context_tokens: int = 0  # Most recent input_tokens (current context size)
+    subagent_count: int = 0  # Number of subagent files (#176)
+    background_task_count: int = 0  # Number of background/farm tasks (#177)
 
     @property
     def total_tokens(self) -> int:
@@ -477,6 +479,8 @@ def get_session_stats(
     total_cache_read = 0
     current_context = 0  # Track most recent context size (only from owned sessions)
     all_work_times: List[float] = []
+    subagent_count = 0  # Count subagent files (#176)
+    background_task_count = 0  # Count background task files (#177)
 
     for sid in all_session_ids:
         session_file = get_session_file_path(
@@ -502,6 +506,7 @@ def get_session_stats(
         subagents_dir = projects_path / encoded / sid / "subagents"
         if subagents_dir.exists():
             for subagent_file in subagents_dir.glob("agent-*.jsonl"):
+                subagent_count += 1
                 sub_usage = read_token_usage_from_session_file(
                     subagent_file, since=session_start
                 )
@@ -509,6 +514,12 @@ def get_session_stats(
                 total_output += sub_usage["output_tokens"]
                 total_cache_creation += sub_usage["cache_creation_tokens"]
                 total_cache_read += sub_usage["cache_read_tokens"]
+
+        # Check for background tasks (run_in_background agents) (#177)
+        # These are subagents that were started in background mode
+        tasks_dir = projects_path / encoded / sid / "tasks"
+        if tasks_dir.exists():
+            background_task_count += len(list(tasks_dir.glob("task-*.jsonl")))
 
     return ClaudeSessionStats(
         interaction_count=interaction_count,
@@ -518,4 +529,6 @@ def get_session_stats(
         cache_read_tokens=total_cache_read,
         work_times=all_work_times,
         current_context_tokens=current_context,
+        subagent_count=subagent_count,
+        background_task_count=background_task_count,
     )

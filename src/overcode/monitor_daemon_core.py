@@ -87,6 +87,12 @@ def calculate_time_accumulation(
             sleep = sleep * ratio
             was_capped = True
 
+        # Clamp individual components so they don't exceed uptime (#154)
+        # Even if total is within tolerance, individual components must be sane
+        green = min(green, max_allowed)
+        non_green = min(non_green, max_allowed - green)
+        sleep = min(sleep, max_allowed - green - non_green)
+
     state_changed = previous_status is not None and previous_status != current_status
 
     return TimeAccumulationResult(

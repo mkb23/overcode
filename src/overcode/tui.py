@@ -95,6 +95,7 @@ from .tui_widgets import (
     StatusTimeline,
     SessionSummary,
     CommandBar,
+    SummaryConfigModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -199,12 +200,14 @@ class SupervisorTUI(
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
+        # Column configuration modal (#178)
+        ("C", "open_column_config", "Columns"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
     DETAIL_LEVELS = [5, 10, 20, 50]
-    # Summary detail levels: low (minimal), med (timing), full (all + repo)
-    SUMMARY_LEVELS = ["low", "med", "full"]
+    # Summary detail levels: low (minimal), med (timing), full (all + repo), custom (user-configured)
+    SUMMARY_LEVELS = ["low", "med", "full", "custom"]
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value"]
     # Summary content modes: what to show in the summary line (#74)
@@ -307,6 +310,8 @@ class SupervisorTUI(
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
         yield CommandBar(id="command-bar")
+        # Modal for column configuration (positioned programmatically)
+        yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal")
         yield HelpOverlay(id="help-overlay")
         yield Static(
             "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline | g:Killed",
@@ -791,6 +796,8 @@ class SupervisorTUI(
                 widget.summary_content_mode = self.summary_content_mode
                 # Apply cost display mode
                 widget.show_cost = self.show_cost
+                # Apply column group visibility (#178)
+                widget.summary_groups = self._prefs.summary_groups
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
@@ -972,6 +979,20 @@ class SupervisorTUI(
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
         from datetime import datetime
+
+        # Auto-wake sleeping agent if needed (#168)
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if session and session.is_asleep:
+            self.session_manager.update_session(session.id, is_asleep=False)
+            # Update widget display immediately
+            for widget in self.query(SessionSummary):
+                if widget.session.id == session.id:
+                    widget.session.is_asleep = False
+                    if widget.detected_status == "asleep":
+                        widget.detected_status = "running"
+                    widget.refresh()
+                    break
+            self.notify(f"Woke agent '{message.session_name}' to send command", severity="information")
 
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
@@ -1252,9 +1273,84 @@ class SupervisorTUI(
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
+    def action_open_column_config(self) -> None:
+        """Open the column configuration modal (#178)."""
+        try:
+            modal = self.query_one("#summary-config-modal", SummaryConfigModal)
+            # Save original state for cancel
+            self._column_config_original_detail = self._prefs.summary_detail
+            self._column_config_original_index = self.summary_level_index
+            # Switch to custom mode immediately so live summary lines update
+            self._prefs.summary_detail = "custom"
+            self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
+            for widget in self.query(SessionSummary):
+                widget.summary_detail = "custom"
+                widget.summary_groups = self._prefs.summary_groups
+            modal.show(self._prefs.summary_groups, self)
+        except NoMatches:
+            pass
+
+    def on_summary_config_modal_config_changed(self, message: SummaryConfigModal.ConfigChanged) -> None:
+        """Handle column configuration changes from modal (#178)."""
+        self._prefs.summary_groups = message.summary_groups
+        # Switch to "custom" summary detail level
+        self._prefs.summary_detail = "custom"
+        self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
+        self._save_prefs()
+
+        # Update all session widgets with new group visibility and custom mode
+        for widget in self.query(SessionSummary):
+            widget.summary_groups = message.summary_groups
+            widget.summary_detail = "custom"
+            widget.refresh()
+
+        self.notify("Custom column config saved (press 's' to cycle modes)", severity="information")
+
+    def on_summary_config_modal_cancelled(self, message: SummaryConfigModal.Cancelled) -> None:
+        """Handle modal cancellation (#178)."""
+        # Restore original detail level
+        if hasattr(self, '_column_config_original_detail'):
+            self._prefs.summary_detail = self._column_config_original_detail
+            self.summary_level_index = self._column_config_original_index
+            for widget in self.query(SessionSummary):
+                widget.summary_detail = self._column_config_original_detail
+                widget.refresh()
+
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
+
+        # Handle Escape to close help overlay (#175)
+        try:
+            from .tui_widgets import HelpOverlay
+            help_overlay = self.query_one("#help-overlay", HelpOverlay)
+            if help_overlay.has_class("visible") and event.key == "escape":
+                help_overlay.remove_class("visible")
+                event.stop()
+        except Exception:
+            pass
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Check if an action should be allowed (#175).
+
+        When help overlay is visible, only allow help toggle and quit.
+        Other actions are blocked - pressing those keys just closes help.
+        """
+        # Only intercept when help is visible
+        try:
+            from .tui_widgets import HelpOverlay
+            help_overlay = self.query_one("#help-overlay", HelpOverlay)
+            if help_overlay.has_class("visible"):
+                # Allow these actions when help is visible
+                if action in ("toggle_help", "quit"):
+                    return True
+                # Block all other actions - close help instead
+                help_overlay.remove_class("visible")
+                return False
+        except Exception:
+            pass
+        # Default: allow the action
+        return True
 
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""

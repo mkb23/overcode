@@ -78,10 +78,12 @@ class ViewActionsMixin:
         self.notify(f"Detail: {new_level} lines", severity="information")
 
     def action_cycle_summary(self) -> None:
-        """Cycle through summary detail levels (low, med, full)."""
+        """Cycle through summary detail levels (low, med, full, custom)."""
         from ..tui_widgets import SessionSummary
-        self.summary_level_index = (self.summary_level_index + 1) % len(self.SUMMARY_LEVELS)
-        new_level = self.SUMMARY_LEVELS[self.summary_level_index]
+        # Cycle through all levels including custom
+        new_idx = (self.summary_level_index + 1) % len(self.SUMMARY_LEVELS)
+        new_level = self.SUMMARY_LEVELS[new_idx]
+        self.summary_level_index = new_idx
 
         # Update all session widgets
         for widget in self.query(SessionSummary):

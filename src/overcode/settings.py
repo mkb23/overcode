@@ -402,6 +402,11 @@ class TUIPreferences:
     show_cost: bool = False  # Show $ cost instead of token counts
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
+    # Column group visibility (group_id -> enabled) for summary line (#178)
+    summary_groups: dict = field(default_factory=lambda: {
+        "time": True, "tokens": True, "git": True,
+        "supervision": True, "priority": True, "performance": True
+    })
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -418,6 +423,11 @@ class TUIPreferences:
                 if not isinstance(data, dict):
                     return cls()
 
+                # Default summary groups visibility
+                default_summary_groups = {
+                    "time": True, "tokens": True, "git": True,
+                    "supervision": True, "priority": True, "performance": True
+                }
                 return cls(
                     summary_detail=data.get("summary_detail", "low"),
                     detail_lines=data.get("detail_lines", 5),
@@ -433,6 +443,7 @@ class TUIPreferences:
                     monochrome=data.get("monochrome", False),
                     show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
+                    summary_groups=data.get("summary_groups", default_summary_groups),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -460,6 +471,7 @@ class TUIPreferences:
                     "monochrome": self.monochrome,
                     "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
+                    "summary_groups": self.summary_groups,
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

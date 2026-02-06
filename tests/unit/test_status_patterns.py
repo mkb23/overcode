@@ -17,6 +17,7 @@ from overcode.status_patterns import (
     is_command_menu_line,
     count_command_menu_lines,
     clean_line,
+    extract_background_bash_count,
 )
 
 
@@ -276,3 +277,63 @@ class TestCountCommandMenuLines:
     def test_handles_empty_list(self):
         """Should handle empty list."""
         assert count_command_menu_lines([]) == 0
+
+
+class TestExtractBackgroundBashCount:
+    """Tests for extract_background_bash_count function."""
+
+    def test_detects_multiple_bashes(self):
+        """Should detect 'N bashes' pattern."""
+        content = """Some output
+⏵⏵ bypass permissions on · 2 bashes · esc to interrupt · ctrl+t to hide tasks"""
+        assert extract_background_bash_count(content) == 2
+
+        content_3 = """⏵⏵ auto-approve · 3 bashes · esc"""
+        assert extract_background_bash_count(content_3) == 3
+
+    def test_detects_single_bash(self):
+        """Should detect single bash via (running) pattern."""
+        content = """Some output
+⏵⏵ bypass permissions on · for i in {1..300}; do echo "tick $i"; s… (running) · esc to interrupt"""
+        assert extract_background_bash_count(content) == 1
+
+    def test_returns_zero_when_no_bashes(self):
+        """Should return 0 when no background bashes."""
+        content = """Some output
+⏵⏵ bypass permissions on · 50 files +229 -82"""
+        assert extract_background_bash_count(content) == 0
+
+    def test_returns_zero_for_empty_content(self):
+        """Should return 0 for empty content."""
+        assert extract_background_bash_count("") == 0
+
+    def test_returns_zero_without_status_bar(self):
+        """Should return 0 when no status bar line present."""
+        content = """Just some regular output
+without any status bar"""
+        assert extract_background_bash_count(content) == 0
+
+    def test_handles_multiline_content(self):
+        """Should scan through multiline content to find status bar."""
+        content = """⏺ Bash(sleep 60)
+  ⎿  Running…
+
+Some more output here
+
+────────────────────────────
+❯
+────────────────────────────
+  ⏵⏵ bypass permissions on · 2 bashes · esc to interrupt"""
+        assert extract_background_bash_count(content) == 2
+
+    def test_handles_ansi_codes_in_status_bar(self):
+        """Should detect bashes even when status bar has ANSI escape codes."""
+        # Real tmux capture includes ANSI color codes around the status bar
+        content = """Some output
+\x1b[36m⏵⏵ bypass permissions on · 3 bashes · esc to interrupt\x1b[0m"""
+        assert extract_background_bash_count(content) == 3
+
+    def test_handles_ansi_codes_single_bash(self):
+        """Should detect single bash with ANSI codes."""
+        content = """\x1b[1;36m⏵⏵ auto-approve · sleep 120 (running) · esc\x1b[0m"""
+        assert extract_background_bash_count(content) == 1

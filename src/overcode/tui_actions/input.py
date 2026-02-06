@@ -14,6 +14,39 @@ if TYPE_CHECKING:
 class InputActionsMixin:
     """Mixin providing input/send actions for SupervisorTUI."""
 
+    def _auto_wake_if_sleeping(self, session, widget=None) -> bool:
+        """Auto-wake a sleeping agent when sending a command (#168).
+
+        Args:
+            session: The session to potentially wake
+            widget: Optional SessionSummary widget to update
+
+        Returns:
+            True if the agent was woken, False if it wasn't sleeping
+        """
+        # Check both the session object and widget's detected status
+        is_sleeping = session.is_asleep
+        if widget and widget.detected_status == "asleep":
+            is_sleeping = True
+
+        if not is_sleeping:
+            return False
+
+        # Wake the agent - persist to disk
+        self.session_manager.update_session(session.id, is_asleep=False)
+        session.is_asleep = False
+
+        # Update widget display immediately (don't wait for next refresh cycle)
+        if widget:
+            widget.session.is_asleep = False
+            # Clear the asleep status so it shows detected status on next refresh
+            if widget.detected_status == "asleep":
+                widget.detected_status = "running"  # Will be corrected on next status update
+            widget.refresh()
+
+        self.notify(f"Woke agent '{session.name}' to send command", severity="information")
+        return True
+
     def action_send_enter_to_focused(self) -> None:
         """Send Enter keypress to the focused agent (for approvals)."""
         from ..tui_widgets import SessionSummary
@@ -24,7 +57,12 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        session_name = focused.session.name
+        session = focused.session
+        session_name = session.name
+
+        # Auto-wake sleeping agent (#168)
+        self._auto_wake_if_sleeping(session, focused)
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
@@ -109,7 +147,12 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        session_name = focused.session.name
+        session = focused.session
+        session_name = session.name
+
+        # Auto-wake sleeping agent (#168)
+        self._auto_wake_if_sleeping(session, focused)
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
