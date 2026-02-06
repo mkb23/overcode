@@ -437,7 +437,12 @@ def show(
                 ctx_pct = min(100, claude_stats.current_context_tokens / 200_000 * 100)
                 token_str += f" (context {ctx_pct:.0f}%)"
             cost = sess.stats.estimated_cost_usd
-            print(f"Tokens:    {token_str:<28} Cost:    {format_cost(cost)}")
+            budget = sess.cost_budget_usd
+            if budget > 0:
+                cost_display = f"{format_cost(cost)}/{format_cost(budget)}"
+            else:
+                cost_display = format_cost(cost)
+            print(f"Tokens:    {token_str:<28} Cost:    {cost_display}")
 
             # Work & interactions
             median_work = claude_stats.median_work_time

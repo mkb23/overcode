@@ -195,6 +195,8 @@ def _build_agent_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
         "tokens": format_tokens(s.input_tokens + s.output_tokens),
         "tokens_raw": s.input_tokens + s.output_tokens,
         "cost_usd": round(s.estimated_cost_usd, 2),
+        "cost_budget_usd": s.cost_budget_usd,
+        "budget_exceeded": s.budget_exceeded,
         "standing_orders": bool(s.standing_instructions),
         "standing_orders_complete": s.standing_orders_complete,
         "time_in_state": format_duration(time_in_state),
