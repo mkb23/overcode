@@ -27,9 +27,9 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
 
     BINDINGS = [
         Binding("up", "scroll_up", "Scroll Up", show=False),
-        Binding("k", "scroll_up", "Scroll Up", show=False),
+        Binding("k", "scroll_up_20", "Scroll Up 20", show=False),
         Binding("down", "scroll_down", "Scroll Down", show=False),
-        Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("j", "scroll_down_20", "Scroll Down 20", show=False),
         Binding("pageup", "page_up", "Page Up", show=False),
         Binding("pagedown", "page_down", "Page Down", show=False),
         Binding("home", "scroll_home", "Scroll Home", show=False),
@@ -86,7 +86,7 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         except Exception:
             pass
         self.add_class("visible")
-        self.scroll_home(animate=False)
+        self.scroll_end(animate=False)
         self.focus()
 
     def hide(self) -> None:
@@ -95,6 +95,14 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         if self._previous_focus is not None:
             self._previous_focus.focus()
             self._previous_focus = None
+
+    def action_scroll_up_20(self) -> None:
+        """Scroll up 20 lines."""
+        self.scroll_relative(y=-20, animate=False)
+
+    def action_scroll_down_20(self) -> None:
+        """Scroll down 20 lines."""
+        self.scroll_relative(y=20, animate=False)
 
     def on_key(self, event: events.Key) -> None:
         """Handle keyboard input — Esc/f/q close the overlay."""
