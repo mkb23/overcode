@@ -47,21 +47,20 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         yield Static(id="fullscreen-content")
 
     def _build_content(self) -> Panel:
-        """Build the Rich Panel renderable from stored content lines."""
+        """Build the Rich Panel renderable from stored content lines.
+
+        Always strips ANSI escape codes — they have zero display width but
+        non-zero byte length, so any character-count truncation clips
+        mid-sequence and produces garbled/ragged edges.
+        """
         content = Text()
 
         if not self._content_lines:
             content.append("(no output)", style="dim italic")
         else:
-            pane_width = self.size.width - 6 if self.size.width > 6 else 80
-            max_line_len = max(pane_width, 40)
             for line in self._content_lines:
-                display_line = line[:max_line_len] if len(line) > max_line_len else line
-                if self._monochrome:
-                    parsed = Text.from_ansi(display_line)
-                    content.append(parsed.plain)
-                else:
-                    content.append(Text.from_ansi(display_line))
+                plain = Text.from_ansi(line).plain
+                content.append(plain)
                 content.append("\n")
 
         title = Text()
