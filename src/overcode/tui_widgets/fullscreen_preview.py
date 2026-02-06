@@ -8,6 +8,7 @@ with up to 500 lines of scrollback history.
 from typing import List, Optional
 
 from textual.binding import Binding
+from textual.containers import ScrollableContainer
 from textual.widgets import Static
 from textual.widget import Widget
 from textual import events
@@ -16,12 +17,19 @@ from rich.panel import Panel
 from rich import box
 
 
-class FullscreenPreview(Static, can_focus=True):
-    """Fullscreen scrollable preview of an agent's terminal output."""
+class FullscreenPreview(ScrollableContainer, can_focus=True):
+    """Fullscreen scrollable preview of an agent's terminal output.
+
+    Uses ScrollableContainer so the inner Static child (height: auto)
+    grows to fit all content lines, and the container provides native
+    keyboard/mouse/trackpad scrolling.
+    """
 
     BINDINGS = [
         Binding("up", "scroll_up", "Scroll Up", show=False),
+        Binding("k", "scroll_up", "Scroll Up", show=False),
         Binding("down", "scroll_down", "Scroll Down", show=False),
+        Binding("j", "scroll_down", "Scroll Down", show=False),
         Binding("pageup", "page_up", "Page Up", show=False),
         Binding("pagedown", "page_down", "Page Down", show=False),
         Binding("home", "scroll_home", "Scroll Home", show=False),
@@ -35,7 +43,11 @@ class FullscreenPreview(Static, can_focus=True):
         self._monochrome: bool = False
         self._previous_focus: Optional[Widget] = None
 
-    def render(self) -> Panel:
+    def compose(self):
+        yield Static(id="fullscreen-content")
+
+    def _build_content(self) -> Panel:
+        """Build the Rich Panel renderable from stored content lines."""
         content = Text()
 
         if not self._content_lines:
@@ -58,7 +70,7 @@ class FullscreenPreview(Static, can_focus=True):
         return Panel(
             content,
             title=title,
-            subtitle=Text("Esc/f/q close · ↑↓/PgUp/PgDn scroll", style="dim"),
+            subtitle=Text("Esc/f/q close · ↑↓/j/k/PgUp/PgDn scroll", style="dim"),
             border_style="bright_cyan",
             box=box.DOUBLE,
         )
@@ -69,8 +81,13 @@ class FullscreenPreview(Static, can_focus=True):
         self._session_name = session_name
         self._monochrome = monochrome
         self._previous_focus = self.app.focused
+        try:
+            content_widget = self.query_one("#fullscreen-content", Static)
+            content_widget.update(self._build_content())
+        except Exception:
+            pass
         self.add_class("visible")
-        self.refresh()
+        self.scroll_home(animate=False)
         self.focus()
 
     def hide(self) -> None:
