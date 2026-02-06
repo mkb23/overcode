@@ -818,11 +818,14 @@ class TestHelpOverlayWidget:
         widget = HelpOverlay()
         assert widget is not None
 
-    def test_has_help_text(self):
-        """HelpOverlay has help text defined"""
+    def test_renders_help_content(self):
+        """HelpOverlay renders help content with keybindings and status reference"""
         from overcode.tui import HelpOverlay
-        assert HelpOverlay.HELP_TEXT is not None
-        assert len(HelpOverlay.HELP_TEXT) > 100
+        widget = HelpOverlay()
+        rendered = widget.render()
+        # Should return a Rich Panel with keybindings and status reference
+        from rich.panel import Panel
+        assert isinstance(rendered, Panel)
 
 
 # =============================================================================
@@ -909,24 +912,25 @@ class TestHelpOverlayRender:
     """Test HelpOverlay.render() output"""
 
     def test_render_contains_keyboard_shortcuts(self):
-        """Help text contains keyboard shortcut sections"""
+        """Help keybindings column contains keyboard shortcut sections"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
-        result = widget.render()
-        plain = result.plain
-        # Check for reorganized section headers
+        keybindings = widget._build_keybindings()
+        plain = keybindings.plain
         assert "NAVIGATION & VIEW" in plain
         assert "AGENT CONTROL" in plain
         assert "Quit" in plain
 
-    def test_render_contains_status_colors(self):
-        """Help text contains status color descriptions"""
+    def test_render_contains_status_reference(self):
+        """Help status column contains status descriptions"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
-        result = widget.render()
-        plain = result.plain
+        statuses = widget._build_status_reference()
+        plain = statuses.plain
         assert "Running" in plain
-        assert "Wait user" in plain
+        assert "Waiting (user)" in plain
+        assert "AGENT STATUSES" in plain
+        assert "TIMELINE LEGEND" in plain
 
 
 @pytest.mark.skip(reason="Requires Textual app context")
