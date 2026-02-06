@@ -51,7 +51,8 @@ class DaemonStatusBar(Static):
         # Update cache of asleep session IDs from session manager
         if self._session_manager:
             self._asleep_session_ids = {
-                s.id for s in self._session_manager.list_sessions() if s.is_asleep
+                s.id for s in self._session_manager.list_sessions()
+                if s.is_asleep and s.tmux_session == self.tmux_session
             }
         self.refresh()
 

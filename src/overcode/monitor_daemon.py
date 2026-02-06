@@ -661,8 +661,9 @@ class MonitorDaemon:
                 self.state.loop_count += 1
                 now = datetime.now()
 
-                # Get all sessions
-                sessions = self.session_manager.list_sessions()
+                # Get sessions belonging to this tmux session only
+                all_sessions = self.session_manager.list_sessions()
+                sessions = [s for s in all_sessions if s.tmux_session == self.tmux_session]
 
                 # Sync Claude Code stats BEFORE building session_states so token counts are fresh
                 # This ensures the first loop has accurate data (fixes #103)

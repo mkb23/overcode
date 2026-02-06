@@ -690,8 +690,9 @@ class SupervisorTUI(
         if not self._summarizer.enabled:
             return
 
-        # Get fresh session list
-        sessions = self.session_manager.list_sessions()
+        # Get fresh session list (filtered to this tmux session)
+        all_sessions = self.session_manager.list_sessions()
+        sessions = [s for s in all_sessions if s.tmux_session == self.tmux_session]
         if not sessions:
             return
 
