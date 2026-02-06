@@ -337,3 +337,13 @@ Some more output here
         """Should detect single bash with ANSI codes."""
         content = """\x1b[1;36m⏵⏵ auto-approve · sleep 120 (running) · esc\x1b[0m"""
         assert extract_background_bash_count(content) == 1
+
+    def test_handles_ansi_with_leading_spaces(self):
+        """Should detect bashes when ANSI codes wrap leading spaces (real-world case).
+
+        Claude Code's status bar is rendered with ANSI reset codes before leading
+        spaces, so strip() alone can't remove them — must strip_ansi first.
+        """
+        # Real captured line: \x1b[0m  \x1b[38;2;255;107;128m⏵⏵\x1b[39m ...
+        content = """\x1b[0m  \x1b[38;2;255;107;128m⏵⏵\x1b[39m \x1b[38;2;255;107;128mbypass\x1b[39m \x1b[38;2;255;107;128mpermissions\x1b[39m \x1b[38;2;255;107;128mon\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;0;204;204m3\x1b[39m \x1b[38;2;0;204;204mbashes\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;153;153;153mctrl+t\x1b[39m"""
+        assert extract_background_bash_count(content) == 3

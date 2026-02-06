@@ -316,17 +316,158 @@ class TestHistoryCommandWithMocks:
 class TestShowCommandWithMocks:
     """Test show command with mocked output"""
 
-    def test_show_session_output(self):
-        """Show outputs session content"""
+    def _make_mock_session(self, name="test-agent"):
+        """Create a mock Session object with all required fields."""
+        from overcode.session_manager import Session, SessionStats
+        return Session(
+            id="test-id",
+            name=name,
+            tmux_session="agents",
+            tmux_window=0,
+            command=["claude"],
+            start_directory="/tmp/test",
+            start_time="2026-02-06T10:00:00",
+            repo_name="test-repo",
+            branch="main",
+            status="running",
+            permissiveness_mode="normal",
+            standing_instructions="",
+            agent_value=1000,
+            stats=SessionStats(
+                green_time_seconds=3600.0,
+                non_green_time_seconds=600.0,
+                sleep_time_seconds=0.0,
+                estimated_cost_usd=1.50,
+                steers_count=2,
+                state_since="2026-02-06T11:50:00",
+            ),
+        )
+
+    def _make_mock_claude_stats(self):
+        """Create a mock ClaudeSessionStats."""
+        from overcode.history_reader import ClaudeSessionStats
+        return ClaudeSessionStats(
+            interaction_count=5,
+            input_tokens=50000,
+            output_tokens=10000,
+            cache_creation_tokens=1000,
+            cache_read_tokens=2000,
+            work_times=[120.0, 180.0, 90.0],
+            current_context_tokens=90000,
+            subagent_count=2,
+            background_task_count=0,
+        )
+
+    def test_show_session_output_no_stats(self):
+        """Show --no-stats outputs only pane content"""
         with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.get_session_output.return_value = "line 1\nline 2\nline 3"
+            mock_launcher.sessions.get_session_by_name.return_value = self._make_mock_session()
+            mock_launcher.get_session_output.return_value = None
             mock_launcher_class.return_value = mock_launcher
 
-            result = runner.invoke(app, ["show", "test-agent"])
+            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+                mock_sd = MagicMock()
+                mock_sd.detect_status.return_value = ("running", "Working...", "line 1\nline 2\nline 3")
+                mock_sd_class.return_value = mock_sd
 
-            assert result.exit_code == 0
-            assert "line 1" in result.output
+                result = runner.invoke(app, ["show", "test-agent", "--no-stats"])
+
+                assert result.exit_code == 0
+                assert "line 1" in result.output
+                # Stats should NOT be present
+                assert "Tokens:" not in result.output
+
+    def test_show_displays_stats(self):
+        """Show displays stats section by default"""
+        mock_session = self._make_mock_session()
+        mock_claude_stats = self._make_mock_claude_stats()
+
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher_class.return_value = mock_launcher
+
+            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+                mock_sd = MagicMock()
+                pane = "Some output\n⏵⏵ bypass permissions on · 3 bashes · esc"
+                mock_sd.detect_status.return_value = ("running", "Working on tests", pane)
+                mock_sd_class.return_value = mock_sd
+
+                with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
+                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=(3, 120, 45)):
+                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
+                            result = runner.invoke(app, ["show", "test-agent"])
+
+                            assert result.exit_code == 0
+                            output = result.output
+                            assert "=== test-agent ===" in output
+                            assert "running" in output
+                            assert "test-repo:main" in output
+                            assert "active" in output
+                            assert "stalled" in output
+                            assert "60.0K" in output  # total tokens
+                            assert "subagents" in output
+                            assert "3 background bashes" in output
+                            assert "Δ3 files" in output
+
+    def test_show_agent_not_found(self):
+        """Show exits with error when agent not found"""
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.sessions.get_session_by_name.return_value = None
+            mock_launcher_class.return_value = mock_launcher
+
+            result = runner.invoke(app, ["show", "nonexistent"])
+
+            assert result.exit_code == 1
+
+    def test_show_handles_no_claude_stats(self):
+        """Show handles missing claude stats gracefully"""
+        mock_session = self._make_mock_session()
+
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher_class.return_value = mock_launcher
+
+            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+                mock_sd = MagicMock()
+                mock_sd.detect_status.return_value = ("running", "Working...", "output")
+                mock_sd_class.return_value = mock_sd
+
+                with patch('overcode.history_reader.get_session_stats', return_value=None):
+                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
+                            result = runner.invoke(app, ["show", "test-agent"])
+
+                            assert result.exit_code == 0
+                            assert "Tokens:    -" in result.output
+
+    def test_show_background_bash_count_with_ansi(self):
+        """Show correctly extracts background bash count from ANSI content"""
+        mock_session = self._make_mock_session()
+        mock_claude_stats = self._make_mock_claude_stats()
+
+        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+            mock_launcher = MagicMock()
+            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher_class.return_value = mock_launcher
+
+            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+                mock_sd = MagicMock()
+                # Simulate ANSI-coded status bar
+                pane = "Output\n\x1b[36m⏵⏵ auto-approve · 2 bashes · esc\x1b[0m"
+                mock_sd.detect_status.return_value = ("running", "Working", pane)
+                mock_sd_class.return_value = mock_sd
+
+                with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
+                    with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
+                        with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
+                            result = runner.invoke(app, ["show", "test-agent"])
+
+                            assert result.exit_code == 0
+                            assert "2 background bashes" in result.output
 
 
 class TestKillCommandWithMocks:

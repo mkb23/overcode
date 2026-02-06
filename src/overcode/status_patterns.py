@@ -314,7 +314,7 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None)
     # Look for status bar line (starts with ⏵⏵)
     # Must strip ANSI codes since pane content is captured with escape_sequences=True
     for line in content.split('\n'):
-        stripped = strip_ansi(line.strip())
+        stripped = strip_ansi(line).strip()
         if not any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
             continue
 
