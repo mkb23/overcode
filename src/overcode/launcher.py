@@ -138,12 +138,15 @@ class ClaudeLauncher:
         elif skip_permissions:
             claude_cmd.extend(["--permission-mode", "dontAsk"])
 
+        # Prepend overcode env vars so the agent knows its identity
+        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
+
         # If MOCK_SCENARIO is set, prepend it to the command for testing
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
-            cmd_str = f"MOCK_SCENARIO={mock_scenario} python {' '.join(claude_cmd)}"
+            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {' '.join(claude_cmd)}"
         else:
-            cmd_str = " ".join(claude_cmd)
+            cmd_str = f"{env_prefix} {' '.join(claude_cmd)}"
 
         # Send command to window to start interactive Claude
         if not self.tmux.send_keys(window_index, cmd_str, enter=True):

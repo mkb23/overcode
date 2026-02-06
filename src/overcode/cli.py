@@ -457,6 +457,24 @@ def show(
                 rprint(f"[dim]No pane output available[/dim]")
 
 
+@app.command("time-context")
+def time_context():
+    """Output a compact time-awareness line for Claude Code hooks.
+
+    Called by a UserPromptSubmit hook on every prompt. Outputs a single
+    line with clock, presence, office hours, uptime, and heartbeat info.
+    Silently exits when not in an overcode-managed session (env vars missing).
+    """
+    from .time_context import get_agent_identity, generate_time_context
+
+    name, tmux = get_agent_identity()
+    if not name or not tmux:
+        raise typer.Exit(0)
+
+    line = generate_time_context(tmux, name)
+    print(line)
+
+
 @app.command()
 def instruct(
     name: Annotated[
@@ -1017,6 +1035,12 @@ CONFIG_TEMPLATE = """\
 #     - name: "Full Day"
 #       start: "09:00"
 #       end: "17:00"
+
+# Time context hook settings (for 'overcode time-context')
+# time_context:
+#   office_start: 9
+#   office_end: 17
+#   heartbeat_interval_minutes: 15  # omit to disable
 """
 
 

@@ -185,3 +185,26 @@ def get_web_time_presets() -> list:
         {"name": "Evening", "start": "18:00", "end": "22:00"},
         {"name": "All Time", "start": None, "end": None},
     ]
+
+
+def get_time_context_config() -> dict:
+    """Get time context configuration for the time-context hook.
+
+    Config format in ~/.overcode/config.yaml:
+        time_context:
+          office_start: 9
+          office_end: 17
+          heartbeat_interval_minutes: 15  # omit to disable
+
+    Returns:
+        Dict with office_start (int), office_end (int),
+        heartbeat_interval_minutes (Optional[int])
+    """
+    config = load_config()
+    tc = config.get("time_context", {})
+
+    return {
+        "office_start": tc.get("office_start", 9),
+        "office_end": tc.get("office_end", 17),
+        "heartbeat_interval_minutes": tc.get("heartbeat_interval_minutes"),
+    }
