@@ -574,7 +574,7 @@ class TestStatusOrderConstants:
     def test_attention_order_has_all_statuses(self):
         """Status order should have all expected statuses."""
         expected = {"waiting_user", "waiting_approval", "error",
-                    "running_heartbeat", "waiting_heartbeat",
+                    "running_heartbeat", "heartbeat_start", "waiting_heartbeat",
                     "running", "terminated", "asleep"}
         assert set(STATUS_ORDER_BY_ATTENTION.keys()) == expected
 
@@ -582,7 +582,7 @@ class TestStatusOrderConstants:
         """Value order should have all expected statuses."""
         expected = {"waiting_user", "waiting_approval", "error",
                     "waiting_heartbeat", "running", "running_heartbeat",
-                    "terminated", "asleep"}
+                    "heartbeat_start", "terminated", "asleep"}
         assert set(STATUS_ORDER_BY_VALUE.keys()) == expected
 
     def test_waiting_user_highest_priority(self):

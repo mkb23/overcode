@@ -782,6 +782,23 @@ class TestGetGitDiffStats:
         assert result is None
 
 
+class TestHeartbeatStartStatus:
+    """Tests for heartbeat_start status integration."""
+
+    def test_is_green_status(self):
+        """heartbeat_start should count as green (actively working)."""
+        from overcode.status_constants import is_green_status
+        assert is_green_status("heartbeat_start") is True
+
+    def test_has_timeline_char(self):
+        """heartbeat_start should have a timeline character mapping."""
+        assert agent_status_to_char("heartbeat_start") == "💚"
+
+    def test_has_timeline_color(self):
+        """heartbeat_start should have green timeline color."""
+        assert get_agent_timeline_color("heartbeat_start") == "green"
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

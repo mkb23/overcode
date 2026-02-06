@@ -139,6 +139,8 @@ class HelpOverlay(Static):
         section("TIMELINE LEGEND")
         t.append("█", style="green")
         t.append(" active  ", style="dim")
+        t.append("💚", style="")
+        t.append(" heartbeat start\n", style="dim")
         t.append("▒", style="yellow")
         t.append(" waiting  ", style="dim")
         t.append("░", style="red")

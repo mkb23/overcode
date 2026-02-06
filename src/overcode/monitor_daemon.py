@@ -55,6 +55,7 @@ from .settings import (
 from .config import get_relay_config
 from .status_constants import (
     STATUS_ASLEEP,
+    STATUS_HEARTBEAT_START,
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
@@ -234,6 +235,7 @@ class MonitorDaemon:
         # Heartbeat tracking (#171)
         self._heartbeat_triggered_sessions: set = set()  # Session IDs that received heartbeat this loop
         self._sessions_running_from_heartbeat: set = set()  # Persistent: sessions currently running due to heartbeat
+        self._heartbeat_start_pending: set = set()  # One-shot: sessions awaiting first "running" observation after heartbeat
 
     def track_session_stats(self, session, status: str) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
@@ -690,6 +692,8 @@ class MonitorDaemon:
                 self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
                 # Add newly triggered sessions to persistent heartbeat tracking
                 self._sessions_running_from_heartbeat.update(self._heartbeat_triggered_sessions)
+                # Track pending heartbeat starts for timeline marker
+                self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
 
                 # Detect status and track stats for each session
                 session_states = []
@@ -702,6 +706,7 @@ class MonitorDaemon:
                     # Clear heartbeat tracking when session stops running
                     if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
                         self._sessions_running_from_heartbeat.discard(session.id)
+                        self._heartbeat_start_pending.discard(session.id)
 
                     # Refresh git context (branch may have changed)
                     self.session_manager.refresh_git_context(session.id)
@@ -723,7 +728,11 @@ class MonitorDaemon:
                     if session.is_asleep:
                         effective_status = STATUS_ASLEEP
                     elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
-                        effective_status = STATUS_RUNNING_HEARTBEAT
+                        if session.id in self._heartbeat_start_pending:
+                            effective_status = STATUS_HEARTBEAT_START
+                            self._heartbeat_start_pending.discard(session.id)
+                        else:
+                            effective_status = STATUS_RUNNING_HEARTBEAT
                     elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
                           and session.heartbeat_enabled
                           and not session.heartbeat_paused

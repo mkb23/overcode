@@ -202,7 +202,16 @@ class StatusTimeline(Static):
             if history:
                 slot_states = build_timeline_slots(history, width, self.timeline_hours, now)
                 # Render timeline with colors, including baseline marker
+                skip_next = False
                 for i in range(width):
+                    if skip_next:
+                        skip_next = False
+                        # Still count the underlying slot for percentage
+                        if i in slot_states:
+                            total_slots += 1
+                            if is_green_status(slot_states[i]):
+                                green_slots += 1
+                        continue
                     if i == baseline_slot:
                         content.append("|", style="bold cyan")
                         # Still count the underlying slot for percentage
@@ -212,9 +221,14 @@ class StatusTimeline(Static):
                                 green_slots += 1
                     elif i in slot_states:
                         status = slot_states[i]
-                        char = agent_status_to_char(status)
-                        color = get_agent_timeline_color(status)
-                        content.append(char, style=color)
+                        if status == "heartbeat_start":
+                            # 💚 is 2 cells wide — skip next slot to keep alignment
+                            content.append("💚")
+                            skip_next = True
+                        else:
+                            char = agent_status_to_char(status)
+                            color = get_agent_timeline_color(status)
+                            content.append(char, style=color)
                         total_slots += 1
                         if is_green_status(status):
                             green_slots += 1
@@ -242,6 +256,8 @@ class StatusTimeline(Static):
         content.append(f"  {'Legend:':<14} ", style="dim")
         content.append("█", style="green")
         content.append("active/running ", style="dim")
+        content.append("💚", style="")
+        content.append("heartbeat start ", style="dim")
         content.append("▒", style="yellow")
         content.append("inactive ", style="dim")
         content.append("░", style="red")

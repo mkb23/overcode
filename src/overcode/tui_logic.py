@@ -49,6 +49,7 @@ STATUS_ORDER_BY_ATTENTION = {
     "waiting_approval": 1,
     "error": 2,
     "running_heartbeat": 3,
+    "heartbeat_start": 3,
     "waiting_heartbeat": 4,
     "running": 5,
     "terminated": 6,
@@ -62,6 +63,7 @@ STATUS_ORDER_BY_VALUE = {
     "waiting_heartbeat": 0,
     "running": 1,
     "running_heartbeat": 1,
+    "heartbeat_start": 1,
     "terminated": 2,
     "asleep": 2,
 }

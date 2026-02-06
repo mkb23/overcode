@@ -20,6 +20,7 @@ STATUS_RUNNING_HEARTBEAT = "running_heartbeat"  # Running from automated heartbe
 STATUS_WAITING_APPROVAL = "waiting_approval"  # Waiting on approval/plan/decision (#22)
 STATUS_WAITING_HEARTBEAT = "waiting_heartbeat"  # Waiting but heartbeat will auto-resume
 STATUS_ERROR = "error"  # API timeout, etc. (#22)
+STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-triggered run (timeline only)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -31,6 +32,7 @@ ALL_STATUSES = [
     STATUS_WAITING_APPROVAL,
     STATUS_WAITING_HEARTBEAT,
     STATUS_ERROR,
+    STATUS_HEARTBEAT_START,
 ]
 
 
@@ -69,6 +71,7 @@ STATUS_EMOJIS = {
     STATUS_WAITING_APPROVAL: "🟠",  # Orange for approval waiting (#22)
     STATUS_WAITING_HEARTBEAT: "💛",  # Yellow heart - waiting but heartbeat will auto-resume
     STATUS_ERROR: "🟣",  # Purple for errors (#22)
+    STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
 }
 
 
@@ -90,6 +93,7 @@ STATUS_COLORS = {
     STATUS_WAITING_APPROVAL: "orange1",  # Orange for approval waiting (#22)
     STATUS_WAITING_HEARTBEAT: "yellow",  # Yellow - waiting but heartbeat will auto-resume
     STATUS_ERROR: "magenta",  # Purple for errors (#22)
+    STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
 }
 
 
@@ -111,6 +115,7 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_APPROVAL: ("🟠", "orange1"),  # Approval waiting (#22)
     STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
     STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
+    STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
 }
 
 
@@ -132,6 +137,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_APPROVAL: "▒",  # Medium shade (#22)
     STATUS_WAITING_HEARTBEAT: "▒",  # Medium shade - waiting but heartbeat will auto-resume
     STATUS_ERROR: "▓",  # Dense shade (#22)
+    STATUS_HEARTBEAT_START: "💚",  # Green heart emoji - rendered specially by timeline widget
 }
 
 
@@ -195,7 +201,7 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
 
 def is_green_status(status: str) -> bool:
     """Check if a status is considered 'green' (actively working)."""
-    return status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT)
+    return status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START)
 
 
 def is_waiting_status(status: str) -> bool:
