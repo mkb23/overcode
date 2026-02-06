@@ -424,3 +424,347 @@ class TestOvercodeHandlerRoutes:
         query = parse_qs(parsed.query)
         assert float(query.get("hours", [3.0])[0]) == 6.0
         assert int(query.get("slots", [60])[0]) == 30
+
+
+class TestOvercodeHandlerRouteDispatching:
+    """Tests that OvercodeHandler.do_GET dispatches to correct methods."""
+
+    def test_root_calls_serve_dashboard(self):
+        """GET / should call _serve_dashboard."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/"
+
+        OvercodeHandler.do_GET(handler)
+
+        handler._serve_dashboard.assert_called_once()
+
+    def test_index_html_calls_serve_dashboard(self):
+        """GET /index.html should call _serve_dashboard."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/index.html"
+
+        OvercodeHandler.do_GET(handler)
+
+        handler._serve_dashboard.assert_called_once()
+
+    def test_api_status_calls_serve_json(self):
+        """GET /api/status should call _serve_json with get_status_data result."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/api/status"
+        handler.tmux_session = "test-session"
+
+        with patch('overcode.web_server.get_status_data') as mock_get_status:
+            mock_get_status.return_value = {"status": "ok"}
+
+            OvercodeHandler.do_GET(handler)
+
+            mock_get_status.assert_called_once_with("test-session")
+            handler._serve_json.assert_called_once_with({"status": "ok"})
+
+    def test_api_timeline_calls_serve_json_with_defaults(self):
+        """GET /api/timeline should call _serve_json with get_timeline_data."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/api/timeline"
+        handler.tmux_session = "test-session"
+
+        with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
+            mock_get_timeline.return_value = {"timeline": "data"}
+
+            OvercodeHandler.do_GET(handler)
+
+            mock_get_timeline.assert_called_once_with("test-session", hours=3.0, slots=60)
+            handler._serve_json.assert_called_once_with({"timeline": "data"})
+
+    def test_api_timeline_passes_query_params(self):
+        """GET /api/timeline?hours=6&slots=30 should pass parsed params."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/api/timeline?hours=6&slots=30"
+        handler.tmux_session = "test-session"
+
+        with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
+            mock_get_timeline.return_value = {"timeline": "data"}
+
+            OvercodeHandler.do_GET(handler)
+
+            mock_get_timeline.assert_called_once_with("test-session", hours=6.0, slots=30)
+
+    def test_health_calls_serve_json(self):
+        """GET /health should call _serve_json with get_health_data result."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/health"
+
+        with patch('overcode.web_server.get_health_data') as mock_health:
+            mock_health.return_value = {"status": "ok"}
+
+            OvercodeHandler.do_GET(handler)
+
+            mock_health.assert_called_once()
+            handler._serve_json.assert_called_once_with({"status": "ok"})
+
+    def test_unknown_route_returns_404(self):
+        """GET /unknown should call send_error(404)."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/nonexistent"
+
+        OvercodeHandler.do_GET(handler)
+
+        handler.send_error.assert_called_once_with(404, "Not Found")
+
+
+class TestAnalyticsHandlerRouteDispatching:
+    """Tests that AnalyticsHandler.do_GET dispatches to correct methods."""
+
+    def test_root_calls_serve_analytics_dashboard(self):
+        """GET / should call _serve_analytics_dashboard."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        AnalyticsHandler.do_GET(handler)
+
+        handler._serve_analytics_dashboard.assert_called_once()
+
+    def test_sessions_route_calls_get_analytics_sessions(self):
+        """GET /api/analytics/sessions should call get_analytics_sessions."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/sessions"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
+            mock_fn.return_value = {"sessions": []}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once_with(None, None)
+            handler._serve_json.assert_called_once_with({"sessions": []})
+
+    def test_timeline_route_calls_get_analytics_timeline(self):
+        """GET /api/analytics/timeline should call get_analytics_timeline."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/timeline"
+        handler.tmux_session = "test-session"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_analytics_timeline') as mock_fn:
+            mock_fn.return_value = {"agents": {}}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once_with("test-session", None, None)
+            handler._serve_json.assert_called_once()
+
+    def test_stats_route_calls_get_analytics_stats(self):
+        """GET /api/analytics/stats should call get_analytics_stats."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/stats"
+        handler.tmux_session = "test-session"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_analytics_stats') as mock_fn:
+            mock_fn.return_value = {"stats": {}}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once_with("test-session", None, None)
+            handler._serve_json.assert_called_once()
+
+    def test_daily_route_calls_get_analytics_daily(self):
+        """GET /api/analytics/daily should call get_analytics_daily."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/daily"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_analytics_daily') as mock_fn:
+            mock_fn.return_value = {"days": []}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once_with(None, None)
+            handler._serve_json.assert_called_once()
+
+    def test_presets_route_calls_get_time_presets(self):
+        """GET /api/analytics/presets should call get_time_presets."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/presets"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_time_presets') as mock_fn:
+            mock_fn.return_value = [{"label": "24h"}]
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once()
+            handler._serve_json.assert_called_once_with([{"label": "24h"}])
+
+    def test_chartjs_route_calls_serve_chartjs(self):
+        """GET /static/chart.min.js should call _serve_chartjs."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/static/chart.min.js"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        AnalyticsHandler.do_GET(handler)
+
+        handler._serve_chartjs.assert_called_once()
+
+    def test_health_route_calls_get_health_data(self):
+        """GET /health should call get_health_data."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/health"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        with patch('overcode.web_server.get_health_data') as mock_fn:
+            mock_fn.return_value = {"status": "ok"}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once()
+            handler._serve_json.assert_called_once_with({"status": "ok"})
+
+    def test_unknown_route_returns_404(self):
+        """GET /unknown should call send_error(404)."""
+        from overcode.web_server import AnalyticsHandler
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/nonexistent"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        AnalyticsHandler.do_GET(handler)
+
+        handler.send_error.assert_called_once_with(404, "Not Found")
+
+    def test_sessions_route_with_time_params(self):
+        """GET /api/analytics/sessions with start/end should parse datetime params."""
+        from overcode.web_server import AnalyticsHandler
+        from datetime import datetime
+
+        handler = MagicMock(spec=AnalyticsHandler)
+        handler.path = "/api/analytics/sessions?start=2024-01-01T00:00:00&end=2024-01-31T23:59:59"
+
+        start_dt = datetime(2024, 1, 1)
+        end_dt = datetime(2024, 1, 31, 23, 59, 59)
+        handler._parse_datetime = MagicMock(side_effect=lambda v: {
+            "2024-01-01T00:00:00": start_dt,
+            "2024-01-31T23:59:59": end_dt,
+        }.get(v))
+
+        with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
+            mock_fn.return_value = {"sessions": []}
+
+            AnalyticsHandler.do_GET(handler)
+
+            mock_fn.assert_called_once_with(start_dt, end_dt)
+
+
+class TestLogToFile:
+    """Tests for _log_to_file function."""
+
+    def test_writes_message_to_log_file(self, tmp_path, monkeypatch):
+        """Should write a timestamped message to web_server.log."""
+        from overcode.web_server import _log_to_file
+
+        monkeypatch.setattr(
+            'overcode.settings.get_session_dir',
+            lambda session: tmp_path / session
+        )
+
+        _log_to_file("test-session", "Hello from test")
+
+        log_path = tmp_path / "test-session" / "web_server.log"
+        assert log_path.exists()
+        content = log_path.read_text()
+        assert "Hello from test" in content
+        assert "[start_web_server]" in content
+
+    def test_appends_to_existing_log(self, tmp_path, monkeypatch):
+        """Should append to existing log file, not overwrite."""
+        from overcode.web_server import _log_to_file
+
+        monkeypatch.setattr(
+            'overcode.settings.get_session_dir',
+            lambda session: tmp_path / session
+        )
+
+        _log_to_file("test-session", "First message")
+        _log_to_file("test-session", "Second message")
+
+        log_path = tmp_path / "test-session" / "web_server.log"
+        content = log_path.read_text()
+        assert "First message" in content
+        assert "Second message" in content
+
+    def test_creates_parent_directories(self, tmp_path, monkeypatch):
+        """Should create parent dirs if they don't exist."""
+        from overcode.web_server import _log_to_file
+
+        deep_path = tmp_path / "deep" / "nested"
+        monkeypatch.setattr(
+            'overcode.settings.get_session_dir',
+            lambda session: deep_path / session
+        )
+
+        _log_to_file("test-session", "Deep message")
+
+        log_path = deep_path / "test-session" / "web_server.log"
+        assert log_path.exists()
+
+    def test_silently_handles_errors(self, tmp_path, monkeypatch):
+        """Should not raise on write errors (passes silently)."""
+        from overcode.web_server import _log_to_file
+
+        # Point to a path that will cause an error (read-only dir)
+        monkeypatch.setattr(
+            'overcode.settings.get_session_dir',
+            lambda session: None  # This will cause an AttributeError
+        )
+
+        # Should not raise
+        _log_to_file("test-session", "Should not crash")
+
+
+class TestToggleWebServerStopFailure:
+    """Tests for toggle_web_server when stop fails."""
+
+    def test_returns_false_when_stop_fails(self, tmp_path, monkeypatch):
+        """Should return (False, 'Failed to stop') when stop_process fails."""
+        from overcode.web_server import toggle_web_server
+
+        pid_file = tmp_path / "test_session_web.pid"
+        pid_file.write_text("12345")
+
+        port_file = tmp_path / "test_session_web.port"
+        port_file.write_text("8080")
+
+        monkeypatch.setattr(
+            'overcode.web_server.get_web_server_pid_path',
+            lambda session: pid_file
+        )
+        monkeypatch.setattr(
+            'overcode.web_server.get_web_server_port_path',
+            lambda session: port_file
+        )
+
+        with patch('overcode.web_server.is_process_running', return_value=True):
+            with patch('overcode.web_server.stop_process') as mock_stop:
+                mock_stop.return_value = False  # stop fails
+
+                is_running, message = toggle_web_server("test_session")
+
+        # toggle_web_server returns (False, msg) regardless of stop success
+        assert is_running is False
+        assert "Failed to stop" in message

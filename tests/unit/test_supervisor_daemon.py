@@ -495,6 +495,776 @@ class TestMarkDaemonClaudeStopped:
         assert daemon.supervisor_stats.supervisor_claude_total_run_seconds == 100.0
 
 
+class TestIsDaemonClaudeRunning:
+    """Test is_daemon_claude_running method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_returns_false_when_no_window(self, tmp_path, monkeypatch):
+        """Should return False when daemon_claude_window is None."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = None
+
+        assert daemon.is_daemon_claude_running() is False
+
+    def test_returns_true_when_window_exists(self, tmp_path, monkeypatch):
+        """Should return True when window is set and tmux says it exists."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 5
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        assert daemon.is_daemon_claude_running() is True
+        daemon.tmux.window_exists.assert_called_once_with(5)
+
+    def test_returns_false_when_window_gone(self, tmp_path, monkeypatch):
+        """Should return False when window is set but tmux says it no longer exists."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 3
+        daemon.tmux.window_exists = Mock(return_value=False)
+
+        assert daemon.is_daemon_claude_running() is False
+
+
+class TestIsDaemonClaudeDone:
+    """Test is_daemon_claude_done method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_returns_true_when_window_does_not_exist(self, tmp_path, monkeypatch):
+        """Should return True when the window no longer exists."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = None  # Not running
+
+        assert daemon.is_daemon_claude_done() is True
+
+    def test_returns_false_when_active_indicator_dot_present(self, tmp_path, monkeypatch):
+        """Should return False when active indicator '· ' is in pane content."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Some output\n· Thinking about it\nMore output\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_false_when_running_indicator(self, tmp_path, monkeypatch):
+        """Should return False when 'Running...' indicator is present."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Some output\nRunning\u2026\nMore output\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_false_when_esc_to_interrupt(self, tmp_path, monkeypatch):
+        """Should return False when '(esc to interrupt' indicator is present."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Doing work\n(esc to interrupt\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_false_when_sparkle_indicator(self, tmp_path, monkeypatch):
+        """Should return False when sparkle indicator is present."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Working\n\u273d processing\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_true_when_empty_prompt_gt(self, tmp_path, monkeypatch):
+        """Should return True when '>' prompt found in last lines."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Previous output\nDone with task\n>\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is True
+
+    def test_returns_true_when_empty_prompt_chevron(self, tmp_path, monkeypatch):
+        """Should return True when chevron prompt found in last lines."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Previous output\nDone with task\n\u203a\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is True
+
+    def test_returns_false_when_tool_call_without_result(self, tmp_path, monkeypatch):
+        """Should return False when tool call marker present but no result marker."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        # Tool call with no result marker following it
+        mock_result.stdout = "Some output\n\u23fa Read(file.py)\nWaiting...\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_false_on_subprocess_timeout(self, tmp_path, monkeypatch):
+        """Should return False when subprocess times out."""
+        import subprocess as sp
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        with patch('overcode.supervisor_daemon.subprocess.run', side_effect=sp.TimeoutExpired(cmd="tmux", timeout=5)):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_false_on_subprocess_error(self, tmp_path, monkeypatch):
+        """Should return False on generic SubprocessError."""
+        import subprocess as sp
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        with patch('overcode.supervisor_daemon.subprocess.run', side_effect=sp.SubprocessError("fail")):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_returns_true_when_capture_fails_nonzero(self, tmp_path, monkeypatch):
+        """Should return True when capture-pane returns non-zero (window gone)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is True
+
+    def test_returns_false_when_no_prompt_and_no_indicators(self, tmp_path, monkeypatch):
+        """Should return False when no indicators and no prompt found."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Some random output\nAnother line\nNo prompt here\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is False
+
+    def test_tool_call_with_result_does_not_block(self, tmp_path, monkeypatch):
+        """Should not consider tool call as blocking when result marker follows."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 1
+        daemon.tmux.window_exists = Mock(return_value=True)
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        # Tool call with result marker after it, then prompt
+        mock_result.stdout = "Some output\n\u23fa Read(file.py)\n\u23bf content here\nDone\n>\n"
+
+        with patch('overcode.supervisor_daemon.subprocess.run', return_value=mock_result):
+            assert daemon.is_daemon_claude_done() is True
+
+
+class TestKillDaemonClaude:
+    """Test kill_daemon_claude method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_kills_existing_window(self, tmp_path, monkeypatch):
+        """Should call kill_window and reset daemon_claude_window to None."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 7
+        daemon.tmux.window_exists = Mock(return_value=True)
+        daemon.tmux.kill_window = Mock()
+
+        daemon.kill_daemon_claude()
+
+        daemon.tmux.kill_window.assert_called_once_with(7)
+        assert daemon.daemon_claude_window is None
+
+    def test_no_kill_when_window_is_none(self, tmp_path, monkeypatch):
+        """Should not call kill_window when daemon_claude_window is None."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = None
+        daemon.tmux.kill_window = Mock()
+
+        daemon.kill_daemon_claude()
+
+        daemon.tmux.kill_window.assert_not_called()
+        assert daemon.daemon_claude_window is None
+
+    def test_no_kill_when_window_already_gone(self, tmp_path, monkeypatch):
+        """Should not call kill_window when window no longer exists."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 5
+        daemon.tmux.window_exists = Mock(return_value=False)
+        daemon.tmux.kill_window = Mock()
+
+        daemon.kill_daemon_claude()
+
+        daemon.tmux.kill_window.assert_not_called()
+        assert daemon.daemon_claude_window is None
+
+
+class TestCleanupStaleDaemonClaudes:
+    """Test cleanup_stale_daemon_claudes method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_clears_stale_window_reference(self, tmp_path, monkeypatch):
+        """Should set daemon_claude_window to None when tracked window no longer exists."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 3
+        daemon.tmux.window_exists = Mock(return_value=False)
+        daemon.tmux.list_windows = Mock(return_value=[])
+
+        daemon.cleanup_stale_daemon_claudes()
+
+        assert daemon.daemon_claude_window is None
+
+    def test_kills_orphaned_daemon_claude_windows(self, tmp_path, monkeypatch):
+        """Should kill daemon claude windows that are not the current tracked one."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 5
+        daemon.tmux.window_exists = Mock(return_value=True)
+        daemon.tmux.list_windows = Mock(return_value=[
+            {'name': '_daemon_claude', 'index': 5},
+            {'name': '_daemon_claude', 'index': 8},  # orphan
+            {'name': 'agent-1', 'index': 1},
+        ])
+        daemon.tmux.kill_window = Mock()
+
+        daemon.cleanup_stale_daemon_claudes()
+
+        daemon.tmux.kill_window.assert_called_once_with(8)
+        assert daemon.daemon_claude_window == 5
+
+    def test_kills_orphans_when_no_tracked_window(self, tmp_path, monkeypatch):
+        """Should kill all daemon claude windows when no window is tracked."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = None
+        daemon.tmux.list_windows = Mock(return_value=[
+            {'name': '_daemon_claude', 'index': 2},
+            {'name': '_daemon_claude', 'index': 9},
+            {'name': 'agent-1', 'index': 1},
+        ])
+        daemon.tmux.kill_window = Mock()
+
+        daemon.cleanup_stale_daemon_claudes()
+
+        assert daemon.tmux.kill_window.call_count == 2
+        daemon.tmux.kill_window.assert_any_call(2)
+        daemon.tmux.kill_window.assert_any_call(9)
+
+    def test_no_cleanup_when_no_orphans(self, tmp_path, monkeypatch):
+        """Should do nothing when no orphaned windows exist."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_window = 5
+        daemon.tmux.window_exists = Mock(return_value=True)
+        daemon.tmux.list_windows = Mock(return_value=[
+            {'name': '_daemon_claude', 'index': 5},
+            {'name': 'agent-1', 'index': 1},
+        ])
+        daemon.tmux.kill_window = Mock()
+
+        daemon.cleanup_stale_daemon_claudes()
+
+        daemon.tmux.kill_window.assert_not_called()
+
+
+class TestCountInterventionsFromLog:
+    """Test count_interventions_from_log method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_returns_empty_when_no_launch_time(self, tmp_path, monkeypatch):
+        """Should return empty dict when daemon_claude_launch_time is None."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = None
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result == {}
+
+    def test_returns_empty_when_log_missing(self, tmp_path, monkeypatch):
+        """Should return empty dict when log file does not exist."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+        # log_path points to tmp_path / "log" which doesn't exist
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result == {}
+
+    def test_counts_approved_interventions(self, tmp_path, monkeypatch):
+        """Should count 'approved' actions per session."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = (
+            "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Tool call approved\n"
+            "Wed 15 Jan 2025 10:31:00 UTC: agent-1 - Another tool approved\n"
+            "Wed 15 Jan 2025 10:32:00 UTC: agent-2 - Action approved\n"
+        )
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1", "agent-2"])
+
+        assert result["agent-1"] == 2
+        assert result["agent-2"] == 1
+
+    def test_counts_rejected_interventions(self, tmp_path, monkeypatch):
+        """Should count 'rejected' actions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Tool call rejected\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result["agent-1"] == 1
+
+    def test_counts_sent_interventions(self, tmp_path, monkeypatch):
+        """Should count 'sent ' actions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Message sent to window\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result["agent-1"] == 1
+
+    def test_counts_provided_interventions(self, tmp_path, monkeypatch):
+        """Should count 'provided' actions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Guidance provided\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result["agent-1"] == 1
+
+    def test_counts_unblocked_interventions(self, tmp_path, monkeypatch):
+        """Should count 'unblocked' actions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Session unblocked\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result["agent-1"] == 1
+
+    def test_excludes_no_action_phrases(self, tmp_path, monkeypatch):
+        """Should not count lines with 'no intervention needed' or 'no action needed'."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = (
+            "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - No intervention needed, approved to continue\n"
+            "Wed 15 Jan 2025 10:31:00 UTC: agent-2 - No action needed\n"
+        )
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1", "agent-2"])
+
+        assert result == {}
+
+    def test_excludes_entries_before_launch_time(self, tmp_path, monkeypatch):
+        """Should only count entries after daemon_claude_launch_time."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 30, 0)
+
+        log_content = (
+            "Wed 15 Jan 2025 10:00:00 UTC: agent-1 - Tool call approved\n"
+            "Wed 15 Jan 2025 10:31:00 UTC: agent-1 - Another tool approved\n"
+        )
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result.get("agent-1", 0) == 1
+
+    def test_ignores_unknown_session_names(self, tmp_path, monkeypatch):
+        """Should not count interventions for sessions not in the provided list."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: unknown-agent - Tool call approved\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result == {}
+
+    def test_ignores_malformed_lines(self, tmp_path, monkeypatch):
+        """Should skip lines without timestamps or proper format."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = (
+            "not a valid line\n"
+            "\n"
+            "no colon here\n"
+            "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Tool call approved\n"
+        )
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result["agent-1"] == 1
+
+    def test_ignores_lines_without_action_phrases(self, tmp_path, monkeypatch):
+        """Should not count lines that match session but have no action phrase."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.daemon_claude_launch_time = datetime(2025, 1, 15, 10, 0, 0)
+
+        log_content = "Wed 15 Jan 2025 10:30:00 UTC: agent-1 - Status is running\n"
+        daemon.log_path.write_text(log_content)
+
+        result = daemon.count_interventions_from_log(["agent-1"])
+
+        assert result == {}
+
+
+class TestUpdateInterventionCounts:
+    """Test update_intervention_counts method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_updates_steers_count_for_sessions(self, tmp_path, monkeypatch):
+        """Should update steers_count for sessions with interventions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        # Mock count_interventions_from_log
+        daemon.count_interventions_from_log = Mock(return_value={"agent-1": 3, "agent-2": 1})
+
+        # Mock session_manager.list_sessions
+        mock_session_1 = Mock()
+        mock_session_1.name = "agent-1"
+        mock_session_1.id = "id-1"
+        mock_session_1.stats = Mock()
+        mock_session_1.stats.steers_count = 5
+
+        mock_session_2 = Mock()
+        mock_session_2.name = "agent-2"
+        mock_session_2.id = "id-2"
+        mock_session_2.stats = Mock()
+        mock_session_2.stats.steers_count = 2
+
+        daemon.session_manager.list_sessions = Mock(return_value=[mock_session_1, mock_session_2])
+        daemon.session_manager.update_stats = Mock()
+
+        daemon.update_intervention_counts(["agent-1", "agent-2"])
+
+        daemon.session_manager.update_stats.assert_any_call("id-1", steers_count=8)
+        daemon.session_manager.update_stats.assert_any_call("id-2", steers_count=3)
+        assert daemon.session_manager.update_stats.call_count == 2
+
+    def test_no_update_when_no_interventions(self, tmp_path, monkeypatch):
+        """Should not call update_stats when there are no interventions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.count_interventions_from_log = Mock(return_value={})
+        daemon.session_manager.update_stats = Mock()
+
+        daemon.update_intervention_counts(["agent-1"])
+
+        daemon.session_manager.update_stats.assert_not_called()
+
+    def test_skips_sessions_not_in_manager(self, tmp_path, monkeypatch):
+        """Should skip intervention counts for sessions not found in session manager."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.count_interventions_from_log = Mock(return_value={"agent-1": 2, "unknown-agent": 1})
+
+        mock_session = Mock()
+        mock_session.name = "agent-1"
+        mock_session.id = "id-1"
+        mock_session.stats = Mock()
+        mock_session.stats.steers_count = 0
+
+        daemon.session_manager.list_sessions = Mock(return_value=[mock_session])
+        daemon.session_manager.update_stats = Mock()
+
+        daemon.update_intervention_counts(["agent-1", "unknown-agent"])
+
+        # Only agent-1 should be updated, unknown-agent is not in session_manager
+        daemon.session_manager.update_stats.assert_called_once_with("id-1", steers_count=2)
+
+
+class TestSyncDaemonClaudeTokens:
+    """Test _sync_daemon_claude_tokens method."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        from overcode.supervisor_daemon import SupervisorDaemon
+
+        monkeypatch.setattr('overcode.supervisor_daemon.ensure_session_dir', lambda x: None)
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_daemon_pid_path', lambda x: tmp_path / "pid")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_stats_path', lambda x: tmp_path / "stats.json")
+        monkeypatch.setattr('overcode.supervisor_daemon.get_supervisor_log_path', lambda x: tmp_path / "log")
+
+        with patch('overcode.supervisor_daemon.SessionManager'):
+            with patch('overcode.supervisor_daemon.TmuxManager'):
+                daemon = SupervisorDaemon(tmux_session="test")
+        return daemon
+
+    def test_no_op_when_projects_dir_missing(self, tmp_path, monkeypatch):
+        """Should do nothing when the Claude projects directory does not exist."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        # Point home to tmp_path so ~/.claude/projects/... doesn't exist
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        daemon._sync_daemon_claude_tokens()
+
+        assert daemon.supervisor_stats.supervisor_tokens == 0
+
+    def test_syncs_new_session_tokens(self, tmp_path, monkeypatch):
+        """Should accumulate tokens from new session files."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        # Create mock projects dir
+        overcode_dir = tmp_path / ".overcode"
+        overcode_dir.mkdir()
+        claude_dir = tmp_path / ".claude" / "projects" / "encoded"
+        claude_dir.mkdir(parents=True)
+
+        # Create fake session files
+        (claude_dir / "session-abc.jsonl").write_text("")
+        (claude_dir / "session-def.jsonl").write_text("")
+
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        usage_calls = iter([
+            {"input_tokens": 1000, "output_tokens": 200, "cache_creation_tokens": 50, "cache_read_tokens": 30},
+            {"input_tokens": 500, "output_tokens": 100, "cache_creation_tokens": 10, "cache_read_tokens": 5},
+        ])
+
+        def mock_read_usage(session_file):
+            return next(usage_calls)
+
+        monkeypatch.setattr('overcode.supervisor_daemon.read_token_usage_from_session_file', mock_read_usage)
+
+        daemon._sync_daemon_claude_tokens()
+
+        assert daemon.supervisor_stats.supervisor_input_tokens == 1500
+        assert daemon.supervisor_stats.supervisor_output_tokens == 300
+        assert daemon.supervisor_stats.supervisor_cache_tokens == 95
+        assert daemon.supervisor_stats.supervisor_tokens == 1800
+        assert len(daemon.supervisor_stats.seen_session_ids) == 2
+        assert daemon.supervisor_stats.last_sync_time is not None
+
+    def test_skips_already_seen_sessions(self, tmp_path, monkeypatch):
+        """Should not re-count tokens from already seen session IDs."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.supervisor_stats.seen_session_ids = ["session-abc"]
+        daemon.supervisor_stats.supervisor_tokens = 500
+
+        overcode_dir = tmp_path / ".overcode"
+        overcode_dir.mkdir()
+        claude_dir = tmp_path / ".claude" / "projects" / "encoded"
+        claude_dir.mkdir(parents=True)
+
+        # One already-seen, one new
+        (claude_dir / "session-abc.jsonl").write_text("")
+        (claude_dir / "session-new.jsonl").write_text("")
+
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        def mock_read_usage(session_file):
+            return {"input_tokens": 100, "output_tokens": 50, "cache_creation_tokens": 0, "cache_read_tokens": 0}
+
+        monkeypatch.setattr('overcode.supervisor_daemon.read_token_usage_from_session_file', mock_read_usage)
+
+        daemon._sync_daemon_claude_tokens()
+
+        # Only the new session's tokens should be added
+        assert daemon.supervisor_stats.supervisor_tokens == 650
+        assert daemon.supervisor_stats.supervisor_input_tokens == 100
+        assert daemon.supervisor_stats.supervisor_output_tokens == 50
+        assert "session-new" in daemon.supervisor_stats.seen_session_ids
+        assert len(daemon.supervisor_stats.seen_session_ids) == 2
+
+    def test_handles_read_error_gracefully(self, tmp_path, monkeypatch):
+        """Should continue when reading a session file raises an error."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        overcode_dir = tmp_path / ".overcode"
+        overcode_dir.mkdir()
+        claude_dir = tmp_path / ".claude" / "projects" / "encoded"
+        claude_dir.mkdir(parents=True)
+
+        (claude_dir / "session-bad.jsonl").write_text("")
+        (claude_dir / "session-good.jsonl").write_text("")
+
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        call_count = [0]
+
+        def mock_read_usage(session_file):
+            call_count[0] += 1
+            if "bad" in str(session_file):
+                raise OSError("Read error")
+            return {"input_tokens": 200, "output_tokens": 100, "cache_creation_tokens": 0, "cache_read_tokens": 0}
+
+        monkeypatch.setattr('overcode.supervisor_daemon.read_token_usage_from_session_file', mock_read_usage)
+
+        daemon._sync_daemon_claude_tokens()
+
+        # Only the good session should contribute
+        assert daemon.supervisor_stats.supervisor_tokens == 300
+        assert daemon.supervisor_stats.supervisor_input_tokens == 200
+        assert len(daemon.supervisor_stats.seen_session_ids) == 1
+
+    def test_saves_stats_when_tokens_found(self, tmp_path, monkeypatch):
+        """Should save stats to disk when new tokens are found."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        overcode_dir = tmp_path / ".overcode"
+        overcode_dir.mkdir()
+        claude_dir = tmp_path / ".claude" / "projects" / "encoded"
+        claude_dir.mkdir(parents=True)
+
+        (claude_dir / "session-x.jsonl").write_text("")
+
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        def mock_read_usage(session_file):
+            return {"input_tokens": 100, "output_tokens": 50, "cache_creation_tokens": 0, "cache_read_tokens": 0}
+
+        monkeypatch.setattr('overcode.supervisor_daemon.read_token_usage_from_session_file', mock_read_usage)
+
+        daemon._sync_daemon_claude_tokens()
+
+        # Stats file should have been saved
+        assert daemon.stats_path.exists()
+        saved = json.loads(daemon.stats_path.read_text())
+        assert saved["supervisor_tokens"] == 150
+
+    def test_no_save_when_no_new_tokens(self, tmp_path, monkeypatch):
+        """Should not save stats when there are no new tokens (all sessions seen)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.supervisor_stats.seen_session_ids = ["session-old"]
+
+        overcode_dir = tmp_path / ".overcode"
+        overcode_dir.mkdir()
+        claude_dir = tmp_path / ".claude" / "projects" / "encoded"
+        claude_dir.mkdir(parents=True)
+
+        (claude_dir / "session-old.jsonl").write_text("")
+
+        monkeypatch.setattr('overcode.supervisor_daemon.Path.home', lambda: tmp_path)
+        monkeypatch.setattr('overcode.supervisor_daemon.encode_project_path', lambda x: "encoded")
+
+        daemon._sync_daemon_claude_tokens()
+
+        # Stats file should NOT have been created (no new tokens to save)
+        assert not daemon.stats_path.exists()
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================
