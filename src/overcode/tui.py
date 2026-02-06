@@ -762,6 +762,9 @@ class SupervisorTUI(
         """
         container = self.query_one("#sessions-container", ScrollableContainer)
 
+        # Check if any session has a cost budget for column alignment (#173)
+        any_has_budget = any(s.cost_budget_usd > 0 for s in self.sessions)
+
         # Build the list of sessions to display using extracted logic
         display_sessions = filter_visible_sessions(
             active_sessions=self.sessions,
@@ -792,6 +795,7 @@ class SupervisorTUI(
             for widget in existing_widgets.values():
                 if widget.session.id in session_map:
                     widget.session = session_map[widget.session.id]
+                    widget.any_has_budget = any_has_budget
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -835,6 +839,7 @@ class SupervisorTUI(
                 widget.summary_content_mode = self.summary_content_mode
                 # Apply cost display mode
                 widget.show_cost = self.show_cost
+                widget.any_has_budget = any_has_budget
                 # Apply column group visibility (#178)
                 widget.summary_groups = self._prefs.summary_groups
                 # Apply list-mode class if in list_preview view
