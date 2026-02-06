@@ -14,7 +14,7 @@ from rich.text import Text
 
 from ..session_manager import Session
 from ..status_detector import StatusDetector
-from ..status_patterns import extract_background_bash_count
+from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
     format_duration,
@@ -78,6 +78,7 @@ class SessionSummary(Static, can_focus=True):
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
+        self.live_subagent_count: int = 0  # Live count from status bar
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
         # Track when status last changed (for immediate time-in-state updates)
@@ -197,11 +198,13 @@ class SessionSummary(Static, can_focus=True):
             # Keep all lines including blanks for proper formatting, just strip trailing blanks
             lines = content.rstrip().split('\n')
             self.pane_content = lines[-50:] if lines else []  # Keep last 50 lines max
-            # Extract live background bash count from status bar (#177)
+            # Extract live counts from status bar (#177)
             self.background_bash_count = extract_background_bash_count(content)
+            self.live_subagent_count = extract_live_subagent_count(content)
         else:
             self.pane_content = []
             self.background_bash_count = 0
+            self.live_subagent_count = 0
 
         # Update detected status for display
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
@@ -398,12 +401,13 @@ class SessionSummary(Static, can_focus=True):
 
         # Subagent count (#176) and background bash count (#177) - show in full/custom detail only
         if self.summary_detail in ("full", "custom"):
-            sub_count = getattr(self.claude_stats, 'subagent_count', 0) if self.claude_stats else 0
+            # Use live subagent count from status bar (not disk-based historical count)
+            sub_count = self.live_subagent_count
             # Use live background bash count from status bar (not disk-based count)
             bash_count = self.background_bash_count
             # Always show columns for alignment, dim if zero
-            content.append(f" 🔀{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
-            content.append(f" ⚡{bash_count:>2}", style=mono(f"bold yellow{bg}", "bold") if bash_count > 0 else mono(f"dim{bg}", "dim"))
+            content.append(f" 🤿{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
+            content.append(f" 🐚{bash_count:>2}", style=mono(f"bold yellow{bg}", "bold") if bash_count > 0 else mono(f"dim{bg}", "dim"))
 
         # Supervision: permission mode, human interactions, robot supervisions - toggleable
         if self.group_enabled("supervision"):

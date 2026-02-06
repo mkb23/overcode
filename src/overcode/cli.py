@@ -304,7 +304,7 @@ def show(
     """Show agent details and recent output."""
     from .status_detector import StatusDetector
     from .history_reader import get_session_stats
-    from .status_patterns import extract_background_bash_count, strip_ansi
+    from .status_patterns import extract_background_bash_count, extract_live_subagent_count, strip_ansi
     from .tui_helpers import (
         calculate_uptime, format_duration, format_tokens, format_cost,
         format_line_count, get_current_state_times, get_status_symbol,
@@ -335,6 +335,7 @@ def show(
     if not no_stats:
         # Gather all stats
         bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
+        live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
 
         claude_stats = None
         try:
@@ -415,9 +416,8 @@ def show(
             files, ins, dels = git_diff
             print(f"Git:       Δ{files} files +{format_line_count(ins)} -{format_line_count(dels)}")
 
-        # Subagents & background bashes
-        sub_count = claude_stats.subagent_count if claude_stats else 0
-        print(f"Agents:    🔀 {sub_count} subagents  ⚡ {bg_bash_count} background bashes")
+        # Subagents & background bashes (live counts from status bar)
+        print(f"Agents:    🤿 {live_sub_count} subagents  🐚 {bg_bash_count} background bashes")
 
         # Standing orders
         if sess.standing_instructions:

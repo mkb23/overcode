@@ -18,6 +18,7 @@ from overcode.status_patterns import (
     count_command_menu_lines,
     clean_line,
     extract_background_bash_count,
+    extract_live_subagent_count,
 )
 
 
@@ -347,3 +348,66 @@ Some more output here
         # Real captured line: \x1b[0m  \x1b[38;2;255;107;128m⏵⏵\x1b[39m ...
         content = """\x1b[0m  \x1b[38;2;255;107;128m⏵⏵\x1b[39m \x1b[38;2;255;107;128mbypass\x1b[39m \x1b[38;2;255;107;128mpermissions\x1b[39m \x1b[38;2;255;107;128mon\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;0;204;204m3\x1b[39m \x1b[38;2;0;204;204mbashes\x1b[39m \x1b[38;2;153;153;153m·\x1b[39m \x1b[38;2;153;153;153mctrl+t\x1b[39m"""
         assert extract_background_bash_count(content) == 3
+
+    def test_uses_last_status_bar_line(self):
+        """Should use the LAST status bar line, not the first.
+
+        Old status bar lines persist in tmux scrollback. The current/active
+        status bar is always at the bottom of the pane capture.
+        """
+        content = """Some output
+⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt
+more output here
+⏵⏵ bypass permissions on · 3 bashes · esc to interrupt"""
+        assert extract_background_bash_count(content) == 3
+
+
+class TestExtractLiveSubagentCount:
+    """Tests for extract_live_subagent_count function."""
+
+    def test_detects_multiple_agents(self):
+        """Should detect 'N local agents' pattern."""
+        content = """Some output
+⏵⏵ bypass permissions on · 2 local agents · esc to interrupt"""
+        assert extract_live_subagent_count(content) == 2
+
+    def test_detects_single_agent(self):
+        """Should detect '1 local agent' pattern."""
+        content = """⏵⏵ auto-approve · 1 local agent · esc"""
+        assert extract_live_subagent_count(content) == 1
+
+    def test_returns_zero_when_no_agents(self):
+        """Should return 0 when no local agents in status bar."""
+        content = """Some output
+⏵⏵ bypass permissions on · 3 bashes · esc to interrupt"""
+        assert extract_live_subagent_count(content) == 0
+
+    def test_returns_zero_for_empty_content(self):
+        """Should return 0 for empty content."""
+        assert extract_live_subagent_count("") == 0
+
+    def test_returns_zero_without_status_bar(self):
+        """Should return 0 when no status bar present."""
+        content = """Just regular output"""
+        assert extract_live_subagent_count(content) == 0
+
+    def test_handles_ansi_codes(self):
+        """Should detect agents with ANSI escape codes."""
+        content = """\x1b[0m  \x1b[36m⏵⏵\x1b[39m bypass permissions on · \x1b[36m2\x1b[39m \x1b[36mlocal\x1b[39m \x1b[36magents\x1b[39m · esc"""
+        assert extract_live_subagent_count(content) == 2
+
+    def test_handles_agents_and_bashes_together(self):
+        """Should detect agents when both agents and bashes are present."""
+        content = """⏵⏵ bypass permissions on · 2 local agents · 3 bashes · esc"""
+        assert extract_live_subagent_count(content) == 2
+        assert extract_background_bash_count(content) == 3
+
+    def test_uses_last_status_bar_line(self):
+        """Should use the LAST status bar line for agent count.
+
+        Old status bar lines persist in scrollback — only the bottom one is current.
+        """
+        content = """⏵⏵ bypass permissions on · esc to interrupt
+some output
+⏵⏵ bypass permissions on · 2 local agents · esc to interrupt"""
+        assert extract_live_subagent_count(content) == 2
