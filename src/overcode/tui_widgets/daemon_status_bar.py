@@ -25,6 +25,7 @@ from ..tui_helpers import (
     get_daemon_status_style,
     calculate_safe_break_duration,
 )
+from ..status_constants import is_green_status
 
 if TYPE_CHECKING:
     from ..session_manager import SessionManager
@@ -149,7 +150,7 @@ class DaemonStatusBar(Static):
 
             total_agents = len(active_sessions)
             # Recalculate green_now excluding sleeping agents
-            green_now = sum(1 for s in active_sessions if s.current_status == "running")
+            green_now = sum(1 for s in active_sessions if is_green_status(s.current_status))
 
             content.append("Spin: ", style="bold")
             content.append(f"{green_now}", style="bold green" if green_now > 0 else "dim")

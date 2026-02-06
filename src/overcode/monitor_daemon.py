@@ -58,6 +58,7 @@ from .status_constants import (
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
+    is_green_status,
 )
 from .status_detector import StatusDetector
 from .status_history import log_agent_status
@@ -231,6 +232,7 @@ class MonitorDaemon:
 
         # Heartbeat tracking (#171)
         self._heartbeat_triggered_sessions: set = set()  # Session IDs that received heartbeat this loop
+        self._sessions_running_from_heartbeat: set = set()  # Persistent: sessions currently running due to heartbeat
 
     def track_session_stats(self, session, status: str) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
@@ -247,8 +249,8 @@ class MonitorDaemon:
         self._update_state_time(session, status, now)
 
         # Track state transitions for operation timing
-        was_running = prev_status == STATUS_RUNNING
-        is_running = status == STATUS_RUNNING
+        was_running = is_green_status(prev_status)
+        is_running = is_green_status(status)
 
         # Session went from running to waiting (operation started)
         if was_running and not is_running:
@@ -291,8 +293,8 @@ class MonitorDaemon:
                 next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
                 next_heartbeat_due = next_due.isoformat()
 
-        # Check if this session was just triggered by heartbeat
-        running_from_heartbeat = session_id in self._heartbeat_triggered_sessions
+        # Check if this session is running from heartbeat (persistent across loops)
+        running_from_heartbeat = session_id in self._sessions_running_from_heartbeat
 
         return SessionDaemonState(
             session_id=session_id,
@@ -674,6 +676,8 @@ class MonitorDaemon:
 
                 # Send heartbeats before status detection (#171)
                 self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
+                # Add newly triggered sessions to persistent heartbeat tracking
+                self._sessions_running_from_heartbeat.update(self._heartbeat_triggered_sessions)
 
                 # Detect status and track stats for each session
                 session_states = []
@@ -682,6 +686,10 @@ class MonitorDaemon:
                 for session in sessions:
                     # Detect status
                     status, activity, _ = self.status_detector.detect_status(session)
+
+                    # Clear heartbeat tracking when session stops running
+                    if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
+                        self._sessions_running_from_heartbeat.discard(session.id)
 
                     # Refresh git context (branch may have changed)
                     self.session_manager.refresh_git_context(session.id)
@@ -699,7 +707,13 @@ class MonitorDaemon:
 
                     # Track stats and build state
                     # Use "asleep" status if session is marked as sleeping (#68)
-                    effective_status = STATUS_ASLEEP if session.is_asleep else status
+                    # Use "running_heartbeat" if running due to heartbeat trigger (#171)
+                    if session.is_asleep:
+                        effective_status = STATUS_ASLEEP
+                    elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
+                        effective_status = STATUS_RUNNING_HEARTBEAT
+                    else:
+                        effective_status = status
                     session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)

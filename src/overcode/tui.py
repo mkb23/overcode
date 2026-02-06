@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
-from .status_constants import STATUS_WAITING_USER
+from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -602,6 +602,20 @@ class SupervisorTUI(
                 status_results[session_id] = status_result
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
+
+            # Enrich status with heartbeat info from daemon state (#171)
+            # StatusDetector only returns "running" - use daemon state to distinguish heartbeat
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            if daemon_state and daemon_state.sessions:
+                heartbeat_sessions = {
+                    s.session_id for s in daemon_state.sessions
+                    if s.running_from_heartbeat
+                }
+                for session_id in heartbeat_sessions:
+                    if session_id in status_results:
+                        status, activity, content = status_results[session_id]
+                        if status == STATUS_RUNNING:
+                            status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
 
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}

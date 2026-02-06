@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List, Tuple
 
-from .status_constants import STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP
+from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
 
 @dataclass
@@ -65,7 +65,7 @@ def calculate_time_accumulation(
     sleep = current_sleep
 
     # Accumulate based on status
-    if current_status == STATUS_RUNNING:
+    if current_status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
         green += elapsed_seconds
     elif current_status == STATUS_ASLEEP:
         sleep += elapsed_seconds  # Track sleep time separately (#141)
@@ -217,7 +217,7 @@ def aggregate_session_stats(
         active_count += 1
         status = session.get('status', '')
 
-        if status == STATUS_RUNNING:
+        if is_green_status(status):
             green_count += 1
 
         total_green += session.get('green_time_seconds', 0.0)

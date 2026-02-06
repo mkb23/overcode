@@ -7,7 +7,7 @@ They are used by SupervisorDaemon but can be tested independently.
 
 from typing import List, Optional
 
-from .status_constants import STATUS_RUNNING, get_status_emoji
+from .status_constants import STATUS_RUNNING, get_status_emoji, is_green_status
 
 
 def build_daemon_claude_context(
@@ -87,7 +87,7 @@ def filter_non_green_sessions(
 
     for s in sessions:
         # Skip green sessions
-        if s.get("current_status") == STATUS_RUNNING:
+        if is_green_status(s.get("current_status", "")):
             continue
 
         # Skip excluded names (e.g., daemon_claude)

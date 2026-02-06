@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 from rich.text import Text
 
+from .status_constants import is_green_status
 from .tui_helpers import (
     format_interval,
     format_duration,
@@ -169,7 +170,7 @@ def render_spin_stats(
     sleeping_count = len(sessions) - len(active_sessions)
 
     total_agents = len(active_sessions)
-    green_now = sum(1 for s in active_sessions if s.current_status == "running")
+    green_now = sum(1 for s in active_sessions if is_green_status(s.current_status))
 
     # Calculate mean spin rate
     mean_spin = 0.0

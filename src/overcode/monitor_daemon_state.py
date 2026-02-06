@@ -293,7 +293,7 @@ class MonitorDaemonState:
         self.total_green_time = sum(s.green_time_seconds for s in self.sessions)
         self.total_non_green_time = sum(s.non_green_time_seconds for s in self.sessions)
         self.total_sleep_time = sum(s.sleep_time_seconds for s in self.sessions)
-        self.green_sessions = sum(1 for s in self.sessions if s.current_status == "running")
+        self.green_sessions = sum(1 for s in self.sessions if s.current_status in ("running", "running_heartbeat"))
         self.non_green_sessions = len(self.sessions) - self.green_sessions
         self.total_supervisions = sum(s.steers_count for s in self.sessions)
 

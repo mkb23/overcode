@@ -24,6 +24,7 @@ from .tui_helpers import (
 from .status_constants import (
     get_status_emoji,
     get_status_color,
+    is_green_status,
     AGENT_TIMELINE_CHARS,
     PRESENCE_TIMELINE_CHARS,
 )
@@ -147,7 +148,7 @@ def _build_agent_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
     green_time = s.green_time_seconds
     non_green_time = s.non_green_time_seconds
 
-    if s.current_status == "running":
+    if is_green_status(s.current_status):
         green_time += time_in_state
     elif s.current_status != "terminated":
         non_green_time += time_in_state
@@ -656,7 +657,7 @@ def _calculate_presence_efficiency(
 
             if agent_status is not None:
                 total_agents += 1
-                if agent_status == "running":
+                if is_green_status(agent_status):
                     green_count += 1
 
         # Calculate green percentage for this sample

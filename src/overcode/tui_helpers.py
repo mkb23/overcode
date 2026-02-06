@@ -21,6 +21,7 @@ from .status_constants import (
     STATUS_ASLEEP,
     STATUS_RUNNING,
     STATUS_TERMINATED,
+    is_green_status,
 )
 
 
@@ -284,7 +285,7 @@ def get_current_state_times(stats, now: Optional[datetime] = None, is_asleep: bo
                 # Use is_asleep parameter to override stats.current_state when user
                 # has toggled sleep but daemon hasn't updated yet (#141)
                 effective_state = STATUS_ASLEEP if is_asleep else stats.current_state
-                if effective_state == STATUS_RUNNING:
+                if is_green_status(effective_state):
                     green_time += current_elapsed
                 elif effective_state == STATUS_ASLEEP:
                     sleep_time += current_elapsed  # Accumulate sleep time (#141)

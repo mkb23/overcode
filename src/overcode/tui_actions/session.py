@@ -38,7 +38,7 @@ class SessionActionsMixin:
         Note: Cannot put a running agent to sleep (#158).
         """
         from ..tui_widgets import SessionSummary
-        from ..status_constants import STATUS_RUNNING
+        from ..status_constants import is_green_status
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -48,7 +48,7 @@ class SessionActionsMixin:
         new_asleep_state = not session.is_asleep
 
         # Prevent putting a running agent to sleep (#158)
-        if new_asleep_state and focused.detected_status == STATUS_RUNNING:
+        if new_asleep_state and is_green_status(focused.detected_status):
             self.notify("Cannot put a running agent to sleep", severity="warning")
             return
 
