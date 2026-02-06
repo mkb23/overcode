@@ -5,6 +5,7 @@ This package contains the individual widget classes extracted from tui.py
 for better maintainability and testability.
 """
 
+from .fullscreen_preview import FullscreenPreview
 from .help_overlay import HelpOverlay
 from .preview_pane import PreviewPane
 from .daemon_panel import DaemonPanel
@@ -15,6 +16,7 @@ from .command_bar import CommandBar
 from .summary_config_modal import SummaryConfigModal
 
 __all__ = [
+    "FullscreenPreview",
     "HelpOverlay",
     "PreviewPane",
     "DaemonPanel",

@@ -88,6 +88,7 @@ from .tui_logic import (
     calculate_human_interaction_count,
 )
 from .tui_widgets import (
+    FullscreenPreview,
     HelpOverlay,
     PreviewPane,
     DaemonPanel,
@@ -141,6 +142,8 @@ class SupervisorTUI(
         ("up", "focus_previous_session", "Prev"),
         # View mode toggle
         ("m", "toggle_view_mode", "Mode"),
+        # Fullscreen preview (expand preview pane)
+        ("f", "expand_preview", "Fullscreen"),
         # Command bar (send instructions to agents)
         ("i", "focus_command_bar", "Send"),
         ("colon", "focus_command_bar", "Send"),
@@ -314,6 +317,7 @@ class SupervisorTUI(
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal")
+        yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
             "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline | g:Killed",
@@ -1348,6 +1352,17 @@ class SupervisorTUI(
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
 
+        # Handle Escape to close fullscreen preview
+        try:
+            from .tui_widgets import FullscreenPreview
+            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
+            if fs_preview.has_class("visible") and event.key == "escape":
+                fs_preview.hide()
+                event.stop()
+                return
+        except Exception:
+            pass
+
         # Handle Escape to close help overlay (#175)
         try:
             from .tui_widgets import HelpOverlay
@@ -1364,6 +1379,18 @@ class SupervisorTUI(
         When help overlay is visible, only allow help toggle and quit.
         Other actions are blocked - pressing those keys just closes help.
         """
+        # Block actions when fullscreen preview is visible
+        try:
+            from .tui_widgets import FullscreenPreview
+            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
+            if fs_preview.has_class("visible"):
+                if action in ("expand_preview", "quit"):
+                    return True
+                fs_preview.hide()
+                return False
+        except Exception:
+            pass
+
         # Only intercept when help is visible
         try:
             from .tui_widgets import HelpOverlay

@@ -109,6 +109,21 @@ SessionSummary.terminated:focus {
     display: block;
 }
 
+#fullscreen-preview {
+    display: none;
+    layer: above;
+    dock: top;
+    width: 100%;
+    height: 100%;
+    background: $surface 90%;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#fullscreen-preview.visible {
+    display: block;
+}
+
 #daemon-panel {
     display: none;
     height: auto;

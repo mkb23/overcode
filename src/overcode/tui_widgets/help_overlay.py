@@ -35,8 +35,8 @@ class HelpOverlay(Static):
         row("j/↓", "Next agent", "k/↑", "Previous agent")
         row("space", "Toggle expand", "m", "Toggle tree/list")
         row("e", "Expand/Collapse all", "c", "Sync main + clear")
-        row("h/?", "Toggle help", "r", "Refresh")
-        row("q", "Quit")
+        row("f", "Fullscreen preview", "r", "Refresh")
+        row("h/?", "Toggle help", "q", "Quit")
         t.append("\n")
 
         section("DISPLAY MODES")

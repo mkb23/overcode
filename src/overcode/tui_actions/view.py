@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from textual.css.query import NoMatches
 
 if TYPE_CHECKING:
-    from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay
+    from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay, FullscreenPreview
 
 
 class ViewActionsMixin:
@@ -358,3 +358,39 @@ class ViewActionsMixin:
             "Showing $ cost" if self.show_cost else "Showing tokens",
             severity="information"
         )
+
+    def action_expand_preview(self) -> None:
+        """Expand the preview pane into a fullscreen scrollable overlay (#190)."""
+        from ..tui_widgets import FullscreenPreview, SessionSummary
+
+        # Only works in list_preview mode
+        if self.view_mode != "list_preview":
+            self.notify("Fullscreen preview requires list+preview mode (press m)", severity="information")
+            return
+
+        # Get the focused session widget
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="information")
+            return
+
+        session = focused.session
+        if session.tmux_window is None:
+            self.notify("No tmux window for this agent", severity="warning")
+            return
+
+        # Do a fresh deep capture (500 lines) for scrollback review
+        raw = self.status_detector.tmux.capture_pane(
+            self.tmux_session, session.tmux_window, lines=500
+        )
+        if raw is None:
+            self.notify("Could not capture pane output", severity="warning")
+            return
+
+        lines = raw.split("\n")
+
+        try:
+            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
+            fs_preview.show(lines, session.name, self.monochrome)
+        except NoMatches:
+            pass
