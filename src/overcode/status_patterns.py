@@ -266,6 +266,27 @@ def count_command_menu_lines(lines: List[str], patterns: StatusPatterns = None) 
     return sum(1 for line in lines if is_command_menu_line(line, patterns))
 
 
+def _find_status_bar_line(content: str, patterns: StatusPatterns = None) -> str | None:
+    """Find and return the stripped status bar line from pane content.
+
+    Args:
+        content: Raw pane content (can include ANSI codes)
+        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+
+    Returns:
+        The ANSI-stripped, whitespace-stripped status bar line, or None if not found
+    """
+    patterns = patterns or DEFAULT_PATTERNS
+
+    # Must strip ANSI codes first since pane content is captured with escape_sequences=True
+    for line in content.split('\n'):
+        stripped = strip_ansi(line).strip()
+        if any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
+            return stripped
+
+    return None
+
+
 def extract_background_bash_count(content: str, patterns: StatusPatterns = None) -> int:
     """Extract the number of background bash tasks from pane content.
 
@@ -281,25 +302,45 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None)
     Returns:
         Number of active background bash tasks (0 if none detected)
     """
-    patterns = patterns or DEFAULT_PATTERNS
+    stripped = _find_status_bar_line(content, patterns)
+    if stripped is None:
+        return 0
 
-    # Look for status bar line (starts with ⏵⏵)
-    # Must strip ANSI codes since pane content is captured with escape_sequences=True
-    for line in content.split('\n'):
-        stripped = strip_ansi(line).strip()
-        if not any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
-            continue
+    # Pattern 1: "N bashes" for 2+ background tasks
+    match = re.search(r'(\d+)\s+bashes', stripped)
+    if match:
+        return int(match.group(1))
 
-        # Found status bar line - check for bash count patterns
-        # Pattern 1: "N bashes" for 2+ background tasks
-        match = re.search(r'(\d+)\s+bashes', stripped)
-        if match:
-            return int(match.group(1))
+    # Pattern 2: "(running)" without "bashes" = 1 background task
+    # This appears when a single command is running in background
+    if '(running)' in stripped and 'bashes' not in stripped:
+        return 1
 
-        # Pattern 2: "(running)" without "bashes" = 1 background task
-        # This appears when a single command is running in background
-        if '(running)' in stripped and 'bashes' not in stripped:
-            return 1
+    return 0
+
+
+def extract_live_subagent_count(content: str, patterns: StatusPatterns = None) -> int:
+    """Extract the number of currently running subagents from pane content.
+
+    Claude Code shows live subagent counts in the status bar:
+    - "N local agents" when there are N subagents running
+    - Nothing when there are 0 subagents
+
+    Args:
+        content: Raw pane content (can include ANSI codes)
+        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+
+    Returns:
+        Number of active subagents (0 if none detected)
+    """
+    stripped = _find_status_bar_line(content, patterns)
+    if stripped is None:
+        return 0
+
+    # Pattern: "N local agents" for running subagents
+    match = re.search(r'(\d+)\s+local\s+agents?', stripped)
+    if match:
+        return int(match.group(1))
 
     return 0
 
