@@ -4,7 +4,7 @@ Session summary widget for TUI.
 Displays expandable session summary with status, metrics, and pane content.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from textual.widgets import Static
@@ -406,6 +406,27 @@ class SessionSummary(Static, can_focus=True):
                 content.append(" ⏬️", style=mono(f"bold blue{bg}", "bold"))  # Low priority
             else:
                 content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
+
+        # Heartbeat columns (med/full detail) (#171)
+        if self.summary_detail in ("med", "full"):
+            if s.heartbeat_enabled and not s.heartbeat_paused:
+                freq_str = format_duration(s.heartbeat_frequency_seconds)
+                content.append(f" 💓{freq_str:>4}", style=mono(f"bold magenta{bg}", "bold"))
+                # Next due countdown - compute from last_heartbeat_time
+                if s.last_heartbeat_time:
+                    try:
+                        last_hb = datetime.fromisoformat(s.last_heartbeat_time)
+                        next_due = last_hb + timedelta(seconds=s.heartbeat_frequency_seconds)
+                        secs = max(0, (next_due - datetime.now()).total_seconds())
+                        due_str = "now" if secs <= 0 else format_duration(secs)
+                        content.append(f" →{due_str:>4}", style=mono(f"bold cyan{bg}", "bold"))
+                    except (ValueError, TypeError):
+                        content.append(" →   -", style=mono(f"dim{bg}", "dim"))
+                else:
+                    content.append(" →   -", style=mono(f"dim{bg}", "dim"))
+            elif s.heartbeat_enabled and s.heartbeat_paused:
+                content.append(" 💓⏸     →   -", style=mono(f"dim yellow{bg}", "dim"))
+            # No placeholder when heartbeat disabled - keeps display cleaner
 
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
