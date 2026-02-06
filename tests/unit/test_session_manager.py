@@ -894,6 +894,94 @@ class TestSessionIsAsleep:
         assert updated.is_asleep is False
 
 
+class TestSessionTimeContextEnabled:
+    """Test time_context_enabled field persistence."""
+
+    def test_default_is_false(self, tmp_path):
+        """New sessions have time_context_enabled=False by default."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        assert session.time_context_enabled is False
+
+    def test_update_time_context_enabled(self, tmp_path):
+        """Can enable time_context_enabled."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_session(session.id, time_context_enabled=True)
+
+        updated = manager.get_session(session.id)
+        assert updated.time_context_enabled is True
+
+    def test_toggle_time_context_enabled(self, tmp_path):
+        """Can toggle time_context_enabled on and off."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+
+        manager.update_session(session.id, time_context_enabled=True)
+        assert manager.get_session(session.id).time_context_enabled is True
+
+        manager.update_session(session.id, time_context_enabled=False)
+        assert manager.get_session(session.id).time_context_enabled is False
+
+    def test_round_trips_through_dict(self, tmp_path):
+        """time_context_enabled survives to_dict/from_dict round-trip."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"]
+        )
+        manager.update_session(session.id, time_context_enabled=True)
+
+        # Reload from disk (new manager instance)
+        manager2 = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        reloaded = manager2.get_session(session.id)
+
+        assert reloaded.time_context_enabled is True
+
+    def test_backwards_compatible_with_old_data(self, tmp_path):
+        """Sessions without time_context_enabled field get default False."""
+        state_file = tmp_path / "sessions.json"
+        old_data = {
+            "session-old": {
+                "id": "session-old",
+                "name": "old-session",
+                "tmux_session": "agents",
+                "tmux_window": 1,
+                "command": ["claude"],
+                "start_directory": None,
+                "start_time": "2024-01-01T00:00:00",
+                "status": "running",
+                # Note: no time_context_enabled field
+            }
+        }
+        state_file.write_text(json.dumps(old_data))
+
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.get_session("session-old")
+
+        assert session is not None
+        assert session.time_context_enabled is False
+
+
 class TestSessionManagerReload:
     """Test session manager state reloading."""
 

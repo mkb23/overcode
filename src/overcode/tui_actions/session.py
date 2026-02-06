@@ -69,6 +69,36 @@ class SessionActionsMixin:
         # Force a refresh
         focused.refresh()
 
+    def action_toggle_time_context(self) -> None:
+        """Toggle time context hook for the focused agent.
+
+        When enabled, the agent receives time awareness context (clock, uptime,
+        presence) injected into every prompt via the UserPromptSubmit hook.
+        Press T again to disable.
+        """
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        new_state = not session.time_context_enabled
+
+        # Update the session in the session manager
+        self.session_manager.update_session(session.id, time_context_enabled=new_state)
+
+        # Update the local session object
+        session.time_context_enabled = new_state
+
+        if new_state:
+            self.notify(f"Time context enabled for '{session.name}' 🕐", severity="information")
+        else:
+            self.notify(f"Time context disabled for '{session.name}'", severity="information")
+
+        # Force a refresh
+        focused.refresh()
+
     def action_kill_focused(self) -> None:
         """Kill the currently focused agent (requires confirmation)."""
         from ..tui_widgets import SessionSummary

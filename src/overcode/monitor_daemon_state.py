@@ -69,6 +69,7 @@ class SessionDaemonState:
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
     is_asleep: bool = False  # Agent is paused and excluded from stats (#70)
+    time_context_enabled: bool = False  # Per-agent time awareness toggle
 
     # Agent priority value (#61)
     agent_value: int = 1000  # Default 1000, higher = more important
@@ -118,6 +119,7 @@ class SessionDaemonState:
             "permissiveness_mode": self.permissiveness_mode,
             "start_directory": self.start_directory,
             "is_asleep": self.is_asleep,
+            "time_context_enabled": self.time_context_enabled,
             "agent_value": self.agent_value,
             "activity_summary": self.activity_summary,
             "activity_summary_updated": self.activity_summary_updated,
@@ -162,6 +164,7 @@ class SessionDaemonState:
             permissiveness_mode=data.get("permissiveness_mode", "normal"),
             start_directory=data.get("start_directory"),
             is_asleep=data.get("is_asleep", False),
+            time_context_enabled=data.get("time_context_enabled", False),
             agent_value=data.get("agent_value", 1000),
             activity_summary=data.get("activity_summary", ""),
             activity_summary_updated=data.get("activity_summary_updated"),

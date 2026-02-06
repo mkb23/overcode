@@ -200,6 +200,8 @@ class SupervisorTUI(
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
+        # Time context toggle - per-agent time awareness hook
+        ("F", "toggle_time_context", "Time context"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
     ]

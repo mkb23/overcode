@@ -409,9 +409,14 @@ class SessionSummary(Static, can_focus=True):
             content.append(f" 🤿{sub_count:>2}", style=mono(f"bold purple{bg}", "bold") if sub_count > 0 else mono(f"dim{bg}", "dim"))
             content.append(f" 🐚{bash_count:>2}", style=mono(f"bold yellow{bg}", "bold") if bash_count > 0 else mono(f"dim{bg}", "dim"))
 
-        # Supervision: permission mode, human interactions, robot supervisions - toggleable
+        # Supervision: permission mode, time context, human interactions, robot supervisions - toggleable
         if self.group_enabled("supervision"):
             content.append(f" {perm_emoji}", style=mono(f"bold white{bg}", "bold"))
+            # Time context indicator
+            if s.time_context_enabled:
+                content.append(" 🕐", style=mono(f"bold white{bg}", "bold"))
+            else:
+                content.append("  ·", style=mono(f"dim{bg}", "dim"))
             # Human interaction count = total interactions - robot interventions
             if self.claude_stats is not None:
                 human_count = max(0, self.claude_stats.interaction_count - stats.steers_count)

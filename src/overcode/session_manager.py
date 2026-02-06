@@ -92,6 +92,9 @@ class Session:
     # Sleep mode - agent is paused and excluded from stats
     is_asleep: bool = False
 
+    # Time context hook - per-agent toggle for time awareness injection
+    time_context_enabled: bool = False
+
     # Agent value - priority indicator for sorting/attention (#61)
     # Default 1000, higher = more important
     agent_value: int = 1000

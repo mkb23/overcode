@@ -289,6 +289,7 @@ class TestGenerateTimeContext:
                 {
                     "name": "my-agent",
                     "start_time": "2025-01-15T13:00:00",
+                    "time_context_enabled": True,
                 }
             ],
         }
@@ -391,6 +392,103 @@ class TestGenerateTimeContext:
         assert "Heartbeat: 15m (next: 7m)" in result
 
 
+class TestTimeContextEnabledFlag:
+    """Test time_context_enabled flag check in generate_time_context."""
+
+    def test_returns_empty_when_disabled(self, tmp_path, monkeypatch):
+        """generate_time_context returns empty string when flag is False."""
+        state_dir = tmp_path / "state"
+        session_dir = state_dir / "agents"
+        session_dir.mkdir(parents=True)
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(state_dir))
+
+        daemon_state = {
+            "presence_state": 3,
+            "sessions": [
+                {
+                    "name": "my-agent",
+                    "start_time": "2025-01-15T13:00:00",
+                    "time_context_enabled": False,
+                }
+            ],
+        }
+        state_file = session_dir / "monitor_daemon_state.json"
+        state_file.write_text(json.dumps(daemon_state))
+
+        config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
+        now = datetime(2025, 1, 15, 14, 32, 0)
+        result = generate_time_context("agents", "my-agent", now=now, config=config)
+
+        assert result == ""
+
+    def test_returns_output_when_enabled(self, tmp_path, monkeypatch):
+        """generate_time_context returns normal output when flag is True."""
+        state_dir = tmp_path / "state"
+        session_dir = state_dir / "agents"
+        session_dir.mkdir(parents=True)
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(state_dir))
+
+        daemon_state = {
+            "presence_state": 3,
+            "sessions": [
+                {
+                    "name": "my-agent",
+                    "start_time": "2025-01-15T13:00:00",
+                    "time_context_enabled": True,
+                }
+            ],
+        }
+        state_file = session_dir / "monitor_daemon_state.json"
+        state_file.write_text(json.dumps(daemon_state))
+
+        config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
+        now = datetime(2025, 1, 15, 14, 32, 0)
+        result = generate_time_context("agents", "my-agent", now=now, config=config)
+
+        assert "Clock: 14:32" in result
+        assert "User: active" in result
+
+    def test_returns_output_when_session_not_in_state(self, tmp_path, monkeypatch):
+        """generate_time_context returns output when session is not in daemon state (new agent)."""
+        state_dir = tmp_path / "state"
+        session_dir = state_dir / "agents"
+        session_dir.mkdir(parents=True)
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(state_dir))
+
+        daemon_state = {
+            "presence_state": 3,
+            "sessions": [],
+        }
+        state_file = session_dir / "monitor_daemon_state.json"
+        state_file.write_text(json.dumps(daemon_state))
+
+        config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
+        now = datetime(2025, 1, 15, 14, 32, 0)
+        result = generate_time_context("agents", "my-agent", now=now, config=config)
+
+        # Should still produce output (session not found = no flag to check)
+        assert "Clock: 14:32" in result
+
+    def test_returns_output_when_no_daemon_state(self, tmp_path, monkeypatch):
+        """generate_time_context returns output when daemon state file missing."""
+        state_dir = tmp_path / "state"
+        session_dir = state_dir / "agents"
+        session_dir.mkdir(parents=True)
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(state_dir))
+
+        # No state file written
+        config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
+        now = datetime(2025, 1, 15, 14, 32, 0)
+        result = generate_time_context("agents", "my-agent", now=now, config=config)
+
+        # Should still produce output (no state = no flag to check)
+        assert "Clock: 14:32" in result
+
+
 class TestCliSilentExit:
     """Test CLI silent exit when env vars are missing."""
 
@@ -401,6 +499,34 @@ class TestCliSilentExit:
 
         monkeypatch.delenv("OVERCODE_SESSION_NAME", raising=False)
         monkeypatch.delenv("OVERCODE_TMUX_SESSION", raising=False)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["time-context"])
+
+        assert result.exit_code == 0
+        assert result.output.strip() == ""
+
+    def test_silent_exit_when_flag_disabled(self, tmp_path, monkeypatch):
+        """time-context command should exit silently when time_context_enabled is False."""
+        from typer.testing import CliRunner
+        from overcode.cli import app
+
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+
+        # Set up daemon state with flag disabled
+        state_dir = tmp_path / "state"
+        session_dir = state_dir / "agents"
+        session_dir.mkdir(parents=True)
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(state_dir))
+
+        daemon_state = {
+            "sessions": [
+                {"name": "test-agent", "time_context_enabled": False}
+            ],
+        }
+        state_file = session_dir / "monitor_daemon_state.json"
+        state_file.write_text(json.dumps(daemon_state))
 
         runner = CliRunner()
         result = runner.invoke(app, ["time-context"])

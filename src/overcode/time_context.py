@@ -269,6 +269,15 @@ def generate_time_context(
     if now is None:
         now = datetime.now().astimezone()
 
+    # Check time_context_enabled flag in daemon state before doing any work.
+    # If the session exists in state and flag is False (or missing), suppress output.
+    # If the session is not found or state is unavailable, allow output (graceful degradation).
+    state = _load_daemon_state(tmux_session)
+    if state:
+        session_data = _find_session_in_state(state, session_name)
+        if session_data and not session_data.get("time_context_enabled", False):
+            return ""
+
     if config is None:
         from .config import get_time_context_config
         config = get_time_context_config()
@@ -276,8 +285,7 @@ def generate_time_context(
     # Clock
     clock = format_clock(now)
 
-    # Presence from daemon state
-    state = _load_daemon_state(tmux_session)
+    # Presence from daemon state (reuse already-loaded state)
     presence_state = None
     start_time = None
 

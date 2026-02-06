@@ -332,6 +332,7 @@ class MonitorDaemon:
             permissiveness_mode=session.permissiveness_mode,
             start_directory=session.start_directory,
             is_asleep=session.is_asleep,
+            time_context_enabled=session.time_context_enabled,
             agent_value=session.agent_value,
             # Heartbeat state (#171)
             heartbeat_enabled=session.heartbeat_enabled,

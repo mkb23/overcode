@@ -388,7 +388,9 @@ def show(
         print(f"=== {name} ===")
         print(f"Status:    {symbol} {status}{time_in_state:<16} Uptime:  {uptime}")
         repo_info = f"{sess.repo_name or '-'}:{sess.branch or '-'}"
+        tc_display = "🕐 enabled" if sess.time_context_enabled else "disabled"
         print(f"Repo:      {repo_info:<28} Mode:    {perm_display}")
+        print(f"Time ctx:  {tc_display}")
 
         # Time
         time_str = f"▶ {format_duration(green_time):>5} active  ⏸ {format_duration(non_green_time):>5} stalled  💤 {format_duration(sleep_time):>5} sleep  ({active_pct:.0f}%)"
@@ -472,6 +474,8 @@ def time_context():
         raise typer.Exit(0)
 
     line = generate_time_context(tmux, name)
+    if not line:
+        raise typer.Exit(0)
     print(line)
 
 
