@@ -2,4 +2,6 @@
 Overcode - A supervisor for managing multiple Claude Code instances.
 """
 
-__version__ = "0.1.4"
+from importlib.metadata import version as _version
+
+__version__ = _version("overcode")
