@@ -198,10 +198,6 @@ class TestStatusColors:
         """Waiting user maps to red"""
         assert status_to_color("waiting_user") == "red"
 
-    def test_no_instructions_is_yellow(self):
-        """No instructions maps to yellow"""
-        assert status_to_color("no_instructions") == "yellow"
-
     def test_unknown_is_dim(self):
         """Unknown status maps to dim"""
         assert status_to_color("unknown") == "dim"
@@ -359,14 +355,6 @@ class TestAgentStatusToChar:
     def test_running(self):
         """Running status returns full block"""
         assert agent_status_to_char("running") == "█"
-
-    def test_no_instructions(self):
-        """No instructions returns dense shade"""
-        assert agent_status_to_char("no_instructions") == "▓"
-
-    def test_waiting_supervisor(self):
-        """Waiting supervisor returns medium shade"""
-        assert agent_status_to_char("waiting_supervisor") == "▒"
 
     def test_waiting_user(self):
         """Waiting user returns light shade"""
@@ -561,18 +549,6 @@ class TestGetStatusSymbol:
         assert symbol == "🟢"
         assert color == "green"
 
-    def test_no_instructions_status(self):
-        """No instructions returns yellow circle"""
-        symbol, color = get_status_symbol("no_instructions")
-        assert symbol == "🟡"
-        assert color == "yellow"
-
-    def test_waiting_supervisor_status(self):
-        """Waiting supervisor returns orange circle"""
-        symbol, color = get_status_symbol("waiting_supervisor")
-        assert symbol == "🟠"
-        assert color == "orange1"
-
     def test_waiting_user_status(self):
         """Waiting user returns red circle"""
         symbol, color = get_status_symbol("waiting_user")
@@ -612,14 +588,6 @@ class TestGetAgentTimelineColor:
     def test_running_is_green(self):
         """Running is green"""
         assert get_agent_timeline_color("running") == "green"
-
-    def test_no_instructions_is_yellow(self):
-        """No instructions is yellow"""
-        assert get_agent_timeline_color("no_instructions") == "yellow"
-
-    def test_waiting_supervisor_is_orange(self):
-        """Waiting supervisor is orange1"""
-        assert get_agent_timeline_color("waiting_supervisor") == "orange1"
 
     def test_waiting_user_is_red(self):
         """Waiting user is red"""

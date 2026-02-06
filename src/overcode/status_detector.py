@@ -6,8 +6,6 @@ from typing import Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
     STATUS_RUNNING,
-    STATUS_NO_INSTRUCTIONS,
-    STATUS_WAITING_SUPERVISOR,
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
     STATUS_WAITING_APPROVAL,
@@ -34,8 +32,6 @@ class StatusDetector:
 
     # Re-export status constants for backwards compatibility
     STATUS_RUNNING = STATUS_RUNNING
-    STATUS_NO_INSTRUCTIONS = STATUS_NO_INSTRUCTIONS
-    STATUS_WAITING_SUPERVISOR = STATUS_WAITING_SUPERVISOR
     STATUS_WAITING_USER = STATUS_WAITING_USER
     STATUS_TERMINATED = STATUS_TERMINATED
     STATUS_WAITING_APPROVAL = STATUS_WAITING_APPROVAL
@@ -244,9 +240,9 @@ class StatusDetector:
         if matches_any(last_few, self.patterns.waiting_patterns):
             return self.STATUS_WAITING_USER, self._extract_question(last_lines), content
 
-        # Default: if no standing instructions, it's yellow
+        # Default: if no standing instructions, it's waiting for user
         if not session.standing_instructions:
-            return self.STATUS_NO_INSTRUCTIONS, self._extract_last_activity(last_lines), content
+            return self.STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
 
         # Otherwise, assume running
         return self.STATUS_RUNNING, self._extract_last_activity(last_lines), content

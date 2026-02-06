@@ -698,7 +698,7 @@ class TestSleepModeTimeTracking:
 
         session = MockSession()
 
-        for detected_status in ["running", "waiting_user", "waiting_supervisor", "terminated"]:
+        for detected_status in ["running", "waiting_user", "waiting_approval", "terminated"]:
             effective_status = STATUS_ASLEEP if session.is_asleep else detected_status
             assert effective_status == detected_status
 

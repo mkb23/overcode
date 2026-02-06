@@ -117,8 +117,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       border-left: 3px solid var(--green);
     }
     .agent-row.waiting_user { border-left-color: var(--red); }
-    .agent-row.waiting_supervisor { border-left-color: var(--orange); }
-    .agent-row.no_instructions { border-left-color: var(--yellow); }
+    .agent-row.waiting_approval { border-left-color: var(--orange); }
+    .agent-row.waiting_heartbeat { border-left-color: var(--yellow); }
+    .agent-row.running_heartbeat { border-left-color: var(--green); }
     .agent-row.terminated { border-left-color: var(--dim); }
 
     /* Fixed-width columns for alignment */

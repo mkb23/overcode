@@ -148,8 +148,8 @@ No spinners or tools running
         mock_tmux.sessions["agents"][1] = static_content
         status, _, _ = detector.detect_status(session)
 
-        # Should be no_instructions (yellow) since no standing instructions
-        assert status == StatusDetector.STATUS_NO_INSTRUCTIONS
+        # Should be waiting_user since no standing instructions
+        assert status == StatusDetector.STATUS_WAITING_USER
 
     def test_status_bar_changes_dont_trigger_running(self):
         """Status bar updates (token counts, time) should not trigger 'running' detection.
@@ -194,10 +194,10 @@ More text here
 
 
 class TestStatusDetectorNoInstructions:
-    """Test the no_instructions (yellow) state"""
+    """Test the waiting_user state when no standing instructions"""
 
-    def test_returns_no_instructions_when_idle_without_orders(self):
-        """Sessions without standing instructions get yellow status when idle"""
+    def test_returns_waiting_user_when_idle_without_orders(self):
+        """Sessions without standing instructions get waiting_user status when idle"""
         content = """
 ⏺ Task completed successfully!
 
@@ -215,7 +215,7 @@ class TestStatusDetectorNoInstructions:
         detector.detect_status(session)
         status, _, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_NO_INSTRUCTIONS
+        assert status == StatusDetector.STATUS_WAITING_USER
 
     def test_returns_running_when_idle_with_orders(self):
         """Sessions WITH standing instructions get green status when idle"""

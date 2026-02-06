@@ -40,7 +40,7 @@ class SessionStats:
     last_stats_update: Optional[str] = None  # ISO timestamp of last stats sync
 
     # State tracking
-    current_state: str = "running"  # running, no_instructions, waiting_supervisor, waiting_user
+    current_state: str = "running"  # running, waiting_user, waiting_approval, waiting_heartbeat
     state_since: Optional[str] = None  # ISO timestamp when current state started
     green_time_seconds: float = 0.0  # time spent in "running" state
     non_green_time_seconds: float = 0.0  # time spent in non-running states

@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
-from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_USER
+from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -616,6 +616,17 @@ class SupervisorTUI(
                         status, activity, content = status_results[session_id]
                         if status == STATUS_RUNNING:
                             status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
+
+                # Enrich with waiting_heartbeat from daemon state
+                waiting_heartbeat_sessions = {
+                    s.session_id for s in daemon_state.sessions
+                    if s.waiting_for_heartbeat
+                }
+                for session_id in waiting_heartbeat_sessions:
+                    if session_id in status_results:
+                        status, activity, content = status_results[session_id]
+                        if status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
+                            status_results[session_id] = (STATUS_WAITING_HEARTBEAT, activity, content)
 
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}

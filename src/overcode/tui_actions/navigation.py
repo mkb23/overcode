@@ -43,13 +43,13 @@ class NavigationActionsMixin:
         Cycles through sessions prioritized by:
         1. Bell indicator (is_unvisited_stalled=True) - highest priority
         2. waiting_user status (red, no bell)
-        3. no_instructions status (yellow)
-        4. waiting_supervisor status (orange)
+        3. waiting_approval status (orange)
+        4. waiting_heartbeat status (yellow)
         """
         from ..status_constants import (
             STATUS_WAITING_USER,
-            STATUS_NO_INSTRUCTIONS,
-            STATUS_WAITING_SUPERVISOR,
+            STATUS_WAITING_APPROVAL,
+            STATUS_WAITING_HEARTBEAT,
             STATUS_RUNNING,
         )
 
@@ -58,7 +58,7 @@ class NavigationActionsMixin:
             return
 
         # Build prioritized list of sessions needing attention
-        # Priority: bell > waiting_user > no_instructions > waiting_supervisor
+        # Priority: bell > waiting_user > waiting_approval > waiting_heartbeat
         attention_sessions = []
         for i, widget in enumerate(widgets):
             status = getattr(widget, 'detected_status', STATUS_RUNNING)
@@ -70,9 +70,9 @@ class NavigationActionsMixin:
                 attention_sessions.append((0, i, widget))  # Bell = highest priority
             elif status == STATUS_WAITING_USER:
                 attention_sessions.append((1, i, widget))  # Red but no bell (already visited)
-            elif status == STATUS_NO_INSTRUCTIONS:
+            elif status == STATUS_WAITING_APPROVAL:
                 attention_sessions.append((2, i, widget))
-            elif status == STATUS_WAITING_SUPERVISOR:
+            elif status == STATUS_WAITING_HEARTBEAT:
                 attention_sessions.append((3, i, widget))
             # Skip running, terminated, asleep
 

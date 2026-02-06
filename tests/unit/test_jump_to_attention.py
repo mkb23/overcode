@@ -14,8 +14,8 @@ from typing import List, Optional
 
 # Replicate the status constants
 STATUS_WAITING_USER = "waiting_user"
-STATUS_NO_INSTRUCTIONS = "no_instructions"
-STATUS_WAITING_SUPERVISOR = "waiting_supervisor"
+STATUS_WAITING_APPROVAL = "waiting_approval"
+STATUS_WAITING_HEARTBEAT = "waiting_heartbeat"
 STATUS_RUNNING = "running"
 
 
@@ -40,9 +40,9 @@ def build_attention_list_old_broken(widgets: List[MockWidget]) -> List[MockWidge
         status = widget.detected_status
         if status == STATUS_WAITING_USER:
             attention_sessions.append((0, i, widget))  # Highest priority
-        elif status == STATUS_NO_INSTRUCTIONS:
+        elif status == STATUS_WAITING_APPROVAL:
             attention_sessions.append((1, i, widget))
-        elif status == STATUS_WAITING_SUPERVISOR:
+        elif status == STATUS_WAITING_HEARTBEAT:
             attention_sessions.append((2, i, widget))
 
     attention_sessions.sort(key=lambda x: (x[0], x[1]))
@@ -58,14 +58,14 @@ def build_attention_list_fixed(widgets: List[MockWidget]) -> List[MockWidget]:
         status = widget.detected_status
         is_bell = widget.is_unvisited_stalled
 
-        # Priority: bell > waiting_user > no_instructions > waiting_supervisor
+        # Priority: bell > waiting_user > waiting_approval > waiting_heartbeat
         if is_bell:
             attention_sessions.append((0, i, widget))  # Bell = highest priority
         elif status == STATUS_WAITING_USER:
             attention_sessions.append((1, i, widget))  # Red but no bell
-        elif status == STATUS_NO_INSTRUCTIONS:
+        elif status == STATUS_WAITING_APPROVAL:
             attention_sessions.append((2, i, widget))
-        elif status == STATUS_WAITING_SUPERVISOR:
+        elif status == STATUS_WAITING_HEARTBEAT:
             attention_sessions.append((3, i, widget))
 
     attention_sessions.sort(key=lambda x: (x[0], x[1]))
@@ -124,7 +124,7 @@ class TestJumpToAttentionBug:
         widgets = [
             MockWidget("Agent A", STATUS_WAITING_USER, is_unvisited_stalled=False),  # Red
             MockWidget("Agent B", STATUS_RUNNING, is_unvisited_stalled=True),        # Bell on "running"?
-            MockWidget("Agent C", STATUS_NO_INSTRUCTIONS, is_unvisited_stalled=False),
+            MockWidget("Agent C", STATUS_WAITING_APPROVAL, is_unvisited_stalled=False),
         ]
 
         result = build_attention_list_fixed(widgets)
@@ -139,22 +139,22 @@ class TestAttentionPriorityOrder:
     def test_full_priority_order(self):
         """Test all priority levels in order."""
         widgets = [
-            MockWidget("D-supervisor", STATUS_WAITING_SUPERVISOR, is_unvisited_stalled=False),
+            MockWidget("D-heartbeat", STATUS_WAITING_HEARTBEAT, is_unvisited_stalled=False),
             MockWidget("A-bell", STATUS_WAITING_USER, is_unvisited_stalled=True),
             MockWidget("B-red", STATUS_WAITING_USER, is_unvisited_stalled=False),
-            MockWidget("C-yellow", STATUS_NO_INSTRUCTIONS, is_unvisited_stalled=False),
+            MockWidget("C-approval", STATUS_WAITING_APPROVAL, is_unvisited_stalled=False),
             MockWidget("E-running", STATUS_RUNNING, is_unvisited_stalled=False),
         ]
 
         result = build_attention_list_fixed(widgets)
 
-        # Should be: bell > red > yellow > supervisor
+        # Should be: bell > red > approval > heartbeat
         # E-running should not be in the list at all
         assert len(result) == 4
         assert result[0].name == "A-bell", "Bell should be first"
         assert result[1].name == "B-red", "Red (no bell) should be second"
-        assert result[2].name == "C-yellow", "Yellow should be third"
-        assert result[3].name == "D-supervisor", "Supervisor should be fourth"
+        assert result[2].name == "C-approval", "Approval should be third"
+        assert result[3].name == "D-heartbeat", "Heartbeat should be fourth"
 
     def test_multiple_bells_preserve_order(self):
         """When multiple sessions have bells, maintain their original order."""
@@ -238,12 +238,12 @@ class TestIntegrationScenarios:
             MockWidget("Agent A", STATUS_WAITING_USER, is_unvisited_stalled=False),
             MockWidget("Agent B", STATUS_WAITING_USER, is_unvisited_stalled=True),
             MockWidget("Agent C", STATUS_WAITING_USER, is_unvisited_stalled=True),
-            MockWidget("Agent D", STATUS_NO_INSTRUCTIONS, is_unvisited_stalled=False),
+            MockWidget("Agent D", STATUS_WAITING_APPROVAL, is_unvisited_stalled=False),
         ]
 
         result = build_attention_list_fixed(widgets)
 
-        # Order should be: B, C (bells), A (red no bell), D (yellow)
+        # Order should be: B, C (bells), A (red no bell), D (approval)
         assert [w.name for w in result] == ["Agent B", "Agent C", "Agent A", "Agent D"]
 
         # Simulating pressing 'b' 4 times should cycle through all 4

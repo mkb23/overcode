@@ -132,18 +132,19 @@ class TestSortSessionsByStatus:
     def test_full_priority_order(self):
         """Should respect full priority order."""
         sessions = [
-            make_session_with_stats("g", "asleep"),
+            make_session_with_stats("h", "asleep"),
             make_session_with_stats("a", "waiting_user"),
-            make_session_with_stats("e", "running"),
-            make_session_with_stats("c", "no_instructions"),
-            make_session_with_stats("b", "waiting_supervisor"),
-            make_session_with_stats("f", "terminated"),
-            make_session_with_stats("d", "error"),
+            make_session_with_stats("f", "running"),
+            make_session_with_stats("c", "error"),
+            make_session_with_stats("b", "waiting_approval"),
+            make_session_with_stats("g", "terminated"),
+            make_session_with_stats("d", "running_heartbeat"),
+            make_session_with_stats("e", "waiting_heartbeat"),
         ]
 
         result = sort_sessions_by_status(sessions)
 
-        expected_order = ["a", "b", "c", "d", "e", "f", "g"]
+        expected_order = ["a", "b", "c", "d", "e", "f", "g", "h"]
         assert [s.name for s in result] == expected_order
 
     def test_alphabetical_within_same_status(self):
@@ -572,14 +573,16 @@ class TestStatusOrderConstants:
 
     def test_attention_order_has_all_statuses(self):
         """Status order should have all expected statuses."""
-        expected = {"waiting_user", "waiting_supervisor", "no_instructions",
-                    "error", "running", "terminated", "asleep"}
+        expected = {"waiting_user", "waiting_approval", "error",
+                    "running_heartbeat", "waiting_heartbeat",
+                    "running", "terminated", "asleep"}
         assert set(STATUS_ORDER_BY_ATTENTION.keys()) == expected
 
     def test_value_order_has_all_statuses(self):
         """Value order should have all expected statuses."""
-        expected = {"waiting_user", "waiting_supervisor", "no_instructions",
-                    "error", "running", "terminated", "asleep"}
+        expected = {"waiting_user", "waiting_approval", "error",
+                    "waiting_heartbeat", "running", "running_heartbeat",
+                    "terminated", "asleep"}
         assert set(STATUS_ORDER_BY_VALUE.keys()) == expected
 
     def test_waiting_user_highest_priority(self):

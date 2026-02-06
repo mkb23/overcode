@@ -39,7 +39,7 @@ class SessionDaemonState:
     tmux_window: int = 0
 
     # Status (from StatusDetector)
-    current_status: str = "unknown"  # running, waiting_user, waiting_supervisor, no_instructions, terminated
+    current_status: str = "unknown"  # running, waiting_user, waiting_approval, waiting_heartbeat, terminated
     current_activity: str = ""
     status_since: Optional[str] = None  # ISO timestamp
 
@@ -88,6 +88,7 @@ class SessionDaemonState:
     last_heartbeat_time: Optional[str] = None
     next_heartbeat_due: Optional[str] = None  # Computed
     running_from_heartbeat: bool = False  # True if agent started running from heartbeat
+    waiting_for_heartbeat: bool = False  # True if waiting but heartbeat will auto-resume
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -129,6 +130,7 @@ class SessionDaemonState:
             "last_heartbeat_time": self.last_heartbeat_time,
             "next_heartbeat_due": self.next_heartbeat_due,
             "running_from_heartbeat": self.running_from_heartbeat,
+            "waiting_for_heartbeat": self.waiting_for_heartbeat,
         }
 
     @classmethod
@@ -172,6 +174,7 @@ class SessionDaemonState:
             last_heartbeat_time=data.get("last_heartbeat_time"),
             next_heartbeat_due=data.get("next_heartbeat_due"),
             running_from_heartbeat=data.get("running_from_heartbeat", False),
+            waiting_for_heartbeat=data.get("waiting_for_heartbeat", False),
         )
 
 

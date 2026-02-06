@@ -203,14 +203,14 @@ class TestJumpToAttention:
         assert len(mock_tui._attention_jump_list) == 1
         mock_widget.focus.assert_called_once()
 
-    def test_includes_no_instructions_sessions(self):
-        """Should include no_instructions sessions."""
+    def test_includes_waiting_approval_sessions(self):
+        """Should include waiting_approval sessions."""
         from overcode.tui_actions.navigation import NavigationActionsMixin
 
         mock_widget = MagicMock()
-        mock_widget.detected_status = "no_instructions"
+        mock_widget.detected_status = "waiting_approval"
         mock_widget.is_unvisited_stalled = False
-        mock_widget.session.name = "needs-instructions"
+        mock_widget.session.name = "needs-approval"
 
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget]
@@ -222,14 +222,14 @@ class TestJumpToAttention:
 
         assert len(mock_tui._attention_jump_list) == 1
 
-    def test_includes_waiting_supervisor_sessions(self):
-        """Should include waiting_supervisor sessions."""
+    def test_includes_waiting_heartbeat_sessions(self):
+        """Should include waiting_heartbeat sessions."""
         from overcode.tui_actions.navigation import NavigationActionsMixin
 
         mock_widget = MagicMock()
-        mock_widget.detected_status = "waiting_supervisor"
+        mock_widget.detected_status = "waiting_heartbeat"
         mock_widget.is_unvisited_stalled = False
-        mock_widget.session.name = "needs-supervisor"
+        mock_widget.session.name = "needs-heartbeat"
 
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget]

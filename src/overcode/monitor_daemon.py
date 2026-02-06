@@ -58,6 +58,7 @@ from .status_constants import (
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
+    STATUS_WAITING_HEARTBEAT,
     is_green_status,
 )
 from .status_detector import StatusDetector
@@ -296,6 +297,15 @@ class MonitorDaemon:
         # Check if this session is running from heartbeat (persistent across loops)
         running_from_heartbeat = session_id in self._sessions_running_from_heartbeat
 
+        # Check if this session is waiting for heartbeat to auto-resume
+        waiting_for_heartbeat = (
+            status == STATUS_WAITING_HEARTBEAT
+            or (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
+                and session.heartbeat_enabled
+                and not session.heartbeat_paused
+                and bool(session.heartbeat_instruction))
+        )
+
         return SessionDaemonState(
             session_id=session_id,
             name=session.name,
@@ -330,6 +340,7 @@ class MonitorDaemon:
             last_heartbeat_time=session.last_heartbeat_time,
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
+            waiting_for_heartbeat=waiting_for_heartbeat,
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -712,6 +723,11 @@ class MonitorDaemon:
                         effective_status = STATUS_ASLEEP
                     elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
                         effective_status = STATUS_RUNNING_HEARTBEAT
+                    elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
+                          and session.heartbeat_enabled
+                          and not session.heartbeat_paused
+                          and session.heartbeat_instruction):
+                        effective_status = STATUS_WAITING_HEARTBEAT
                     else:
                         effective_status = status
                     session_state = self.track_session_stats(session, effective_status)

@@ -46,20 +46,22 @@ S = TypeVar('S', bound=SessionWithStats)
 # Status priority orders for sorting
 STATUS_ORDER_BY_ATTENTION = {
     "waiting_user": 0,
-    "waiting_supervisor": 1,
-    "no_instructions": 2,
-    "error": 3,
-    "running": 4,
-    "terminated": 5,
-    "asleep": 6,
+    "waiting_approval": 1,
+    "error": 2,
+    "running_heartbeat": 3,
+    "waiting_heartbeat": 4,
+    "running": 5,
+    "terminated": 6,
+    "asleep": 7,
 }
 
 STATUS_ORDER_BY_VALUE = {
     "waiting_user": 0,
-    "waiting_supervisor": 0,
-    "no_instructions": 0,
+    "waiting_approval": 0,
     "error": 0,
+    "waiting_heartbeat": 0,
     "running": 1,
+    "running_heartbeat": 1,
     "terminated": 2,
     "asleep": 2,
 }
@@ -80,8 +82,8 @@ def sort_sessions_alphabetical(sessions: List[T]) -> List[T]:
 def sort_sessions_by_status(sessions: List[S]) -> List[S]:
     """Sort sessions by status priority, then alphabetically.
 
-    Priority order: waiting_user, waiting_supervisor, no_instructions,
-    error, running, terminated, asleep.
+    Priority order: waiting_user, waiting_approval, error,
+    running_heartbeat, waiting_heartbeat, running, terminated, asleep.
 
     Args:
         sessions: List of session objects with stats.current_state

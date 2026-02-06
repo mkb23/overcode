@@ -210,7 +210,7 @@ def agent_status_to_char(status: str) -> str:
     """Convert agent status to timeline character.
 
     Args:
-        status: One of running, no_instructions, waiting_supervisor, waiting_user
+        status: One of running, waiting_user, waiting_approval, waiting_heartbeat, etc.
 
     Returns:
         Block character for timeline visualization
