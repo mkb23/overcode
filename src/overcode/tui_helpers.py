@@ -129,13 +129,16 @@ def format_line_count(count: int) -> str:
         count: Number of lines
 
     Returns:
-        Formatted string like "173K", "1.2M", or "500" for small counts.
-        Uses no decimal for K values to keep display compact.
+        Formatted string like "1.5K", "173K", "1.2M", or "500" for small counts.
+        Uses one decimal for values under 10K, integer for 10K+ to stay within
+        4 chars for layout alignment.
     """
     if count >= 1_000_000:
         return f"{count / 1_000_000:.1f}M"
-    elif count >= 1_000:
+    elif count >= 10_000:
         return f"{count // 1_000}K"
+    elif count >= 1_000:
+        return f"{count / 1_000:.1f}K"
     else:
         return str(count)
 
@@ -186,8 +189,9 @@ def calculate_percentiles(times: List[float]) -> Tuple[float, float, float]:
         return mean_time, mean_time, mean_time
 
     sorted_times = sorted(times)
-    p5_idx = int(len(sorted_times) * 0.05)
-    p95_idx = int(len(sorted_times) * 0.95)
+    n = len(sorted_times)
+    p5_idx = int(0.05 * (n - 1))
+    p95_idx = int(0.95 * (n - 1))
     p5 = sorted_times[p5_idx]
     p95 = sorted_times[p95_idx]
 

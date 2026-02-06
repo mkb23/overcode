@@ -109,10 +109,10 @@ def calculate_cost_estimate(
     output_tokens: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
-    price_input: float = 15.0,
-    price_output: float = 75.0,
-    price_cache_write: float = 18.75,
-    price_cache_read: float = 1.50,
+    price_input: float = 5.0,
+    price_output: float = 25.0,
+    price_cache_write: float = 6.25,
+    price_cache_read: float = 0.50,
 ) -> float:
     """Calculate estimated cost from token counts.
 

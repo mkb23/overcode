@@ -174,9 +174,11 @@ class TestFormatLineCount:
         assert format_line_count(500) == "500"
 
     def test_thousands(self):
-        """Should format thousands with K (no decimal)."""
-        assert format_line_count(1000) == "1K"
-        assert format_line_count(1500) == "1K"  # Integer division
+        """Should format thousands with K: decimal under 10K, integer above."""
+        assert format_line_count(1000) == "1.0K"
+        assert format_line_count(1500) == "1.5K"
+        assert format_line_count(9999) == "10.0K"
+        assert format_line_count(10000) == "10K"
         assert format_line_count(173000) == "173K"
 
     def test_millions(self):
@@ -234,9 +236,9 @@ class TestCalculatePercentiles:
         times = list(range(1, 101))  # 1 to 100
         mean, p5, p95 = calculate_percentiles(times)
         assert mean == 50.5  # Mean of 1-100
-        # Percentile calculation uses int index: int(100 * 0.05) = 5, times[5] = 6
-        assert p5 == 6  # 5th percentile (index 5 in 1-100 list)
-        assert p95 == 96  # 95th percentile (index 95 in 1-100 list)
+        # Percentile uses int(p * (n-1)): int(0.05 * 99) = 4, times[4] = 5
+        assert p5 == 5  # 5th percentile
+        assert p95 == 95  # 95th percentile (int(0.95 * 99) = 94, times[94] = 95)
 
 
 class TestPresenceStateToChar:

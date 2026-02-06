@@ -134,10 +134,10 @@ class TestFormatLineCount:
         assert format_line_count(999) == "999"
 
     def test_thousands(self):
-        """Counts in thousands show as K without decimal"""
-        assert format_line_count(1000) == "1K"
-        assert format_line_count(1500) == "1K"
-        assert format_line_count(9999) == "9K"
+        """Counts under 10K show decimal, 10K+ show integer K"""
+        assert format_line_count(1000) == "1.0K"
+        assert format_line_count(1500) == "1.5K"
+        assert format_line_count(9999) == "10.0K"
         assert format_line_count(10000) == "10K"
         assert format_line_count(173242) == "173K"
         assert format_line_count(999999) == "999K"
@@ -149,11 +149,10 @@ class TestFormatLineCount:
         assert format_line_count(10_500_000) == "10.5M"
 
     def test_output_fits_width(self):
-        """Formatted output fits within expected display width (4 chars)"""
-        # This is the key test for the bug fix - large numbers must fit in 4 chars
+        """Formatted output fits within expected display width (5 chars)"""
         test_cases = [
             0, 1, 99, 999,           # Small numbers: "0", "1", "99", "999"
-            1000, 9999, 99999,       # Thousands: "1K", "9K", "99K"
+            1000, 9999, 99999,       # Thousands: "1.0K", "10.0K", "99K"
             100000, 999999,          # Large thousands: "100K", "999K"
             173242,                  # Issue #2 example: "173K"
             1_000_000, 9_999_999,    # Millions: "1.0M", "10.0M"
@@ -1157,7 +1156,7 @@ class TestSummaryLineAlignment:
         extreme_cases = [
             (0, 0, 0),                        # Empty diff
             (1, 1, 1),                        # Minimal changes
-            (99, 9999, 9999),                 # Large but fits original format
+            (99, 9999, 9999),                 # Large but fits format
             (99, 173242, 50000),              # Issue #2 example - large insertions
             (99, 1_000_000, 500_000),         # Very large diffs (e.g., vendored deps)
             (99, 999_999, 999_999),           # Max before millions
@@ -1170,20 +1169,20 @@ class TestSummaryLineAlignment:
             # Files should fit in 2 chars (we don't format files, just check reasonableness)
             assert files <= 99 or True, "Files count test case setup issue"
 
-            # Insertions and deletions should fit in 4 chars each (right-justified)
-            assert len(ins_str) <= 4, (
-                f"format_line_count({ins}) = '{ins_str}' exceeds 4 chars"
+            # Insertions and deletions should fit in 5 chars each (right-justified)
+            assert len(ins_str) <= 5, (
+                f"format_line_count({ins}) = '{ins_str}' exceeds 5 chars"
             )
-            assert len(dels_str) <= 4, (
-                f"format_line_count({dels}) = '{dels_str}' exceeds 4 chars"
+            assert len(dels_str) <= 5, (
+                f"format_line_count({dels}) = '{dels_str}' exceeds 5 chars"
             )
 
     def test_git_diff_formatted_segment_width(self):
         """Full git diff segment maintains consistent width across all values"""
         from overcode.tui_helpers import format_line_count
 
-        # The full detail format is: " Δ{files:>2} +{ins:>4} -{dels:>4}"
-        # Total width should be: 1 + 1 + 2 + 1 + 1 + 4 + 1 + 1 + 4 = 16 chars
+        # The full detail format is: " Δ{files:>2} +{ins:>5} -{dels:>5}"
+        # Total width should be: 1 + 1 + 2 + 1 + 1 + 5 + 1 + 1 + 5 = 18 chars
 
         test_cases = [
             (0, 0, 0),
@@ -1195,8 +1194,8 @@ class TestSummaryLineAlignment:
         ]
 
         for files, ins, dels in test_cases:
-            segment = f" Δ{files:>2} +{format_line_count(ins):>4} -{format_line_count(dels):>4}"
-            expected_width = 16
+            segment = f" Δ{files:>2} +{format_line_count(ins):>5} -{format_line_count(dels):>5}"
+            expected_width = 18
             assert len(segment) == expected_width, (
                 f"Git diff segment for ({files}, {ins}, {dels}) = '{segment}' "
                 f"has width {len(segment)}, expected {expected_width}"
