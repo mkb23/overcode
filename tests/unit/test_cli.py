@@ -36,11 +36,12 @@ class TestCLICommands:
         assert "list" in result.stdout
         assert "daemon" in result.stdout
 
-    def test_no_args_shows_help(self):
-        """No arguments shows help"""
+    def test_no_args_launches_tui(self):
+        """No arguments launches the TUI monitor (#185)"""
         result = runner.invoke(app, [])
-        # Shows help output (Typer may return exit code 2 for no args)
-        assert "Usage:" in result.output
+        # TUI launch fails outside a real terminal
+        assert result.exit_code != 0
+        assert "TTY" in result.output or "terminal" in result.output.lower()
 
 
 class TestLaunchCommand:

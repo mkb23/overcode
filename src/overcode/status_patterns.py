@@ -146,6 +146,34 @@ class StatusPatterns:
         "is not recognized",  # Windows-style (for future compatibility)
     ])
 
+    # Approval waiting patterns (#22)
+    # These indicate Claude is waiting for user approval of a plan or decision
+    approval_patterns: List[str] = field(default_factory=lambda: [
+        "waiting for.*approval",
+        "plan mode",
+        "approve.*plan",
+        "select.*option",
+        "choose.*[1-4]",
+        "review the plan",
+        "approve this plan",
+        "plan requires approval",
+    ])
+
+    # Error patterns (#22)
+    # These indicate Claude encountered an API or system error
+    error_patterns: List[str] = field(default_factory=lambda: [
+        "api.*error",
+        "timeout",
+        "rate.*limit",
+        "connection.*failed",
+        "error:.*api",
+        "overloaded",
+        "service unavailable",
+        "internal server error",
+        "429",  # Rate limit HTTP code
+        "503",  # Service unavailable
+    ])
+
 
 # Default patterns instance
 DEFAULT_PATTERNS = StatusPatterns()

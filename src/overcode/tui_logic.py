@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from typing import List, Set, Optional, TypeVar, Protocol, Tuple
 from dataclasses import dataclass
 
+from .status_constants import is_green_status
+
 
 class SessionLike(Protocol):
     """Protocol for session-like objects used in sorting/filtering."""
@@ -240,7 +242,7 @@ def calculate_spin_stats(
     sleeping_count = len(sessions) - len(active_sessions)
 
     total_count = len(active_sessions)
-    green_count = sum(1 for s in active_sessions if s.current_status == "running")
+    green_count = sum(1 for s in active_sessions if is_green_status(s.current_status))
 
     # Calculate mean spin rate
     mean_spin = 0.0
@@ -301,7 +303,7 @@ def calculate_mean_spin_from_history(
     if not window_history:
         return (0.0, 0)
 
-    running_count = sum(1 for _, _, status in window_history if status == "running")
+    running_count = sum(1 for _, _, status in window_history if is_green_status(status))
     total_count = len(window_history)
 
     # mean_spin = (fraction of samples that were "running") * num_agents

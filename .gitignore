@@ -4,6 +4,7 @@ __pycache__/
 !demo/text-adventure/.gitkeep
 .claude/settings.local.json
 .coverage
+.coverage.*
 .DS_Store
 .eggs/
 .idea/

@@ -18,6 +18,9 @@ STATUS_WAITING_SUPERVISOR = "waiting_supervisor"
 STATUS_WAITING_USER = "waiting_user"
 STATUS_TERMINATED = "terminated"  # Claude Code exited, shell prompt showing
 STATUS_ASLEEP = "asleep"  # Human marked agent as paused/snoozed (excluded from stats)
+STATUS_RUNNING_HEARTBEAT = "running_heartbeat"  # Running from automated heartbeat (#171)
+STATUS_WAITING_APPROVAL = "waiting_approval"  # Waiting on approval/plan/decision (#22)
+STATUS_ERROR = "error"  # API timeout, etc. (#22)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -27,6 +30,9 @@ ALL_STATUSES = [
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
     STATUS_ASLEEP,
+    STATUS_RUNNING_HEARTBEAT,
+    STATUS_WAITING_APPROVAL,
+    STATUS_ERROR,
 ]
 
 
@@ -63,6 +69,9 @@ STATUS_EMOJIS = {
     STATUS_WAITING_USER: "🔴",
     STATUS_TERMINATED: "⚫",  # Black circle - Claude exited
     STATUS_ASLEEP: "💤",  # Sleeping/snoozed - human marked as paused
+    STATUS_RUNNING_HEARTBEAT: "💛",  # Yellow heart for heartbeat-triggered (#171)
+    STATUS_WAITING_APPROVAL: "🟠",  # Orange for approval waiting (#22)
+    STATUS_ERROR: "🟣",  # Purple for errors (#22)
 }
 
 
@@ -82,6 +91,9 @@ STATUS_COLORS = {
     STATUS_WAITING_USER: "red",
     STATUS_TERMINATED: "dim",  # Grey for terminated
     STATUS_ASLEEP: "dim",  # Grey for sleeping
+    STATUS_RUNNING_HEARTBEAT: "yellow",  # Yellow for automated instruction (#171)
+    STATUS_WAITING_APPROVAL: "orange1",  # Orange for approval waiting (#22)
+    STATUS_ERROR: "magenta",  # Purple for errors (#22)
 }
 
 
@@ -101,6 +113,9 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_USER: ("🔴", "red"),
     STATUS_TERMINATED: ("⚫", "dim"),
     STATUS_ASLEEP: ("💤", "dim"),  # Sleeping/snoozed
+    STATUS_RUNNING_HEARTBEAT: ("💛", "yellow"),  # Heartbeat-triggered (#171)
+    STATUS_WAITING_APPROVAL: ("🟠", "orange1"),  # Approval waiting (#22)
+    STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
 }
 
 
@@ -120,6 +135,9 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_USER: "░",
     STATUS_TERMINATED: "×",  # Small X - terminated
     STATUS_ASLEEP: "░",  # Light shade hatching (grey) - sleeping/paused
+    STATUS_RUNNING_HEARTBEAT: "█",  # Same block but yellow color (#171)
+    STATUS_WAITING_APPROVAL: "▒",  # Medium shade (#22)
+    STATUS_ERROR: "▓",  # Dense shade (#22)
 }
 
 
@@ -183,7 +201,7 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
 
 def is_green_status(status: str) -> bool:
     """Check if a status is considered 'green' (actively working)."""
-    return status == STATUS_RUNNING
+    return status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT)
 
 
 def is_waiting_status(status: str) -> bool:

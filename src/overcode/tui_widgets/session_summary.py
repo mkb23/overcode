@@ -4,7 +4,7 @@ Session summary widget for TUI.
 Displays expandable session summary with status, metrics, and pane content.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from textual.widgets import Static
@@ -451,6 +451,37 @@ class SessionSummary(Static, can_focus=True):
                 else:
                     content.append(" ⏹️ ", style=mono(f"dim{bg}", "dim"))  # Normal (extra space for alignment)
 
+        # Heartbeat columns (med/full detail) (#171)
+        # Column 1: interval (e.g., "5m"), Column 2: 24hr clock time of next beat
+        if self.summary_detail in ("med", "full"):
+            if s.heartbeat_enabled and not s.heartbeat_paused:
+                freq_str = format_duration(s.heartbeat_frequency_seconds)
+                content.append(f" 💓{freq_str:>5}", style=mono(f"bold magenta{bg}", "bold"))
+                # Next heartbeat time in 24hr format
+                if s.last_heartbeat_time:
+                    try:
+                        last_hb = datetime.fromisoformat(s.last_heartbeat_time)
+                        next_due = last_hb + timedelta(seconds=s.heartbeat_frequency_seconds)
+                        time_str = next_due.strftime("%H:%M")
+                        content.append(f" @{time_str}", style=mono(f"bold cyan{bg}", "bold"))
+                    except (ValueError, TypeError):
+                        content.append(" @--:--", style=mono(f"dim{bg}", "dim"))
+                else:
+                    # No last heartbeat yet - show when first one will fire
+                    if s.start_time:
+                        try:
+                            start = datetime.fromisoformat(s.start_time)
+                            next_due = start + timedelta(seconds=s.heartbeat_frequency_seconds)
+                            time_str = next_due.strftime("%H:%M")
+                            content.append(f" @{time_str}", style=mono(f"bold cyan{bg}", "bold"))
+                        except (ValueError, TypeError):
+                            content.append(" @--:--", style=mono(f"dim{bg}", "dim"))
+                    else:
+                        content.append(" @--:--", style=mono(f"dim{bg}", "dim"))
+            elif s.heartbeat_enabled and s.heartbeat_paused:
+                content.append(" 💓⏸    @--:--", style=mono(f"dim yellow{bg}", "dim"))
+            # No placeholder when heartbeat disabled - keeps display cleaner
+
         if not self.expanded:
             # Compact view: show content based on summary_content_mode (#74)
             content.append(" │ ", style=mono(f"bold dim{bg}", "dim"))
@@ -491,6 +522,18 @@ class SessionSummary(Static, can_focus=True):
                     content.append("📖 (summarizer disabled - press 'a')", style=mono(f"dim italic{bg}", "dim"))
                 else:
                     content.append("📖 (awaiting context...)", style=mono(f"dim italic{bg}", "dim"))
+            elif mode == "heartbeat":
+                # heartbeat: show heartbeat instruction (💓 icon)
+                if s.heartbeat_enabled:
+                    freq_str = format_duration(s.heartbeat_frequency_seconds)
+                    if s.heartbeat_paused:
+                        hb_text = f"💓⏸ (paused): {s.heartbeat_instruction}"
+                    else:
+                        hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
+                    display_text = hb_text[:remaining]
+                    content.append(display_text, style=mono(f"bold magenta{bg}", "bold"))
+                else:
+                    content.append("💓 (no heartbeat configured - press H)", style=mono(f"dim{bg}", "dim"))
             else:
                 # ai_short: show short summary (💬 icon - current activity from AI)
                 if self.ai_summary_short:

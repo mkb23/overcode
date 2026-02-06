@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector import StatusDetector
-from .status_constants import STATUS_WAITING_USER
+from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -197,7 +197,9 @@ class SupervisorTUI(
         # Toggle between token count and dollar cost display
         ("dollar_sign", "toggle_cost_display", "Show $"),
         # Transport/handover - prepare all sessions for handoff (double-press)
-        ("H", "transport_all", "Handover all"),
+        ("T", "transport_all", "Handover all"),
+        # Heartbeat configuration (#171)
+        ("H", "configure_heartbeat", "Heartbeat config"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
     ]
@@ -209,7 +211,7 @@ class SupervisorTUI(
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value"]
     # Summary content modes: what to show in the summary line (#74)
-    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation"]
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat"]
 
     sessions: reactive[List[Session]] = reactive(list)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
@@ -601,6 +603,20 @@ class SupervisorTUI(
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
 
+            # Enrich status with heartbeat info from daemon state (#171)
+            # StatusDetector only returns "running" - use daemon state to distinguish heartbeat
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            if daemon_state and daemon_state.sessions:
+                heartbeat_sessions = {
+                    s.session_id for s in daemon_state.sessions
+                    if s.running_from_heartbeat
+                }
+                for session_id in heartbeat_sessions:
+                    if session_id in status_results:
+                        status, activity, content = status_results[session_id]
+                        if status == STATUS_RUNNING:
+                            status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
+
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}
             for session_id, summary in self._summaries.items():
@@ -688,8 +704,9 @@ class SupervisorTUI(
         if not self._summarizer.enabled:
             return
 
-        # Get fresh session list
-        sessions = self.session_manager.list_sessions()
+        # Get fresh session list (filtered to this tmux session)
+        all_sessions = self.session_manager.list_sessions()
+        sessions = [s for s in all_sessions if s.tmux_session == self.tmux_session]
         if not sessions:
             return
 
@@ -1048,6 +1065,29 @@ class SupervisorTUI(
             self.refresh_sessions()
         else:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+
+    def on_command_bar_heartbeat_updated(self, message: CommandBar.HeartbeatUpdated) -> None:
+        """Handle heartbeat configuration update from command bar (#171)."""
+        session = self.session_manager.get_session_by_name(message.session_name)
+        if not session:
+            self.notify(f"Session not found: {message.session_name}", severity="error")
+            return
+
+        self.session_manager.update_session(
+            session.id,
+            heartbeat_enabled=message.enabled,
+            heartbeat_frequency_seconds=message.frequency,
+            heartbeat_instruction=message.instruction,
+        )
+
+        if message.enabled:
+            freq_str = format_duration(message.frequency)
+            self.notify(f"Heartbeat enabled: every {freq_str}", severity="information")
+        else:
+            self.notify("Heartbeat disabled", severity="information")
+
+        # Refresh session list to show updated heartbeat config
+        self.refresh_sessions()
 
     def on_command_bar_clear_requested(self, message: CommandBar.ClearRequested) -> None:
         """Handle clear request - hide and unfocus command bar."""

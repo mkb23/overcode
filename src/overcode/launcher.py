@@ -269,7 +269,6 @@ class ClaudeLauncher:
 
         # Filter to only sessions belonging to this tmux session
         my_sessions = [s for s in all_sessions if s.tmux_session == self.tmux.session_name]
-        other_sessions = [s for s in all_sessions if s.tmux_session != self.tmux.session_name]
 
         # Detect terminated sessions (tmux window gone but session still tracked)
         if detect_terminated:
@@ -305,7 +304,7 @@ class ClaudeLauncher:
             if untracked_count > 0:
                 print(f"Killed {untracked_count} untracked window(s)")
 
-        return my_sessions + other_sessions
+        return my_sessions
 
     def cleanup_terminated_sessions(self) -> int:
         """Remove all terminated sessions from state.

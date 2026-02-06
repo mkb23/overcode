@@ -103,6 +103,13 @@ class Session:
     # Used to accurately calculate context window for this specific agent
     claude_session_ids: List[str] = field(default_factory=list)
 
+    # Heartbeat configuration (#171)
+    heartbeat_enabled: bool = False
+    heartbeat_frequency_seconds: int = 300  # Default 5 minutes
+    heartbeat_instruction: str = ""
+    heartbeat_paused: bool = False
+    last_heartbeat_time: Optional[str] = None  # ISO timestamp
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict

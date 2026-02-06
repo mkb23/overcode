@@ -38,7 +38,7 @@ class SessionActionsMixin:
         Note: Cannot put a running agent to sleep (#158).
         """
         from ..tui_widgets import SessionSummary
-        from ..status_constants import STATUS_RUNNING
+        from ..status_constants import is_green_status
         focused = self.focused
         if not isinstance(focused, SessionSummary):
             self.notify("No agent focused", severity="warning")
@@ -48,7 +48,7 @@ class SessionActionsMixin:
         new_asleep_state = not session.is_asleep
 
         # Prevent putting a running agent to sleep (#158)
-        if new_asleep_state and focused.detected_status == STATUS_RUNNING:
+        if new_asleep_state and is_green_status(focused.detected_status):
             self.notify("Cannot put a running agent to sleep", severity="warning")
             return
 
@@ -334,6 +334,39 @@ class SessionActionsMixin:
             cmd_bar.set_mode("value")
 
             # Enable and focus the input
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
+
+    def action_configure_heartbeat(self) -> None:
+        """Open command bar for heartbeat configuration (H key) (#171).
+
+        Two-step flow:
+        1. Enter frequency (e.g., 300, 5m, 1h) or 'off' to disable
+        2. Enter instruction to send at each heartbeat
+        """
+        from ..tui_widgets import SessionSummary, CommandBar
+
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.add_class("visible")
+
+            # Get the currently focused session (if any)
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                # Pre-fill with existing frequency if enabled
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                if focused.session.heartbeat_enabled:
+                    cmd_input.value = str(focused.session.heartbeat_frequency_seconds)
+                else:
+                    cmd_input.value = "300"  # Default 5 min
+            elif not cmd_bar.target_session and self.sessions:
+                cmd_bar.set_target(self.sessions[0].name)
+
+            cmd_bar.set_mode("heartbeat_freq")
             cmd_input = cmd_bar.query_one("#cmd-input", Input)
             cmd_input.disabled = False
             cmd_input.focus()

@@ -396,7 +396,7 @@ class TUIPreferences:
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
-    summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation (#98)
+    summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     show_cost: bool = False  # Show $ cost instead of token counts

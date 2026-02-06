@@ -10,6 +10,8 @@ from .status_constants import (
     STATUS_WAITING_SUPERVISOR,
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
+    STATUS_WAITING_APPROVAL,
+    STATUS_ERROR,
 )
 from .status_patterns import (
     get_patterns,
@@ -36,6 +38,8 @@ class StatusDetector:
     STATUS_WAITING_SUPERVISOR = STATUS_WAITING_SUPERVISOR
     STATUS_WAITING_USER = STATUS_WAITING_USER
     STATUS_TERMINATED = STATUS_TERMINATED
+    STATUS_WAITING_APPROVAL = STATUS_WAITING_APPROVAL
+    STATUS_ERROR = STATUS_ERROR
 
     def __init__(
         self,
@@ -140,6 +144,15 @@ class StatusDetector:
 
         # Join more lines for pattern matching (menus have multiple lines)
         last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
+
+        # Check for API/system errors (#22) - high priority
+        if self._matches_error_patterns(last_few):
+            error_msg = self._extract_error_message(last_lines)
+            return self.STATUS_ERROR, f"Error: {error_msg}", content
+
+        # Check for approval waiting state (#22)
+        if self._matches_approval_patterns(last_few):
+            return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
 
         # Check for permission/confirmation prompts (HIGHEST priority)
         # This MUST come before active indicator checks because permission dialogs
@@ -381,3 +394,57 @@ class StatusDetector:
                     return True
 
         return False
+
+    def _matches_approval_patterns(self, text: str) -> bool:
+        """Check if text matches approval waiting patterns (#22).
+
+        Uses regex patterns for more flexible matching.
+
+        Args:
+            text: Text to check (should be lowercased)
+
+        Returns:
+            True if approval pattern is found
+        """
+        import re
+        for pattern in self.patterns.approval_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    def _matches_error_patterns(self, text: str) -> bool:
+        """Check if text matches error patterns (#22).
+
+        Uses regex patterns for more flexible matching.
+
+        Args:
+            text: Text to check (should be lowercased)
+
+        Returns:
+            True if error pattern is found
+        """
+        import re
+        for pattern in self.patterns.error_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    def _extract_error_message(self, lines: list) -> str:
+        """Extract error message from recent output (#22).
+
+        Args:
+            lines: Recent output lines
+
+        Returns:
+            Extracted error message or generic error text
+        """
+        import re
+        for line in reversed(lines):
+            line_lower = line.lower()
+            # Look for lines containing error indicators
+            if any(re.search(p, line_lower, re.IGNORECASE) for p in self.patterns.error_patterns):
+                cleaned = clean_line(line, self.patterns)
+                if len(cleaned) > 80:
+                    cleaned = cleaned[:77] + "..."
+                return cleaned
+        return "API or system error"

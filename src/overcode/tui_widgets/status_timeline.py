@@ -21,6 +21,7 @@ from ..tui_helpers import (
     truncate_name,
     build_timeline_slots,
 )
+from ..status_constants import is_green_status
 
 
 class StatusTimeline(Static):
@@ -207,7 +208,7 @@ class StatusTimeline(Static):
                         # Still count the underlying slot for percentage
                         if i in slot_states:
                             total_slots += 1
-                            if slot_states[i] == "running":
+                            if is_green_status(slot_states[i]):
                                 green_slots += 1
                     elif i in slot_states:
                         status = slot_states[i]
@@ -215,7 +216,7 @@ class StatusTimeline(Static):
                         color = get_agent_timeline_color(status)
                         content.append(char, style=color)
                         total_slots += 1
-                        if status == "running":
+                        if is_green_status(status):
                             green_slots += 1
                     else:
                         content.append("─", style="dim")
