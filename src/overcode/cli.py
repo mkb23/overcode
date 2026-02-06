@@ -296,6 +296,9 @@ def show(
     no_stats: Annotated[
         bool, typer.Option("--no-stats", help="Skip stats, show only pane output")
     ] = False,
+    stats_only: Annotated[
+        bool, typer.Option("--stats-only", "-s", help="Show only stats, no pane output")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Show agent details and recent output."""
@@ -434,23 +437,24 @@ def show(
 
         print()
 
-    # Pane output section
-    if pane_content_raw:
-        clean_content = strip_ansi(pane_content_raw)
-        content_lines = clean_content.rstrip().split('\n')
-        display_lines = content_lines[-lines:] if len(content_lines) > lines else content_lines
-        print(f"=== {name} (last {lines} lines) ===")
-        print('\n'.join(display_lines))
-        print(f"=== end {name} ===")
-    else:
-        # Fallback for terminated sessions
-        output = launcher.get_session_output(name, lines=lines)
-        if output is not None:
+    # Pane output section (skip if --stats-only or --lines 0)
+    if not stats_only and lines > 0:
+        if pane_content_raw:
+            clean_content = strip_ansi(pane_content_raw)
+            content_lines = clean_content.rstrip().split('\n')
+            display_lines = content_lines[-lines:]
             print(f"=== {name} (last {lines} lines) ===")
-            print(output)
+            print('\n'.join(display_lines))
             print(f"=== end {name} ===")
         else:
-            rprint(f"[dim]No pane output available[/dim]")
+            # Fallback for terminated sessions
+            output = launcher.get_session_output(name, lines=lines)
+            if output is not None:
+                print(f"=== {name} (last {lines} lines) ===")
+                print(output)
+                print(f"=== end {name} ===")
+            else:
+                rprint(f"[dim]No pane output available[/dim]")
 
 
 @app.command()
