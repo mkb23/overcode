@@ -106,8 +106,11 @@ INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
 
 def _is_budget_exceeded(session, stats) -> bool:
     """Check if session has exceeded its cost budget (#173)."""
-    budget = getattr(session, "cost_budget_usd", 0.0)
-    return budget > 0 and stats.estimated_cost_usd >= budget
+    try:
+        budget = session.cost_budget_usd
+        return isinstance(budget, (int, float)) and budget > 0 and stats.estimated_cost_usd >= budget
+    except (AttributeError, TypeError):
+        return False
 
 
 def check_activity_signal(session: str = None) -> bool:
@@ -351,7 +354,7 @@ class MonitorDaemon:
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
             # Cost budget (#173)
-            cost_budget_usd=getattr(session, "cost_budget_usd", 0.0),
+            cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
         )
 
