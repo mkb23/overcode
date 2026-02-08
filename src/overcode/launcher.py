@@ -151,6 +151,7 @@ class ClaudeLauncher:
         # Send command to window to start interactive Claude
         if not self.tmux.send_keys(window_index, cmd_str, enter=True):
             print(f"Failed to send command to window {window_index}")
+            self.tmux.kill_window(window_index)
             return None
 
         # Determine permissiveness mode based on flags

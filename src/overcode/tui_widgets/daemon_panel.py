@@ -94,7 +94,10 @@ class DaemonPanel(Static):
             content.append("  │  ", style="dim")
             content.append(f"#{state.loop_count}", style="cyan")
             content.append(f" @{format_interval(state.current_interval)}", style="dim")
-            last_loop = datetime.fromisoformat(state.last_loop_time) if state.last_loop_time else None
+            try:
+                last_loop = datetime.fromisoformat(state.last_loop_time) if state.last_loop_time else None
+            except (ValueError, TypeError):
+                last_loop = None
             content.append(f" ({format_ago(last_loop)})", style="dim")
             if state.total_supervisions > 0:
                 content.append(f"  sup:{state.total_supervisions}", style="magenta")
