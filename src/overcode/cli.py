@@ -245,6 +245,40 @@ def set_value(
     rprint(f"[green]✓ Set {name} value to {value}[/green]")
 
 
+@app.command(name="set-budget")
+def set_budget(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    budget: Annotated[float, typer.Argument(help="Budget in USD (0 to clear)")],
+    session: SessionOption = "agents",
+):
+    """Set cost budget for an agent (#173).
+
+    When an agent's estimated cost reaches the budget, heartbeats are
+    disabled and supervision is skipped.
+
+    Examples:
+        overcode set-budget my-agent 5.00    # $5 budget
+        overcode set-budget my-agent 0       # Clear budget
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    if budget < 0:
+        rprint("[red]Error: Budget cannot be negative[/red]")
+        raise typer.Exit(code=1)
+
+    manager.set_cost_budget(agent.id, budget)
+    if budget > 0:
+        rprint(f"[green]✓ Set {name} budget to ${budget:.2f}[/green]")
+    else:
+        rprint(f"[green]✓ Cleared budget for {name}[/green]")
+
+
 @app.command()
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],
@@ -403,7 +437,12 @@ def show(
                 ctx_pct = min(100, claude_stats.current_context_tokens / 200_000 * 100)
                 token_str += f" (context {ctx_pct:.0f}%)"
             cost = sess.stats.estimated_cost_usd
-            print(f"Tokens:    {token_str:<28} Cost:    {format_cost(cost)}")
+            budget = sess.cost_budget_usd
+            if budget > 0:
+                cost_display = f"{format_cost(cost)}/{format_cost(budget)}"
+            else:
+                cost_display = format_cost(cost)
+            print(f"Tokens:    {token_str:<28} Cost:    {cost_display}")
 
             # Work & interactions
             median_work = claude_stats.median_work_time

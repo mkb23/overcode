@@ -122,6 +122,21 @@ def format_cost(cost_usd: float) -> str:
         return f"${cost_usd:.2f}"
 
 
+def format_budget(cost_usd: float, budget_usd: float) -> str:
+    """Format cost with budget context (#173).
+
+    Args:
+        cost_usd: Current cost in USD
+        budget_usd: Budget limit in USD (0 = no budget)
+
+    Returns:
+        Formatted string like "$1.23/$5.00" or "$1.23" if no budget
+    """
+    if budget_usd <= 0:
+        return format_cost(cost_usd)
+    return f"{format_cost(cost_usd)}/{format_cost(budget_usd)}"
+
+
 def format_line_count(count: int) -> str:
     """Format line count (insertions/deletions) to human readable (K/M).
 

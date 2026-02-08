@@ -91,6 +91,10 @@ class SessionDaemonState:
     running_from_heartbeat: bool = False  # True if agent started running from heartbeat
     waiting_for_heartbeat: bool = False  # True if waiting but heartbeat will auto-resume
 
+    # Cost budget (#173)
+    cost_budget_usd: float = 0.0  # 0 = unlimited
+    budget_exceeded: bool = False  # True when cost >= budget
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -133,6 +137,9 @@ class SessionDaemonState:
             "next_heartbeat_due": self.next_heartbeat_due,
             "running_from_heartbeat": self.running_from_heartbeat,
             "waiting_for_heartbeat": self.waiting_for_heartbeat,
+            # Cost budget (#173)
+            "cost_budget_usd": self.cost_budget_usd,
+            "budget_exceeded": self.budget_exceeded,
         }
 
     @classmethod
@@ -178,6 +185,9 @@ class SessionDaemonState:
             next_heartbeat_due=data.get("next_heartbeat_due"),
             running_from_heartbeat=data.get("running_from_heartbeat", False),
             waiting_for_heartbeat=data.get("waiting_for_heartbeat", False),
+            # Cost budget (#173)
+            cost_budget_usd=data.get("cost_budget_usd", 0.0),
+            budget_exceeded=data.get("budget_exceeded", False),
         )
 
 

@@ -83,6 +83,13 @@ class CommandBar(Static):
             self.frequency = frequency
             self.instruction = instruction
 
+    class BudgetUpdated(Message):
+        """Message sent when user updates cost budget (#173)."""
+        def __init__(self, session_name: str, budget_usd: float):
+            super().__init__()
+            self.session_name = session_name
+            self.budget_usd = budget_usd
+
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
         pass
@@ -128,6 +135,12 @@ class CommandBar(Static):
             else:
                 label.update("[Value] ")
             input_widget.placeholder = "Enter priority value (1000 = normal, higher = more important)..."
+        elif self.mode == "cost_budget":
+            if self.target_session:
+                label.update(f"[{self.target_session} Budget] ")
+            else:
+                label.update("[Budget] ")
+            input_widget.placeholder = "Enter $ budget (e.g., 5.00) or 0 to clear..."
         elif self.mode == "annotation":
             if self.target_session:
                 label.update(f"[{self.target_session} Annotation] ")
@@ -244,6 +257,12 @@ class CommandBar(Static):
             elif self.mode == "value":
                 # Set agent value (#61)
                 self._set_value(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "cost_budget":
+                # Set cost budget (#173)
+                self._set_cost_budget(text)
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -380,6 +399,20 @@ class CommandBar(Static):
         except ValueError:
             # Invalid input, notify user but don't crash
             self.app.notify("Invalid value - please enter a number", severity="error")
+
+    def _set_cost_budget(self, text: str) -> None:
+        """Set cost budget (#173)."""
+        if not self.target_session:
+            return
+        try:
+            cleaned = text.strip().lstrip('$')
+            budget = float(cleaned) if cleaned else 0.0
+            if budget < 0:
+                self.app.notify("Budget cannot be negative", severity="error")
+                return
+            self.post_message(self.BudgetUpdated(self.target_session, budget))
+        except ValueError:
+            self.app.notify("Invalid budget - enter a dollar amount (e.g., 5.00)", severity="error")
 
     def _set_annotation(self, text: str) -> None:
         """Set human annotation (empty string clears it) (#74)."""

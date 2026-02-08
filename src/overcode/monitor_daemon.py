@@ -104,6 +104,15 @@ INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
 ) = create_daemon_helpers(get_monitor_daemon_pid_path, "monitor")
 
 
+def _is_budget_exceeded(session, stats) -> bool:
+    """Check if session has exceeded its cost budget (#173)."""
+    try:
+        budget = session.cost_budget_usd
+        return isinstance(budget, (int, float)) and budget > 0 and stats.estimated_cost_usd >= budget
+    except (AttributeError, TypeError):
+        return False
+
+
 def check_activity_signal(session: str = None) -> bool:
     """Check for and consume the activity signal from TUI.
 
@@ -344,6 +353,9 @@ class MonitorDaemon:
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
+            # Cost budget (#173)
+            cost_budget_usd=session.cost_budget_usd,
+            budget_exceeded=_is_budget_exceeded(session, stats),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -364,6 +376,9 @@ class MonitorDaemon:
                 continue
             # Skip sleeping agents
             if session.is_asleep:
+                continue
+            # Skip budget-exceeded agents (#173)
+            if _is_budget_exceeded(session, session.stats):
                 continue
             # Skip if no instruction configured
             if not session.heartbeat_instruction:

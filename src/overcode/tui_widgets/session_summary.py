@@ -73,6 +73,7 @@ class SessionSummary(Static, can_focus=True):
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
         self.show_cost: bool = False  # Show $ cost instead of token counts
+        self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
@@ -359,8 +360,22 @@ class SessionSummary(Static, can_focus=True):
             if self.claude_stats is not None:
                 if self.show_cost:
                     # Show estimated cost instead of tokens
+                    # ALIGNMENT: use 14-char width when any agent has budget, 7-char otherwise
                     cost = s.stats.estimated_cost_usd
-                    content.append(f" {format_cost(cost):>7}", style=mono(f"bold orange1{bg}", "bold"))
+                    budget = s.cost_budget_usd
+                    cost_width = 14 if self.any_has_budget else 7
+                    if budget > 0:
+                        display = f"{format_cost(cost)}/{format_cost(budget)}"
+                        if cost >= budget:
+                            style = mono(f"bold red{bg}", "bold")
+                        elif cost >= budget * 0.8:
+                            style = mono(f"bold yellow{bg}", "bold")
+                        else:
+                            style = mono(f"bold orange1{bg}", "bold")
+                    else:
+                        display = format_cost(cost)
+                        style = mono(f"bold orange1{bg}", "bold")
+                    content.append(f" {display:>{cost_width}}", style=style)
                 else:
                     content.append(f" Σ{format_tokens(self.claude_stats.total_tokens):>6}", style=mono(f"bold orange1{bg}", "bold"))
                 # Show current context window usage as percentage (assuming 200K max)

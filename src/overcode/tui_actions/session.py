@@ -370,6 +370,30 @@ class SessionActionsMixin:
         except NoMatches:
             pass
 
+    def action_edit_cost_budget(self) -> None:
+        """Focus the command bar for editing cost budget (#173)."""
+        from ..tui_widgets import SessionSummary, CommandBar
+
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.add_class("visible")
+
+            focused = self.focused
+            if isinstance(focused, SessionSummary):
+                cmd_bar.set_target(focused.session.name)
+                cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                current = focused.session.cost_budget_usd
+                cmd_input.value = str(current) if current > 0 else ""
+            elif not cmd_bar.target_session and self.sessions:
+                cmd_bar.set_target(self.sessions[0].name)
+
+            cmd_bar.set_mode("cost_budget")
+            cmd_input = cmd_bar.query_one("#cmd-input", Input)
+            cmd_input.disabled = False
+            cmd_input.focus()
+        except NoMatches:
+            pass
+
     def action_configure_heartbeat(self) -> None:
         """Open command bar for heartbeat configuration (H key) (#171).
 

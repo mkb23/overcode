@@ -113,6 +113,9 @@ class Session:
     heartbeat_paused: bool = False
     last_heartbeat_time: Optional[str] = None  # ISO timestamp
 
+    # Cost budget (#173) - 0.0 means no budget/unlimited
+    cost_budget_usd: float = 0.0
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
@@ -638,6 +641,15 @@ class SessionManager:
             value: Priority value (default 1000, higher = more important)
         """
         self.update_session(session_id, agent_value=value)
+
+    def set_cost_budget(self, session_id: str, budget_usd: float):
+        """Set cost budget for an agent (#173).
+
+        Args:
+            session_id: The session ID
+            budget_usd: Budget in USD (0.0 = no budget/unlimited)
+        """
+        self.update_session(session_id, cost_budget_usd=budget_usd)
 
     def set_human_annotation(self, session_id: str, annotation: str):
         """Set human annotation for a session (#74)."""

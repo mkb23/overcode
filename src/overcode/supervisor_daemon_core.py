@@ -98,6 +98,10 @@ def filter_non_green_sessions(
         if s.get("is_asleep", False):
             continue
 
+        # Skip budget-exceeded sessions (#173)
+        if s.get("budget_exceeded", False):
+            continue
+
         # Skip sessions with DO_NOTHING standing orders
         instructions = s.get("standing_instructions", "")
         if instructions and "DO_NOTHING" in instructions.upper():
