@@ -52,6 +52,86 @@ overcode set-value my-agent 2000  # High priority
 overcode set-value cleanup-bot 100  # Low priority
 ```
 
+## Heartbeat
+
+Heartbeat sends a periodic instruction to an agent, keeping it working even when it stalls at a prompt or finishes a task.
+
+### Setting Up
+
+1. Select an agent and press `H`
+2. Enter a frequency (e.g., `5m`, `1h`, `300`)
+3. Enter the instruction to send at each heartbeat (e.g., "continue working on the task")
+
+The agent will receive the instruction at the configured interval whenever it's not actively running.
+
+### How It Works
+
+- The monitor daemon checks heartbeat timers every loop (~10s)
+- If the agent is idle and the heartbeat interval has elapsed, the instruction is sent to the agent's tmux window
+- The agent starts working as if a user typed the instruction
+- Heartbeat timing resets after each send
+
+### Pausing
+
+Press `H` and enter `off` to disable heartbeat. The configuration is preserved — re-enable with `H` and a new frequency.
+
+### Interaction with Cost Budgets
+
+When an agent exceeds its cost budget, heartbeats are **silently skipped**. The heartbeat configuration stays intact — nothing is disabled or modified. Once the budget is raised or cleared, heartbeats resume automatically on the next daemon loop.
+
+This prevents runaway spending: an agent can't burn through budget indefinitely via heartbeat-driven work.
+
+### Interaction with Sleep Mode
+
+Sleeping agents also skip heartbeats. Wake the agent with `z` to resume.
+
+## Cost Budgets
+
+Set a spending limit on individual agents to manage usage.
+
+### Setting a Budget
+
+**TUI**: Select an agent and press `B`, enter a dollar amount (e.g., `5.00`). Enter `0` to clear.
+
+**CLI**:
+```bash
+overcode set-budget my-agent 5.00    # $5 budget
+overcode set-budget my-agent 0       # Clear budget
+```
+
+### Display
+
+When `show_cost` is enabled (`$` key), agents with budgets show `$cost/$budget` instead of just `$cost`:
+- **Orange** — under 80% of budget
+- **Yellow** — 80-99% of budget
+- **Red** — budget exceeded
+
+The `overcode show <agent>` command also displays the budget on the Cost line.
+
+### What Happens When Budget Is Exceeded
+
+Budget enforcement is **soft** — the agent is not killed or put to sleep. Instead:
+
+1. **Heartbeats are skipped** — the agent won't receive periodic instructions, so it naturally stops when it finishes its current work or hits a permission prompt
+2. **Supervision is skipped** — the supervisor daemon won't launch a daemon Claude to approve prompts or steer the agent
+
+The agent can still finish whatever it's currently doing. It just won't receive any more automated nudges.
+
+### Resuming After Budget
+
+To continue past a budget, either raise it or clear it:
+
+```bash
+overcode set-budget my-agent 10.00   # Raise to $10
+overcode set-budget my-agent 0       # Remove limit entirely
+```
+
+Heartbeats and supervision resume automatically on the next daemon loop (~10s).
+
+### No Global Default
+
+Budgets are per-agent only. There is no global default budget in config.
+
 ## Jump to Attention
 
 Press `b` to quickly navigate to agents needing attention.
