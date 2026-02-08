@@ -656,6 +656,7 @@ class SupervisorDaemon:
         claude_cmd = "claude --dangerously-skip-permissions"
         if not self.tmux.send_keys(window_index, claude_cmd, enter=True):
             self.log.error("Failed to start Claude in daemon claude window")
+            self.tmux.kill_window(window_index)
             return False
 
         # Wait for Claude startup
@@ -850,6 +851,7 @@ class SupervisorDaemon:
         finally:
             self.log.info("Supervisor daemon shutting down")
             self.status = "stopped"
+            self.kill_daemon_claude()
             remove_pid_file(self.pid_path)
 
 

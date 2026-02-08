@@ -601,7 +601,7 @@ class SupervisorTUI(
                         git_diff = get_git_diff_stats(session.start_directory)
                     return (status_result, claude_stats, git_diff)
                 except Exception:
-                    return ((StatusDetector.STATUS_WAITING_USER, "Error", ""), None, None)
+                    return ((STATUS_WAITING_USER, "Error", ""), None, None)
 
             sessions = [s for _, s in sessions_to_check]
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
@@ -1155,6 +1155,7 @@ class SupervisorTUI(
                     if target_widget:
                         target_widget.focus()
                     else:
+                        self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
                         widgets[self.focused_session_index].focus()
                     if self.view_mode == "list_preview":
                         self._update_preview()

@@ -7,6 +7,7 @@ avoiding code duplication between monitor_daemon and supervisor_daemon.
 
 import os
 import signal
+import time
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -75,6 +76,14 @@ def create_daemon_helpers(
 
         try:
             os.kill(pid, signal.SIGTERM)
+            # Wait for process to actually terminate before removing PID file
+            start = time.time()
+            while time.time() - start < 5.0:
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except (OSError, ProcessLookupError):
+                    break
             remove_pid_file(pid_path)
             return True
         except (OSError, ProcessLookupError):

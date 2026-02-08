@@ -117,7 +117,7 @@ class TestCreateDaemonHelpers:
         assert result is False
 
     def test_stop_sends_sigterm(self, tmp_path):
-        """stop should send SIGTERM to the process."""
+        """stop should send SIGTERM and wait for process to exit."""
         def get_pid_path(session):
             return tmp_path / f"{session}.pid"
 
@@ -126,15 +126,19 @@ class TestCreateDaemonHelpers:
 
         _, _, stop = create_daemon_helpers(get_pid_path, "test_daemon")
 
-        with patch('os.kill') as mock_kill:
+        def kill_side_effect(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError("No such process")
+
+        with patch('os.kill', side_effect=kill_side_effect) as mock_kill:
             with patch('overcode.daemon_utils.get_process_pid', return_value=12345):
                 result = stop("test_session")
 
-                mock_kill.assert_called_once_with(12345, 15)  # SIGTERM = 15
+                mock_kill.assert_any_call(12345, 15)  # SIGTERM = 15
                 assert result is True
 
     def test_stop_removes_pid_file_on_success(self, tmp_path):
-        """stop should remove PID file after stopping."""
+        """stop should remove PID file after process exits."""
         def get_pid_path(session):
             return tmp_path / f"{session}.pid"
 
@@ -143,7 +147,11 @@ class TestCreateDaemonHelpers:
 
         _, _, stop = create_daemon_helpers(get_pid_path, "test_daemon")
 
-        with patch('os.kill'):
+        def kill_side_effect(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError("No such process")
+
+        with patch('os.kill', side_effect=kill_side_effect):
             with patch('overcode.daemon_utils.get_process_pid', return_value=12345):
                 stop("test_session")
 

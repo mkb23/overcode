@@ -12,6 +12,8 @@ The Monitor Daemon is the single source of truth for:
 """
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -339,8 +341,20 @@ class MonitorDaemonState:
         # Update summaries before saving
         self.update_summaries()
 
-        with open(path, 'w') as f:
-            json.dump(self.to_dict(), f, indent=2)
+        # Atomic write: temp file + fsync + rename
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(self.to_dict(), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            Path(tmp_path).rename(path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def load(cls, state_file: Optional[Path] = None) -> Optional["MonitorDaemonState"]:
