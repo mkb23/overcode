@@ -397,15 +397,15 @@ class SessionSummary(Static, can_focus=True):
                 if self.summary_detail in ("full", "custom"):
                     # Full/Custom: show files and lines with fixed widths
                     content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}", "bold"))
-                    content.append(f" +{format_line_count(ins):>4}", style=mono(f"bold green{bg}", "bold"))
-                    content.append(f" -{format_line_count(dels):>4}", style=mono(f"bold red{bg}", "dim"))
+                    content.append(f" +{format_line_count(ins):>5}", style=mono(f"bold green{bg}", "bold"))
+                    content.append(f" -{format_line_count(dels):>5}", style=mono(f"bold red{bg}", "dim"))
                 else:
                     # Compact: just files changed (fixed 4 char width)
                     content.append(f" Δ{files:>2}", style=mono(f"bold magenta{bg}" if files > 0 else f"dim{bg}", "bold" if files > 0 else "dim"))
             else:
                 # Placeholder matching width for alignment
                 if self.summary_detail in ("full", "custom"):
-                    content.append("  Δ-  +   -  -  ", style=mono(f"dim{bg}", "dim"))
+                    content.append("  Δ-  +    -  -   ", style=mono(f"dim{bg}", "dim"))
                 else:
                     content.append("  Δ-", style=mono(f"dim{bg}", "dim"))
 
