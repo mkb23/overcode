@@ -91,6 +91,9 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.background_bash_count = 0
     widget.live_subagent_count = 0
     widget.is_unvisited_stalled = False
+    widget.monochrome = False
+    widget.show_cost = False
+    widget.any_has_budget = False
     widget._status_changed_at = None
     widget._last_known_status = "running"
     widget.summary_detail = "low"
@@ -101,6 +104,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
         "supervision": True,
         "priority": True,
         "performance": True,
+        "activity": True,
     }
     # Apply any caller-specified overrides
     for k, v in extra_attrs.items():
