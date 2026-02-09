@@ -104,7 +104,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
         "supervision": True,
         "priority": True,
         "performance": True,
-        "activity": True,
+        "subprocesses": True,
     }
     # Apply any caller-specified overrides
     for k, v in extra_attrs.items():

@@ -65,8 +65,8 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
         default_enabled=True,
     ),
     SummaryGroup(
-        id="activity",
-        name="Activity",
+        id="subprocesses",
+        name="Subprocesses",
         fields=["subagent_count", "bash_count"],
         default_enabled=True,
     ),
@@ -86,7 +86,7 @@ PRESETS: Dict[str, Dict[str, bool]] = {
         "supervision": False,
         "priority": False,
         "performance": False,
-        "activity": False,
+        "subprocesses": False,
     },
     "standard": {
         "time": True,
@@ -95,7 +95,7 @@ PRESETS: Dict[str, Dict[str, bool]] = {
         "supervision": True,
         "priority": True,
         "performance": False,
-        "activity": True,
+        "subprocesses": True,
     },
     "full": {
         "time": True,
@@ -104,7 +104,7 @@ PRESETS: Dict[str, Dict[str, bool]] = {
         "supervision": True,
         "priority": True,
         "performance": True,
-        "activity": True,
+        "subprocesses": True,
     },
 }
 

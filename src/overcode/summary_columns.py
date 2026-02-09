@@ -510,14 +510,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time),
 
-    # Activity group
-    SummaryColumn(id="subagent_count", group="activity", detail_levels=FULL_PLUS, render=render_subagent_count),
-    SummaryColumn(id="bash_count", group="activity", detail_levels=FULL_PLUS, render=render_bash_count),
+    # Subprocesses group
+    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_subagent_count),
+    SummaryColumn(id="bash_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_bash_count),
     # Synthetic CLI-only: combined work + interactions line
     SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain),
     # Synthetic CLI-only: combined agents line
-    SummaryColumn(id="agents_combined", group="activity", detail_levels=set(), render=lambda ctx: None,
+    SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,
                   label="Agents", render_plain=render_agents_plain),
 
     # Supervision group

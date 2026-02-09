@@ -478,7 +478,7 @@ class TestTUIPreferences:
                 "supervision": True,
                 "priority": False,
                 "performance": True,
-                "activity": True,
+                "subprocesses": True,
             }
             original.save("test-session")
 
@@ -490,7 +490,7 @@ class TestTUIPreferences:
             assert loaded.summary_groups["supervision"] is True
             assert loaded.summary_groups["priority"] is False
             assert loaded.summary_groups["performance"] is True
-            assert loaded.summary_groups["activity"] is True
+            assert loaded.summary_groups["subprocesses"] is True
 
 
 # =============================================================================

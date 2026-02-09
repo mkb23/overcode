@@ -93,7 +93,7 @@ class SessionSummary(Static, can_focus=True):
         self.summary_groups: dict = {
             "time": True, "tokens": True, "git": True,
             "supervision": True, "priority": True, "performance": True,
-            "activity": True,
+            "subprocesses": True,
         }
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")

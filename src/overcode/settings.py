@@ -407,7 +407,7 @@ class TUIPreferences:
     summary_groups: dict = field(default_factory=lambda: {
         "time": True, "tokens": True, "git": True,
         "supervision": True, "priority": True, "performance": True,
-        "activity": True,
+        "subprocesses": True,
     })
 
     @classmethod
@@ -429,7 +429,7 @@ class TUIPreferences:
                 default_summary_groups = {
                     "time": True, "tokens": True, "git": True,
                     "supervision": True, "priority": True, "performance": True,
-                    "activity": True,
+                    "subprocesses": True,
                 }
                 return cls(
                     summary_detail=data.get("summary_detail", "low"),

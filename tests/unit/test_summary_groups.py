@@ -58,7 +58,7 @@ class TestSummaryGroups:
         assert minimal["supervision"] is False
         assert minimal["priority"] is False
         assert minimal["performance"] is False
-        assert minimal["activity"] is False
+        assert minimal["subprocesses"] is False
 
     def test_full_preset_enables_all(self):
         """Test full preset enables all groups."""

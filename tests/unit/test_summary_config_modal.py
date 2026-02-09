@@ -74,7 +74,7 @@ class TestSummaryConfigModal:
         modal = SummaryConfigModal({})
         original = {"time": True, "tokens": True, "git": True,
                    "supervision": True, "priority": True, "performance": True,
-                   "activity": True}
+                   "subprocesses": True}
         modal.show(original)
         # Change some values
         modal.config["time"] = False
