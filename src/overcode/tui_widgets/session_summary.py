@@ -197,7 +197,7 @@ class SessionSummary(Static, can_focus=True):
         if content:
             # Keep all lines including blanks for proper formatting, just strip trailing blanks
             lines = content.rstrip().split('\n')
-            self.pane_content = lines[-50:] if lines else []  # Keep last 50 lines max
+            self.pane_content = lines[-200:] if lines else []  # Keep last 200 lines for scrollback
             # Extract live counts from status bar (#177)
             self.background_bash_count = extract_background_bash_count(content)
             self.live_subagent_count = extract_live_subagent_count(content)

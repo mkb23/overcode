@@ -71,7 +71,7 @@ class StatusDetector:
         Captures more content than requested and filters out trailing blank lines
         to find the actual content (Claude Code often has blank lines at bottom).
         """
-        content = self.tmux.capture_pane(self.tmux_session, window, lines=150)
+        content = self.tmux.capture_pane(self.tmux_session, window, lines=200)
         if content is None:
             return None
 
