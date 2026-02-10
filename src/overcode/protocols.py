@@ -6,8 +6,11 @@ swap real implementations (subprocess calls to tmux, file I/O) with
 mock implementations in tests.
 """
 
-from typing import Protocol, Optional, List, Dict, Any, runtime_checkable
+from typing import Protocol, Optional, List, Dict, Any, Tuple, runtime_checkable, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from .session_manager import Session
 
 
 @runtime_checkable
@@ -88,6 +91,30 @@ class TmuxInterface(Protocol):
         Returns:
             True if successful, False otherwise
         """
+        ...
+
+
+@runtime_checkable
+class StatusDetectorProtocol(Protocol):
+    """Interface for status detection strategies.
+
+    Both PollingStatusDetector and HookStatusDetector implement this protocol.
+    Consumers can hold references typed as StatusDetectorProtocol to support
+    runtime strategy selection (#5).
+    """
+
+    tmux_session: str
+
+    def detect_status(self, session: "Session") -> Tuple[str, str, str]:
+        """Detect session status and current activity.
+
+        Returns:
+            Tuple of (status, current_activity, pane_content)
+        """
+        ...
+
+    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+        """Get the last N meaningful lines from a tmux pane."""
         ...
 
 

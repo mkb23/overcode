@@ -28,7 +28,8 @@ from rich.panel import Panel
 from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
-from .status_detector import StatusDetector
+from .status_detector import StatusDetector, PollingStatusDetector
+from .hook_status_detector import HookStatusDetector
 from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
@@ -209,6 +210,8 @@ class SupervisorTUI(
         ("H", "configure_heartbeat", "Heartbeat config"),
         # Time context toggle - per-agent time awareness hook
         ("F", "toggle_time_context", "Time context"),
+        # Hook-based status detection toggle (#5)
+        ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
     ]
@@ -240,7 +243,8 @@ class SupervisorTUI(
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
-        self.status_detector = StatusDetector(tmux_session)
+        self.status_detector = PollingStatusDetector(tmux_session)
+        self.hook_detector = HookStatusDetector(tmux_session)
         # Track expanded state per session ID to preserve across refreshes
         self.expanded_states: dict[str, bool] = {}
         # Max repo:branch width for alignment in full detail mode
@@ -592,7 +596,9 @@ class SupervisorTUI(
                     if session.status == "terminated":
                         status_result = ("terminated", "(tmux window no longer exists)", "")
                     else:
-                        status_result = self.status_detector.detect_status(session)
+                        # Dispatch to hook or polling detector per-session (#5)
+                        detector = self.hook_detector if session.hook_status_detection else self.status_detector
+                        status_result = detector.detect_status(session)
                     # Also fetch claude stats here (heavy file I/O)
                     claude_stats = get_session_stats(session)
                     # Fetch git diff stats
@@ -827,7 +833,9 @@ class SupervisorTUI(
         # Add widgets for new sessions
         for session in display_sessions:
             if session.id in sessions_added:
-                widget = SessionSummary(session, self.status_detector)
+                # Select detector per-session (#5)
+                detector = self.hook_detector if session.hook_status_detection else self.status_detector
+                widget = SessionSummary(session, detector)
                 # Restore expanded state if we have it saved
                 if session.id in self.expanded_states:
                     widget.expanded = self.expanded_states[session.id]

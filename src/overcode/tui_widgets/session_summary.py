@@ -13,7 +13,7 @@ from textual import events
 from rich.text import Text
 
 from ..session_manager import Session
-from ..status_detector import StatusDetector
+from ..protocols import StatusDetectorProtocol
 from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
@@ -57,7 +57,7 @@ class SessionSummary(Static, can_focus=True):
     summary_detail: reactive[str] = reactive("low")  # low, med, full
     summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
 
-    def __init__(self, session: Session, status_detector: StatusDetector, *args, **kwargs):
+    def __init__(self, session: Session, status_detector: StatusDetectorProtocol, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.session = session
         self.status_detector = status_detector

@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from .interfaces import TmuxInterface
 
 
-class StatusDetector:
-    """Detects the current status of a Claude session"""
+class PollingStatusDetector:
+    """Detects the current status of a Claude session via tmux pane scraping."""
 
     # Re-export status constants for backwards compatibility
     STATUS_RUNNING = STATUS_RUNNING
@@ -444,3 +444,7 @@ class StatusDetector:
                     cleaned = cleaned[:77] + "..."
                 return cleaned
         return "API or system error"
+
+
+# Backward-compat alias: all existing imports continue working
+StatusDetector = PollingStatusDetector
