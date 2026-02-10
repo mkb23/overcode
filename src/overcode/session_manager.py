@@ -121,6 +121,9 @@ class Session:
     # Cost budget (#173) - 0.0 means no budget/unlimited
     cost_budget_usd: float = 0.0
 
+    # Hook-based status detection - per-agent toggle (#5)
+    hook_status_detection: bool = False
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict

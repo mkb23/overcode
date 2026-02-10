@@ -128,7 +128,6 @@ def launch(
 @app.command("list")
 def list_agents(session: SessionOption = "agents"):
     """List running agents with status."""
-    from .status_detector import StatusDetector
     from .history_reader import get_session_stats
     from .tui_helpers import (
         calculate_uptime, format_duration, format_tokens,
@@ -142,7 +141,11 @@ def list_agents(session: SessionOption = "agents"):
         rprint("[dim]No running agents[/dim]")
         return
 
-    status_detector = StatusDetector(session)
+    # Create both detectors for per-session dispatch (#5)
+    from .status_detector import PollingStatusDetector
+    from .hook_status_detector import HookStatusDetector
+    polling_detector = PollingStatusDetector(session)
+    hook_detector = HookStatusDetector(session)
     terminated_count = 0
 
     for sess in sessions:
@@ -152,7 +155,8 @@ def list_agents(session: SessionOption = "agents"):
             activity = "(tmux window no longer exists)"
             terminated_count += 1
         else:
-            status, activity, _ = status_detector.detect_status(sess)
+            detector = hook_detector if sess.hook_status_detection else polling_detector
+            status, activity, _ = detector.detect_status(sess)
 
         symbol, _ = get_status_symbol(status)
 
@@ -336,7 +340,7 @@ def show(
     session: SessionOption = "agents",
 ):
     """Show agent details and recent output."""
-    from .status_detector import StatusDetector
+    from .status_detector_factory import create_status_detector
     from .history_reader import get_session_stats
     from .status_patterns import extract_background_bash_count, extract_live_subagent_count, strip_ansi
     from .tui_helpers import get_git_diff_stats
@@ -357,8 +361,11 @@ def show(
         status = "terminated"
         activity = "(tmux window no longer exists)"
     else:
-        status_detector = StatusDetector(session)
-        status, activity, pane_content_raw = status_detector.detect_status(sess)
+        detector = create_status_detector(
+            session,
+            strategy="hooks" if sess.hook_status_detection else "polling",
+        )
+        status, activity, pane_content_raw = detector.detect_status(sess)
 
     if sess.is_asleep:
         status = "asleep"

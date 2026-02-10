@@ -99,6 +99,39 @@ class SessionActionsMixin:
         # Force a refresh
         focused.refresh()
 
+    def action_toggle_hook_detection(self) -> None:
+        """Toggle hook-based status detection for the focused agent (#5).
+
+        When enabled, the agent uses hook state files for status detection
+        instead of tmux pane scraping. Falls back to polling when no hook
+        state is available.
+        """
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        new_state = not session.hook_status_detection
+
+        # Update the session in the session manager
+        self.session_manager.update_session(session.id, hook_status_detection=new_state)
+
+        # Update the local session object
+        session.hook_status_detection = new_state
+
+        # Swap the detector on the widget
+        if new_state:
+            focused.status_detector = self.hook_detector
+            self.notify(f"Hook detection enabled for '{session.name}'", severity="information")
+        else:
+            focused.status_detector = self.status_detector
+            self.notify(f"Hook detection disabled for '{session.name}' (using polling)", severity="information")
+
+        # Force a refresh
+        focused.refresh()
+
     def action_kill_focused(self) -> None:
         """Kill the currently focused agent (requires confirmation)."""
         from ..tui_widgets import SessionSummary

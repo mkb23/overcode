@@ -367,10 +367,10 @@ class TestShowCommandWithMocks:
             mock_launcher.get_session_output.return_value = None
             mock_launcher_class.return_value = mock_launcher
 
-            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
                 mock_sd = MagicMock()
                 mock_sd.detect_status.return_value = ("running", "Working...", "line 1\nline 2\nline 3")
-                mock_sd_class.return_value = mock_sd
+                mock_factory.return_value = mock_sd
 
                 result = runner.invoke(app, ["show", "test-agent", "--no-stats"])
 
@@ -389,11 +389,11 @@ class TestShowCommandWithMocks:
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
-            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
                 mock_sd = MagicMock()
                 pane = "Some output\n⏵⏵ bypass permissions on · 3 bashes · esc"
                 mock_sd.detect_status.return_value = ("running", "Working on tests", pane)
-                mock_sd_class.return_value = mock_sd
+                mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
                     with patch('overcode.tui_helpers.get_git_diff_stats', return_value=(3, 120, 45)):
@@ -433,10 +433,10 @@ class TestShowCommandWithMocks:
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
-            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
                 mock_sd = MagicMock()
                 mock_sd.detect_status.return_value = ("running", "Working...", "output")
-                mock_sd_class.return_value = mock_sd
+                mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=None):
                     with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):
@@ -458,12 +458,12 @@ class TestShowCommandWithMocks:
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
-            with patch('overcode.status_detector.StatusDetector') as mock_sd_class:
+            with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
                 mock_sd = MagicMock()
                 # Simulate ANSI-coded status bar
                 pane = "Output\n\x1b[36m⏵⏵ auto-approve · 2 bashes · esc\x1b[0m"
                 mock_sd.detect_status.return_value = ("running", "Working", pane)
-                mock_sd_class.return_value = mock_sd
+                mock_factory.return_value = mock_sd
 
                 with patch('overcode.history_reader.get_session_stats', return_value=mock_claude_stats):
                     with patch('overcode.tui_helpers.get_git_diff_stats', return_value=None):

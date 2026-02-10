@@ -62,7 +62,8 @@ from .status_constants import (
     STATUS_WAITING_HEARTBEAT,
     is_green_status,
 )
-from .status_detector import StatusDetector
+from .status_detector import StatusDetector, PollingStatusDetector
+from .hook_status_detector import HookStatusDetector
 from .status_history import log_agent_status
 from .monitor_daemon_core import (
     calculate_time_accumulation,
@@ -207,7 +208,8 @@ class MonitorDaemon:
 
         # Dependencies (allow injection for testing)
         self.session_manager = session_manager or SessionManager()
-        self.status_detector = status_detector or StatusDetector(tmux_session)
+        self.status_detector = status_detector or PollingStatusDetector(tmux_session)
+        self.hook_detector = HookStatusDetector(tmux_session)
 
         # Presence tracking (graceful degradation)
         self.presence = PresenceComponent()
@@ -736,8 +738,9 @@ class MonitorDaemon:
                 all_waiting_user = True
 
                 for session in sessions:
-                    # Detect status
-                    status, activity, _ = self.status_detector.detect_status(session)
+                    # Detect status - dispatch per-session (#5)
+                    detector = self.hook_detector if session.hook_status_detection else self.status_detector
+                    status, activity, _ = detector.detect_status(session)
 
                     # Clear heartbeat tracking when session stops running
                     if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
