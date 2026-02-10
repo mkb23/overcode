@@ -275,7 +275,6 @@ class SupervisorTUI(
         self._sessions_cache_ttl: float = 1.0  # 1 second TTL
         # Flag to prevent overlapping async status updates
         self._status_update_in_progress = False
-        self._status_tick = 0  # Counter for merging focused/background updates
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
         # Track whether sessions have been loaded at least once (for startup sequencing)
@@ -404,9 +403,7 @@ class SupervisorTUI(
             # Normal mode: Set up all timers
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
-            # Tiered status updates for CPU efficiency:
-            # Single 250ms timer handles both focused (every tick) and
-            # background (every 4th tick ≈ 1s) to avoid timer collision starvation.
+            # Status updates every 250ms (all widgets, fetched in background thread)
             self.set_interval(0.25, self.update_focused_status)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
@@ -620,32 +617,17 @@ class SupervisorTUI(
         return None
 
     def update_focused_status(self) -> None:
-        """Update session statuses on a single 250ms timer.
+        """Update all session statuses every 250ms.
 
-        Every tick: update the focused/selected session (responsive preview).
-        Every 4th tick (~1s): update ALL sessions including background ones.
-
-        Previously these were separate 250ms and 1s timers, but since 1000ms
-        is a multiple of 250ms they always fired in the same event-loop tick
-        and the shared _status_update_in_progress flag caused the background
-        update to be permanently starved.
+        All data fetching (tmux capture_pane, claude stats, git diff) happens
+        in a background thread with ThreadPoolExecutor parallelism, so updating
+        all widgets is no more expensive than updating one.
         """
         # Skip if an update is already in progress
         if self._status_update_in_progress:
             return
 
-        self._status_tick += 1
-
-        # Every 4th tick (~1s), update all widgets
-        if self._status_tick % 4 == 0:
-            widgets = list(self.query(SessionSummary))
-        else:
-            # Fast path: only the selected widget
-            focused = self._get_focused_widget()
-            if focused is None:
-                return
-            widgets = [focused]
-
+        widgets = list(self.query(SessionSummary))
         if not widgets:
             return
 
