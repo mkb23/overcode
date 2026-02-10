@@ -285,7 +285,7 @@ class SessionActionsMixin:
 
     def action_focus_command_bar(self) -> None:
         """Focus the command bar for input."""
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
@@ -293,9 +293,10 @@ class SessionActionsMixin:
             # Show the command bar
             cmd_bar.add_class("visible")
 
-            # Get the currently focused session (if any)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            # (Textual's internal focus) which diverges during DOM reordering
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
             elif not cmd_bar.target_session and self.sessions:
                 # Default to first session if none focused
@@ -310,7 +311,7 @@ class SessionActionsMixin:
 
     def action_focus_standing_orders(self) -> None:
         """Focus the command bar for editing standing orders."""
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
@@ -318,9 +319,9 @@ class SessionActionsMixin:
             # Show the command bar
             cmd_bar.add_class("visible")
 
-            # Get the currently focused session (if any)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
                 # Pre-fill with existing standing orders
                 cmd_input = cmd_bar.query_one("#cmd-input", Input)
@@ -341,7 +342,7 @@ class SessionActionsMixin:
 
     def action_focus_human_annotation(self) -> None:
         """Focus input for editing human annotation (#74)."""
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
@@ -349,9 +350,9 @@ class SessionActionsMixin:
             # Show the command bar
             cmd_bar.add_class("visible")
 
-            # Get the currently focused session (if any)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
                 # Pre-fill with existing annotation
                 cmd_input = cmd_bar.query_one("#cmd-input", Input)
@@ -372,7 +373,7 @@ class SessionActionsMixin:
 
     def action_edit_agent_value(self) -> None:
         """Focus the command bar for editing agent value (#61)."""
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
@@ -380,9 +381,9 @@ class SessionActionsMixin:
             # Show the command bar
             cmd_bar.add_class("visible")
 
-            # Get the currently focused session (if any)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
                 # Pre-fill with existing value
                 cmd_input = cmd_bar.query_one("#cmd-input", Input)
@@ -405,14 +406,15 @@ class SessionActionsMixin:
 
     def action_edit_cost_budget(self) -> None:
         """Focus the command bar for editing cost budget (#173)."""
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
             cmd_bar.add_class("visible")
 
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
                 cmd_input = cmd_bar.query_one("#cmd-input", Input)
                 current = focused.session.cost_budget_usd
@@ -434,15 +436,15 @@ class SessionActionsMixin:
         1. Enter frequency (e.g., 300, 5m, 1h) or 'off' to disable
         2. Enter instruction to send at each heartbeat
         """
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
             cmd_bar.add_class("visible")
 
-            # Get the currently focused session (if any)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
+            # Use _get_focused_widget (our own index) not self.focused
+            focused = self._get_focused_widget()
+            if focused:
                 cmd_bar.set_target(focused.session.name)
                 # Pre-fill with existing frequency if enabled
                 cmd_input = cmd_bar.query_one("#cmd-input", Input)

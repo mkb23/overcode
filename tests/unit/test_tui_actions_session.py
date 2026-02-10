@@ -653,12 +653,11 @@ class TestFocusCommandBar:
     def test_opens_and_focuses_command_bar(self):
         """Should show and focus the command bar."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -667,7 +666,7 @@ class TestFocusCommandBar:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
@@ -689,7 +688,7 @@ class TestFocusCommandBar:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = MagicMock()  # Not a SessionSummary
+        mock_tui._get_focused_widget.return_value = None
         mock_tui.sessions = [mock_session]
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
@@ -714,13 +713,12 @@ class TestFocusStandingOrders:
     def test_opens_command_bar_in_standing_orders_mode(self):
         """Should open command bar with standing_orders mode and pre-fill."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
         mock_session.standing_instructions = "Do the thing"
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -729,7 +727,7 @@ class TestFocusStandingOrders:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_focus_standing_orders(mock_tui)
 
@@ -745,13 +743,12 @@ class TestFocusHumanAnnotation:
     def test_opens_command_bar_in_annotation_mode(self):
         """Should open command bar with annotation mode and pre-fill."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
         mock_session.human_annotation = "Needs review"
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -760,7 +757,7 @@ class TestFocusHumanAnnotation:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_focus_human_annotation(mock_tui)
 
@@ -775,13 +772,12 @@ class TestEditAgentValue:
     def test_opens_command_bar_in_value_mode(self):
         """Should open command bar with value mode and pre-fill."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
         mock_session.agent_value = 500
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -790,7 +786,7 @@ class TestEditAgentValue:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
@@ -812,7 +808,7 @@ class TestEditAgentValue:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = MagicMock()  # Not a SessionSummary
+        mock_tui._get_focused_widget.return_value = None
         mock_tui.sessions = [mock_session]
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
@@ -827,14 +823,13 @@ class TestConfigureHeartbeat:
     def test_opens_command_bar_in_heartbeat_freq_mode_enabled(self):
         """Should pre-fill with existing frequency when heartbeat is enabled."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
         mock_session.heartbeat_enabled = True
         mock_session.heartbeat_frequency_seconds = 600
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -843,7 +838,7 @@ class TestConfigureHeartbeat:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
@@ -854,13 +849,12 @@ class TestConfigureHeartbeat:
     def test_opens_command_bar_in_heartbeat_freq_mode_disabled(self):
         """Should pre-fill with 300 (default) when heartbeat is disabled."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.name = "test-agent"
         mock_session.heartbeat_enabled = False
 
-        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget = MagicMock()
         mock_widget.session = mock_session
 
         mock_input = MagicMock()
@@ -869,7 +863,7 @@ class TestConfigureHeartbeat:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui.focused = mock_widget
+        mock_tui._get_focused_widget.return_value = mock_widget
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
