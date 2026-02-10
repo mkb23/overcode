@@ -701,6 +701,12 @@ def instruct(
             rprint(f"[dim]Tip: Use 'overcode presets' to see available presets[/dim]")
 
 
+def _signal_heartbeat_change(session: str) -> None:
+    """Wake the monitor daemon so heartbeat status updates immediately (#212)."""
+    from .settings import signal_activity
+    signal_activity(session)
+
+
 @app.command()
 def heartbeat(
     name: Annotated[str, typer.Argument(help="Name of agent")],
@@ -793,6 +799,7 @@ def heartbeat(
             heartbeat_paused=False,
             heartbeat_instruction="",
         )
+        _signal_heartbeat_change(session)
         rprint(f"[green]✓ Heartbeat disabled for {name}[/green]")
         return
 
@@ -802,6 +809,7 @@ def heartbeat(
             rprint(f"[yellow]Heartbeat is not enabled for {name}[/yellow]")
             return
         manager.update_session(agent.id, heartbeat_paused=True)
+        _signal_heartbeat_change(session)
         rprint(f"[green]✓ Heartbeat paused for {name}[/green]")
         return
 
@@ -811,6 +819,7 @@ def heartbeat(
             rprint(f"[yellow]Heartbeat is not enabled for {name}[/yellow]")
             return
         manager.update_session(agent.id, heartbeat_paused=False)
+        _signal_heartbeat_change(session)
         rprint(f"[green]✓ Heartbeat resumed for {name}[/green]")
         return
 
@@ -828,6 +837,7 @@ def heartbeat(
             heartbeat_frequency_seconds=final_freq,
             heartbeat_instruction=instruction,
         )
+        _signal_heartbeat_change(session)
         rprint(f"[green]✓ Heartbeat enabled for {name}[/green]")
         rprint(f"  Frequency: {format_duration(final_freq)}")
         rprint(f"  Instruction: {instruction}")
@@ -842,6 +852,7 @@ def heartbeat(
 
     if updates:
         manager.update_session(agent.id, **updates)
+        _signal_heartbeat_change(session)
         rprint(f"[green]✓ Heartbeat config updated for {name}[/green]")
         if freq_seconds:
             rprint(f"  Frequency: {format_duration(freq_seconds)}")
