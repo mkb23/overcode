@@ -210,6 +210,11 @@ SessionSummary.list-mode {
     display: block;
 }
 
+/* Child content widget grows to fit all lines (container scrolls) */
+#preview-content {
+    height: auto;
+}
+
 /* Focused indicator in list mode */
 SessionSummary:focus.list-mode {
     background: $accent;
