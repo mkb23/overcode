@@ -443,7 +443,9 @@ class TestShowCommandWithMocks:
                             result = runner.invoke(app, ["show", "test-agent"])
 
                             assert result.exit_code == 0
-                            assert "Tokens:    -" in result.output
+                            # With no claude stats, Tokens/Work lines are omitted
+                            assert "Tokens" not in result.output
+                            assert "=== test-agent ===" in result.output
 
     def test_show_background_bash_count_with_ansi(self):
         """Show correctly extracts background bash count from ANSI content"""

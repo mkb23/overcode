@@ -406,7 +406,8 @@ class TUIPreferences:
     # Column group visibility (group_id -> enabled) for summary line (#178)
     summary_groups: dict = field(default_factory=lambda: {
         "time": True, "tokens": True, "git": True,
-        "supervision": True, "priority": True, "performance": True
+        "supervision": True, "priority": True, "performance": True,
+        "subprocesses": True,
     })
 
     @classmethod
@@ -427,7 +428,8 @@ class TUIPreferences:
                 # Default summary groups visibility
                 default_summary_groups = {
                     "time": True, "tokens": True, "git": True,
-                    "supervision": True, "priority": True, "performance": True
+                    "supervision": True, "priority": True, "performance": True,
+                    "subprocesses": True,
                 }
                 return cls(
                     summary_detail=data.get("summary_detail", "low"),
