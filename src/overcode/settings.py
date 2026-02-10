@@ -405,7 +405,7 @@ class TUIPreferences:
     visited_stalled_agents: Set[str] = field(default_factory=set)
     # Column group visibility (group_id -> enabled) for summary line (#178)
     summary_groups: dict = field(default_factory=lambda: {
-        "time": True, "tokens": True, "git": True,
+        "time": True, "llm_usage": True, "context": True, "git": True,
         "supervision": True, "priority": True, "performance": True,
         "subprocesses": True,
     })
@@ -427,7 +427,7 @@ class TUIPreferences:
 
                 # Default summary groups visibility
                 default_summary_groups = {
-                    "time": True, "tokens": True, "git": True,
+                    "time": True, "llm_usage": True, "context": True, "git": True,
                     "supervision": True, "priority": True, "performance": True,
                     "subprocesses": True,
                 }
