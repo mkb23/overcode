@@ -29,6 +29,15 @@ from tests.fixtures import (
     PANE_CONTENT_BASH_PERMISSION,
     PANE_CONTENT_READ_PERMISSION,
     PANE_CONTENT_AUTOCOMPLETE_SUGGESTION,
+    PANE_CONTENT_ERROR_API_OVERLOADED,
+    PANE_CONTENT_ERROR_TIMEOUT,
+    PANE_CONTENT_ERROR_FINAL,
+    PANE_CONTENT_ERROR_CONNECTION,
+    PANE_CONTENT_ERROR_ECONNRESET,
+    PANE_CONTENT_ERROR_RATE_LIMIT,
+    PANE_CONTENT_ERROR_AUTH,
+    PANE_CONTENT_NARRATIVE_ERRORS,
+    PANE_CONTENT_NARRATIVE_ERROR_PATTERNS,
 )
 
 
@@ -541,4 +550,160 @@ class TestStatusDetectorSpawnFailure:
         )
         assert "permission denied" in activity.lower(), (
             f"Activity should include 'permission denied', got: {activity}"
+        )
+
+
+class TestErrorDetection:
+    """Tests for STATUS_ERROR detection (#216).
+
+    Real Claude Code errors use specific structural formats (⎿ API Error, etc.)
+    and should be detected as purple/error. Claude's narrative text that merely
+    discusses errors should NOT trigger error status.
+    """
+
+    def test_detects_api_overloaded_error(self):
+        """529 overloaded with retry should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_API_OVERLOADED)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        # First call sets baseline, second detects static content
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"API overloaded error should be STATUS_ERROR, got {status}: {activity}"
+        )
+        assert "API Error" in activity
+
+    def test_detects_request_timeout_error(self):
+        """Request timeout with retry should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_TIMEOUT)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"Timeout error should be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_detects_final_error_after_retries(self):
+        """Final API error (retries exhausted) should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_FINAL)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"Final error should be STATUS_ERROR, got {status}: {activity}"
+        )
+        assert "API Error" in activity
+
+    def test_detects_connection_error(self):
+        """Connection error with TypeError should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_CONNECTION)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"Connection error should be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_detects_econnreset_error(self):
+        """ECONNRESET should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_ECONNRESET)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"ECONNRESET should be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_detects_rate_limit_banner(self):
+        """Rate limit banner should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_RATE_LIMIT)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"Rate limit banner should be STATUS_ERROR, got {status}: {activity}"
+        )
+        assert "hit your limit" in activity.lower()
+
+    def test_detects_auth_error(self):
+        """Auth error should be detected as error."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_AUTH)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_ERROR, (
+            f"Auth error should be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_narrative_errors_not_detected_as_error(self):
+        """Claude discussing errors in response text should NOT trigger error (#216)."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_NARRATIVE_ERRORS)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        # First call sets baseline, second detects static content
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status != StatusDetector.STATUS_ERROR, (
+            f"Narrative error text should NOT be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_error_pattern_discussion_not_detected_as_error(self):
+        """Claude discussing error detection patterns should NOT trigger error (#216).
+
+        This is the exact scenario from the bug report: Claude's output contains
+        words like 'timeout', '429', 'api.*error', 'rate.*limit' as part of a
+        discussion about error detection, not as actual system errors.
+        """
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_NARRATIVE_ERROR_PATTERNS)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status != StatusDetector.STATUS_ERROR, (
+            f"Discussion of error patterns should NOT be STATUS_ERROR, got {status}: {activity}"
+        )
+
+    def test_content_changing_suppresses_error(self):
+        """Even if error text is present, content changing means running (#216)."""
+        # First poll with error content
+        error_content = PANE_CONTENT_ERROR_API_OVERLOADED
+        mock_tmux = create_mock_tmux_with_content("agents", 1, error_content)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        # First call establishes baseline
+        detector.detect_status(session)
+
+        # Second call with DIFFERENT content (simulating active streaming)
+        different_content = error_content + "\n  ⎿ API Error (529) · Retrying in 8 seconds… (attempt 4/10)"
+        mock_tmux.sessions["agents"][1] = different_content
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_RUNNING, (
+            f"Content changing should return RUNNING even with error text, got {status}: {activity}"
         )

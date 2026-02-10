@@ -159,19 +159,30 @@ class StatusPatterns:
         "plan requires approval",
     ])
 
-    # Error patterns (#22)
-    # These indicate Claude encountered an API or system error
+    # Error patterns (#216)
+    # These match the SPECIFIC formats Claude Code uses to display errors.
+    # Previous broad patterns ("timeout", "429", etc.) caused false positives
+    # when Claude's response text discussed errors (#216).
+    #
+    # Real Claude Code errors have distinct structural formats:
+    # - Retryable: "⎿ API Error (...) · Retrying in N seconds… (attempt X/10)"
+    # - Final:     "⎿ API Error: <message>"
+    # - Network:   "⎿ TypeError (fetch failed)"
+    # - Network:   "⎿ Unable to connect to API (ECONNRESET)"
+    # - Rate limit: "You've hit your limit · resets <time>"
+    # - Auth:      "Invalid API key · Please run /login"
+    # - Auth:      "Missing API key · Run /login"
+    #
+    # These are matched per-line against the last 3 content lines (not joined).
     error_patterns: List[str] = field(default_factory=lambda: [
-        "api.*error",
-        "timeout",
-        "rate.*limit",
-        "connection.*failed",
-        "error:.*api",
-        "overloaded",
-        "service unavailable",
-        "internal server error",
-        "429",  # Rate limit HTTP code
-        "503",  # Service unavailable
+        r"⎿\s*API Error",            # All API errors (retryable + final)
+        r"⎿\s*TypeError",            # Network fetch failures
+        r"⎿\s*Unable to connect",    # ECONNRESET and similar
+        r"⎿\s*Error:.*compaction",   # Compaction errors
+        r"You've hit your limit",     # Rate limit banner
+        r"Invalid API key",           # Auth error
+        r"Missing API key",           # Auth error
+        r"Retrying in.*seconds.*attempt",  # Retry indicator (any format)
     ])
 
 

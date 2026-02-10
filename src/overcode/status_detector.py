@@ -141,11 +141,6 @@ class PollingStatusDetector:
         # Join more lines for pattern matching (menus have multiple lines)
         last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
 
-        # Check for API/system errors (#22) - high priority
-        if self._matches_error_patterns(last_few):
-            error_msg = self._extract_error_message(last_lines)
-            return self.STATUS_ERROR, f"Error: {error_msg}", content
-
         # Check for permission/confirmation prompts (HIGHEST priority)
         # This MUST come before active indicator checks because permission dialogs
         # can contain tool names like "Web Search commands in" that would falsely
@@ -156,11 +151,23 @@ class PollingStatusDetector:
 
         # Content change detection - if pane content is actively changing, Claude is working
         # This is the most reliable indicator as it catches streaming output.
-        # Checked BEFORE approval patterns so that plan mode shows green while
-        # Claude is actively exploring/reading files (#214).
+        # Checked BEFORE error patterns and approval patterns so that active work
+        # is never misclassified (#214, #216).
         if content_changed:
             activity = self._extract_last_activity(last_lines)
             return self.STATUS_RUNNING, f"Active: {activity}", content
+
+        # Check for API/system errors (#216)
+        # Only reached when content is NOT changing (Claude has stalled).
+        # Matches structural error formats per-line against the last 3 content lines,
+        # NOT broad keywords across joined text. This prevents false positives from
+        # Claude's response text that merely discusses errors.
+        error_line = self._find_error_line(content_lines[-3:] if content_lines else [])
+        if error_line:
+            error_msg = clean_line(error_line, self.patterns)
+            if len(error_msg) > 80:
+                error_msg = error_msg[:77] + "..."
+            return self.STATUS_ERROR, f"Error: {error_msg}", content
 
         # Check for approval waiting state (#22)
         # Only reached when content is NOT changing, so plan mode correctly shows
@@ -412,42 +419,24 @@ class PollingStatusDetector:
                 return True
         return False
 
-    def _matches_error_patterns(self, text: str) -> bool:
-        """Check if text matches error patterns (#22).
+    def _find_error_line(self, lines: list) -> str | None:
+        """Find a line matching a structural error pattern (#216).
 
-        Uses regex patterns for more flexible matching.
-
-        Args:
-            text: Text to check (should be lowercased)
-
-        Returns:
-            True if error pattern is found
-        """
-        import re
-        for pattern in self.patterns.error_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True
-        return False
-
-    def _extract_error_message(self, lines: list) -> str:
-        """Extract error message from recent output (#22).
+        Checks each line individually against the error patterns, which match
+        specific Claude Code error output formats (not broad keywords).
 
         Args:
-            lines: Recent output lines
+            lines: Recent content lines to check (should be last 3)
 
         Returns:
-            Extracted error message or generic error text
+            The matching error line, or None if no match
         """
         import re
         for line in reversed(lines):
-            line_lower = line.lower()
-            # Look for lines containing error indicators
-            if any(re.search(p, line_lower, re.IGNORECASE) for p in self.patterns.error_patterns):
-                cleaned = clean_line(line, self.patterns)
-                if len(cleaned) > 80:
-                    cleaned = cleaned[:77] + "..."
-                return cleaned
-        return "API or system error"
+            for pattern in self.patterns.error_patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    return line
+        return None
 
 
 # Backward-compat alias: all existing imports continue working

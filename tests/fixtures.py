@@ -252,6 +252,100 @@ def create_mock_tmux_with_content(session: str, window: int, content: str):
     mock.sessions[session][window] = content
     return mock
 
+# =============================================================================
+# Error state fixtures (#216)
+# Real Claude Code error output formats
+# =============================================================================
+
+# API Error with retry (529 overloaded)
+PANE_CONTENT_ERROR_API_OVERLOADED = """
+⏺ Let me read that file for you.
+
+⏺ Read("src/main.py")
+  ⎿ API Error (529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}) · Retrying in 1 seconds… (attempt 1/10)
+  ⎿ API Error (529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}) · Retrying in 2 seconds… (attempt 2/10)
+  ⎿ API Error (529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}) · Retrying in 4 seconds… (attempt 3/10)
+"""
+
+# API Error with retry (request timeout)
+PANE_CONTENT_ERROR_TIMEOUT = """
+⏺ Let me analyze that code.
+
+  ⎿ API Error (Request timed out.) · Retrying in 1 seconds… (attempt 1/10)
+  ⎿ API Error (Request timed out.) · Retrying in 2 seconds… (attempt 2/10)
+"""
+
+# Final error after retries exhausted
+PANE_CONTENT_ERROR_FINAL = """
+⏺ Let me check the API.
+
+  ⎿ API Error: 503 no healthy upstream
+"""
+
+# Connection error with TypeError
+PANE_CONTENT_ERROR_CONNECTION = """
+⏺ Searching for relevant files...
+
+  ⎿ API Error (Connection error.) · Retrying in 1 seconds… (attempt 1/10)
+  ⎿ TypeError (fetch failed)
+"""
+
+# ECONNRESET
+PANE_CONTENT_ERROR_ECONNRESET = """
+⏺ Working on the implementation...
+
+  ⎿ Unable to connect to API (ECONNRESET)
+  Retrying in 7 seconds… (attempt 5/10)
+"""
+
+# Rate limit banner
+PANE_CONTENT_ERROR_RATE_LIMIT = """
+⏺ Here's my analysis of the code...
+
+You've hit your limit · resets 4pm (Europe/Berlin)
+"""
+
+# Auth error
+PANE_CONTENT_ERROR_AUTH = """
+Invalid API key · Please run /login
+"""
+
+# FALSE POSITIVE: Claude's response text discusses errors (#216)
+# These should NOT trigger error status
+PANE_CONTENT_NARRATIVE_ERRORS = """
+⏺ Here's my analysis of the error handling:
+
+  The API error handling code catches timeout exceptions and retries
+  with exponential backoff. When a 429 rate limit or 503 service
+  unavailable response is received, the connection failed handler
+  kicks in. The internal server error path is also covered.
+
+  The overloaded endpoint returns a "service unavailable" message.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts
+"""
+
+# FALSE POSITIVE: Claude discussing error patterns in code (#216)
+# The exact scenario from the bug report - discussing error detection
+PANE_CONTENT_NARRATIVE_ERROR_PATTERNS = """
+  - "Two tests failed due to connection timeout handling"  — matches timeout
+  - "Fixed the API error handling in..."  — matches api.*error
+  - "The server returned a 429 status code"  — matches 429
+  - "Let me check the rate limit configuration"  — matches rate.*limit
+
+  The detection waterfall hits the error check at line 145 before
+  reaching the content-change check, so it returns STATUS_ERROR (purple)
+
+✽ Cooked for 3m 9s
+
+>
+⏵⏵ bypass permissions on (shift+tab to cycle)
+"""
+
+
 # Spawn failure: claude command not found (bash style)
 PANE_CONTENT_SPAWN_FAILED_BASH = """
 Last login: Thu Jan 23 10:00:00 on ttys001
