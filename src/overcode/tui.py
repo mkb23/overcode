@@ -273,8 +273,9 @@ class SupervisorTUI(
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
         self._sessions_cache_ttl: float = 1.0  # 1 second TTL
-        # Flag to prevent overlapping async status updates
+        # Flags to prevent overlapping async updates (fast and slow paths are independent)
         self._status_update_in_progress = False
+        self._stats_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
         # Track whether sessions have been loaded at least once (for startup sequencing)
@@ -403,8 +404,10 @@ class SupervisorTUI(
             # Normal mode: Set up all timers
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
-            # Status updates every 250ms (all widgets, fetched in background thread)
+            # Fast status updates every 250ms (detect_status + capture_pane only)
             self.set_interval(0.25, self.update_focused_status)
+            # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
+            self.set_interval(5, self._update_stats_async)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds
@@ -635,35 +638,26 @@ class SupervisorTUI(
         self._fetch_statuses_async(widgets)
 
     def update_all_statuses(self) -> None:
-        """Trigger async status update for all session widgets.
+        """Trigger full async refresh of all session widgets.
 
-        This is NON-BLOCKING - it kicks off a background worker that fetches
-        all statuses in parallel, then updates widgets when done.
-
-        Note: Primarily used for manual refresh ('r' key) and initial load.
-        Regular updates use the tiered update_focused_status timer.
+        Kicks off both the fast path (detect_status) and slow path (stats/git).
+        Primarily used for manual refresh ('r' key) and initial load.
         """
-        # Skip if an update is already in progress
-        if self._status_update_in_progress:
-            return
-        self._status_update_in_progress = True
+        # Fast path
+        if not self._status_update_in_progress:
+            widgets = list(self.query(SessionSummary))
+            if widgets:
+                self._status_update_in_progress = True
+                self._fetch_statuses_async(widgets)
+        # Slow path
+        self._update_stats_async()
 
-        # Gather widget info needed for the background fetch
-        widgets = list(self.query(SessionSummary))
-        if not widgets:
-            self._status_update_in_progress = False
-            return
-
-        # Kick off async status fetch
-        self._fetch_statuses_async(widgets)
-
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="fast_status")
     def _fetch_statuses_async(self, widgets: list) -> None:
-        """Fetch all statuses in background thread, then update UI.
+        """Fast path: fetch detect_status (capture_pane) only, every 250ms.
 
-        Uses ThreadPoolExecutor to parallelize tmux calls within the worker.
-        The @work decorator runs this in a background thread so it doesn't
-        block the main event loop.
+        This is the critical path for responsive preview pane updates.
+        Heavy operations (claude stats, git diff) run on a separate 5s timer.
         """
         try:
             # Load fresh session data (this does file I/O but we're in a thread)
@@ -675,40 +669,25 @@ class SupervisorTUI(
                 session = fresh_sessions.get(widget.session.id, widget.session)
                 sessions_to_check.append((widget.session.id, session))
 
-            # Fetch all statuses AND claude stats AND git diff stats in parallel
-            def fetch_all(session):
-                """Fetch status, stats, and git diff for a session (runs in thread pool)."""
+            # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
+            def fetch_status(session):
                 try:
-                    # For terminated sessions, return status directly without checking tmux
                     if session.status == "terminated":
-                        status_result = ("terminated", "(tmux window no longer exists)", "")
-                    else:
-                        status_result = self.status_detector.detect_status(session)
-                    # Also fetch claude stats here (heavy file I/O)
-                    claude_stats = get_session_stats(session)
-                    # Fetch git diff stats
-                    git_diff = None
-                    if session.start_directory:
-                        git_diff = get_git_diff_stats(session.start_directory)
-                    return (status_result, claude_stats, git_diff)
+                        return ("terminated", "(tmux window no longer exists)", "")
+                    return self.status_detector.detect_status(session)
                 except Exception:
-                    return ((STATUS_WAITING_USER, "Error", ""), None, None)
+                    return (STATUS_WAITING_USER, "Error", "")
 
             sessions = [s for _, s in sessions_to_check]
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
-                results = list(executor.map(fetch_all, sessions))
+                results = list(executor.map(fetch_status, sessions))
 
             # Package results with session IDs
             status_results = {}
-            stats_results = {}
-            git_diff_results = {}
-            for (session_id, _), (status_result, claude_stats, git_diff) in zip(sessions_to_check, results):
+            for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
-                stats_results[session_id] = claude_stats
-                git_diff_results[session_id] = git_diff
 
             # Enrich status with heartbeat info from daemon state (#171)
-            # StatusDetector only returns "running" - use daemon state to distinguish heartbeat
             daemon_state = get_monitor_daemon_state(self.tmux_session)
             if daemon_state and daemon_state.sessions:
                 heartbeat_sessions = {
@@ -721,7 +700,6 @@ class SupervisorTUI(
                         if status == STATUS_RUNNING:
                             status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
 
-                # Enrich with waiting_heartbeat from daemon state
                 waiting_heartbeat_sessions = {
                     s.session_id for s in daemon_state.sessions
                     if s.waiting_for_heartbeat
@@ -741,21 +719,63 @@ class SupervisorTUI(
                 )
 
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions, ai_summaries)
+            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries)
         finally:
             self._status_update_in_progress = False
 
-    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
-        """Apply fetched status results to widgets (runs on main thread).
+    @work(thread=True, exclusive=True, group="slow_stats")
+    def _update_stats_async(self) -> None:
+        """Slow path: fetch claude stats + git diff every 5s.
 
-        All data has been pre-fetched in background - this just updates widget state.
-        No file I/O happens here.
+        These involve heavy file I/O (parsing JSONL session files, running
+        git diff subprocess) and don't need 250ms updates. Runs independently
+        from the fast status path so it never blocks preview pane updates.
         """
+        if self._stats_update_in_progress:
+            return
+        self._stats_update_in_progress = True
+        try:
+            widgets = list(self.query(SessionSummary))
+            if not widgets:
+                return
+
+            fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
+
+            sessions_to_check = []
+            for widget in widgets:
+                session = fresh_sessions.get(widget.session.id, widget.session)
+                sessions_to_check.append((widget.session.id, session))
+
+            def fetch_stats(session):
+                try:
+                    claude_stats = get_session_stats(session)
+                    git_diff = None
+                    if session.start_directory:
+                        git_diff = get_git_diff_stats(session.start_directory)
+                    return (claude_stats, git_diff)
+                except Exception:
+                    return (None, None)
+
+            sessions = [s for _, s in sessions_to_check]
+            with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
+                results = list(executor.map(fetch_stats, sessions))
+
+            stats_results = {}
+            git_diff_results = {}
+            for (session_id, _), (claude_stats, git_diff) in zip(sessions_to_check, results):
+                stats_results[session_id] = claude_stats
+                git_diff_results[session_id] = git_diff
+
+            self.call_from_thread(self._apply_stats_results, stats_results, git_diff_results)
+        finally:
+            self._stats_update_in_progress = False
+
+    def _apply_status_results(self, status_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
+        """Apply fast-path status results to widgets (runs on main thread)."""
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
         # Recalculate repo/branch widths from fresh session data (#143)
-        # This ensures alignment is correct when agents change branches
         if fresh_sessions:
             self._recalc_repo_widths(fresh_sessions.values())
 
@@ -766,27 +786,22 @@ class SupervisorTUI(
             if session_id in fresh_sessions:
                 widget.session = fresh_sessions[session_id]
 
-            # Update AI summaries from daemon state (if available)
+            # Update AI summaries (if available)
             if session_id in ai_summaries:
                 widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
 
-            # Apply status and stats if we have results for this widget
+            # Apply status if we have results for this widget
             if session_id in status_results:
                 status, activity, content = status_results[session_id]
-                claude_stats = stats_results.get(session_id)
-                git_diff = git_diff_results.get(session_id)
 
                 # Detect transitions TO stalled state (waiting_user)
                 prev_status = self._previous_statuses.get(session_id)
                 if status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER:
-                    # Agent just became stalled - mark as unvisited
                     self._prefs.visited_stalled_agents.discard(session_id)
                     prefs_changed = True
 
-                # Update previous status for next round
                 self._previous_statuses[session_id] = status
 
-                # Update widget's unvisited state (never show bell on asleep sessions #120)
                 is_unvisited_stalled = (
                     status == STATUS_WAITING_USER and
                     session_id not in self._prefs.visited_stalled_agents and
@@ -794,12 +809,25 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
-                widget.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
-                widget.refresh()  # Refresh each widget to repaint
+                # Pass None for claude_stats/git_diff — those come from the slow path
+                widget.apply_status_no_refresh(status, activity, content, None, None)
+                widget.refresh()
 
-        # Save preferences if we marked any agents as unvisited
         if prefs_changed:
             self._save_prefs()
+
+    def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
+        """Apply slow-path stats results to widgets (runs on main thread)."""
+        for widget in self.query(SessionSummary):
+            session_id = widget.session.id
+            claude_stats = stats_results.get(session_id)
+            git_diff = git_diff_results.get(session_id)
+            if claude_stats is not None:
+                widget.claude_stats = claude_stats
+            if git_diff is not None:
+                widget.git_diff_stats = git_diff
+            if claude_stats is not None or git_diff is not None:
+                widget.refresh()
 
         # Update preview pane if in list_preview mode
         if self.view_mode == "list_preview":
