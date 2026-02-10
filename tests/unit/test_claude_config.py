@@ -237,3 +237,125 @@ class TestInstallHookCommand:
         assert f.exists()
         data = json.loads(f.read_text())
         assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "overcode time-context"
+
+
+class TestRemoveHook:
+
+    def test_remove_existing_hook(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"hooks": {"UserPromptSubmit": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+        ]}}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_hook("UserPromptSubmit", "overcode hook-handler") is True
+        data = json.loads(f.read_text())
+        assert "hooks" not in data
+
+    def test_remove_nonexistent_hook(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text('{"hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "other"}]}]}}')
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_hook("UserPromptSubmit", "overcode hook-handler") is False
+        # File unchanged
+        data = json.loads(f.read_text())
+        assert len(data["hooks"]["Stop"]) == 1
+
+    def test_remove_from_empty(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("{}")
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_hook("UserPromptSubmit", "overcode hook-handler") is False
+
+    def test_remove_last_hook_in_event(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"other_key": True, "hooks": {"UserPromptSubmit": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+        ], "Stop": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+        ]}}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_hook("UserPromptSubmit", "overcode hook-handler") is True
+        data = json.loads(f.read_text())
+        assert "UserPromptSubmit" not in data["hooks"]
+        assert len(data["hooks"]["Stop"]) == 1
+        assert data["other_key"] is True
+
+    def test_remove_last_hook_overall(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"other_key": True, "hooks": {"UserPromptSubmit": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+        ]}}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        editor.remove_hook("UserPromptSubmit", "overcode hook-handler")
+        data = json.loads(f.read_text())
+        assert "hooks" not in data
+        assert data["other_key"] is True
+
+    def test_remove_preserves_other_hooks_in_event(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"hooks": {"UserPromptSubmit": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]},
+            {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]},
+        ]}}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_hook("UserPromptSubmit", "overcode hook-handler") is True
+        data = json.loads(f.read_text())
+        assert len(data["hooks"]["UserPromptSubmit"]) == 1
+        assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "other-tool"
+
+
+class TestListHooksMatching:
+
+    def test_finds_overcode_hooks(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"hooks": {
+            "UserPromptSubmit": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+            ],
+            "Stop": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
+            ],
+            "PreToolUse": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]}
+            ],
+        }}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        result = editor.list_hooks_matching("overcode")
+        assert len(result) == 2
+        assert ("UserPromptSubmit", "overcode hook-handler") in result
+        assert ("Stop", "overcode hook-handler") in result
+
+    def test_no_matches(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"hooks": {"Stop": [
+            {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]}
+        ]}}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        assert editor.list_hooks_matching("overcode") == []
+
+    def test_empty_settings(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("{}")
+        editor = ClaudeConfigEditor(f)
+        assert editor.list_hooks_matching("overcode") == []
+
+    def test_matches_legacy_hooks(self, tmp_path):
+        f = tmp_path / "settings.json"
+        settings = {"hooks": {
+            "UserPromptSubmit": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]},
+                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]},
+            ],
+        }}
+        f.write_text(json.dumps(settings))
+        editor = ClaudeConfigEditor(f)
+        result = editor.list_hooks_matching("overcode")
+        assert len(result) == 2
+        assert ("UserPromptSubmit", "overcode time-context") in result
+        assert ("UserPromptSubmit", "overcode hook-handler") in result
