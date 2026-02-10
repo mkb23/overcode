@@ -6,15 +6,16 @@ Includes subprocess coverage collection support for combined unit+e2e coverage.
 """
 
 import os
-import signal
 import pytest
 import subprocess
 import time
 import json
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Generator
 import tempfile
 import shutil
+
+from tests.daemon_test_utils import kill_by_pid_file, stop_daemons_in_state_dir
 
 
 # Paths
@@ -44,75 +45,10 @@ def stop_daemons_for_session(state_dir: Path, session_name: str) -> None:
             break
         time.sleep(0.1)
 
-    # Stop monitor daemon by PID file
-    _kill_by_pid_file(session_dir / "monitor_daemon.pid")
-
-    # Stop supervisor daemon by PID file
-    _kill_by_pid_file(session_dir / "supervisor_daemon.pid")
-
-    # Also kill any daemon processes with this session name (backup method)
-    # This catches daemons that haven't written their PID file yet
-    _kill_daemons_by_session_name(session_name, state_dir)
-
-
-def _kill_by_pid_file(pid_file: Path) -> None:
-    """Kill a process by reading its PID file."""
-    if not pid_file.exists():
-        return
-
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-        # Wait briefly for graceful shutdown
-        time.sleep(0.3)
-        try:
-            os.kill(pid, 0)
-            # Still running, force kill
-            os.kill(pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-    except (ValueError, OSError, ProcessLookupError):
-        pass
-    finally:
-        try:
-            pid_file.unlink()
-        except FileNotFoundError:
-            pass
-
-
-def _kill_daemons_by_session_name(session_name: str, state_dir: Path) -> None:
-    """Kill any daemon processes matching the session name and state_dir."""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", f"monitor_daemon.*{session_name}"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            for pid_str in result.stdout.strip().split('\n'):
-                if not pid_str:
-                    continue
-                try:
-                    pid = int(pid_str)
-                    # Verify this daemon belongs to our test (check state_dir in env)
-                    env_result = subprocess.run(
-                        ["ps", "eww", str(pid)],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if str(state_dir) in env_result.stdout:
-                        os.kill(pid, signal.SIGTERM)
-                        time.sleep(0.2)
-                        try:
-                            os.kill(pid, signal.SIGKILL)
-                        except (OSError, ProcessLookupError):
-                            pass
-                except (ValueError, OSError, subprocess.SubprocessError):
-                    pass
-    except (subprocess.SubprocessError, ValueError):
-        pass
+    # Kill by PID file, then hunt by process environment
+    kill_by_pid_file(session_dir / "monitor_daemon.pid")
+    kill_by_pid_file(session_dir / "supervisor_daemon.pid")
+    stop_daemons_in_state_dir(str(state_dir), session_name=session_name)
 
 
 @pytest.fixture
