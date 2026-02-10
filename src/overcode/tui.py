@@ -1393,7 +1393,11 @@ class SupervisorTUI(
                     preview = self.query_one("#preview-pane", PreviewPane)
                     preview.session_name = ""
                     preview.content_lines = []
-                    preview.refresh()
+                    try:
+                        content_widget = preview.query_one("#preview-content", Static)
+                        content_widget.update("")
+                    except Exception:
+                        pass
                     # Focus next available agent
                     widgets = list(self.query(SessionSummary))
                     if widgets:

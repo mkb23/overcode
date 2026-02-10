@@ -2,30 +2,38 @@
 Preview pane widget for TUI.
 
 Shows focused agent's terminal output in list+preview mode.
+Uses ScrollableContainer for native mouse wheel / trackpad scrolling.
 """
 
 from typing import List, TYPE_CHECKING
 
+from textual.containers import ScrollableContainer
 from textual.widgets import Static
-from textual.reactive import reactive
 from rich.text import Text
 
 if TYPE_CHECKING:
     from .session_summary import SessionSummary
 
 
-class PreviewPane(Static):
-    """Preview pane showing focused agent's terminal output in list+preview mode."""
+class PreviewPane(ScrollableContainer):
+    """Preview pane showing focused agent's terminal output in list+preview mode.
 
-    content_lines: reactive[List[str]] = reactive(list, init=False)
-    monochrome: reactive[bool] = reactive(False)
-    session_name: str = ""
+    Wraps a child Static whose height grows to fit all content lines.
+    The container provides native mouse wheel / trackpad scrolling.
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.content_lines = []
+        self.content_lines: List[str] = []
+        self.monochrome: bool = False
+        self.session_name: str = ""
+        self._auto_scroll = True  # Track whether user has scrolled away from bottom
 
-    def render(self) -> Text:
+    def compose(self):
+        yield Static(id="preview-content")
+
+    def _build_content(self) -> Text:
+        """Build the Rich Text renderable from stored content lines."""
         content = Text()
         # Use widget width for layout, with sensible fallback
         pane_width = self.size.width if self.size.width > 0 else 80
@@ -41,22 +49,13 @@ class PreviewPane(Static):
         if not self.content_lines:
             content.append("(no output)", style="dim italic")
         else:
-            # Calculate available lines based on widget height
-            # Reserve 2 lines for header and some padding
-            available_lines = max(10, self.size.height - 2) if self.size.height > 0 else 30
-            # Show last N lines of output with ANSI color support
-            # Truncate lines to pane width to match tmux display
-            max_line_len = max(pane_width - 1, 40)  # Leave room for newline, minimum 40
-            for line in self.content_lines[-available_lines:]:
-                # Truncate long lines to pane width
+            max_line_len = max(pane_width - 1, 40)
+            for line in self.content_lines:
                 display_line = line[:max_line_len] if len(line) > max_line_len else line
                 if self.monochrome:
-                    # Strip ANSI colors - use plain text only
                     parsed = Text.from_ansi(display_line)
                     content.append(parsed.plain)
                 else:
-                    # Parse ANSI escape sequences to preserve colors from tmux
-                    # Note: Text.from_ansi() strips trailing newlines, so add newline separately
                     content.append(Text.from_ansi(display_line))
                 content.append("\n")
 
@@ -66,4 +65,27 @@ class PreviewPane(Static):
         """Update preview content from a SessionSummary widget."""
         self.session_name = widget.session.name
         self.content_lines = list(widget.pane_content) if widget.pane_content else []
-        self.refresh()
+        try:
+            content_widget = self.query_one("#preview-content", Static)
+            content_widget.update(self._build_content())
+        except Exception:
+            pass
+        # Auto-scroll to bottom if user hasn't scrolled away
+        if self._auto_scroll:
+            self.scroll_end(animate=False)
+
+    def on_scroll_up(self) -> None:
+        """User scrolled up — disable auto-scroll to bottom."""
+        self._auto_scroll = False
+
+    def on_scroll_down(self) -> None:
+        """User scrolled down — re-enable auto-scroll if at bottom."""
+        if self.scroll_offset.y >= self.max_scroll_y:
+            self._auto_scroll = True
+
+    def watch_scroll_y(self, value: float) -> None:
+        """Track scroll position to manage auto-scroll behavior."""
+        if self.max_scroll_y > 0 and value >= self.max_scroll_y - 1:
+            self._auto_scroll = True
+        elif self.max_scroll_y > 0 and value < self.max_scroll_y - 1:
+            self._auto_scroll = False
