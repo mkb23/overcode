@@ -52,6 +52,11 @@ class SessionActionsMixin:
             self.notify("Cannot put a running agent to sleep", severity="warning")
             return
 
+        # Prevent putting an agent with heartbeat enabled to sleep (#219)
+        if new_asleep_state and session.heartbeat_enabled and not session.heartbeat_paused:
+            self.notify("Cannot sleep agent with active heartbeat — disable heartbeat first", severity="warning")
+            return
+
         # Update the session in the session manager
         self.session_manager.update_session(session.id, is_asleep=new_asleep_state)
 
