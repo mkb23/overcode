@@ -275,6 +275,7 @@ class SupervisorTUI(
         self._sessions_cache_ttl: float = 1.0  # 1 second TTL
         # Flag to prevent overlapping async status updates
         self._status_update_in_progress = False
+        self._status_tick = 0  # Counter for merging focused/background updates
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
         # Track whether sessions have been loaded at least once (for startup sequencing)
@@ -404,10 +405,9 @@ class SupervisorTUI(
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
             # Tiered status updates for CPU efficiency:
-            # - Focused agent: 250ms (responsive preview pane)
-            # - Background agents: 1s (reduced overhead)
+            # Single 250ms timer handles both focused (every tick) and
+            # background (every 4th tick ≈ 1s) to avoid timer collision starvation.
             self.set_interval(0.25, self.update_focused_status)
-            self.set_interval(1.0, self.update_background_statuses)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds
@@ -620,38 +620,32 @@ class SupervisorTUI(
         return None
 
     def update_focused_status(self) -> None:
-        """Update only the focused session's status (fast path, 250ms).
+        """Update session statuses on a single 250ms timer.
 
-        This provides responsive updates for the session being viewed
-        while reducing CPU overhead for background sessions.
+        Every tick: update the focused/selected session (responsive preview).
+        Every 4th tick (~1s): update ALL sessions including background ones.
+
+        Previously these were separate 250ms and 1s timers, but since 1000ms
+        is a multiple of 250ms they always fired in the same event-loop tick
+        and the shared _status_update_in_progress flag caused the background
+        update to be permanently starved.
         """
         # Skip if an update is already in progress
         if self._status_update_in_progress:
             return
 
-        # Only update the selected widget
-        focused = self._get_focused_widget()
-        if focused is None:
-            return
+        self._status_tick += 1
 
-        self._status_update_in_progress = True
-        self._fetch_statuses_async([focused])
+        # Every 4th tick (~1s), update all widgets
+        if self._status_tick % 4 == 0:
+            widgets = list(self.query(SessionSummary))
+        else:
+            # Fast path: only the selected widget
+            focused = self._get_focused_widget()
+            if focused is None:
+                return
+            widgets = [focused]
 
-    def update_background_statuses(self) -> None:
-        """Update non-focused sessions' statuses (slow path, 1s).
-
-        Updates all sessions except the focused one, which gets
-        faster updates via update_focused_status.
-        """
-        # Skip if an update is already in progress
-        if self._status_update_in_progress:
-            return
-
-        # Gather all widgets except the selected one
-        focused = self._get_focused_widget()
-        focused_id = focused.session.id if focused else None
-
-        widgets = [w for w in self.query(SessionSummary) if w.session.id != focused_id]
         if not widgets:
             return
 
@@ -665,7 +659,7 @@ class SupervisorTUI(
         all statuses in parallel, then updates widgets when done.
 
         Note: Primarily used for manual refresh ('r' key) and initial load.
-        Regular updates use tiered update_focused_status/update_background_statuses.
+        Regular updates use the tiered update_focused_status timer.
         """
         # Skip if an update is already in progress
         if self._status_update_in_progress:
