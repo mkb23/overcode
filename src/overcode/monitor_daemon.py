@@ -493,6 +493,7 @@ class MonitorDaemon:
                     )
                     if current_id:
                         self.session_manager.add_claude_session_id(session.id, current_id)
+                        self.session_manager.set_active_claude_session_id(session.id, current_id)
                 except (ValueError, TypeError):
                     pass
 

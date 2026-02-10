@@ -106,6 +106,11 @@ class Session:
     # Used to accurately calculate context window for this specific agent
     claude_session_ids: List[str] = field(default_factory=list)
 
+    # The currently active Claude session ID (#116)
+    # Replaced (not appended) when /clear creates a new session.
+    # Used for context window calculation — only the active session matters.
+    active_claude_session_id: Optional[str] = None
+
     # Heartbeat configuration (#171)
     heartbeat_enabled: bool = False
     heartbeat_frequency_seconds: int = 300  # Default 5 minutes
@@ -683,3 +688,21 @@ class SessionManager:
 
         self._atomic_update(do_update)
         return True
+
+    def set_active_claude_session_id(self, session_id: str, claude_session_id: str):
+        """Set the active Claude session ID for context tracking (#116).
+
+        Unlike add_claude_session_id which accumulates, this replaces the
+        active session. After /clear, Claude creates a new session and only
+        that session's context window is relevant.
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return
+
+        def do_update(state):
+            if session_id in state:
+                state[session_id]['active_claude_session_id'] = claude_session_id
+            return state
+
+        self._atomic_update(do_update)
