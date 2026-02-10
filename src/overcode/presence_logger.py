@@ -1,7 +1,12 @@
 """
 presence_logger.py
 
-Mac-only presence logger that records user presence/absence stats.
+Cross-platform presence logger that records user presence/absence stats.
+
+Supports:
+- macOS: Quartz APIs (CGEventSource, CGSession)
+- Linux: DBus (org.freedesktop.ScreenSaver / org.gnome.ScreenSaver)
+         with xprintidle fallback for idle time (#91)
 
 Records once per SAMPLE_INTERVAL:
 - timestamp (ISO8601 local time)
@@ -31,6 +36,9 @@ to run it in the foreground.
 import csv
 import datetime as dt
 import os
+import platform
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -51,6 +59,19 @@ try:
     MACOS_APIS_AVAILABLE = True
 except ImportError:
     MACOS_APIS_AVAILABLE = False
+
+# Check for Linux DBus support (#91)
+LINUX_DBUS_AVAILABLE = False
+LINUX_PLATFORM = platform.system() == "Linux"
+_dbus_session_bus = None
+
+if LINUX_PLATFORM:
+    try:
+        import dbus
+        _dbus_session_bus = dbus.SessionBus()
+        LINUX_DBUS_AVAILABLE = True
+    except Exception:
+        pass
 
 
 # ---- config -----------------------------------------------------------------
@@ -105,38 +126,105 @@ class PresenceLoggerConfig:
 
 
 def get_idle_seconds() -> float:
-    """Seconds since last user input (mouse/keyboard) in current session."""
-    if not MACOS_APIS_AVAILABLE:
-        return 0.0
-    return CGEventSourceSecondsSinceLastEventType(
-        kCGEventSourceStateCombinedSessionState,
-        kCGAnyInputEventType,
-    )
+    """Seconds since last user input (mouse/keyboard) in current session.
+
+    Supports macOS (Quartz) and Linux (DBus / xprintidle fallback).
+    """
+    if MACOS_APIS_AVAILABLE:
+        return CGEventSourceSecondsSinceLastEventType(
+            kCGEventSourceStateCombinedSessionState,
+            kCGAnyInputEventType,
+        )
+
+    if LINUX_PLATFORM:
+        return _linux_get_idle_seconds()
+
+    return 0.0
 
 
 def is_screen_locked() -> bool:
-    """
-    Try to detect if the screen/session is locked.
+    """Detect if the screen/session is locked.
 
-    This relies on keys in CGSessionCopyCurrentDictionary; may vary by macOS
-    version but works on most modern versions.
+    Supports macOS (CGSession) and Linux (DBus screensaver interfaces).
     """
-    if not MACOS_APIS_AVAILABLE:
+    if MACOS_APIS_AVAILABLE:
+        session_info = CGSessionCopyCurrentDictionary()
+        if not session_info:
+            return False
+        if session_info.get("CGSSessionScreenIsLocked", 0):
+            return True
+        on_console = session_info.get("kCGSessionOnConsoleKey")
+        if isinstance(on_console, bool) and not on_console:
+            return True
         return False
 
-    session_info = CGSessionCopyCurrentDictionary()
-    if not session_info:
+    if LINUX_PLATFORM:
+        return _linux_is_screen_locked()
+
+    return False
+
+
+# ---- Linux helpers (#91) ---------------------------------------------------
+
+
+def _linux_get_idle_seconds() -> float:
+    """Get idle time on Linux via DBus or xprintidle fallback."""
+    # Try DBus ScreenSaver interface (GNOME, KDE, etc.)
+    if LINUX_DBUS_AVAILABLE and _dbus_session_bus is not None:
+        for service in (
+            "org.freedesktop.ScreenSaver",
+            "org.gnome.Mutter.IdleMonitor",
+        ):
+            try:
+                if service == "org.gnome.Mutter.IdleMonitor":
+                    obj = _dbus_session_bus.get_object(
+                        service, "/org/gnome/Mutter/IdleMonitor/Core"
+                    )
+                    idle_ms = obj.GetIdletime(
+                        dbus_interface="org.gnome.Mutter.IdleMonitor"
+                    )
+                else:
+                    obj = _dbus_session_bus.get_object(
+                        service, "/org/freedesktop/ScreenSaver"
+                    )
+                    idle_ms = obj.GetSessionIdleTime(
+                        dbus_interface="org.freedesktop.ScreenSaver"
+                    )
+                return float(idle_ms) / 1000.0
+            except Exception:
+                continue
+
+    # Fallback: xprintidle command
+    if shutil.which("xprintidle"):
+        try:
+            result = subprocess.run(
+                ["xprintidle"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                return float(result.stdout.strip()) / 1000.0
+        except Exception:
+            pass
+
+    return 0.0
+
+
+def _linux_is_screen_locked() -> bool:
+    """Detect screen lock on Linux via DBus."""
+    if not LINUX_DBUS_AVAILABLE or _dbus_session_bus is None:
         return False
 
-    # Common key; default to 0 if missing
-    if session_info.get("CGSSessionScreenIsLocked", 0):
-        return True
-
-    # Fallback heuristic: if there is an explicit "kCGSessionOnConsoleKey"
-    # and it's false, treat as locked. This is more conservative.
-    on_console = session_info.get("kCGSessionOnConsoleKey")
-    if isinstance(on_console, bool) and not on_console:
-        return True
+    # Try common screensaver/lock interfaces
+    interfaces = [
+        ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver"),
+        ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver"),
+    ]
+    for service, path, iface in interfaces:
+        try:
+            obj = _dbus_session_bus.get_object(service, path)
+            locked = obj.GetActive(dbus_interface=iface)
+            return bool(locked)
+        except Exception:
+            continue
 
     return False
 
@@ -412,9 +500,10 @@ def main() -> int:
 
         overcode presence
     """
-    if not MACOS_APIS_AVAILABLE:
-        print("Error: macOS APIs not available.")
-        print("Install dependencies: pip install pyobjc-framework-Quartz pyobjc-framework-ApplicationServices")
+    if not MACOS_APIS_AVAILABLE and not LINUX_PLATFORM:
+        print("Error: No presence APIs available.")
+        print("macOS: pip install pyobjc-framework-Quartz pyobjc-framework-ApplicationServices")
+        print("Linux: pip install dbus-python (or install xprintidle)")
         return 1
 
     # Check if already running
