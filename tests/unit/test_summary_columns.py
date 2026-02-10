@@ -24,6 +24,7 @@ from overcode.summary_columns import (
     render_sleep_time,
     render_active_pct,
     render_token_count,
+    render_context_usage,
     render_cost,
     render_budget,
     render_tokens,
@@ -42,6 +43,7 @@ from overcode.summary_columns import (
     render_uptime_plain,
     render_time_plain,
     render_token_count_plain,
+    render_context_usage_plain,
     render_cost_plain,
     render_tokens_plain,
     render_git_diff_plain,
@@ -380,25 +382,47 @@ class TestRenderTokenCount:
         ctx = _make_ctx(claude_stats=None)
         result = render_token_count(ctx)
         assert len(result) == 1
-        assert "c@  -%" in result[0][0]
+        assert "-" in result[0][0]
 
     def test_with_stats_shows_token_count(self):
         stats = _make_claude_stats(total_tokens=150000, current_context_tokens=50000)
         ctx = _make_ctx(claude_stats=stats)
         result = render_token_count(ctx)
-        assert len(result) == 2
+        assert len(result) == 1
         assert "Σ" in result[0][0]
-
-    def test_zero_context_shows_dash(self):
-        stats = _make_claude_stats(current_context_tokens=0)
-        ctx = _make_ctx(claude_stats=stats)
-        result = render_token_count(ctx)
-        assert "c@  -%" in result[1][0]
 
     def test_hidden_when_show_cost(self):
         stats = _make_claude_stats()
         ctx = _make_ctx(claude_stats=stats, show_cost=True)
         assert render_token_count(ctx) is None
+
+
+class TestRenderContextUsage:
+    def test_no_stats_shows_placeholder(self):
+        ctx = _make_ctx(claude_stats=None)
+        result = render_context_usage(ctx)
+        assert "c@  -%" in result[0][0]
+
+    def test_with_context_shows_pct(self):
+        stats = _make_claude_stats(current_context_tokens=50000)
+        ctx = _make_ctx(claude_stats=stats)
+        result = render_context_usage(ctx)
+        assert "c@" in result[0][0]
+        assert "%" in result[0][0]
+
+    def test_zero_context_shows_dash(self):
+        stats = _make_claude_stats(current_context_tokens=0)
+        ctx = _make_ctx(claude_stats=stats)
+        result = render_context_usage(ctx)
+        assert "c@  -%" in result[0][0]
+
+    def test_visible_when_show_cost(self):
+        """Context usage is always visible regardless of show_cost."""
+        stats = _make_claude_stats(current_context_tokens=50000)
+        ctx = _make_ctx(claude_stats=stats, show_cost=True)
+        result = render_context_usage(ctx)
+        assert result is not None
+        assert "c@" in result[0][0]
 
 
 class TestRenderCost:
@@ -741,11 +765,22 @@ class TestRenderTokenCountPlain:
         result = render_token_count_plain(ctx)
         assert "Σ" in result
 
+
+class TestRenderContextUsagePlain:
+    def test_no_stats_returns_none(self):
+        ctx = _make_ctx(claude_stats=None)
+        assert render_context_usage_plain(ctx) is None
+
     def test_with_context_shows_pct(self):
-        stats = _make_claude_stats(total_tokens=150000, current_context_tokens=50000)
+        stats = _make_claude_stats(current_context_tokens=50000)
         ctx = _make_ctx(claude_stats=stats)
-        result = render_token_count_plain(ctx)
+        result = render_context_usage_plain(ctx)
         assert "context" in result
+
+    def test_zero_context_returns_none(self):
+        stats = _make_claude_stats(current_context_tokens=0)
+        ctx = _make_ctx(claude_stats=stats)
+        assert render_context_usage_plain(ctx) is None
 
 
 class TestRenderCostPlain:

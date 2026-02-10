@@ -197,21 +197,26 @@ def render_active_pct(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_token_count(ctx: ColumnContext) -> ColumnOutput:
-    """Token count + context usage. Hidden when show_cost=True."""
+    """Token count (Σ123K). Hidden when show_cost=True."""
     if ctx.show_cost:
         return None
     if ctx.claude_stats is not None:
-        segments = []
-        segments.append((f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold")))
+        return [(f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+    else:
+        return [("       -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+
+
+def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
+    """Context window usage (c@XX%). Always visible."""
+    if ctx.claude_stats is not None:
         if ctx.claude_stats.current_context_tokens > 0:
             max_context = 200_000
             ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            segments.append((f" c@{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold")))
+            return [(f" c@{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
         else:
-            segments.append((" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim")))
-        return segments
+            return [(" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
     else:
-        return [("       - c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [(" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
 def render_cost(ctx: ColumnContext) -> ColumnOutput:
@@ -422,15 +427,20 @@ def render_time_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
-    """Tokens + context usage for CLI."""
+    """Token count for CLI."""
     if ctx.claude_stats is None:
         return None
-    parts = []
-    parts.append(f"Σ {format_tokens(ctx.claude_stats.total_tokens)}")
+    return f"Σ {format_tokens(ctx.claude_stats.total_tokens)}"
+
+
+def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
+    """Context window usage for CLI."""
+    if ctx.claude_stats is None:
+        return None
     if ctx.claude_stats.current_context_tokens > 0:
         ctx_pct = min(100, ctx.claude_stats.current_context_tokens / 200_000 * 100)
-        parts.append(f"(context {ctx_pct:.0f}%)")
-    return " ".join(parts)
+        return f"context {ctx_pct:.0f}%"
+    return None
 
 
 def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
@@ -555,12 +565,15 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain),
 
-    # Tokens group — split into token count, cost, and budget columns
-    SummaryColumn(id="token_count", group="tokens", detail_levels=ALL, render=render_token_count,
+    # LLM Usage group — token count, cost, budget ($-toggled); context always visible
+    SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
                   label="Tokens", render_plain=render_token_count_plain),
-    SummaryColumn(id="cost", group="tokens", detail_levels=ALL, render=render_cost,
+    SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
                   label="Cost", render_plain=render_cost_plain),
-    SummaryColumn(id="budget", group="tokens", detail_levels=ALL, render=render_budget),
+    SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget),
+
+    # Context group — always visible, independent of $ toggle
+    SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage),
 
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time),

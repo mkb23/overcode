@@ -35,9 +35,15 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
         default_enabled=True,
     ),
     SummaryGroup(
-        id="tokens",
-        name="Tokens & Cost",
+        id="llm_usage",
+        name="LLM Usage",
         fields=["token_count", "cost", "budget"],
+        default_enabled=True,
+    ),
+    SummaryGroup(
+        id="context",
+        name="Context",
+        fields=["context_usage"],
         default_enabled=True,
     ),
     SummaryGroup(
@@ -81,7 +87,8 @@ SUMMARY_GROUPS_BY_ID: Dict[str, SummaryGroup] = {g.id: g for g in SUMMARY_GROUPS
 PRESETS: Dict[str, Dict[str, bool]] = {
     "minimal": {
         "time": False,
-        "tokens": True,
+        "llm_usage": True,
+        "context": True,
         "git": False,
         "supervision": False,
         "priority": False,
@@ -90,7 +97,8 @@ PRESETS: Dict[str, Dict[str, bool]] = {
     },
     "standard": {
         "time": True,
-        "tokens": True,
+        "llm_usage": True,
+        "context": True,
         "git": False,
         "supervision": True,
         "priority": True,
@@ -99,7 +107,8 @@ PRESETS: Dict[str, Dict[str, bool]] = {
     },
     "full": {
         "time": True,
-        "tokens": True,
+        "llm_usage": True,
+        "context": True,
         "git": True,
         "supervision": True,
         "priority": True,

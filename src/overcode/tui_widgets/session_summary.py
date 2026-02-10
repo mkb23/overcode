@@ -91,7 +91,7 @@ class SessionSummary(Static, can_focus=True):
         self._last_known_status: str = self.detected_status
         # Column group visibility (#178)
         self.summary_groups: dict = {
-            "time": True, "tokens": True, "git": True,
+            "time": True, "llm_usage": True, "context": True, "git": True,
             "supervision": True, "priority": True, "performance": True,
             "subprocesses": True,
         }

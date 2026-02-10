@@ -13,21 +13,21 @@ class TestSummaryConfigModal:
         """Modal should initialize missing groups with defaults."""
         modal = SummaryConfigModal({})
         # All toggleable groups should be present
-        expected_groups = ["time", "tokens", "git", "supervision", "priority", "performance"]
+        expected_groups = ["time", "llm_usage", "context", "git", "supervision", "priority", "performance"]
         for group_id in expected_groups:
             assert group_id in modal.config
 
     def test_init_preserves_existing_config(self):
         """Modal should preserve provided configuration values."""
-        config = {"time": False, "tokens": True, "git": False}
+        config = {"time": False, "llm_usage": True, "git": False}
         modal = SummaryConfigModal(config)
         assert modal.config["time"] is False
-        assert modal.config["tokens"] is True
+        assert modal.config["llm_usage"] is True
         assert modal.config["git"] is False
 
     def test_config_is_copied(self):
         """Modal should not modify the original config dict."""
-        original_config = {"time": True, "tokens": True}
+        original_config = {"time": True, "llm_usage": True}
         modal = SummaryConfigModal(original_config)
         modal.config["time"] = False
         # Original should be unchanged
@@ -46,7 +46,8 @@ class TestSummaryConfigModal:
 
         # All group names should be in the text
         assert "Time" in plain
-        assert "Tokens" in plain
+        assert "LLM Usage" in plain
+        assert "Context" in plain
         assert "Git" in plain
         assert "Supervision" in plain
         assert "Priority" in plain
@@ -54,7 +55,7 @@ class TestSummaryConfigModal:
 
     def test_build_list_text_shows_checkmarks(self):
         """List text should show checkmarks for enabled groups."""
-        modal = SummaryConfigModal({"time": True, "tokens": False})
+        modal = SummaryConfigModal({"time": True, "llm_usage": False})
         text = modal._build_list_text()
         plain = text.plain
 
@@ -65,20 +66,20 @@ class TestSummaryConfigModal:
     def test_show_stores_original_config(self):
         """Show should store original config for cancel."""
         modal = SummaryConfigModal({})
-        config = {"time": False, "tokens": True}
+        config = {"time": False, "llm_usage": True}
         modal.show(config)
         assert modal.original_config == config
 
     def test_cancel_restores_original_config(self):
         """Cancel should restore original config."""
         modal = SummaryConfigModal({})
-        original = {"time": True, "tokens": True, "git": True,
+        original = {"time": True, "llm_usage": True, "git": True,
                    "supervision": True, "priority": True, "performance": True,
                    "subprocesses": True}
         modal.show(original)
         # Change some values
         modal.config["time"] = False
-        modal.config["tokens"] = False
+        modal.config["llm_usage"] = False
         # Cancel
         modal._cancel()
         # Config should be restored

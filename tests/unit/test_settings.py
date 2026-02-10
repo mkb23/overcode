@@ -457,7 +457,7 @@ class TestTUIPreferences:
         assert hasattr(prefs, 'summary_groups')
         assert isinstance(prefs.summary_groups, dict)
         # All toggleable groups should be present
-        expected_groups = ["time", "tokens", "git", "supervision", "priority", "performance"]
+        expected_groups = ["time", "llm_usage", "context", "git", "supervision", "priority", "performance"]
         for group_id in expected_groups:
             assert group_id in prefs.summary_groups
             assert isinstance(prefs.summary_groups[group_id], bool)
