@@ -343,11 +343,8 @@ def show(
     from .status_detector_factory import create_status_detector
     from .history_reader import get_session_stats
     from .status_patterns import extract_background_bash_count, extract_live_subagent_count, strip_ansi
-    from .tui_helpers import (
-        calculate_uptime, format_duration, format_tokens, format_cost,
-        format_line_count, get_current_state_times, get_status_symbol,
-        get_git_diff_stats,
-    )
+    from .tui_helpers import get_git_diff_stats
+    from .summary_columns import build_cli_context, render_cli_stats
     from .monitor_daemon_state import get_monitor_daemon_state
 
     launcher = ClaudeLauncher(session)
@@ -391,13 +388,7 @@ def show(
         except Exception:
             pass
 
-        uptime = calculate_uptime(sess.start_time) if sess.start_time else "-"
-        green_time, non_green_time, sleep_time = get_current_state_times(
-            sess.stats, is_asleep=sess.is_asleep
-        )
-        active_time = green_time + non_green_time
-        active_pct = (green_time / active_time * 100) if active_time > 0 else 0
-
+        # AI summaries from daemon state
         ai_short = ""
         ai_context = ""
         try:
@@ -410,78 +401,33 @@ def show(
         except Exception:
             pass
 
-        # Status line
-        symbol, _ = get_status_symbol(status)
-        time_in_state = ""
-        if sess.stats.state_since:
-            try:
-                from datetime import datetime
-                elapsed = (datetime.now() - datetime.fromisoformat(sess.stats.state_since)).total_seconds()
-                time_in_state = f" ({format_duration(elapsed)})"
-            except (ValueError, TypeError):
-                pass
+        # Build context and render via column system
+        any_has_budget = sess.cost_budget_usd > 0
+        ctx = build_cli_context(
+            session=sess,
+            stats=sess.stats,
+            claude_stats=claude_stats,
+            git_diff_stats=git_diff,
+            status=status,
+            bg_bash_count=bg_bash_count,
+            live_sub_count=live_sub_count,
+            any_has_budget=any_has_budget,
+        )
 
-        # Permissiveness emoji
-        perm_map = {"bypass": "🔥 bypass", "permissive": "🏃 permissive", "normal": "👮 normal"}
-        perm_display = perm_map.get(sess.permissiveness_mode, sess.permissiveness_mode)
-
-        # Render stats
         print(f"=== {name} ===")
-        print(f"Status:    {symbol} {status}{time_in_state:<16} Uptime:  {uptime}")
-        repo_info = f"{sess.repo_name or '-'}:{sess.branch or '-'}"
-        tc_display = "🕐 enabled" if sess.time_context_enabled else "disabled"
-        print(f"Repo:      {repo_info:<28} Mode:    {perm_display}")
-        print(f"Time ctx:  {tc_display}")
+        label_width = max(len(label) for label, _ in render_cli_stats(ctx)) + 1
+        for label, value in render_cli_stats(ctx):
+            print(f"{label + ':':<{label_width + 1}} {value}")
 
-        # Time
-        time_str = f"▶ {format_duration(green_time):>5} active  ⏸ {format_duration(non_green_time):>5} stalled  💤 {format_duration(sleep_time):>5} sleep  ({active_pct:.0f}%)"
-        print(f"Time:      {time_str}")
-
-        # Tokens & cost
-        if claude_stats:
-            token_str = f"Σ {format_tokens(claude_stats.total_tokens)}"
-            if claude_stats.current_context_tokens > 0:
-                ctx_pct = min(100, claude_stats.current_context_tokens / 200_000 * 100)
-                token_str += f" (context {ctx_pct:.0f}%)"
-            cost = sess.stats.estimated_cost_usd
-            budget = sess.cost_budget_usd
-            if budget > 0:
-                cost_display = f"{format_cost(cost)}/{format_cost(budget)}"
-            else:
-                cost_display = format_cost(cost)
-            print(f"Tokens:    {token_str:<28} Cost:    {cost_display}")
-
-            # Work & interactions
-            median_work = claude_stats.median_work_time
-            work_str = format_duration(median_work) if median_work > 0 else "-"
-            human_count = max(0, claude_stats.interaction_count - sess.stats.steers_count)
-            print(f"Work:      ⏱ {work_str} median{'':<18} Interactions: 👤 {human_count} human 🤖 {sess.stats.steers_count} robot")
-        else:
-            print(f"Tokens:    -")
-
-        # Git
-        if git_diff:
-            files, ins, dels = git_diff
-            print(f"Git:       Δ{files} files +{format_line_count(ins)} -{format_line_count(dels)}")
-
-        # Subagents & background bashes (live counts from status bar)
-        print(f"Agents:    🤿 {live_sub_count} subagents  🐚 {bg_bash_count} background bashes")
-
-        # Standing orders
-        if sess.standing_instructions:
-            prefix = "✓ " if sess.standing_orders_complete else ""
-            instr = sess.standing_instructions[:80]
-            print(f"Orders:    📋 {prefix}{instr}")
-
-        # AI summaries
+        # AI summaries (not a column — comes from daemon state)
         if ai_short:
-            print(f"AI:        {ai_short}")
+            print(f"{'AI:':<{label_width + 1}} {ai_short}")
         if ai_context:
-            print(f"Context:   {ai_context}")
+            print(f"{'Context:':<{label_width + 1}} {ai_context}")
 
-        # Activity from status detector
+        # Activity from status detector (not a column — transient)
         if activity:
-            print(f"Activity:  {activity[:100]}")
+            print(f"{'Activity:':<{label_width + 1}} {activity[:100]}")
 
         print()
 

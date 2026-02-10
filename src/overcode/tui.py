@@ -247,8 +247,10 @@ class SupervisorTUI(
         self.hook_detector = HookStatusDetector(tmux_session)
         # Track expanded state per session ID to preserve across refreshes
         self.expanded_states: dict[str, bool] = {}
-        # Max repo:branch width for alignment in full detail mode
-        self.max_repo_info_width: int = 18
+        # Max repo/branch widths for alignment in full detail mode
+        self.max_repo_width: int = 10
+        self.max_branch_width: int = 10
+        self.all_names_match_repos: bool = False
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -275,10 +277,13 @@ class SupervisorTUI(
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
         self._sessions_cache_ttl: float = 1.0  # 1 second TTL
-        # Flag to prevent overlapping async status updates
+        # Flags to prevent overlapping async updates (fast and slow paths are independent)
         self._status_update_in_progress = False
+        self._stats_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
+        # Track whether sessions have been loaded at least once (for startup sequencing)
+        self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
         self._attention_jump_index = 0
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
@@ -403,11 +408,10 @@ class SupervisorTUI(
             # Normal mode: Set up all timers
             # Refresh session list every 10 seconds
             self.set_interval(10, self.refresh_sessions)
-            # Tiered status updates for CPU efficiency:
-            # - Focused agent: 250ms (responsive preview pane)
-            # - Background agents: 1s (reduced overhead)
+            # Fast status updates every 250ms (detect_status + capture_pane only)
             self.set_interval(0.25, self.update_focused_status)
-            self.set_interval(1.0, self.update_background_statuses)
+            # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
+            self.set_interval(5, self._update_stats_async)
             # Update daemon status every 5 seconds
             self.set_interval(5, self.update_daemon_status)
             # Update timeline every 30 seconds
@@ -416,15 +420,64 @@ class SupervisorTUI(
             self.set_interval(5, self._update_summaries_async)
 
     def update_daemon_status(self) -> None:
-        """Update daemon status bar"""
+        """Update daemon status bar (kicks off background worker)"""
+        self._fetch_daemon_status_async()
+
+    @work(thread=True, exclusive=True, group="daemon_status")
+    def _fetch_daemon_status_async(self) -> None:
+        """Fetch daemon status off the main thread, then apply to UI."""
         try:
             daemon_bar = self.query_one("#daemon-status", DaemonStatusBar)
-            daemon_bar.update_status()
         except NoMatches:
-            pass
+            return
+
+        # All I/O happens here in the worker thread
+        monitor_state = get_monitor_daemon_state(self.tmux_session)
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
+
+        # Gather data that DaemonStatusBar.update_status() would fetch
+        asleep_ids = set()
+        if daemon_bar._session_manager:
+            asleep_ids = {
+                s.id for s in daemon_bar._session_manager.list_sessions()
+                if s.is_asleep and s.tmux_session == self.tmux_session
+            }
+
+        # Pre-compute active session names for spin rate calculation
+        active_session_names = []
+        if monitor_state and monitor_state.sessions:
+            active_session_names = [
+                s.name for s in monitor_state.sessions
+                if s.session_id not in asleep_ids
+            ]
+
+        # Fetch all volatile I/O state for the status bar (PID checks, CSV reads, etc.)
+        baseline_minutes = getattr(self, 'baseline_minutes', 0)
+        daemon_bar.monitor_state = monitor_state
+        daemon_bar._asleep_session_ids = asleep_ids
+        daemon_bar.fetch_volatile_state(
+            baseline_minutes=baseline_minutes,
+            active_session_names=active_session_names,
+        )
+
+        # Apply results on main thread
+        self.call_from_thread(
+            self._apply_daemon_status, daemon_bar, monitor_state, daemon_count, asleep_ids
+        )
+
+    def _apply_daemon_status(
+        self,
+        daemon_bar: "DaemonStatusBar",
+        monitor_state,
+        daemon_count: int,
+        asleep_ids: set,
+    ) -> None:
+        """Apply daemon status results on main thread (no I/O)."""
+        daemon_bar.monitor_state = monitor_state
+        daemon_bar._asleep_session_ids = asleep_ids
+        daemon_bar.refresh()
 
         # Check for multiple daemon processes (potential time tracking bug)
-        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
         if daemon_count > 1 and not self._multiple_daemon_warning_shown:
             self._multiple_daemon_warning_shown = True
             self.notify(
@@ -438,12 +491,27 @@ class SupervisorTUI(
             self._multiple_daemon_warning_shown = False
 
     def update_timeline(self) -> None:
-        """Update the status timeline widget"""
+        """Update the status timeline widget (kicks off background worker)"""
+        self._fetch_timeline_async()
+
+    @work(thread=True, exclusive=True, group="timeline")
+    def _fetch_timeline_async(self) -> None:
+        """Read timeline CSV data off the main thread, then apply to UI."""
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
-            timeline.update_history(self.sessions)
         except NoMatches:
-            pass
+            return
+
+        # Snapshot sessions for the worker (avoid race with main thread)
+        sessions = list(self.sessions)
+
+        # Heavy CSV I/O happens here in the worker thread
+        presence_history, agent_histories = timeline.fetch_history_data(sessions)
+
+        # Apply on main thread
+        self.call_from_thread(
+            timeline.apply_history_data, sessions, presence_history, agent_histories
+        )
 
     def _save_prefs(self) -> None:
         """Save current TUI preferences to disk."""
@@ -455,36 +523,71 @@ class SupervisorTUI(
         self.update_session_widgets()
 
     def refresh_sessions(self) -> None:
-        """Refresh session list (checks for new/removed sessions)
+        """Refresh session list (kicks off background worker).
 
         Uses launcher.list_sessions() to detect terminated sessions
         (tmux windows that no longer exist, e.g., after machine reboot).
         """
-        # Remember the currently focused session before refreshing/sorting
-        focused = self.focused
-        focused_session_id = focused.session.id if isinstance(focused, SessionSummary) else None
+        # Use focused_session_index (not self.focused) to capture the selected
+        # session ID — self.focused can be a non-session widget (e.g. command bar)
+        focused_widget = self._get_focused_widget()
+        focused_session_id = focused_widget.session.id if focused_widget else None
+        self._fetch_sessions_async(focused_session_id)
 
-        self._invalidate_sessions_cache()  # Force cache refresh
-        self.sessions = self.launcher.list_sessions()
+    @work(thread=True, exclusive=True, group="refresh_sessions")
+    def _fetch_sessions_async(self, focused_session_id: str | None) -> None:
+        """Read session list off the main thread, then apply to UI."""
+        sessions = self.launcher.list_sessions()
+        self.call_from_thread(
+            self._apply_sessions, sessions, focused_session_id
+        )
+
+    def _apply_sessions(self, sessions: list, focused_session_id: str | None) -> None:
+        """Apply refreshed session list on main thread (no I/O)."""
+        self._invalidate_sessions_cache()
+        self.sessions = sessions
         # Apply sorting (#61)
         self._sort_sessions()
-        # Calculate max repo:branch width for alignment in full detail mode
-        self.max_repo_info_width = max(
-            (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in self.sessions),
-            default=18
-        )
-        self.max_repo_info_width = max(self.max_repo_info_width, 10)  # Minimum 10 chars
+        # Calculate max repo/branch widths for alignment in full detail mode
+        self._recalc_repo_widths(self.sessions)
         self.update_session_widgets()
 
-        # Update focused_session_index to follow the same session at its new position
+        # Update focused_session_index to follow the same session at its new position.
+        # Only restore Textual's focus if a SessionSummary currently has it — never
+        # steal focus from the command bar or other input widgets.
         if focused_session_id:
             widgets = self._get_widgets_in_session_order()
             for i, widget in enumerate(widgets):
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
+                    if isinstance(self.focused, SessionSummary):
+                        widget.focus()
                     break
-        # NOTE: Don't call update_timeline() here - it has its own 30s interval
-        # and reading log files during session refresh causes UI stutter
+
+        # On first load, kick off timeline + daemon status now that sessions exist.
+        # (These are async workers so no stutter — the old synchronous concern no longer applies.)
+        if not self._initial_sessions_loaded:
+            self._initial_sessions_loaded = True
+            self.update_timeline()
+            self.update_daemon_status()
+
+    def _recalc_repo_widths(self, sessions) -> None:
+        """Recalculate max repo/branch widths and name-match flag."""
+        sessions = list(sessions)
+        if sessions:
+            self.max_repo_width = max(
+                (len(s.repo_name or "n/a") for s in sessions), default=5
+            )
+            self.max_branch_width = max(
+                (len(s.branch or "n/a") for s in sessions), default=5
+            )
+            self.all_names_match_repos = all(
+                s.name == s.repo_name for s in sessions if s.repo_name
+            )
+        else:
+            self.max_repo_width = 10
+            self.max_branch_width = 10
+            self.all_names_match_repos = False
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -508,39 +611,30 @@ class SupervisorTUI(
         """Invalidate the sessions cache to force reload on next access."""
         self._sessions_cache_time = 0
 
+    def _get_focused_widget(self) -> "SessionSummary | None":
+        """Get the selected session widget using focused_session_index.
+
+        Uses the app's own selection state rather than Textual's self.focused,
+        which can diverge during DOM reordering or when non-session widgets
+        (e.g. command bar) have focus.
+        """
+        widgets = self._get_widgets_in_session_order()
+        if 0 <= self.focused_session_index < len(widgets):
+            return widgets[self.focused_session_index]
+        return None
+
     def update_focused_status(self) -> None:
-        """Update only the focused session's status (fast path, 250ms).
+        """Update all session statuses every 250ms.
 
-        This provides responsive updates for the session being viewed
-        while reducing CPU overhead for background sessions.
+        All data fetching (tmux capture_pane, claude stats, git diff) happens
+        in a background thread with ThreadPoolExecutor parallelism, so updating
+        all widgets is no more expensive than updating one.
         """
         # Skip if an update is already in progress
         if self._status_update_in_progress:
             return
 
-        # Only update the focused widget
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
-            return
-
-        self._status_update_in_progress = True
-        self._fetch_statuses_async([focused])
-
-    def update_background_statuses(self) -> None:
-        """Update non-focused sessions' statuses (slow path, 1s).
-
-        Updates all sessions except the focused one, which gets
-        faster updates via update_focused_status.
-        """
-        # Skip if an update is already in progress
-        if self._status_update_in_progress:
-            return
-
-        # Gather all widgets except the focused one
-        focused = self.focused
-        focused_id = focused.session.id if isinstance(focused, SessionSummary) else None
-
-        widgets = [w for w in self.query(SessionSummary) if w.session.id != focused_id]
+        widgets = list(self.query(SessionSummary))
         if not widgets:
             return
 
@@ -548,35 +642,26 @@ class SupervisorTUI(
         self._fetch_statuses_async(widgets)
 
     def update_all_statuses(self) -> None:
-        """Trigger async status update for all session widgets.
+        """Trigger full async refresh of all session widgets.
 
-        This is NON-BLOCKING - it kicks off a background worker that fetches
-        all statuses in parallel, then updates widgets when done.
-
-        Note: Primarily used for manual refresh ('r' key) and initial load.
-        Regular updates use tiered update_focused_status/update_background_statuses.
+        Kicks off both the fast path (detect_status) and slow path (stats/git).
+        Primarily used for manual refresh ('r' key) and initial load.
         """
-        # Skip if an update is already in progress
-        if self._status_update_in_progress:
-            return
-        self._status_update_in_progress = True
+        # Fast path
+        if not self._status_update_in_progress:
+            widgets = list(self.query(SessionSummary))
+            if widgets:
+                self._status_update_in_progress = True
+                self._fetch_statuses_async(widgets)
+        # Slow path
+        self._update_stats_async()
 
-        # Gather widget info needed for the background fetch
-        widgets = list(self.query(SessionSummary))
-        if not widgets:
-            self._status_update_in_progress = False
-            return
-
-        # Kick off async status fetch
-        self._fetch_statuses_async(widgets)
-
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="fast_status")
     def _fetch_statuses_async(self, widgets: list) -> None:
-        """Fetch all statuses in background thread, then update UI.
+        """Fast path: fetch detect_status (capture_pane) only, every 250ms.
 
-        Uses ThreadPoolExecutor to parallelize tmux calls within the worker.
-        The @work decorator runs this in a background thread so it doesn't
-        block the main event loop.
+        This is the critical path for responsive preview pane updates.
+        Heavy operations (claude stats, git diff) run on a separate 5s timer.
         """
         try:
             # Load fresh session data (this does file I/O but we're in a thread)
@@ -588,42 +673,27 @@ class SupervisorTUI(
                 session = fresh_sessions.get(widget.session.id, widget.session)
                 sessions_to_check.append((widget.session.id, session))
 
-            # Fetch all statuses AND claude stats AND git diff stats in parallel
-            def fetch_all(session):
-                """Fetch status, stats, and git diff for a session (runs in thread pool)."""
+            # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
+            def fetch_status(session):
                 try:
-                    # For terminated sessions, return status directly without checking tmux
                     if session.status == "terminated":
-                        status_result = ("terminated", "(tmux window no longer exists)", "")
-                    else:
-                        # Dispatch to hook or polling detector per-session (#5)
-                        detector = self.hook_detector if session.hook_status_detection else self.status_detector
-                        status_result = detector.detect_status(session)
-                    # Also fetch claude stats here (heavy file I/O)
-                    claude_stats = get_session_stats(session)
-                    # Fetch git diff stats
-                    git_diff = None
-                    if session.start_directory:
-                        git_diff = get_git_diff_stats(session.start_directory)
-                    return (status_result, claude_stats, git_diff)
+                        return ("terminated", "(tmux window no longer exists)", "")
+                    # Dispatch to hook or polling detector per-session (#5)
+                    detector = self.hook_detector if session.hook_status_detection else self.status_detector
+                    return detector.detect_status(session)
                 except Exception:
-                    return ((STATUS_WAITING_USER, "Error", ""), None, None)
+                    return (STATUS_WAITING_USER, "Error", "")
 
             sessions = [s for _, s in sessions_to_check]
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
-                results = list(executor.map(fetch_all, sessions))
+                results = list(executor.map(fetch_status, sessions))
 
             # Package results with session IDs
             status_results = {}
-            stats_results = {}
-            git_diff_results = {}
-            for (session_id, _), (status_result, claude_stats, git_diff) in zip(sessions_to_check, results):
+            for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
-                stats_results[session_id] = claude_stats
-                git_diff_results[session_id] = git_diff
 
             # Enrich status with heartbeat info from daemon state (#171)
-            # StatusDetector only returns "running" - use daemon state to distinguish heartbeat
             daemon_state = get_monitor_daemon_state(self.tmux_session)
             if daemon_state and daemon_state.sessions:
                 heartbeat_sessions = {
@@ -636,7 +706,6 @@ class SupervisorTUI(
                         if status == STATUS_RUNNING:
                             status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
 
-                # Enrich with waiting_heartbeat from daemon state
                 waiting_heartbeat_sessions = {
                     s.session_id for s in daemon_state.sessions
                     if s.waiting_for_heartbeat
@@ -656,27 +725,65 @@ class SupervisorTUI(
                 )
 
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, stats_results, git_diff_results, fresh_sessions, ai_summaries)
+            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries)
         finally:
             self._status_update_in_progress = False
 
-    def _apply_status_results(self, status_results: dict, stats_results: dict, git_diff_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
-        """Apply fetched status results to widgets (runs on main thread).
+    @work(thread=True, exclusive=True, group="slow_stats")
+    def _update_stats_async(self) -> None:
+        """Slow path: fetch claude stats + git diff every 5s.
 
-        All data has been pre-fetched in background - this just updates widget state.
-        No file I/O happens here.
+        These involve heavy file I/O (parsing JSONL session files, running
+        git diff subprocess) and don't need 250ms updates. Runs independently
+        from the fast status path so it never blocks preview pane updates.
         """
+        if self._stats_update_in_progress:
+            return
+        self._stats_update_in_progress = True
+        try:
+            widgets = list(self.query(SessionSummary))
+            if not widgets:
+                return
+
+            fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
+
+            sessions_to_check = []
+            for widget in widgets:
+                session = fresh_sessions.get(widget.session.id, widget.session)
+                sessions_to_check.append((widget.session.id, session))
+
+            def fetch_stats(session):
+                try:
+                    claude_stats = get_session_stats(session)
+                    git_diff = None
+                    if session.start_directory:
+                        git_diff = get_git_diff_stats(session.start_directory)
+                    return (claude_stats, git_diff)
+                except Exception:
+                    return (None, None)
+
+            sessions = [s for _, s in sessions_to_check]
+            with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
+                results = list(executor.map(fetch_stats, sessions))
+
+            stats_results = {}
+            git_diff_results = {}
+            for (session_id, _), (claude_stats, git_diff) in zip(sessions_to_check, results):
+                stats_results[session_id] = claude_stats
+                git_diff_results[session_id] = git_diff
+
+            self.call_from_thread(self._apply_stats_results, stats_results, git_diff_results)
+        finally:
+            self._stats_update_in_progress = False
+
+    def _apply_status_results(self, status_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
+        """Apply fast-path status results to widgets (runs on main thread)."""
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
-        # Recalculate max_repo_info_width from fresh session data (#143)
-        # This ensures alignment is correct when agents change branches
+        # Recalculate repo/branch widths from fresh session data (#143)
         if fresh_sessions:
-            self.max_repo_info_width = max(
-                (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in fresh_sessions.values()),
-                default=18
-            )
-            self.max_repo_info_width = max(self.max_repo_info_width, 10)
+            self._recalc_repo_widths(fresh_sessions.values())
 
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
@@ -685,27 +792,22 @@ class SupervisorTUI(
             if session_id in fresh_sessions:
                 widget.session = fresh_sessions[session_id]
 
-            # Update AI summaries from daemon state (if available)
+            # Update AI summaries (if available)
             if session_id in ai_summaries:
                 widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
 
-            # Apply status and stats if we have results for this widget
+            # Apply status if we have results for this widget
             if session_id in status_results:
                 status, activity, content = status_results[session_id]
-                claude_stats = stats_results.get(session_id)
-                git_diff = git_diff_results.get(session_id)
 
                 # Detect transitions TO stalled state (waiting_user)
                 prev_status = self._previous_statuses.get(session_id)
                 if status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER:
-                    # Agent just became stalled - mark as unvisited
                     self._prefs.visited_stalled_agents.discard(session_id)
                     prefs_changed = True
 
-                # Update previous status for next round
                 self._previous_statuses[session_id] = status
 
-                # Update widget's unvisited state (never show bell on asleep sessions #120)
                 is_unvisited_stalled = (
                     status == STATUS_WAITING_USER and
                     session_id not in self._prefs.visited_stalled_agents and
@@ -713,12 +815,25 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
-                widget.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
-                widget.refresh()  # Refresh each widget to repaint
+                # Pass None for claude_stats/git_diff — those come from the slow path
+                widget.apply_status_no_refresh(status, activity, content, None, None)
+                widget.refresh()
 
-        # Save preferences if we marked any agents as unvisited
         if prefs_changed:
             self._save_prefs()
+
+    def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
+        """Apply slow-path stats results to widgets (runs on main thread)."""
+        for widget in self.query(SessionSummary):
+            session_id = widget.session.id
+            claude_stats = stats_results.get(session_id)
+            git_diff = git_diff_results.get(session_id)
+            if claude_stats is not None:
+                widget.claude_stats = claude_stats
+            if git_diff is not None:
+                widget.git_diff_stats = git_diff
+            if claude_stats is not None or git_diff is not None:
+                widget.refresh()
 
         # Update preview pane if in list_preview mode
         if self.view_mode == "list_preview":
@@ -939,6 +1054,14 @@ class SupervisorTUI(
             if session.id in widgets:
                 ordered_widgets.append(widgets[session.id])
 
+        # Skip if order already matches — avoids unnecessary DOM moves
+        # which cause Textual relayout/repaint glitches every 10s
+        current_order = [
+            w for w in container.children if isinstance(w, SessionSummary)
+        ]
+        if current_order == ordered_widgets:
+            return
+
         # Reorder by moving each widget to the correct position
         for i, widget in enumerate(ordered_widgets):
             if i == 0:
@@ -1014,17 +1137,18 @@ class SupervisorTUI(
             pass
 
     def _update_preview(self) -> None:
-        """Update preview pane with focused session's content.
+        """Update preview pane with the selected session's content.
 
-        Uses self.focused directly to ensure the preview always shows the
-        actually-focused widget, regardless of any index tracking issues
-        that might occur during sorting or session refresh.
+        Uses focused_session_index (the app's own selection state) rather
+        than self.focused (Textual's internal focus) because DOM reordering
+        in _reorder_session_widgets() and async focus changes can cause
+        self.focused to diverge from the visually highlighted row.
         """
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
-                preview.update_from_widget(focused)
+            widgets = self._get_widgets_in_session_order()
+            if 0 <= self.focused_session_index < len(widgets):
+                preview.update_from_widget(widgets[self.focused_session_index])
         except NoMatches:
             pass
 

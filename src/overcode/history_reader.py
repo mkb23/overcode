@@ -468,16 +468,19 @@ def get_session_stats(
         if entry.session_id:
             all_session_ids.add(entry.session_id)
 
-    # Get owned sessionIds for context calculation (#119)
-    # Only use explicitly tracked sessionIds to avoid showing wrong agent's context
+    # Get owned sessionIds for token counting (#119)
     owned_session_ids = getattr(session, 'claude_session_ids', None) or []
+
+    # Get active session ID for context calculation (#116)
+    # After /clear, only the active session's context is relevant
+    active_session_id = getattr(session, 'active_claude_session_id', None)
 
     # Sum token usage and work times across all session files
     total_input = 0
     total_output = 0
     total_cache_creation = 0
     total_cache_read = 0
-    current_context = 0  # Track most recent context size (only from owned sessions)
+    current_context = 0  # Track context size from active session only (#116)
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     background_task_count = 0  # Count background task files (#177)
@@ -492,8 +495,11 @@ def get_session_stats(
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
 
-        # Only track context from OWNED sessionIds to avoid cross-contamination (#119)
-        if sid in owned_session_ids:
+        # Context: use only the active session (#116), fall back to MAX of owned (#119)
+        if active_session_id:
+            if sid == active_session_id:
+                current_context = usage["current_context_tokens"]
+        elif sid in owned_session_ids:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
 
