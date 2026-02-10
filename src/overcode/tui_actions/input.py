@@ -159,7 +159,7 @@ class InputActionsMixin:
         )
 
         # Check if this option is a free-text instruction option before sending
-        pane_content = self.status_detector.get_pane_content(focused.session.tmux_window) or ""
+        pane_content = self.detector.get_pane_content(focused.session.tmux_window) or ""
         is_freetext = self._is_freetext_option(pane_content, key)
 
         # Send the key followed by Enter (to select the numbered option)

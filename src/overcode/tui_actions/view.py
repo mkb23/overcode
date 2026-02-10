@@ -400,7 +400,7 @@ class ViewActionsMixin:
             return
 
         # Do a fresh deep capture (500 lines) for scrollback review
-        raw = self.status_detector.tmux.capture_pane(
+        raw = self.detector.polling.tmux.capture_pane(
             self.tmux_session, session.tmux_window, lines=500
         )
         if raw is None:

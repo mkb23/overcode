@@ -1,17 +1,18 @@
 """
 Factory for creating status detector instances.
 
-Selects between PollingStatusDetector (default) and HookStatusDetector
-based on a strategy string. The caller decides which strategy to use
-based on session.hook_status_detection (#5).
+Provides both a single-strategy factory (create_status_detector) and a
+dispatcher (StatusDetectorDispatcher) that holds both detector types and
+auto-dispatches per-session based on session.hook_status_detection (#5).
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Tuple, TYPE_CHECKING
 
 from .protocols import StatusDetectorProtocol
 
 if TYPE_CHECKING:
     from .protocols import TmuxInterface
+    from .session_manager import Session
     from .status_patterns import StatusPatterns
 
 
@@ -38,3 +39,35 @@ def create_status_detector(
 
     from .status_detector import PollingStatusDetector
     return PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+
+
+class StatusDetectorDispatcher:
+    """Holds both detector types and dispatches per-session.
+
+    Implements StatusDetectorProtocol so it can be used anywhere a single
+    detector is expected. The detect_status() method checks
+    session.hook_status_detection to pick the right strategy.
+    """
+
+    def __init__(
+        self,
+        tmux_session: str,
+        tmux: Optional["TmuxInterface"] = None,
+        patterns: Optional["StatusPatterns"] = None,
+        polling_detector: Optional[StatusDetectorProtocol] = None,
+        hook_detector: Optional[StatusDetectorProtocol] = None,
+    ):
+        self.tmux_session = tmux_session
+        from .status_detector import PollingStatusDetector
+        from .hook_status_detector import HookStatusDetector
+        self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+        self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+
+    def detect_status(self, session: "Session") -> Tuple[str, str, str]:
+        """Detect status using the appropriate detector for the session."""
+        detector = self.hooks if session.hook_status_detection else self.polling
+        return detector.detect_status(session)
+
+    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+        """Get pane content (delegates to polling detector)."""
+        return self.polling.get_pane_content(window, num_lines)

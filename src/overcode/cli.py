@@ -149,11 +149,8 @@ def list_agents(session: SessionOption = "agents"):
         rprint("[dim]No running agents[/dim]")
         return
 
-    # Create both detectors for per-session dispatch (#5)
-    from .status_detector import PollingStatusDetector
-    from .hook_status_detector import HookStatusDetector
-    polling_detector = PollingStatusDetector(session)
-    hook_detector = HookStatusDetector(session)
+    from .status_detector_factory import StatusDetectorDispatcher
+    detector = StatusDetectorDispatcher(session)
     terminated_count = 0
 
     for sess in sessions:
@@ -163,7 +160,6 @@ def list_agents(session: SessionOption = "agents"):
             activity = "(tmux window no longer exists)"
             terminated_count += 1
         else:
-            detector = hook_detector if sess.hook_status_detection else polling_detector
             status, activity, _ = detector.detect_status(sess)
 
         symbol, _ = get_status_symbol(status)

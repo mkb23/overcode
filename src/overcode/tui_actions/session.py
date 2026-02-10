@@ -126,12 +126,10 @@ class SessionActionsMixin:
         # Update the local session object
         session.hook_status_detection = new_state
 
-        # Swap the detector on the widget
+        # Dispatcher auto-selects based on session.hook_status_detection
         if new_state:
-            focused.status_detector = self.hook_detector
             self.notify(f"Hook detection enabled for '{session.name}'", severity="information")
         else:
-            focused.status_detector = self.status_detector
             self.notify(f"Hook detection disabled for '{session.name}' (using polling)", severity="information")
 
         # Force a refresh
