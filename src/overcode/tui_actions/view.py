@@ -375,7 +375,7 @@ class ViewActionsMixin:
             pass
 
         self.notify(
-            "Showing $ cost" if self.show_cost else "Showing tokens",
+            "Showing cost/budget" if self.show_cost else "Showing token counts",
             severity="information"
         )
 

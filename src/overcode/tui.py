@@ -922,6 +922,8 @@ class SupervisorTUI(
                         widget.add_class("terminated")
                     else:
                         widget.remove_class("terminated")
+                    # Refresh so column widths (branch, repo) stay aligned (#218)
+                    widget.refresh()
             # Still reorder widgets to handle sort mode changes
             self._reorder_session_widgets(container)
             return
