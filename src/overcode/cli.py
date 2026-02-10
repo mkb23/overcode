@@ -292,6 +292,40 @@ def set_budget(
 
 
 @app.command()
+def annotate(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    text: Annotated[
+        Optional[List[str]], typer.Argument(help="Annotation text (omit to clear)")
+    ] = None,
+    session: SessionOption = "agents",
+):
+    """Set or clear a human annotation on an agent (#223).
+
+    Allows programmatic annotation of agents so scripts and other tools
+    can communicate status to the overcode TUI.
+
+    Examples:
+        overcode annotate my-agent "Working on auth module"
+        overcode annotate my-agent Building the API layer
+        overcode annotate my-agent                           # Clear annotation
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    annotation = " ".join(text) if text else ""
+    manager.set_human_annotation(agent.id, annotation)
+    if annotation:
+        rprint(f"[green]✓ Annotation set for {name}:[/green] {annotation}")
+    else:
+        rprint(f"[green]✓ Annotation cleared for {name}[/green]")
+
+
+@app.command()
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],
     text: Annotated[
