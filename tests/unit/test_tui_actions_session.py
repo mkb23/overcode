@@ -240,8 +240,18 @@ class TestToggleTimeContext:
 class TestKillFocused:
     """Test action_kill_focused method."""
 
+    def _make_mock_tui(self, focused_widget):
+        """Create a mock TUI with _confirm_double_press bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.focused = focused_widget
+        mock_tui._pending_confirmations = {}
+        mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        return mock_tui
+
     def test_first_press_sets_pending(self):
-        """First press should set _pending_kill and show confirmation."""
+        """First press should set pending confirmation and show warning."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
@@ -252,15 +262,12 @@ class TestKillFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_kill = None
+        mock_tui = self._make_mock_tui(mock_widget)
 
         SessionActionsMixin.action_kill_focused(mock_tui)
 
-        # Should set _pending_kill with session name and timestamp
-        assert mock_tui._pending_kill is not None
-        assert mock_tui._pending_kill[0] == "test-agent"
+        assert "kill" in mock_tui._pending_confirmations
+        assert mock_tui._pending_confirmations["kill"][0] == "test-agent"
         mock_tui.notify.assert_called_once()
         assert "Press x again" in mock_tui.notify.call_args[0][0]
 
@@ -277,17 +284,15 @@ class TestKillFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_kill = ("test-agent", time.time())  # Just set
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["kill"] = ("test-agent", time.time())
 
         SessionActionsMixin.action_kill_focused(mock_tui)
 
-        # Should execute the kill
         mock_tui._execute_kill.assert_called_once_with(
             mock_widget, "test-agent", "session-123"
         )
-        assert mock_tui._pending_kill is None
+        assert "kill" not in mock_tui._pending_confirmations
 
     def test_second_press_after_timeout_resets(self):
         """Second press after 3s should start a new confirmation."""
@@ -302,16 +307,14 @@ class TestKillFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_kill = ("test-agent", time.time() - 5.0)  # Expired
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["kill"] = ("test-agent", time.time() - 5.0)
 
         SessionActionsMixin.action_kill_focused(mock_tui)
 
-        # Should NOT execute kill; should start new confirmation
         mock_tui._execute_kill.assert_not_called()
-        assert mock_tui._pending_kill is not None
-        assert mock_tui._pending_kill[0] == "test-agent"
+        assert "kill" in mock_tui._pending_confirmations
+        assert mock_tui._pending_confirmations["kill"][0] == "test-agent"
         mock_tui.notify.assert_called_once()
         assert "Press x again" in mock_tui.notify.call_args[0][0]
 
@@ -328,15 +331,13 @@ class TestKillFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_kill = ("test-agent", time.time())  # Different session
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["kill"] = ("test-agent", time.time())
 
         SessionActionsMixin.action_kill_focused(mock_tui)
 
-        # Should NOT execute kill; should set new pending for "other-agent"
         mock_tui._execute_kill.assert_not_called()
-        assert mock_tui._pending_kill[0] == "other-agent"
+        assert mock_tui._pending_confirmations["kill"][0] == "other-agent"
 
     def test_no_agent_focused(self):
         """Should warn when no agent is focused."""
@@ -354,8 +355,18 @@ class TestKillFocused:
 class TestRestartFocused:
     """Test action_restart_focused method."""
 
+    def _make_mock_tui(self, focused_widget):
+        """Create a mock TUI with _confirm_double_press bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.focused = focused_widget
+        mock_tui._pending_confirmations = {}
+        mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        return mock_tui
+
     def test_first_press_sets_pending(self):
-        """First press should set _pending_restart and show confirmation."""
+        """First press should set pending confirmation and show warning."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
@@ -365,14 +376,12 @@ class TestRestartFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_restart = None
+        mock_tui = self._make_mock_tui(mock_widget)
 
         SessionActionsMixin.action_restart_focused(mock_tui)
 
-        assert mock_tui._pending_restart is not None
-        assert mock_tui._pending_restart[0] == "test-agent"
+        assert "restart" in mock_tui._pending_confirmations
+        assert mock_tui._pending_confirmations["restart"][0] == "test-agent"
         assert "Press R again" in mock_tui.notify.call_args[0][0]
 
     def test_second_press_within_window_executes_restart(self):
@@ -387,14 +396,13 @@ class TestRestartFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_restart = ("test-agent", time.time())
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["restart"] = ("test-agent", time.time())
 
         SessionActionsMixin.action_restart_focused(mock_tui)
 
         mock_tui._execute_restart.assert_called_once_with(mock_widget)
-        assert mock_tui._pending_restart is None
+        assert "restart" not in mock_tui._pending_confirmations
 
     def test_second_press_after_timeout_resets(self):
         """Second press after 3s should start a new confirmation."""
@@ -408,14 +416,13 @@ class TestRestartFocused:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_restart = ("test-agent", time.time() - 5.0)
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["restart"] = ("test-agent", time.time() - 5.0)
 
         SessionActionsMixin.action_restart_focused(mock_tui)
 
         mock_tui._execute_restart.assert_not_called()
-        assert mock_tui._pending_restart[0] == "test-agent"
+        assert mock_tui._pending_confirmations["restart"][0] == "test-agent"
 
     def test_no_agent_focused(self):
         """Should warn when no agent is focused."""
@@ -433,8 +440,18 @@ class TestRestartFocused:
 class TestSyncToMainAndClear:
     """Test action_sync_to_main_and_clear method."""
 
+    def _make_mock_tui(self, focused_widget):
+        """Create a mock TUI with _confirm_double_press bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.focused = focused_widget
+        mock_tui._pending_confirmations = {}
+        mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        return mock_tui
+
     def test_first_press_sets_pending(self):
-        """First press should set _pending_sync and show confirmation."""
+        """First press should set pending confirmation and show warning."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
@@ -444,14 +461,12 @@ class TestSyncToMainAndClear:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_sync = None
+        mock_tui = self._make_mock_tui(mock_widget)
 
         SessionActionsMixin.action_sync_to_main_and_clear(mock_tui)
 
-        assert mock_tui._pending_sync is not None
-        assert mock_tui._pending_sync[0] == "test-agent"
+        assert "sync" in mock_tui._pending_confirmations
+        assert mock_tui._pending_confirmations["sync"][0] == "test-agent"
         assert "Press c again" in mock_tui.notify.call_args[0][0]
 
     def test_second_press_within_window_executes_sync(self):
@@ -466,14 +481,13 @@ class TestSyncToMainAndClear:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_sync = ("test-agent", time.time())
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["sync"] = ("test-agent", time.time())
 
         SessionActionsMixin.action_sync_to_main_and_clear(mock_tui)
 
         mock_tui._execute_sync.assert_called_once_with(mock_widget)
-        assert mock_tui._pending_sync is None
+        assert "sync" not in mock_tui._pending_confirmations
 
     def test_second_press_after_timeout_resets(self):
         """Second press after 3s should start a new confirmation."""
@@ -487,14 +501,13 @@ class TestSyncToMainAndClear:
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
 
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._pending_sync = ("test-agent", time.time() - 5.0)
+        mock_tui = self._make_mock_tui(mock_widget)
+        mock_tui._pending_confirmations["sync"] = ("test-agent", time.time() - 5.0)
 
         SessionActionsMixin.action_sync_to_main_and_clear(mock_tui)
 
         mock_tui._execute_sync.assert_not_called()
-        assert mock_tui._pending_sync[0] == "test-agent"
+        assert mock_tui._pending_confirmations["sync"][0] == "test-agent"
 
     def test_no_agent_focused(self):
         """Should warn when no agent is focused."""
@@ -512,8 +525,18 @@ class TestSyncToMainAndClear:
 class TestTransportAll:
     """Test action_transport_all method."""
 
+    def _make_mock_tui(self, sessions):
+        """Create a mock TUI with _confirm_double_press bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.sessions = sessions
+        mock_tui._pending_confirmations = {}
+        mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        return mock_tui
+
     def test_first_press_sets_pending_with_active_sessions(self):
-        """First press with active sessions should set _pending_transport."""
+        """First press with active sessions should set pending confirmation."""
         from overcode.tui_actions.session import SessionActionsMixin
 
         session1 = MagicMock()
@@ -524,13 +547,11 @@ class TestTransportAll:
         session2.status = "waiting"
         session2.is_asleep = False
 
-        mock_tui = MagicMock()
-        mock_tui.sessions = [session1, session2]
-        mock_tui._pending_transport = None
+        mock_tui = self._make_mock_tui([session1, session2])
 
         SessionActionsMixin.action_transport_all(mock_tui)
 
-        assert mock_tui._pending_transport is not None
+        assert "transport" in mock_tui._pending_confirmations
         assert "Press H again" in mock_tui.notify.call_args[0][0]
         assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
 
@@ -550,9 +571,7 @@ class TestTransportAll:
         sleeping.status = "running"
         sleeping.is_asleep = True
 
-        mock_tui = MagicMock()
-        mock_tui.sessions = [active, terminated, sleeping]
-        mock_tui._pending_transport = None
+        mock_tui = self._make_mock_tui([active, terminated, sleeping])
 
         SessionActionsMixin.action_transport_all(mock_tui)
 
@@ -566,15 +585,13 @@ class TestTransportAll:
         terminated.status = "terminated"
         terminated.is_asleep = False
 
-        mock_tui = MagicMock()
-        mock_tui.sessions = [terminated]
-        mock_tui._pending_transport = None
+        mock_tui = self._make_mock_tui([terminated])
 
         SessionActionsMixin.action_transport_all(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "No active sessions" in mock_tui.notify.call_args[0][0]
-        assert mock_tui._pending_transport is None
+        assert "transport" not in mock_tui._pending_confirmations
 
     def test_second_press_within_window_executes(self):
         """Second press within 3s should call _execute_transport_all."""
@@ -585,14 +602,13 @@ class TestTransportAll:
         session1.status = "running"
         session1.is_asleep = False
 
-        mock_tui = MagicMock()
-        mock_tui.sessions = [session1]
-        mock_tui._pending_transport = time.time()
+        mock_tui = self._make_mock_tui([session1])
+        mock_tui._pending_confirmations["transport"] = (None, time.time())
 
         SessionActionsMixin.action_transport_all(mock_tui)
 
         mock_tui._execute_transport_all.assert_called_once_with([session1])
-        assert mock_tui._pending_transport is None
+        assert "transport" not in mock_tui._pending_confirmations
 
     def test_second_press_after_timeout_resets(self):
         """Second press after 3s should start a new confirmation."""
@@ -603,14 +619,13 @@ class TestTransportAll:
         session1.status = "running"
         session1.is_asleep = False
 
-        mock_tui = MagicMock()
-        mock_tui.sessions = [session1]
-        mock_tui._pending_transport = time.time() - 5.0
+        mock_tui = self._make_mock_tui([session1])
+        mock_tui._pending_confirmations["transport"] = (None, time.time() - 5.0)
 
         SessionActionsMixin.action_transport_all(mock_tui)
 
         mock_tui._execute_transport_all.assert_not_called()
-        assert mock_tui._pending_transport is not None
+        assert "transport" in mock_tui._pending_confirmations
 
 
 class TestNewAgent:
@@ -650,6 +665,18 @@ class TestNewAgent:
 class TestFocusCommandBar:
     """Test action_focus_command_bar method."""
 
+    def _make_mock_tui(self, cmd_bar, focused_widget=None, sessions=None):
+        """Create a mock TUI with _open_command_bar bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.query_one.return_value = cmd_bar
+        mock_tui._get_focused_widget.return_value = focused_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
+        if sessions is not None:
+            mock_tui.sessions = sessions
+        return mock_tui
+
     def test_opens_and_focuses_command_bar(self):
         """Should show and focus the command bar."""
         from overcode.tui_actions.session import SessionActionsMixin
@@ -664,9 +691,7 @@ class TestFocusCommandBar:
         mock_cmd_bar = MagicMock()
         mock_cmd_bar.query_one.return_value = mock_input
 
-        mock_tui = MagicMock()
-        mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui = self._make_mock_tui(mock_cmd_bar, focused_widget=mock_widget)
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
@@ -686,10 +711,7 @@ class TestFocusCommandBar:
         mock_cmd_bar.target_session = None
         mock_cmd_bar.query_one.return_value = mock_input
 
-        mock_tui = MagicMock()
-        mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui._get_focused_widget.return_value = None
-        mock_tui.sessions = [mock_session]
+        mock_tui = self._make_mock_tui(mock_cmd_bar, sessions=[mock_session])
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
@@ -702,6 +724,7 @@ class TestFocusCommandBar:
 
         mock_tui = MagicMock()
         mock_tui.query_one.side_effect = NoMatches()
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         # Should not raise
         SessionActionsMixin.action_focus_command_bar(mock_tui)
@@ -728,6 +751,7 @@ class TestFocusStandingOrders:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_focus_standing_orders(mock_tui)
 
@@ -758,6 +782,7 @@ class TestFocusHumanAnnotation:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_focus_human_annotation(mock_tui)
 
@@ -787,6 +812,7 @@ class TestEditAgentValue:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
@@ -810,6 +836,7 @@ class TestEditAgentValue:
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = None
         mock_tui.sessions = [mock_session]
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
@@ -839,6 +866,7 @@ class TestConfigureHeartbeat:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
@@ -864,6 +892,7 @@ class TestConfigureHeartbeat:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
@@ -876,6 +905,7 @@ class TestConfigureHeartbeat:
 
         mock_tui = MagicMock()
         mock_tui.query_one.side_effect = NoMatches()
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         # Should not raise
         SessionActionsMixin.action_configure_heartbeat(mock_tui)

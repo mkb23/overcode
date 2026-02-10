@@ -28,8 +28,7 @@ from rich.panel import Panel
 from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
-from .status_detector import StatusDetector, PollingStatusDetector
-from .hook_status_detector import HookStatusDetector
+from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
@@ -243,8 +242,7 @@ class SupervisorTUI(
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
-        self.status_detector = PollingStatusDetector(tmux_session)
-        self.hook_detector = HookStatusDetector(tmux_session)
+        self.detector = StatusDetectorDispatcher(tmux_session)
         # Track expanded state per session ID to preserve across refreshes
         self.expanded_states: dict[str, bool] = {}
         # Max repo/branch widths for alignment in full detail mode
@@ -287,14 +285,8 @@ class SupervisorTUI(
         # Track attention jump state (for 'b' key cycling)
         self._attention_jump_index = 0
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
-        # Pending kill confirmation (session name, timestamp)
-        self._pending_kill: tuple[str, float] | None = None
-        # Pending restart confirmation (session name, timestamp) (#133)
-        self._pending_restart: tuple[str, float] | None = None
-        # Pending sync-to-main confirmation (session name, timestamp) (#156)
-        self._pending_sync: tuple[str, float] | None = None
-        # Pending transport/handover confirmation (timestamp)
-        self._pending_transport: float | None = None
+        # Pending double-press confirmations: action_key -> (session_name | None, timestamp)
+        self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences
@@ -692,9 +684,7 @@ class SupervisorTUI(
                 try:
                     if session.status == "terminated":
                         return ("terminated", "(tmux window no longer exists)", "")
-                    # Dispatch to hook or polling detector per-session (#5)
-                    detector = self.hook_detector if session.hook_status_detection else self.status_detector
-                    return detector.detect_status(session)
+                    return self.detector.detect_status(session)
                 except Exception:
                     return (STATUS_WAITING_USER, "Error", "")
 
@@ -979,9 +969,7 @@ class SupervisorTUI(
         # Add widgets for new sessions
         for session in display_sessions:
             if session.id in sessions_added:
-                # Select detector per-session (#5)
-                detector = self.hook_detector if session.hook_status_detection else self.status_detector
-                widget = SessionSummary(session, detector)
+                widget = SessionSummary(session, self.detector)
                 # Restore expanded state if we have it saved
                 if session.id in self.expanded_states:
                     widget.expanded = self.expanded_states[session.id]

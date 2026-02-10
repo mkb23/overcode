@@ -19,6 +19,42 @@ if TYPE_CHECKING:
 class SessionActionsMixin:
     """Mixin providing session/agent actions for SupervisorTUI."""
 
+    def _confirm_double_press(
+        self,
+        action_key: str,
+        message: str,
+        callback,
+        session_name: str | None = None,
+        timeout: float = 3.0,
+    ) -> None:
+        """Generic double-press confirmation pattern.
+
+        First press shows a warning notification. Second press within timeout
+        executes the callback. If the session_name changes, the confirmation
+        resets.
+
+        Args:
+            action_key: Unique key for this action (e.g., "kill", "restart")
+            message: Warning message shown on first press (e.g., "Press x again to kill 'agent'")
+            callback: Callable to execute on confirmation
+            session_name: Session name to match (None for global actions)
+            timeout: Seconds before confirmation expires
+        """
+        now = time.time()
+        pending = self._pending_confirmations.get(action_key)
+
+        if pending is not None:
+            pending_name, pending_time = pending
+            if pending_name == session_name and (now - pending_time) < timeout:
+                del self._pending_confirmations[action_key]
+                callback()
+                return
+            # Different session or expired — reset
+            del self._pending_confirmations[action_key]
+
+        self._pending_confirmations[action_key] = (session_name, now)
+        self.notify(message, severity="warning", timeout=int(timeout))
+
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)."""
         from ..tui_widgets import SessionSummary
@@ -126,12 +162,10 @@ class SessionActionsMixin:
         # Update the local session object
         session.hook_status_detection = new_state
 
-        # Swap the detector on the widget
+        # Dispatcher auto-selects based on session.hook_status_detection
         if new_state:
-            focused.status_detector = self.hook_detector
             self.notify(f"Hook detection enabled for '{session.name}'", severity="information")
         else:
-            focused.status_detector = self.status_detector
             self.notify(f"Hook detection disabled for '{session.name}' (using polling)", severity="information")
 
         # Force a refresh
@@ -147,26 +181,11 @@ class SessionActionsMixin:
 
         session_name = focused.session.name
         session_id = focused.session.id
-        now = time.time()
-
-        # Check if this is a confirmation of a pending kill
-        if self._pending_kill:
-            pending_name, pending_time = self._pending_kill
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_kill = None  # Clear pending state
-                self._execute_kill(focused, session_name, session_id)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_kill = None
-
-        # First press - request confirmation
-        self._pending_kill = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "kill",
             f"Press x again to kill '{session_name}'",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_kill(focused, session_name, session_id),
+            session_name=session_name,
         )
 
     def action_restart_focused(self) -> None:
@@ -182,26 +201,11 @@ class SessionActionsMixin:
             return
 
         session_name = focused.session.name
-        now = time.time()
-
-        # Check if this is a confirmation of a pending restart
-        if self._pending_restart:
-            pending_name, pending_time = self._pending_restart
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_restart = None  # Clear pending state
-                self._execute_restart(focused)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_restart = None
-
-        # First press - request confirmation
-        self._pending_restart = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "restart",
             f"Press R again to restart '{session_name}'",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_restart(focused),
+            session_name=session_name,
         )
 
     def action_sync_to_main_and_clear(self) -> None:
@@ -219,26 +223,11 @@ class SessionActionsMixin:
             return
 
         session_name = focused.session.name
-        now = time.time()
-
-        # Check if this is a confirmation of a pending sync
-        if self._pending_sync:
-            pending_name, pending_time = self._pending_sync
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_sync = None  # Clear pending state
-                self._execute_sync(focused)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_sync = None
-
-        # First press - request confirmation
-        self._pending_sync = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "sync",
             f"Press c again to sync '{session_name}' to main",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_sync(focused),
+            session_name=session_name,
         )
 
     def _execute_sync(self, widget: "SessionSummary") -> None:
@@ -288,158 +277,21 @@ class SessionActionsMixin:
         except NoMatches:
             self.notify("Command bar not found", severity="error")
 
-    def action_focus_command_bar(self) -> None:
-        """Focus the command bar for input."""
-        from ..tui_widgets import CommandBar
+    def _open_command_bar(
+        self,
+        mode: str | None = None,
+        get_prefill=None,
+        fallback_prefill: str | None = None,
+    ) -> None:
+        """Open the command bar with optional mode and pre-fill.
 
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
+        Handles the common pattern of showing the bar, targeting the focused
+        session, pre-filling the input, and focusing it.
 
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            # (Textual's internal focus) which diverges during DOM reordering
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_focus_standing_orders(self) -> None:
-        """Focus the command bar for editing standing orders."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing standing orders
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = focused.session.standing_instructions or ""
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Set mode to standing_orders
-            cmd_bar.set_mode("standing_orders")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_focus_human_annotation(self) -> None:
-        """Focus input for editing human annotation (#74)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing annotation
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = focused.session.human_annotation or ""
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Set mode to annotation editing
-            cmd_bar.set_mode("annotation")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_edit_agent_value(self) -> None:
-        """Focus the command bar for editing agent value (#61)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing value
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = str(focused.session.agent_value)
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = "1000"
-
-            # Set mode to value
-            cmd_bar.set_mode("value")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_edit_cost_budget(self) -> None:
-        """Focus the command bar for editing cost budget (#173)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                current = focused.session.cost_budget_usd
-                cmd_input.value = str(current) if current > 0 else ""
-            elif not cmd_bar.target_session and self.sessions:
-                cmd_bar.set_target(self.sessions[0].name)
-
-            cmd_bar.set_mode("cost_budget")
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_configure_heartbeat(self) -> None:
-        """Open command bar for heartbeat configuration (H key) (#171).
-
-        Two-step flow:
-        1. Enter frequency (e.g., 300, 5m, 1h) or 'off' to disable
-        2. Enter instruction to send at each heartbeat
+        Args:
+            mode: Command bar mode to set (None keeps current mode)
+            get_prefill: Optional callable(session) -> str to pre-fill input
+            fallback_prefill: Pre-fill value when no agent is focused
         """
         from ..tui_widgets import CommandBar
 
@@ -448,24 +300,57 @@ class SessionActionsMixin:
             cmd_bar.add_class("visible")
 
             # Use _get_focused_widget (our own index) not self.focused
+            # (Textual's internal focus) which diverges during DOM reordering
             focused = self._get_focused_widget()
             if focused:
                 cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing frequency if enabled
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                if focused.session.heartbeat_enabled:
-                    cmd_input.value = str(focused.session.heartbeat_frequency_seconds)
-                else:
-                    cmd_input.value = "300"  # Default 5 min
+                if get_prefill:
+                    cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                    cmd_input.value = get_prefill(focused.session)
             elif not cmd_bar.target_session and self.sessions:
                 cmd_bar.set_target(self.sessions[0].name)
+                if fallback_prefill is not None:
+                    cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                    cmd_input.value = fallback_prefill
 
-            cmd_bar.set_mode("heartbeat_freq")
+            if mode:
+                cmd_bar.set_mode(mode)
+
             cmd_input = cmd_bar.query_one("#cmd-input", Input)
             cmd_input.disabled = False
             cmd_input.focus()
         except NoMatches:
             pass
+
+    def action_focus_command_bar(self) -> None:
+        """Focus the command bar for input."""
+        self._open_command_bar()
+
+    def action_focus_standing_orders(self) -> None:
+        """Focus the command bar for editing standing orders."""
+        self._open_command_bar("standing_orders", lambda s: s.standing_instructions or "")
+
+    def action_focus_human_annotation(self) -> None:
+        """Focus input for editing human annotation (#74)."""
+        self._open_command_bar("annotation", lambda s: s.human_annotation or "")
+
+    def action_edit_agent_value(self) -> None:
+        """Focus the command bar for editing agent value (#61)."""
+        self._open_command_bar("value", lambda s: str(s.agent_value), fallback_prefill="1000")
+
+    def action_edit_cost_budget(self) -> None:
+        """Focus the command bar for editing cost budget (#173)."""
+        self._open_command_bar(
+            "cost_budget",
+            lambda s: str(s.cost_budget_usd) if s.cost_budget_usd > 0 else "",
+        )
+
+    def action_configure_heartbeat(self) -> None:
+        """Open command bar for heartbeat configuration (#171)."""
+        self._open_command_bar(
+            "heartbeat_freq",
+            lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",
+        )
 
     def action_transport_all(self) -> None:
         """Prepare all sessions for transport/handover (requires double-press confirmation).
@@ -479,8 +364,6 @@ class SessionActionsMixin:
 
         Sleeping agents are excluded from handover.
         """
-        now = time.time()
-
         # Get active sessions (exclude terminated and sleeping)
         active_sessions = [
             s for s in self.sessions
@@ -490,23 +373,11 @@ class SessionActionsMixin:
             self.notify("No active sessions to prepare (sleeping sessions excluded)", severity="warning")
             return
 
-        # Check if this is a confirmation of a pending transport
-        if self._pending_transport is not None:
-            if (now - self._pending_transport) < 3.0:
-                self._pending_transport = None  # Clear pending state
-                self._execute_transport_all(active_sessions)
-                return
-            else:
-                # Expired - start new confirmation
-                self._pending_transport = None
-
-        # First press - request confirmation
-        self._pending_transport = now
         count = len(active_sessions)
-        self.notify(
+        self._confirm_double_press(
+            "transport",
             f"Press H again to send handover instructions to {count} agent(s)",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_transport_all(active_sessions),
         )
 
     def _execute_transport_all(self, sessions: List["Session"]) -> None:
