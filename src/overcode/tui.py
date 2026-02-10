@@ -1284,6 +1284,9 @@ class SupervisorTUI(
             heartbeat_instruction=message.instruction,
         )
 
+        # Wake daemon so status updates immediately (#212)
+        signal_activity(self.tmux_session)
+
         if message.enabled:
             freq_str = format_duration(message.frequency)
             self.notify(f"Heartbeat enabled: every {freq_str}", severity="information")
