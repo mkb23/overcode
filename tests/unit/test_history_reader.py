@@ -981,6 +981,115 @@ class TestGetSessionStatsOwnership:
         assert stats.input_tokens == 100 + 50000
 
 
+class TestActiveSessionContext:
+    """Test that context uses active_claude_session_id after /clear (#116)."""
+
+    def test_uses_active_session_not_max(self, tmp_path):
+        """After /clear, context should use active session, not MAX of all owned."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+
+        entries = [
+            {"display": "1", "timestamp": session_start_ms + 1000, "project": "/test/project", "sessionId": "old-session"},
+            {"display": "2", "timestamp": session_start_ms + 2000, "project": "/test/project", "sessionId": "new-session"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        # Old session (pre-clear) with high context
+        old_file = project_dir / "old-session.jsonl"
+        old_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {"usage": {"input_tokens": 5000, "output_tokens": 100, "cache_read_input_tokens": 130000}}
+        }
+        old_file.write_text(json.dumps(old_entry))
+
+        # New session (post-clear) with low context
+        new_file = project_dir / "new-session.jsonl"
+        new_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:05:00.000Z",
+            "message": {"usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 15000}}
+        }
+        new_file.write_text(json.dumps(new_entry))
+
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+        session.claude_session_ids = ["old-session", "new-session"]
+        session.active_claude_session_id = "new-session"
+
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Context should be from active session only: 100 + 15000 = 15100
+        # NOT max of old (135000) and new (15100)
+        assert stats.current_context_tokens == 15100
+        # Total tokens still include both sessions
+        assert stats.input_tokens == 5000 + 100
+
+    def test_falls_back_to_max_owned_when_no_active(self, tmp_path):
+        """Without active_claude_session_id, fall back to MAX of owned (old behavior)."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+
+        entries = [
+            {"display": "1", "timestamp": session_start_ms + 1000, "project": "/test/project", "sessionId": "session-a"},
+            {"display": "2", "timestamp": session_start_ms + 2000, "project": "/test/project", "sessionId": "session-b"},
+        ]
+        history_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        file_a = project_dir / "session-a.jsonl"
+        file_a.write_text(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {"usage": {"input_tokens": 500, "output_tokens": 50, "cache_read_input_tokens": 80000}}
+        }))
+
+        file_b = project_dir / "session-b.jsonl"
+        file_b.write_text(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:02:00.000Z",
+            "message": {"usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20000}}
+        }))
+
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+        session.claude_session_ids = ["session-a", "session-b"]
+        # No active_claude_session_id set
+
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Should fall back to MAX: 80500 > 20100
+        assert stats.current_context_tokens == 80500
+
+
 class TestHistoryEntryEdgeCases:
     """Test edge cases in HistoryEntry and history reading."""
 
