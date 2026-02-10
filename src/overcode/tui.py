@@ -243,8 +243,10 @@ class SupervisorTUI(
         self.status_detector = StatusDetector(tmux_session)
         # Track expanded state per session ID to preserve across refreshes
         self.expanded_states: dict[str, bool] = {}
-        # Max repo:branch width for alignment in full detail mode
-        self.max_repo_info_width: int = 18
+        # Max repo/branch widths for alignment in full detail mode
+        self.max_repo_width: int = 10
+        self.max_branch_width: int = 10
+        self.all_names_match_repos: bool = False
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -464,12 +466,8 @@ class SupervisorTUI(
         self.sessions = self.launcher.list_sessions()
         # Apply sorting (#61)
         self._sort_sessions()
-        # Calculate max repo:branch width for alignment in full detail mode
-        self.max_repo_info_width = max(
-            (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in self.sessions),
-            default=18
-        )
-        self.max_repo_info_width = max(self.max_repo_info_width, 10)  # Minimum 10 chars
+        # Calculate max repo/branch widths for alignment in full detail mode
+        self._recalc_repo_widths(self.sessions)
         self.update_session_widgets()
 
         # Update focused_session_index to follow the same session at its new position
@@ -481,6 +479,24 @@ class SupervisorTUI(
                     break
         # NOTE: Don't call update_timeline() here - it has its own 30s interval
         # and reading log files during session refresh causes UI stutter
+
+    def _recalc_repo_widths(self, sessions) -> None:
+        """Recalculate max repo/branch widths and name-match flag."""
+        sessions = list(sessions)
+        if sessions:
+            self.max_repo_width = max(
+                (len(s.repo_name or "n/a") for s in sessions), default=5
+            )
+            self.max_branch_width = max(
+                (len(s.branch or "n/a") for s in sessions), default=5
+            )
+            self.all_names_match_repos = all(
+                s.name == s.repo_name for s in sessions if s.repo_name
+            )
+        else:
+            self.max_repo_width = 10
+            self.max_branch_width = 10
+            self.all_names_match_repos = False
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -663,14 +679,10 @@ class SupervisorTUI(
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
-        # Recalculate max_repo_info_width from fresh session data (#143)
+        # Recalculate repo/branch widths from fresh session data (#143)
         # This ensures alignment is correct when agents change branches
         if fresh_sessions:
-            self.max_repo_info_width = max(
-                (len(f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}") for s in fresh_sessions.values()),
-                default=18
-            )
-            self.max_repo_info_width = max(self.max_repo_info_width, 10)
+            self._recalc_repo_widths(fresh_sessions.values())
 
         for widget in self.query(SessionSummary):
             session_id = widget.session.id

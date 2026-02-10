@@ -404,7 +404,8 @@ class TestShowCommandWithMocks:
                             output = result.output
                             assert "=== test-agent ===" in output
                             assert "running" in output
-                            assert "test-repo:main" in output
+                            assert "test-repo" in output
+                            assert "main" in output
                             assert "active" in output
                             assert "stalled" in output
                             assert "60.0K" in output  # total tokens

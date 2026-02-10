@@ -74,9 +74,13 @@ class ColumnContext:
     median_work: float
 
     # Pre-computed strings
-    repo_info: str
+    repo_name: str
+    branch: str
     display_name: str
     perm_emoji: str
+
+    # Repo column visibility
+    all_names_match_repos: bool  # True → hide repo column (redundant with agent name)
 
     # Live counts
     live_subagent_count: int
@@ -85,8 +89,9 @@ class ColumnContext:
     # Time-in-state
     status_changed_at: Optional[datetime]
 
-    # App-level settings (max_repo_info_width)
-    max_repo_info_width: int
+    # App-level alignment widths
+    max_repo_width: int
+    max_branch_width: int
 
     def mono(self, colored: str, simple: str = "bold") -> str:
         """Return simplified style when monochrome is enabled."""
@@ -153,9 +158,17 @@ def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
     return [(ctx.display_name, ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
 
 
-def render_repo_branch(ctx: ColumnContext) -> ColumnOutput:
-    w = ctx.max_repo_info_width
-    return [(f" {ctx.repo_info:<{w}} ", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+def render_repo_name(ctx: ColumnContext) -> ColumnOutput:
+    if ctx.all_names_match_repos:
+        return None
+    w = ctx.max_repo_width
+    return [(f" {ctx.repo_name:<{w}}", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+
+
+def render_branch(ctx: ColumnContext) -> ColumnOutput:
+    w = ctx.max_branch_width
+    sep = ":" if not ctx.all_names_match_repos else " "
+    return [(f"{sep}{ctx.branch:<{w}} ", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
 
 
 def render_uptime(ctx: ColumnContext) -> ColumnOutput:
@@ -423,8 +436,14 @@ def render_agents_plain(ctx: ColumnContext) -> Optional[str]:
     return f"🤿 {ctx.live_subagent_count} subagents  🐚 {ctx.background_bash_count} background bashes"
 
 
-def render_repo_plain(ctx: ColumnContext) -> Optional[str]:
-    return ctx.repo_info
+def render_repo_name_plain(ctx: ColumnContext) -> Optional[str]:
+    if ctx.all_names_match_repos:
+        return None
+    return ctx.repo_name
+
+
+def render_branch_plain(ctx: ColumnContext) -> Optional[str]:
+    return ctx.branch
 
 
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
@@ -484,9 +503,11 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
 
-    # Git group — repo:branch (full/custom only) and diff stats
-    SummaryColumn(id="repo_branch", group="git", detail_levels=FULL_PLUS, render=render_repo_branch,
-                  label="Repo", render_plain=render_repo_plain),
+    # Git group — repo, branch (full/custom only), diff stats
+    SummaryColumn(id="repo_name", group="git", detail_levels=FULL_PLUS, render=render_repo_name,
+                  label="Repo", render_plain=render_repo_name_plain),
+    SummaryColumn(id="branch", group="git", detail_levels=FULL_PLUS, render=render_branch,
+                  label="Branch", render_plain=render_branch_plain),
     SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
                   label="Git", render_plain=render_git_diff_plain),
 
@@ -560,8 +581,6 @@ def build_cli_context(
     else:
         perm_emoji = "👮"
 
-    repo_info = f"{session.repo_name or '-'}:{session.branch or '-'}"
-
     # Parse state_since for time-in-state
     status_changed_at = None
     if stats.state_since:
@@ -591,13 +610,16 @@ def build_cli_context(
         non_green_time=non_green_time,
         sleep_time=sleep_time,
         median_work=median_work,
-        repo_info=repo_info,
+        repo_name=session.repo_name or "-",
+        branch=session.branch or "-",
         display_name=session.name,
         perm_emoji=perm_emoji,
+        all_names_match_repos=False,
         live_subagent_count=live_sub_count,
         background_bash_count=bg_bash_count,
         status_changed_at=status_changed_at,
-        max_repo_info_width=18,
+        max_repo_width=10,
+        max_branch_width=10,
     )
 
 

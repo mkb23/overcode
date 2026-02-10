@@ -294,13 +294,16 @@ class SessionSummary(Static, can_focus=True):
             non_green_time=non_green_time,
             sleep_time=sleep_time,
             median_work=median_work,
-            repo_info=f"{s.repo_name or 'n/a'}:{s.branch or 'n/a'}",
+            repo_name=s.repo_name or "n/a",
+            branch=s.branch or "n/a",
             display_name=display_name,
             perm_emoji=perm_emoji,
+            all_names_match_repos=getattr(self.app, 'all_names_match_repos', False),
             live_subagent_count=self.live_subagent_count,
             background_bash_count=self.background_bash_count,
             status_changed_at=self._status_changed_at,
-            max_repo_info_width=getattr(self.app, 'max_repo_info_width', 18),
+            max_repo_width=getattr(self.app, 'max_repo_width', 10),
+            max_branch_width=getattr(self.app, 'max_branch_width', 10),
         )
 
     def _render_content_area(self, content: Text, ctx: ColumnContext, term_width: int) -> None:

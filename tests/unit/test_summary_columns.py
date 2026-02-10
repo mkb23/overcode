@@ -16,7 +16,8 @@ from overcode.summary_columns import (
     render_time_in_state,
     render_expand_icon,
     render_agent_name,
-    render_repo_branch,
+    render_repo_name,
+    render_branch,
     render_uptime,
     render_running_time,
     render_stalled_time,
@@ -41,7 +42,8 @@ from overcode.summary_columns import (
     render_git_diff_plain,
     render_work_plain,
     render_agents_plain,
-    render_repo_plain,
+    render_repo_name_plain,
+    render_branch_plain,
     render_mode_plain,
     render_heartbeat_plain,
     render_orders_plain,
@@ -136,13 +138,16 @@ def _make_ctx(**overrides) -> ColumnContext:
         non_green_time=1200.0,
         sleep_time=0.0,
         median_work=120.0,
-        repo_info="test-repo:main",
+        repo_name="test-repo",
+        branch="main",
         display_name="test-agent      ",
         perm_emoji="👮",
+        all_names_match_repos=False,
         live_subagent_count=0,
         background_bash_count=0,
         status_changed_at=None,
-        max_repo_info_width=18,
+        max_repo_width=10,
+        max_branch_width=10,
     )
     defaults.update(overrides)
     return ColumnContext(**defaults)
@@ -759,10 +764,20 @@ class TestRenderAgentsPlain:
         assert "🐚 3" in result
 
 
-class TestRenderRepoPlain:
-    def test_returns_repo_info(self):
-        ctx = _make_ctx(repo_info="my-repo:main")
-        assert render_repo_plain(ctx) == "my-repo:main"
+class TestRenderRepoNamePlain:
+    def test_returns_repo_name(self):
+        ctx = _make_ctx(repo_name="my-repo")
+        assert render_repo_name_plain(ctx) == "my-repo"
+
+    def test_hidden_when_all_names_match(self):
+        ctx = _make_ctx(repo_name="my-repo", all_names_match_repos=True)
+        assert render_repo_name_plain(ctx) is None
+
+
+class TestRenderBranchPlain:
+    def test_returns_branch(self):
+        ctx = _make_ctx(branch="feature/foo")
+        assert render_branch_plain(ctx) == "feature/foo"
 
 
 class TestRenderModePlain:
@@ -921,6 +936,6 @@ class TestRenderCliStats:
         )
         result = render_cli_stats(ctx)
         labels = [label for label, _ in result]
-        for expected in ["Status", "Repo", "Uptime", "Time", "Tokens", "Git",
+        for expected in ["Status", "Repo", "Branch", "Uptime", "Time", "Tokens", "Git",
                          "Work", "Agents", "Mode", "Orders", "Heartbeat", "Value"]:
             assert expected in labels, f"Missing label: {expected}"
