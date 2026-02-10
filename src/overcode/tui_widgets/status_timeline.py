@@ -82,25 +82,39 @@ class StatusTimeline(Static):
         self.timeline_hours = hours
         self.update_history(sessions)
 
-    def update_history(self, sessions: list) -> None:
-        """Refresh history data from log files."""
-        self.sessions = sessions
-        self._presence_history = read_presence_history(hours=self.timeline_hours)
-        self._agent_histories = {}
+    def fetch_history_data(self, sessions: list) -> tuple:
+        """Read history data from log files. Safe to call from a background thread.
 
-        # Get agent names from sessions
-        agent_names = [s.name for s in sessions]
+        Returns:
+            (presence_history, agent_histories) tuple for apply_history_data().
+        """
+        presence_history = read_presence_history(hours=self.timeline_hours)
+        agent_histories = {}
 
-        # Read agent history from session-specific file and group by agent
         history_path = get_agent_history_path(self.tmux_session)
         all_history = read_agent_status_history(hours=self.timeline_hours, history_file=history_path)
         for ts, agent, status, activity in all_history:
-            if agent not in self._agent_histories:
-                self._agent_histories[agent] = []
-            self._agent_histories[agent].append((ts, status))
+            if agent not in agent_histories:
+                agent_histories[agent] = []
+            agent_histories[agent].append((ts, status))
 
-        # Force layout refresh when content changes (agent count may have changed)
+        return presence_history, agent_histories
+
+    def apply_history_data(self, sessions: list, presence_history: list, agent_histories: dict) -> None:
+        """Apply pre-fetched history data to the widget. Call on main thread."""
+        self.sessions = sessions
+        self._presence_history = presence_history
+        self._agent_histories = agent_histories
         self.refresh(layout=True)
+
+    def update_history(self, sessions: list) -> None:
+        """Refresh history data from log files (blocking, legacy).
+
+        For non-blocking updates, use fetch_history_data() in a worker
+        thread then apply_history_data() on the main thread.
+        """
+        presence_history, agent_histories = self.fetch_history_data(sessions)
+        self.apply_history_data(sessions, presence_history, agent_histories)
 
     def _build_timeline(self, history: list, state_to_char: callable) -> str:
         """Build a timeline string from history data.
