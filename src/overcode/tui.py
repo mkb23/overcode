@@ -548,15 +548,16 @@ class SupervisorTUI(
         self._recalc_repo_widths(self.sessions)
         self.update_session_widgets()
 
-        # Update focused_session_index to follow the same session at its new position
-        # and restore Textual's focus so _update_preview() (which reads self.focused)
-        # stays in sync with the highlighted row.
+        # Update focused_session_index to follow the same session at its new position.
+        # Only restore Textual's focus if a SessionSummary currently has it — never
+        # steal focus from the command bar or other input widgets.
         if focused_session_id:
             widgets = self._get_widgets_in_session_order()
             for i, widget in enumerate(widgets):
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
-                    widget.focus()
+                    if isinstance(self.focused, SessionSummary):
+                        widget.focus()
                     break
 
         # On first load, kick off timeline + daemon status now that sessions exist.
@@ -1040,6 +1041,14 @@ class SupervisorTUI(
         for session in display_sessions:
             if session.id in widgets:
                 ordered_widgets.append(widgets[session.id])
+
+        # Skip if order already matches — avoids unnecessary DOM moves
+        # which cause Textual relayout/repaint glitches every 10s
+        current_order = [
+            w for w in container.children if isinstance(w, SessionSummary)
+        ]
+        if current_order == ordered_widgets:
+            return
 
         # Reorder by moving each widget to the correct position
         for i, widget in enumerate(ordered_widgets):
