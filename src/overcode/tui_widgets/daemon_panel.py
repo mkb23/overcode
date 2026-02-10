@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from textual.widgets import Static
+from textual import work
 from rich.text import Text
 
 from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -37,42 +38,54 @@ class DaemonPanel(Static):
         self._refresh_logs()
 
     def _refresh_logs(self) -> None:
-        """Refresh daemon status and logs"""
-        from pathlib import Path
-
-        # Only refresh if visible
+        """Kick off background log refresh (if visible)."""
         if not self.display:
             return
+        self._fetch_logs_async()
 
-        # Update daemon state from Monitor Daemon
-        self.monitor_state = get_monitor_daemon_state(self.tmux_session)
+    @work(thread=True, exclusive=True, group="daemon_logs")
+    def _fetch_logs_async(self) -> None:
+        """Read daemon state and logs off the main thread."""
+        # All file I/O happens here in the worker thread
+        monitor_state = get_monitor_daemon_state(self.tmux_session)
 
-        # Read log lines from session-specific monitor_daemon.log
         session_dir = get_session_dir(self.tmux_session)
         log_file = session_dir / "monitor_daemon.log"
+
+        new_log_lines = None
+        new_file_pos = self._log_file_pos
+
         if log_file.exists():
             try:
                 with open(log_file, 'r') as f:
                     if not self.log_lines:
                         # First read: get last 100 lines of file
                         all_lines = f.readlines()
-                        self.log_lines = [l.rstrip() for l in all_lines[-100:]]
-                        self._log_file_pos = f.tell()
+                        new_log_lines = [l.rstrip() for l in all_lines[-100:]]
+                        new_file_pos = f.tell()
                     else:
                         # Subsequent reads: only get new content
                         f.seek(self._log_file_pos)
                         new_content = f.read()
-                        self._log_file_pos = f.tell()
+                        new_file_pos = f.tell()
 
                         if new_content:
                             new_lines = new_content.strip().split('\n')
-                            self.log_lines.extend(new_lines)
-                            # Keep last 100 lines
-                            self.log_lines = self.log_lines[-100:]
+                            new_log_lines = (self.log_lines + new_lines)[-100:]
             except (OSError, IOError, ValueError):
-                # Log file not available, read error, or seek error
                 pass
 
+        # Apply on main thread
+        self.app.call_from_thread(
+            self._apply_logs, monitor_state, new_log_lines, new_file_pos
+        )
+
+    def _apply_logs(self, monitor_state, new_log_lines, new_file_pos) -> None:
+        """Apply fetched log data on main thread (no I/O)."""
+        self.monitor_state = monitor_state
+        self._log_file_pos = new_file_pos
+        if new_log_lines is not None:
+            self.log_lines = new_log_lines
         self.refresh()
 
     def render(self) -> Text:

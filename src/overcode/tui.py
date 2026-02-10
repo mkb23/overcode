@@ -414,15 +414,64 @@ class SupervisorTUI(
             self.set_interval(5, self._update_summaries_async)
 
     def update_daemon_status(self) -> None:
-        """Update daemon status bar"""
+        """Update daemon status bar (kicks off background worker)"""
+        self._fetch_daemon_status_async()
+
+    @work(thread=True, exclusive=True, group="daemon_status")
+    def _fetch_daemon_status_async(self) -> None:
+        """Fetch daemon status off the main thread, then apply to UI."""
         try:
             daemon_bar = self.query_one("#daemon-status", DaemonStatusBar)
-            daemon_bar.update_status()
         except NoMatches:
-            pass
+            return
+
+        # All I/O happens here in the worker thread
+        monitor_state = get_monitor_daemon_state(self.tmux_session)
+        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
+
+        # Gather data that DaemonStatusBar.update_status() would fetch
+        asleep_ids = set()
+        if daemon_bar._session_manager:
+            asleep_ids = {
+                s.id for s in daemon_bar._session_manager.list_sessions()
+                if s.is_asleep and s.tmux_session == self.tmux_session
+            }
+
+        # Pre-compute active session names for spin rate calculation
+        active_session_names = []
+        if monitor_state and monitor_state.sessions:
+            active_session_names = [
+                s.name for s in monitor_state.sessions
+                if s.session_id not in asleep_ids
+            ]
+
+        # Fetch all volatile I/O state for the status bar (PID checks, CSV reads, etc.)
+        baseline_minutes = getattr(self, 'baseline_minutes', 0)
+        daemon_bar.monitor_state = monitor_state
+        daemon_bar._asleep_session_ids = asleep_ids
+        daemon_bar.fetch_volatile_state(
+            baseline_minutes=baseline_minutes,
+            active_session_names=active_session_names,
+        )
+
+        # Apply results on main thread
+        self.call_from_thread(
+            self._apply_daemon_status, daemon_bar, monitor_state, daemon_count, asleep_ids
+        )
+
+    def _apply_daemon_status(
+        self,
+        daemon_bar: "DaemonStatusBar",
+        monitor_state,
+        daemon_count: int,
+        asleep_ids: set,
+    ) -> None:
+        """Apply daemon status results on main thread (no I/O)."""
+        daemon_bar.monitor_state = monitor_state
+        daemon_bar._asleep_session_ids = asleep_ids
+        daemon_bar.refresh()
 
         # Check for multiple daemon processes (potential time tracking bug)
-        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
         if daemon_count > 1 and not self._multiple_daemon_warning_shown:
             self._multiple_daemon_warning_shown = True
             self.notify(
@@ -436,12 +485,27 @@ class SupervisorTUI(
             self._multiple_daemon_warning_shown = False
 
     def update_timeline(self) -> None:
-        """Update the status timeline widget"""
+        """Update the status timeline widget (kicks off background worker)"""
+        self._fetch_timeline_async()
+
+    @work(thread=True, exclusive=True, group="timeline")
+    def _fetch_timeline_async(self) -> None:
+        """Read timeline CSV data off the main thread, then apply to UI."""
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
-            timeline.update_history(self.sessions)
         except NoMatches:
-            pass
+            return
+
+        # Snapshot sessions for the worker (avoid race with main thread)
+        sessions = list(self.sessions)
+
+        # Heavy CSV I/O happens here in the worker thread
+        presence_history, agent_histories = timeline.fetch_history_data(sessions)
+
+        # Apply on main thread
+        self.call_from_thread(
+            timeline.apply_history_data, sessions, presence_history, agent_histories
+        )
 
     def _save_prefs(self) -> None:
         """Save current TUI preferences to disk."""
@@ -453,17 +517,28 @@ class SupervisorTUI(
         self.update_session_widgets()
 
     def refresh_sessions(self) -> None:
-        """Refresh session list (checks for new/removed sessions)
+        """Refresh session list (kicks off background worker).
 
         Uses launcher.list_sessions() to detect terminated sessions
         (tmux windows that no longer exist, e.g., after machine reboot).
         """
-        # Remember the currently focused session before refreshing/sorting
+        # Capture focused session ID on main thread before spawning worker
         focused = self.focused
         focused_session_id = focused.session.id if isinstance(focused, SessionSummary) else None
+        self._fetch_sessions_async(focused_session_id)
 
-        self._invalidate_sessions_cache()  # Force cache refresh
-        self.sessions = self.launcher.list_sessions()
+    @work(thread=True, exclusive=True, group="refresh_sessions")
+    def _fetch_sessions_async(self, focused_session_id: str | None) -> None:
+        """Read session list off the main thread, then apply to UI."""
+        sessions = self.launcher.list_sessions()
+        self.call_from_thread(
+            self._apply_sessions, sessions, focused_session_id
+        )
+
+    def _apply_sessions(self, sessions: list, focused_session_id: str | None) -> None:
+        """Apply refreshed session list on main thread (no I/O)."""
+        self._invalidate_sessions_cache()
+        self.sessions = sessions
         # Apply sorting (#61)
         self._sort_sessions()
         # Calculate max repo/branch widths for alignment in full detail mode
