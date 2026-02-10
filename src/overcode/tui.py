@@ -277,6 +277,8 @@ class SupervisorTUI(
         self._status_update_in_progress = False
         # Track if we've warned about multiple daemons (to avoid spam)
         self._multiple_daemon_warning_shown = False
+        # Track whether sessions have been loaded at least once (for startup sequencing)
+        self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
         self._attention_jump_index = 0
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
@@ -552,8 +554,13 @@ class SupervisorTUI(
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
                     break
-        # NOTE: Don't call update_timeline() here - it has its own 30s interval
-        # and reading log files during session refresh causes UI stutter
+
+        # On first load, kick off timeline + daemon status now that sessions exist.
+        # (These are async workers so no stutter — the old synchronous concern no longer applies.)
+        if not self._initial_sessions_loaded:
+            self._initial_sessions_loaded = True
+            self.update_timeline()
+            self.update_daemon_status()
 
     def _recalc_repo_widths(self, sessions) -> None:
         """Recalculate max repo/branch widths and name-match flag."""
