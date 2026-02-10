@@ -207,16 +207,16 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
-    """Context window usage (c@XX%). Always visible."""
+    """Context window usage (📚XX%). Always visible."""
     if ctx.claude_stats is not None:
         if ctx.claude_stats.current_context_tokens > 0:
             max_context = 200_000
             ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            return [(f" c@{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+            return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
         else:
-            return [(" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+            return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
     else:
-        return [(" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
 def render_cost(ctx: ColumnContext) -> ColumnOutput:

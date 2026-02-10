@@ -401,20 +401,20 @@ class TestRenderContextUsage:
     def test_no_stats_shows_placeholder(self):
         ctx = _make_ctx(claude_stats=None)
         result = render_context_usage(ctx)
-        assert "c@  -%" in result[0][0]
+        assert "📚  -%" in result[0][0]
 
     def test_with_context_shows_pct(self):
         stats = _make_claude_stats(current_context_tokens=50000)
         ctx = _make_ctx(claude_stats=stats)
         result = render_context_usage(ctx)
-        assert "c@" in result[0][0]
+        assert "📚" in result[0][0]
         assert "%" in result[0][0]
 
     def test_zero_context_shows_dash(self):
         stats = _make_claude_stats(current_context_tokens=0)
         ctx = _make_ctx(claude_stats=stats)
         result = render_context_usage(ctx)
-        assert "c@  -%" in result[0][0]
+        assert "📚  -%" in result[0][0]
 
     def test_visible_when_show_cost(self):
         """Context usage is always visible regardless of show_cost."""
@@ -422,7 +422,7 @@ class TestRenderContextUsage:
         ctx = _make_ctx(claude_stats=stats, show_cost=True)
         result = render_context_usage(ctx)
         assert result is not None
-        assert "c@" in result[0][0]
+        assert "📚" in result[0][0]
 
 
 class TestRenderCost:
