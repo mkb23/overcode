@@ -37,7 +37,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     SummaryGroup(
         id="tokens",
         name="Tokens & Cost",
-        fields=["total_tokens", "context_usage", "cost"],
+        fields=["token_count", "cost", "budget"],
         default_enabled=True,
     ),
     SummaryGroup(

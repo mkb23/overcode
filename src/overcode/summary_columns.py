@@ -196,28 +196,13 @@ def render_active_pct(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {pct:>3.0f}%", ctx.mono(f"bold green{ctx.bg}" if pct >= 50 else f"bold red{ctx.bg}", "bold"))]
 
 
-def render_tokens(ctx: ColumnContext) -> ColumnOutput:
-    s = ctx.session
+def render_token_count(ctx: ColumnContext) -> ColumnOutput:
+    """Token count + context usage. Hidden when show_cost=True."""
+    if ctx.show_cost:
+        return None
     if ctx.claude_stats is not None:
         segments = []
-        if ctx.show_cost:
-            cost = s.stats.estimated_cost_usd
-            budget = s.cost_budget_usd
-            cost_width = 14 if ctx.any_has_budget else 7
-            if budget > 0:
-                display = f"{format_cost(cost)}/{format_cost(budget)}"
-                if cost >= budget:
-                    style = ctx.mono(f"bold red{ctx.bg}", "bold")
-                elif cost >= budget * 0.8:
-                    style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
-                else:
-                    style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
-            else:
-                display = format_cost(cost)
-                style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
-            segments.append((f" {display:>{cost_width}}", style))
-        else:
-            segments.append((f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold")))
+        segments.append((f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold")))
         if ctx.claude_stats.current_context_tokens > 0:
             max_context = 200_000
             ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
@@ -226,7 +211,46 @@ def render_tokens(ctx: ColumnContext) -> ColumnOutput:
             segments.append((" c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim")))
         return segments
     else:
-        return [("      - c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [("       - c@  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+
+
+def render_cost(ctx: ColumnContext) -> ColumnOutput:
+    """Dollar cost. Hidden when show_cost=False."""
+    if not ctx.show_cost:
+        return None
+    s = ctx.session
+    if ctx.claude_stats is not None:
+        cost = s.stats.estimated_cost_usd
+        budget = s.cost_budget_usd
+        if budget > 0:
+            if cost >= budget:
+                style = ctx.mono(f"bold red{ctx.bg}", "bold")
+            elif cost >= budget * 0.8:
+                style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+            else:
+                style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
+        else:
+            style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
+        return [(f" {format_cost(cost):>6}", style)]
+    else:
+        return [("      -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+
+
+def render_budget(ctx: ColumnContext) -> ColumnOutput:
+    """Budget amount. Hidden when show_cost=False or no session has a budget."""
+    if not ctx.show_cost:
+        return None
+    if not ctx.any_has_budget:
+        return None
+    s = ctx.session
+    if s.cost_budget_usd > 0:
+        return [(f"/{format_cost(s.cost_budget_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+    else:
+        return [("       ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+# Backward-compat alias
+render_tokens = render_token_count
 
 
 def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
@@ -397,9 +421,8 @@ def render_time_plain(ctx: ColumnContext) -> Optional[str]:
     )
 
 
-def render_tokens_plain(ctx: ColumnContext) -> Optional[str]:
-    """Tokens + context + cost."""
-    s = ctx.session
+def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
+    """Tokens + context usage for CLI."""
     if ctx.claude_stats is None:
         return None
     parts = []
@@ -407,13 +430,23 @@ def render_tokens_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.claude_stats.current_context_tokens > 0:
         ctx_pct = min(100, ctx.claude_stats.current_context_tokens / 200_000 * 100)
         parts.append(f"(context {ctx_pct:.0f}%)")
+    return " ".join(parts)
+
+
+def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
+    """Cost + budget for CLI."""
+    s = ctx.session
+    if ctx.claude_stats is None:
+        return None
     cost = s.stats.estimated_cost_usd
     budget = s.cost_budget_usd
     if budget > 0:
-        parts.append(f"— {format_cost(cost)}/{format_cost(budget)}")
-    else:
-        parts.append(f"— {format_cost(cost)}")
-    return " ".join(parts)
+        return f"{format_cost(cost)}/{format_cost(budget)}"
+    return format_cost(cost)
+
+
+# Backward-compat alias
+render_tokens_plain = render_token_count_plain
 
 
 def render_git_diff_plain(ctx: ColumnContext) -> Optional[str]:
@@ -522,9 +555,12 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain),
 
-    # Tokens group
-    SummaryColumn(id="tokens", group="tokens", detail_levels=ALL, render=render_tokens,
-                  label="Tokens", render_plain=render_tokens_plain),
+    # Tokens group — split into token count, cost, and budget columns
+    SummaryColumn(id="token_count", group="tokens", detail_levels=ALL, render=render_token_count,
+                  label="Tokens", render_plain=render_token_count_plain),
+    SummaryColumn(id="cost", group="tokens", detail_levels=ALL, render=render_cost,
+                  label="Cost", render_plain=render_cost_plain),
+    SummaryColumn(id="budget", group="tokens", detail_levels=ALL, render=render_budget),
 
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time),

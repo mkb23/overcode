@@ -23,6 +23,9 @@ from overcode.summary_columns import (
     render_stalled_time,
     render_sleep_time,
     render_active_pct,
+    render_token_count,
+    render_cost,
+    render_budget,
     render_tokens,
     render_git_diff,
     render_median_work_time,
@@ -38,6 +41,8 @@ from overcode.summary_columns import (
     render_status_plain,
     render_uptime_plain,
     render_time_plain,
+    render_token_count_plain,
+    render_cost_plain,
     render_tokens_plain,
     render_git_diff_plain,
     render_work_plain,
@@ -370,76 +375,95 @@ class TestRenderActivePct:
 # Tokens column render tests
 # ===========================================================================
 
-class TestRenderTokens:
+class TestRenderTokenCount:
     def test_no_stats_shows_placeholder(self):
         ctx = _make_ctx(claude_stats=None)
-        result = render_tokens(ctx)
+        result = render_token_count(ctx)
         assert len(result) == 1
         assert "c@  -%" in result[0][0]
 
     def test_with_stats_shows_token_count(self):
         stats = _make_claude_stats(total_tokens=150000, current_context_tokens=50000)
         ctx = _make_ctx(claude_stats=stats)
-        result = render_tokens(ctx)
+        result = render_token_count(ctx)
         assert len(result) == 2
         assert "Σ" in result[0][0]
-
-    def test_with_cost_mode(self):
-        stats = _make_claude_stats()
-        session = _make_session()
-        session.stats.estimated_cost_usd = 12.5
-        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session)
-        result = render_tokens(ctx)
-        assert "$" in result[0][0]
 
     def test_zero_context_shows_dash(self):
         stats = _make_claude_stats(current_context_tokens=0)
         ctx = _make_ctx(claude_stats=stats)
-        result = render_tokens(ctx)
+        result = render_token_count(ctx)
         assert "c@  -%" in result[1][0]
 
-    def test_cost_with_budget_shows_slash(self):
-        """Budget > 0 shows cost/budget format."""
+    def test_hidden_when_show_cost(self):
         stats = _make_claude_stats()
-        session = _make_session(cost_budget_usd=5.0)
-        session.stats.estimated_cost_usd = 1.5
-        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session, any_has_budget=True)
-        result = render_tokens(ctx)
-        text = result[0][0]
-        assert "/" in text
-        assert "$" in text
+        ctx = _make_ctx(claude_stats=stats, show_cost=True)
+        assert render_token_count(ctx) is None
 
-    def test_cost_over_budget_uses_red(self):
+
+class TestRenderCost:
+    def test_hidden_when_not_show_cost(self):
+        stats = _make_claude_stats()
+        ctx = _make_ctx(claude_stats=stats, show_cost=False)
+        assert render_cost(ctx) is None
+
+    def test_shows_cost(self):
+        stats = _make_claude_stats()
+        session = _make_session()
+        session.stats.estimated_cost_usd = 12.5
+        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session)
+        result = render_cost(ctx)
+        assert "$" in result[0][0]
+
+    def test_no_stats_shows_placeholder(self):
+        ctx = _make_ctx(claude_stats=None, show_cost=True)
+        result = render_cost(ctx)
+        assert result is not None
+        assert "-" in result[0][0]
+
+    def test_over_budget_uses_red(self):
         """Cost exceeding budget uses bold red style."""
         stats = _make_claude_stats()
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 6.0
         ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session,
                         any_has_budget=True, monochrome=False)
-        result = render_tokens(ctx)
+        result = render_cost(ctx)
         assert "red" in result[0][1]
 
-    def test_cost_near_budget_uses_yellow(self):
+    def test_near_budget_uses_yellow(self):
         """Cost at 80%+ of budget uses bold yellow style."""
         stats = _make_claude_stats()
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 4.5  # 90%
         ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session,
                         any_has_budget=True, monochrome=False)
-        result = render_tokens(ctx)
+        result = render_cost(ctx)
         assert "yellow" in result[0][1]
 
-    def test_cost_width_wider_when_any_has_budget(self):
-        """When any_has_budget, cost field is 14 chars wide."""
-        stats = _make_claude_stats()
+
+class TestRenderBudget:
+    def test_hidden_when_not_show_cost(self):
+        ctx = _make_ctx(show_cost=False, any_has_budget=True)
+        assert render_budget(ctx) is None
+
+    def test_hidden_when_no_budgets(self):
+        ctx = _make_ctx(show_cost=True, any_has_budget=False)
+        assert render_budget(ctx) is None
+
+    def test_shows_budget_value(self):
+        session = _make_session(cost_budget_usd=5.0)
+        ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
+        result = render_budget(ctx)
+        assert "/" in result[0][0]
+        assert "$" in result[0][0]
+
+    def test_shows_spacer_when_session_has_no_budget(self):
         session = _make_session(cost_budget_usd=0.0)
-        session.stats.estimated_cost_usd = 1.0
-        ctx_no_budget = _make_ctx(claude_stats=stats, show_cost=True, session=session, any_has_budget=False)
-        ctx_has_budget = _make_ctx(claude_stats=stats, show_cost=True, session=session, any_has_budget=True)
-        result_no = render_tokens(ctx_no_budget)
-        result_yes = render_tokens(ctx_has_budget)
-        # The budget version should be wider (14 chars vs 7)
-        assert len(result_yes[0][0]) > len(result_no[0][0])
+        ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
+        result = render_budget(ctx)
+        assert result is not None
+        assert result[0][0].strip() == ""
 
 
 # ===========================================================================
@@ -706,18 +730,35 @@ class TestRenderTimePlain:
         assert "💤" in result
 
 
-class TestRenderTokensPlain:
+class TestRenderTokenCountPlain:
     def test_no_stats_returns_none(self):
         ctx = _make_ctx(claude_stats=None)
-        assert render_tokens_plain(ctx) is None
+        assert render_token_count_plain(ctx) is None
 
-    def test_with_stats_shows_tokens_and_cost(self):
+    def test_with_stats_shows_tokens(self):
         stats = _make_claude_stats(total_tokens=150000, current_context_tokens=50000)
+        ctx = _make_ctx(claude_stats=stats)
+        result = render_token_count_plain(ctx)
+        assert "Σ" in result
+
+    def test_with_context_shows_pct(self):
+        stats = _make_claude_stats(total_tokens=150000, current_context_tokens=50000)
+        ctx = _make_ctx(claude_stats=stats)
+        result = render_token_count_plain(ctx)
+        assert "context" in result
+
+
+class TestRenderCostPlain:
+    def test_no_stats_returns_none(self):
+        ctx = _make_ctx(claude_stats=None)
+        assert render_cost_plain(ctx) is None
+
+    def test_shows_cost(self):
+        stats = _make_claude_stats()
         session = _make_session()
         session.stats.estimated_cost_usd = 1.5
         ctx = _make_ctx(claude_stats=stats, session=session)
-        result = render_tokens_plain(ctx)
-        assert "Σ" in result
+        result = render_cost_plain(ctx)
         assert "$" in result
 
     def test_with_budget_shows_slash(self):
@@ -725,7 +766,7 @@ class TestRenderTokensPlain:
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 1.5
         ctx = _make_ctx(claude_stats=stats, session=session)
-        result = render_tokens_plain(ctx)
+        result = render_cost_plain(ctx)
         assert "/" in result
 
 
@@ -910,8 +951,9 @@ class TestRenderCliStats:
         ctx = _make_ctx(claude_stats=None, git_diff_stats=None)
         result = render_cli_stats(ctx)
         labels = [label for label, _ in result]
-        # Tokens returns None when no claude_stats
+        # Tokens/Cost return None when no claude_stats
         assert "Tokens" not in labels
+        assert "Cost" not in labels
         # Git returns None when no diff stats
         assert "Git" not in labels
 
@@ -923,6 +965,7 @@ class TestRenderCliStats:
         result = render_cli_stats(ctx)
         labels = [label for label, _ in result]
         assert "Tokens" in labels
+        assert "Cost" in labels
 
     def test_all_expected_labels_present(self):
         """With full data, all expected labels appear."""
@@ -936,6 +979,6 @@ class TestRenderCliStats:
         )
         result = render_cli_stats(ctx)
         labels = [label for label, _ in result]
-        for expected in ["Status", "Repo", "Branch", "Uptime", "Time", "Tokens", "Git",
+        for expected in ["Status", "Repo", "Branch", "Uptime", "Time", "Tokens", "Cost", "Git",
                          "Work", "Agents", "Mode", "Orders", "Heartbeat", "Value"]:
             assert expected in labels, f"Missing label: {expected}"
