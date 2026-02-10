@@ -136,11 +136,11 @@ def launch(
 @app.command("list")
 def list_agents(session: SessionOption = "agents"):
     """List running agents with status."""
-    from .history_reader import get_session_stats
     from .tui_helpers import (
         calculate_uptime, format_duration, format_tokens,
         get_current_state_times, get_status_symbol
     )
+    from .monitor_daemon_state import get_monitor_daemon_state
 
     launcher = ClaudeLauncher(session)
     sessions = launcher.list_sessions()
@@ -149,18 +149,39 @@ def list_agents(session: SessionOption = "agents"):
         rprint("[dim]No running agents[/dim]")
         return
 
-    from .status_detector_factory import StatusDetectorDispatcher
-    detector = StatusDetectorDispatcher(session)
+    # Prefer daemon state for status/activity (single source of truth)
+    daemon_state = get_monitor_daemon_state(session)
+    use_daemon = daemon_state is not None and not daemon_state.is_stale()
+
+    # Only create detector as fallback when daemon isn't running
+    detector = None
+    if not use_daemon:
+        from .status_detector_factory import StatusDetectorDispatcher
+        detector = StatusDetectorDispatcher(session)
+
     terminated_count = 0
 
     for sess in sessions:
-        # For terminated sessions, use stored status; otherwise detect from tmux
         if sess.status == "terminated":
             status = "terminated"
             activity = "(tmux window no longer exists)"
             terminated_count += 1
+        elif use_daemon:
+            ds = daemon_state.get_session_by_name(sess.name)
+            if ds:
+                status = ds.current_status
+                activity = ds.current_activity
+            else:
+                # Session not yet in daemon state — detect directly
+                if detector is None:
+                    from .status_detector_factory import StatusDetectorDispatcher
+                    detector = StatusDetectorDispatcher(session)
+                status, activity, _ = detector.detect_status(sess)
         else:
             status, activity, _ = detector.detect_status(sess)
+
+        if sess.is_asleep:
+            status = "asleep"
 
         symbol, _ = get_status_symbol(status)
 
@@ -170,10 +191,10 @@ def list_agents(session: SessionOption = "agents"):
         # Get state times using shared helper
         green_time, non_green_time, sleep_time = get_current_state_times(sess.stats, is_asleep=sess.is_asleep)
 
-        # Get stats from Claude Code history and session files
-        stats = get_session_stats(sess)
-        if stats:
-            stats_display = f"{stats.interaction_count:>2}i {format_tokens(stats.total_tokens):>5}"
+        # Stats from session manager (already synced by daemon)
+        stats = sess.stats
+        if stats.interaction_count > 0:
+            stats_display = f"{stats.interaction_count:>2}i {format_tokens(stats.input_tokens + stats.output_tokens):>5}"
         else:
             stats_display = " -i     -"
 
@@ -378,7 +399,6 @@ def show(
     session: SessionOption = "agents",
 ):
     """Show agent details and recent output."""
-    from .status_detector_factory import create_status_detector
     from .history_reader import get_session_stats
     from .status_patterns import extract_background_bash_count, extract_live_subagent_count, strip_ansi
     from .tui_helpers import get_git_diff_stats
@@ -393,12 +413,23 @@ def show(
         rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
         raise typer.Exit(1)
 
-    # Detect live status (gets status + pane content with ANSI for bash count)
+    # Read daemon state for status/activity (single source of truth)
+    daemon_state = get_monitor_daemon_state(session)
+    daemon_session = None
+    if daemon_state and not daemon_state.is_stale():
+        daemon_session = daemon_state.get_session_by_name(name)
+
+    # Get status/activity from daemon state, falling back to detection
     pane_content_raw = ""
     if sess.status == "terminated":
         status = "terminated"
         activity = "(tmux window no longer exists)"
+    elif daemon_session:
+        status = daemon_session.current_status
+        activity = daemon_session.current_activity
     else:
+        # Daemon not running — fall back to direct detection
+        from .status_detector_factory import create_status_detector
         detector = create_status_detector(
             session,
             strategy="hooks" if sess.hook_status_detection else "polling",
@@ -407,6 +438,13 @@ def show(
 
     if sess.is_asleep:
         status = "asleep"
+
+    # Capture pane content separately if needed for display or stats parsing
+    need_pane = (not stats_only and lines > 0) or not no_stats
+    if need_pane and not pane_content_raw and sess.status != "terminated":
+        from .status_detector_factory import StatusDetectorDispatcher
+        dispatcher = StatusDetectorDispatcher(session)
+        pane_content_raw = dispatcher.get_pane_content(sess.tmux_window, num_lines=max(lines, 50))
 
     if not no_stats:
         # Gather all stats
@@ -429,15 +467,9 @@ def show(
         # AI summaries from daemon state
         ai_short = ""
         ai_context = ""
-        try:
-            daemon_state = get_monitor_daemon_state(session)
-            if daemon_state:
-                ds = daemon_state.get_session_by_name(name)
-                if ds:
-                    ai_short = ds.activity_summary or ""
-                    ai_context = ds.activity_summary_context or ""
-        except Exception:
-            pass
+        if daemon_session:
+            ai_short = daemon_session.activity_summary or ""
+            ai_context = daemon_session.activity_summary_context or ""
 
         # Build context and render via column system
         any_has_budget = sess.cost_budget_usd > 0
