@@ -285,14 +285,8 @@ class SupervisorTUI(
         # Track attention jump state (for 'b' key cycling)
         self._attention_jump_index = 0
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
-        # Pending kill confirmation (session name, timestamp)
-        self._pending_kill: tuple[str, float] | None = None
-        # Pending restart confirmation (session name, timestamp) (#133)
-        self._pending_restart: tuple[str, float] | None = None
-        # Pending sync-to-main confirmation (session name, timestamp) (#156)
-        self._pending_sync: tuple[str, float] | None = None
-        # Pending transport/handover confirmation (timestamp)
-        self._pending_transport: float | None = None
+        # Pending double-press confirmations: action_key -> (session_name | None, timestamp)
+        self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
         # Tmux interface for sync operations
         self._tmux = RealTmux()
         # Initialize tmux_sync from preferences

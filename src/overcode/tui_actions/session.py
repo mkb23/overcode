@@ -19,6 +19,42 @@ if TYPE_CHECKING:
 class SessionActionsMixin:
     """Mixin providing session/agent actions for SupervisorTUI."""
 
+    def _confirm_double_press(
+        self,
+        action_key: str,
+        message: str,
+        callback,
+        session_name: str | None = None,
+        timeout: float = 3.0,
+    ) -> None:
+        """Generic double-press confirmation pattern.
+
+        First press shows a warning notification. Second press within timeout
+        executes the callback. If the session_name changes, the confirmation
+        resets.
+
+        Args:
+            action_key: Unique key for this action (e.g., "kill", "restart")
+            message: Warning message shown on first press (e.g., "Press x again to kill 'agent'")
+            callback: Callable to execute on confirmation
+            session_name: Session name to match (None for global actions)
+            timeout: Seconds before confirmation expires
+        """
+        now = time.time()
+        pending = self._pending_confirmations.get(action_key)
+
+        if pending is not None:
+            pending_name, pending_time = pending
+            if pending_name == session_name and (now - pending_time) < timeout:
+                del self._pending_confirmations[action_key]
+                callback()
+                return
+            # Different session or expired — reset
+            del self._pending_confirmations[action_key]
+
+        self._pending_confirmations[action_key] = (session_name, now)
+        self.notify(message, severity="warning", timeout=int(timeout))
+
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)."""
         from ..tui_widgets import SessionSummary
@@ -145,26 +181,11 @@ class SessionActionsMixin:
 
         session_name = focused.session.name
         session_id = focused.session.id
-        now = time.time()
-
-        # Check if this is a confirmation of a pending kill
-        if self._pending_kill:
-            pending_name, pending_time = self._pending_kill
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_kill = None  # Clear pending state
-                self._execute_kill(focused, session_name, session_id)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_kill = None
-
-        # First press - request confirmation
-        self._pending_kill = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "kill",
             f"Press x again to kill '{session_name}'",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_kill(focused, session_name, session_id),
+            session_name=session_name,
         )
 
     def action_restart_focused(self) -> None:
@@ -180,26 +201,11 @@ class SessionActionsMixin:
             return
 
         session_name = focused.session.name
-        now = time.time()
-
-        # Check if this is a confirmation of a pending restart
-        if self._pending_restart:
-            pending_name, pending_time = self._pending_restart
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_restart = None  # Clear pending state
-                self._execute_restart(focused)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_restart = None
-
-        # First press - request confirmation
-        self._pending_restart = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "restart",
             f"Press R again to restart '{session_name}'",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_restart(focused),
+            session_name=session_name,
         )
 
     def action_sync_to_main_and_clear(self) -> None:
@@ -217,26 +223,11 @@ class SessionActionsMixin:
             return
 
         session_name = focused.session.name
-        now = time.time()
-
-        # Check if this is a confirmation of a pending sync
-        if self._pending_sync:
-            pending_name, pending_time = self._pending_sync
-            # Confirm if same session and within 3 second window
-            if pending_name == session_name and (now - pending_time) < 3.0:
-                self._pending_sync = None  # Clear pending state
-                self._execute_sync(focused)
-                return
-            else:
-                # Different session or expired - start new confirmation
-                self._pending_sync = None
-
-        # First press - request confirmation
-        self._pending_sync = (session_name, now)
-        self.notify(
+        self._confirm_double_press(
+            "sync",
             f"Press c again to sync '{session_name}' to main",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_sync(focused),
+            session_name=session_name,
         )
 
     def _execute_sync(self, widget: "SessionSummary") -> None:
@@ -477,8 +468,6 @@ class SessionActionsMixin:
 
         Sleeping agents are excluded from handover.
         """
-        now = time.time()
-
         # Get active sessions (exclude terminated and sleeping)
         active_sessions = [
             s for s in self.sessions
@@ -488,23 +477,11 @@ class SessionActionsMixin:
             self.notify("No active sessions to prepare (sleeping sessions excluded)", severity="warning")
             return
 
-        # Check if this is a confirmation of a pending transport
-        if self._pending_transport is not None:
-            if (now - self._pending_transport) < 3.0:
-                self._pending_transport = None  # Clear pending state
-                self._execute_transport_all(active_sessions)
-                return
-            else:
-                # Expired - start new confirmation
-                self._pending_transport = None
-
-        # First press - request confirmation
-        self._pending_transport = now
         count = len(active_sessions)
-        self.notify(
+        self._confirm_double_press(
+            "transport",
             f"Press H again to send handover instructions to {count} agent(s)",
-            severity="warning",
-            timeout=3
+            lambda: self._execute_transport_all(active_sessions),
         )
 
     def _execute_transport_all(self, sessions: List["Session"]) -> None:
