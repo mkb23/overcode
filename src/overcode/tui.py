@@ -548,11 +548,14 @@ class SupervisorTUI(
         self.update_session_widgets()
 
         # Update focused_session_index to follow the same session at its new position
+        # and restore Textual's focus so _update_preview() (which reads self.focused)
+        # stays in sync with the highlighted row.
         if focused_session_id:
             widgets = self._get_widgets_in_session_order()
             for i, widget in enumerate(widgets):
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
+                    widget.focus()
                     break
 
         # On first load, kick off timeline + daemon status now that sessions exist.
