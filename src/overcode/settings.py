@@ -99,11 +99,6 @@ class OvercodePaths:
         return self.base_dir / "daemon.pid"
 
     @property
-    def daemon_state(self) -> Path:
-        """Daemon state file (legacy - supervisor daemon)."""
-        return self.base_dir / "daemon_state.json"
-
-    @property
     def monitor_daemon_state(self) -> Path:
         """Monitor daemon state file (new - single source of truth)."""
         return self.base_dir / "monitor_daemon_state.json"

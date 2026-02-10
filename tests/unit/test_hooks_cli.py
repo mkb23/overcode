@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from overcode.cli import app
-from overcode.hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+from overcode.hook_handler import OVERCODE_HOOKS
 
 
 runner = CliRunner()
@@ -51,33 +51,6 @@ class TestHooksInstall:
                     if hook.get("command") == command:
                         count += 1
             assert count == 1, f"Duplicate hooks for {event}"
-
-    def test_migrates_legacy_hook(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        # Install legacy hook first
-        settings = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]}
-        ]}}
-        (claude_dir / "settings.json").write_text(json.dumps(settings))
-
-        result = runner.invoke(app, ["hooks", "install"])
-        assert result.exit_code == 0
-        assert "Migrated" in result.output
-
-        # Legacy hook should be gone, new hook present
-        data = json.loads((claude_dir / "settings.json").read_text())
-        for entry in data["hooks"]["UserPromptSubmit"]:
-            for hook in entry.get("hooks", []):
-                assert hook["command"] != "overcode time-context"
-        # New hook should be there
-        found = False
-        for entry in data["hooks"]["UserPromptSubmit"]:
-            for hook in entry.get("hooks", []):
-                if hook["command"] == "overcode hook-handler":
-                    found = True
-        assert found
 
     def test_project_flag(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -134,22 +107,6 @@ class TestHooksUninstall:
         assert result.exit_code == 0
         assert "No overcode hooks found" in result.output
 
-    def test_uninstall_removes_legacy(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        settings = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]}
-        ]}}
-        (claude_dir / "settings.json").write_text(json.dumps(settings))
-
-        result = runner.invoke(app, ["hooks", "uninstall"])
-        assert result.exit_code == 0
-        assert "Removed" in result.output
-
-        data = json.loads((claude_dir / "settings.json").read_text())
-        assert "hooks" not in data
-
     def test_uninstall_project_flag(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         # Install project hooks first
@@ -185,22 +142,6 @@ class TestHooksStatus:
         result = runner.invoke(app, ["hooks", "status"])
         assert result.exit_code == 0
         assert "not installed" in result.output
-
-    def test_shows_legacy_hook_warning(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        monkeypatch.chdir(tmp_path)
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        settings = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]}
-        ]}}
-        (claude_dir / "settings.json").write_text(json.dumps(settings))
-
-        result = runner.invoke(app, ["hooks", "status"])
-        assert result.exit_code == 0
-        assert "legacy" in result.output
-        assert "migrate" in result.output.lower()
-
 
 class TestHookHandlerCommand:
 
