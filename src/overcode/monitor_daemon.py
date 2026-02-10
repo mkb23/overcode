@@ -76,16 +76,20 @@ from .monitor_daemon_core import (
 from .tmux_utils import send_text_to_tmux_window
 
 
-# Check for macOS presence APIs (optional)
+# Check for presence APIs (macOS or Linux) (#91)
 try:
     from .presence_logger import (
         MACOS_APIS_AVAILABLE,
+        LINUX_PLATFORM,
         get_current_presence_state,
         PresenceLogger,
         PresenceLoggerConfig,
     )
+    PRESENCE_AVAILABLE = MACOS_APIS_AVAILABLE or LINUX_PLATFORM
 except ImportError:
     MACOS_APIS_AVAILABLE = False
+    LINUX_PLATFORM = False
+    PRESENCE_AVAILABLE = False
     get_current_presence_state = None
     PresenceLogger = None
     PresenceLoggerConfig = None
@@ -144,10 +148,10 @@ def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = N
 
 
 class PresenceComponent:
-    """Presence tracking with graceful degradation for non-macOS."""
+    """Presence tracking with graceful degradation (macOS + Linux)."""
 
     def __init__(self):
-        self.available = MACOS_APIS_AVAILABLE
+        self.available = PRESENCE_AVAILABLE
         self._logger: Optional[PresenceLogger] = None
 
         if self.available and PresenceLogger is not None:
