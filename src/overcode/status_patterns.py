@@ -159,6 +159,29 @@ class StatusPatterns:
         "plan requires approval",
     ])
 
+    # Daemon Claude: active work indicators
+    # Used by the supervisor daemon to check if daemon claude is still working.
+    # These are checked against raw pane content (case-sensitive).
+    daemon_active_indicators: List[str] = field(default_factory=lambda: [
+        '· ',
+        'Running…',
+        '(esc to interrupt',
+        '✽',
+    ])
+
+    # Daemon Claude: tool activity indicators
+    # Used by the supervisor daemon to check if daemon claude has started working.
+    # These are checked against raw pane content (case-sensitive).
+    daemon_tool_indicators: List[str] = field(default_factory=lambda: [
+        '⏺',
+        'Read(',
+        'Write(',
+        'Edit(',
+        'Bash(',
+        'Grep(',
+        'Glob(',
+    ])
+
     # Error patterns (#216)
     # These match the SPECIFIC formats Claude Code uses to display errors.
     # Previous broad patterns ("timeout", "429", etc.) caused false positives

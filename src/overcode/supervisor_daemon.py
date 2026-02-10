@@ -55,6 +55,7 @@ from .status_constants import (
     STATUS_WAITING_USER,
     get_status_emoji,
 )
+from .status_patterns import get_patterns
 from .tmux_manager import TmuxManager
 from .tmux_utils import send_text_to_tmux_window
 from .history_reader import encode_project_path, read_token_usage_from_session_file
@@ -227,14 +228,9 @@ class SupervisorDaemon:
 
             content = result.stdout
 
-            # Active work indicators
-            active_indicators = [
-                '· ',
-                'Running…',
-                '(esc to interrupt',
-                '✽',
-            ]
-            for indicator in active_indicators:
+            # Active work indicators (from centralized patterns)
+            patterns = get_patterns()
+            for indicator in patterns.daemon_active_indicators:
                 if indicator in content:
                     return False
 
@@ -281,8 +277,8 @@ class SupervisorDaemon:
                 return False
 
             content = result.stdout
-            activity_indicators = ['⏺', 'Read(', 'Write(', 'Edit(', 'Bash(', 'Grep(', 'Glob(']
-            for indicator in activity_indicators:
+            patterns = get_patterns()
+            for indicator in patterns.daemon_tool_indicators:
                 if indicator in content:
                     return True
 
