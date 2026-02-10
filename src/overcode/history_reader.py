@@ -17,9 +17,10 @@ Each assistant message in session files has usage data:
 """
 
 import json
+import os
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
@@ -204,6 +205,37 @@ def get_session_ids_for_session(
     return sorted(session_ids)
 
 
+def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str]:
+    """Read the last chunk of a file and return lines in reverse order.
+
+    Reads up to max_bytes from the end of the file. This is much faster than
+    reading the entire file when we only need recent entries.
+    """
+    try:
+        file_size = filepath.stat().st_size
+    except OSError:
+        return []
+
+    read_size = min(file_size, max_bytes)
+    try:
+        with open(filepath, 'rb') as f:
+            f.seek(max(0, file_size - read_size))
+            chunk = f.read().decode('utf-8', errors='replace')
+    except IOError:
+        return []
+
+    lines = chunk.split('\n')
+    # First line may be partial if we didn't read from start — drop it
+    if file_size > read_size and lines:
+        lines = lines[1:]
+    # Return non-empty lines in reverse order
+    return [line for line in reversed(lines) if line.strip()]
+
+
+# Cache for get_current_session_id_for_directory
+_session_id_cache: Dict[str, Tuple[float, int, Optional[str]]] = {}
+
+
 def get_current_session_id_for_directory(
     directory: str,
     since: datetime,
@@ -211,8 +243,8 @@ def get_current_session_id_for_directory(
 ) -> Optional[str]:
     """Get the most recent Claude sessionId for a directory since a given time.
 
-    This is used to discover new Claude sessionIds that should be tracked
-    by an overcode agent running in that directory (#119).
+    Optimized for frequent calls: reads history.jsonl backwards (most recent
+    entries are at the end) and caches results by file mtime+size.
 
     Args:
         directory: The project directory path
@@ -222,24 +254,50 @@ def get_current_session_id_for_directory(
     Returns:
         The most recent sessionId, or None if no matching entries
     """
-    entries = read_history(history_path)
+    if not history_path.exists():
+        return None
+
+    # Check cache — keyed on (directory, mtime, size)
+    try:
+        stat = history_path.stat()
+        file_mtime = stat.st_mtime
+        file_size = stat.st_size
+    except OSError:
+        return None
+
     session_dir = str(Path(directory).resolve())
+    cache_key = f"{session_dir}:{history_path}"
+
+    cached = _session_id_cache.get(cache_key)
+    if cached and cached[0] == file_mtime and cached[1] == file_size:
+        return cached[2]
+
     since_ms = int(since.timestamp() * 1000)
 
-    latest_session_id = None
-    latest_timestamp = 0
-
-    for entry in entries:
-        if entry.timestamp_ms < since_ms:
+    # Read backwards — most recent entries are at the end of the file.
+    # Since history is append-only and roughly chronological, the first
+    # match we find (reading backwards) for our directory is the most recent.
+    result = None
+    for line in _read_lines_reversed(history_path):
+        try:
+            data = json.loads(line)
+            ts = data.get("timestamp", 0)
+            if ts < since_ms:
+                # We've gone past our time window reading backwards — stop
+                break
+            project = data.get("project")
+            if project:
+                entry_dir = str(Path(project).resolve())
+                if entry_dir == session_dir:
+                    sid = data.get("sessionId")
+                    if sid:
+                        result = sid
+                        break
+        except (json.JSONDecodeError, KeyError, TypeError):
             continue
-        if entry.project:
-            entry_dir = str(Path(entry.project).resolve())
-            if entry_dir == session_dir and entry.session_id:
-                if entry.timestamp_ms > latest_timestamp:
-                    latest_timestamp = entry.timestamp_ms
-                    latest_session_id = entry.session_id
 
-    return latest_session_id
+    _session_id_cache[cache_key] = (file_mtime, file_size, result)
+    return result
 
 
 def encode_project_path(path: str) -> str:

@@ -736,7 +736,11 @@ class TestGetCurrentSessionIdForDirectory:
     """Test get_current_session_id_for_directory function."""
 
     def test_returns_most_recent_session_id(self, tmp_path):
-        """Should return the most recent sessionId for the directory."""
+        """Should return the most recent sessionId for the directory.
+
+        history.jsonl is append-only so entries are in chronological order.
+        The last matching entry in the file is the most recent.
+        """
         from overcode.history_reader import get_current_session_id_for_directory
 
         history_file = tmp_path / "history.jsonl"
@@ -745,8 +749,8 @@ class TestGetCurrentSessionIdForDirectory:
 
         entries = [
             {"display": "1", "timestamp": since_ms + 1000, "project": "/test/project", "sessionId": "old-session"},
-            {"display": "2", "timestamp": since_ms + 5000, "project": "/test/project", "sessionId": "new-session"},
-            {"display": "3", "timestamp": since_ms + 3000, "project": "/test/project", "sessionId": "middle-session"},
+            {"display": "2", "timestamp": since_ms + 3000, "project": "/test/project", "sessionId": "middle-session"},
+            {"display": "3", "timestamp": since_ms + 5000, "project": "/test/project", "sessionId": "new-session"},
         ]
         history_file.write_text("\n".join(json.dumps(e) for e in entries))
 

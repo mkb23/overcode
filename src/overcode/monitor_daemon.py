@@ -232,6 +232,10 @@ class MonitorDaemon:
         self._last_stats_sync: Optional[datetime] = None
         self._stats_sync_interval = 60  # seconds
 
+        # Session ID detection runs more frequently than full stats (#116)
+        self._last_session_id_sync: Optional[datetime] = None
+        self._session_id_sync_interval = 10  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -480,22 +484,31 @@ class MonitorDaemon:
 
         self.last_state_times[session_id] = now
 
+    def sync_session_id(self, session) -> None:
+        """Detect and bind the current Claude session ID (fast path, #116).
+
+        Reads only the tail of history.jsonl so it's cheap enough to run
+        every 10 seconds. This ensures active_claude_session_id updates
+        promptly after /clear.
+        """
+        if not session.start_directory:
+            return
+        try:
+            session_start = datetime.fromisoformat(session.start_time)
+            current_id = get_current_session_id_for_directory(
+                session.start_directory, session_start
+            )
+            if current_id:
+                self.session_manager.add_claude_session_id(session.id, current_id)
+                self.session_manager.set_active_claude_session_id(session.id, current_id)
+        except (ValueError, TypeError):
+            pass
+
     def sync_claude_code_stats(self, session) -> None:
         """Sync token/interaction stats from Claude Code history files."""
         try:
-            # Capture current Claude sessionId if not already tracked (#119)
-            # This ensures accurate context window calculation for this agent
-            if session.start_directory:
-                try:
-                    session_start = datetime.fromisoformat(session.start_time)
-                    current_id = get_current_session_id_for_directory(
-                        session.start_directory, session_start
-                    )
-                    if current_id:
-                        self.session_manager.add_claude_session_id(session.id, current_id)
-                        self.session_manager.set_active_claude_session_id(session.id, current_id)
-                except (ValueError, TypeError):
-                    pass
+            # Session ID detection also runs here for the first sync
+            self.sync_session_id(session)
 
             stats = get_session_stats(session)
             if stats is None:
@@ -697,7 +710,14 @@ class MonitorDaemon:
                 all_sessions = self.session_manager.list_sessions()
                 sessions = [s for s in all_sessions if s.tmux_session == self.tmux_session]
 
-                # Sync Claude Code stats BEFORE building session_states so token counts are fresh
+                # Fast session ID detection every 10s (#116)
+                # Ensures active_claude_session_id updates promptly after /clear
+                if should_sync_stats(self._last_session_id_sync, now, self._session_id_sync_interval):
+                    for session in sessions:
+                        self.sync_session_id(session)
+                    self._last_session_id_sync = now
+
+                # Full stats sync every 60s (heavier I/O)
                 # This ensures the first loop has accurate data (fixes #103)
                 if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
                     for session in sessions:
