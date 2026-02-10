@@ -46,7 +46,7 @@ class TestSummaryConfigModal:
 
         # All group names should be in the text
         assert "Time" in plain
-        assert "LLM Usage" in plain
+        assert "Budget" in plain
         assert "Context" in plain
         assert "Git" in plain
         assert "Supervision" in plain

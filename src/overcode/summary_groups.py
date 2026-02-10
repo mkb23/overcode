@@ -36,7 +36,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     ),
     SummaryGroup(
         id="llm_usage",
-        name="LLM Usage",
+        name="Budget",
         fields=["token_count", "cost", "budget"],
         default_enabled=True,
     ),

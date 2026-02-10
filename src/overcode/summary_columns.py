@@ -565,7 +565,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain),
 
-    # LLM Usage group — token count, cost, budget ($-toggled); context always visible
+    # Budget group — token count, cost, budget ($-toggled); context always visible
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
                   label="Tokens", render_plain=render_token_count_plain),
     SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
