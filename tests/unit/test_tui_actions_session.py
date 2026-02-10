@@ -665,6 +665,18 @@ class TestNewAgent:
 class TestFocusCommandBar:
     """Test action_focus_command_bar method."""
 
+    def _make_mock_tui(self, cmd_bar, focused_widget=None, sessions=None):
+        """Create a mock TUI with _open_command_bar bound."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.query_one.return_value = cmd_bar
+        mock_tui._get_focused_widget.return_value = focused_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
+        if sessions is not None:
+            mock_tui.sessions = sessions
+        return mock_tui
+
     def test_opens_and_focuses_command_bar(self):
         """Should show and focus the command bar."""
         from overcode.tui_actions.session import SessionActionsMixin
@@ -679,9 +691,7 @@ class TestFocusCommandBar:
         mock_cmd_bar = MagicMock()
         mock_cmd_bar.query_one.return_value = mock_input
 
-        mock_tui = MagicMock()
-        mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui = self._make_mock_tui(mock_cmd_bar, focused_widget=mock_widget)
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
@@ -701,10 +711,7 @@ class TestFocusCommandBar:
         mock_cmd_bar.target_session = None
         mock_cmd_bar.query_one.return_value = mock_input
 
-        mock_tui = MagicMock()
-        mock_tui.query_one.return_value = mock_cmd_bar
-        mock_tui._get_focused_widget.return_value = None
-        mock_tui.sessions = [mock_session]
+        mock_tui = self._make_mock_tui(mock_cmd_bar, sessions=[mock_session])
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
@@ -717,6 +724,7 @@ class TestFocusCommandBar:
 
         mock_tui = MagicMock()
         mock_tui.query_one.side_effect = NoMatches()
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         # Should not raise
         SessionActionsMixin.action_focus_command_bar(mock_tui)
@@ -743,6 +751,7 @@ class TestFocusStandingOrders:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_focus_standing_orders(mock_tui)
 
@@ -773,6 +782,7 @@ class TestFocusHumanAnnotation:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_focus_human_annotation(mock_tui)
 
@@ -802,6 +812,7 @@ class TestEditAgentValue:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
@@ -825,6 +836,7 @@ class TestEditAgentValue:
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = None
         mock_tui.sessions = [mock_session]
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
@@ -854,6 +866,7 @@ class TestConfigureHeartbeat:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
@@ -879,6 +892,7 @@ class TestConfigureHeartbeat:
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
         mock_tui._get_focused_widget.return_value = mock_widget
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
@@ -891,6 +905,7 @@ class TestConfigureHeartbeat:
 
         mock_tui = MagicMock()
         mock_tui.query_one.side_effect = NoMatches()
+        mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
 
         # Should not raise
         SessionActionsMixin.action_configure_heartbeat(mock_tui)

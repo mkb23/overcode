@@ -277,158 +277,21 @@ class SessionActionsMixin:
         except NoMatches:
             self.notify("Command bar not found", severity="error")
 
-    def action_focus_command_bar(self) -> None:
-        """Focus the command bar for input."""
-        from ..tui_widgets import CommandBar
+    def _open_command_bar(
+        self,
+        mode: str | None = None,
+        get_prefill=None,
+        fallback_prefill: str | None = None,
+    ) -> None:
+        """Open the command bar with optional mode and pre-fill.
 
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
+        Handles the common pattern of showing the bar, targeting the focused
+        session, pre-filling the input, and focusing it.
 
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            # (Textual's internal focus) which diverges during DOM reordering
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_focus_standing_orders(self) -> None:
-        """Focus the command bar for editing standing orders."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing standing orders
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = focused.session.standing_instructions or ""
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Set mode to standing_orders
-            cmd_bar.set_mode("standing_orders")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_focus_human_annotation(self) -> None:
-        """Focus input for editing human annotation (#74)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing annotation
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = focused.session.human_annotation or ""
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-
-            # Set mode to annotation editing
-            cmd_bar.set_mode("annotation")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_edit_agent_value(self) -> None:
-        """Focus the command bar for editing agent value (#61)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-
-            # Show the command bar
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing value
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = str(focused.session.agent_value)
-            elif not cmd_bar.target_session and self.sessions:
-                # Default to first session if none focused
-                cmd_bar.set_target(self.sessions[0].name)
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                cmd_input.value = "1000"
-
-            # Set mode to value
-            cmd_bar.set_mode("value")
-
-            # Enable and focus the input
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_edit_cost_budget(self) -> None:
-        """Focus the command bar for editing cost budget (#173)."""
-        from ..tui_widgets import CommandBar
-
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            cmd_bar.add_class("visible")
-
-            # Use _get_focused_widget (our own index) not self.focused
-            focused = self._get_focused_widget()
-            if focused:
-                cmd_bar.set_target(focused.session.name)
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                current = focused.session.cost_budget_usd
-                cmd_input.value = str(current) if current > 0 else ""
-            elif not cmd_bar.target_session and self.sessions:
-                cmd_bar.set_target(self.sessions[0].name)
-
-            cmd_bar.set_mode("cost_budget")
-            cmd_input = cmd_bar.query_one("#cmd-input", Input)
-            cmd_input.disabled = False
-            cmd_input.focus()
-        except NoMatches:
-            pass
-
-    def action_configure_heartbeat(self) -> None:
-        """Open command bar for heartbeat configuration (H key) (#171).
-
-        Two-step flow:
-        1. Enter frequency (e.g., 300, 5m, 1h) or 'off' to disable
-        2. Enter instruction to send at each heartbeat
+        Args:
+            mode: Command bar mode to set (None keeps current mode)
+            get_prefill: Optional callable(session) -> str to pre-fill input
+            fallback_prefill: Pre-fill value when no agent is focused
         """
         from ..tui_widgets import CommandBar
 
@@ -437,24 +300,57 @@ class SessionActionsMixin:
             cmd_bar.add_class("visible")
 
             # Use _get_focused_widget (our own index) not self.focused
+            # (Textual's internal focus) which diverges during DOM reordering
             focused = self._get_focused_widget()
             if focused:
                 cmd_bar.set_target(focused.session.name)
-                # Pre-fill with existing frequency if enabled
-                cmd_input = cmd_bar.query_one("#cmd-input", Input)
-                if focused.session.heartbeat_enabled:
-                    cmd_input.value = str(focused.session.heartbeat_frequency_seconds)
-                else:
-                    cmd_input.value = "300"  # Default 5 min
+                if get_prefill:
+                    cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                    cmd_input.value = get_prefill(focused.session)
             elif not cmd_bar.target_session and self.sessions:
                 cmd_bar.set_target(self.sessions[0].name)
+                if fallback_prefill is not None:
+                    cmd_input = cmd_bar.query_one("#cmd-input", Input)
+                    cmd_input.value = fallback_prefill
 
-            cmd_bar.set_mode("heartbeat_freq")
+            if mode:
+                cmd_bar.set_mode(mode)
+
             cmd_input = cmd_bar.query_one("#cmd-input", Input)
             cmd_input.disabled = False
             cmd_input.focus()
         except NoMatches:
             pass
+
+    def action_focus_command_bar(self) -> None:
+        """Focus the command bar for input."""
+        self._open_command_bar()
+
+    def action_focus_standing_orders(self) -> None:
+        """Focus the command bar for editing standing orders."""
+        self._open_command_bar("standing_orders", lambda s: s.standing_instructions or "")
+
+    def action_focus_human_annotation(self) -> None:
+        """Focus input for editing human annotation (#74)."""
+        self._open_command_bar("annotation", lambda s: s.human_annotation or "")
+
+    def action_edit_agent_value(self) -> None:
+        """Focus the command bar for editing agent value (#61)."""
+        self._open_command_bar("value", lambda s: str(s.agent_value), fallback_prefill="1000")
+
+    def action_edit_cost_budget(self) -> None:
+        """Focus the command bar for editing cost budget (#173)."""
+        self._open_command_bar(
+            "cost_budget",
+            lambda s: str(s.cost_budget_usd) if s.cost_budget_usd > 0 else "",
+        )
+
+    def action_configure_heartbeat(self) -> None:
+        """Open command bar for heartbeat configuration (#171)."""
+        self._open_command_bar(
+            "heartbeat_freq",
+            lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",
+        )
 
     def action_transport_all(self) -> None:
         """Prepare all sessions for transport/handover (requires double-press confirmation).
