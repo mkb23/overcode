@@ -146,10 +146,6 @@ class PollingStatusDetector:
             error_msg = self._extract_error_message(last_lines)
             return self.STATUS_ERROR, f"Error: {error_msg}", content
 
-        # Check for approval waiting state (#22)
-        if self._matches_approval_patterns(last_few):
-            return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
-
         # Check for permission/confirmation prompts (HIGHEST priority)
         # This MUST come before active indicator checks because permission dialogs
         # can contain tool names like "Web Search commands in" that would falsely
@@ -158,6 +154,20 @@ class PollingStatusDetector:
             request_text = self._extract_permission_request(last_lines)
             return self.STATUS_WAITING_USER, f"Permission: {request_text}", content
 
+        # Content change detection - if pane content is actively changing, Claude is working
+        # This is the most reliable indicator as it catches streaming output.
+        # Checked BEFORE approval patterns so that plan mode shows green while
+        # Claude is actively exploring/reading files (#214).
+        if content_changed:
+            activity = self._extract_last_activity(last_lines)
+            return self.STATUS_RUNNING, f"Active: {activity}", content
+
+        # Check for approval waiting state (#22)
+        # Only reached when content is NOT changing, so plan mode correctly shows
+        # orange only when Claude has stopped and is waiting for plan approval (#214).
+        if self._matches_approval_patterns(last_few):
+            return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
+
         # Check for command menu display (slash command autocomplete)
         # When user types a slash command, Claude shows a menu of available commands.
         # This means Claude is waiting for the user to complete/select a command.
@@ -165,12 +175,6 @@ class PollingStatusDetector:
         menu_lines = count_command_menu_lines(last_lines, self.patterns)
         if menu_lines >= 3 and menu_lines >= len(last_lines) * 0.4:
             return self.STATUS_WAITING_USER, "Command menu - waiting for input", content
-
-        # Content change detection - if pane content is actively changing, Claude is working
-        # This is the most reliable indicator as it catches streaming output
-        if content_changed:
-            activity = self._extract_last_activity(last_lines)
-            return self.STATUS_RUNNING, f"Active: {activity}", content
 
         # Check for ACTIVE WORK indicators BEFORE checking for prompt
         # These indicate Claude is busy even if the prompt is visible
