@@ -49,7 +49,6 @@ class NavigationActionsMixin:
         from ..status_constants import (
             STATUS_WAITING_USER,
             STATUS_WAITING_APPROVAL,
-            STATUS_WAITING_HEARTBEAT,
             STATUS_RUNNING,
         )
 
@@ -57,8 +56,10 @@ class NavigationActionsMixin:
         if not widgets:
             return
 
-        # Build prioritized list of sessions needing attention
-        # Priority: bell > waiting_user > waiting_approval > waiting_heartbeat
+        # Build prioritized list of sessions needing attention (#224)
+        # Only include agents that truly need human action.
+        # Heartbeat agents auto-resume and don't need attention.
+        # Priority: bell > waiting_user > waiting_approval
         attention_sessions = []
         for i, widget in enumerate(widgets):
             status = getattr(widget, 'detected_status', STATUS_RUNNING)
@@ -72,9 +73,7 @@ class NavigationActionsMixin:
                 attention_sessions.append((1, i, widget))  # Red but no bell (already visited)
             elif status == STATUS_WAITING_APPROVAL:
                 attention_sessions.append((2, i, widget))
-            elif status == STATUS_WAITING_HEARTBEAT:
-                attention_sessions.append((3, i, widget))
-            # Skip running, terminated, asleep
+            # Skip waiting_heartbeat (#224), running, terminated, asleep
 
         if not attention_sessions:
             self.notify("No sessions need attention", severity="information")
