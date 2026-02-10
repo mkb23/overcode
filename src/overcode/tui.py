@@ -396,7 +396,7 @@ class SupervisorTUI(
 
         # Apply pre-loaded sessions synchronously so widgets exist immediately
         if self._preloaded_sessions is not None:
-            self._apply_sessions(self._preloaded_sessions, None)
+            self._apply_sessions(self._preloaded_sessions)
             self._preloaded_sessions = None
         else:
             self.refresh_sessions()
@@ -537,29 +537,28 @@ class SupervisorTUI(
         Uses launcher.list_sessions() to detect terminated sessions
         (tmux windows that no longer exist, e.g., after machine reboot).
         """
-        # Use focused_session_index (not self.focused) to capture the selected
-        # session ID — self.focused can be a non-session widget (e.g. command bar)
-        focused_widget = self._get_focused_widget()
-        focused_session_id = focused_widget.session.id if focused_widget else None
-        self._fetch_sessions_async(focused_session_id)
+        self._fetch_sessions_async()
 
     @work(thread=True, exclusive=True, group="refresh_sessions")
-    def _fetch_sessions_async(self, focused_session_id: str | None) -> None:
+    def _fetch_sessions_async(self) -> None:
         """Read session list off the main thread, then apply to UI."""
         sessions = self.launcher.list_sessions()
-        self.call_from_thread(
-            self._apply_sessions, sessions, focused_session_id
-        )
+        self.call_from_thread(self._apply_sessions, sessions)
 
-    def _apply_sessions(self, sessions: list, focused_session_id: str | None) -> None:
+    def _apply_sessions(self, sessions: list) -> None:
         """Apply refreshed session list on main thread (no I/O)."""
+        # Capture focus NOW (at apply time) so it reflects the user's current
+        # position, not where they were when the async fetch started.
+        focused_widget = self._get_focused_widget()
+        focused_session_id = focused_widget.session.id if focused_widget else None
+
         self._invalidate_sessions_cache()
         self.sessions = sessions
         # Apply sorting (#61)
         self._sort_sessions()
         # Calculate max repo/branch widths for alignment in full detail mode
-        self._recalc_repo_widths(self.sessions)
-        self.update_session_widgets()
+        widths_changed = self._recalc_repo_widths(self.sessions)
+        self.update_session_widgets(force_refresh=widths_changed)
 
         # Update focused_session_index to follow the same session at its new position.
         # Only restore Textual's focus if a SessionSummary currently has it — never
@@ -581,8 +580,12 @@ class SupervisorTUI(
             # Select first agent immediately (no timer delay)
             self._select_first_agent()
 
-    def _recalc_repo_widths(self, sessions) -> None:
-        """Recalculate max repo/branch widths and name-match flag."""
+    def _recalc_repo_widths(self, sessions) -> bool:
+        """Recalculate max repo/branch widths and name-match flag.
+
+        Returns True if any width or flag actually changed.
+        """
+        old = (self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
         sessions = list(sessions)
         if sessions:
             self.max_repo_width = max(
@@ -598,6 +601,7 @@ class SupervisorTUI(
             self.max_repo_width = 10
             self.max_branch_width = 10
             self.all_names_match_repos = False
+        return old != (self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -885,11 +889,16 @@ class SupervisorTUI(
                 widget.ai_summary_context = summary.context or ""
             widget.refresh()
 
-    def update_session_widgets(self) -> None:
+    def update_session_widgets(self, force_refresh: bool = True) -> None:
         """Update the session display incrementally.
 
         Only adds/removes widgets when sessions change, rather than
         destroying and recreating all widgets (which causes UI stutter).
+
+        Args:
+            force_refresh: If False, only refresh widgets whose session data
+                actually changed. Set to True when column widths changed or
+                on structural changes that require all widgets to repaint.
         """
         container = self.query_one("#sessions-container", ScrollableContainer)
 
@@ -925,15 +934,25 @@ class SupervisorTUI(
             session_map = {s.id: s for s in display_sessions}
             for widget in existing_widgets.values():
                 if widget.session.id in session_map:
-                    widget.session = session_map[widget.session.id]
+                    new_session = session_map[widget.session.id]
+                    old_budget = widget.any_has_budget
+                    # Check if anything display-relevant actually changed
+                    changed = (
+                        force_refresh
+                        or widget.session != new_session
+                        or old_budget != any_has_budget
+                    )
+                    widget.session = new_session
                     widget.any_has_budget = any_has_budget
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
                     else:
                         widget.remove_class("terminated")
-                    # Refresh so column widths (branch, repo) stay aligned (#218)
-                    widget.refresh()
+                    # Only refresh if data actually changed (#218 alignment still
+                    # handled via force_refresh=True when widths change)
+                    if changed:
+                        widget.refresh()
             # Still reorder widgets to handle sort mode changes
             self._reorder_session_widgets(container)
             return
