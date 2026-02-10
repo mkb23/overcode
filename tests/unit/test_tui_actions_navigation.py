@@ -222,8 +222,8 @@ class TestJumpToAttention:
 
         assert len(mock_tui._attention_jump_list) == 1
 
-    def test_includes_waiting_heartbeat_sessions(self):
-        """Should include waiting_heartbeat sessions."""
+    def test_skips_waiting_heartbeat_sessions(self):
+        """Should skip waiting_heartbeat sessions (#224) - they auto-resume."""
         from overcode.tui_actions.navigation import NavigationActionsMixin
 
         mock_widget = MagicMock()
@@ -239,7 +239,7 @@ class TestJumpToAttention:
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
-        assert len(mock_tui._attention_jump_list) == 1
+        mock_tui.notify.assert_called_once_with("No sessions need attention", severity="information")
 
     def test_cycles_through_attention_list(self):
         """Should cycle through attention list on subsequent calls."""
