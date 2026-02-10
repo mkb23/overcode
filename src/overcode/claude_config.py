@@ -88,3 +88,52 @@ class ClaudeConfigEditor:
 
         self.save(updated)
         return True
+
+    def remove_hook(self, event: str, command: str) -> bool:
+        """Remove a matcher group containing this command.
+
+        Returns True if found and removed, False if not found.
+        Cleans up empty event arrays and empty hooks dict.
+        """
+        settings = self.load()
+        hooks_dict = settings.get("hooks", {})
+        event_list = hooks_dict.get(event, [])
+
+        # Find the matcher group index containing this command
+        index_to_remove = None
+        for i, entry in enumerate(event_list):
+            for hook in entry.get("hooks", []):
+                if hook.get("command") == command:
+                    index_to_remove = i
+                    break
+            if index_to_remove is not None:
+                break
+
+        if index_to_remove is None:
+            return False
+
+        updated = copy.deepcopy(settings)
+        del updated["hooks"][event][index_to_remove]
+
+        # Clean up empty event array
+        if not updated["hooks"][event]:
+            del updated["hooks"][event]
+
+        # Clean up empty hooks dict
+        if not updated["hooks"]:
+            del updated["hooks"]
+
+        self.save(updated)
+        return True
+
+    def list_hooks_matching(self, command_prefix: str) -> list[tuple[str, str]]:
+        """Return [(event, command)] for all hooks whose command starts with prefix."""
+        settings = self.load()
+        results = []
+        for event, entries in settings.get("hooks", {}).items():
+            for entry in entries:
+                for hook in entry.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    if cmd.startswith(command_prefix):
+                        results.append((event, cmd))
+        return results

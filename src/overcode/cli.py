@@ -40,6 +40,14 @@ supervisor_daemon_app = typer.Typer(
 )
 app.add_typer(supervisor_daemon_app, name="supervisor-daemon")
 
+# Hooks subcommand group
+hooks_app = typer.Typer(
+    name="hooks",
+    help="Manage Claude Code hook integration.",
+    no_args_is_help=True,
+)
+app.add_typer(hooks_app, name="hooks")
+
 # Config subcommand group
 config_app = typer.Typer(
     name="config",
@@ -478,6 +486,9 @@ def install_hook(
 
     The hook runs 'overcode time-context' on every prompt, giving Claude
     continuous awareness of clock, presence, office hours, and uptime.
+
+    NOTE: Prefer 'overcode hooks install' which installs all hooks
+    (status detection + time context) via a unified handler.
     """
     from .claude_config import ClaudeConfigEditor
 
@@ -501,6 +512,167 @@ def install_hook(
         rprint(f"  [dim]Toggle per-agent with F in the TUI.[/dim]")
     else:
         rprint(f"[green]\u2713[/green] Hook already installed in {level} settings ({editor.path})")
+
+    rprint(f"\n  [dim]Tip: Use 'overcode hooks install' for the full hook suite (status detection + time context).[/dim]")
+
+
+# =============================================================================
+# Hooks Commands
+# =============================================================================
+
+
+@hooks_app.command("install")
+def hooks_install(
+    project: Annotated[
+        bool,
+        typer.Option("--project", "-p", help="Install to project-level .claude/settings.json instead of user-level"),
+    ] = False,
+):
+    """Install all overcode hooks into Claude Code settings.
+
+    Installs hooks for: UserPromptSubmit, PostToolUse, Stop,
+    PermissionRequest, SessionEnd. All use the unified 'overcode hook-handler'.
+
+    Migrates legacy 'overcode time-context' hook if present.
+    """
+    from .claude_config import ClaudeConfigEditor
+    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+
+    if project:
+        editor = ClaudeConfigEditor.project_level()
+        level = "project"
+    else:
+        editor = ClaudeConfigEditor.user_level()
+        level = "user"
+
+    try:
+        settings = editor.load()
+    except ValueError as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    # 1. Remove legacy hooks
+    migrated = False
+    for event, command in LEGACY_HOOKS:
+        if editor.remove_hook(event, command):
+            migrated = True
+
+    if migrated:
+        rprint("[green]\u2713[/green] Migrated legacy time-context hook")
+
+    # 2. Install all overcode hooks (idempotent)
+    installed = 0
+    already = 0
+    for event, command in OVERCODE_HOOKS:
+        if editor.add_hook(event, command):
+            installed += 1
+        else:
+            already += 1
+
+    if installed > 0:
+        events = ", ".join(event for event, _ in OVERCODE_HOOKS)
+        rprint(f"[green]\u2713[/green] Installed {installed} hook(s) in {level} settings")
+        rprint(f"  [dim]{editor.path}[/dim]")
+        rprint(f"\n  Events: {events}")
+        rprint(f"  All hooks run 'overcode hook-handler' (reads event from stdin).")
+    elif already == len(OVERCODE_HOOKS):
+        rprint(f"[green]\u2713[/green] All {already} hooks already installed in {level} settings")
+
+
+@hooks_app.command("uninstall")
+def hooks_uninstall(
+    project: Annotated[
+        bool,
+        typer.Option("--project", "-p", help="Uninstall from project-level .claude/settings.json instead of user-level"),
+    ] = False,
+):
+    """Remove all overcode hooks from Claude Code settings."""
+    from .claude_config import ClaudeConfigEditor
+    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+
+    if project:
+        editor = ClaudeConfigEditor.project_level()
+        level = "project"
+    else:
+        editor = ClaudeConfigEditor.user_level()
+        level = "user"
+
+    try:
+        editor.load()
+    except ValueError as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    removed = 0
+    for event, command in OVERCODE_HOOKS:
+        if editor.remove_hook(event, command):
+            removed += 1
+
+    # Also remove legacy hooks
+    for event, command in LEGACY_HOOKS:
+        if editor.remove_hook(event, command):
+            removed += 1
+
+    if removed > 0:
+        rprint(f"[green]\u2713[/green] Removed {removed} hook(s) from {level} settings")
+    else:
+        rprint(f"[dim]No overcode hooks found in {level} settings[/dim]")
+
+
+@hooks_app.command("status")
+def hooks_status():
+    """Show which overcode hooks are installed."""
+    from .claude_config import ClaudeConfigEditor
+    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+
+    for level_name, editor in [
+        ("User-level", ClaudeConfigEditor.user_level()),
+        ("Project-level", ClaudeConfigEditor.project_level()),
+    ]:
+        try:
+            editor.load()
+        except ValueError:
+            rprint(f"\n{level_name} ({editor.path}):")
+            rprint(f"  [red](invalid JSON)[/red]")
+            continue
+
+        if not editor.path.exists():
+            rprint(f"\n{level_name} ({editor.path}):")
+            rprint(f"  [dim](no settings file)[/dim]")
+            continue
+
+        rprint(f"\n{level_name} ({editor.path}):")
+
+        found_any = False
+        for event, command in OVERCODE_HOOKS:
+            if editor.has_hook(event, command):
+                rprint(f"  {event:<20} {command}  [green]\u2713[/green]")
+                found_any = True
+            else:
+                rprint(f"  {event:<20} [dim]not installed[/dim]")
+
+        # Check for legacy hooks
+        for event, command in LEGACY_HOOKS:
+            if editor.has_hook(event, command):
+                rprint(f"  {event:<20} {command}  [yellow]\u26a0 legacy[/yellow]")
+                rprint(f"    [dim]Run 'overcode hooks install' to migrate[/dim]")
+                found_any = True
+
+        if not found_any:
+            pass  # Already shows "not installed" per event
+
+
+@app.command("hook-handler", hidden=True)
+def hook_handler_cmd():
+    """Handle Claude Code hook events (internal).
+
+    Called by Claude Code hooks, not by users directly.
+    Reads event JSON from stdin, writes state for status detection,
+    and outputs time-context for UserPromptSubmit events.
+    """
+    from .hook_handler import handle_hook_event
+
+    handle_hook_event()
 
 
 @app.command()
