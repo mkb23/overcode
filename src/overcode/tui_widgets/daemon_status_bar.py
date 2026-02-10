@@ -45,22 +45,74 @@ class DaemonStatusBar(Static):
         self._session_manager = session_manager
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
         self.show_cost: bool = False  # Show $ cost instead of token counts
+        # Cached I/O results (populated by fetch_volatile_state, read by render)
+        self._supervisor_running: bool = False
+        self._summarizer_available: bool = False
+        self._web_running: bool = False
+        self._web_url: Optional[str] = None
+        self._mean_spin: float = 0.0
+        self._spin_sample_count: int = 0
+        self._spin_baseline_minutes: int = 0
+
+    def fetch_volatile_state(self, baseline_minutes: int = 0, active_session_names: Optional[list] = None) -> None:
+        """Fetch all I/O-dependent state. Call from a background thread, NOT main thread.
+
+        This replaces the I/O that was previously done inside render().
+        """
+        self._supervisor_running = is_supervisor_daemon_running(self.tmux_session)
+        self._summarizer_available = SummarizerClient.is_available()
+        self._web_running = is_web_server_running(self.tmux_session)
+        self._web_url = get_web_server_url(self.tmux_session) if self._web_running else None
+        self._spin_baseline_minutes = baseline_minutes
+
+        # Mean spin rate from history (expensive CSV parse)
+        if baseline_minutes > 0 and active_session_names:
+            history = read_agent_status_history(
+                hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
+                history_file=get_agent_history_path(self.tmux_session)
+            )
+            self._mean_spin, self._spin_sample_count = calculate_mean_spin_from_history(
+                history, active_session_names, baseline_minutes
+            )
+        else:
+            self._mean_spin = 0.0
+            self._spin_sample_count = 0
 
     def update_status(self) -> None:
-        """Refresh daemon state from file"""
+        """Refresh daemon state from file.
+
+        NOTE: This is the legacy entry point. The TUI now calls
+        fetch_volatile_state() from a background worker and sets
+        monitor_state / _asleep_session_ids directly. This method
+        remains for backwards compatibility (e.g. diagnostics mode
+        manual refresh).
+        """
         self.monitor_state = get_monitor_daemon_state(self.tmux_session)
-        # Update cache of asleep session IDs from session manager
         if self._session_manager:
             self._asleep_session_ids = {
                 s.id for s in self._session_manager.list_sessions()
                 if s.is_asleep and s.tmux_session == self.tmux_session
             }
+        self.fetch_volatile_state(
+            baseline_minutes=getattr(self.app, 'baseline_minutes', 0),
+            active_session_names=self._get_active_session_names(),
+        )
         self.refresh()
+
+    def _get_active_session_names(self) -> list:
+        """Get active (non-sleeping) agent names from monitor state."""
+        if not self.monitor_state or not self.monitor_state.sessions:
+            return []
+        return [
+            s.name for s in self.monitor_state.sessions
+            if s.session_id not in self._asleep_session_ids
+        ]
 
     def render(self) -> Text:
         """Render daemon status bar.
 
         Shows Monitor Daemon and Supervisor Daemon status explicitly.
+        All data comes from cached instance variables — NO I/O here.
         """
         content = Text()
 
@@ -83,11 +135,10 @@ class DaemonStatusBar(Static):
 
         content.append(" │ ", style="dim")
 
-        # Supervisor Daemon status
+        # Supervisor Daemon status (cached)
         content.append("Supervisor: ", style="bold")
-        supervisor_running = is_supervisor_daemon_running(self.tmux_session)
 
-        if supervisor_running:
+        if self._supervisor_running:
             content.append("● ", style="green")
             # Show if daemon Claude is currently running
             if monitor_running and self.monitor_state.supervisor_claude_running:
@@ -119,14 +170,13 @@ class DaemonStatusBar(Static):
         # AI Summarizer status (from TUI's local summarizer, not daemon)
         content.append(" │ ", style="dim")
         content.append("AI: ", style="bold")
-        # Get summarizer state from parent app
-        summarizer_available = SummarizerClient.is_available()
+        # Get summarizer state from parent app (cheap attribute reads, no I/O)
         summarizer_enabled = False
         summarizer_calls = 0
         if hasattr(self.app, '_summarizer'):
             summarizer_enabled = self.app._summarizer.enabled
             summarizer_calls = self.app._summarizer.total_calls
-        if summarizer_available:
+        if self._summarizer_available:
             if summarizer_enabled:
                 content.append("● ", style="green")
                 if summarizer_calls > 0:
@@ -158,20 +208,10 @@ class DaemonStatusBar(Static):
             if sleeping_count > 0:
                 content.append(f" 💤{sleeping_count}", style="dim")  # Show sleeping count
 
-            # Mean spin rate - use history-based calculation if baseline > 0
-            baseline_minutes = getattr(self.app, 'baseline_minutes', 0)
+            # Mean spin rate — use cached values from fetch_volatile_state()
+            baseline_minutes = self._spin_baseline_minutes
             if baseline_minutes > 0:
-                # History-based calculation for time window
-                history = read_agent_status_history(
-                    hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
-                    history_file=get_agent_history_path(self.tmux_session)
-                )
-                agent_names = [s.name for s in active_sessions]
-                mean_spin, sample_count = calculate_mean_spin_from_history(
-                    history, agent_names, baseline_minutes
-                )
-
-                if sample_count > 0:
+                if self._spin_sample_count > 0:
                     # Format window label: "15m", "1h", "1h30m"
                     if baseline_minutes < 60:
                         window_label = f"{baseline_minutes}m"
@@ -179,7 +219,7 @@ class DaemonStatusBar(Static):
                         hours = baseline_minutes // 60
                         mins = baseline_minutes % 60
                         window_label = f"{hours}h" if mins == 0 else f"{hours}h{mins}m"
-                    content.append(f" μ{mean_spin:.1f} ({window_label})", style="cyan")
+                    content.append(f" μ{self._mean_spin:.1f} ({window_label})", style="cyan")
                 else:
                     content.append(" μ-- (no data)", style="dim")
             else:
@@ -233,15 +273,13 @@ class DaemonStatusBar(Static):
             else:
                 content.append("📡", style="dim")
 
-        # Web server status
-        web_running = is_web_server_running(self.tmux_session)
-        if web_running:
+        # Web server status (cached)
+        if self._web_running:
             content.append(" │ ", style="dim")
-            url = get_web_server_url(self.tmux_session)
             content.append("🌐", style="green")
-            if url:
+            if self._web_url:
                 # Just show port
-                port = url.split(":")[-1] if url else ""
+                port = self._web_url.split(":")[-1] if self._web_url else ""
                 content.append(f":{port}", style="cyan")
 
         return content
