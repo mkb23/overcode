@@ -17,8 +17,6 @@ Architecture:
     Monitor Daemon (metrics) → monitor_daemon_state.json → Supervisor Daemon (claude)
 
 Pure business logic is extracted to supervisor_daemon_core.py for testability.
-TODO: Extract _send_prompt_to_window to a shared tmux utilities module
-(duplicated in launcher.py)
 """
 
 import json
@@ -26,7 +24,6 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -59,6 +56,7 @@ from .status_constants import (
     get_status_emoji,
 )
 from .tmux_manager import TmuxManager
+from .tmux_utils import send_text_to_tmux_window
 from .history_reader import encode_project_path, read_token_usage_from_session_file
 from .supervisor_daemon_core import (
     build_daemon_claude_context as _build_daemon_claude_context,
@@ -577,44 +575,12 @@ class SupervisorDaemon:
 
     def _send_prompt_to_window(self, window_index: int, prompt: str) -> bool:
         """Send a large prompt to a tmux window via load-buffer/paste-buffer."""
-        lines = prompt.split('\n')
-        batch_size = 10
-
-        for i in range(0, len(lines), batch_size):
-            batch = lines[i:i + batch_size]
-            text = '\n'.join(batch)
-            if i + batch_size < len(lines):
-                text += '\n'
-
-            try:
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-                    temp_path = f.name
-                    f.write(text)
-
-                subprocess.run(['tmux', 'load-buffer', temp_path], timeout=5, check=True)
-                subprocess.run([
-                    'tmux', 'paste-buffer', '-t',
-                    f"{self.tmux.session_name}:{window_index}"
-                ], timeout=5, check=True)
-            except subprocess.SubprocessError as e:
-                self.log.error(f"Failed to send prompt batch: {e}")
-                return False
-            finally:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
-
-            time.sleep(0.1)
-
-        # Send Enter to submit
-        subprocess.run([
-            'tmux', 'send-keys', '-t',
-            f"{self.tmux.session_name}:{window_index}",
-            '', 'Enter'
-        ])
-
-        return True
+        return send_text_to_tmux_window(
+            self.tmux.session_name,
+            window_index,
+            prompt,
+            send_enter=True,
+        )
 
     def launch_daemon_claude(self, non_green_sessions: List[SessionDaemonState]) -> bool:
         """Launch daemon claude to handle non-green sessions.

@@ -5,20 +5,18 @@ All Claude sessions launched by overcode are interactive - users can
 take over at any time. Initial prompts are sent as keystrokes after
 Claude starts, not as CLI arguments.
 
-TODO: Extract _send_prompt_to_window to a shared tmux utilities module
-(duplicated in supervisor_daemon.py)
 """
 
 import time
 import subprocess
-import tempfile
 import os
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 from pathlib import Path
 
 import re
 
 from .tmux_manager import TmuxManager
+from .tmux_utils import send_text_to_tmux_window
 from .session_manager import SessionManager, Session
 from .config import get_default_standing_instructions
 from .dependency_check import require_tmux, require_claude
@@ -42,10 +40,6 @@ def validate_session_name(name: str) -> None:
         raise InvalidSessionNameError(name, "name cannot be empty")
     if not SESSION_NAME_PATTERN.match(name):
         raise InvalidSessionNameError(name)
-
-if TYPE_CHECKING:
-    pass  # For future type hints
-
 
 class ClaudeLauncher:
     """Launches interactive Claude Code sessions in tmux windows.
@@ -188,66 +182,14 @@ class ClaudeLauncher:
         prompt: str,
         startup_delay: float = 3.0,
     ) -> bool:
-        """
-        Send a prompt to a Claude session via tmux keystrokes.
-
-        This sends the prompt as if the user typed it, so the session
-        remains fully interactive - the user can take over at any time.
-
-        Args:
-            window_index: The tmux window index
-            prompt: The prompt text to send
-            startup_delay: Seconds to wait for Claude to start (default: 3)
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Wait for Claude to start up
-        time.sleep(startup_delay)
-
-        # For large prompts, use tmux load-buffer/paste-buffer
-        # to avoid escaping issues and line length limits
-        lines = prompt.split('\n')
-        batch_size = 10
-
-        for i in range(0, len(lines), batch_size):
-            batch = lines[i:i + batch_size]
-            text = '\n'.join(batch)
-            if i + batch_size < len(lines):
-                text += '\n'  # Add newline between batches
-
-            # Use tempfile for the buffer
-            temp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-                    temp_path = f.name
-                    f.write(text)
-
-                subprocess.run(['tmux', 'load-buffer', temp_path], timeout=5, check=True)
-                subprocess.run([
-                    'tmux', 'paste-buffer', '-t',
-                    f"{self.tmux.session_name}:{window_index}"
-                ], timeout=5, check=True)
-            except subprocess.SubprocessError as e:
-                print(f"Failed to send prompt batch: {e}")
-                return False
-            finally:
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
-
-            time.sleep(0.1)
-
-        # Send Enter to submit the prompt
-        subprocess.run([
-            'tmux', 'send-keys', '-t',
-            f"{self.tmux.session_name}:{window_index}",
-            '', 'Enter'
-        ])
-
-        return True
+        """Send a prompt to a Claude session via tmux load-buffer/paste-buffer."""
+        return send_text_to_tmux_window(
+            self.tmux.session_name,
+            window_index,
+            prompt,
+            send_enter=True,
+            startup_delay=startup_delay,
+        )
 
     def attach(self):
         """Attach to the tmux session"""

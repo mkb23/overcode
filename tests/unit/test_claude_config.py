@@ -1,4 +1,4 @@
-"""Tests for ClaudeConfigEditor and the install-hook CLI command."""
+"""Tests for ClaudeConfigEditor."""
 
 import json
 from pathlib import Path
@@ -177,66 +177,6 @@ class TestAddHook:
         editor.add_hook("PreToolUse", "my-cmd", matcher="Bash")
         data = json.loads(f.read_text())
         assert data["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
-
-
-class TestInstallHookCommand:
-
-    def test_help(self):
-        result = runner.invoke(app, ["install-hook", "--help"])
-        assert result.exit_code == 0
-        assert "time-context" in result.output
-
-    def test_creates_new_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        result = runner.invoke(app, ["install-hook"])
-        assert result.exit_code == 0
-        assert "Installed" in result.output
-        f = tmp_path / ".claude" / "settings.json"
-        assert f.exists()
-        data = json.loads(f.read_text())
-        assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "overcode time-context"
-
-    def test_merges_existing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text(json.dumps({"existingKey": True}))
-        result = runner.invoke(app, ["install-hook"])
-        assert result.exit_code == 0
-        data = json.loads((claude_dir / "settings.json").read_text())
-        assert data["existingKey"] is True
-        assert "UserPromptSubmit" in data["hooks"]
-
-    def test_detects_already_installed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        settings = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]}
-        ]}}
-        (claude_dir / "settings.json").write_text(json.dumps(settings))
-        result = runner.invoke(app, ["install-hook"])
-        assert result.exit_code == 0
-        assert "already installed" in result.output
-
-    def test_invalid_json_error(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("not json{{{")
-        result = runner.invoke(app, ["install-hook"])
-        assert result.exit_code == 1
-        assert "Error" in result.output
-
-    def test_project_flag(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app, ["install-hook", "--project"])
-        assert result.exit_code == 0
-        assert "project" in result.output
-        f = tmp_path / ".claude" / "settings.json"
-        assert f.exists()
-        data = json.loads(f.read_text())
-        assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "overcode time-context"
 
 
 class TestRemoveHook:

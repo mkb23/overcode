@@ -28,11 +28,6 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("SessionEnd", "overcode hook-handler"),
 ]
 
-# Legacy hook command to migrate away from
-LEGACY_HOOKS: list[tuple[str, str]] = [
-    ("UserPromptSubmit", "overcode time-context"),
-]
-
 
 def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for a hook state file.

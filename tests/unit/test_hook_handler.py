@@ -9,7 +9,6 @@ import pytest
 
 from overcode.hook_handler import (
     OVERCODE_HOOKS,
-    LEGACY_HOOKS,
     _get_hook_state_path,
     write_hook_state,
     handle_hook_event,
@@ -30,8 +29,6 @@ class TestConstants:
         commands = set(cmd for _, cmd in OVERCODE_HOOKS)
         assert commands == {"overcode hook-handler"}
 
-    def test_legacy_hooks_has_time_context(self):
-        assert ("UserPromptSubmit", "overcode time-context") in LEGACY_HOOKS
 
 
 class TestGetHookStatePath:

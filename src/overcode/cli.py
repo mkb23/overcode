@@ -459,70 +459,6 @@ def show(
                 rprint(f"[dim]No pane output available[/dim]")
 
 
-@app.command("time-context")
-def time_context():
-    """Output a compact time-awareness line for Claude Code hooks.
-
-    Called by a UserPromptSubmit hook on every prompt. Outputs a single
-    line with clock, presence, office hours, uptime, and heartbeat info.
-    Silently exits when not in an overcode-managed session (env vars missing).
-    """
-    from .time_context import get_agent_identity, generate_time_context
-
-    name, tmux = get_agent_identity()
-    if not name or not tmux:
-        raise typer.Exit(0)
-
-    line = generate_time_context(tmux, name)
-    if not line:
-        raise typer.Exit(0)
-    print(line)
-
-
-@app.command("install-hook")
-def install_hook(
-    project: Annotated[
-        bool,
-        typer.Option("--project", "-p", help="Install to project-level .claude/settings.json instead of user-level"),
-    ] = False,
-):
-    """Install the time-context hook into Claude Code settings.
-
-    By default installs to user-level settings (~/.claude/settings.json).
-    Use --project to install to the current project's .claude/settings.json.
-
-    The hook runs 'overcode time-context' on every prompt, giving Claude
-    continuous awareness of clock, presence, office hours, and uptime.
-
-    NOTE: Prefer 'overcode hooks install' which installs all hooks
-    (status detection + time context) via a unified handler.
-    """
-    from .claude_config import ClaudeConfigEditor
-
-    if project:
-        editor = ClaudeConfigEditor.project_level()
-        level = "project"
-    else:
-        editor = ClaudeConfigEditor.user_level()
-        level = "user"
-
-    try:
-        added = editor.add_hook("UserPromptSubmit", "overcode time-context")
-    except ValueError as e:
-        rprint(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-
-    if added:
-        rprint(f"[green]\u2713[/green] Installed time-context hook in {level} settings")
-        rprint(f"  [dim]{editor.path}[/dim]")
-        rprint(f"\n  [dim]The hook runs 'overcode time-context' on every prompt.[/dim]")
-        rprint(f"  [dim]Toggle per-agent with F in the TUI.[/dim]")
-    else:
-        rprint(f"[green]\u2713[/green] Hook already installed in {level} settings ({editor.path})")
-
-    rprint(f"\n  [dim]Tip: Use 'overcode hooks install' for the full hook suite (status detection + time context).[/dim]")
-
-
 # =============================================================================
 # Hooks Commands
 # =============================================================================
@@ -539,11 +475,9 @@ def hooks_install(
 
     Installs hooks for: UserPromptSubmit, PostToolUse, Stop,
     PermissionRequest, SessionEnd. All use the unified 'overcode hook-handler'.
-
-    Migrates legacy 'overcode time-context' hook if present.
     """
     from .claude_config import ClaudeConfigEditor
-    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+    from .hook_handler import OVERCODE_HOOKS
 
     if project:
         editor = ClaudeConfigEditor.project_level()
@@ -558,16 +492,7 @@ def hooks_install(
         rprint(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-    # 1. Remove legacy hooks
-    migrated = False
-    for event, command in LEGACY_HOOKS:
-        if editor.remove_hook(event, command):
-            migrated = True
-
-    if migrated:
-        rprint("[green]\u2713[/green] Migrated legacy time-context hook")
-
-    # 2. Install all overcode hooks (idempotent)
+    # Install all overcode hooks (idempotent)
     installed = 0
     already = 0
     for event, command in OVERCODE_HOOKS:
@@ -595,7 +520,7 @@ def hooks_uninstall(
 ):
     """Remove all overcode hooks from Claude Code settings."""
     from .claude_config import ClaudeConfigEditor
-    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+    from .hook_handler import OVERCODE_HOOKS
 
     if project:
         editor = ClaudeConfigEditor.project_level()
@@ -615,11 +540,6 @@ def hooks_uninstall(
         if editor.remove_hook(event, command):
             removed += 1
 
-    # Also remove legacy hooks
-    for event, command in LEGACY_HOOKS:
-        if editor.remove_hook(event, command):
-            removed += 1
-
     if removed > 0:
         rprint(f"[green]\u2713[/green] Removed {removed} hook(s) from {level} settings")
     else:
@@ -630,7 +550,7 @@ def hooks_uninstall(
 def hooks_status():
     """Show which overcode hooks are installed."""
     from .claude_config import ClaudeConfigEditor
-    from .hook_handler import OVERCODE_HOOKS, LEGACY_HOOKS
+    from .hook_handler import OVERCODE_HOOKS
 
     for level_name, editor in [
         ("User-level", ClaudeConfigEditor.user_level()),
@@ -650,23 +570,11 @@ def hooks_status():
 
         rprint(f"\n{level_name} ({editor.path}):")
 
-        found_any = False
         for event, command in OVERCODE_HOOKS:
             if editor.has_hook(event, command):
                 rprint(f"  {event:<20} {command}  [green]\u2713[/green]")
-                found_any = True
             else:
                 rprint(f"  {event:<20} [dim]not installed[/dim]")
-
-        # Check for legacy hooks
-        for event, command in LEGACY_HOOKS:
-            if editor.has_hook(event, command):
-                rprint(f"  {event:<20} {command}  [yellow]\u26a0 legacy[/yellow]")
-                rprint(f"    [dim]Run 'overcode hooks install' to migrate[/dim]")
-                found_any = True
-
-        if not found_any:
-            pass  # Already shows "not installed" per event
 
 
 @app.command("hook-handler", hidden=True)
