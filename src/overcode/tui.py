@@ -524,9 +524,10 @@ class SupervisorTUI(
         Uses launcher.list_sessions() to detect terminated sessions
         (tmux windows that no longer exist, e.g., after machine reboot).
         """
-        # Capture focused session ID on main thread before spawning worker
-        focused = self.focused
-        focused_session_id = focused.session.id if isinstance(focused, SessionSummary) else None
+        # Use focused_session_index (not self.focused) to capture the selected
+        # session ID — self.focused can be a non-session widget (e.g. command bar)
+        focused_widget = self._get_focused_widget()
+        focused_session_id = focused_widget.session.id if focused_widget else None
         self._fetch_sessions_async(focused_session_id)
 
     @work(thread=True, exclusive=True, group="refresh_sessions")
@@ -605,6 +606,18 @@ class SupervisorTUI(
         """Invalidate the sessions cache to force reload on next access."""
         self._sessions_cache_time = 0
 
+    def _get_focused_widget(self) -> "SessionSummary | None":
+        """Get the selected session widget using focused_session_index.
+
+        Uses the app's own selection state rather than Textual's self.focused,
+        which can diverge during DOM reordering or when non-session widgets
+        (e.g. command bar) have focus.
+        """
+        widgets = self._get_widgets_in_session_order()
+        if 0 <= self.focused_session_index < len(widgets):
+            return widgets[self.focused_session_index]
+        return None
+
     def update_focused_status(self) -> None:
         """Update only the focused session's status (fast path, 250ms).
 
@@ -615,9 +628,9 @@ class SupervisorTUI(
         if self._status_update_in_progress:
             return
 
-        # Only update the focused widget
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        # Only update the selected widget
+        focused = self._get_focused_widget()
+        if focused is None:
             return
 
         self._status_update_in_progress = True
@@ -633,9 +646,9 @@ class SupervisorTUI(
         if self._status_update_in_progress:
             return
 
-        # Gather all widgets except the focused one
-        focused = self.focused
-        focused_id = focused.session.id if isinstance(focused, SessionSummary) else None
+        # Gather all widgets except the selected one
+        focused = self._get_focused_widget()
+        focused_id = focused.session.id if focused else None
 
         widgets = [w for w in self.query(SessionSummary) if w.session.id != focused_id]
         if not widgets:
@@ -1103,17 +1116,18 @@ class SupervisorTUI(
             pass
 
     def _update_preview(self) -> None:
-        """Update preview pane with focused session's content.
+        """Update preview pane with the selected session's content.
 
-        Uses self.focused directly to ensure the preview always shows the
-        actually-focused widget, regardless of any index tracking issues
-        that might occur during sorting or session refresh.
+        Uses focused_session_index (the app's own selection state) rather
+        than self.focused (Textual's internal focus) because DOM reordering
+        in _reorder_session_widgets() and async focus changes can cause
+        self.focused to diverge from the visually highlighted row.
         """
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
-            focused = self.focused
-            if isinstance(focused, SessionSummary):
-                preview.update_from_widget(focused)
+            widgets = self._get_widgets_in_session_order()
+            if 0 <= self.focused_session_index < len(widgets):
+                preview.update_from_widget(widgets[self.focused_session_index])
         except NoMatches:
             pass
 
