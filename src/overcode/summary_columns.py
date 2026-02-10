@@ -484,9 +484,11 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
 
-    # Git group — repo:branch (full/custom only)
+    # Git group — repo:branch (full/custom only) and diff stats
     SummaryColumn(id="repo_branch", group="git", detail_levels=FULL_PLUS, render=render_repo_branch,
                   label="Repo", render_plain=render_repo_plain),
+    SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
+                  label="Git", render_plain=render_git_diff_plain),
 
     # Time group — uptime, running, stalled, sleep, active%
     SummaryColumn(id="uptime", group="time", detail_levels=MED_PLUS, render=render_uptime,
@@ -502,10 +504,6 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Tokens group
     SummaryColumn(id="tokens", group="tokens", detail_levels=ALL, render=render_tokens,
                   label="Tokens", render_plain=render_tokens_plain),
-
-    # Git group — diff stats
-    SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
-                  label="Git", render_plain=render_git_diff_plain),
 
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time),
