@@ -822,6 +822,10 @@ class SupervisorTUI(
         if prefs_changed:
             self._save_prefs()
 
+        # Update preview pane on the fast path (250ms) for responsive updates
+        if self.view_mode == "list_preview":
+            self._update_preview()
+
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
         for widget in self.query(SessionSummary):
@@ -834,10 +838,6 @@ class SupervisorTUI(
                 widget.git_diff_stats = git_diff
             if claude_stats is not None or git_diff is not None:
                 widget.refresh()
-
-        # Update preview pane if in list_preview mode
-        if self.view_mode == "list_preview":
-            self._update_preview()
 
     @work(thread=True, exclusive=True, name="summarizer")
     def _update_summaries_async(self) -> None:
