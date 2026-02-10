@@ -321,6 +321,12 @@ class SupervisorTUI(
         )
         self._summaries: dict[str, AgentSummary] = {}
 
+        # Pre-load session list synchronously so first render has data immediately
+        try:
+            self._preloaded_sessions: list | None = self.launcher.list_sessions()
+        except Exception:
+            self._preloaded_sessions = None
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
@@ -388,13 +394,16 @@ class SupervisorTUI(
         # Set view_mode from preferences (triggers watch_view_mode)
         self.view_mode = self._prefs.view_mode
 
-        self.refresh_sessions()
+        # Apply pre-loaded sessions synchronously so widgets exist immediately
+        if self._preloaded_sessions is not None:
+            self._apply_sessions(self._preloaded_sessions, None)
+            self._preloaded_sessions = None
+        else:
+            self.refresh_sessions()
         self.update_daemon_status()
         self.update_timeline()
-        # Schedule initial status fetch after widgets are mounted (small delay ensures DOM is ready)
-        self.set_timer(0.1, self.update_all_statuses)
-        # Select first agent for preview pane (slightly longer delay to ensure widgets exist)
-        self.set_timer(0.2, self._select_first_agent)
+        # Kick off status fetch immediately (widgets already exist from pre-load)
+        self.update_all_statuses()
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -564,12 +573,13 @@ class SupervisorTUI(
                         widget.focus()
                     break
 
-        # On first load, kick off timeline + daemon status now that sessions exist.
-        # (These are async workers so no stutter — the old synchronous concern no longer applies.)
+        # On first load, select the first agent and kick off async updates.
         if not self._initial_sessions_loaded:
             self._initial_sessions_loaded = True
             self.update_timeline()
             self.update_daemon_status()
+            # Select first agent immediately (no timer delay)
+            self._select_first_agent()
 
     def _recalc_repo_widths(self, sessions) -> None:
         """Recalculate max repo/branch widths and name-match flag."""
@@ -1126,15 +1136,14 @@ class SupervisorTUI(
             self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}"
 
     def _select_first_agent(self) -> None:
-        """Select the first agent for initial preview pane display."""
-        if self.view_mode != "list_preview":
-            return
+        """Select the first agent so something is highlighted from the start."""
         try:
             widgets = list(self.query(SessionSummary))
             if widgets:
                 self.focused_session_index = 0
                 widgets[0].focus()
-                self._update_preview()
+                if self.view_mode == "list_preview":
+                    self._update_preview()
         except NoMatches:
             pass
 
