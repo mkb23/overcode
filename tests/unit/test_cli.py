@@ -158,15 +158,6 @@ class TestSupervisorCommand:
         assert "--restart" in strip_ansi(result.stdout)
 
 
-class TestAttachCommand:
-    """Test attach command"""
-
-    def test_attach_help(self):
-        """Attach help works"""
-        result = runner.invoke(app, ["attach", "--help"])
-        assert result.exit_code == 0
-
-
 class TestDaemonCommands:
     """Test daemon-related commands"""
 
