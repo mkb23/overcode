@@ -745,7 +745,7 @@ class TestAttachCommand:
     def test_attach_help_shows_bare_option(self):
         """Help should document --bare flag."""
         result = runner.invoke(app, ["attach", "--help"])
-        assert "--bare" in result.output
+        assert "--bare" in strip_ansi(result.output)
 
     def test_attach_help_shows_name_argument(self):
         """Help should document optional NAME argument."""
