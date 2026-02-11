@@ -1172,8 +1172,6 @@ class SupervisorTUI(
 
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
-        from datetime import datetime
-
         # Auto-wake sleeping agent if needed (#168)
         session = self.session_manager.get_session_by_name(message.session_name)
         if session and session.is_asleep:
@@ -1194,13 +1192,6 @@ class SupervisorTUI(
         )
         success = launcher.send_to_session(message.session_name, message.text)
         if success:
-            # Reset the state timer immediately so UI shows instant feedback
-            session = self.session_manager.get_session_by_name(message.session_name)
-            if session:
-                self.session_manager.update_stats(
-                    session.id,
-                    state_since=datetime.now().isoformat()
-                )
             self._invalidate_sessions_cache()  # Refresh to show updated stats
             self.notify(f"Sent to {message.session_name}")
         else:
