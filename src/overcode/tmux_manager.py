@@ -159,12 +159,28 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
-    def attach_session(self):
-        """Attach to the tmux session (blocking)"""
+    def attach_session(self, window: Optional[int] = None, bare: bool = False):
+        """Attach to the tmux session (blocking).
+
+        Args:
+            window: optional window index to target
+            bare: if True, strip tmux chrome for embedding in other terminals
+        """
         if self._tmux:
-            self._tmux.attach(self.session_name)
+            self._tmux.attach(self.session_name, window=window, bare=bare)
             return
-        os.execlp("tmux", "tmux", "attach-session", "-t", self.session_name)
+        target = f"{self.session_name}:={window}" if window is not None else self.session_name
+        if bare:
+            os.execlp(
+                "tmux", "tmux",
+                "attach-session", "-t", target,
+                ";", "set", "status", "off",
+                ";", "set", "mouse", "off",
+                ";", "set", "prefix", "None",
+                ";", "set", "prefix2", "None",
+            )
+        else:
+            os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def list_windows(self) -> List[Dict[str, Any]]:
         """List all windows in the session.

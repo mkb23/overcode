@@ -191,13 +191,30 @@ class ClaudeLauncher:
             startup_delay=startup_delay,
         )
 
-    def attach(self):
-        """Attach to the tmux session"""
+    def attach(self, name: str = None, bare: bool = False):
+        """Attach to the tmux session, optionally targeting a specific agent.
+
+        Args:
+            name: optional agent name to focus on
+            bare: if True, strip tmux chrome for embedding in other terminals
+        """
         if not self.tmux.session_exists():
             print(f"Error: tmux session '{self.tmux.session_name}' does not exist")
             print("No active sessions to attach to. Launch a session first with 'overcode launch'")
             return
-        self.tmux.attach_session()
+
+        window = None
+        if name:
+            session = self.sessions.get_session_by_name(name)
+            if session is None:
+                print(f"Error: agent '{name}' not found")
+                return
+            if not self.tmux.window_exists(session.tmux_window):
+                print(f"Error: agent '{name}' tmux window no longer exists")
+                return
+            window = session.tmux_window
+
+        self.tmux.attach_session(window=window, bare=bare)
 
     def list_sessions(self, detect_terminated: bool = True, kill_untracked: bool = False) -> List[Session]:
         """

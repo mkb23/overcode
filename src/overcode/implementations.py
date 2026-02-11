@@ -230,8 +230,19 @@ class RealTmux:
         except LibTmuxException:
             return []
 
-    def attach(self, session: str) -> None:
-        os.execlp("tmux", "tmux", "attach-session", "-t", session)
+    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+        target = f"{session}:={window}" if window is not None else session
+        if bare:
+            os.execlp(
+                "tmux", "tmux",
+                "attach-session", "-t", target,
+                ";", "set", "status", "off",
+                ";", "set", "mouse", "off",
+                ";", "set", "prefix", "None",
+                ";", "set", "prefix2", "None",
+            )
+        else:
+            os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def select_window(self, session: str, window: int) -> bool:
         """Select a window in a tmux session (for external pane sync)."""
