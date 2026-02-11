@@ -214,12 +214,32 @@ def list_agents(session: SessionOption = "agents"):
 
 
 @app.command()
-def attach(session: SessionOption = "agents"):
-    """Attach to the tmux session to view agents."""
+def attach(
+    name: Annotated[Optional[str], typer.Argument(help="Agent name to focus on")] = None,
+    bare: Annotated[
+        bool,
+        typer.Option("--bare", help="Minimal attach: no status bar, no prefix, mouse passthrough"),
+    ] = False,
+    session: SessionOption = "agents",
+):
+    """Attach to the tmux session to view agents.
+
+    Optionally specify an agent name to jump directly to that agent's window.
+    Use --bare for embedding in VSCode or other terminals (hides tmux chrome).
+    """
     launcher = ClaudeLauncher(session)
-    rprint("[dim]Attaching to overcode...[/dim]")
-    rprint("[dim](Ctrl-b d to detach, Ctrl-b <number> to switch agents)[/dim]")
-    launcher.attach()
+    if bare:
+        if not name:
+            rprint("[red]Error:[/red] --bare requires an agent name")
+            raise typer.Exit(1)
+        rprint(f"[dim]Attaching to '{name}' (bare mode, close terminal to detach)...[/dim]")
+    elif name:
+        rprint(f"[dim]Attaching to '{name}'...[/dim]")
+        rprint("[dim](Ctrl-b d to detach, Ctrl-b <number> to switch agents)[/dim]")
+    else:
+        rprint("[dim]Attaching to overcode...[/dim]")
+        rprint("[dim](Ctrl-b d to detach, Ctrl-b <number> to switch agents)[/dim]")
+    launcher.attach(name=name, bare=bare)
 
 
 @app.command()

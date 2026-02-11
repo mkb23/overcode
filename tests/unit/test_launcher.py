@@ -642,6 +642,71 @@ class TestAttach:
         captured = capsys.readouterr()
         assert "does not exist" in captured.out
 
+    def test_attach_by_name(self, tmp_path):
+        """Should resolve agent name to window index"""
+        mock_tmux = MockTmux()
+        mock_tmux.sessions["agents"] = {}
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        # Launch an agent so we have a name -> window mapping
+        with patch.dict('os.environ', {'CLAUDE_COMMAND': 'echo'}):
+            launcher.launch(name="test-agent", start_directory=str(tmp_path))
+
+        # attach with name should call attach_session with the window index
+        with patch.object(tmux_manager, 'attach_session') as mock_attach:
+            launcher.attach(name="test-agent")
+            mock_attach.assert_called_once()
+            _, kwargs = mock_attach.call_args
+            assert kwargs['window'] is not None
+            assert kwargs['bare'] is False
+
+    def test_attach_by_name_not_found(self, tmp_path, capsys):
+        """Should error when agent name doesn't exist"""
+        mock_tmux = MockTmux()
+        mock_tmux.sessions["agents"] = {}
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        launcher.attach(name="nonexistent")
+
+        captured = capsys.readouterr()
+        assert "not found" in captured.out
+
+    def test_attach_bare_mode(self, tmp_path):
+        """Should pass bare=True through to attach_session"""
+        mock_tmux = MockTmux()
+        mock_tmux.sessions["agents"] = {}
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        with patch.dict('os.environ', {'CLAUDE_COMMAND': 'echo'}):
+            launcher.launch(name="test-agent", start_directory=str(tmp_path))
+
+        with patch.object(tmux_manager, 'attach_session') as mock_attach:
+            launcher.attach(name="test-agent", bare=True)
+            mock_attach.assert_called_once()
+            _, kwargs = mock_attach.call_args
+            assert kwargs['bare'] is True
+
 
 # =============================================================================
 # Run tests directly
