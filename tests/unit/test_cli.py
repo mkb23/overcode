@@ -751,6 +751,23 @@ class TestAttachCommand:
         result = runner.invoke(app, ["attach", "--help"])
         assert result.exit_code == 0
 
+    def test_attach_help_shows_bare_option(self):
+        """Help should document --bare flag."""
+        result = runner.invoke(app, ["attach", "--help"])
+        assert "--bare" in result.output
+
+    def test_attach_help_shows_name_argument(self):
+        """Help should document optional NAME argument."""
+        result = runner.invoke(app, ["attach", "--help"])
+        assert "NAME" in result.output
+
+    def test_attach_bare_without_name_errors(self):
+        """--bare without agent name should error."""
+        result = runner.invoke(app, ["attach", "--bare"])
+        assert result.exit_code == 1
+        output = strip_ansi(result.output)
+        assert "--bare requires an agent name" in output
+
 
 # =============================================================================
 # Run tests directly
