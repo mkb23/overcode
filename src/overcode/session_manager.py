@@ -124,6 +124,9 @@ class Session:
     # Hook-based status detection - per-agent toggle (#5)
     hook_status_detection: bool = False
 
+    # Agent hierarchy (#244) - parent/child relationships
+    parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
@@ -709,3 +712,105 @@ class SessionManager:
             return state
 
         self._atomic_update(do_update)
+
+    # =========================================================================
+    # Agent Hierarchy (#244)
+    # =========================================================================
+
+    def get_children(self, session_id: str) -> List[Session]:
+        """Get direct children of a session.
+
+        Scans all sessions for matching parent_session_id.
+        Typically <50 agents, so scanning is free.
+        """
+        all_sessions = self.list_sessions()
+        return [s for s in all_sessions if s.parent_session_id == session_id]
+
+    def get_descendants(self, session_id: str) -> List[Session]:
+        """Get all descendants of a session (recursive BFS)."""
+        result = []
+        queue = [session_id]
+        while queue:
+            parent_id = queue.pop(0)
+            children = self.get_children(parent_id)
+            result.extend(children)
+            queue.extend(c.id for c in children)
+        return result
+
+    def get_parent_chain(self, session_id: str) -> List[Session]:
+        """Walk up from session to root, returning list of ancestors.
+
+        Returns list ordered from immediate parent to root.
+        """
+        chain = []
+        current_id = session_id
+        visited = set()  # Cycle protection
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            session = self.get_session(current_id)
+            if not session or not session.parent_session_id:
+                break
+            parent = self.get_session(session.parent_session_id)
+            if parent:
+                chain.append(parent)
+                current_id = parent.id
+            else:
+                break
+        return chain
+
+    def compute_depth(self, session: Session) -> int:
+        """Compute depth of a session in the hierarchy (0 = root)."""
+        return len(self.get_parent_chain(session.id))
+
+    def is_ancestor(self, ancestor_id: str, descendant_id: str) -> bool:
+        """Check if ancestor_id is an ancestor of descendant_id."""
+        chain = self.get_parent_chain(descendant_id)
+        return any(s.id == ancestor_id for s in chain)
+
+    def transfer_budget(self, from_id: str, to_id: str, amount: float) -> bool:
+        """Transfer budget from one agent to another.
+
+        Validates that source is an ancestor of target and has sufficient budget.
+
+        Args:
+            from_id: Source session ID (must be ancestor of target)
+            to_id: Target session ID
+            amount: Amount in USD to transfer (must be > 0)
+
+        Returns:
+            True if transfer succeeded, False otherwise
+        """
+        if amount <= 0:
+            return False
+
+        # Validate relationship
+        if not self.is_ancestor(from_id, to_id):
+            return False
+
+        # Atomic transfer
+        success = False
+
+        def do_transfer(state):
+            nonlocal success
+            if from_id not in state or to_id not in state:
+                return state
+
+            source_budget = state[from_id].get('cost_budget_usd', 0.0)
+
+            # 0.0 = unlimited: always succeeds but just sets target's budget
+            if source_budget > 0 and source_budget < amount:
+                return state  # Insufficient funds
+
+            # Deduct from source (skip if unlimited)
+            if source_budget > 0:
+                state[from_id]['cost_budget_usd'] = source_budget - amount
+
+            # Add to target
+            target_budget = state[to_id].get('cost_budget_usd', 0.0)
+            state[to_id]['cost_budget_usd'] = target_budget + amount
+
+            success = True
+            return state
+
+        self._atomic_update(do_transfer)
+        return success

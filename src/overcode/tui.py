@@ -183,6 +183,8 @@ class SupervisorTUI(
         ("b", "jump_to_attention", "Jump attention"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
+        # Show/hide done child agents (#244)
+        ("d", "toggle_show_done", "Show done"),
         # Sort mode cycle (#61)
         ("S", "cycle_sort_mode", "Sort mode"),
         # Edit agent value (#61)
@@ -222,7 +224,7 @@ class SupervisorTUI(
     # Summary detail levels: low (minimal), med (timing), full (all + repo), custom (user-configured)
     SUMMARY_LEVELS = ["low", "med", "full", "custom"]
     # Sort modes (#61)
-    SORT_MODES = ["alphabetical", "by_status", "by_value"]
+    SORT_MODES = ["alphabetical", "by_status", "by_value", "by_tree"]
     # Summary content modes: what to show in the summary line (#74)
     SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat"]
 
@@ -231,6 +233,7 @@ class SupervisorTUI(
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
+    show_done: reactive[bool] = reactive(False)  # show "done" child agents (#244)
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
@@ -901,6 +904,7 @@ class SupervisorTUI(
             terminated_sessions=list(self._terminated_sessions.values()),
             hide_asleep=self.hide_asleep,
             show_terminated=self.show_terminated,
+            show_done=self.show_done,
         )
 
         # Get existing widgets and their session IDs
@@ -1089,6 +1093,26 @@ class SupervisorTUI(
             else:
                 # Each subsequent widget should be after the previous one
                 container.move_child(widget, after=ordered_widgets[i - 1])
+
+        # Update tree prefix for hierarchy display (#244)
+        is_tree_mode = self._prefs.sort_mode == "by_tree"
+        for widget in ordered_widgets:
+            if is_tree_mode:
+                depth = self.session_manager.compute_depth(widget.session)
+                # Determine if this is the last sibling at its level
+                parent_id = widget.session.parent_session_id
+                siblings = [w for w in ordered_widgets if w.session.parent_session_id == parent_id]
+                is_last = siblings and siblings[-1] is widget
+                if depth == 0:
+                    widget.tree_prefix = ""
+                else:
+                    indent = "  " * (depth - 1)
+                    connector = "└─" if is_last else "├─"
+                    widget.tree_prefix = indent + connector
+                widget.tree_depth = depth
+            else:
+                widget.tree_prefix = ""
+                widget.tree_depth = 0
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.

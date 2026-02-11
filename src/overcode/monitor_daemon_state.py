@@ -97,6 +97,11 @@ class SessionDaemonState:
     cost_budget_usd: float = 0.0  # 0 = unlimited
     budget_exceeded: bool = False  # True when cost >= budget
 
+    # Agent hierarchy (#244)
+    parent_name: Optional[str] = None  # Name of parent agent (None = root)
+    depth: int = 0  # Computed by daemon each cycle
+    children_count: int = 0  # Computed by daemon each cycle
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -142,6 +147,10 @@ class SessionDaemonState:
             # Cost budget (#173)
             "cost_budget_usd": self.cost_budget_usd,
             "budget_exceeded": self.budget_exceeded,
+            # Agent hierarchy (#244)
+            "parent_name": self.parent_name,
+            "depth": self.depth,
+            "children_count": self.children_count,
         }
 
     @classmethod
@@ -190,6 +199,10 @@ class SessionDaemonState:
             # Cost budget (#173)
             cost_budget_usd=data.get("cost_budget_usd", 0.0),
             budget_exceeded=data.get("budget_exceeded", False),
+            # Agent hierarchy (#244)
+            parent_name=data.get("parent_name"),
+            depth=data.get("depth", 0),
+            children_count=data.get("children_count", 0),
         )
 
 

@@ -48,6 +48,14 @@ hooks_app = typer.Typer(
 )
 app.add_typer(hooks_app, name="hooks")
 
+# Budget subcommand group (#244)
+budget_app = typer.Typer(
+    name="budget",
+    help="Manage agent cost budgets.",
+    no_args_is_help=True,
+)
+app.add_typer(budget_app, name="budget")
+
 # Config subcommand group
 config_app = typer.Typer(
     name="config",
@@ -108,6 +116,14 @@ def launch(
             help="Bypass all permission checks (--dangerously-skip-permissions)",
         ),
     ] = False,
+    parent: Annotated[
+        Optional[str],
+        typer.Option("--parent", help="Parent agent name for hierarchy (#244)"),
+    ] = None,
+    follow: Annotated[
+        bool,
+        typer.Option("--follow", "-f", help="Stream child output and block until done (#244)"),
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Launch a new Claude agent."""
@@ -124,18 +140,39 @@ def launch(
         initial_prompt=prompt,
         skip_permissions=skip_permissions,
         dangerously_skip_permissions=bypass_permissions,
+        parent_name=parent,
     )
 
     if result:
         rprint(f"\n[green]✓[/green] Agent '[bold]{name}[/bold]' launched")
+        if result.parent_session_id:
+            rprint(f"  Parent: {parent or os.environ.get('OVERCODE_SESSION_NAME', '?')}")
         if prompt:
             rprint("  Initial prompt sent")
+
+        if follow:
+            from .follow_mode import follow_agent
+            exit_code = follow_agent(name, session)
+            raise typer.Exit(code=exit_code)
+
         rprint("\nTo view: [bold]overcode attach[/bold]")
 
 
 @app.command("list")
-def list_agents(session: SessionOption = "agents"):
-    """List running agents with status."""
+def list_agents(
+    name: Annotated[
+        Optional[str], typer.Argument(help="Agent name to filter (show agent + descendants)")
+    ] = None,
+    show_done: Annotated[
+        bool, typer.Option("--show-done", help="Include 'done' child agents (#244)")
+    ] = False,
+    session: SessionOption = "agents",
+):
+    """List running agents with status.
+
+    With no arguments, shows all agents with depth-based indentation.
+    With a name, shows that agent + all its descendants.
+    """
     from .tui_helpers import (
         calculate_uptime, format_duration, format_tokens,
         get_current_state_times, get_status_symbol
@@ -148,6 +185,20 @@ def list_agents(session: SessionOption = "agents"):
     if not sessions:
         rprint("[dim]No running agents[/dim]")
         return
+
+    # Filter to specific agent + descendants if name given (#244)
+    if name:
+        root = launcher.sessions.get_session_by_name(name)
+        if not root:
+            rprint(f"[red]Error: Agent '{name}' not found[/red]")
+            raise typer.Exit(code=1)
+        descendants = launcher.sessions.get_descendants(root.id)
+        allowed_ids = {root.id} | {d.id for d in descendants}
+        sessions = [s for s in sessions if s.id in allowed_ids]
+
+    # Filter out "done" agents unless --show-done (#244)
+    if not show_done:
+        sessions = [s for s in sessions if s.status != "done"]
 
     # Prefer daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)
@@ -166,6 +217,9 @@ def list_agents(session: SessionOption = "agents"):
             status = "terminated"
             activity = "(tmux window no longer exists)"
             terminated_count += 1
+        elif sess.status == "done":
+            status = "done"
+            activity = "(completed)"
         elif use_daemon:
             ds = daemon_state.get_session_by_name(sess.name)
             if ds:
@@ -203,8 +257,12 @@ def list_agents(session: SessionOption = "agents"):
         if sleep_time > 0:
             time_display += f" 💤{format_duration(sleep_time):>5}"
 
+        # Compute depth for indentation (#244)
+        depth = launcher.sessions.compute_depth(sess)
+        indent = "  " * depth
+
         print(
-            f"{symbol} {sess.name:<16} ↑{uptime:>5}  "
+            f"{symbol} {indent}{sess.name:<{16 - len(indent)}} ↑{uptime:>5}  "
             f"{time_display}  "
             f"{stats_display}  {activity[:50]}"
         )
@@ -225,26 +283,76 @@ def attach(session: SessionOption = "agents"):
 @app.command()
 def kill(
     name: Annotated[str, typer.Argument(help="Name of agent to kill")],
+    no_cascade: Annotated[
+        bool,
+        typer.Option("--no-cascade", help="Don't kill child agents (orphan them instead)"),
+    ] = False,
     session: SessionOption = "agents",
 ):
-    """Kill a running agent."""
+    """Kill a running agent.
+
+    By default, also kills all descendant (child) agents.
+    Use --no-cascade to only kill the named agent and orphan its children.
+    """
     launcher = ClaudeLauncher(session)
-    launcher.kill_session(name)
+    launcher.kill_session(name, cascade=not no_cascade)
 
 
 @app.command()
-def cleanup(session: SessionOption = "agents"):
+def follow(
+    name: Annotated[str, typer.Argument(help="Name of agent to follow")],
+    session: SessionOption = "agents",
+):
+    """Follow an already-running agent, streaming its output (#244).
+
+    Blocks until the agent reaches Stop. Press Ctrl-C to stop following
+    (the agent keeps running in tmux).
+
+    Examples:
+        overcode follow my-child-agent
+    """
+    from .follow_mode import follow_agent as _follow_agent
+
+    exit_code = _follow_agent(name, session)
+    raise typer.Exit(code=exit_code)
+
+
+@app.command()
+def cleanup(
+    done: Annotated[
+        bool, typer.Option("--done", help="Also archive 'done' child agents (#244)")
+    ] = False,
+    session: SessionOption = "agents",
+):
     """Remove terminated sessions from tracking.
 
     Terminated sessions are those whose tmux window no longer exists
     (e.g., after a machine reboot). Use 'overcode list' to see them.
+
+    Use --done to also archive done child agents (kill tmux window, move to archive).
     """
     launcher = ClaudeLauncher(session)
     count = launcher.cleanup_terminated_sessions()
-    if count > 0:
-        rprint(f"[green]✓ Cleaned up {count} terminated session(s)[/green]")
+
+    # Also clean up done agents if requested (#244)
+    done_count = 0
+    if done:
+        all_sessions = launcher.sessions.list_sessions()
+        done_sessions = [s for s in all_sessions if s.status == "done"]
+        for sess in done_sessions:
+            launcher._kill_single_session(sess)
+            done_count += 1
+
+    total = count + done_count
+    if total > 0:
+        parts = []
+        if count > 0:
+            parts.append(f"{count} terminated")
+        if done_count > 0:
+            parts.append(f"{done_count} done")
+        rprint(f"[green]✓ Cleaned up {' + '.join(parts)} session(s)[/green]")
     else:
-        rprint("[dim]No terminated sessions to clean up[/dim]")
+        rprint("[dim]No sessions to clean up[/dim]")
 
 
 @app.command(name="set-value")
@@ -274,20 +382,15 @@ def set_value(
     rprint(f"[green]✓ Set {name} value to {value}[/green]")
 
 
-@app.command(name="set-budget")
+@app.command(name="set-budget", hidden=True)
 def set_budget(
     name: Annotated[str, typer.Argument(help="Name of agent")],
     budget: Annotated[float, typer.Argument(help="Budget in USD (0 to clear)")],
     session: SessionOption = "agents",
 ):
-    """Set cost budget for an agent (#173).
+    """[Deprecated] Use 'overcode budget set' instead.
 
-    When an agent's estimated cost reaches the budget, heartbeats are
-    disabled and supervision is skipped.
-
-    Examples:
-        overcode set-budget my-agent 5.00    # $5 budget
-        overcode set-budget my-agent 0       # Clear budget
+    Set cost budget for an agent (#173).
     """
     from .session_manager import SessionManager
 
@@ -306,6 +409,149 @@ def set_budget(
         rprint(f"[green]✓ Set {name} budget to ${budget:.2f}[/green]")
     else:
         rprint(f"[green]✓ Cleared budget for {name}[/green]")
+
+
+# =============================================================================
+# Budget Commands (#244)
+# =============================================================================
+
+
+@budget_app.command("set")
+def budget_set(
+    name: Annotated[str, typer.Argument(help="Name of agent")],
+    amount: Annotated[float, typer.Argument(help="Budget in USD (0 to clear)")],
+    session: SessionOption = "agents",
+):
+    """Set cost budget for an agent.
+
+    When an agent's estimated cost reaches the budget, heartbeats are
+    disabled and supervision is skipped.
+
+    Examples:
+        overcode budget set my-agent 5.00    # $5 budget
+        overcode budget set my-agent 0       # Clear budget
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    if amount < 0:
+        rprint("[red]Error: Budget cannot be negative[/red]")
+        raise typer.Exit(code=1)
+
+    manager.set_cost_budget(agent.id, amount)
+    if amount > 0:
+        rprint(f"[green]✓ Set {name} budget to ${amount:.2f}[/green]")
+    else:
+        rprint(f"[green]✓ Cleared budget for {name}[/green]")
+
+
+@budget_app.command("transfer")
+def budget_transfer(
+    source: Annotated[str, typer.Argument(help="Source agent name (must be ancestor)")],
+    target: Annotated[str, typer.Argument(help="Target agent name")],
+    amount: Annotated[float, typer.Argument(help="Amount in USD to transfer")],
+    session: SessionOption = "agents",
+):
+    """Transfer budget from parent to child agent (#244).
+
+    Source must be an ancestor of target in the agent hierarchy.
+    If source has unlimited budget (0), the target's budget is simply set.
+
+    Examples:
+        overcode budget transfer parent-agent child-agent 2.00
+    """
+    from .session_manager import SessionManager
+
+    manager = SessionManager()
+
+    source_agent = manager.get_session_by_name(source)
+    if not source_agent:
+        rprint(f"[red]Error: Source agent '{source}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    target_agent = manager.get_session_by_name(target)
+    if not target_agent:
+        rprint(f"[red]Error: Target agent '{target}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    if amount <= 0:
+        rprint("[red]Error: Transfer amount must be positive[/red]")
+        raise typer.Exit(code=1)
+
+    if not manager.is_ancestor(source_agent.id, target_agent.id):
+        rprint(f"[red]Error: '{source}' is not an ancestor of '{target}'[/red]")
+        raise typer.Exit(code=1)
+
+    success = manager.transfer_budget(source_agent.id, target_agent.id, amount)
+    if success:
+        rprint(f"[green]✓ Transferred ${amount:.2f} from {source} to {target}[/green]")
+    else:
+        rprint(f"[red]Transfer failed: insufficient budget on '{source}'[/red]")
+        raise typer.Exit(code=1)
+
+
+@budget_app.command("show")
+def budget_show(
+    name: Annotated[
+        Optional[str], typer.Argument(help="Agent name (omit for all)")
+    ] = None,
+    session: SessionOption = "agents",
+):
+    """Show budget status for agents.
+
+    Shows per-agent budget, spent, remaining, and % used.
+    For parents, includes subtree total spend.
+
+    Examples:
+        overcode budget show              # All agents
+        overcode budget show my-agent     # Specific agent
+    """
+    from .session_manager import SessionManager
+    from .tui_helpers import format_duration
+
+    manager = SessionManager()
+
+    if name:
+        agents = []
+        agent = manager.get_session_by_name(name)
+        if not agent:
+            rprint(f"[red]Error: Agent '{name}' not found[/red]")
+            raise typer.Exit(code=1)
+        agents = [agent]
+    else:
+        agents = manager.list_sessions()
+        if not agents:
+            rprint("[dim]No running agents[/dim]")
+            return
+
+    for agent in agents:
+        budget = agent.cost_budget_usd
+        spent = agent.stats.estimated_cost_usd
+        budget_str = f"${budget:.2f}" if budget > 0 else "unlimited"
+        spent_str = f"${spent:.4f}"
+
+        if budget > 0:
+            remaining = max(0, budget - spent)
+            pct = (spent / budget * 100) if budget > 0 else 0
+            status = f"${remaining:.2f} remaining ({pct:.0f}% used)"
+        else:
+            status = "no limit"
+
+        # Check for children's spend
+        children = manager.get_descendants(agent.id)
+        subtree_spend = spent + sum(c.stats.estimated_cost_usd for c in children)
+
+        depth = manager.compute_depth(agent)
+        indent = "  " * depth
+        line = f"  {indent}{agent.name:<16} budget={budget_str:<10} spent={spent_str:<10} {status}"
+        if children:
+            line += f"  (subtree: ${subtree_spend:.4f})"
+        print(line)
 
 
 @app.command()

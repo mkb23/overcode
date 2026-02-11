@@ -21,6 +21,7 @@ STATUS_WAITING_APPROVAL = "waiting_approval"  # Waiting on approval/plan/decisio
 STATUS_WAITING_HEARTBEAT = "waiting_heartbeat"  # Waiting but heartbeat will auto-resume
 STATUS_ERROR = "error"  # API timeout, etc. (#22)
 STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-triggered run (timeline only)
+STATUS_DONE = "done"  # Child agent completed its delegated work (#244)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -33,6 +34,7 @@ ALL_STATUSES = [
     STATUS_WAITING_HEARTBEAT,
     STATUS_ERROR,
     STATUS_HEARTBEAT_START,
+    STATUS_DONE,
 ]
 
 
@@ -72,6 +74,7 @@ STATUS_EMOJIS = {
     STATUS_WAITING_HEARTBEAT: "💛",  # Yellow heart - waiting but heartbeat will auto-resume
     STATUS_ERROR: "🟣",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
+    STATUS_DONE: "✅",  # Child agent completed delegated work (#244)
 }
 
 
@@ -94,6 +97,7 @@ STATUS_COLORS = {
     STATUS_WAITING_HEARTBEAT: "yellow",  # Yellow - waiting but heartbeat will auto-resume
     STATUS_ERROR: "magenta",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
+    STATUS_DONE: "green",  # Done child agent (#244)
 }
 
 
@@ -116,6 +120,7 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
     STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
+    STATUS_DONE: ("✅", "green"),  # Done child agent (#244)
 }
 
 
@@ -138,6 +143,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_WAITING_HEARTBEAT: "▒",  # Medium shade - waiting but heartbeat will auto-resume
     STATUS_ERROR: "▓",  # Dense shade (#22)
     STATUS_HEARTBEAT_START: "💚",  # Green heart emoji - rendered specially by timeline widget
+    STATUS_DONE: "✓",  # Done child agent (#244)
 }
 
 
@@ -217,3 +223,8 @@ def is_user_blocked(status: str) -> bool:
 def is_asleep(status: str) -> bool:
     """Check if status indicates agent is asleep (paused by human)."""
     return status == STATUS_ASLEEP
+
+
+def is_done(status: str) -> bool:
+    """Check if status indicates child agent completed its work (#244)."""
+    return status == STATUS_DONE

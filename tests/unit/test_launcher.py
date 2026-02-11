@@ -644,6 +644,197 @@ class TestAttach:
 
 
 # =============================================================================
+# Agent Hierarchy Tests (#244)
+# =============================================================================
+
+
+class TestLauncherHierarchy:
+    """Test parent/child hierarchy in launcher"""
+
+    def test_launch_with_parent_name(self, tmp_path):
+        """Can launch a child agent with explicit parent."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent-agent")
+        assert parent is not None
+
+        child = launcher.launch(name="child-agent", parent_name="parent-agent")
+        assert child is not None
+        assert child.parent_session_id == parent.id
+
+    def test_launch_parent_not_found(self, tmp_path, capsys):
+        """Launch fails when parent doesn't exist."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        child = launcher.launch(name="child-agent", parent_name="nonexistent")
+        assert child is None
+        captured = capsys.readouterr()
+        assert "not found" in captured.out
+
+    def test_auto_detect_parent_from_env(self, tmp_path):
+        """Auto-detects parent from OVERCODE_SESSION_NAME env var."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="auto-parent")
+        assert parent is not None
+
+        with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "auto-parent"}):
+            child = launcher.launch(name="auto-child")
+            assert child is not None
+            assert child.parent_session_id == parent.id
+
+    def test_depth_limit_enforced(self, tmp_path, capsys):
+        """Launch fails when max depth would be exceeded."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        # Build chain up to max depth
+        prev = launcher.launch(name="level-0")
+        for i in range(1, ClaudeLauncher.MAX_HIERARCHY_DEPTH):
+            child = launcher.launch(name=f"level-{i}", parent_name=f"level-{i-1}")
+            assert child is not None, f"Should succeed at depth {i}"
+            prev = child
+
+        # One more should fail
+        too_deep = launcher.launch(
+            name="too-deep",
+            parent_name=f"level-{ClaudeLauncher.MAX_HIERARCHY_DEPTH - 1}",
+        )
+        assert too_deep is None
+        captured = capsys.readouterr()
+        assert "depth" in captured.out.lower()
+
+    def test_parent_env_vars_propagated(self, tmp_path):
+        """Parent env vars are included in the command sent to tmux."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="env-parent")
+        child = launcher.launch(name="env-child", parent_name="env-parent")
+
+        assert child is not None
+        # Check that the env vars were sent to tmux
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        child_cmd = [c for c in sent_commands if "env-child" in c]
+        assert any("OVERCODE_PARENT_SESSION_ID" in cmd for cmd in child_cmd)
+        assert any("OVERCODE_PARENT_NAME=env-parent" in cmd for cmd in child_cmd)
+
+
+class TestCascadeKill:
+    """Test cascade kill functionality."""
+
+    def test_cascade_kill_children(self, tmp_path):
+        """Killing parent cascades to children by default."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent")
+        child1 = launcher.launch(name="child1", parent_name="parent")
+        child2 = launcher.launch(name="child2", parent_name="parent")
+
+        result = launcher.kill_session("parent", cascade=True)
+        assert result is True
+
+        # All sessions should be gone
+        assert session_manager.get_session_by_name("parent") is None
+        assert session_manager.get_session_by_name("child1") is None
+        assert session_manager.get_session_by_name("child2") is None
+
+    def test_no_cascade_orphans_children(self, tmp_path):
+        """Killing parent with cascade=False orphans children."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent")
+        child = launcher.launch(name="child", parent_name="parent")
+
+        result = launcher.kill_session("parent", cascade=False)
+        assert result is True
+
+        # Parent gone, child still exists but orphaned
+        assert session_manager.get_session_by_name("parent") is None
+        orphan = session_manager.get_session_by_name("child")
+        assert orphan is not None
+        assert orphan.parent_session_id is None
+
+    def test_cascade_kill_deepest_first(self, tmp_path):
+        """Cascade kill removes deepest descendants first."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        root = launcher.launch(name="root")
+        child = launcher.launch(name="child", parent_name="root")
+        grandchild = launcher.launch(name="grandchild", parent_name="child")
+
+        result = launcher.kill_session("root", cascade=True)
+        assert result is True
+
+        # All three should be gone
+        assert session_manager.get_session_by_name("root") is None
+        assert session_manager.get_session_by_name("child") is None
+        assert session_manager.get_session_by_name("grandchild") is None
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 
