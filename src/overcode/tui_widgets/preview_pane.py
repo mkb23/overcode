@@ -51,14 +51,12 @@ class PreviewPane(ScrollableContainer):
         if not self.content_lines:
             content.append("(no output)", style="dim italic")
         else:
-            max_line_len = max(pane_width - 1, 40)
             for line in self.content_lines:
-                display_line = line[:max_line_len] if len(line) > max_line_len else line
                 if self.monochrome:
-                    parsed = Text.from_ansi(display_line)
+                    parsed = Text.from_ansi(line)
                     content.append(parsed.plain)
                 else:
-                    content.append(Text.from_ansi(display_line))
+                    content.append(Text.from_ansi(line))
                 content.append("\n")
 
         return content
