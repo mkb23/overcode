@@ -16,6 +16,8 @@ overcode supervisor   # Monitor with supervisor daemon
 ### Tree View (Default)
 Shows agents in a hierarchical list with expandable details. Press `space` to expand/collapse individual agents, or `e` to expand/collapse all.
 
+When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children. The child count column (👶) shows direct children per agent.
+
 ### List + Preview Mode
 Press `m` to toggle. Shows a compact agent list on the left with a live terminal preview on the right. The preview updates in real-time as the selected agent works.
 
@@ -40,6 +42,8 @@ Press `m` to toggle. Shows a compact agent list on the left with a live terminal
 | `d` | Toggle daemon log panel |
 | `g` | Show/hide terminated agents |
 | `Z` | Show/hide sleeping agents |
+| `D` | Show/hide done child agents |
+| `X` | Collapse/expand children (tree mode) |
 | `h` / `?` | Show/hide help overlay |
 
 ### Display Customization
@@ -49,7 +53,7 @@ Press `m` to toggle. Shows a compact agent list on the left with a live terminal
 | `s` | Cycle summary detail: low → med → full |
 | `l` | Cycle summary content: AI short → AI long → orders → annotation |
 | `v` | Cycle detail lines: 5 → 10 → 20 → 50 |
-| `S` | Cycle sort mode: alphabetical → status → value |
+| `S` | Cycle sort mode: alphabetical → status → value → tree |
 | `$` | Toggle cost display (tokens vs dollars) |
 | `M` | Toggle monochrome mode |
 
@@ -116,6 +120,7 @@ Agents display colored status indicators:
 | Red | Wait User | Waiting for human input |
 | Grey | Asleep | Agent is paused (sleep mode) |
 | Black | Terminated | Tmux window no longer exists |
+| Green ✓ | Done | Child agent completed its task |
 
 ### Bell Indicator
 

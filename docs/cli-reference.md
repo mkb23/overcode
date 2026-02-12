@@ -19,6 +19,8 @@ overcode launch --name <name> [options]
 | `--prompt` | `-p` | Initial prompt to send to the agent |
 | `--skip-permissions` | | Auto-deny permission prompts |
 | `--bypass-permissions` | | Bypass all permission checks (dangerous) |
+| `--parent` | | Name of parent agent (auto-detected if launched from within an agent) |
+| `--follow` | `-f` | Stream child output, block until Stop |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Examples:**
@@ -31,6 +33,9 @@ overcode launch -n researcher -d ~/project -p "Analyze the authentication flow"
 
 # Autonomous mode
 overcode launch -n builder -d ~/project --bypass-permissions
+
+# Launch as child agent with follow mode
+overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug"
 ```
 
 ### `overcode list`
@@ -38,10 +43,15 @@ overcode launch -n builder -d ~/project --bypass-permissions
 List all running agents with status and statistics.
 
 ```bash
-overcode list [--session <session>]
+overcode list [name] [--show-done] [--session <session>]
 ```
 
-Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity.
+| Option | Description |
+|--------|-------------|
+| `name` | Optional. Show only this agent and its descendants |
+| `--show-done` | Include "done" child agents |
+
+Output shows: agent name, uptime, green/idle time, interactions, tokens, and current activity. In tree mode, children are indented under their parent.
 
 ### `overcode attach`
 
@@ -58,16 +68,46 @@ Use `Ctrl+b d` to detach, or `Ctrl+b n/p` to switch windows.
 Kill a running agent.
 
 ```bash
-overcode kill <agent-name> [--session <session>]
+overcode kill <agent-name> [--no-cascade] [--session <session>]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--no-cascade` | Only kill this agent, orphan its children instead of killing them |
+
+By default, killing a parent also kills all its descendants (deepest-first).
 
 ### `overcode cleanup`
 
 Remove terminated sessions from tracking. Sessions whose tmux windows no longer exist are marked terminated; this command removes them from the session list.
 
 ```bash
-overcode cleanup [--session <session>]
+overcode cleanup [--done] [--session <session>]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--done` | Also archive "done" child agents (kill tmux window, remove from tracking) |
+
+### `overcode follow`
+
+Follow an already-running agent's output. Streams pane content to stdout and exits when the agent stops.
+
+```bash
+overcode follow <agent-name> [--session <session>]
+```
+
+### `overcode budget`
+
+Manage agent cost budgets.
+
+```bash
+overcode budget set <name> <amount>              # Set budget
+overcode budget transfer <source> <target> <amount>  # Transfer between agents
+overcode budget show [name]                      # Show budget status
+```
+
+The `transfer` command requires the source to be an ancestor of the target.
 
 ### `overcode send`
 

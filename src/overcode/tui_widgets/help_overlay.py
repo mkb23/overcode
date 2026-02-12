@@ -43,10 +43,11 @@ class HelpOverlay(Static):
         row("s", "Cycle summary detail  (low → med → full)")
         row("l", "Cycle content  (💬 short → 📖 ctx → 🎯 orders → ✏️ note)")
         row("v", "Cycle detail lines  (5 → 10 → 20 → 50)")
-        row("S", "Cycle sort  (alpha → status → value)")
+        row("S", "Cycle sort  (alpha → status → value → tree)")
         row("C", "Column config modal")
         row("t", "Toggle timeline", "d", "Toggle daemon panel")
         row("g", "Show killed agents", "Z", "Hide sleeping agents")
+        row("D", "Show done agents", "X", "Collapse/expand children")
         row(",/.", "Baseline time -/+15m", "0", "Reset baseline")
         t.append("\n")
 
@@ -118,6 +119,9 @@ class HelpOverlay(Static):
         status("⚫", "×", "dim", "Terminated",
                "Process exited, shell showing")
 
+        status("✓", "✓", "green", "Done",
+               "Child agent completed (D to show)")
+
         section("SPECIAL INDICATORS")
 
         t.append("🔔  ", style="")
@@ -131,6 +135,10 @@ class HelpOverlay(Static):
         t.append("🐚  ", style="")
         t.append("Background bash count\n", style="white")
         t.append("     Running background shell tasks\n\n", style="dim")
+
+        t.append("👶  ", style="")
+        t.append("Child agent count\n", style="white")
+        t.append("     Spawned child agents in hierarchy\n\n", style="dim")
 
         t.append("📋  ", style="")
         t.append("Standing orders active\n", style="white")
