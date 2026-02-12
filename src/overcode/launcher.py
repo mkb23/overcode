@@ -286,11 +286,12 @@ class ClaudeLauncher:
                             session.status = "terminated"
                             newly_terminated.append(session.name)
 
-            # Detect "done" child agents whose window is still open (#244)
+            # Detect "done" child agents via hook state (#244)
             # Child agents fire a Stop hook when Claude exits normally.
             # Without follow mode, nobody reads the hook state — fix that here.
+            # Also retroactively fix children already marked "terminated".
             for session in my_sessions:
-                if (session.status == "running"
+                if (session.status in ("running", "terminated")
                         and session.parent_session_id is not None
                         and _check_hook_stop(self.tmux.session_name, session.name)):
                     self.sessions.update_session_status(session.id, "done")
