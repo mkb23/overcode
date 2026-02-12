@@ -74,7 +74,7 @@ class MockTmux:
             for idx in self.sessions[session].keys()
         ]
 
-    def attach(self, session: str) -> None:
+    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
         pass  # No-op in tests
 
     def select_window(self, session: str, window: int) -> bool:

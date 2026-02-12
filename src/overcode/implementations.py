@@ -230,8 +230,40 @@ class RealTmux:
         except LibTmuxException:
             return []
 
-    def attach(self, session: str) -> None:
-        os.execlp("tmux", "tmux", "attach-session", "-t", session)
+    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+        if bare:
+            self._attach_bare(session, window)
+        else:
+            target = f"{session}:={window}" if window is not None else session
+            os.execlp("tmux", "tmux", "attach-session", "-t", target)
+
+    def _attach_bare(self, session: str, window: int) -> None:
+        """Create a linked session with stripped chrome and attach to it."""
+        import subprocess
+
+        bare_session = f"bare-{session}-{window}"
+
+        subprocess.run(
+            ["tmux", "kill-session", "-t", bare_session],
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            ["tmux", "new-session", "-d", "-s", bare_session, "-t", session],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return
+
+        for cmd in [
+            ["tmux", "set", "-t", bare_session, "status", "off"],
+            ["tmux", "set", "-t", bare_session, "mouse", "off"],
+            ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
+            ["tmux", "select-window", "-t", f"{bare_session}:={window}"],
+        ]:
+            subprocess.run(cmd, capture_output=True)
+
+        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
 
     def select_window(self, session: str, window: int) -> bool:
         """Select a window in a tmux session (for external pane sync)."""

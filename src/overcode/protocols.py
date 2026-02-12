@@ -77,8 +77,14 @@ class TmuxInterface(Protocol):
         """
         ...
 
-    def attach(self, session: str) -> None:
-        """Attach to a tmux session (replaces current process)."""
+    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+        """Attach to a tmux session (replaces current process).
+
+        Args:
+            session: tmux session name
+            window: optional window index to target
+            bare: if True, strip tmux chrome (no status bar, no prefix, mouse passthrough)
+        """
         ...
 
     def select_window(self, session: str, window: int) -> bool:

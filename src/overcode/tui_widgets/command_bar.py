@@ -152,7 +152,7 @@ class CommandBar(Static):
                 label.update(f"[{self.target_session} Heartbeat: Frequency] ")
             else:
                 label.update("[Heartbeat: Frequency] ")
-            input_widget.placeholder = "Enter interval (e.g., 300, 5m, 1h) or 'off' to disable..."
+            input_widget.placeholder = "Enter interval (e.g., 300, 5m, 1h) or empty to disable..."
         elif self.mode == "heartbeat_instruction":
             if self.target_session:
                 label.update(f"[{self.target_session} Heartbeat: Instruction] ")
@@ -484,7 +484,7 @@ class CommandBar(Static):
 
     def _handle_heartbeat_freq(self, text: str) -> None:
         """Handle frequency input for heartbeat configuration (#171)."""
-        if text.lower().strip() in ('off', 'disable', '0', 'no', 'false'):
+        if not text.strip() or text.lower().strip() in ('off', 'disable', '0', 'no', 'false'):
             # Disable heartbeat
             if self.target_session:
                 self.post_message(self.HeartbeatUpdated(
@@ -493,7 +493,7 @@ class CommandBar(Static):
             self.action_clear_and_unfocus()
             return
 
-        freq = self._parse_duration(text) if text else 300  # Default 5 min
+        freq = self._parse_duration(text)
         if freq is None:
             self.app.notify("Invalid format. Use: 300, 5m, or 1h", severity="error")
             return

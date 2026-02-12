@@ -159,12 +159,60 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
-    def attach_session(self):
-        """Attach to the tmux session (blocking)"""
+    def attach_session(self, window: Optional[int] = None, bare: bool = False):
+        """Attach to the tmux session (blocking).
+
+        Args:
+            window: optional window index to target
+            bare: if True, create a linked session with tmux chrome stripped,
+                  isolated from other clients attached to the main session
+        """
         if self._tmux:
-            self._tmux.attach(self.session_name)
+            self._tmux.attach(self.session_name, window=window, bare=bare)
             return
-        os.execlp("tmux", "tmux", "attach-session", "-t", self.session_name)
+        if bare:
+            self._attach_bare(window)
+        else:
+            target = f"{self.session_name}:={window}" if window is not None else self.session_name
+            os.execlp("tmux", "tmux", "attach-session", "-t", target)
+
+    def _attach_bare(self, window: int):
+        """Create a linked session with stripped chrome and attach to it.
+
+        Uses a grouped session (new-session -t) so options are isolated
+        from the main session. Sets destroy-unattached so the linked
+        session is cleaned up when the terminal closes.
+        """
+        import subprocess
+
+        bare_session = f"bare-{self.session_name}-{window}"
+
+        # Kill any stale bare session with the same name
+        subprocess.run(
+            ["tmux", "kill-session", "-t", bare_session],
+            capture_output=True,
+        )
+
+        # Create linked session sharing the same window group
+        result = subprocess.run(
+            ["tmux", "new-session", "-d", "-s", bare_session, "-t", self.session_name],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(f"Failed to create bare session: {result.stderr.decode().strip()}")
+            return
+
+        # Configure the linked session (isolated from main session)
+        for cmd in [
+            ["tmux", "set", "-t", bare_session, "status", "off"],
+            ["tmux", "set", "-t", bare_session, "mouse", "off"],
+            ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
+            ["tmux", "select-window", "-t", f"{bare_session}:={window}"],
+        ]:
+            subprocess.run(cmd, capture_output=True)
+
+        # Attach (replaces process)
+        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
 
     def list_windows(self) -> List[Dict[str, Any]]:
         """List all windows in the session.
