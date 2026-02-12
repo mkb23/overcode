@@ -1,3 +1,7 @@
+---
+description: Delegate work to child Claude agents via overcode launch
+---
+
 # Delegation: Using Overcode Agents Instead of Subagents
 
 When you need to delegate work to another Claude instance, use `overcode launch` instead of the Task tool. Overcode agents are full Claude Code sessions running in tmux — the human can watch them work in real-time, intervene, send instructions, and control them from the TUI. Built-in subagents are invisible black boxes by comparison.

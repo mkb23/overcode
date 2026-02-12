@@ -1,3 +1,7 @@
+---
+user-invocable: false
+---
+
 # Overcode CLI Skill
 
 Overcode manages multiple Claude Code agent sessions in tmux. Use this skill to launch, monitor, and control parallel Claude agents.
