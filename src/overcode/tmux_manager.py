@@ -203,10 +203,13 @@ class TmuxManager:
             return
 
         # Configure the linked session (isolated from main session)
+        # Note: destroy-unattached must be deferred via a hook, because setting
+        # it on a detached session causes tmux to destroy it immediately.
         for cmd in [
             ["tmux", "set", "-t", bare_session, "status", "off"],
             ["tmux", "set", "-t", bare_session, "mouse", "off"],
-            ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
+            ["tmux", "set-hook", "-t", bare_session, "client-attached",
+             "set destroy-unattached on"],
             ["tmux", "select-window", "-t", f"{bare_session}:={window}"],
         ]:
             subprocess.run(cmd, capture_output=True)
