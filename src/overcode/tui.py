@@ -184,7 +184,9 @@ class SupervisorTUI(
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
-        ("d", "toggle_show_done", "Show done"),
+        ("D", "toggle_show_done", "Show done"),
+        # Collapse/expand children in tree view (#244)
+        ("X", "toggle_collapse_children", "Collapse children"),
         # Sort mode cycle (#61)
         ("S", "cycle_sort_mode", "Sort mode"),
         # Edit agent value (#61)
@@ -248,6 +250,8 @@ class SupervisorTUI(
         self.detector = StatusDetectorDispatcher(tmux_session)
         # Track expanded state per session ID to preserve across refreshes
         self.expanded_states: dict[str, bool] = {}
+        # Track collapsed parents in tree view (#244)
+        self.collapsed_parents: set[str] = set()
         # Max repo/branch widths for alignment in full detail mode
         self.max_repo_width: int = 10
         self.max_branch_width: int = 10
@@ -905,6 +909,7 @@ class SupervisorTUI(
             hide_asleep=self.hide_asleep,
             show_terminated=self.show_terminated,
             show_done=self.show_done,
+            collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
         )
 
         # Get existing widgets and their session IDs
@@ -1094,9 +1099,16 @@ class SupervisorTUI(
                 # Each subsequent widget should be after the previous one
                 container.move_child(widget, after=ordered_widgets[i - 1])
 
-        # Update tree prefix for hierarchy display (#244)
+        # Update tree prefix and child count for hierarchy display (#244)
         is_tree_mode = self._prefs.sort_mode == "by_tree"
+        # Build child count map once (counts all children, not just visible ones)
+        child_counts: dict[str, int] = {}
         for widget in ordered_widgets:
+            pid = widget.session.parent_session_id
+            if pid is not None:
+                child_counts[pid] = child_counts.get(pid, 0) + 1
+        for widget in ordered_widgets:
+            widget.child_count = child_counts.get(widget.session.id, 0)
             if is_tree_mode:
                 depth = self.session_manager.compute_depth(widget.session)
                 # Determine if this is the last sibling at its level

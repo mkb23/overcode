@@ -698,6 +698,83 @@ class TestStatusOrderConstants:
         assert STATUS_ORDER_BY_VALUE["waiting_user"] == 0
 
 
+class TestFilterCollapsedParents:
+    """Tests for collapsed parent filtering in tree view (#244)."""
+
+    def test_collapsed_parent_hides_children(self):
+        """Children of a collapsed parent should be hidden."""
+        parent = make_session("parent", session_id="p1")
+        parent.parent_session_id = None
+        parent.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "p1"
+        child.status = "running"
+
+        result = filter_visible_sessions(
+            [parent, child], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"p1"},
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "parent"
+
+    def test_collapsed_parent_hides_grandchildren(self):
+        """Grandchildren of a collapsed parent should also be hidden."""
+        root = make_session("root", session_id="r1")
+        root.parent_session_id = None
+        root.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "r1"
+        child.status = "running"
+        grandchild = make_session("grandchild", session_id="gc1")
+        grandchild.parent_session_id = "c1"
+        grandchild.status = "running"
+
+        result = filter_visible_sessions(
+            [root, child, grandchild], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"r1"},
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "root"
+
+    def test_no_collapse_when_not_in_tree_mode(self):
+        """When collapsed_parents is None, no filtering happens."""
+        parent = make_session("parent", session_id="p1")
+        parent.parent_session_id = None
+        parent.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "p1"
+        child.status = "running"
+
+        result = filter_visible_sessions(
+            [parent, child], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents=None,
+        )
+
+        assert len(result) == 2
+
+    def test_collapse_only_affects_descendants(self):
+        """Collapsing one parent shouldn't affect unrelated agents."""
+        parent1 = make_session("parent1", session_id="p1")
+        parent1.parent_session_id = None
+        parent1.status = "running"
+        child1 = make_session("child1", session_id="c1")
+        child1.parent_session_id = "p1"
+        child1.status = "running"
+        parent2 = make_session("parent2", session_id="p2")
+        parent2.parent_session_id = None
+        parent2.status = "running"
+
+        result = filter_visible_sessions(
+            [parent1, child1, parent2], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"p1"},
+        )
+
+        assert len(result) == 2
+        assert {s.name for s in result} == {"parent1", "parent2"}
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

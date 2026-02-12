@@ -255,6 +255,13 @@ class MonitorDaemon:
         self._sessions_running_from_heartbeat: set = set()  # Persistent: sessions currently running due to heartbeat
         self._heartbeat_start_pending: set = set()  # One-shot: sessions awaiting first "running" observation after heartbeat
 
+    def _get_parent_name(self, session) -> Optional[str]:
+        """Get the name of a session's parent, if any (#244)."""
+        if not session.parent_session_id:
+            return None
+        parent = self.session_manager.get_session(session.parent_session_id)
+        return parent.name if parent else None
+
     def track_session_stats(self, session, status: str) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
 
@@ -365,6 +372,10 @@ class MonitorDaemon:
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
+            # Agent hierarchy (#244)
+            parent_name=self._get_parent_name(session),
+            depth=self.session_manager.compute_depth(session),
+            children_count=len(self.session_manager.get_children(session.id)),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -585,6 +596,38 @@ class MonitorDaemon:
                 self.state.current_interval = INTERVAL_FAST
                 self.state.save(self.state_path)
                 return
+
+    def _auto_archive_done_agents(self, sessions: list) -> None:
+        """Auto-archive done agents that have been done for over 1 hour (#244).
+
+        Kills the tmux window and marks as terminated so cleanup can remove them.
+        """
+        now = datetime.now()
+        done_timeout_seconds = 3600  # 1 hour
+
+        for session in sessions:
+            if session.status != "done":
+                continue
+            # Check how long agent has been in done state
+            if session.stats.state_since:
+                try:
+                    done_since = datetime.fromisoformat(session.stats.state_since)
+                    if (now - done_since).total_seconds() < done_timeout_seconds:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            else:
+                continue
+
+            # Archive: kill tmux window and mark terminated
+            try:
+                from .tmux_utils import TmuxHelper
+                tmux = TmuxHelper()
+                tmux.kill_window(self.tmux_session, session.tmux_window)
+            except Exception:
+                pass  # Window may already be gone
+            self.session_manager.update_session_status(session.id, "terminated")
+            self.log.info(f"Auto-archived done agent: {session.name}")
 
     def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
         """Publish current state to JSON file."""
@@ -815,6 +858,10 @@ class MonitorDaemon:
 
                 # Publish state
                 self._publish_state(session_states)
+
+                # Auto-archive "done" agents after 1 hour (#244)
+                if self.state.loop_count % 60 == 0:
+                    self._auto_archive_done_agents(sessions)
 
                 # Log summary
                 green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

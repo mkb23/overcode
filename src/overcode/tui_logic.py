@@ -198,6 +198,7 @@ def filter_visible_sessions(
     hide_asleep: bool,
     show_terminated: bool,
     show_done: bool = False,
+    collapsed_parents: Optional[Set[str]] = None,
 ) -> List[T]:
     """Filter sessions based on visibility preferences.
 
@@ -207,6 +208,7 @@ def filter_visible_sessions(
         hide_asleep: If True, filter out sleeping agents
         show_terminated: If True, include terminated sessions
         show_done: If True, include "done" child agents (#244)
+        collapsed_parents: Set of session IDs whose children should be hidden (#244)
 
     Returns:
         New filtered list (does not mutate inputs)
@@ -228,7 +230,41 @@ def filter_visible_sessions(
             if session.id not in active_ids:
                 result.append(session)
 
+    # Hide descendants of collapsed parents (#244)
+    if collapsed_parents:
+        hidden_ids = _get_collapsed_descendants(result, collapsed_parents)
+        if hidden_ids:
+            result = [s for s in result if s.id not in hidden_ids]
+
     return result
+
+
+def _get_collapsed_descendants(
+    sessions: List[T],
+    collapsed_parents: Set[str],
+) -> Set[str]:
+    """Get IDs of all sessions that should be hidden due to collapsed parents.
+
+    Walks down from each collapsed parent, hiding all descendants recursively.
+    """
+    # Build parent_id -> children map
+    children_map: dict = {}
+    for s in sessions:
+        pid = getattr(s, 'parent_session_id', None)
+        if pid is not None:
+            children_map.setdefault(pid, []).append(s)
+
+    hidden: Set[str] = set()
+
+    def hide_subtree(parent_id: str) -> None:
+        for child in children_map.get(parent_id, []):
+            hidden.add(child.id)
+            hide_subtree(child.id)
+
+    for parent_id in collapsed_parents:
+        hide_subtree(parent_id)
+
+    return hidden
 
 
 def get_sort_mode_display_name(mode: str) -> str:

@@ -98,6 +98,7 @@ class SessionSummary(Static, can_focus=True):
         # Agent hierarchy (#244)
         self.tree_depth: int = 0  # Set by TUI when sort mode is by_tree
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
+        self.child_count: int = 0  # Number of direct children — set by TUI
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -311,6 +312,7 @@ class SessionSummary(Static, can_focus=True):
             all_names_match_repos=getattr(self.app, 'all_names_match_repos', False),
             live_subagent_count=self.live_subagent_count,
             background_bash_count=self.background_bash_count,
+            child_count=self.child_count,
             status_changed_at=self._status_changed_at,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
