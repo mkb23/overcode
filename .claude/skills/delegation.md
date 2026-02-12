@@ -1,75 +1,124 @@
-# Agent Delegation Skill
+# Delegation: Using Overcode Agents Instead of Subagents
 
-Use `overcode launch --follow` to delegate work to child agents instead of the Task tool. Child agents are first-class tmux citizens that humans can observe and intervene in.
+When you need to delegate work to another Claude instance, use `overcode launch` instead of the Task tool. Overcode agents are full Claude Code sessions running in tmux — the human can watch them work in real-time, intervene, send instructions, and control them from the TUI. Built-in subagents are invisible black boxes by comparison.
 
-## Sequential Delegation (blocking)
+## When to Use Overcode Agents
 
-Launch a child agent and wait for it to complete:
+**Use `overcode launch` when:**
+- The task is substantial (would take more than a few minutes)
+- The human might want to observe or intervene
+- You want the child to have its own git workspace and full tool access
+- You're doing parallel work across multiple repos or directories
+- The task involves writing code, running tests, or making commits
+
+**Use the built-in Task tool when:**
+- Quick research or file lookup (seconds, not minutes)
+- Simple, self-contained queries that don't need intervention
+- You need the result inline in your current context immediately
+
+## Sequential Delegation (Blocking)
+
+Launch a child and wait for it to finish:
 
 ```bash
-overcode launch --name <task-name> --follow --prompt "<detailed instructions>" --bypass-permissions
+overcode launch \
+  --name fix-auth-bug \
+  --directory ~/project \
+  --follow \
+  --prompt "Fix the authentication bug in src/auth.py where JWT tokens aren't being refreshed. Run tests to verify." \
+  --bypass-permissions
 ```
 
-The `--follow` flag streams the child's output to your stdout and blocks until the child reaches Stop. When it finishes, the child is marked "done" and hidden from default views.
+- `--follow` blocks until the child stops, streaming its output to your terminal
+- `--bypass-permissions` lets the child work autonomously (use `--skip-permissions` for safer mode)
+- When the child finishes, it's marked "done" and you regain control
+- Check the exit: 0 = clean stop, 1 = terminated, 130 = you interrupted
 
-## Parallel Delegation (non-blocking)
+**After it returns**, verify the work:
+```bash
+overcode show fix-auth-bug --lines 50
+```
 
-Launch multiple children without `--follow`, then check on them:
+## Parallel Delegation (Non-Blocking)
+
+Launch several children and check on them:
 
 ```bash
-# Launch several in parallel
-overcode launch --name auth-refactor --prompt "Refactor the auth module to use JWT" --bypass-permissions
-overcode launch --name api-tests --prompt "Write integration tests for the /users API" --bypass-permissions
+# Launch multiple agents in parallel
+overcode launch --name refactor-api --directory ~/project --prompt "Refactor the REST API to use FastAPI" --bypass-permissions
+overcode launch --name write-tests --directory ~/project --prompt "Write unit tests for the auth module" --bypass-permissions
+overcode launch --name update-docs --directory ~/project --prompt "Update the API documentation" --bypass-permissions
 
-# Check status
+# Monitor progress
 overcode list
 
-# Read a child's output
-overcode show auth-refactor --lines 100
+# Read a specific child's recent output
+overcode show refactor-api --lines 100
 
-# Follow a specific child (blocks until it finishes)
-overcode follow auth-refactor
+# Block on one when you need its result
+overcode follow refactor-api
 ```
 
-## Budget Management
+## Writing the Prompt
 
-Transfer budget to child agents before launching:
+**This is the most important part.** The child starts a fresh Claude Code session with zero context. Your `--prompt` must be entirely self-contained:
+
+- **State the goal clearly** — what should be different when the child is done?
+- **Include file paths** — don't say "the auth module", say `src/auth/jwt.py`
+- **Specify constraints** — "don't modify the public API", "keep backwards compatibility"
+- **Include verification** — "run `pytest tests/auth/` and fix any failures"
+- **Give context on architecture** — the child doesn't know what you know
+
+Bad: `"Fix the bug"`
+Good: `"Fix the JWT refresh bug in src/auth/jwt.py. The refresh_token() function on line 45 doesn't check token expiry before refreshing. Add an expiry check and update the unit test in tests/test_auth.py. Run pytest tests/test_auth.py to verify."`
+
+## Budget Control
+
+Prevent runaway costs by giving children explicit budgets:
 
 ```bash
-# Set your own budget first (if not already set)
-overcode budget set my-agent 10.00
+# Transfer from your budget to the child
+overcode budget transfer my-agent fix-auth-bug 2.00
 
-# Transfer budget to child
-overcode budget transfer my-agent child-agent 2.00
+# Or set directly on the child
+overcode budget set fix-auth-bug 3.00
 
-# Check budget status
+# Check all budgets
 overcode budget show
 ```
 
-## Key Rules
+When a child exceeds its budget, heartbeats and supervisor nudges stop — it naturally winds down.
 
-1. **Always pass full context in `--prompt`** - child agents start fresh with no shared context
-2. **Use meaningful names** - they appear in the TUI and help humans understand the hierarchy
-3. **One concern per child** - keep delegated tasks focused and well-scoped
-4. **Check output after `--follow` returns** - verify the child completed successfully
-5. **Set budgets** - prevent runaway costs by transferring explicit budgets to children
-
-## Hierarchy
-
-- Agents auto-detect their parent via the `OVERCODE_SESSION_NAME` environment variable
-- Maximum nesting depth is 5 levels
-- `overcode kill <parent>` cascades to all descendants by default
-- `overcode list <parent>` shows the parent and all its descendants
-- The TUI has a "By Tree" sort mode (press S to cycle) showing the hierarchy
-
-## Cleanup
-
-Done child agents stay alive in tmux but are hidden from default views:
+## Managing Children
 
 ```bash
-# Show done agents
+# See your subtree
+overcode list my-agent
+
+# Kill a child (and its children, recursively)
+overcode kill fix-auth-bug
+
+# Kill only the child, not its grandchildren
+overcode kill fix-auth-bug --no-cascade
+
+# See done children
 overcode list --show-done
 
-# Archive all done agents
+# Clean up all done children
 overcode cleanup --done
 ```
+
+## Naming Convention
+
+Use descriptive, task-oriented names. The human sees these in the TUI:
+
+- `fix-auth-bug` not `child-1`
+- `refactor-api-v2` not `task`
+- `test-payment-flow` not `worker`
+
+## Hierarchy Rules
+
+- Parent is auto-detected from `OVERCODE_SESSION_NAME` env var — you don't need `--parent` when running inside an overcode agent
+- Maximum depth is 5 levels (you → child → grandchild → ...)
+- `overcode kill` cascades to all descendants by default
+- The TUI shows the tree when sorted by hierarchy (press `S` to cycle to "Tree" mode)
