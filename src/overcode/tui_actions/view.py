@@ -165,6 +165,20 @@ class ViewActionsMixin:
         else:
             self.notify(f"Killed sessions: {status}", severity="information")
 
+    def action_toggle_show_done(self) -> None:
+        """Toggle showing 'done' child agents (#244)."""
+        self.show_done = not self.show_done
+        self._prefs.show_done = self.show_done
+        self._save_prefs()
+        self.update_session_widgets()
+
+        status = "visible" if self.show_done else "hidden"
+        done_count = sum(1 for s in self.sessions if getattr(s, 'status', None) == 'done')
+        if done_count > 0:
+            self.notify(f"Done agents: {status} ({done_count})", severity="information")
+        else:
+            self.notify(f"Done agents: {status}", severity="information")
+
     def action_toggle_hide_asleep(self) -> None:
         """Toggle hiding sleeping agents from display."""
         self.hide_asleep = not self.hide_asleep

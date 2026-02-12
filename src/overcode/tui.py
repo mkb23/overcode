@@ -302,6 +302,8 @@ class SupervisorTUI(
         self.show_terminated = self._prefs.show_terminated
         # Initialize hide_asleep from preferences
         self.hide_asleep = self._prefs.hide_asleep
+        # Initialize show_done from preferences (#244)
+        self.show_done = self._prefs.show_done
         # Initialize summary_content_mode from preferences (#98)
         self.summary_content_mode = self._prefs.summary_content_mode
         # Initialize baseline_minutes from preferences (for mean spin calculation)
@@ -551,6 +553,9 @@ class SupervisorTUI(
         focused_widget = self._get_focused_widget()
         focused_session_id = focused_widget.session.id if focused_widget else None
 
+        # Detect new sessions for timeline refresh (#244)
+        old_names = {s.name for s in self.sessions}
+
         self._invalidate_sessions_cache()
         self.sessions = sessions
         # Apply sorting (#61)
@@ -570,6 +575,11 @@ class SupervisorTUI(
                     if isinstance(self.focused, SessionSummary):
                         widget.focus()
                     break
+
+        # Trigger timeline refresh when new sessions appear (child agents) (#244)
+        new_names = {s.name for s in sessions}
+        if new_names - old_names:
+            self.update_timeline()
 
         # On first load, select the first agent and kick off async updates.
         if not self._initial_sessions_loaded:
