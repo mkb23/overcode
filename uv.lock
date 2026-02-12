@@ -292,7 +292,7 @@ wheels = [
 
 [[package]]
 name = "overcode"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "libtmux" },
