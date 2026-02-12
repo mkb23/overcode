@@ -1,3 +1,7 @@
+---
+user-invocable: false
+---
+
 # Overcode CLI Skill
 
 Overcode manages multiple Claude Code agent sessions in tmux. Use this skill to launch, monitor, and control parallel Claude agents.
@@ -154,6 +158,36 @@ overcode supervisor
 
 # Agents show in the TUI, navigate with j/k, attach with Enter
 ```
+
+## Agent Hierarchy (#244)
+
+Agents can spawn child agents, creating a tree:
+
+```bash
+# Launch a child agent (auto-detects parent from env)
+overcode launch --name child-task --follow --prompt "Do something" --bypass-permissions
+
+# Explicit parent
+overcode launch --name child-task --parent my-agent --prompt "Do something"
+
+# Follow an already-running child
+overcode follow child-task
+
+# Kill parent + all descendants (default)
+overcode kill my-agent
+
+# Kill only the parent, orphan children
+overcode kill my-agent --no-cascade
+
+# Show a subtree
+overcode list my-agent
+
+# Budget transfer
+overcode budget transfer parent-agent child-agent 2.00
+overcode budget show
+```
+
+See the `delegation` skill for detailed delegation patterns.
 
 ## Tips
 

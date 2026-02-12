@@ -152,6 +152,7 @@ def _make_ctx(**overrides) -> ColumnContext:
         all_names_match_repos=False,
         live_subagent_count=0,
         background_bash_count=0,
+        child_count=0,
         status_changed_at=None,
         max_repo_width=10,
         max_branch_width=10,

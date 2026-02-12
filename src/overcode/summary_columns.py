@@ -85,6 +85,7 @@ class ColumnContext:
     # Live counts
     live_subagent_count: int
     background_bash_count: int
+    child_count: int  # Agent hierarchy child count (#244)
 
     # Time-in-state
     status_changed_at: Optional[datetime]
@@ -292,6 +293,14 @@ def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.background_bash_count
     style = ctx.mono(f"bold yellow{ctx.bg}", "bold") if count > 0 else ctx.mono(f"dim{ctx.bg}", "dim")
     return [(f" 🐚{count:>2}", style)]
+
+
+def render_child_count(ctx: ColumnContext) -> ColumnOutput:
+    count = ctx.child_count
+    if count == 0:
+        return [(f" 👶 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    style = ctx.mono(f"bold cyan{ctx.bg}", "bold")
+    return [(f" 👶{count:>2}", style)]
 
 
 def render_permission_mode(ctx: ColumnContext) -> ColumnOutput:
@@ -581,6 +590,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Subprocesses group
     SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_subagent_count),
     SummaryColumn(id="bash_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_bash_count),
+    SummaryColumn(id="child_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_child_count),
     # Synthetic CLI-only: combined work + interactions line
     SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain),
@@ -612,7 +622,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 def build_cli_context(
     session, stats, claude_stats, git_diff_stats,
     status: str, bg_bash_count: int, live_sub_count: int,
-    any_has_budget: bool = False,
+    any_has_budget: bool = False, child_count: int = 0,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -666,6 +676,7 @@ def build_cli_context(
         all_names_match_repos=False,
         live_subagent_count=live_sub_count,
         background_bash_count=bg_bash_count,
+        child_count=child_count,
         status_changed_at=status_changed_at,
         max_repo_width=10,
         max_branch_width=10,

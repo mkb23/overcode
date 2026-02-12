@@ -53,6 +53,7 @@ STATUS_ORDER_BY_ATTENTION = {
     "waiting_heartbeat": 4,
     "running": 5,
     "terminated": 6,
+    "done": 6,
     "asleep": 7,
 }
 
@@ -65,6 +66,7 @@ STATUS_ORDER_BY_VALUE = {
     "running_heartbeat": 1,
     "heartbeat_start": 1,
     "terminated": 2,
+    "done": 2,
     "asleep": 2,
 }
 
@@ -124,12 +126,55 @@ def sort_sessions_by_value(sessions: List[S]) -> List[S]:
     )
 
 
+def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
+    """Sort sessions in tree order: roots first (alphabetical), children immediately after parent.
+
+    Args:
+        sessions: List of session objects
+        parent_id_fn: Function to get parent_session_id from a session.
+            Defaults to accessing session.parent_session_id attribute.
+
+    Returns:
+        New sorted list (does not mutate input)
+    """
+    if parent_id_fn is None:
+        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+
+    # Build parent_id -> children map
+    children_map: dict = {}
+    roots = []
+    for s in sessions:
+        pid = parent_id_fn(s)
+        if pid is None:
+            roots.append(s)
+        else:
+            children_map.setdefault(pid, []).append(s)
+
+    # Sort each group alphabetically
+    roots.sort(key=lambda s: s.name.lower())
+    for kids in children_map.values():
+        kids.sort(key=lambda s: s.name.lower())
+
+    # DFS from roots
+    result = []
+
+    def dfs(session):
+        result.append(session)
+        for child in children_map.get(session.id, []):
+            dfs(child)
+
+    for root in roots:
+        dfs(root)
+
+    return result
+
+
 def sort_sessions(sessions: List[S], mode: str) -> List[S]:
     """Sort sessions based on the specified mode.
 
     Args:
         sessions: List of session objects
-        mode: One of "alphabetical", "by_status", "by_value"
+        mode: One of "alphabetical", "by_status", "by_value", "by_tree"
 
     Returns:
         New sorted list (does not mutate input)
@@ -140,6 +185,8 @@ def sort_sessions(sessions: List[S], mode: str) -> List[S]:
         return sort_sessions_by_status(sessions)
     elif mode == "by_value":
         return sort_sessions_by_value(sessions)
+    elif mode == "by_tree":
+        return sort_sessions_by_tree(sessions)
     else:
         # Default to alphabetical for unknown modes
         return sort_sessions_alphabetical(sessions)
@@ -150,6 +197,8 @@ def filter_visible_sessions(
     terminated_sessions: List[T],
     hide_asleep: bool,
     show_terminated: bool,
+    show_done: bool = False,
+    collapsed_parents: Optional[Set[str]] = None,
 ) -> List[T]:
     """Filter sessions based on visibility preferences.
 
@@ -158,6 +207,8 @@ def filter_visible_sessions(
         terminated_sessions: List of terminated/killed sessions
         hide_asleep: If True, filter out sleeping agents
         show_terminated: If True, include terminated sessions
+        show_done: If True, include "done" child agents (#244)
+        collapsed_parents: Set of session IDs whose children should be hidden (#244)
 
     Returns:
         New filtered list (does not mutate inputs)
@@ -168,6 +219,10 @@ def filter_visible_sessions(
     if hide_asleep:
         result = [s for s in result if not s.is_asleep]
 
+    # Filter out "done" agents unless show_done (#244)
+    if not show_done:
+        result = [s for s in result if getattr(s, 'status', None) != 'done']
+
     # Include terminated sessions if requested
     if show_terminated:
         active_ids = {s.id for s in active_sessions}
@@ -175,7 +230,41 @@ def filter_visible_sessions(
             if session.id not in active_ids:
                 result.append(session)
 
+    # Hide descendants of collapsed parents (#244)
+    if collapsed_parents:
+        hidden_ids = _get_collapsed_descendants(result, collapsed_parents)
+        if hidden_ids:
+            result = [s for s in result if s.id not in hidden_ids]
+
     return result
+
+
+def _get_collapsed_descendants(
+    sessions: List[T],
+    collapsed_parents: Set[str],
+) -> Set[str]:
+    """Get IDs of all sessions that should be hidden due to collapsed parents.
+
+    Walks down from each collapsed parent, hiding all descendants recursively.
+    """
+    # Build parent_id -> children map
+    children_map: dict = {}
+    for s in sessions:
+        pid = getattr(s, 'parent_session_id', None)
+        if pid is not None:
+            children_map.setdefault(pid, []).append(s)
+
+    hidden: Set[str] = set()
+
+    def hide_subtree(parent_id: str) -> None:
+        for child in children_map.get(parent_id, []):
+            hidden.add(child.id)
+            hide_subtree(child.id)
+
+    for parent_id in collapsed_parents:
+        hide_subtree(parent_id)
+
+    return hidden
 
 
 def get_sort_mode_display_name(mode: str) -> str:
@@ -191,6 +280,7 @@ def get_sort_mode_display_name(mode: str) -> str:
         "alphabetical": "Alphabetical",
         "by_status": "By Status",
         "by_value": "By Value (priority)",
+        "by_tree": "By Tree (hierarchy)",
     }
     return mode_names.get(mode, mode)
 

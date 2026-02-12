@@ -659,7 +659,7 @@ class TestCleanupCommandWithMocks:
             result = runner.invoke(app, ["cleanup"])
 
             assert result.exit_code == 0
-            assert "No terminated sessions" in result.output
+            assert "No sessions to clean up" in result.output
 
 
 class TestSetValueCommand:

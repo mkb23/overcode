@@ -390,6 +390,7 @@ class TUIPreferences:
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
+    show_done: bool = False  # show "done" child agents (#244)
     sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
@@ -435,6 +436,7 @@ class TUIPreferences:
                     tmux_sync=data.get("tmux_sync", False),
                     show_terminated=data.get("show_terminated", False),
                     hide_asleep=data.get("hide_asleep", False),
+                    show_done=data.get("show_done", False),
                     sort_mode=data.get("sort_mode", "alphabetical"),
                     summary_content_mode=data.get("summary_content_mode", "ai_short"),
                     baseline_minutes=data.get("baseline_minutes", 0),
@@ -464,6 +466,7 @@ class TUIPreferences:
                     "tmux_sync": self.tmux_sync,
                     "show_terminated": self.show_terminated,
                     "hide_asleep": self.hide_asleep,
+                    "show_done": self.show_done,
                     "sort_mode": self.sort_mode,
                     "summary_content_mode": self.summary_content_mode,
                     "baseline_minutes": self.baseline_minutes,

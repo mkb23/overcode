@@ -165,6 +165,20 @@ class ViewActionsMixin:
         else:
             self.notify(f"Killed sessions: {status}", severity="information")
 
+    def action_toggle_show_done(self) -> None:
+        """Toggle showing 'done' child agents (#244)."""
+        self.show_done = not self.show_done
+        self._prefs.show_done = self.show_done
+        self._save_prefs()
+        self.update_session_widgets()
+
+        status = "visible" if self.show_done else "hidden"
+        done_count = sum(1 for s in self.sessions if getattr(s, 'status', None) == 'done')
+        if done_count > 0:
+            self.notify(f"Done agents: {status} ({done_count})", severity="information")
+        else:
+            self.notify(f"Done agents: {status}", severity="information")
+
     def action_toggle_hide_asleep(self) -> None:
         """Toggle hiding sleeping agents from display."""
         self.hide_asleep = not self.hide_asleep
@@ -214,6 +228,36 @@ class ViewActionsMixin:
                     break
 
         self.notify(f"Sort: {get_sort_mode_display_name(self._prefs.sort_mode)}", severity="information")
+
+    def action_toggle_collapse_children(self) -> None:
+        """Toggle collapse/expand children for the focused parent in tree view (#244)."""
+        if self._prefs.sort_mode != "by_tree":
+            self.notify("Collapse only works in tree sort mode (press S)", severity="warning")
+            return
+
+        widgets = self._get_widgets_in_session_order()
+        if not widgets or not (0 <= self.focused_session_index < len(widgets)):
+            return
+
+        focused_widget = widgets[self.focused_session_index]
+        session_id = focused_widget.session.id
+
+        # Check if this session has children
+        children = self.session_manager.get_children(session_id)
+        if not children:
+            self.notify("No children to collapse", severity="warning")
+            return
+
+        if session_id in self.collapsed_parents:
+            self.collapsed_parents.discard(session_id)
+            self.notify(f"Expanded children of {focused_widget.session.name}", severity="information")
+        else:
+            self.collapsed_parents.add(session_id)
+            self.notify(f"Collapsed children of {focused_widget.session.name}", severity="information")
+
+        # Re-sort and refresh to apply filtering
+        self._sort_sessions()
+        self.update_session_widgets()
 
     def action_toggle_copy_mode(self) -> None:
         """Toggle mouse capture to allow native terminal text selection.

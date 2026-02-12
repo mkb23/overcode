@@ -64,6 +64,9 @@ class ClaudeLauncher:
         self.tmux = tmux_manager if tmux_manager else TmuxManager(tmux_session)
         self.sessions = session_manager if session_manager else SessionManager()
 
+    # Maximum nesting depth for agent hierarchy (#244)
+    MAX_HIERARCHY_DEPTH = 5
+
     def launch(
         self,
         name: str,
@@ -71,6 +74,7 @@ class ClaudeLauncher:
         initial_prompt: Optional[str] = None,
         skip_permissions: bool = False,
         dangerously_skip_permissions: bool = False,
+        parent_name: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -82,6 +86,8 @@ class ClaudeLauncher:
             skip_permissions: If True, use --permission-mode dontAsk
             dangerously_skip_permissions: If True, use --dangerously-skip-permissions
                 (for testing only - bypasses folder trust dialog)
+            parent_name: Optional parent agent name for hierarchy (#244).
+                If not set, auto-detects from OVERCODE_SESSION_NAME env var.
 
         Returns:
             Session object if successful, None otherwise
@@ -100,6 +106,25 @@ class ClaudeLauncher:
         except (TmuxNotFoundError, ClaudeNotFoundError) as e:
             print(f"Cannot launch: {e}")
             return None
+
+        # Auto-detect parent from env var if not explicitly set (#244)
+        parent_session = None
+        if parent_name is None:
+            env_parent_name = os.environ.get("OVERCODE_SESSION_NAME")
+            if env_parent_name:
+                parent_name = env_parent_name
+
+        if parent_name:
+            parent_session = self.sessions.get_session_by_name(parent_name)
+            if not parent_session:
+                print(f"Parent agent '{parent_name}' not found")
+                return None
+
+            # Enforce depth limit
+            parent_depth = self.sessions.compute_depth(parent_session)
+            if parent_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
+                print(f"Cannot launch: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
+                return None
 
         # Check if a session with this name already exists
         existing = self.sessions.get_session_by_name(name)
@@ -135,6 +160,10 @@ class ClaudeLauncher:
         # Prepend overcode env vars so the agent knows its identity
         env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
 
+        # Add parent env vars for hierarchy (#244)
+        if parent_session:
+            env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent_session.id} OVERCODE_PARENT_NAME={parent_session.name}"
+
         # If MOCK_SCENARIO is set, prepend it to the command for testing
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
@@ -167,6 +196,11 @@ class ClaudeLauncher:
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode
         )
+
+        # Set parent if launching as child agent (#244)
+        if parent_session:
+            self.sessions.update_session(session.id, parent_session_id=parent_session.id)
+            session.parent_session_id = parent_session.id
 
         print(f"✓ Launched '{name}' in tmux window {window_index}")
 
@@ -235,15 +269,33 @@ class ClaudeLauncher:
 
         # Detect terminated sessions (tmux window gone but session still tracked)
         if detect_terminated:
+            from .follow_mode import _check_hook_stop
+
             newly_terminated = []
             for session in my_sessions:
                 # Only check non-terminated sessions
-                if session.status != "terminated":
+                if session.status not in ("terminated", "done"):
                     if not self.tmux.window_exists(session.tmux_window):
-                        # Mark as terminated in state file
-                        self.sessions.update_session_status(session.id, "terminated")
-                        session.status = "terminated"  # Update local object too
-                        newly_terminated.append(session.name)
+                        # Child agents with Stop hook → "done", not "terminated" (#244)
+                        if (session.parent_session_id is not None
+                                and _check_hook_stop(self.tmux.session_name, session.name)):
+                            self.sessions.update_session_status(session.id, "done")
+                            session.status = "done"
+                        else:
+                            self.sessions.update_session_status(session.id, "terminated")
+                            session.status = "terminated"
+                            newly_terminated.append(session.name)
+
+            # Detect "done" child agents via hook state (#244)
+            # Child agents fire a Stop hook when Claude exits normally.
+            # Without follow mode, nobody reads the hook state — fix that here.
+            # Also retroactively fix children already marked "terminated".
+            for session in my_sessions:
+                if (session.status in ("running", "terminated")
+                        and session.parent_session_id is not None
+                        and _check_hook_stop(self.tmux.session_name, session.name)):
+                    self.sessions.update_session_status(session.id, "done")
+                    session.status = "done"
 
             if newly_terminated:
                 print(f"Detected {len(newly_terminated)} terminated session(s): {', '.join(newly_terminated)}")
@@ -283,17 +335,39 @@ class ClaudeLauncher:
 
         return len(terminated)
 
-    def kill_session(self, name: str) -> bool:
+    def kill_session(self, name: str, cascade: bool = True) -> bool:
         """Kill a session by name.
 
         Handles both active sessions and stale sessions (where tmux window/session
         no longer exists, e.g., after a machine reboot).
+
+        Args:
+            name: Name of the session to kill
+            cascade: If True (default), also kill all descendant agents.
+                If False, orphan children (set their parent_session_id to None).
         """
         session = self.sessions.get_session_by_name(name)
         if session is None:
             print(f"Session '{name}' not found")
             return False
 
+        # Handle cascade: kill descendants deepest-first (#244)
+        if cascade:
+            descendants = self.sessions.get_descendants(session.id)
+            # Sort by depth (deepest first) for clean teardown
+            descendants.sort(key=lambda s: self.sessions.compute_depth(s), reverse=True)
+            for desc in descendants:
+                self._kill_single_session(desc)
+        else:
+            # Orphan children: set their parent_session_id to None
+            children = self.sessions.get_children(session.id)
+            for child in children:
+                self.sessions.update_session(child.id, parent_session_id=None)
+
+        return self._kill_single_session(session)
+
+    def _kill_single_session(self, session: Session) -> bool:
+        """Kill a single session (no cascade). Internal helper."""
         # Check if the tmux window/session still exists
         window_exists = self.tmux.window_exists(session.tmux_window)
 
@@ -301,16 +375,16 @@ class ClaudeLauncher:
             # Active session - try to kill the tmux window
             if self.tmux.kill_window(session.tmux_window):
                 self.sessions.delete_session(session.id)
-                print(f"✓ Killed session '{name}'")
+                print(f"✓ Killed session '{session.name}'")
                 return True
             else:
-                print(f"Failed to kill tmux window for '{name}'")
+                print(f"Failed to kill tmux window for '{session.name}'")
                 return False
         else:
             # Stale session - tmux window/session is already gone (e.g., after reboot)
             # Just clean up the state file
             self.sessions.delete_session(session.id)
-            print(f"✓ Cleaned up stale session '{name}' (tmux window no longer exists)")
+            print(f"✓ Cleaned up stale session '{session.name}' (tmux window no longer exists)")
             return True
 
     def send_to_session(self, name: str, text: str, enter: bool = True) -> bool:

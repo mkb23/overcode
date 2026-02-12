@@ -16,6 +16,7 @@ from overcode.tui_logic import (
     sort_sessions_alphabetical,
     sort_sessions_by_status,
     sort_sessions_by_value,
+    sort_sessions_by_tree,
     sort_sessions,
     filter_visible_sessions,
     get_sort_mode_display_name,
@@ -568,6 +569,112 @@ class TestCalculateHumanInteractionCount:
         assert calculate_human_interaction_count(3, 10) == 0
 
 
+class TestSortSessionsByTree:
+    """Tests for tree hierarchy sorting (#244)."""
+
+    def _make_tree_session(self, name, session_id=None, parent_session_id=None):
+        session = make_session(name, session_id=session_id or name)
+        session.parent_session_id = parent_session_id
+        return session
+
+    def test_roots_sorted_alphabetically(self):
+        """Root sessions (no parent) should sort alphabetically."""
+        sessions = [
+            self._make_tree_session("charlie"),
+            self._make_tree_session("alpha"),
+            self._make_tree_session("bravo"),
+        ]
+
+        result = sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in result] == ["alpha", "bravo", "charlie"]
+
+    def test_children_follow_parent(self):
+        """Children should appear immediately after their parent."""
+        root = self._make_tree_session("root", session_id="root-id")
+        child_a = self._make_tree_session("child-a", session_id="child-a-id", parent_session_id="root-id")
+        child_b = self._make_tree_session("child-b", session_id="child-b-id", parent_session_id="root-id")
+        other = self._make_tree_session("other", session_id="other-id")
+
+        sessions = [other, child_b, root, child_a]
+        result = sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in result] == ["other", "root", "child-a", "child-b"]
+
+    def test_nested_hierarchy(self):
+        """Deeply nested hierarchy should be correctly ordered."""
+        root = self._make_tree_session("root", session_id="r")
+        child = self._make_tree_session("child", session_id="c", parent_session_id="r")
+        grandchild = self._make_tree_session("grandchild", session_id="gc", parent_session_id="c")
+
+        sessions = [grandchild, root, child]
+        result = sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in result] == ["root", "child", "grandchild"]
+
+    def test_multiple_trees(self):
+        """Multiple root trees should sort independently."""
+        root_a = self._make_tree_session("alpha-root", session_id="ar")
+        child_a = self._make_tree_session("alpha-child", session_id="ac", parent_session_id="ar")
+        root_z = self._make_tree_session("zeta-root", session_id="zr")
+        child_z = self._make_tree_session("zeta-child", session_id="zc", parent_session_id="zr")
+
+        sessions = [child_z, root_z, child_a, root_a]
+        result = sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in result] == [
+            "alpha-root", "alpha-child",
+            "zeta-root", "zeta-child",
+        ]
+
+    def test_empty_list(self):
+        """Should handle empty list."""
+        result = sort_sessions_by_tree([])
+        assert result == []
+
+    def test_does_not_mutate_input(self):
+        """Should not mutate input list."""
+        sessions = [
+            self._make_tree_session("b"),
+            self._make_tree_session("a"),
+        ]
+        original_order = [s.name for s in sessions]
+
+        sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in sessions] == original_order
+
+
+class TestFilterVisibleSessionsDone:
+    """Tests for done agent filtering (#244)."""
+
+    def test_done_hidden_by_default(self):
+        """Done agents should be hidden by default."""
+        done_session = make_session("done-agent")
+        done_session.status = "done"
+        active = [make_session("active"), done_session]
+
+        result = filter_visible_sessions(
+            active, [], hide_asleep=False, show_terminated=False, show_done=False
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "active"
+
+    def test_done_shown_when_enabled(self):
+        """Done agents should appear when show_done=True."""
+        done_session = make_session("done-agent")
+        done_session.status = "done"
+        active = [make_session("active"), done_session]
+
+        result = filter_visible_sessions(
+            active, [], hide_asleep=False, show_terminated=False, show_done=True
+        )
+
+        assert len(result) == 2
+        assert {s.name for s in result} == {"active", "done-agent"}
+
+
 class TestStatusOrderConstants:
     """Tests for status order constants."""
 
@@ -575,20 +682,97 @@ class TestStatusOrderConstants:
         """Status order should have all expected statuses."""
         expected = {"waiting_user", "waiting_approval", "error",
                     "running_heartbeat", "heartbeat_start", "waiting_heartbeat",
-                    "running", "terminated", "asleep"}
+                    "running", "terminated", "done", "asleep"}
         assert set(STATUS_ORDER_BY_ATTENTION.keys()) == expected
 
     def test_value_order_has_all_statuses(self):
         """Value order should have all expected statuses."""
         expected = {"waiting_user", "waiting_approval", "error",
                     "waiting_heartbeat", "running", "running_heartbeat",
-                    "heartbeat_start", "terminated", "asleep"}
+                    "heartbeat_start", "terminated", "done", "asleep"}
         assert set(STATUS_ORDER_BY_VALUE.keys()) == expected
 
     def test_waiting_user_highest_priority(self):
         """waiting_user should have highest priority (0) in both orders."""
         assert STATUS_ORDER_BY_ATTENTION["waiting_user"] == 0
         assert STATUS_ORDER_BY_VALUE["waiting_user"] == 0
+
+
+class TestFilterCollapsedParents:
+    """Tests for collapsed parent filtering in tree view (#244)."""
+
+    def test_collapsed_parent_hides_children(self):
+        """Children of a collapsed parent should be hidden."""
+        parent = make_session("parent", session_id="p1")
+        parent.parent_session_id = None
+        parent.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "p1"
+        child.status = "running"
+
+        result = filter_visible_sessions(
+            [parent, child], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"p1"},
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "parent"
+
+    def test_collapsed_parent_hides_grandchildren(self):
+        """Grandchildren of a collapsed parent should also be hidden."""
+        root = make_session("root", session_id="r1")
+        root.parent_session_id = None
+        root.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "r1"
+        child.status = "running"
+        grandchild = make_session("grandchild", session_id="gc1")
+        grandchild.parent_session_id = "c1"
+        grandchild.status = "running"
+
+        result = filter_visible_sessions(
+            [root, child, grandchild], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"r1"},
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "root"
+
+    def test_no_collapse_when_not_in_tree_mode(self):
+        """When collapsed_parents is None, no filtering happens."""
+        parent = make_session("parent", session_id="p1")
+        parent.parent_session_id = None
+        parent.status = "running"
+        child = make_session("child", session_id="c1")
+        child.parent_session_id = "p1"
+        child.status = "running"
+
+        result = filter_visible_sessions(
+            [parent, child], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents=None,
+        )
+
+        assert len(result) == 2
+
+    def test_collapse_only_affects_descendants(self):
+        """Collapsing one parent shouldn't affect unrelated agents."""
+        parent1 = make_session("parent1", session_id="p1")
+        parent1.parent_session_id = None
+        parent1.status = "running"
+        child1 = make_session("child1", session_id="c1")
+        child1.parent_session_id = "p1"
+        child1.status = "running"
+        parent2 = make_session("parent2", session_id="p2")
+        parent2.parent_session_id = None
+        parent2.status = "running"
+
+        result = filter_visible_sessions(
+            [parent1, child1, parent2], [], hide_asleep=False, show_terminated=False,
+            collapsed_parents={"p1"},
+        )
+
+        assert len(result) == 2
+        assert {s.name for s in result} == {"parent1", "parent2"}
 
 
 # =============================================================================

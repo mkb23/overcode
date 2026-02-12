@@ -44,6 +44,7 @@ Organize agents by importance with priority values.
 | Alphabetical | Sort by agent name |
 | Status | Red (stalled) first, then yellow, orange, green |
 | Value | Highest priority values first |
+| Tree | Parent/child hierarchy with tree connectors |
 
 ### CLI Access
 
@@ -131,6 +132,93 @@ Heartbeats and supervision resume automatically on the next daemon loop (~10s).
 ### No Global Default
 
 Budgets are per-agent only. There is no global default budget in config.
+
+## Agent Hierarchy
+
+Agents can spawn child agents, creating a parent/child tree. This enables delegation patterns where a parent agent launches children to handle subtasks.
+
+### Launching Child Agents
+
+**CLI:**
+```bash
+# Explicit parent
+overcode launch -n subtask --parent my-agent -d ~/project -p "Fix the auth bug"
+
+# With follow mode (blocks until child finishes)
+overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug"
+```
+
+**Auto-detection:** When an agent runs `overcode launch` from within its own session, the parent is auto-detected from the `OVERCODE_SESSION_NAME` environment variable.
+
+**Depth limit:** Hierarchies are limited to 5 levels deep.
+
+### Follow Mode
+
+Follow mode streams a child agent's output to stdout and blocks until the child finishes (receives a Stop event).
+
+```bash
+# Launch and follow
+overcode launch -n child --follow -p "Do the task"
+
+# Follow an already-running agent
+overcode follow child-agent
+```
+
+When follow exits cleanly, the child is marked as "done" — it stays alive in tmux but is hidden from default views.
+
+### Budget Transfer
+
+Transfer budget from a parent to a child agent:
+
+```bash
+overcode budget transfer parent-agent child-agent 2.50
+overcode budget show          # See all budgets
+overcode budget show my-agent # See one agent's budget
+```
+
+The source must be an ancestor of the target.
+
+### Cascade Kill
+
+Killing a parent kills all its descendants (deepest-first):
+
+```bash
+overcode kill parent-agent           # Kills parent + all children
+overcode kill parent-agent --no-cascade  # Kills only parent, orphans children
+```
+
+### TUI Tree View
+
+Press `S` to cycle to "Tree" sort mode. Agents display in a hierarchy with tree connectors:
+
+```
+parent-agent    🟢  2.5h  ...
+├─child-1       🟢  1.2h  ...
+│ └─grandchild  🟠  0.5h  ...
+└─child-2       ✓   0.8h  ...
+```
+
+- **`X`** — Collapse/expand children of the focused agent
+- **`D`** — Show/hide "done" child agents (hidden by default)
+
+The child count column (👶) shows how many direct children each agent has.
+
+### Done Agents
+
+When a child finishes via follow mode, it enters the "done" state:
+- Hidden from default list and TUI views
+- Press `D` in TUI or use `--show-done` in CLI to reveal them
+- Auto-archived by the monitor daemon after 1 hour
+- Manually archive with `overcode cleanup --done`
+
+### Filtered List
+
+View a subtree from the CLI:
+
+```bash
+overcode list parent-agent    # Shows parent + all descendants
+overcode list --show-done     # Include done agents
+```
 
 ## Jump to Attention
 

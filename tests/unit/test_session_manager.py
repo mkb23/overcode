@@ -1007,6 +1007,225 @@ class TestSessionManagerReload:
 
 
 # =============================================================================
+# Agent Hierarchy Tests (#244)
+# =============================================================================
+
+
+class TestSessionHierarchy:
+    """Test parent/child hierarchy methods."""
+
+    def _make_hierarchy(self, tmp_path):
+        """Create a 3-level hierarchy: root -> child1, child2 -> grandchild."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        root = manager.create_session(
+            name="root", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        child1 = manager.create_session(
+            name="child1", tmux_session="agents", tmux_window=2, command=["claude"]
+        )
+        child2 = manager.create_session(
+            name="child2", tmux_session="agents", tmux_window=3, command=["claude"]
+        )
+        grandchild = manager.create_session(
+            name="grandchild", tmux_session="agents", tmux_window=4, command=["claude"]
+        )
+
+        manager.update_session(child1.id, parent_session_id=root.id)
+        manager.update_session(child2.id, parent_session_id=root.id)
+        manager.update_session(grandchild.id, parent_session_id=child1.id)
+
+        # Reload to get updated parent_session_id values
+        root = manager.get_session(root.id)
+        child1 = manager.get_session(child1.id)
+        child2 = manager.get_session(child2.id)
+        grandchild = manager.get_session(grandchild.id)
+
+        return manager, root, child1, child2, grandchild
+
+    def test_parent_session_id_default_none(self, tmp_path):
+        """New sessions have no parent by default."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.create_session(
+            name="test", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        assert session.parent_session_id is None
+
+    def test_set_parent(self, tmp_path):
+        """Can set parent_session_id."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        parent = manager.create_session(
+            name="parent", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        child = manager.create_session(
+            name="child", tmux_session="agents", tmux_window=2, command=["claude"]
+        )
+        manager.update_session(child.id, parent_session_id=parent.id)
+
+        updated = manager.get_session(child.id)
+        assert updated.parent_session_id == parent.id
+
+    def test_get_children(self, tmp_path):
+        """get_children returns direct children."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        children = manager.get_children(root.id)
+        child_names = {c.name for c in children}
+        assert child_names == {"child1", "child2"}
+
+    def test_get_children_empty(self, tmp_path):
+        """get_children returns empty for leaf nodes."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        children = manager.get_children(child2.id)
+        assert children == []
+
+    def test_get_descendants(self, tmp_path):
+        """get_descendants returns all descendants."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        descendants = manager.get_descendants(root.id)
+        desc_names = {d.name for d in descendants}
+        assert desc_names == {"child1", "child2", "grandchild"}
+
+    def test_get_descendants_leaf(self, tmp_path):
+        """get_descendants returns empty for leaf nodes."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        assert manager.get_descendants(grandchild.id) == []
+
+    def test_get_parent_chain(self, tmp_path):
+        """get_parent_chain returns ancestors from immediate parent to root."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        chain = manager.get_parent_chain(grandchild.id)
+        chain_names = [c.name for c in chain]
+        assert chain_names == ["child1", "root"]
+
+    def test_get_parent_chain_root(self, tmp_path):
+        """get_parent_chain returns empty for root."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        chain = manager.get_parent_chain(root.id)
+        assert chain == []
+
+    def test_compute_depth(self, tmp_path):
+        """compute_depth returns correct depth."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        assert manager.compute_depth(root) == 0
+        assert manager.compute_depth(child1) == 1
+        assert manager.compute_depth(child2) == 1
+        assert manager.compute_depth(grandchild) == 2
+
+    def test_is_ancestor(self, tmp_path):
+        """is_ancestor correctly identifies ancestor relationships."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        assert manager.is_ancestor(root.id, grandchild.id) is True
+        assert manager.is_ancestor(child1.id, grandchild.id) is True
+        assert manager.is_ancestor(child2.id, grandchild.id) is False
+        assert manager.is_ancestor(grandchild.id, root.id) is False
+
+    def test_transfer_budget(self, tmp_path):
+        """transfer_budget moves budget from ancestor to descendant."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        # Give root a budget
+        manager.set_cost_budget(root.id, 10.0)
+
+        # Transfer to child
+        result = manager.transfer_budget(root.id, child1.id, 3.0)
+        assert result is True
+
+        root_updated = manager.get_session(root.id)
+        child_updated = manager.get_session(child1.id)
+        assert root_updated.cost_budget_usd == 7.0
+        assert child_updated.cost_budget_usd == 3.0
+
+    def test_transfer_budget_insufficient(self, tmp_path):
+        """transfer_budget fails when source has insufficient budget."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        manager.set_cost_budget(root.id, 2.0)
+
+        result = manager.transfer_budget(root.id, child1.id, 5.0)
+        assert result is False
+
+        # Budgets unchanged
+        root_updated = manager.get_session(root.id)
+        assert root_updated.cost_budget_usd == 2.0
+
+    def test_transfer_budget_unlimited_source(self, tmp_path):
+        """transfer_budget from unlimited source just sets target budget."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        # Root has unlimited budget (0.0)
+        result = manager.transfer_budget(root.id, child1.id, 5.0)
+        assert result is True
+
+        root_updated = manager.get_session(root.id)
+        child_updated = manager.get_session(child1.id)
+        assert root_updated.cost_budget_usd == 0.0  # Still unlimited
+        assert child_updated.cost_budget_usd == 5.0
+
+    def test_transfer_budget_non_ancestor_fails(self, tmp_path):
+        """transfer_budget fails when source is not an ancestor."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        manager.set_cost_budget(child2.id, 10.0)
+
+        result = manager.transfer_budget(child2.id, grandchild.id, 2.0)
+        assert result is False  # child2 is not ancestor of grandchild
+
+    def test_transfer_budget_negative_amount(self, tmp_path):
+        """transfer_budget fails with negative amount."""
+        manager, root, child1, child2, grandchild = self._make_hierarchy(tmp_path)
+
+        result = manager.transfer_budget(root.id, child1.id, -1.0)
+        assert result is False
+
+    def test_parent_session_id_round_trips(self, tmp_path):
+        """parent_session_id survives to_dict/from_dict round-trip."""
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        parent = manager.create_session(
+            name="parent", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        child = manager.create_session(
+            name="child", tmux_session="agents", tmux_window=2, command=["claude"]
+        )
+        manager.update_session(child.id, parent_session_id=parent.id)
+
+        # Reload from disk
+        manager2 = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        reloaded = manager2.get_session(child.id)
+        assert reloaded.parent_session_id == parent.id
+
+    def test_backwards_compatible_no_parent_field(self, tmp_path):
+        """Sessions without parent_session_id field get default None."""
+        state_file = tmp_path / "sessions.json"
+        old_data = {
+            "session-old": {
+                "id": "session-old",
+                "name": "old-session",
+                "tmux_session": "agents",
+                "tmux_window": 1,
+                "command": ["claude"],
+                "start_directory": None,
+                "start_time": "2024-01-01T00:00:00",
+                "status": "running",
+                # Note: no parent_session_id field
+            }
+        }
+        state_file.write_text(json.dumps(old_data))
+
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        session = manager.get_session("session-old")
+
+        assert session is not None
+        assert session.parent_session_id is None
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 
