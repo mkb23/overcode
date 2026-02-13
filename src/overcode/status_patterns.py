@@ -127,6 +127,7 @@ class StatusPatterns:
     # Lines starting with these are UI chrome, not Claude output.
     status_bar_prefixes: List[str] = field(default_factory=lambda: [
         "⏵⏵",  # Status bar indicator (e.g., "⏵⏵ bypass permissions on")
+        "⏸",   # Plan mode status bar (e.g., "⏸ plan mode on (shift+tab to cycle)")
     ])
 
     # Command menu pattern - regex pattern for slash command menu lines

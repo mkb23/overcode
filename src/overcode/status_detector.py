@@ -172,7 +172,10 @@ class PollingStatusDetector:
         # Check for approval waiting state (#22)
         # Only reached when content is NOT changing, so plan mode correctly shows
         # orange only when Claude has stopped and is waiting for plan approval (#214).
-        if self._matches_approval_patterns(last_few):
+        # Guard: require Claude output (⏺) in content — without it, "plan mode"
+        # is just UI chrome from the startup banner, not a plan awaiting approval.
+        has_claude_output = any(line.strip().startswith('⏺') for line in lines)
+        if has_claude_output and self._matches_approval_patterns(last_few):
             return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
 
         # Check for command menu display (slash command autocomplete)
