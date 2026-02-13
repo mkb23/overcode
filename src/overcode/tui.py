@@ -562,17 +562,20 @@ class SupervisorTUI(
         self._sort_sessions()
         # Calculate max repo/branch widths for alignment in full detail mode
         widths_changed = self._recalc_repo_widths(self.sessions)
+        # Check focus state BEFORE update_session_widgets, which may do DOM
+        # changes that cause Textual to drop focus to None.
+        focus_was_on_session = isinstance(self.focused, SessionSummary)
         self.update_session_widgets(force_refresh=widths_changed)
 
         # Update focused_session_index to follow the same session at its new position.
-        # Only restore Textual's focus if a SessionSummary currently has it — never
-        # steal focus from the command bar or other input widgets.
+        # Only restore Textual's focus if a SessionSummary had it before the update —
+        # never steal focus from the command bar or other input widgets.
         if focused_session_id:
             widgets = self._get_widgets_in_session_order()
             for i, widget in enumerate(widgets):
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
-                    if isinstance(self.focused, SessionSummary):
+                    if focus_was_on_session:
                         widget.focus()
                     break
 
@@ -1100,12 +1103,17 @@ class SupervisorTUI(
             w for w in container.children if isinstance(w, SessionSummary)
         ]
         if current_order != ordered_widgets:
-            # Reorder by moving each widget to the correct position
+            # Reorder by moving each widget to the correct position.
+            # Save focused widget so we can restore if move_child() drops focus.
+            had_focus = self.focused
             for i, widget in enumerate(ordered_widgets):
                 if i == 0:
                     container.move_child(widget, before=0)
                 else:
                     container.move_child(widget, after=ordered_widgets[i - 1])
+            # Restore focus if move_child() caused it to be lost
+            if had_focus is not None and self.focused is None:
+                had_focus.focus()
 
         # Update tree prefix and child count for hierarchy display (#244)
         # Always runs (not gated by reorder) so prefixes are set on first mount.
@@ -1570,6 +1578,12 @@ class SupervisorTUI(
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
+
+        # Auto-recover if focus was lost (e.g., after tabbing back to terminal)
+        if self.focused is None:
+            widget = self._get_focused_widget()
+            if widget is not None:
+                widget.focus()
 
         # Handle Escape to close fullscreen preview
         try:
