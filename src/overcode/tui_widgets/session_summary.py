@@ -114,7 +114,9 @@ class SessionSummary(Static, can_focus=True):
         return self.summary_groups.get(group_id, True)
 
     def on_click(self) -> None:
-        """Toggle expanded state on click"""
+        """Toggle expanded state on click (disabled in list+preview mode)"""
+        if self.has_class("list-mode"):
+            return
         self.expanded = not self.expanded
         # Notify parent app to save state
         self.post_message(self.ExpandedChanged(self.session.id, self.expanded))

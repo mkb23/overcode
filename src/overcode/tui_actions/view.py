@@ -69,7 +69,9 @@ class ViewActionsMixin:
         self.notify("Refreshed", severity="information", timeout=2)
 
     def action_toggle_expand_all(self) -> None:
-        """Toggle expand/collapse all sessions."""
+        """Toggle expand/collapse all sessions (disabled in list+preview mode)."""
+        if self.view_mode == "list_preview":
+            return
         from ..tui_widgets import SessionSummary
         widgets = list(self.query(SessionSummary))
         if not widgets:

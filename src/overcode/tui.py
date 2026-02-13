@@ -1034,6 +1034,9 @@ class SupervisorTUI(
 
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
+        # Don't save forced-collapsed state in list_preview mode
+        if self.view_mode == "list_preview":
+            return
         self.expanded_states[message.session_id] = message.expanded
 
     def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
@@ -1182,6 +1185,9 @@ class SupervisorTUI(
                 container.remove_class("list-mode")
                 for widget in self.query(SessionSummary):
                     widget.remove_class("list-mode")
+                    # Restore saved expanded state
+                    saved = self.expanded_states.get(widget.session.id, True)
+                    widget.expanded = saved
                 preview.remove_class("visible")
         except NoMatches:
             pass

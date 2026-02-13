@@ -81,6 +81,12 @@ class SessionActionsMixin:
             return
 
         session = focused.session
+
+        # Only allow sleep toggle on root agents (not children)
+        if session.parent_session_id is not None:
+            self.notify("Sleep mode is only available for root agents", severity="warning")
+            return
+
         new_asleep_state = not session.is_asleep
 
         # Prevent putting a running agent to sleep (#158)

@@ -20,6 +20,7 @@ class TestToggleSleep:
         mock_session = MagicMock()
         mock_session.is_asleep = False
         mock_session.name = "test-agent"
+        mock_session.parent_session_id = None  # root agent
 
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
@@ -47,6 +48,7 @@ class TestToggleSleep:
         mock_session.is_asleep = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
+        mock_session.parent_session_id = None  # root agent
 
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
@@ -75,6 +77,7 @@ class TestToggleSleep:
         mock_session.is_asleep = True  # Already asleep
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
+        mock_session.parent_session_id = None  # root agent
 
         mock_widget = MagicMock(spec=SessionSummary)
         mock_widget.session = mock_session
@@ -93,6 +96,32 @@ class TestToggleSleep:
         assert mock_session.is_asleep is False
         mock_tui.notify.assert_called_once()
         assert "is now awake" in mock_tui.notify.call_args[0][0]
+
+    def test_blocks_sleep_on_child_agent(self):
+        """Should prevent toggling sleep on a child agent."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+        from overcode.status_constants import STATUS_WAITING_USER
+
+        mock_session = MagicMock()
+        mock_session.is_asleep = False
+        mock_session.name = "child-agent"
+        mock_session.parent_session_id = "parent-123"  # child agent
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+        mock_widget.detected_status = STATUS_WAITING_USER
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+
+        SessionActionsMixin.action_toggle_sleep(mock_tui)
+
+        # Should show warning and not toggle sleep
+        mock_tui.notify.assert_called_once()
+        assert "only available for root agents" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+        mock_tui.session_manager.update_session.assert_not_called()
 
     def test_no_agent_focused(self):
         """Should show warning when no agent is focused."""
