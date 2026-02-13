@@ -42,6 +42,7 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         self._session_name: str = ""
         self._monochrome: bool = False
         self._previous_focus: Optional[Widget] = None
+        self._previous_focus_session_id: Optional[str] = None
 
     def compose(self):
         yield Static(id="fullscreen-content")
@@ -79,7 +80,9 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         self._content_lines = lines
         self._session_name = session_name
         self._monochrome = monochrome
-        self._previous_focus = self.app.focused
+        focused = self.app.focused
+        self._previous_focus = focused
+        self._previous_focus_session_id = getattr(focused, 'session', None) and focused.session.id
         try:
             content_widget = self.query_one("#fullscreen-content", Static)
             content_widget.update(self._build_content())
@@ -90,11 +93,27 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         self.focus()
 
     def hide(self) -> None:
-        """Hide the fullscreen preview and restore previous focus."""
+        """Hide the fullscreen preview and restore previous focus.
+
+        Looks up the widget by session ID at restore time in case the original
+        widget was remounted during a refresh cycle while the overlay was open.
+        """
         self.remove_class("visible")
-        if self._previous_focus is not None:
-            self._previous_focus.focus()
-            self._previous_focus = None
+        restored = False
+        if self._previous_focus_session_id:
+            from .session_summary import SessionSummary
+            for w in self.app.query(SessionSummary):
+                if w.session.id == self._previous_focus_session_id:
+                    w.focus()
+                    restored = True
+                    break
+        if not restored and self._previous_focus is not None:
+            try:
+                self._previous_focus.focus()
+            except Exception:
+                pass
+        self._previous_focus = None
+        self._previous_focus_session_id = None
 
     def action_scroll_up_20(self) -> None:
         """Scroll up 20 lines."""
