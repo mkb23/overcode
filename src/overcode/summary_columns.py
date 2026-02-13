@@ -119,7 +119,16 @@ class SummaryColumn:
 # ---------------------------------------------------------------------------
 
 def render_status_symbol(ctx: ColumnContext) -> ColumnOutput:
-    return [(f"{ctx.status_symbol} ", ctx.status_color)]
+    # Most status emojis are 2 cells wide; some (☑️) are 1 cell.
+    # Pad narrow symbols with an extra space so columns stay aligned.
+    import unicodedata
+    symbol = ctx.status_symbol
+    cell_width = sum(
+        2 if unicodedata.east_asian_width(c) in ('W', 'F') else (0 if c == '\ufe0f' else 1)
+        for c in symbol
+    )
+    pad = " " * (2 - cell_width) if cell_width < 2 else ""
+    return [(f"{symbol}{pad} ", ctx.status_color)]
 
 
 def render_unvisited_alert(ctx: ColumnContext) -> ColumnOutput:
