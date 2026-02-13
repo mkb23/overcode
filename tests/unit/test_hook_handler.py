@@ -196,6 +196,115 @@ class TestHandleHookEvent:
         data = json.loads(state_path.read_text())
         assert data["event"] == "SessionEnd"
 
+    def test_budget_exceeded_blocks_prompt(self, monkeypatch, tmp_path, capsys):
+        """Exit code 2 when budget exceeded blocks prompt in Claude Code (#246)."""
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+
+        # Write daemon state with budget_exceeded=True
+        state_dir = tmp_path / "agents"
+        state_dir.mkdir(parents=True)
+        state_path = state_dir / "monitor_daemon_state.json"
+        state_path.write_text(json.dumps({
+            "sessions": [{
+                "name": "test-agent",
+                "budget_exceeded": True,
+                "cost_budget_usd": 5.0,
+                "estimated_cost_usd": 5.42,
+            }]
+        }))
+
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "abc123",
+            })
+            with pytest.raises(SystemExit) as exc_info:
+                handle_hook_event()
+            assert exc_info.value.code == 2
+
+        captured = capsys.readouterr()
+        assert "Budget exceeded" in captured.err
+        assert "$5.42" in captured.err
+        assert "$5.00" in captured.err
+
+    def test_budget_not_exceeded_allows_prompt(self, monkeypatch, tmp_path, capsys):
+        """Normal flow when budget is not exceeded (#246)."""
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+
+        # Write daemon state with budget_exceeded=False
+        state_dir = tmp_path / "agents"
+        state_dir.mkdir(parents=True)
+        state_path = state_dir / "monitor_daemon_state.json"
+        state_path.write_text(json.dumps({
+            "sessions": [{
+                "name": "test-agent",
+                "budget_exceeded": False,
+                "cost_budget_usd": 10.0,
+                "estimated_cost_usd": 3.50,
+            }]
+        }))
+
+        with patch("sys.stdin") as mock_stdin, \
+             patch("overcode.time_context.generate_time_context", return_value="Clock: 14:00 PST"):
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "abc123",
+            })
+            handle_hook_event()  # Should not raise
+
+        captured = capsys.readouterr()
+        assert "Clock: 14:00 PST" in captured.out
+
+    def test_budget_check_skipped_when_no_state(self, monkeypatch, tmp_path, capsys):
+        """Normal flow when no daemon state file exists (#246)."""
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+
+        # No daemon state file — budget check should be skipped
+        with patch("sys.stdin") as mock_stdin, \
+             patch("overcode.time_context.generate_time_context", return_value="Clock: 14:00 PST"):
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "abc123",
+            })
+            handle_hook_event()  # Should not raise
+
+        captured = capsys.readouterr()
+        assert "Clock: 14:00 PST" in captured.out
+
+    def test_budget_check_only_on_user_prompt_submit(self, monkeypatch, tmp_path):
+        """Budget check should not fire for non-UserPromptSubmit events (#246)."""
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+
+        # Write daemon state with budget_exceeded=True
+        state_dir = tmp_path / "agents"
+        state_dir.mkdir(parents=True)
+        state_path = state_dir / "monitor_daemon_state.json"
+        state_path.write_text(json.dumps({
+            "sessions": [{
+                "name": "test-agent",
+                "budget_exceeded": True,
+                "cost_budget_usd": 5.0,
+                "estimated_cost_usd": 5.42,
+            }]
+        }))
+
+        # PostToolUse should not trigger budget check
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "session_id": "abc123",
+            })
+            handle_hook_event()  # Should not raise despite budget exceeded
+
     def test_missing_event_name_silent_exit(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
         monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")

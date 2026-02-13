@@ -99,8 +99,23 @@ def handle_hook_event() -> None:
     # Write state file for status detection
     write_hook_state(event, tmux_session, session_name, tool_name=tool_name)
 
-    # For UserPromptSubmit, also output time-context
+    # For UserPromptSubmit, check budget and output time-context
     if event == "UserPromptSubmit":
+        from .time_context import _load_daemon_state, _find_session_in_state
+
+        # Block prompt if agent has exceeded its cost budget (#246)
+        state = _load_daemon_state(tmux_session)
+        if state:
+            session_data = _find_session_in_state(state, session_name)
+            if session_data and session_data.get("budget_exceeded", False):
+                budget = session_data.get("cost_budget_usd", 0)
+                cost = session_data.get("estimated_cost_usd", 0)
+                print(
+                    f"Budget exceeded (${cost:.2f} / ${budget:.2f}). Prompt blocked.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+
         from .time_context import generate_time_context
 
         line = generate_time_context(tmux_session, session_name)
