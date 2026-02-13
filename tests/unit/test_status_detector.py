@@ -38,6 +38,8 @@ from tests.fixtures import (
     PANE_CONTENT_ERROR_AUTH,
     PANE_CONTENT_NARRATIVE_ERRORS,
     PANE_CONTENT_NARRATIVE_ERROR_PATTERNS,
+    PANE_CONTENT_PLAN_MODE_IDLE,
+    PANE_CONTENT_PLAN_APPROVAL,
 )
 
 
@@ -249,6 +251,47 @@ class TestStatusDetectorNoInstructions:
         status, _, _ = detector.detect_status(session)
 
         assert status == StatusDetector.STATUS_RUNNING
+
+
+class TestApprovalDetection:
+    """Test approval/plan mode detection.
+
+    An idle session in plan mode (no Claude output) should be waiting_user,
+    not waiting_approval. The ⏸ status bar line showing "plan mode on"
+    must be filtered as UI chrome.
+    """
+
+    def test_plan_mode_idle_is_waiting_user(self):
+        """Fresh plan-mode session should be waiting_user.
+
+        Bug: "⏸ plan mode on" status bar line wasn't filtered as UI chrome,
+        so "plan mode" matched approval_patterns on idle sessions.
+        """
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_PLAN_MODE_IDLE)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_WAITING_USER, (
+            f"Idle plan-mode session should be waiting_user, got {status}: {activity}"
+        )
+
+    def test_genuine_plan_approval_detected(self):
+        """Claude output with approval text should be waiting_approval."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_PLAN_APPROVAL)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_WAITING_APPROVAL, (
+            f"Genuine plan approval should be waiting_approval, got {status}: {activity}"
+        )
 
 
 class TestStatusDetectorAutocomplete:

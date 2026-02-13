@@ -347,6 +347,31 @@ PANE_CONTENT_NARRATIVE_ERROR_PATTERNS = """
 
 
 # Spawn failure: claude command not found (bash style)
+# Plan mode: idle session — captured from real `claude --permission-mode plan`
+# "plan mode" appears in the ⏸ status bar line, not the banner
+PANE_CONTENT_PLAN_MODE_IDLE = """
+           Claude Code v2.1.41
+ ▐▛███▜▌   Opus 4.6 · Claude Max
+▝▜█████▛▘  ~/Code/overcode2
+  ▘▘ ▝▝    Opus 4.6 is here
+
+────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────
+  ⏸ plan mode on (shift+tab to cycle) · PR #257
+"""
+
+# Plan approval: Claude has produced a plan and is waiting for user to approve
+PANE_CONTENT_PLAN_APPROVAL = """
+⏺ I've analyzed the codebase and written my plan. Please review the plan
+  and let me know if you'd like to approve this plan or make changes.
+
+────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────
+  ⏸ plan mode on (shift+tab to cycle)
+"""
+
 PANE_CONTENT_SPAWN_FAILED_BASH = """
 Last login: Thu Jan 23 10:00:00 on ttys001
 user@hostname ~ % claude code
