@@ -100,6 +100,7 @@ class SessionSummary(Static, can_focus=True):
         self.tree_depth: int = 0  # Set by TUI when sort mode is by_tree
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
         self.child_count: int = 0  # Number of direct children — set by TUI
+        self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -279,13 +280,17 @@ class SessionSummary(Static, can_focus=True):
         else:
             name_width = 16
 
+        # Fold indicator for parents with collapsed children
+        fold_suffix = " ▶" if self.children_collapsed else ""
+
         # Apply tree indentation when in tree sort mode (#244)
         if self.tree_prefix:
             tree_str = self.tree_prefix
-            available = name_width - len(tree_str)
-            display_name = (tree_str + s.name[:available]).ljust(name_width)
+            available = name_width - len(tree_str) - len(fold_suffix)
+            display_name = (tree_str + s.name[:available] + fold_suffix).ljust(name_width)
         else:
-            display_name = s.name[:name_width].ljust(name_width)
+            available = name_width - len(fold_suffix)
+            display_name = (s.name[:available] + fold_suffix).ljust(name_width)
 
         return ColumnContext(
             session=s,

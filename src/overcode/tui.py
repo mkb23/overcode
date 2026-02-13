@@ -1132,14 +1132,15 @@ class SupervisorTUI(
         # Update tree prefix and child count for hierarchy display (#244)
         # Always runs (not gated by reorder) so prefixes are set on first mount.
         is_tree_mode = self._prefs.sort_mode == "by_tree"
-        # Build child count map once (counts all children, not just visible ones)
+        # Build child count map from self.sessions (not just visible widgets)
+        # so collapsed parents still show the correct count.
         child_counts: dict[str, int] = {}
-        for widget in ordered_widgets:
-            pid = widget.session.parent_session_id
-            if pid is not None:
-                child_counts[pid] = child_counts.get(pid, 0) + 1
+        for s in self.sessions:
+            if s.parent_session_id is not None:
+                child_counts[s.parent_session_id] = child_counts.get(s.parent_session_id, 0) + 1
         for widget in ordered_widgets:
             widget.child_count = child_counts.get(widget.session.id, 0)
+            widget.children_collapsed = widget.session.id in self.collapsed_parents
             if is_tree_mode:
                 depth = self.session_manager.compute_depth(widget.session)
                 # Determine if this is the last sibling at its level

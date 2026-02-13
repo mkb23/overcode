@@ -261,25 +261,45 @@ class ViewActionsMixin:
             self.notify("Collapse only works in tree sort mode (press S)", severity="warning")
             return
 
-        widgets = self._get_widgets_in_session_order()
-        if not widgets or not (0 <= self.focused_session_index < len(widgets)):
+        focused_widget = self._get_focused_widget()
+        if not focused_widget:
             return
 
-        focused_widget = widgets[self.focused_session_index]
         session_id = focused_widget.session.id
 
-        # Check if this session has children
+        # Check if this session has children — if not, walk up to the parent
         children = self.session_manager.get_children(session_id)
+        if not children:
+            parent_id = focused_widget.session.parent_session_id
+            if parent_id:
+                # Focused on a child — collapse/expand the parent's children instead
+                session_id = parent_id
+                children = self.session_manager.get_children(session_id)
+
         if not children:
             self.notify("No children to collapse", severity="warning")
             return
 
+        # Resolve parent name for notification
+        if session_id == focused_widget.session.id:
+            parent_name = focused_widget.session.name
+        else:
+            parent_session = self.session_manager.get_session(session_id)
+            parent_name = parent_session.name if parent_session else session_id[:8]
+
         if session_id in self.collapsed_parents:
             self.collapsed_parents.discard(session_id)
-            self.notify(f"Expanded children of {focused_widget.session.name}", severity="information")
+            self.notify(f"Expanded children of {parent_name}", severity="information")
         else:
             self.collapsed_parents.add(session_id)
-            self.notify(f"Collapsed children of {focused_widget.session.name}", severity="information")
+            # Move focus to the parent so the user isn't left on a now-hidden widget
+            widgets = self._get_widgets_in_session_order()
+            for i, w in enumerate(widgets):
+                if w.session.id == session_id:
+                    self.focused_session_index = i
+                    w.focus()
+                    break
+            self.notify(f"Collapsed children of {parent_name}", severity="information")
 
         # Re-sort and refresh to apply filtering
         self._sort_sessions()
