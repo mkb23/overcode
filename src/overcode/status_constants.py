@@ -74,7 +74,7 @@ STATUS_EMOJIS = {
     STATUS_WAITING_HEARTBEAT: "💛",  # Yellow heart - waiting but heartbeat will auto-resume
     STATUS_ERROR: "🟣",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
-    STATUS_DONE: "✅",  # Child agent completed delegated work (#244)
+    STATUS_DONE: "☑️",  # Child agent completed delegated work (#244)
 }
 
 
@@ -97,7 +97,7 @@ STATUS_COLORS = {
     STATUS_WAITING_HEARTBEAT: "yellow",  # Yellow - waiting but heartbeat will auto-resume
     STATUS_ERROR: "magenta",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
-    STATUS_DONE: "green",  # Done child agent (#244)
+    STATUS_DONE: "dim",  # Done child agent (#244)
 }
 
 
@@ -120,7 +120,7 @@ STATUS_SYMBOLS = {
     STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
     STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
-    STATUS_DONE: ("✅", "green"),  # Done child agent (#244)
+    STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
 }
 
 
