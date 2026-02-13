@@ -860,6 +860,7 @@ class SupervisorTUI(
             git_diff = git_diff_results.get(session_id)
             if claude_stats is not None:
                 widget.claude_stats = claude_stats
+                widget.file_subagent_count = claude_stats.live_subagent_count
             if git_diff is not None:
                 widget.git_diff_stats = git_diff
             if claude_stats is not None or git_diff is not None:

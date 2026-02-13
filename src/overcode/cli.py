@@ -781,6 +781,8 @@ def show(
         claude_stats = None
         try:
             claude_stats = get_session_stats(sess)
+            if claude_stats:
+                live_sub_count = max(live_sub_count, claude_stats.live_subagent_count)
         except Exception:
             pass
 

@@ -18,6 +18,7 @@ Each assistant message in session files has usage data:
 
 import json
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -42,6 +43,7 @@ class ClaudeSessionStats:
     work_times: List[float]  # seconds per work cycle (prompt to next prompt)
     current_context_tokens: int = 0  # Most recent input_tokens (current context size)
     subagent_count: int = 0  # Number of subagent files (#176)
+    live_subagent_count: int = 0  # Subagents with recently-modified files (#256)
     background_task_count: int = 0  # Number of background/farm tasks (#177)
 
     @property
@@ -541,7 +543,9 @@ def get_session_stats(
     current_context = 0  # Track context size from active session only (#116)
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
+    live_subagent_count = 0  # Subagents with recently-modified files (#256)
     background_task_count = 0  # Count background task files (#177)
+    now = time.time()
 
     for sid in all_session_ids:
         session_file = get_session_file_path(
@@ -571,6 +575,8 @@ def get_session_stats(
         if subagents_dir.exists():
             for subagent_file in subagents_dir.glob("agent-*.jsonl"):
                 subagent_count += 1
+                if now - subagent_file.stat().st_mtime < 30:
+                    live_subagent_count += 1
                 sub_usage = read_token_usage_from_session_file(
                     subagent_file, since=session_start
                 )
@@ -594,5 +600,6 @@ def get_session_stats(
         work_times=all_work_times,
         current_context_tokens=current_context,
         subagent_count=subagent_count,
+        live_subagent_count=live_subagent_count,
         background_task_count=background_task_count,
     )

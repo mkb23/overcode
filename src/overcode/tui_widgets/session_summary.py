@@ -78,6 +78,7 @@ class SessionSummary(Static, can_focus=True):
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
         self.live_subagent_count: int = 0  # Live count from status bar
+        self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
         # Track when status last changed (for immediate time-in-state updates)
@@ -312,7 +313,7 @@ class SessionSummary(Static, can_focus=True):
             display_name=display_name,
             perm_emoji=perm_emoji,
             all_names_match_repos=getattr(self.app, 'all_names_match_repos', False),
-            live_subagent_count=self.live_subagent_count,
+            live_subagent_count=max(self.live_subagent_count, self.file_subagent_count),
             background_bash_count=self.background_bash_count,
             child_count=self.child_count,
             status_changed_at=self._status_changed_at,
