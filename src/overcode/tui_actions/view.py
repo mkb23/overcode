@@ -15,6 +15,26 @@ if TYPE_CHECKING:
 class ViewActionsMixin:
     """Mixin providing view/display actions for SupervisorTUI."""
 
+    def _restore_focus_after_filter(self, focused_id: str | None) -> None:
+        """Restore focused_session_index after a visibility filter change.
+
+        When toggling done/terminated/asleep visibility, the widget list
+        changes but focused_session_index stays stale, causing cursor jumps.
+        """
+        if not focused_id:
+            return
+        from ..tui_widgets import SessionSummary
+        for i, w in enumerate(self._get_widgets_in_session_order()):
+            if w.session.id == focused_id:
+                self.focused_session_index = i
+                if isinstance(self.focused, SessionSummary):
+                    w.focus()
+                return
+        # Focused session was filtered out — clamp index
+        widgets = self._get_widgets_in_session_order()
+        if widgets:
+            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+
     def action_toggle_timeline(self) -> None:
         """Toggle timeline visibility."""
         from ..tui_widgets import StatusTimeline
@@ -148,16 +168,16 @@ class ViewActionsMixin:
 
     def action_toggle_show_terminated(self) -> None:
         """Toggle showing killed/terminated sessions in the timeline."""
-        self.show_terminated = not self.show_terminated
+        focused_widget = self._get_focused_widget()
+        focused_id = focused_widget.session.id if focused_widget else None
 
-        # Save preference
+        self.show_terminated = not self.show_terminated
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
-
-        # Refresh session widgets to show/hide terminated sessions
         self.update_session_widgets()
 
-        # Notify user
+        self._restore_focus_after_filter(focused_id)
+
         status = "visible" if self.show_terminated else "hidden"
         count = len(self._terminated_sessions)
         if count > 0:
@@ -167,10 +187,15 @@ class ViewActionsMixin:
 
     def action_toggle_show_done(self) -> None:
         """Toggle showing 'done' child agents (#244)."""
+        focused_widget = self._get_focused_widget()
+        focused_id = focused_widget.session.id if focused_widget else None
+
         self.show_done = not self.show_done
         self._prefs.show_done = self.show_done
         self._save_prefs()
         self.update_session_widgets()
+
+        self._restore_focus_after_filter(focused_id)
 
         status = "visible" if self.show_done else "hidden"
         done_count = sum(1 for s in self.sessions if getattr(s, 'status', None) == 'done')
@@ -181,17 +206,16 @@ class ViewActionsMixin:
 
     def action_toggle_hide_asleep(self) -> None:
         """Toggle hiding sleeping agents from display."""
-        self.hide_asleep = not self.hide_asleep
+        focused_widget = self._get_focused_widget()
+        focused_id = focused_widget.session.id if focused_widget else None
 
-        # Save preference
+        self.hide_asleep = not self.hide_asleep
         self._prefs.hide_asleep = self.hide_asleep
         self._save_prefs()
-
-        # Update subtitle to show state
         self._update_subtitle()
-
-        # Refresh session widgets to show/hide sleeping agents
         self.update_session_widgets()
+
+        self._restore_focus_after_filter(focused_id)
 
         # Count sleeping agents
         asleep_count = sum(1 for s in self.sessions if s.is_asleep)
