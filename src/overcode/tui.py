@@ -572,12 +572,17 @@ class SupervisorTUI(
         # never steal focus from the command bar or other input widgets.
         if focused_session_id:
             widgets = self._get_widgets_in_session_order()
+            found = False
             for i, widget in enumerate(widgets):
                 if widget.session.id == focused_session_id:
                     self.focused_session_index = i
                     if focus_was_on_session:
                         widget.focus()
+                    found = True
                     break
+            # Focused session disappeared (killed/filtered) — clamp index
+            if not found and widgets:
+                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
         new_names = {s.name for s in sessions}
@@ -643,11 +648,16 @@ class SupervisorTUI(
         Uses the app's own selection state rather than Textual's self.focused,
         which can diverge during DOM reordering or when non-session widgets
         (e.g. command bar) have focus.
+
+        Self-healing: if the index is out of bounds but widgets exist, clamp it
+        so that an agent is always focused when agents are present.
         """
         widgets = self._get_widgets_in_session_order()
-        if 0 <= self.focused_session_index < len(widgets):
-            return widgets[self.focused_session_index]
-        return None
+        if not widgets:
+            return None
+        if not (0 <= self.focused_session_index < len(widgets)):
+            self.focused_session_index = max(0, min(self.focused_session_index, len(widgets) - 1))
+        return widgets[self.focused_session_index]
 
     def update_focused_status(self) -> None:
         """Update all session statuses every 250ms.
