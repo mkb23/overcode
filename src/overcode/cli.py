@@ -174,18 +174,27 @@ def list_agents(
     show_done: Annotated[
         bool, typer.Option("--show-done", help="Include 'done' child agents (#244)")
     ] = False,
+    cost: Annotated[
+        bool, typer.Option("--cost", help="Show $ cost instead of token counts")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """List running agents with status.
 
+    Shows a compact TUI-style summary line per agent with status, time-in-state,
+    timing breakdown, token/cost usage, context window %, and git diff stats.
+
     With no arguments, shows all agents with depth-based indentation.
     With a name, shows that agent + all its descendants.
     """
+    from .history_reader import get_session_stats
     from .tui_helpers import (
-        calculate_uptime, format_duration, format_tokens,
-        get_current_state_times, get_status_symbol
+        get_current_state_times, get_status_symbol, get_git_diff_stats,
     )
     from .monitor_daemon_state import get_monitor_daemon_state
+    from .summary_columns import build_cli_context, SUMMARY_COLUMNS
+    from rich.text import Text
+    from rich.console import Console
 
     launcher = ClaudeLauncher(session)
     sessions = launcher.list_sessions()
@@ -208,6 +217,23 @@ def list_agents(
     if not show_done:
         sessions = [s for s in sessions if s.status != "done"]
 
+    if not sessions:
+        rprint("[dim]No running agents[/dim]")
+        return
+
+    # Columns to render in list mode (subset of TUI columns)
+    list_columns = {
+        "status_symbol", "time_in_state", "agent_name",
+        "git_diff",
+        "uptime", "running_time", "stalled_time", "sleep_time",
+        "token_count", "cost", "budget", "context_usage",
+    }
+
+    # Pre-compute: any agent with budget, max name width
+    any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
+    max_name_len = max(len(s.name) for s in sessions)
+    name_width = min(max(max_name_len, 10), 20)
+
     # Prefer daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)
     use_daemon = daemon_state is not None and not daemon_state.is_stale()
@@ -218,6 +244,7 @@ def list_agents(
         from .status_detector_factory import StatusDetectorDispatcher
         detector = StatusDetectorDispatcher(session)
 
+    console = Console()
     terminated_count = 0
 
     for sess in sessions:
@@ -245,35 +272,61 @@ def list_agents(
         if sess.is_asleep:
             status = "asleep"
 
-        symbol, _ = get_status_symbol(status)
+        # Get claude_stats for context%, tokens
+        claude_stats = None
+        try:
+            claude_stats = get_session_stats(sess)
+        except Exception:
+            pass
 
-        # Calculate uptime using shared helper
-        uptime = calculate_uptime(sess.start_time) if sess.start_time else "?"
+        # Get git diff stats
+        git_diff = None
+        try:
+            if sess.start_directory:
+                git_diff = get_git_diff_stats(sess.start_directory)
+        except Exception:
+            pass
 
-        # Get state times using shared helper
-        green_time, non_green_time, sleep_time = get_current_state_times(sess.stats, is_asleep=sess.is_asleep)
+        # Build column context
+        child_count = len(launcher.sessions.get_children(sess.id))
+        ctx = build_cli_context(
+            session=sess, stats=sess.stats,
+            claude_stats=claude_stats, git_diff_stats=git_diff,
+            status=status, bg_bash_count=0, live_sub_count=0,
+            any_has_budget=any_has_budget, child_count=child_count,
+        )
 
-        # Stats from session manager (already synced by daemon)
-        stats = sess.stats
-        if stats.interaction_count > 0:
-            stats_display = f"{stats.interaction_count:>2}i {format_tokens(stats.input_tokens + stats.output_tokens):>5}"
-        else:
-            stats_display = " -i     -"
+        # Enable colors and set detail level for list view
+        ctx.monochrome = False
+        _, status_color = get_status_symbol(status)
+        ctx.status_color = f"bold {status_color}"
+        ctx.summary_detail = "med"
+        ctx.show_cost = cost
 
-        # Build time display - show sleep time if agent has slept
-        time_display = f"▶{format_duration(green_time):>5} ⏸{format_duration(non_green_time):>5}"
-        if sleep_time > 0:
-            time_display += f" 💤{format_duration(sleep_time):>5}"
-
-        # Compute depth for indentation (#244)
+        # Handle tree indentation (#244)
         depth = launcher.sessions.compute_depth(sess)
         indent = "  " * depth
+        available = name_width - len(indent)
+        ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
 
-        print(
-            f"{symbol} {indent}{sess.name:<{16 - len(indent)}} ↑{uptime:>5}  "
-            f"{time_display}  "
-            f"{stats_display}  {activity[:50]}"
-        )
+        # Render line using column system
+        line = Text()
+        for col in SUMMARY_COLUMNS:
+            if col.id not in list_columns:
+                continue
+            if ctx.summary_detail not in col.detail_levels:
+                continue
+            segments = col.render(ctx)
+            if segments:
+                for text, style in segments:
+                    line.append(text, style=style)
+
+        # Append activity (truncate to fit terminal width)
+        line.append(" │ ", style="dim")
+        line.append(activity)
+        line.truncate(console.width, pad=False)
+
+        console.print(line, no_wrap=True)
 
     if terminated_count > 0:
         rprint(f"\n[dim]{terminated_count} terminated session(s). Run 'overcode cleanup' to remove.[/dim]")
