@@ -1094,24 +1094,21 @@ class SupervisorTUI(
             if session.id in widgets:
                 ordered_widgets.append(widgets[session.id])
 
-        # Skip if order already matches — avoids unnecessary DOM moves
-        # which cause Textual relayout/repaint glitches every 10s
+        # Skip DOM moves if order already matches — avoids unnecessary relayout
+        # which cause Textual repaint glitches every 10s
         current_order = [
             w for w in container.children if isinstance(w, SessionSummary)
         ]
-        if current_order == ordered_widgets:
-            return
-
-        # Reorder by moving each widget to the correct position
-        for i, widget in enumerate(ordered_widgets):
-            if i == 0:
-                # First widget should be at the start
-                container.move_child(widget, before=0)
-            else:
-                # Each subsequent widget should be after the previous one
-                container.move_child(widget, after=ordered_widgets[i - 1])
+        if current_order != ordered_widgets:
+            # Reorder by moving each widget to the correct position
+            for i, widget in enumerate(ordered_widgets):
+                if i == 0:
+                    container.move_child(widget, before=0)
+                else:
+                    container.move_child(widget, after=ordered_widgets[i - 1])
 
         # Update tree prefix and child count for hierarchy display (#244)
+        # Always runs (not gated by reorder) so prefixes are set on first mount.
         is_tree_mode = self._prefs.sort_mode == "by_tree"
         # Build child count map once (counts all children, not just visible ones)
         child_counts: dict[str, int] = {}
