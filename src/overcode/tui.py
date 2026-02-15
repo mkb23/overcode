@@ -715,7 +715,9 @@ class SupervisorTUI(
                     if session.status == "terminated":
                         return ("terminated", "(tmux window no longer exists)", "")
                     if session.status == "done":
-                        return ("done", "Completed", "")
+                        # Still capture pane content so preview shows output
+                        content = self.detector.get_pane_content(session.tmux_window) or ""
+                        return ("done", "Completed", content)
                     return self.detector.detect_status(session)
                 except Exception:
                     return (STATUS_WAITING_USER, "Error", "")
