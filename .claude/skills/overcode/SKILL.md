@@ -1,197 +1,81 @@
 ---
+name: overcode-cli
+description: Reference for overcode CLI commands to launch, monitor, and control Claude Code agent sessions in tmux. Use when needing to interact with agents via overcode commands.
 user-invocable: false
 ---
 
-# Overcode CLI Skill
+# Overcode CLI Reference
 
-Overcode manages multiple Claude Code agent sessions in tmux. Use this skill to launch, monitor, and control parallel Claude agents.
+Overcode manages multiple Claude Code agent sessions in tmux.
 
 ## Quick Reference
 
 ```bash
-# Launch a new agent
-overcode launch --name <name> [--directory <path>] [--prompt "<initial prompt>"]
+# Launch
+overcode launch -n <name> [-d <path>] [-p "<prompt>"] [--follow] [--bypass-permissions]
+overcode launch -n <name> --follow --oversight-timeout 5m -p "... When done: overcode report --status success"
 
-# List running agents
-overcode list
+# Monitor
+overcode list [name] [--show-done]
+overcode show <name> [-n 50]
+overcode follow <name>
 
-# Show output from an agent
-overcode show <name> [--lines 50]
+# Control
+overcode send <name> "message"       # Send text + Enter
+overcode send <name> enter           # Approve permission
+overcode send <name> escape          # Reject permission
+overcode kill <name> [--no-cascade]
+overcode instruct <name> "instructions"
 
-# Send input to an agent
-overcode send <name> "your message"      # Send text + Enter
-overcode send <name> enter               # Press Enter (approve)
-overcode send <name> escape              # Press Escape (reject)
+# Report completion (child agents call this when done)
+overcode report --status success|failure [--reason "..."]
 
-# Attach to tmux to view/control agents
-overcode attach
+# Budget
+overcode budget set <name> <amount>
+overcode budget transfer <source> <target> <amount>
+overcode budget show [name]
 
-# Kill an agent
-overcode kill <name>
+# Cleanup
+overcode cleanup [--done]
 
-# Launch supervisor TUI
+# TUI / daemons
+overcode monitor
 overcode supervisor [--restart]
-
-# Set standing instructions for an agent
-overcode instruct <name> "Your instructions here"
+overcode attach [--name <agent>]
 ```
 
-## Launching Agents
-
-### Basic Launch
-```bash
-overcode launch --name my-agent
-```
-
-### Launch with Working Directory
-```bash
-overcode launch --name backend --directory /path/to/backend-repo
-```
-
-### Launch with Initial Prompt
-```bash
-overcode launch --name feature-agent --prompt "Implement the user authentication feature"
-```
-
-## Viewing Agents
-
-### Attach to Tmux Session
-```bash
-overcode attach
-```
-
-**Inside tmux:**
-- `Ctrl-b 0/1/2/...` - Switch to window by number
-- `Ctrl-b n` - Next window
-- `Ctrl-b p` - Previous window
-- `Ctrl-b d` - Detach (agents keep running)
-
-### Direct Tmux Access
-```bash
-# Attach to default session
-tmux attach -t agents
-
-# List windows
-tmux list-windows -t agents
-
-# Read agent output
-tmux capture-pane -t agents:<window_num> -p -S -50
-```
-
-## Supervisor TUI
-
-The supervisor provides a dashboard for monitoring all agents.
-
-```bash
-# Launch supervisor
-overcode supervisor
-
-# With auto-restart on exit
-overcode supervisor --restart
-```
-
-### Status Indicators
+## Status Indicators
 
 | Status | Meaning |
 |--------|---------|
 | GREEN | Running actively |
-| YELLOW | Running but no standing instructions |
+| YELLOW | No standing instructions |
 | ORANGE | Waiting for supervisor |
 | RED | Waiting for user input |
-
-## Session State
-
-Sessions are tracked in `~/.overcode/sessions/<session-name>/`:
-
-```bash
-# View session state
-cat ~/.overcode/sessions/agents/sessions.json | jq
-```
+| 👁️ YELLOW | Waiting for oversight report |
 
 ## Unblocking Stuck Agents
 
-When an agent is RED (waiting for input):
-
 ```bash
-# See what it's stuck on
-overcode show my-agent --lines 100
-
-# Approve a permission (press Enter)
-overcode send my-agent enter
-
-# Reject a permission (press Escape)
-overcode send my-agent escape
-
-# Send a text response
-overcode send my-agent "yes"
+overcode show my-agent -n 100   # See what it's stuck on
+overcode send my-agent enter     # Approve permission
+overcode send my-agent escape    # Reject permission
+overcode send my-agent "yes"     # Send text response
 ```
+
+## Standing Instructions Presets
+
+`overcode instruct <name> <preset>` — available presets: `DO_NOTHING`, `STANDARD`, `PERMISSIVE`, `CAUTIOUS`, `RESEARCH`, `CODING`, `TESTING`, `REVIEW`, `DEPLOY`, `AUTONOMOUS`, `MINIMAL`.
 
 ## File Locations
 
 ```
 ~/.overcode/
-├── sessions/<session-name>/
-│   ├── sessions.json           # Session state and metadata
-│   ├── monitor_daemon.log      # Monitor daemon log
-│   └── supervisor_daemon.log   # Supervisor decisions log
-├── config.yaml                 # Optional configuration
-├── presets.json               # Launch presets
-└── presence_log.csv           # User presence tracking (macOS)
+├── sessions/<tmux-session>/
+│   ├── sessions.json              # Session state
+│   ├── monitor_daemon_state.json  # Daemon state (TUI reads this)
+│   ├── report_<agent>.json        # Oversight reports
+│   └── *.log                      # Daemon logs
+├── config.yaml
+└── presets.json
 ```
-
-## Common Workflows
-
-### Run Multiple Parallel Agents
-```bash
-overcode launch --name frontend --directory ./frontend --prompt "Implement the dashboard"
-overcode launch --name backend --directory ./backend --prompt "Add the API endpoint"
-overcode launch --name tests --directory . --prompt "Write integration tests"
-
-# Watch them all
-overcode attach
-```
-
-### Interactive Supervision
-```bash
-# Launch supervisor for monitoring
-overcode supervisor
-
-# Agents show in the TUI, navigate with j/k, attach with Enter
-```
-
-## Agent Hierarchy (#244)
-
-Agents can spawn child agents, creating a tree:
-
-```bash
-# Launch a child agent (auto-detects parent from env)
-overcode launch --name child-task --follow --prompt "Do something" --bypass-permissions
-
-# Explicit parent
-overcode launch --name child-task --parent my-agent --prompt "Do something"
-
-# Follow an already-running child
-overcode follow child-task
-
-# Kill parent + all descendants (default)
-overcode kill my-agent
-
-# Kill only the parent, orphan children
-overcode kill my-agent --no-cascade
-
-# Show a subtree
-overcode list my-agent
-
-# Budget transfer
-overcode budget transfer parent-agent child-agent 2.00
-overcode budget show
-```
-
-See the `delegation` skill for detailed delegation patterns.
-
-## Tips
-
-- Use meaningful names to track what each agent is doing
-- Use `--directory` to scope agents to specific repos/folders
-- All agents are interactive - attach anytime to take over
-- The supervisor TUI provides keyboard shortcuts for common actions

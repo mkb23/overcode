@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_USER
+from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -752,6 +752,16 @@ class SupervisorTUI(
                         if status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
                             status_results[session_id] = (STATUS_WAITING_HEARTBEAT, activity, content)
 
+                # Enrich with waiting_oversight from daemon state
+                oversight_sessions = {
+                    s.session_id: s for s in daemon_state.sessions
+                    if s.current_status == STATUS_WAITING_OVERSIGHT
+                }
+                for session_id, ds in oversight_sessions.items():
+                    if session_id in status_results:
+                        _, _, content = status_results[session_id]
+                        status_results[session_id] = (STATUS_WAITING_OVERSIGHT, "Waiting for oversight report", content)
+
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}
             for session_id, summary in self._summaries.items():
@@ -927,6 +937,12 @@ class SupervisorTUI(
 
         # Check if any session has a cost budget for column alignment (#173)
         any_has_budget = any(s.cost_budget_usd > 0 for s in self.sessions)
+        # Check if any session has an oversight timeout for countdown column
+        any_has_oversight_timeout = any(
+            getattr(s, 'oversight_policy', 'wait') == 'timeout'
+            and getattr(s, 'oversight_timeout_seconds', 0) > 0
+            for s in self.sessions
+        )
 
         # Build the list of sessions to display using extracted logic
         display_sessions = filter_visible_sessions(
@@ -969,6 +985,8 @@ class SupervisorTUI(
                     )
                     widget.session = new_session
                     widget.any_has_budget = any_has_budget
+                    widget.any_has_oversight_timeout = any_has_oversight_timeout
+                    widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -1017,6 +1035,8 @@ class SupervisorTUI(
                 # Apply cost display mode
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget
+                widget.any_has_oversight_timeout = any_has_oversight_timeout
+                widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 # Apply column group visibility (#178)
                 widget.summary_groups = self._prefs.summary_groups
                 # Apply list-mode class if in list_preview view

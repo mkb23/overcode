@@ -87,6 +87,19 @@ SessionOption = Annotated[
 ]
 
 
+def _parse_duration(s: str) -> float:
+    """Parse a duration string like '5m', '1h', '30s', '90' into seconds."""
+    s = s.strip().lower()
+    if s.endswith('s'):
+        return float(s[:-1])
+    elif s.endswith('m'):
+        return float(s[:-1]) * 60
+    elif s.endswith('h'):
+        return float(s[:-1]) * 3600
+    else:
+        return float(s)
+
+
 @app.callback(invoke_without_command=True)
 def main_callback(ctx: typer.Context):
     """Launch the TUI monitor when no command is given."""
@@ -132,10 +145,44 @@ def launch(
         bool,
         typer.Option("--follow", "-f", help="Stream child output and block until done (#244)"),
     ] = False,
+    on_stuck: Annotated[
+        Optional[str],
+        typer.Option("--on-stuck", help="Policy when child stops: wait (default), fail, timeout:DURATION"),
+    ] = None,
+    oversight_timeout: Annotated[
+        Optional[str],
+        typer.Option("--oversight-timeout", help="Shorthand for --on-stuck timeout:DURATION (e.g. 5m, 1h)"),
+    ] = None,
     session: SessionOption = "agents",
 ):
     """Launch a new Claude agent."""
     import os
+
+    # Parse oversight policy
+    oversight_policy = "wait"
+    oversight_timeout_seconds = 0.0
+    if oversight_timeout:
+        oversight_policy = "timeout"
+        try:
+            oversight_timeout_seconds = _parse_duration(oversight_timeout)
+        except ValueError:
+            rprint(f"[red]Error: Invalid duration '{oversight_timeout}'[/red]")
+            raise typer.Exit(code=1)
+    elif on_stuck:
+        if on_stuck == "wait":
+            oversight_policy = "wait"
+        elif on_stuck == "fail":
+            oversight_policy = "fail"
+        elif on_stuck.startswith("timeout:"):
+            oversight_policy = "timeout"
+            try:
+                oversight_timeout_seconds = _parse_duration(on_stuck[len("timeout:"):])
+            except ValueError:
+                rprint(f"[red]Error: Invalid duration in '--on-stuck {on_stuck}'[/red]")
+                raise typer.Exit(code=1)
+        else:
+            rprint(f"[red]Error: Invalid --on-stuck value '{on_stuck}'. Use: wait, fail, timeout:DURATION[/red]")
+            raise typer.Exit(code=1)
 
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
@@ -157,6 +204,17 @@ def launch(
             rprint(f"  Parent: {parent or os.environ.get('OVERCODE_SESSION_NAME', '?')}")
         if prompt:
             rprint("  Initial prompt sent")
+
+        # Store oversight policy on session
+        if oversight_policy != "wait" or oversight_timeout_seconds > 0:
+            from .session_manager import SessionManager
+            sm = SessionManager()
+            sm.update_session(
+                result.id,
+                oversight_policy=oversight_policy,
+                oversight_timeout_seconds=oversight_timeout_seconds,
+            )
+            rprint(f"  Oversight: {oversight_policy}" + (f" ({oversight_timeout_seconds:.0f}s)" if oversight_timeout_seconds > 0 else ""))
 
         if follow:
             from .follow_mode import follow_agent
@@ -396,6 +454,69 @@ def follow(
 
     exit_code = _follow_agent(name, session)
     raise typer.Exit(code=exit_code)
+
+
+@app.command()
+def report(
+    status: Annotated[
+        str,
+        typer.Option("--status", "-s", help="Report status: success or failure"),
+    ],
+    reason: Annotated[
+        Optional[str],
+        typer.Option("--reason", "-r", help="Reason for the report"),
+    ] = None,
+):
+    """Report completion status from a child agent.
+
+    Called by child agents to signal success or failure to the parent.
+    Reads OVERCODE_SESSION_NAME and OVERCODE_TMUX_SESSION from env vars
+    (automatically set for all child agents).
+
+    Examples:
+        overcode report --status success
+        overcode report --status failure --reason "Tests failed"
+    """
+    import os
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    if status not in ("success", "failure"):
+        rprint(f"[red]Error: --status must be 'success' or 'failure', got '{status}'[/red]")
+        raise typer.Exit(code=1)
+
+    agent_name = os.environ.get("OVERCODE_SESSION_NAME")
+    tmux_session = os.environ.get("OVERCODE_TMUX_SESSION")
+
+    if not agent_name or not tmux_session:
+        rprint("[red]Error: OVERCODE_SESSION_NAME and OVERCODE_TMUX_SESSION env vars required[/red]")
+        rprint("[dim]This command should be run from within a child agent launched by overcode[/dim]")
+        raise typer.Exit(code=1)
+
+    # Write report file
+    from .settings import get_session_dir
+    session_dir = get_session_dir(tmux_session)
+    report_file = session_dir / f"report_{agent_name}.json"
+    report_data = {
+        "status": status,
+        "reason": reason or "",
+        "timestamp": datetime.now().isoformat(),
+    }
+    report_file.write_text(json.dumps(report_data, indent=2))
+
+    # Also update session fields for persistence
+    from .session_manager import SessionManager
+    sm = SessionManager()
+    session = sm.get_session_by_name(agent_name)
+    if session:
+        sm.update_session(
+            session.id,
+            report_status=status,
+            report_reason=reason or "",
+        )
+
+    rprint(f"[green]✓[/green] Report filed: {status}" + (f" ({reason})" if reason else ""))
 
 
 @app.command()

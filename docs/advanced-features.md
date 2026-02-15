@@ -154,17 +154,47 @@ overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug"
 
 ### Follow Mode
 
-Follow mode streams a child agent's output to stdout and blocks until the child finishes (receives a Stop event).
+Follow mode streams a child agent's output to stdout and blocks until the child reports completion via `overcode report`.
 
 ```bash
-# Launch and follow
-overcode launch -n child --follow -p "Do the task"
+# Launch and follow — prompt must include overcode report at the end
+overcode launch -n child --follow -p "Do the task. When done: overcode report --status success"
 
 # Follow an already-running agent
 overcode follow child-agent
 ```
 
-When follow exits cleanly, the child is marked as "done" — it stays alive in tmux but is hidden from default views.
+When the child reports success, it's marked "done" — it stays alive in tmux but is hidden from default views.
+
+### Reporting Completion
+
+Child agents must explicitly signal completion by running `overcode report`:
+
+```bash
+overcode report --status success --reason "All tests pass"
+overcode report --status failure --reason "Build failed"
+```
+
+Without a report, the child enters `waiting_oversight` status (👁️) when it stops. The parent's follow mode blocks until a report arrives or the oversight policy triggers.
+
+**Always include `overcode report` at the end of your `--prompt`.** This is the most common mistake when setting up delegation.
+
+### Oversight Policies
+
+Control what happens when a child stops without reporting:
+
+```bash
+# Default: wait indefinitely for a report
+overcode launch -n child --follow -p "..."
+
+# Fail immediately if child stops without reporting
+overcode launch -n child --follow --on-stuck fail -p "..."
+
+# Wait up to 5 minutes, then fail
+overcode launch -n child --follow --oversight-timeout 5m -p "..."
+```
+
+The TUI shows a countdown timer (⏳) for agents with a timeout policy.
 
 ### Budget Transfer
 
@@ -205,11 +235,19 @@ The child count column (👶) shows how many direct children each agent has.
 
 ### Done Agents
 
-When a child finishes via follow mode, it enters the "done" state:
+When a child reports success or failure via `overcode report`, it enters the "done" state:
 - Hidden from default list and TUI views
 - Press `D` in TUI or use `--show-done` in CLI to reveal them
 - Auto-archived by the monitor daemon after 1 hour
 - Manually archive with `overcode cleanup --done`
+
+### Waiting for Oversight
+
+If a child stops without calling `overcode report`, it enters `waiting_oversight` (👁️):
+- Visible in the TUI with a yellow indicator
+- Parent's follow mode remains blocked, waiting for a report
+- With `--oversight-timeout`, a countdown timer appears in the TUI
+- Resolve by attaching to the child's tmux window and running `overcode report` manually, or let the timeout expire
 
 ### Filtered List
 

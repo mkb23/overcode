@@ -127,6 +127,13 @@ class Session:
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
 
+    # Oversight system - report + timeout for child agents
+    oversight_policy: str = "wait"  # wait | fail | timeout
+    oversight_timeout_seconds: float = 0.0  # 0 = indefinite
+    oversight_deadline: Optional[str] = None  # ISO timestamp, set on entering waiting_oversight
+    report_status: Optional[str] = None  # "success" | "failure"
+    report_reason: str = ""
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict

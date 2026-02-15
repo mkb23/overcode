@@ -21,6 +21,7 @@ from typing import Optional, Tuple, TYPE_CHECKING
 from .status_constants import (
     STATUS_RUNNING,
     STATUS_WAITING_USER,
+    STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
 )
 
@@ -158,15 +159,19 @@ class HookStatusDetector:
         event = hook_state.get("event", "")
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
 
+        # For child agents, Stop → waiting_oversight instead of waiting_user
+        if event == "Stop" and session.parent_session_id is not None:
+            status = STATUS_WAITING_OVERSIGHT
+
         # Read pane for activity enrichment and content return value
         pane_content = self.get_pane_content(session.tmux_window) or ""
 
         # Build activity description
-        activity = self._build_activity(event, hook_state, pane_content)
+        activity = self._build_activity(event, hook_state, pane_content, session)
 
         return status, activity, pane_content
 
-    def _build_activity(self, event: str, hook_state: dict, pane_content: str) -> str:
+    def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""
         if event == "PostToolUse":
             tool_name = hook_state.get("tool_name", "")
@@ -178,6 +183,8 @@ class HookStatusDetector:
             return "Processing prompt"
 
         if event == "Stop":
+            if session and session.parent_session_id is not None:
+                return "Waiting for oversight report"
             return "Waiting for user input"
 
         if event == "PermissionRequest":

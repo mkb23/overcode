@@ -72,6 +72,8 @@ class SessionSummary(Static, can_focus=True):
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
         self.show_cost: bool = False  # Show $ cost instead of token counts
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
+        self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
+        self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
@@ -324,6 +326,8 @@ class SessionSummary(Static, can_focus=True):
             status_changed_at=self._status_changed_at,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
+            any_has_oversight_timeout=self.any_has_oversight_timeout,
+            oversight_deadline=self.oversight_deadline,
         )
 
     def _render_content_area(self, content: Text, ctx: ColumnContext, term_width: int) -> None:

@@ -20,7 +20,9 @@ overcode launch --name <name> [options]
 | `--skip-permissions` | | Auto-deny permission prompts |
 | `--bypass-permissions` | | Bypass all permission checks (dangerous) |
 | `--parent` | | Name of parent agent (auto-detected if launched from within an agent) |
-| `--follow` | `-f` | Stream child output, block until Stop |
+| `--follow` | `-f` | Stream child output, block until report or timeout |
+| `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail`, `timeout:DURATION` |
+| `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Examples:**
@@ -35,7 +37,10 @@ overcode launch -n researcher -d ~/project -p "Analyze the authentication flow"
 overcode launch -n builder -d ~/project --bypass-permissions
 
 # Launch as child agent with follow mode
-overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug"
+overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug. When done: overcode report --status success"
+
+# With oversight timeout (fail after 5 minutes without report)
+overcode launch -n subtask --follow --oversight-timeout 5m -p "Fix the bug. When done: overcode report --status success"
 ```
 
 ### `overcode list`
@@ -89,13 +94,36 @@ overcode cleanup [--done] [--session <session>]
 |--------|-------------|
 | `--done` | Also archive "done" child agents (kill tmux window, remove from tracking) |
 
+### `overcode report`
+
+Report completion from within a child agent session. Called by the child agent (not the parent) to signal that it finished its work.
+
+```bash
+overcode report --status <success|failure> [--reason <text>]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--status` | `-s` | **Required.** `success` or `failure` |
+| `--reason` | `-r` | Optional explanation |
+
+The command reads `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` from the environment (automatically set for all agents launched by overcode).
+
+Without a report, child agents that stop enter `waiting_oversight` status instead of `done`. The parent's `--follow` blocks until a report arrives (or the oversight policy triggers).
+
 ### `overcode follow`
 
-Follow an already-running agent's output. Streams pane content to stdout and exits when the agent stops.
+Follow an already-running agent's output. Streams pane content to stdout and blocks until the agent reports completion (or the oversight policy triggers).
 
 ```bash
 overcode follow <agent-name> [--session <session>]
 ```
+
+Exit codes:
+- `0` — child reported success
+- `1` — child reported failure or terminated
+- `2` — oversight timeout expired
+- `130` — interrupted (Ctrl-C)
 
 ### `overcode budget`
 
