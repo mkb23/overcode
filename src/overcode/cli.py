@@ -1106,7 +1106,8 @@ def skills_install(
     By default installs to ~/.claude/skills/<name>/SKILL.md (user-level).
     Use --project to install to .claude/skills/<name>/SKILL.md instead.
     """
-    from .bundled_skills import OVERCODE_SKILLS
+    import shutil
+    from .bundled_skills import OVERCODE_SKILLS, DEPRECATED_SKILL_NAMES
 
     if project:
         base = Path.cwd() / ".claude" / "skills"
@@ -1114,6 +1115,13 @@ def skills_install(
     else:
         base = Path.home() / ".claude" / "skills"
         level = "user"
+
+    # Remove deprecated/renamed skills
+    for old_name in DEPRECATED_SKILL_NAMES:
+        old_dir = base / old_name
+        if old_dir.exists():
+            shutil.rmtree(old_dir)
+            rprint(f"  [dim]Removed deprecated skill '{old_name}'[/dim]")
 
     installed = 0
     skipped = 0
