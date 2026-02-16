@@ -55,6 +55,7 @@ from .settings import (
 from .config import get_relay_config
 from .status_constants import (
     STATUS_ASLEEP,
+    STATUS_DONE,
     STATUS_HEARTBEAT_START,
     STATUS_RUNNING,
     STATUS_RUNNING_HEARTBEAT,
@@ -814,8 +815,16 @@ class MonitorDaemon:
                 all_waiting_user = True
 
                 for session in sessions:
-                    # Detect status - dispatches per-session via dispatcher (#5)
-                    status, activity, _ = self.detector.detect_status(session)
+                    # Skip sessions already known to be terminated/done —
+                    # avoids a wasted tmux call and prevents desync where
+                    # detect_status returns waiting_user for a gone window.
+                    if session.status == "terminated":
+                        status, activity = STATUS_TERMINATED, "Session terminated"
+                    elif session.status == "done":
+                        status, activity = STATUS_DONE, "Completed"
+                    else:
+                        # Detect status - dispatches per-session via dispatcher (#5)
+                        status, activity, _ = self.detector.detect_status(session)
 
                     # Clear heartbeat tracking when session stops running
                     if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
@@ -854,6 +863,11 @@ class MonitorDaemon:
                         effective_status = STATUS_WAITING_HEARTBEAT
                     else:
                         effective_status = status
+
+                    # Persist terminated status so future loops skip detect_status
+                    if effective_status == STATUS_TERMINATED and session.status != "terminated":
+                        self.session_manager.update_session_status(session.id, "terminated")
+
                     session_state = self.track_session_stats(session, effective_status)
                     session_state.current_activity = activity
                     session_states.append(session_state)

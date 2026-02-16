@@ -81,18 +81,18 @@ class ContractTests:
 
         assert status in ALL_STATUSES, f"Unknown status: {status}"
 
-    def test_missing_pane_returns_waiting_user(self, tmp_path):
-        """When pane content is unavailable, returns waiting_user."""
+    def test_missing_pane_returns_terminated(self, tmp_path):
+        """When pane content is unavailable (window gone), returns terminated."""
         mock_tmux = MockTmux()
         mock_tmux.new_session("agents")
-        # Window 1 has no content set
+        # Window 1 has no content set — simulates killed tmux window
 
         detector = self.create_detector("agents", mock_tmux, tmp_path=tmp_path)
         session = create_mock_session(tmux_window=1)
 
         status, _, _ = detector.detect_status(session)
 
-        assert status == "waiting_user"
+        assert status == "terminated"
 
     def test_get_pane_content_returns_optional_str(self, tmp_path):
         """get_pane_content returns Optional[str]."""
@@ -159,3 +159,22 @@ class TestHookContractWithState(ContractTests):
             "timestamp": time.time(),
         }))
         return HookStatusDetector(tmux_session, tmux=mock_tmux, state_dir=state_dir)
+
+    def test_missing_pane_returns_terminated(self, tmp_path):
+        """With active hook state (Stop), missing pane returns waiting_user.
+
+        The hook detector trusts the hook state over the tmux window — "Stop"
+        means the agent stopped and is waiting for user input. The daemon loop
+        guard (session.status check) handles the terminated case before
+        detect_status is ever called.
+        """
+        mock_tmux = MockTmux()
+        mock_tmux.new_session("agents")
+        # Window 1 has no content — simulates killed tmux window
+
+        detector = self.create_detector("agents", mock_tmux, tmp_path=tmp_path)
+        session = create_mock_session(tmux_window=1)
+
+        status, _, _ = detector.detect_status(session)
+
+        assert status == "waiting_user"
