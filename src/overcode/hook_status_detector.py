@@ -79,13 +79,13 @@ class HookStatusDetector:
         self._patterns = patterns
         self._stale_threshold = stale_threshold_seconds
 
-        # Resolve state directory
+        # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
             self._state_dir = state_dir
         else:
             env_dir = os.environ.get("OVERCODE_STATE_DIR")
             if env_dir:
-                self._state_dir = Path(env_dir) / "sessions" / tmux_session
+                self._state_dir = Path(env_dir) / tmux_session
             else:
                 self._state_dir = Path.home() / ".overcode" / "sessions" / tmux_session
 

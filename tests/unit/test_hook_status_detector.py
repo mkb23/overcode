@@ -370,18 +370,25 @@ class TestEnvVarOverride:
     """Test OVERCODE_STATE_DIR environment variable override."""
 
     def test_uses_env_var_state_dir(self, tmp_path, monkeypatch):
-        """OVERCODE_STATE_DIR env var overrides default state dir."""
+        """OVERCODE_STATE_DIR env var overrides default state dir.
+
+        Hook state path must match hook_handler._get_hook_state_path():
+            OVERCODE_STATE_DIR / {tmux_session} / hook_state_{name}.json
+        """
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
 
-        state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "Stop")
+        # Write to the correct path: OVERCODE_STATE_DIR / tmux_session
+        state_dir = tmp_path / "agents"
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Read")
         mock_tmux = create_mock_tmux_with_content("agents", 1, "content")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, name="test-agent")
-        status, _, _ = detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        # PostToolUse → running (proves hooks were read, not polling fallback)
+        assert status == STATUS_RUNNING
+        assert "Using Read" in activity
 
 
 class TestStatusDetectorAttributes:
