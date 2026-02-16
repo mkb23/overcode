@@ -19,10 +19,10 @@ from typing import Optional
 from .session_manager import SessionManager
 from .status_patterns import strip_ansi
 from .settings import get_session_dir
-from .status_constants import STATUS_WAITING_OVERSIGHT
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
 
 
-def _capture_pane(tmux_session: str, window_index: int, lines: int = 200) -> Optional[str]:
+def _capture_pane(tmux_session: str, window_index: int, lines: int = DEFAULT_CAPTURE_LINES) -> Optional[str]:
     """Capture recent pane output via tmux."""
     try:
         result = subprocess.run(

@@ -276,13 +276,13 @@ class TestApplyStatusNoRefresh:
         assert widget.current_activity == "Editing files"
 
     def test_parses_pane_content_into_lines(self):
-        """Content is split into lines and stored (last 200 max)."""
+        """Content is split into lines and stored (no artificial cap)."""
         content = "\n".join(f"line {i}" for i in range(300))
         widget = _make_bare_widget()
         widget.apply_status_no_refresh("running", "", content, None, None)
-        assert len(widget.pane_content) == 200
+        assert len(widget.pane_content) == 300
         assert widget.pane_content[-1] == "line 299"
-        assert widget.pane_content[0] == "line 100"
+        assert widget.pane_content[0] == "line 0"
 
     def test_empty_content_clears_pane_and_counts(self):
         """Empty/falsy content resets pane_content and live counts to zero."""

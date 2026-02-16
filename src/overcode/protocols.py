@@ -110,6 +110,7 @@ class StatusDetectorProtocol(Protocol):
     """
 
     tmux_session: str
+    capture_lines: int
 
     def detect_status(self, session: "Session") -> Tuple[str, str, str]:
         """Detect session status and current activity.
@@ -119,7 +120,7 @@ class StatusDetectorProtocol(Protocol):
         """
         ...
 
-    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane."""
         ...
 

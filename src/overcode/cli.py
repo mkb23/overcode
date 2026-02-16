@@ -892,7 +892,7 @@ def show(
     if need_pane and not pane_content_raw and sess.status != "terminated":
         from .status_detector_factory import StatusDetectorDispatcher
         dispatcher = StatusDetectorDispatcher(session)
-        pane_content_raw = dispatcher.get_pane_content(sess.tmux_window, num_lines=max(lines, 50))
+        pane_content_raw = dispatcher.get_pane_content(sess.tmux_window, num_lines=lines)
 
     if not no_stats:
         # Gather all stats

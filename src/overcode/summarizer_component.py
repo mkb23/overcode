@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Optional, TYPE_CHECKING
 
+from .status_constants import DEFAULT_CAPTURE_LINES
 from .summarizer_client import SummarizerClient
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ class SummarizerConfig:
     enabled: bool = False  # Off by default
     interval: float = 5.0  # Seconds between short summary updates per agent
     context_interval: float = 15.0  # Seconds between context summary updates (less frequent)
-    lines: int = 200  # Pane lines to capture
+    lines: int = DEFAULT_CAPTURE_LINES  # Pane lines to capture
     max_tokens: int = 150  # Max response tokens
 
 

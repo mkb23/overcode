@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
+    DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
@@ -73,6 +74,7 @@ class HookStatusDetector:
         stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD,
     ):
         self.tmux_session = tmux_session
+        self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
         self._patterns = patterns
         self._stale_threshold = stale_threshold_seconds
@@ -135,9 +137,11 @@ class HookStatusDetector:
 
         return data
 
-    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get pane content via the polling detector's tmux interface."""
-        return self._get_polling_fallback().get_pane_content(window, num_lines)
+        fallback = self._get_polling_fallback()
+        fallback.capture_lines = self.capture_lines
+        return fallback.get_pane_content(window, num_lines)
 
     def detect_status(self, session: "Session") -> Tuple[str, str, str]:
         """Detect session status using hook state files.

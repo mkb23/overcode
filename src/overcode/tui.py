@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -355,6 +355,7 @@ class SupervisorTUI(
         """Called when app starts"""
         self.title = f"Overcode v{__version__}"
         self._update_subtitle()
+        self._update_capture_lines()
 
         # Auto-start Monitor Daemon if not running
         self._ensure_monitor_daemon()
@@ -536,8 +537,14 @@ class SupervisorTUI(
 
     def on_resize(self) -> None:
         """Handle terminal resize events"""
+        self._update_capture_lines()
         self.refresh()
         self.update_session_widgets()
+
+    def _update_capture_lines(self) -> None:
+        """Scale capture buffer to at least 2x terminal height."""
+        height = self.size.height if self.size.height > 0 else 40
+        self.detector.capture_lines = max(DEFAULT_CAPTURE_LINES, 2 * height)
 
     def refresh_sessions(self) -> None:
         """Refresh session list (kicks off background worker).
