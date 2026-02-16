@@ -502,14 +502,9 @@ class TestCycleSortMode:
 
     @patch("overcode.tui_logic.get_sort_mode_display_name", return_value="By Status")
     @patch("overcode.tui_logic.cycle_sort_mode", return_value="by_status")
-    def test_follows_focused_session_after_sort(self, mock_cycle, mock_display_name):
-        """Should update focused_session_index to track the same session."""
+    def test_delegates_focus_tracking_to_update_session_widgets(self, mock_cycle, mock_display_name):
+        """Should delegate focus tracking to update_session_widgets (preserve_focus)."""
         from overcode.tui_actions.view import ViewActionsMixin
-
-        widget_a = MagicMock()
-        widget_a.session.id = "s-alpha"
-        widget_b = MagicMock()
-        widget_b.session.id = "s-beta"
 
         mock_tui = MagicMock()
         mock_tui._prefs = MagicMock()
@@ -517,16 +512,11 @@ class TestCycleSortMode:
         mock_tui.SORT_MODES = ["alphabetical", "by_status", "by_value"]
         mock_tui.focused_session_index = 0
 
-        # Before sort: [alpha, beta]; after sort: [beta, alpha]
-        mock_tui._get_widgets_in_session_order.side_effect = [
-            [widget_a, widget_b],  # First call (before sort)
-            [widget_b, widget_a],  # Second call (after sort)
-        ]
-
         ViewActionsMixin.action_cycle_sort_mode(mock_tui)
 
-        # Originally focused on s-alpha at index 0, now at index 1
-        assert mock_tui.focused_session_index == 1
+        # Focus tracking is now handled internally by update_session_widgets
+        mock_tui.update_session_widgets.assert_called_once()
+        mock_tui._sort_sessions.assert_called_once()
 
 
 class TestBaselineBack:

@@ -24,7 +24,7 @@ class TestFocusNextSession:
         mock_tui._sync_tmux_window.assert_not_called()
 
     def test_cycles_to_next_widget(self):
-        """Should focus next widget in list."""
+        """Should set focused_session_index to next widget (watcher handles focus)."""
         from overcode.tui_actions.navigation import NavigationActionsMixin
 
         mock_widget1 = MagicMock()
@@ -39,7 +39,6 @@ class TestFocusNextSession:
         NavigationActionsMixin.action_focus_next_session(mock_tui)
 
         assert mock_tui.focused_session_index == 1
-        mock_widget2.focus.assert_called_once()
 
     def test_wraps_around_at_end(self):
         """Should wrap around to beginning when at end."""
@@ -56,22 +55,6 @@ class TestFocusNextSession:
         NavigationActionsMixin.action_focus_next_session(mock_tui)
 
         assert mock_tui.focused_session_index == 0
-        mock_widget1.focus.assert_called_once()
-
-    def test_updates_preview_in_list_preview_mode(self):
-        """Should update preview when in list_preview mode."""
-        from overcode.tui_actions.navigation import NavigationActionsMixin
-
-        mock_widget = MagicMock()
-
-        mock_tui = MagicMock()
-        mock_tui._get_widgets_in_session_order.return_value = [mock_widget]
-        mock_tui.focused_session_index = 0
-        mock_tui.view_mode = "list_preview"
-
-        NavigationActionsMixin.action_focus_next_session(mock_tui)
-
-        mock_tui._update_preview.assert_called_once()
 
 
 class TestFocusPreviousSession:
@@ -89,7 +72,7 @@ class TestFocusPreviousSession:
         mock_tui._sync_tmux_window.assert_not_called()
 
     def test_cycles_to_previous_widget(self):
-        """Should focus previous widget in list."""
+        """Should set focused_session_index to previous widget (watcher handles focus)."""
         from overcode.tui_actions.navigation import NavigationActionsMixin
 
         mock_widget1 = MagicMock()
@@ -104,7 +87,6 @@ class TestFocusPreviousSession:
         NavigationActionsMixin.action_focus_previous_session(mock_tui)
 
         assert mock_tui.focused_session_index == 0
-        mock_widget1.focus.assert_called_once()
 
     def test_wraps_around_at_beginning(self):
         """Should wrap around to end when at beginning."""
@@ -121,7 +103,6 @@ class TestFocusPreviousSession:
         NavigationActionsMixin.action_focus_previous_session(mock_tui)
 
         assert mock_tui.focused_session_index == 1
-        mock_widget2.focus.assert_called_once()
 
 
 class TestJumpToAttention:
@@ -201,7 +182,6 @@ class TestJumpToAttention:
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
         assert len(mock_tui._attention_jump_list) == 1
-        mock_widget.focus.assert_called_once()
 
     def test_includes_waiting_approval_sessions(self):
         """Should include waiting_approval sessions."""

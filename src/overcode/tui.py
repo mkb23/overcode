@@ -232,6 +232,7 @@ class SupervisorTUI(
     SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat"]
 
     sessions: reactive[List[Session]] = reactive(list)
+    focused_session_index: reactive[int] = reactive(0, always_update=True)
     view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
@@ -275,8 +276,8 @@ class SupervisorTUI(
         except ValueError:
             self.summary_level_index = 0  # Default to "low"
 
-        # Track focused session for navigation
-        self.focused_session_index = 0
+        # Suppress focus watcher during command bar interaction etc.
+        self._suppress_focus_watcher = False
         # Track previous status of each session for detecting transitions to stalled state
         self._previous_statuses: dict[str, str] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
@@ -554,11 +555,6 @@ class SupervisorTUI(
 
     def _apply_sessions(self, sessions: list) -> None:
         """Apply refreshed session list on main thread (no I/O)."""
-        # Capture focus NOW (at apply time) so it reflects the user's current
-        # position, not where they were when the async fetch started.
-        focused_widget = self._get_focused_widget()
-        focused_session_id = focused_widget.session.id if focused_widget else None
-
         # Detect new sessions for timeline refresh (#244)
         old_names = {s.name for s in self.sessions}
 
@@ -568,27 +564,8 @@ class SupervisorTUI(
         self._sort_sessions()
         # Calculate max repo/branch widths for alignment in full detail mode
         widths_changed = self._recalc_repo_widths(self.sessions)
-        # Check focus state BEFORE update_session_widgets, which may do DOM
-        # changes that cause Textual to drop focus to None.
-        focus_was_on_session = isinstance(self.focused, SessionSummary)
+        # update_session_widgets handles focus preservation internally
         self.update_session_widgets(force_refresh=widths_changed)
-
-        # Update focused_session_index to follow the same session at its new position.
-        # Only restore Textual's focus if a SessionSummary had it before the update —
-        # never steal focus from the command bar or other input widgets.
-        if focused_session_id:
-            widgets = self._get_widgets_in_session_order()
-            found = False
-            for i, widget in enumerate(widgets):
-                if widget.session.id == focused_session_id:
-                    self.focused_session_index = i
-                    if focus_was_on_session:
-                        widget.focus()
-                    found = True
-                    break
-            # Focused session disappeared (killed/filtered) — clamp index
-            if not found and widgets:
-                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
         new_names = {s.name for s in sessions}
@@ -664,6 +641,18 @@ class SupervisorTUI(
         if not (0 <= self.focused_session_index < len(widgets)):
             self.focused_session_index = max(0, min(self.focused_session_index, len(widgets) - 1))
         return widgets[self.focused_session_index]
+
+    def watch_focused_session_index(self, new_index: int) -> None:
+        """Auto-focus the widget at the new index, update preview, and sync tmux."""
+        if self._suppress_focus_watcher:
+            return
+        widget = self._get_focused_widget()
+        if widget is None:
+            return
+        widget.focus()
+        if self.view_mode == "list_preview":
+            self._update_preview()
+        self._sync_tmux_window(widget)
 
     def update_focused_status(self) -> None:
         """Update all session statuses every 250ms.
@@ -880,6 +869,17 @@ class SupervisorTUI(
         if self.view_mode == "list_preview":
             self._update_preview()
 
+        # Proactive focus recovery: if focus was lost or landed on a non-interactive
+        # widget (e.g. mouse click on preview pane when switching windows), restore
+        # it within 250ms so the selection highlight never disappears.
+        if self.focused is None or (
+            not isinstance(self.focused, SessionSummary)
+            and not isinstance(self.focused, (Input, TextArea))
+        ):
+            widget = self._get_focused_widget()
+            if widget is not None:
+                widget.focus()
+
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
         for widget in self.query(SessionSummary):
@@ -930,7 +930,7 @@ class SupervisorTUI(
                 widget.ai_summary_context = summary.context or ""
             widget.refresh()
 
-    def update_session_widgets(self, force_refresh: bool = True) -> None:
+    def update_session_widgets(self, force_refresh: bool = True, preserve_focus: bool = True) -> None:
         """Update the session display incrementally.
 
         Only adds/removes widgets when sessions change, rather than
@@ -940,7 +940,20 @@ class SupervisorTUI(
             force_refresh: If False, only refresh widgets whose session data
                 actually changed. Set to True when column widths changed or
                 on structural changes that require all widgets to repaint.
+            preserve_focus: If True, capture the currently focused session
+                before DOM mutations and restore focused_session_index after.
+                Focus is only restored to a SessionSummary if one had Textual
+                focus before the update (never steals from command bar).
         """
+        # Capture focus state before DOM mutations
+        if preserve_focus:
+            _focused_widget = self._get_focused_widget()
+            _focused_session_id = _focused_widget.session.id if _focused_widget else None
+            _focus_was_on_session = isinstance(self.focused, SessionSummary)
+        else:
+            _focused_session_id = None
+            _focus_was_on_session = False
+
         container = self.query_one("#sessions-container", ScrollableContainer)
 
         # Check if any session has a cost budget for column alignment (#173)
@@ -1006,6 +1019,7 @@ class SupervisorTUI(
                         widget.refresh()
             # Still reorder widgets to handle sort mode changes
             self._reorder_session_widgets(container)
+            self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
             return
 
         # Remove widgets for deleted sessions
@@ -1070,6 +1084,33 @@ class SupervisorTUI(
         # Reorder widgets to match display_sessions order
         # This must run after any structural changes AND after sort mode changes
         self._reorder_session_widgets(container)
+        self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
+
+    def _restore_focus_in_update(self, focused_session_id: str | None, focus_was_on_session: bool) -> None:
+        """Restore focused_session_index after update_session_widgets DOM mutations.
+
+        If the previously focused session still exists, move the index to its
+        new position. If it was removed/filtered, clamp the index.
+        Only fires the watcher (which calls .focus()) when a SessionSummary
+        had Textual focus before the update — never steals from command bar.
+        """
+        if not focused_session_id:
+            return
+        widgets = self._get_widgets_in_session_order()
+        if not widgets:
+            return
+        # Suppress watcher if focus wasn't on a session (e.g. command bar open)
+        if not focus_was_on_session:
+            self._suppress_focus_watcher = True
+        try:
+            for i, widget in enumerate(widgets):
+                if widget.session.id == focused_session_id:
+                    self.focused_session_index = i
+                    return
+            # Focused session was removed/filtered — clamp index
+            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+        finally:
+            self._suppress_focus_watcher = False
 
     def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
         """Handle expanded state changes from session widgets"""
@@ -1246,10 +1287,7 @@ class SupervisorTUI(
         try:
             widgets = list(self.query(SessionSummary))
             if widgets:
-                self.focused_session_index = 0
-                widgets[0].focus()
-                if self.view_mode == "list_preview":
-                    self._update_preview()
+                self.focused_session_index = 0  # Watcher handles focus + preview + tmux sync
         except NoMatches:
             pass
 
@@ -1495,6 +1533,9 @@ class SupervisorTUI(
             # Store in terminated sessions cache for ghost mode
             self._terminated_sessions[session_id] = terminated_session
 
+            # Remove from self.sessions so j/k ordering stays consistent
+            self.sessions = [s for s in self.sessions if s.id != session_id]
+
             # Remove the widget (will be re-added if show_terminated is True)
             focused.remove()
             # Update session cache
@@ -1506,25 +1547,12 @@ class SupervisorTUI(
             # If showing terminated sessions, refresh to add it back
             if self.show_terminated:
                 self.update_session_widgets()
-            # Clear preview pane and focus next agent if in list_preview mode
-            if self.view_mode == "list_preview":
-                try:
-                    preview = self.query_one("#preview-pane", PreviewPane)
-                    preview.session_name = ""
-                    preview.content_lines = []
-                    try:
-                        content_widget = preview.query_one("#preview-content", Static)
-                        content_widget.update("")
-                    except Exception:
-                        pass
-                    # Focus next available agent
-                    widgets = list(self.query(SessionSummary))
-                    if widgets:
-                        self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
-                        widgets[self.focused_session_index].focus()
-                        self._update_preview()
-                except NoMatches:
-                    pass
+
+            # Focus next available agent (uses session order for j/k consistency)
+            widgets = self._get_widgets_in_session_order()
+            if widgets:
+                self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+                # Watcher handles .focus(), preview update, and tmux sync
         else:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
 
@@ -1533,6 +1561,9 @@ class SupervisorTUI(
         self.session_manager.delete_session(session_id)
 
         self.notify(f"Cleaned up agent: {session_name}", severity="information")
+
+        # Remove from self.sessions so j/k ordering stays consistent
+        self.sessions = [s for s in self.sessions if s.id != session_id]
 
         # Remove from caches
         if session_id in self._terminated_sessions:
@@ -1545,24 +1576,11 @@ class SupervisorTUI(
         # Remove the widget
         focused.remove()
 
-        # Clear preview pane and focus next agent if in list_preview mode
-        if self.view_mode == "list_preview":
-            try:
-                preview = self.query_one("#preview-pane", PreviewPane)
-                preview.session_name = ""
-                preview.content_lines = []
-                try:
-                    content_widget = preview.query_one("#preview-content", Static)
-                    content_widget.update("")
-                except Exception:
-                    pass
-                widgets = list(self.query(SessionSummary))
-                if widgets:
-                    self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
-                    widgets[self.focused_session_index].focus()
-                    self._update_preview()
-            except NoMatches:
-                pass
+        # Focus next available agent (uses session order for j/k consistency)
+        widgets = self._get_widgets_in_session_order()
+        if widgets:
+            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+            # Watcher handles .focus(), preview update, and tmux sync
 
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).
@@ -1661,8 +1679,12 @@ class SupervisorTUI(
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
 
-        # Auto-recover if focus was lost (e.g., after tabbing back to terminal)
-        if self.focused is None:
+        # Auto-recover if focus was lost or landed on a non-interactive widget
+        # (e.g., clicking the terminal window focuses the preview pane)
+        if self.focused is None or (
+            not isinstance(self.focused, SessionSummary)
+            and not isinstance(self.focused, (Input, TextArea))
+        ):
             widget = self._get_focused_widget()
             if widget is not None:
                 widget.focus()
