@@ -434,7 +434,11 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
             segments.append((" @--:--", ctx.mono(f"dim{ctx.bg}", "dim")))
         return segments
     elif s.heartbeat_enabled and s.heartbeat_paused:
-        return [(" 💓⏸    @--:--", ctx.mono(f"dim yellow{ctx.bg}", "dim"))]
+        freq_str = format_duration(s.heartbeat_frequency_seconds)
+        return [
+            (f" 💓{freq_str:>5}", ctx.mono(f"dim{ctx.bg}", "dim")),
+            (" ⏸", ctx.mono(f"bold yellow{ctx.bg}", "bold")),
+        ]
     else:
         return [(" 💓    - @--:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
 

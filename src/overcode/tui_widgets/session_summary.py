@@ -377,10 +377,11 @@ class SessionSummary(Static, can_focus=True):
             if s.heartbeat_enabled:
                 freq_str = format_duration(s.heartbeat_frequency_seconds)
                 if s.heartbeat_paused:
-                    hb_text = f"💓⏸ (paused): {s.heartbeat_instruction}"
+                    hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
+                    content.append(hb_text[:remaining], style=ctx.mono(f"dim{ctx.bg}", "dim"))
                 else:
                     hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
-                content.append(hb_text[:remaining], style=ctx.mono(f"bold magenta{ctx.bg}", "bold"))
+                    content.append(hb_text[:remaining], style=ctx.mono(f"bold magenta{ctx.bg}", "bold"))
             else:
                 content.append("💓 (no heartbeat configured - press H)", style=ctx.mono(f"dim{ctx.bg}", "dim"))
         else:

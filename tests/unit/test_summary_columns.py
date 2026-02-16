@@ -652,11 +652,15 @@ class TestRenderHeartbeat:
         result = render_heartbeat(ctx)
         assert "💓    -" in result[0][0]
 
-    def test_paused_shows_paused(self):
+    def test_paused_shows_frequency_dimmed_with_pause_symbol(self):
         session = _make_session(heartbeat_enabled=True, heartbeat_paused=True)
         ctx = _make_ctx(session=session)
         result = render_heartbeat(ctx)
-        assert "⏸" in result[0][0]
+        # Frequency still visible (dimmed) in first segment
+        assert "💓" in result[0][0]
+        assert "5.0m" in result[0][0]
+        # Pause symbol in second segment
+        assert "⏸" in result[1][0]
 
     def test_active_shows_frequency_and_next_time(self):
         now = datetime.now()
