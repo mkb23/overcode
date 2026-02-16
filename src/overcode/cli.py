@@ -64,6 +64,15 @@ budget_app = typer.Typer(
 )
 app.add_typer(budget_app, name="budget")
 
+# Sister subcommand group
+sister_app = typer.Typer(
+    name="sister",
+    help="Manage sister instances for cross-machine monitoring.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
+app.add_typer(sister_app, name="sister")
+
 # Config subcommand group
 config_app = typer.Typer(
     name="config",
@@ -1930,6 +1939,107 @@ def supervisor_daemon_watch(session: SessionOption = "agents"):
 
 
 # =============================================================================
+# Sister Commands
+# =============================================================================
+
+
+@sister_app.callback(invoke_without_command=True)
+def sister_default(ctx: typer.Context):
+    """List configured sister instances (default when no subcommand given)."""
+    if ctx.invoked_subcommand is None:
+        _sister_list()
+
+
+@sister_app.command("list")
+def sister_list():
+    """List configured sister instances."""
+    _sister_list()
+
+
+def _sister_list():
+    """Internal function to display configured sisters."""
+    from .config import get_sisters_config
+
+    sisters = get_sisters_config()
+    if not sisters:
+        rprint("[dim]No sister instances configured.[/dim]")
+        rprint("[dim]Use 'overcode sister add <name> <url>' to add one.[/dim]")
+        return
+
+    rprint(f"[bold]Sister instances[/bold] ({len(sisters)}):\n")
+    for s in sisters:
+        api_key = s.get("api_key")
+        if api_key:
+            masked = api_key[:4] + "..." if len(api_key) > 4 else "****"
+            rprint(f"  [bold]{s['name']}[/bold]  {s['url']}  api_key={masked}")
+        else:
+            rprint(f"  [bold]{s['name']}[/bold]  {s['url']}")
+
+
+@sister_app.command("add")
+def sister_add(
+    name: Annotated[str, typer.Argument(help="Name for this sister instance")],
+    url: Annotated[str, typer.Argument(help="URL of the sister's web server")],
+    api_key: Annotated[
+        Optional[str], typer.Option("--api-key", help="API key for authentication")
+    ] = None,
+):
+    """Add a sister instance for cross-machine monitoring.
+
+    Examples:
+        overcode sister add macbook http://localhost:15337
+        overcode sister add desktop http://192.168.1.10:5337 --api-key secret
+    """
+    from .config import load_config, save_config
+
+    config = load_config()
+    sisters = config.get("sisters", [])
+    if not isinstance(sisters, list):
+        sisters = []
+
+    # Reject duplicate name
+    for s in sisters:
+        if isinstance(s, dict) and s.get("name") == name:
+            rprint(f"[red]Error: Sister '{name}' already exists[/red]")
+            raise typer.Exit(code=1)
+
+    entry = {"name": name, "url": url.rstrip("/")}
+    if api_key:
+        entry["api_key"] = api_key
+
+    sisters.append(entry)
+    config["sisters"] = sisters
+    save_config(config)
+    rprint(f"[green]✓ Added sister '{name}' at {entry['url']}[/green]")
+
+
+@sister_app.command("remove")
+def sister_remove(
+    name: Annotated[str, typer.Argument(help="Name of the sister instance to remove")],
+):
+    """Remove a sister instance.
+
+    Examples:
+        overcode sister remove desktop
+    """
+    from .config import load_config, save_config
+
+    config = load_config()
+    sisters = config.get("sisters", [])
+    if not isinstance(sisters, list):
+        sisters = []
+
+    new_sisters = [s for s in sisters if not (isinstance(s, dict) and s.get("name") == name)]
+    if len(new_sisters) == len(sisters):
+        rprint(f"[red]Error: Sister '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    config["sisters"] = new_sisters
+    save_config(config)
+    rprint(f"[green]✓ Removed sister '{name}'[/green]")
+
+
+# =============================================================================
 # Config Commands
 # =============================================================================
 
@@ -1968,6 +2078,14 @@ CONFIG_TEMPLATE = """\
 #   office_start: 9
 #   office_end: 17
 #   heartbeat_interval_minutes: 15  # omit to disable
+
+# Sister instances for cross-machine monitoring
+# sisters:
+#   - name: "macbook-pro"
+#     url: "http://localhost:15337"
+#   - name: "desktop"
+#     url: "http://192.168.1.10:5337"
+#     api_key: "shared-secret"
 """
 
 
@@ -2055,6 +2173,14 @@ def _config_show():
         w = config["web"]
         if "time_presets" in w:
             rprint(f"  web.time_presets: {len(w['time_presets'])} presets")
+
+    if "sisters" in config:
+        sisters = config["sisters"]
+        if isinstance(sisters, list) and sisters:
+            rprint(f"  sisters: {len(sisters)} configured")
+            for s in sisters:
+                if isinstance(s, dict) and s.get("name"):
+                    rprint(f"    - {s['name']}: {s.get('url', '?')}")
 
 
 @config_app.command("path")

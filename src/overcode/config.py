@@ -17,6 +17,12 @@ import yaml
 CONFIG_PATH = Path.home() / ".overcode" / "config.yaml"
 
 
+def save_config(config: dict) -> None:
+    """Save configuration dict to ~/.overcode/config.yaml."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+
+
 def load_config() -> dict:
     """Load configuration from ~/.overcode/config.yaml.
 
