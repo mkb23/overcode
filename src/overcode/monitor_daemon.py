@@ -403,6 +403,10 @@ class MonitorDaemon:
             # Skip sleeping agents
             if session.is_asleep:
                 continue
+            # Skip agents that are already green/active (#267)
+            prev_status = self.previous_states.get(session.id)
+            if prev_status and is_green_status(prev_status):
+                continue
             # Skip budget-exceeded agents (#173)
             if _is_budget_exceeded(session, session.stats):
                 continue

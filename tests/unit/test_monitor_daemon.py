@@ -771,6 +771,60 @@ class TestCheckAndSendHeartbeats:
         assert session.id in result
         mock_send.assert_called_once()
 
+    def test_skips_already_green_session(self, tmp_path, monkeypatch):
+        """Should skip sessions that are already green/active (#267)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        session = self._make_heartbeat_session(
+            frequency=300,
+            last_heartbeat=(datetime.now() - timedelta(hours=1)).isoformat()
+        )
+
+        # Simulate that previous loop detected this session as running
+        daemon.previous_states[session.id] = "running"
+
+        with patch('overcode.monitor_daemon.send_text_to_tmux_window') as mock_send:
+            result = daemon.check_and_send_heartbeats([session])
+
+        assert len(result) == 0
+        mock_send.assert_not_called()
+
+    def test_skips_running_heartbeat_session(self, tmp_path, monkeypatch):
+        """Should skip sessions with running_heartbeat status (#267)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        session = self._make_heartbeat_session(
+            frequency=300,
+            last_heartbeat=(datetime.now() - timedelta(hours=1)).isoformat()
+        )
+
+        # Simulate that previous loop detected this session as running from heartbeat
+        daemon.previous_states[session.id] = "running_heartbeat"
+
+        with patch('overcode.monitor_daemon.send_text_to_tmux_window') as mock_send:
+            result = daemon.check_and_send_heartbeats([session])
+
+        assert len(result) == 0
+        mock_send.assert_not_called()
+
+    def test_sends_heartbeat_when_previously_non_green(self, tmp_path, monkeypatch):
+        """Should send heartbeat when previous status was non-green (#267)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        session = self._make_heartbeat_session(
+            frequency=300,
+            last_heartbeat=(datetime.now() - timedelta(hours=1)).isoformat()
+        )
+
+        # Previous status was waiting — heartbeat should fire
+        daemon.previous_states[session.id] = "waiting_user"
+
+        with patch('overcode.monitor_daemon.send_text_to_tmux_window', return_value=True) as mock_send:
+            result = daemon.check_and_send_heartbeats([session])
+
+        assert session.id in result
+        mock_send.assert_called_once()
+
 
 class TestInterruptibleSleep:
     """Test _interruptible_sleep method."""
