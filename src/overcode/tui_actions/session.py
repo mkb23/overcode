@@ -155,6 +155,11 @@ class SessionActionsMixin:
 
         new_paused_state = not session.heartbeat_paused
 
+        # Prevent resuming heartbeat on a sleeping agent (#265)
+        if not new_paused_state and session.is_asleep:
+            self.notify("Cannot resume heartbeat on sleeping agent — wake with z first", severity="warning")
+            return
+
         # Update the session in the session manager
         self.session_manager.update_session(session.id, heartbeat_paused=new_paused_state)
 
