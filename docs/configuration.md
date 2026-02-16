@@ -36,6 +36,10 @@ relay:
   api_key: your-secret-key
   interval: 30  # Seconds between status pushes
 
+# Display hostname (shown in Host column and API response)
+# Defaults to system hostname if omitted
+hostname: "mac-studio"
+
 # Token pricing for cost calculations
 # Defaults match Claude Sonnet 3.5
 pricing:
@@ -44,8 +48,12 @@ pricing:
   cache_write: 3.75    # $/million tokens for cache writes
   cache_read: 0.30     # $/million tokens for cache reads
 
-# Web analytics dashboard presets
+# Web server settings
 web:
+  # API key for web server authentication
+  # Required when binding to non-localhost (--host 0.0.0.0)
+  api_key: "your-secret-key"
+  # Analytics dashboard presets
   time_presets:
     - name: "Morning"
       start: "09:00"
@@ -60,6 +68,15 @@ web:
 # Timeline display settings
 timeline:
   hours: 3.0  # Hours of history to show in timeline
+
+# Sister instances for cross-machine monitoring
+# See docs/advanced-features.md for setup guide
+sisters:
+  - name: "macbook-pro"
+    url: "http://localhost:15337"
+  - name: "desktop"
+    url: "http://localhost:25337"
+    api_key: "secret"  # Only needed for direct LAN access
 ```
 
 ## Environment Variables

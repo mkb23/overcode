@@ -291,5 +291,113 @@ web:
         assert "Morning" in preset_names
 
 
+class TestGetHostname:
+    """Test hostname configuration."""
+
+    def test_returns_system_hostname_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        result = config.get_hostname()
+        import socket
+        assert result == socket.gethostname()
+
+    def test_returns_configured_hostname(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("hostname: mac-studio\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_hostname() == "mac-studio"
+
+
+class TestGetWebApiKey:
+    """Test web API key configuration."""
+
+    def test_returns_none_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        assert config.get_web_api_key() is None
+
+    def test_returns_none_when_key_not_set(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("web:\n  time_presets: []\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_web_api_key() is None
+
+    def test_returns_api_key(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('web:\n  api_key: "my-secret"\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_web_api_key() == "my-secret"
+
+
+class TestGetSistersConfig:
+    """Test sisters configuration."""
+
+    def test_returns_empty_list_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        assert config.get_sisters_config() == []
+
+    def test_returns_empty_when_sisters_not_list(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("sisters: not-a-list\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_sisters_config() == []
+
+    def test_returns_valid_sisters(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""
+sisters:
+  - name: "macbook"
+    url: "http://localhost:15337"
+  - name: "desktop"
+    url: "http://localhost:25337/"
+    api_key: "secret"
+""")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_sisters_config()
+
+        assert len(result) == 2
+        assert result[0] == {"name": "macbook", "url": "http://localhost:15337"}
+        assert result[1] == {"name": "desktop", "url": "http://localhost:25337", "api_key": "secret"}
+
+    def test_skips_entries_without_name(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""
+sisters:
+  - url: "http://localhost:15337"
+  - name: "valid"
+    url: "http://localhost:25337"
+""")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_sisters_config()
+        assert len(result) == 1
+        assert result[0]["name"] == "valid"
+
+    def test_skips_entries_without_url(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""
+sisters:
+  - name: "no-url"
+  - name: "valid"
+    url: "http://localhost:25337"
+""")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_sisters_config()
+        assert len(result) == 1
+        assert result[0]["name"] == "valid"
+
+    def test_strips_trailing_slash_from_url(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""
+sisters:
+  - name: "host"
+    url: "http://localhost:8080/"
+""")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_sisters_config()
+        assert result[0]["url"] == "http://localhost:8080"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

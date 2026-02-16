@@ -54,6 +54,7 @@ from .web_server import (
     toggle_web_server,
 )
 from .config import get_default_standing_instructions
+from .sister_poller import SisterPoller
 from .status_history import read_agent_status_history
 from .usage_monitor import UsageMonitor
 from .presence_logger import read_presence_history, MACOS_APIS_AVAILABLE
@@ -330,6 +331,12 @@ class SupervisorTUI(
         )
         self._summaries: dict[str, AgentSummary] = {}
 
+        # Sister integration (#245) - remote agent monitoring
+        self._sister_poller = SisterPoller()
+        self.has_sisters: bool = self._sister_poller.has_sisters
+        self.local_hostname: str = self._sister_poller.local_hostname
+        self._remote_sessions: List[Session] = []
+
         # Pre-load session list synchronously so first render has data immediately
         try:
             self._preloaded_sessions: list | None = self.launcher.list_sessions()
@@ -437,6 +444,10 @@ class SupervisorTUI(
             self.set_interval(30, self.update_timeline)
             # Update AI summaries every 5 seconds (only runs if enabled)
             self.set_interval(5, self._update_summaries_async)
+            # Poll sister instances every 10 seconds (only runs if configured)
+            if self.has_sisters:
+                self.set_interval(10, self._poll_sisters)
+                self._poll_sisters()  # Initial fetch
 
     def update_daemon_status(self) -> None:
         """Update daemon status bar (kicks off background worker)"""
@@ -475,6 +486,9 @@ class SupervisorTUI(
         baseline_minutes = getattr(self, 'baseline_minutes', 0)
         daemon_bar.monitor_state = monitor_state
         daemon_bar._asleep_session_ids = asleep_ids
+        # Sister states for footer display (#245)
+        if self.has_sisters:
+            daemon_bar._sister_states = self._sister_poller.get_sister_states()
         daemon_bar.fetch_volatile_state(
             baseline_minutes=baseline_minutes,
             active_session_names=active_session_names,
@@ -569,7 +583,8 @@ class SupervisorTUI(
         old_names = {s.name for s in self.sessions}
 
         self._invalidate_sessions_cache()
-        self.sessions = sessions
+        # Merge local + remote sessions (#245)
+        self.sessions = sessions + self._remote_sessions
         # Apply sorting (#61)
         self._sort_sessions()
         # Calculate max repo/branch widths for alignment in full detail mode
@@ -749,6 +764,8 @@ class SupervisorTUI(
             # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
             def fetch_status(session):
                 try:
+                    if session.is_remote:
+                        return (session.stats.current_state or "running", session.stats.current_task, "")
                     if session.status == "terminated":
                         return ("terminated", "(tmux window no longer exists)", "")
                     if session.status == "done":
@@ -839,6 +856,8 @@ class SupervisorTUI(
 
             def fetch_stats(session):
                 try:
+                    if session.is_remote:
+                        return (None, None)  # Stats come pre-populated from API
                     claude_stats = get_session_stats(session)
                     git_diff = None
                     if session.start_directory:
@@ -860,6 +879,25 @@ class SupervisorTUI(
             self.call_from_thread(self._apply_stats_results, stats_results, git_diff_results)
         finally:
             self._stats_update_in_progress = False
+
+    # ── Sister integration (#245) ──────────────────────────────────────
+
+    def _poll_sisters(self) -> None:
+        """Kick off sister polling in background thread."""
+        self._poll_sisters_async()
+
+    @work(thread=True, exclusive=True, group="sister_poll")
+    def _poll_sisters_async(self) -> None:
+        """Fetch remote sessions from all sisters."""
+        remote = self._sister_poller.poll_all()
+        self.call_from_thread(self._apply_remote_sessions, remote)
+
+    def _apply_remote_sessions(self, remote_sessions: List[Session]) -> None:
+        """Store remote sessions and rebuild widget list."""
+        self._remote_sessions = remote_sessions
+        self.refresh_sessions()
+
+    # ── End sister integration ────────────────────────────────────────
 
     def _apply_status_results(self, status_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""

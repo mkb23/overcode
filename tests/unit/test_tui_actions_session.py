@@ -18,6 +18,7 @@ class TestToggleSleep:
         from overcode.status_constants import STATUS_RUNNING
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.is_asleep = False
         mock_session.name = "test-agent"
         mock_session.parent_session_id = None  # root agent
@@ -28,6 +29,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -45,6 +47,7 @@ class TestToggleSleep:
         from overcode.status_constants import STATUS_WAITING_USER
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.is_asleep = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
@@ -56,6 +59,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -74,6 +78,7 @@ class TestToggleSleep:
         from overcode.status_constants import STATUS_RUNNING
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.is_asleep = True  # Already asleep
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
@@ -86,6 +91,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -104,6 +110,7 @@ class TestToggleSleep:
         from overcode.status_constants import STATUS_WAITING_USER
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.is_asleep = False
         mock_session.name = "child-agent"
         mock_session.parent_session_id = "parent-123"  # child agent
@@ -114,6 +121,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -210,6 +218,7 @@ class TestToggleTimeContext:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.time_context_enabled = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
@@ -219,6 +228,7 @@ class TestToggleTimeContext:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -235,6 +245,7 @@ class TestToggleTimeContext:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.time_context_enabled = True
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
@@ -244,6 +255,7 @@ class TestToggleTimeContext:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -277,6 +289,7 @@ class TestKillFocused:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -285,6 +298,7 @@ class TestKillFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
 
@@ -307,6 +321,7 @@ class TestKillFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
 
@@ -330,6 +345,7 @@ class TestKillFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
 
@@ -354,6 +370,7 @@ class TestKillFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "other-agent"
         mock_session.id = "session-456"
 
@@ -392,6 +409,7 @@ class TestRestartFocused:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -400,6 +418,7 @@ class TestRestartFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -420,6 +439,7 @@ class TestRestartFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -440,6 +460,7 @@ class TestRestartFocused:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -477,6 +498,7 @@ class TestSyncToMainAndClear:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -485,6 +507,7 @@ class TestSyncToMainAndClear:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -505,6 +528,7 @@ class TestSyncToMainAndClear:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -525,6 +549,7 @@ class TestSyncToMainAndClear:
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock(spec=SessionSummary)
@@ -562,6 +587,7 @@ class TestTransportAll:
         mock_tui.sessions = sessions
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending_with_active_sessions(self):
@@ -702,6 +728,7 @@ class TestFocusCommandBar:
         mock_tui.query_one.return_value = cmd_bar
         mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
         if sessions is not None:
             mock_tui.sessions = sessions
         return mock_tui
@@ -711,6 +738,7 @@ class TestFocusCommandBar:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
 
         mock_widget = MagicMock()
@@ -733,6 +761,7 @@ class TestFocusCommandBar:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "first-agent"
 
         mock_input = MagicMock()
@@ -767,6 +796,7 @@ class TestFocusStandingOrders:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.standing_instructions = "Do the thing"
 
@@ -798,6 +828,7 @@ class TestFocusHumanAnnotation:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.human_annotation = "Needs review"
 
@@ -828,6 +859,7 @@ class TestEditAgentValue:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.agent_value = 500
 
@@ -854,6 +886,7 @@ class TestEditAgentValue:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "first-agent"
 
         mock_input = MagicMock()
@@ -881,6 +914,7 @@ class TestConfigureHeartbeat:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.heartbeat_enabled = True
         mock_session.heartbeat_frequency_seconds = 600
@@ -908,6 +942,7 @@ class TestConfigureHeartbeat:
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_session = MagicMock()
+        mock_session.is_remote = False
         mock_session.name = "test-agent"
         mock_session.heartbeat_enabled = False
 

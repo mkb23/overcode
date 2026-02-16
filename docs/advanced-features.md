@@ -500,6 +500,108 @@ The relay sends JSON with:
 - Slack notifications
 - Integration with project management tools
 
+## Sister Integration
+
+Aggregate agents from multiple machines into a single TUI. When running overcode on 2-3 machines simultaneously, sister integration gives you read-only visibility into all agents from one place.
+
+### Prerequisites
+
+Each machine must be running `overcode serve`:
+
+```bash
+# On each remote machine
+overcode serve
+```
+
+### Setup Option A: SSH Tunnels (Recommended)
+
+SSH tunnels keep all traffic encrypted with no API key needed.
+
+On the **monitoring machine**, add tunnels in `~/.ssh/config`:
+
+```
+Host macbook-pro
+  HostName 192.168.1.10
+  LocalForward 15337 localhost:8080
+
+Host desktop
+  HostName 192.168.1.20
+  LocalForward 25337 localhost:8080
+```
+
+Open the tunnels (or use `autossh` for persistence):
+
+```bash
+ssh -N macbook-pro &
+ssh -N desktop &
+```
+
+Configure sisters in `~/.overcode/config.yaml`:
+
+```yaml
+hostname: "mac-studio"
+
+sisters:
+  - name: "macbook-pro"
+    url: "http://localhost:15337"
+  - name: "desktop"
+    url: "http://localhost:25337"
+```
+
+### Setup Option B: Direct LAN with API Key
+
+Expose the web server directly on the LAN. Requires an API key for security.
+
+On each **remote machine**, add to `~/.overcode/config.yaml`:
+
+```yaml
+web:
+  api_key: "your-shared-secret"
+```
+
+Start the server bound to all interfaces:
+
+```bash
+overcode serve --host 0.0.0.0
+```
+
+On the **monitoring machine**, configure sisters:
+
+```yaml
+hostname: "mac-studio"
+
+sisters:
+  - name: "macbook-pro"
+    url: "http://192.168.1.10:8080"
+    api_key: "your-shared-secret"
+  - name: "desktop"
+    url: "http://192.168.1.20:8080"
+    api_key: "your-shared-secret"
+```
+
+### What It Looks Like
+
+When sisters are configured, a **Host** column appears in the TUI:
+
+```
+Host           Name       Status     Cost    Green    Activity
+mac-studio     agent1     running    $1.23   12m      Writing tests...
+mac-studio     agent2     waiting    $0.45    8m      (waiting for user)
+macbook-pro    agent3     running    $2.34   25m      Refactoring auth...
+desktop        agent5     running    $0.67    5m      Adding endpoint...
+```
+
+- Local agents appear first, remote agents grouped by host
+- Local hostname is dimmed, remote hostnames are bold magenta
+- The footer shows: `Sisters: macbook-pro(2/3) desktop(1/1)`
+- Remote agents are read-only (interactive actions are blocked)
+
+### Troubleshooting
+
+- **Sister shows `--`**: Check that `overcode serve` is running on the remote machine and the tunnel/URL is reachable
+- **401 Unauthorized**: API key mismatch between server and client config
+- **No Host column**: Sisters config is empty or missing — the column is auto-hidden
+
 ## Multiple Daemon Warning
 
 If the TUI detects multiple monitor daemon processes, it shows a warning every 5 seconds.

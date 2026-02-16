@@ -8,8 +8,9 @@ Example config:
     tmux_session: "agents"
 """
 
+import socket
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 import yaml
 
 
@@ -208,3 +209,69 @@ def get_time_context_config() -> dict:
         "office_end": tc.get("office_end", 17),
         "heartbeat_interval_minutes": tc.get("heartbeat_interval_minutes"),
     }
+
+
+def get_hostname() -> str:
+    """Get configured hostname or system hostname.
+
+    Config format in ~/.overcode/config.yaml:
+        hostname: "mac-studio"
+
+    Returns:
+        Configured hostname or socket.gethostname()
+    """
+    config = load_config()
+    return config.get("hostname") or socket.gethostname()
+
+
+def get_web_api_key() -> Optional[str]:
+    """Get API key for web server authentication.
+
+    Required when binding to non-localhost addresses.
+
+    Config format in ~/.overcode/config.yaml:
+        web:
+          api_key: "some-shared-secret"
+
+    Returns:
+        API key string or None if not configured
+    """
+    config = load_config()
+    web = config.get("web", {})
+    return web.get("api_key") or None
+
+
+def get_sisters_config() -> List[dict]:
+    """Get sister instance configuration for cross-machine monitoring.
+
+    Config format in ~/.overcode/config.yaml:
+        sisters:
+          - name: "macbook-pro"
+            url: "http://localhost:15337"
+          - name: "desktop"
+            url: "http://localhost:25337"
+            api_key: "secret"
+
+    Returns:
+        List of dicts with name, url, and optional api_key. Empty list if unconfigured.
+    """
+    config = load_config()
+    sisters = config.get("sisters", [])
+    if not isinstance(sisters, list):
+        return []
+
+    result = []
+    for s in sisters:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        url = s.get("url")
+        if not name or not url:
+            continue
+        entry = {"name": name, "url": url.rstrip("/")}
+        api_key = s.get("api_key")
+        if api_key:
+            entry["api_key"] = api_key
+        result.append(entry)
+
+    return result

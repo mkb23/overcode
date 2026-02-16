@@ -134,6 +134,10 @@ class Session:
     report_status: Optional[str] = None  # "success" | "failure"
     report_reason: str = ""
 
+    # Sister integration (#245) - remote agents from other machines
+    is_remote: bool = False
+    source_host: str = ""
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict
