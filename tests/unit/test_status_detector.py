@@ -731,6 +731,34 @@ class TestErrorDetection:
             f"Discussion of error patterns should NOT be STATUS_ERROR, got {status}: {activity}"
         )
 
+    def test_shell_prompt_detected_with_claude_scrollback(self):
+        """Shell prompt with Claude output (⏺, ⏵) in scrollback → TERMINATED.
+
+        After Claude exits, its output markers and status bar remain in
+        scrollback above the shell prompt. These must not prevent detection.
+        """
+        content = """
+⏺ Here's the fix I made:
+
+  ⎿ Updated the config file
+
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+                                                          1 MCP server failed · /mcp
+
+Resume this session with:
+claude --resume d0c16531-fef4-44ec-b3ba-bc64dda5027e
+mike@shirka overcode-main %
+"""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, content)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1)
+
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_TERMINATED, (
+            f"Shell prompt after exit should be TERMINATED, got {status}: {activity}"
+        )
+
     def test_content_changing_suppresses_error(self):
         """Even if error text is present, content changing means running (#216)."""
         # First poll with error content

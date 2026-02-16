@@ -401,10 +401,13 @@ class PollingStatusDetector:
 
         for pattern in shell_prompt_patterns:
             if re.search(pattern, last_line):
-                # Verify there's no Claude Code UI in recent lines
-                claude_ui_indicators = ['⏺', '›', '? for shortcuts', '⎿', '⏵']
-                recent_text = ' '.join(lines[-5:])
-                has_claude_ui = any(indicator in recent_text for indicator in claude_ui_indicators)
+                # Verify Claude Code's active prompt isn't showing nearby.
+                # Only check for '? for shortcuts' — it appears exclusively in
+                # Claude's live input prompt and never in scrollback after exit.
+                # Previous indicators (⏺, ⏵, ⎿, ›) persist in pane scrollback
+                # after exit and caused false negatives.
+                recent_text = ' '.join(lines[-3:])
+                has_claude_ui = '? for shortcuts' in recent_text
 
                 if not has_claude_ui:
                     return True
