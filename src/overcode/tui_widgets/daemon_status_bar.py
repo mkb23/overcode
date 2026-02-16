@@ -45,6 +45,7 @@ class DaemonStatusBar(Static):
         self._session_manager = session_manager
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
         self.show_cost: bool = False  # Show $ cost instead of token counts
+        self._usage_snapshot = None  # UsageSnapshot from UsageMonitor
         # Cached I/O results (populated by fetch_volatile_state, read by render)
         self._supervisor_running: bool = False
         self._summarizer_available: bool = False
@@ -108,6 +109,17 @@ class DaemonStatusBar(Static):
             if s.session_id not in self._asleep_session_ids
         ]
 
+    @staticmethod
+    def _usage_pct_style(pct: float) -> str:
+        """Return a Rich style string based on usage percentage."""
+        if pct >= 90:
+            return "bold red"
+        elif pct >= 75:
+            return "bold yellow"
+        elif pct >= 50:
+            return "yellow"
+        return "green"
+
     def render(self) -> Text:
         """Render daemon status bar.
 
@@ -115,6 +127,19 @@ class DaemonStatusBar(Static):
         All data comes from cached instance variables — NO I/O here.
         """
         content = Text()
+
+        # Usage section (prepended before Monitor)
+        snap = self._usage_snapshot
+        if snap is not None:
+            content.append("Usage: ", style="bold")
+            if snap.error:
+                content.append("--", style="dim")
+            else:
+                content.append("5h:", style="dim")
+                content.append(f"{snap.five_hour_pct:.0f}%", style=self._usage_pct_style(snap.five_hour_pct))
+                content.append(" 7d:", style="dim")
+                content.append(f"{snap.seven_day_pct:.0f}%", style=self._usage_pct_style(snap.seven_day_pct))
+            content.append(" │ ", style="dim")
 
         # Monitor Daemon status
         content.append("Monitor: ", style="bold")

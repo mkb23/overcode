@@ -55,6 +55,7 @@ from .web_server import (
 )
 from .config import get_default_standing_instructions
 from .status_history import read_agent_status_history
+from .usage_monitor import UsageMonitor
 from .presence_logger import read_presence_history, MACOS_APIS_AVAILABLE
 from .launcher import ClaudeLauncher
 from .implementations import RealTmux
@@ -315,6 +316,9 @@ class SupervisorTUI(
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
+        # Usage monitor (Claude Code subscription limits)
+        self._usage_monitor = UsageMonitor()
+
         # AI Summarizer - owned by TUI, not daemon (zero cost when TUI closed)
         self._summarizer = SummarizerComponent(
             tmux_session=tmux_session,
@@ -442,6 +446,7 @@ class SupervisorTUI(
             return
 
         # All I/O happens here in the worker thread
+        self._usage_monitor.fetch()  # Internally throttled to 90s
         monitor_state = get_monitor_daemon_state(self.tmux_session)
         daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
 
@@ -485,6 +490,7 @@ class SupervisorTUI(
         """Apply daemon status results on main thread (no I/O)."""
         daemon_bar.monitor_state = monitor_state
         daemon_bar._asleep_session_ids = asleep_ids
+        daemon_bar._usage_snapshot = self._usage_monitor.snapshot
         daemon_bar.refresh()
 
         # Check for multiple daemon processes (potential time tracking bug)
