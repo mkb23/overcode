@@ -642,6 +642,34 @@ class SupervisorTUI(
             self.focused_session_index = max(0, min(self.focused_session_index, len(widgets) - 1))
         return widgets[self.focused_session_index]
 
+    def _should_recover_focus(self) -> bool:
+        """Check if focus recovery should run.
+
+        Returns False when an overlay is visible (fullscreen preview, help)
+        or focus is already on a session/input widget.
+        """
+        # Don't steal focus from overlays
+        try:
+            fs = self.query_one("#fullscreen-preview")
+            if fs.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
+        try:
+            ho = self.query_one("#help-overlay")
+            if ho.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
+        # Only recover if focus is not on a session or input widget
+        if self.focused is None:
+            return True
+        if isinstance(self.focused, SessionSummary):
+            return False
+        if isinstance(self.focused, (Input, TextArea)):
+            return False
+        return True
+
     def watch_focused_session_index(self, new_index: int) -> None:
         """Auto-focus the widget at the new index, update preview, and sync tmux."""
         if self._suppress_focus_watcher:
@@ -872,10 +900,7 @@ class SupervisorTUI(
         # Proactive focus recovery: if focus was lost or landed on a non-interactive
         # widget (e.g. mouse click on preview pane when switching windows), restore
         # it within 250ms so the selection highlight never disappears.
-        if self.focused is None or (
-            not isinstance(self.focused, SessionSummary)
-            and not isinstance(self.focused, (Input, TextArea))
-        ):
+        if self._should_recover_focus():
             widget = self._get_focused_widget()
             if widget is not None:
                 widget.focus()
@@ -1681,10 +1706,7 @@ class SupervisorTUI(
 
         # Auto-recover if focus was lost or landed on a non-interactive widget
         # (e.g., clicking the terminal window focuses the preview pane)
-        if self.focused is None or (
-            not isinstance(self.focused, SessionSummary)
-            and not isinstance(self.focused, (Input, TextArea))
-        ):
+        if self._should_recover_focus():
             widget = self._get_focused_widget()
             if widget is not None:
                 widget.focus()
