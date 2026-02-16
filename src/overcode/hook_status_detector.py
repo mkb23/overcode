@@ -19,8 +19,10 @@ from pathlib import Path
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
+    DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_WAITING_USER,
+    STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
 )
 
@@ -72,17 +74,18 @@ class HookStatusDetector:
         stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD,
     ):
         self.tmux_session = tmux_session
+        self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
         self._patterns = patterns
         self._stale_threshold = stale_threshold_seconds
 
-        # Resolve state directory
+        # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
             self._state_dir = state_dir
         else:
             env_dir = os.environ.get("OVERCODE_STATE_DIR")
             if env_dir:
-                self._state_dir = Path(env_dir) / "sessions" / tmux_session
+                self._state_dir = Path(env_dir) / tmux_session
             else:
                 self._state_dir = Path.home() / ".overcode" / "sessions" / tmux_session
 
@@ -134,9 +137,11 @@ class HookStatusDetector:
 
         return data
 
-    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get pane content via the polling detector's tmux interface."""
-        return self._get_polling_fallback().get_pane_content(window, num_lines)
+        fallback = self._get_polling_fallback()
+        fallback.capture_lines = self.capture_lines
+        return fallback.get_pane_content(window, num_lines)
 
     def detect_status(self, session: "Session") -> Tuple[str, str, str]:
         """Detect session status using hook state files.
@@ -156,17 +161,72 @@ class HookStatusDetector:
 
         # Hook state is fresh → use it for status
         event = hook_state.get("event", "")
+
+        if event == "SessionEnd":
+            # SessionEnd fires both on actual exit AND on /clear.
+            # We know Claude reported ending, so do a targeted pane check:
+            # - Shell prompt on last line → actual exit → TERMINATED
+            # - Claude's prompt (› or >) on last line → /clear → fall back to polling
+            #
+            # We can't use the full polling _is_shell_prompt() here because it
+            # rejects shell prompts when Claude's ⏺ output is in the last 5 lines,
+            # which is always the case right after exit.
+            return self._detect_session_end_status(session)
+
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
+
+        # For child agents, Stop → waiting_oversight instead of waiting_user
+        if event == "Stop" and session.parent_session_id is not None:
+            status = STATUS_WAITING_OVERSIGHT
 
         # Read pane for activity enrichment and content return value
         pane_content = self.get_pane_content(session.tmux_window) or ""
 
         # Build activity description
-        activity = self._build_activity(event, hook_state, pane_content)
+        activity = self._build_activity(event, hook_state, pane_content, session)
 
         return status, activity, pane_content
 
-    def _build_activity(self, event: str, hook_state: dict, pane_content: str) -> str:
+    def _detect_session_end_status(self, session: "Session") -> Tuple[str, str, str]:
+        """Determine status after a SessionEnd hook event.
+
+        SessionEnd fires both on actual exit AND on /clear. We distinguish
+        by checking the last line of the pane:
+        - Shell prompt (user@host path %) → actual exit → TERMINATED
+        - Claude's prompt (› or >) → /clear was used → fall back to polling
+
+        Unlike the full polling _is_shell_prompt(), this does NOT reject shell
+        prompts when Claude's ⏺ output appears in nearby lines — that output
+        is always present right after exit and is irrelevant once we know
+        SessionEnd fired.
+        """
+        import re
+        from .status_patterns import strip_ansi
+
+        pane_content = self.get_pane_content(session.tmux_window) or ""
+        clean = strip_ansi(pane_content)
+        lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
+
+        if not lines:
+            return STATUS_TERMINATED, "Claude exited", pane_content
+
+        last_line = lines[-1]
+
+        # Shell prompt patterns (same as PollingStatusDetector._is_shell_prompt)
+        shell_prompt_patterns = [
+            r'\w+@\w+.*[%$]\s*$',
+            r'\[.*\][%$#]\s*$',
+            r'^[~\/].*[%$]\s*$',
+        ]
+
+        for pattern in shell_prompt_patterns:
+            if re.search(pattern, last_line):
+                return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
+
+        # No shell prompt → likely /clear, fall back to full polling
+        return self._get_polling_fallback().detect_status(session)
+
+    def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""
         if event == "PostToolUse":
             tool_name = hook_state.get("tool_name", "")
@@ -178,6 +238,8 @@ class HookStatusDetector:
             return "Processing prompt"
 
         if event == "Stop":
+            if session and session.parent_session_id is not None:
+                return "Waiting for oversight report"
             return "Waiting for user input"
 
         if event == "PermissionRequest":

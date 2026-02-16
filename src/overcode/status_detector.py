@@ -5,6 +5,7 @@ Status detection for Claude sessions in tmux.
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
+    DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
@@ -51,6 +52,7 @@ class PollingStatusDetector:
             patterns: StatusPatterns to use for detection (defaults to DEFAULT_PATTERNS)
         """
         self.tmux_session = tmux_session
+        self.capture_lines = DEFAULT_CAPTURE_LINES
 
         # Dependency injection for testability
         if tmux is None:
@@ -65,19 +67,23 @@ class PollingStatusDetector:
         self._previous_content: dict[int, str] = {}  # window -> content hash
         self._content_changed: dict[int, bool] = {}  # window -> changed flag
 
-    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane.
 
         Captures more content than requested and filters out trailing blank lines
         to find the actual content (Claude Code often has blank lines at bottom).
+
+        Args:
+            num_lines: Lines to return. 0 (default) uses self.capture_lines.
         """
-        content = self.tmux.capture_pane(self.tmux_session, window, lines=200)
+        effective_lines = num_lines or self.capture_lines
+        content = self.tmux.capture_pane(self.tmux_session, window, lines=effective_lines + 50)
         if content is None:
             return None
 
-        # Strip trailing blank lines, then return last num_lines
+        # Strip trailing blank lines, then return last effective_lines
         lines = content.rstrip().split('\n')
-        meaningful_lines = lines[-num_lines:] if len(lines) > num_lines else lines
+        meaningful_lines = lines[-effective_lines:] if len(lines) > effective_lines else lines
         return '\n'.join(meaningful_lines)
 
     def detect_status(self, session) -> Tuple[str, str, str]:
@@ -395,10 +401,13 @@ class PollingStatusDetector:
 
         for pattern in shell_prompt_patterns:
             if re.search(pattern, last_line):
-                # Verify there's no Claude Code UI in recent lines
-                claude_ui_indicators = ['⏺', '›', '? for shortcuts', '⎿', '⏵']
-                recent_text = ' '.join(lines[-5:])
-                has_claude_ui = any(indicator in recent_text for indicator in claude_ui_indicators)
+                # Verify Claude Code's active prompt isn't showing nearby.
+                # Only check for '? for shortcuts' — it appears exclusively in
+                # Claude's live input prompt and never in scrollback after exit.
+                # Previous indicators (⏺, ⏵, ⎿, ›) persist in pane scrollback
+                # after exit and caused false negatives.
+                recent_text = ' '.join(lines[-3:])
+                has_claude_ui = '? for shortcuts' in recent_text
 
                 if not has_claude_ui:
                     return True

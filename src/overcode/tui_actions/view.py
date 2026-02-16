@@ -8,32 +8,14 @@ from typing import TYPE_CHECKING
 
 from textual.css.query import NoMatches
 
+from ..status_constants import DEFAULT_CAPTURE_LINES
+
 if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay, FullscreenPreview
 
 
 class ViewActionsMixin:
     """Mixin providing view/display actions for SupervisorTUI."""
-
-    def _restore_focus_after_filter(self, focused_id: str | None) -> None:
-        """Restore focused_session_index after a visibility filter change.
-
-        When toggling done/terminated/asleep visibility, the widget list
-        changes but focused_session_index stays stale, causing cursor jumps.
-        """
-        if not focused_id:
-            return
-        from ..tui_widgets import SessionSummary
-        for i, w in enumerate(self._get_widgets_in_session_order()):
-            if w.session.id == focused_id:
-                self.focused_session_index = i
-                if isinstance(self.focused, SessionSummary):
-                    w.focus()
-                return
-        # Focused session was filtered out — clamp index
-        widgets = self._get_widgets_in_session_order()
-        if widgets:
-            self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
 
     def action_toggle_timeline(self) -> None:
         """Toggle timeline visibility."""
@@ -170,15 +152,10 @@ class ViewActionsMixin:
 
     def action_toggle_show_terminated(self) -> None:
         """Toggle showing killed/terminated sessions in the timeline."""
-        focused_widget = self._get_focused_widget()
-        focused_id = focused_widget.session.id if focused_widget else None
-
         self.show_terminated = not self.show_terminated
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
         self.update_session_widgets()
-
-        self._restore_focus_after_filter(focused_id)
 
         status = "visible" if self.show_terminated else "hidden"
         count = len(self._terminated_sessions)
@@ -189,15 +166,10 @@ class ViewActionsMixin:
 
     def action_toggle_show_done(self) -> None:
         """Toggle showing 'done' child agents (#244)."""
-        focused_widget = self._get_focused_widget()
-        focused_id = focused_widget.session.id if focused_widget else None
-
         self.show_done = not self.show_done
         self._prefs.show_done = self.show_done
         self._save_prefs()
         self.update_session_widgets()
-
-        self._restore_focus_after_filter(focused_id)
 
         status = "visible" if self.show_done else "hidden"
         done_count = sum(1 for s in self.sessions if getattr(s, 'status', None) == 'done')
@@ -208,16 +180,11 @@ class ViewActionsMixin:
 
     def action_toggle_hide_asleep(self) -> None:
         """Toggle hiding sleeping agents from display."""
-        focused_widget = self._get_focused_widget()
-        focused_id = focused_widget.session.id if focused_widget else None
-
         self.hide_asleep = not self.hide_asleep
         self._prefs.hide_asleep = self.hide_asleep
         self._save_prefs()
         self._update_subtitle()
         self.update_session_widgets()
-
-        self._restore_focus_after_filter(focused_id)
 
         # Count sleeping agents
         asleep_count = sum(1 for s in self.sessions if s.is_asleep)
@@ -230,28 +197,14 @@ class ViewActionsMixin:
         """Cycle through sort modes (#61)."""
         from ..tui_logic import cycle_sort_mode, get_sort_mode_display_name
 
-        # Remember the currently focused session before sorting
-        widgets = self._get_widgets_in_session_order()
-        focused_session_id = None
-        if widgets and 0 <= self.focused_session_index < len(widgets):
-            focused_session_id = widgets[self.focused_session_index].session.id
-
         # Use extracted logic for cycling
         self._prefs.sort_mode = cycle_sort_mode(self._prefs.sort_mode, self.SORT_MODES)
         self._save_prefs()
 
-        # Re-sort and refresh
+        # Re-sort and refresh (update_session_widgets handles focus preservation)
         self._sort_sessions()
         self.update_session_widgets()
         self._update_subtitle()
-
-        # Update focused_session_index to follow the same session at its new position
-        if focused_session_id:
-            widgets = self._get_widgets_in_session_order()
-            for i, widget in enumerate(widgets):
-                if widget.session.id == focused_session_id:
-                    self.focused_session_index = i
-                    break
 
         self.notify(f"Sort: {get_sort_mode_display_name(self._prefs.sort_mode)}", severity="information")
 
@@ -261,27 +214,46 @@ class ViewActionsMixin:
             self.notify("Collapse only works in tree sort mode (press S)", severity="warning")
             return
 
-        widgets = self._get_widgets_in_session_order()
-        if not widgets or not (0 <= self.focused_session_index < len(widgets)):
+        focused_widget = self._get_focused_widget()
+        if not focused_widget:
             return
 
-        focused_widget = widgets[self.focused_session_index]
         session_id = focused_widget.session.id
 
-        # Check if this session has children
+        # Check if this session has children — if not, walk up to the parent
         children = self.session_manager.get_children(session_id)
+        if not children:
+            parent_id = focused_widget.session.parent_session_id
+            if parent_id:
+                # Focused on a child — collapse/expand the parent's children instead
+                session_id = parent_id
+                children = self.session_manager.get_children(session_id)
+
         if not children:
             self.notify("No children to collapse", severity="warning")
             return
 
+        # Resolve parent name for notification
+        if session_id == focused_widget.session.id:
+            parent_name = focused_widget.session.name
+        else:
+            parent_session = self.session_manager.get_session(session_id)
+            parent_name = parent_session.name if parent_session else session_id[:8]
+
         if session_id in self.collapsed_parents:
             self.collapsed_parents.discard(session_id)
-            self.notify(f"Expanded children of {focused_widget.session.name}", severity="information")
+            self.notify(f"Expanded children of {parent_name}", severity="information")
         else:
             self.collapsed_parents.add(session_id)
-            self.notify(f"Collapsed children of {focused_widget.session.name}", severity="information")
+            # Move focus to the parent so the user isn't left on a now-hidden widget
+            widgets = self._get_widgets_in_session_order()
+            for i, w in enumerate(widgets):
+                if w.session.id == session_id:
+                    self.focused_session_index = i
+                    break
+            self.notify(f"Collapsed children of {parent_name}", severity="information")
 
-        # Re-sort and refresh to apply filtering
+        # Re-sort and refresh (update_session_widgets handles focus preservation)
         self._sort_sessions()
         self.update_session_widgets()
 
@@ -469,9 +441,10 @@ class ViewActionsMixin:
             self.notify("No tmux window for this agent", severity="warning")
             return
 
-        # Do a fresh deep capture (500 lines) for scrollback review
+        # Do a fresh deep capture for scrollback review
+        capture_depth = max(DEFAULT_CAPTURE_LINES, self.detector.capture_lines)
         raw = self.detector.polling.tmux.capture_pane(
-            self.tmux_session, session.tmux_window, lines=500
+            self.tmux_session, session.tmux_window, lines=capture_depth
         )
         if raw is None:
             self.notify("Could not capture pane output", severity="warning")

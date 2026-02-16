@@ -9,6 +9,13 @@ from typing import Tuple
 
 
 # =============================================================================
+# Capture Defaults
+# =============================================================================
+
+DEFAULT_CAPTURE_LINES = 500  # Base capture depth for display-oriented pane captures
+
+
+# =============================================================================
 # Agent Status Values
 # =============================================================================
 
@@ -22,6 +29,7 @@ STATUS_WAITING_HEARTBEAT = "waiting_heartbeat"  # Waiting but heartbeat will aut
 STATUS_ERROR = "error"  # API timeout, etc. (#22)
 STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-triggered run (timeline only)
 STATUS_DONE = "done"  # Child agent completed its delegated work (#244)
+STATUS_WAITING_OVERSIGHT = "waiting_oversight"  # Child stopped, awaiting oversight report
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -35,6 +43,7 @@ ALL_STATUSES = [
     STATUS_ERROR,
     STATUS_HEARTBEAT_START,
     STATUS_DONE,
+    STATUS_WAITING_OVERSIGHT,
 ]
 
 
@@ -75,6 +84,7 @@ STATUS_EMOJIS = {
     STATUS_ERROR: "🟣",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
     STATUS_DONE: "☑️",  # Child agent completed delegated work (#244)
+    STATUS_WAITING_OVERSIGHT: "👁️",  # Waiting for oversight report
 }
 
 
@@ -98,6 +108,7 @@ STATUS_COLORS = {
     STATUS_ERROR: "magenta",  # Purple for errors (#22)
     STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
     STATUS_DONE: "dim",  # Done child agent (#244)
+    STATUS_WAITING_OVERSIGHT: "yellow",  # Waiting for oversight report
 }
 
 
@@ -121,6 +132,7 @@ STATUS_SYMBOLS = {
     STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
     STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
+    STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
 }
 
 
@@ -144,6 +156,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_ERROR: "▓",  # Dense shade (#22)
     STATUS_HEARTBEAT_START: "💚",  # Green heart emoji - rendered specially by timeline widget
     STATUS_DONE: "✓",  # Done child agent (#244)
+    STATUS_WAITING_OVERSIGHT: "▒",  # Waiting for oversight report
 }
 
 
@@ -228,3 +241,8 @@ def is_asleep(status: str) -> bool:
 def is_done(status: str) -> bool:
     """Check if status indicates child agent completed its work (#244)."""
     return status == STATUS_DONE
+
+
+def is_waiting_oversight(status: str) -> bool:
+    """Check if status indicates child is waiting for oversight report."""
+    return status == STATUS_WAITING_OVERSIGHT

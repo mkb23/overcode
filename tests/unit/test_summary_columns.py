@@ -154,6 +154,7 @@ def _make_ctx(**overrides) -> ColumnContext:
         background_bash_count=0,
         child_count=0,
         status_changed_at=None,
+        max_name_width=16,
         max_repo_width=10,
         max_branch_width=10,
     )

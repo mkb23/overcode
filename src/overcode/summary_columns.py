@@ -91,8 +91,13 @@ class ColumnContext:
     status_changed_at: Optional[datetime]
 
     # App-level alignment widths
+    max_name_width: int
     max_repo_width: int
     max_branch_width: int
+
+    # Oversight countdown
+    any_has_oversight_timeout: bool = False
+    oversight_deadline: Optional[str] = None
 
     # Sister integration (#245)
     source_host: str = ""
@@ -353,6 +358,53 @@ def render_standing_orders(ctx: ColumnContext) -> ColumnOutput:
             return [(" 📋", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
     else:
         return [(" ➖", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
+
+
+def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
+    """Oversight countdown timer. Hidden if no agent has a timeout."""
+    if not ctx.any_has_oversight_timeout:
+        return None
+
+    from .status_constants import STATUS_WAITING_OVERSIGHT
+    status = ctx.stats.current_state if hasattr(ctx.stats, 'current_state') else ""
+
+    # Check session status as well (session object may have the status)
+    session_status = getattr(ctx.session, 'status', '')
+    is_oversight = session_status == STATUS_WAITING_OVERSIGHT or status == STATUS_WAITING_OVERSIGHT
+
+    if not is_oversight:
+        return [("        ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+    deadline_str = ctx.oversight_deadline
+    if not deadline_str:
+        return [(" ⏳ --:--", ctx.mono(f"yellow{ctx.bg}", "dim"))]
+
+    try:
+        deadline = datetime.fromisoformat(deadline_str)
+        remaining = (deadline - datetime.now()).total_seconds()
+        if remaining <= 0:
+            return [(" ⏳ 0s  ", ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
+
+        if remaining < 60:
+            text = f" ⏳ {remaining:>3.0f}s"
+        elif remaining < 3600:
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            text = f" ⏳{mins:>2}m{secs:02d}s"
+        else:
+            hrs = int(remaining // 3600)
+            mins = int((remaining % 3600) // 60)
+            text = f" ⏳{hrs:>2}h{mins:02d}m"
+
+        if remaining < 30:
+            style = ctx.mono(f"bold blink red{ctx.bg}", "bold")
+        elif remaining < 60:
+            style = ctx.mono(f"bold red{ctx.bg}", "bold")
+        else:
+            style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+        return [(text, style)]
+    except (ValueError, TypeError):
+        return [(" ⏳ --:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
 def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
@@ -644,6 +696,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Orders", render_plain=render_orders_plain),
     SummaryColumn(id="heartbeat", group="supervision", detail_levels=ALL, render=render_heartbeat,
                   label="Heartbeat", render_plain=render_heartbeat_plain),
+    SummaryColumn(id="oversight_countdown", group="supervision", detail_levels=ALL, render=render_oversight_countdown),
 
     # Priority group
     SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
@@ -659,6 +712,7 @@ def build_cli_context(
     session, stats, claude_stats, git_diff_stats,
     status: str, bg_bash_count: int, live_sub_count: int,
     any_has_budget: bool = False, child_count: int = 0,
+    any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -714,8 +768,11 @@ def build_cli_context(
         background_bash_count=bg_bash_count,
         child_count=child_count,
         status_changed_at=status_changed_at,
+        max_name_width=16,
         max_repo_width=10,
         max_branch_width=10,
+        any_has_oversight_timeout=any_has_oversight_timeout,
+        oversight_deadline=oversight_deadline,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
     )

@@ -72,6 +72,8 @@ class SessionSummary(Static, can_focus=True):
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
         self.show_cost: bool = False  # Show $ cost instead of token counts
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
+        self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
+        self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
@@ -100,6 +102,7 @@ class SessionSummary(Static, can_focus=True):
         self.tree_depth: int = 0  # Set by TUI when sort mode is by_tree
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
         self.child_count: int = 0  # Number of direct children — set by TUI
+        self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
@@ -204,7 +207,7 @@ class SessionSummary(Static, can_focus=True):
         if content:
             # Keep all lines including blanks for proper formatting, just strip trailing blanks
             lines = content.rstrip().split('\n')
-            self.pane_content = lines[-200:] if lines else []  # Keep last 200 lines for scrollback
+            self.pane_content = lines if lines else []
             # Extract live counts from status bar (#177)
             self.background_bash_count = extract_background_bash_count(content)
             self.live_subagent_count = extract_live_subagent_count(content)
@@ -271,21 +274,27 @@ class SessionSummary(Static, can_focus=True):
         else:
             perm_emoji = "👮"
 
-        # Name width varies by detail level
+        # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
-            name_width = 24
+            name_cap = 24
         elif self.summary_detail == "med":
-            name_width = 20
+            name_cap = 20
         else:
-            name_width = 16
+            name_cap = 16
+        raw_max = getattr(self.app, 'max_name_width', name_cap)
+        name_width = max(8, min(raw_max, name_cap))
+
+        # Fold indicator for parents with collapsed children
+        fold_suffix = " ▶" if self.children_collapsed else ""
 
         # Apply tree indentation when in tree sort mode (#244)
         if self.tree_prefix:
             tree_str = self.tree_prefix
-            available = name_width - len(tree_str)
-            display_name = (tree_str + s.name[:available]).ljust(name_width)
+            available = name_width - len(tree_str) - len(fold_suffix)
+            display_name = (tree_str + s.name[:available] + fold_suffix).ljust(name_width)
         else:
-            display_name = s.name[:name_width].ljust(name_width)
+            available = name_width - len(fold_suffix)
+            display_name = (s.name[:available] + fold_suffix).ljust(name_width)
 
         return ColumnContext(
             session=s,
@@ -317,8 +326,11 @@ class SessionSummary(Static, can_focus=True):
             background_bash_count=self.background_bash_count,
             child_count=self.child_count,
             status_changed_at=self._status_changed_at,
+            max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
+            any_has_oversight_timeout=self.any_has_oversight_timeout,
+            oversight_deadline=self.oversight_deadline,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

@@ -122,10 +122,17 @@ class Session:
     cost_budget_usd: float = 0.0
 
     # Hook-based status detection - per-agent toggle (#5)
-    hook_status_detection: bool = False
+    hook_status_detection: bool = True
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
+
+    # Oversight system - report + timeout for child agents
+    oversight_policy: str = "wait"  # wait | fail | timeout
+    oversight_timeout_seconds: float = 0.0  # 0 = indefinite
+    oversight_deadline: Optional[str] = None  # ISO timestamp, set on entering waiting_oversight
+    report_status: Optional[str] = None  # "success" | "failure"
+    report_reason: str = ""
 
     # Sister integration (#245) - remote agents from other machines
     is_remote: bool = False

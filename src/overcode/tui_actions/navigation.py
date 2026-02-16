@@ -19,11 +19,6 @@ class NavigationActionsMixin:
         if not widgets:
             return
         self.focused_session_index = (self.focused_session_index + 1) % len(widgets)
-        target_widget = widgets[self.focused_session_index]
-        target_widget.focus()
-        if self.view_mode == "list_preview":
-            self._update_preview()
-        self._sync_tmux_window(target_widget)
 
     def action_focus_previous_session(self) -> None:
         """Focus the previous session in the list."""
@@ -31,11 +26,6 @@ class NavigationActionsMixin:
         if not widgets:
             return
         self.focused_session_index = (self.focused_session_index - 1) % len(widgets)
-        target_widget = widgets[self.focused_session_index]
-        target_widget.focus()
-        if self.view_mode == "list_preview":
-            self._update_preview()
-        self._sync_tmux_window(target_widget)
 
     def action_jump_to_attention(self) -> None:
         """Jump to next session needing attention.
@@ -102,10 +92,7 @@ class NavigationActionsMixin:
                 self.focused_session_index = i
                 break
 
-        target_widget.focus()
-        if self.view_mode == "list_preview":
-            self._update_preview()
-        self._sync_tmux_window(target_widget)
+        # Watcher handles .focus(), preview update, and tmux sync
 
         # Show position indicator
         pos = self._attention_jump_index + 1

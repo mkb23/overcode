@@ -60,6 +60,7 @@ from .status_constants import (
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
     STATUS_WAITING_HEARTBEAT,
+    STATUS_WAITING_OVERSIGHT,
     is_green_status,
 )
 from .status_detector import StatusDetector, PollingStatusDetector
@@ -376,6 +377,10 @@ class MonitorDaemon:
             parent_name=self._get_parent_name(session),
             depth=self.session_manager.compute_depth(session),
             children_count=len(self.session_manager.get_children(session.id)),
+            # Oversight system
+            oversight_policy=getattr(session, 'oversight_policy', 'wait') or 'wait',
+            oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
+            oversight_deadline=getattr(session, 'oversight_deadline', None),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -629,6 +634,31 @@ class MonitorDaemon:
             self.session_manager.update_session_status(session.id, "terminated")
             self.log.info(f"Auto-archived done agent: {session.name}")
 
+    def _enforce_oversight_timeouts(self, sessions: list) -> None:
+        """Enforce oversight timeouts for waiting_oversight sessions."""
+        now = datetime.now()
+        for session in sessions:
+            if session.status != STATUS_WAITING_OVERSIGHT:
+                continue
+            policy = getattr(session, 'oversight_policy', 'wait') or 'wait'
+            if policy != "timeout":
+                continue
+            deadline_str = getattr(session, 'oversight_deadline', None)
+            if not deadline_str:
+                continue
+            try:
+                deadline = datetime.fromisoformat(deadline_str)
+            except (ValueError, TypeError):
+                continue
+            if now >= deadline:
+                self.session_manager.update_session(
+                    session.id,
+                    report_status="failure",
+                    report_reason="Oversight timeout expired",
+                )
+                self.session_manager.update_session_status(session.id, "done")
+                self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
+
     def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
         """Publish current state to JSON file."""
         now = datetime.now()
@@ -858,6 +888,9 @@ class MonitorDaemon:
 
                 # Publish state
                 self._publish_state(session_states)
+
+                # Enforce oversight timeouts every loop
+                self._enforce_oversight_timeouts(sessions)
 
                 # Auto-archive "done" agents after 1 hour (#244)
                 if self.state.loop_count % 60 == 0:

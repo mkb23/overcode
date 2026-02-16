@@ -269,33 +269,42 @@ class ClaudeLauncher:
 
         # Detect terminated sessions (tmux window gone but session still tracked)
         if detect_terminated:
-            from .follow_mode import _check_hook_stop
+            from .follow_mode import _check_hook_stop, _check_report
+            from .status_constants import STATUS_WAITING_OVERSIGHT
 
             newly_terminated = []
             for session in my_sessions:
                 # Only check non-terminated sessions
                 if session.status not in ("terminated", "done"):
                     if not self.tmux.window_exists(session.tmux_window):
-                        # Child agents with Stop hook → "done", not "terminated" (#244)
+                        # Child agents with Stop hook: check for report first
                         if (session.parent_session_id is not None
                                 and _check_hook_stop(self.tmux.session_name, session.name)):
-                            self.sessions.update_session_status(session.id, "done")
-                            session.status = "done"
+                            report = _check_report(self.tmux.session_name, session.name)
+                            if report:
+                                self.sessions.update_session_status(session.id, "done")
+                                session.status = "done"
+                            else:
+                                self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
+                                session.status = STATUS_WAITING_OVERSIGHT
                         else:
                             self.sessions.update_session_status(session.id, "terminated")
                             session.status = "terminated"
                             newly_terminated.append(session.name)
 
-            # Detect "done" child agents via hook state (#244)
-            # Child agents fire a Stop hook when Claude exits normally.
-            # Without follow mode, nobody reads the hook state — fix that here.
-            # Also retroactively fix children already marked "terminated".
+            # Detect child agents with Stop hook but no report → waiting_oversight (#244)
+            # Also handle children that already have reports → done
             for session in my_sessions:
-                if (session.status in ("running", "terminated")
+                if (session.status in ("running", "terminated", STATUS_WAITING_OVERSIGHT)
                         and session.parent_session_id is not None
                         and _check_hook_stop(self.tmux.session_name, session.name)):
-                    self.sessions.update_session_status(session.id, "done")
-                    session.status = "done"
+                    report = _check_report(self.tmux.session_name, session.name)
+                    if report:
+                        self.sessions.update_session_status(session.id, "done")
+                        session.status = "done"
+                    elif session.status != STATUS_WAITING_OVERSIGHT:
+                        self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
+                        session.status = STATUS_WAITING_OVERSIGHT
 
             if newly_terminated:
                 print(f"Detected {len(newly_terminated)} terminated session(s): {', '.join(newly_terminated)}")

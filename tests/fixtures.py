@@ -83,7 +83,8 @@ class MockSession:
     standing_instructions: str = ""
     standing_orders_complete: bool = False
     stats: MockSessionStats = field(default_factory=MockSessionStats)
-    hook_status_detection: bool = False
+    hook_status_detection: bool = True
+    parent_session_id: Optional[str] = None
 
 
 # =============================================================================

@@ -102,6 +102,11 @@ class SessionDaemonState:
     depth: int = 0  # Computed by daemon each cycle
     children_count: int = 0  # Computed by daemon each cycle
 
+    # Oversight system
+    oversight_policy: str = "wait"
+    oversight_timeout_seconds: float = 0.0
+    oversight_deadline: Optional[str] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -151,6 +156,10 @@ class SessionDaemonState:
             "parent_name": self.parent_name,
             "depth": self.depth,
             "children_count": self.children_count,
+            # Oversight system
+            "oversight_policy": self.oversight_policy,
+            "oversight_timeout_seconds": self.oversight_timeout_seconds,
+            "oversight_deadline": self.oversight_deadline,
         }
 
     @classmethod
@@ -203,6 +212,10 @@ class SessionDaemonState:
             parent_name=data.get("parent_name"),
             depth=data.get("depth", 0),
             children_count=data.get("children_count", 0),
+            # Oversight system
+            oversight_policy=data.get("oversight_policy", "wait"),
+            oversight_timeout_seconds=data.get("oversight_timeout_seconds", 0.0),
+            oversight_deadline=data.get("oversight_deadline"),
         )
 
 
