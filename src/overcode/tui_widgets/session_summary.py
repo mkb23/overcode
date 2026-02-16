@@ -274,13 +274,15 @@ class SessionSummary(Static, can_focus=True):
         else:
             perm_emoji = "👮"
 
-        # Name width varies by detail level
+        # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
-            name_width = 24
+            name_cap = 24
         elif self.summary_detail == "med":
-            name_width = 20
+            name_cap = 20
         else:
-            name_width = 16
+            name_cap = 16
+        raw_max = getattr(self.app, 'max_name_width', name_cap)
+        name_width = max(8, min(raw_max, name_cap))
 
         # Fold indicator for parents with collapsed children
         fold_suffix = " ▶" if self.children_collapsed else ""
@@ -324,6 +326,7 @@ class SessionSummary(Static, can_focus=True):
             background_bash_count=self.background_bash_count,
             child_count=self.child_count,
             status_changed_at=self._status_changed_at,
+            max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
             any_has_oversight_timeout=self.any_has_oversight_timeout,

@@ -91,6 +91,7 @@ class ColumnContext:
     status_changed_at: Optional[datetime]
 
     # App-level alignment widths
+    max_name_width: int
     max_repo_width: int
     max_branch_width: int
 
@@ -740,6 +741,7 @@ def build_cli_context(
         background_bash_count=bg_bash_count,
         child_count=child_count,
         status_changed_at=status_changed_at,
+        max_name_width=16,
         max_repo_width=10,
         max_branch_width=10,
         any_has_oversight_timeout=any_has_oversight_timeout,
