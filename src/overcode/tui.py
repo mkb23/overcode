@@ -156,7 +156,7 @@ class SupervisorTUI(
         # Manual refresh (useful in diagnostics mode)
         ("r", "manual_refresh", "Refresh"),
         # Agent management
-        ("x", "kill_focused", "Kill agent"),
+        ("x", "kill_focused", "Kill/Clean up"),
         ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
         # Send Enter to focused agent (for approvals)
@@ -1521,6 +1521,42 @@ class SupervisorTUI(
                     pass
         else:
             self.notify(f"Failed to kill agent: {session_name}", severity="error")
+
+    def _execute_cleanup(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
+        """Clean up a terminated/done agent: archive and remove from display."""
+        self.session_manager.delete_session(session_id)
+
+        self.notify(f"Cleaned up agent: {session_name}", severity="information")
+
+        # Remove from caches
+        if session_id in self._terminated_sessions:
+            del self._terminated_sessions[session_id]
+        if session_id in self._sessions_cache:
+            del self._sessions_cache[session_id]
+        if session_id in self.expanded_states:
+            del self.expanded_states[session_id]
+
+        # Remove the widget
+        focused.remove()
+
+        # Clear preview pane and focus next agent if in list_preview mode
+        if self.view_mode == "list_preview":
+            try:
+                preview = self.query_one("#preview-pane", PreviewPane)
+                preview.session_name = ""
+                preview.content_lines = []
+                try:
+                    content_widget = preview.query_one("#preview-content", Static)
+                    content_widget.update("")
+                except Exception:
+                    pass
+                widgets = list(self.query(SessionSummary))
+                if widgets:
+                    self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
+                    widgets[self.focused_session_index].focus()
+                    self._update_preview()
+            except NoMatches:
+                pass
 
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).

@@ -178,7 +178,11 @@ class SessionActionsMixin:
         focused.refresh()
 
     def action_kill_focused(self) -> None:
-        """Kill the currently focused agent (requires confirmation)."""
+        """Kill or clean up the currently focused agent (requires confirmation).
+
+        Context-sensitive: if the agent is terminated/done, cleans it up
+        (archives and removes from display). Otherwise kills it.
+        """
         from ..tui_widgets import SessionSummary
         focused = self.focused
         if not isinstance(focused, SessionSummary):
@@ -187,12 +191,23 @@ class SessionActionsMixin:
 
         session_name = focused.session.name
         session_id = focused.session.id
-        self._confirm_double_press(
-            "kill",
-            f"Press x again to kill '{session_name}'",
-            lambda: self._execute_kill(focused, session_name, session_id),
-            session_name=session_name,
-        )
+        session_status = focused.session.status
+
+        # Terminated/done agents: clean up (archive + remove) instead of kill
+        if session_status in ("terminated", "done"):
+            self._confirm_double_press(
+                "cleanup",
+                f"Press x again to clean up '{session_name}'",
+                lambda: self._execute_cleanup(focused, session_name, session_id),
+                session_name=session_name,
+            )
+        else:
+            self._confirm_double_press(
+                "kill",
+                f"Press x again to kill '{session_name}'",
+                lambda: self._execute_kill(focused, session_name, session_id),
+                session_name=session_name,
+            )
 
     def action_restart_focused(self) -> None:
         """Restart the currently focused agent (requires confirmation).
