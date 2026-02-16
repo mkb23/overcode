@@ -281,6 +281,8 @@ class SupervisorTUI(
         self._suppress_focus_watcher = False
         # Track previous status of each session for detecting transitions to stalled state
         self._previous_statuses: dict[str, str] = {}
+        # Timers for auto-dismissing bell when the stalled agent is already focused
+        self._bell_dismiss_timers: dict[str, object] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
@@ -898,6 +900,15 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
+                # Auto-dismiss bell after 5s if this agent is already being viewed
+                if is_unvisited_stalled and self.view_mode == "list_preview":
+                    focused = self._get_focused_widget()
+                    if focused is not None and focused.session.id == session_id:
+                        self._schedule_bell_dismiss(session_id)
+                elif not is_unvisited_stalled and session_id in self._bell_dismiss_timers:
+                    # Bell cleared by other means — cancel pending timer
+                    self._bell_dismiss_timers.pop(session_id, None)
+
                 # Pass None for claude_stats/git_diff — those come from the slow path
                 widget.apply_status_no_refresh(status, activity, content, None, None)
                 widget.refresh()
@@ -1161,6 +1172,8 @@ class SupervisorTUI(
         session_id = message.session_id
         self._prefs.visited_stalled_agents.add(session_id)
         self._save_prefs()
+        # Cancel any pending auto-dismiss timer
+        self._bell_dismiss_timers.pop(session_id, None)
 
         # Update the widget's state
         for widget in self.query(SessionSummary):
@@ -1168,6 +1181,28 @@ class SupervisorTUI(
                 widget.is_unvisited_stalled = False
                 widget.refresh()
                 break
+
+    def _schedule_bell_dismiss(self, session_id: str) -> None:
+        """Auto-dismiss bell after 5s if the agent is already being viewed."""
+        # Cancel any existing timer for this session
+        self._bell_dismiss_timers.pop(session_id, None)
+
+        def _dismiss() -> None:
+            self._bell_dismiss_timers.pop(session_id, None)
+            # Only dismiss if still focused on this agent
+            focused = self._get_focused_widget()
+            if focused is None or focused.session.id != session_id:
+                return
+            # Mark as visited
+            self._prefs.visited_stalled_agents.add(session_id)
+            self._save_prefs()
+            for widget in self.query(SessionSummary):
+                if widget.session.id == session_id:
+                    widget.is_unvisited_stalled = False
+                    widget.refresh()
+                    break
+
+        self._bell_dismiss_timers[session_id] = self.set_timer(5.0, _dismiss)
 
     def on_session_summary_session_selected(self, message: SessionSummary.SessionSelected) -> None:
         """Handle session selection - update .selected class to preserve highlight when unfocused"""
