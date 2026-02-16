@@ -437,7 +437,7 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
         return [
             (f" 💓{freq_str:>5}", ctx.mono(f"dim{ctx.bg}", "dim")),
-            ("    ⏸ ", ctx.mono(f"bold yellow{ctx.bg}", "bold")),
+            ("     ⏸ ", ctx.mono(f"bold yellow{ctx.bg}", "bold")),
         ]
     else:
         return [(" 💓    - @--:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
