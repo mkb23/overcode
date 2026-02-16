@@ -122,7 +122,7 @@ class Session:
     cost_budget_usd: float = 0.0
 
     # Hook-based status detection - per-agent toggle (#5)
-    hook_status_detection: bool = False
+    hook_status_detection: bool = True
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
