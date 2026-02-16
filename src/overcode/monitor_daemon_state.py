@@ -261,6 +261,12 @@ class MonitorDaemonState:
     supervisor_claude_started_at: Optional[str] = None  # ISO timestamp
     supervisor_claude_total_run_seconds: float = 0.0   # Cumulative run time
 
+    # Summarizer status
+    summarizer_enabled: bool = False
+    summarizer_available: bool = False
+    summarizer_calls: int = 0
+    summarizer_cost_usd: float = 0.0
+
     # Relay status (for remote monitoring)
     relay_enabled: bool = False
     relay_last_push: Optional[str] = None  # ISO timestamp of last successful push
@@ -291,6 +297,10 @@ class MonitorDaemonState:
             "supervisor_claude_running": self.supervisor_claude_running,
             "supervisor_claude_started_at": self.supervisor_claude_started_at,
             "supervisor_claude_total_run_seconds": self.supervisor_claude_total_run_seconds,
+            "summarizer_enabled": self.summarizer_enabled,
+            "summarizer_available": self.summarizer_available,
+            "summarizer_calls": self.summarizer_calls,
+            "summarizer_cost_usd": self.summarizer_cost_usd,
             "relay_enabled": self.relay_enabled,
             "relay_last_push": self.relay_last_push,
             "relay_last_status": self.relay_last_status,
@@ -327,6 +337,10 @@ class MonitorDaemonState:
             supervisor_claude_running=data.get("supervisor_claude_running", False),
             supervisor_claude_started_at=data.get("supervisor_claude_started_at"),
             supervisor_claude_total_run_seconds=data.get("supervisor_claude_total_run_seconds", 0.0),
+            summarizer_enabled=data.get("summarizer_enabled", False),
+            summarizer_available=data.get("summarizer_available", False),
+            summarizer_calls=data.get("summarizer_calls", 0),
+            summarizer_cost_usd=data.get("summarizer_cost_usd", 0.0),
             relay_enabled=data.get("relay_enabled", False),
             relay_last_push=data.get("relay_last_push"),
             relay_last_status=data.get("relay_last_status", "disabled"),
