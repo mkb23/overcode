@@ -1558,7 +1558,7 @@ def serve(
     ] = 8080,
     session: SessionOption = "agents",
 ):
-    """Start web dashboard server for remote monitoring.
+    """Start web dashboard server (alias for 'overcode web').
 
     Binds to localhost by default. Use --host 0.0.0.0 for LAN access
     (requires web.api_key in config for security).
@@ -1581,18 +1581,21 @@ def web(
     port: Annotated[
         int, typer.Option("--port", "-p", help="Port to listen on")
     ] = 8080,
+    session: SessionOption = "agents",
 ):
-    """Launch analytics web dashboard for browsing historical data.
+    """Launch web dashboard with analytics and live monitoring.
 
-    A lightweight web app for exploring session history, timeline
-    visualization, and efficiency metrics. Uses Chart.js for
-    interactive charts with dark theme matching the TUI.
+    Serves both the historical analytics dashboard (at /) and the
+    live monitoring dashboard (at /dashboard), plus the /api/status
+    endpoint used by sister instances.
 
     Features:
         - Dashboard with summary stats and daily activity charts
         - Session browser with sortable table
         - Timeline view with agent status and user presence
         - Efficiency metrics with cost analysis
+        - Live agent monitoring at /dashboard
+        - Sister-compatible /api/status endpoint
 
     Time range presets can be configured in ~/.overcode/config.yaml:
 
@@ -1607,9 +1610,9 @@ def web(
         overcode web --port 3000        # Custom port
         overcode web --host 0.0.0.0     # Listen on all interfaces
     """
-    from .web_server import run_analytics_server
+    from .web_server import run_server
 
-    run_analytics_server(host=host, port=port)
+    run_server(host=host, port=port, tmux_session=session)
 
 
 

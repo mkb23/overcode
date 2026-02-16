@@ -206,8 +206,33 @@ class TestOvercodeHandler:
         """Handler should have do_GET and helper methods."""
         assert hasattr(OvercodeHandler, 'do_GET')
         assert hasattr(OvercodeHandler, '_serve_dashboard')
+        assert hasattr(OvercodeHandler, '_serve_analytics_dashboard')
+        assert hasattr(OvercodeHandler, '_serve_chartjs')
         assert hasattr(OvercodeHandler, '_serve_json')
+        assert hasattr(OvercodeHandler, '_parse_datetime')
         assert hasattr(OvercodeHandler, 'log_message')
+
+    def test_parse_datetime_returns_none_for_none(self):
+        """_parse_datetime should return None for None input."""
+        handler = MagicMock(spec=OvercodeHandler)
+        result = OvercodeHandler._parse_datetime(handler, None)
+        assert result is None
+
+    def test_parse_datetime_returns_none_for_invalid(self):
+        """_parse_datetime should return None for invalid input."""
+        handler = MagicMock(spec=OvercodeHandler)
+        result = OvercodeHandler._parse_datetime(handler, "not-a-date")
+        assert result is None
+
+    def test_parse_datetime_parses_valid_iso(self):
+        """_parse_datetime should parse valid ISO datetime."""
+        from datetime import datetime
+        handler = MagicMock(spec=OvercodeHandler)
+        result = OvercodeHandler._parse_datetime(handler, "2024-01-15T10:30:00")
+        assert result is not None
+        assert result.year == 2024
+        assert result.month == 1
+        assert result.day == 15
 
     def test_log_message_suppresses_api_success(self):
         """Should suppress successful API poll logs."""
@@ -343,55 +368,6 @@ class TestToggleWebServer:
         assert "Started" in message
 
 
-class TestAnalyticsHandler:
-    """Tests for AnalyticsHandler class."""
-
-    def test_handler_has_tmux_session_attribute(self):
-        """Handler should have tmux_session class attribute."""
-        from overcode.web_server import AnalyticsHandler
-        assert hasattr(AnalyticsHandler, 'tmux_session')
-        assert AnalyticsHandler.tmux_session == "agents"
-
-    def test_handler_has_required_methods(self):
-        """Handler should have do_GET and helper methods."""
-        from overcode.web_server import AnalyticsHandler
-        assert hasattr(AnalyticsHandler, 'do_GET')
-        assert hasattr(AnalyticsHandler, '_serve_analytics_dashboard')
-        assert hasattr(AnalyticsHandler, '_serve_json')
-        assert hasattr(AnalyticsHandler, '_parse_datetime')
-
-    def test_parse_datetime_returns_none_for_none(self):
-        """_parse_datetime should return None for None input."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        result = AnalyticsHandler._parse_datetime(handler, None)
-
-        assert result is None
-
-    def test_parse_datetime_returns_none_for_invalid(self):
-        """_parse_datetime should return None for invalid input."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        result = AnalyticsHandler._parse_datetime(handler, "not-a-date")
-
-        assert result is None
-
-    def test_parse_datetime_parses_valid_iso(self):
-        """_parse_datetime should parse valid ISO datetime."""
-        from overcode.web_server import AnalyticsHandler
-        from datetime import datetime
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        result = AnalyticsHandler._parse_datetime(handler, "2024-01-15T10:30:00")
-
-        assert result is not None
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
-
-
 class TestOvercodeHandlerRoutes:
     """Tests for OvercodeHandler route handling."""
 
@@ -399,12 +375,13 @@ class TestOvercodeHandlerRoutes:
         """do_GET should return 404 for unknown routes."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/unknown/route"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
         handler.send_error.assert_called_once_with(404, "Not Found")
 
-    def test_root_route_matches_dashboard(self):
-        """Root path should match dashboard route logic."""
+    def test_root_route_matches_analytics(self):
+        """Root path should match analytics route logic."""
         from urllib.parse import urlparse
         parsed = urlparse("/")
         assert parsed.path == "/" or parsed.path == "/index.html"
@@ -429,19 +406,31 @@ class TestOvercodeHandlerRoutes:
 class TestOvercodeHandlerRouteDispatching:
     """Tests that OvercodeHandler.do_GET dispatches to correct methods."""
 
-    def test_root_calls_serve_dashboard(self):
-        """GET / should call _serve_dashboard."""
+    def test_root_calls_serve_analytics_dashboard(self):
+        """GET / should call _serve_analytics_dashboard."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
 
-        handler._serve_dashboard.assert_called_once()
+        handler._serve_analytics_dashboard.assert_called_once()
 
-    def test_index_html_calls_serve_dashboard(self):
-        """GET /index.html should call _serve_dashboard."""
+    def test_index_html_calls_serve_analytics_dashboard(self):
+        """GET /index.html should call _serve_analytics_dashboard."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/index.html"
+        handler._parse_datetime = MagicMock(return_value=None)
+
+        OvercodeHandler.do_GET(handler)
+
+        handler._serve_analytics_dashboard.assert_called_once()
+
+    def test_dashboard_calls_serve_dashboard(self):
+        """GET /dashboard should call _serve_dashboard."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/dashboard"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
 
@@ -452,6 +441,7 @@ class TestOvercodeHandlerRouteDispatching:
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/status"
         handler.tmux_session = "test-session"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_status_data') as mock_get_status:
             mock_get_status.return_value = {"status": "ok"}
@@ -466,6 +456,7 @@ class TestOvercodeHandlerRouteDispatching:
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/timeline"
         handler.tmux_session = "test-session"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
             mock_get_timeline.return_value = {"timeline": "data"}
@@ -480,6 +471,7 @@ class TestOvercodeHandlerRouteDispatching:
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/timeline?hours=6&slots=30"
         handler.tmux_session = "test-session"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
             mock_get_timeline.return_value = {"timeline": "data"}
@@ -492,6 +484,7 @@ class TestOvercodeHandlerRouteDispatching:
         """GET /health should call _serve_json with get_health_data result."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/health"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_health_data') as mock_health:
             mock_health.return_value = {"status": "ok"}
@@ -505,48 +498,39 @@ class TestOvercodeHandlerRouteDispatching:
         """GET /unknown should call send_error(404)."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/nonexistent"
+        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
 
         handler.send_error.assert_called_once_with(404, "Not Found")
 
-
-class TestAnalyticsHandlerRouteDispatching:
-    """Tests that AnalyticsHandler.do_GET dispatches to correct methods."""
-
-    def test_root_calls_serve_analytics_dashboard(self):
-        """GET / should call _serve_analytics_dashboard."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        handler.path = "/"
+    def test_chartjs_route_calls_serve_chartjs(self):
+        """GET /static/chart.min.js should call _serve_chartjs."""
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/static/chart.min.js"
         handler._parse_datetime = MagicMock(return_value=None)
 
-        AnalyticsHandler.do_GET(handler)
+        OvercodeHandler.do_GET(handler)
 
-        handler._serve_analytics_dashboard.assert_called_once()
+        handler._serve_chartjs.assert_called_once()
 
     def test_sessions_route_calls_get_analytics_sessions(self):
         """GET /api/analytics/sessions should call get_analytics_sessions."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/sessions"
         handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
             mock_fn.return_value = {"sessions": []}
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once_with(None, None)
             handler._serve_json.assert_called_once_with({"sessions": []})
 
-    def test_timeline_route_calls_get_analytics_timeline(self):
+    def test_analytics_timeline_route_calls_get_analytics_timeline(self):
         """GET /api/analytics/timeline should call get_analytics_timeline."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/timeline"
         handler.tmux_session = "test-session"
         handler._parse_datetime = MagicMock(return_value=None)
@@ -554,16 +538,14 @@ class TestAnalyticsHandlerRouteDispatching:
         with patch('overcode.web_server.get_analytics_timeline') as mock_fn:
             mock_fn.return_value = {"agents": {}}
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once_with("test-session", None, None)
             handler._serve_json.assert_called_once()
 
     def test_stats_route_calls_get_analytics_stats(self):
         """GET /api/analytics/stats should call get_analytics_stats."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/stats"
         handler.tmux_session = "test-session"
         handler._parse_datetime = MagicMock(return_value=None)
@@ -571,89 +553,44 @@ class TestAnalyticsHandlerRouteDispatching:
         with patch('overcode.web_server.get_analytics_stats') as mock_fn:
             mock_fn.return_value = {"stats": {}}
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once_with("test-session", None, None)
             handler._serve_json.assert_called_once()
 
     def test_daily_route_calls_get_analytics_daily(self):
         """GET /api/analytics/daily should call get_analytics_daily."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/daily"
         handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_analytics_daily') as mock_fn:
             mock_fn.return_value = {"days": []}
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once_with(None, None)
             handler._serve_json.assert_called_once()
 
     def test_presets_route_calls_get_time_presets(self):
         """GET /api/analytics/presets should call get_time_presets."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/presets"
         handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_time_presets') as mock_fn:
             mock_fn.return_value = [{"label": "24h"}]
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once()
             handler._serve_json.assert_called_once_with([{"label": "24h"}])
 
-    def test_chartjs_route_calls_serve_chartjs(self):
-        """GET /static/chart.min.js should call _serve_chartjs."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        handler.path = "/static/chart.min.js"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        AnalyticsHandler.do_GET(handler)
-
-        handler._serve_chartjs.assert_called_once()
-
-    def test_health_route_calls_get_health_data(self):
-        """GET /health should call get_health_data."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        handler.path = "/health"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        with patch('overcode.web_server.get_health_data') as mock_fn:
-            mock_fn.return_value = {"status": "ok"}
-
-            AnalyticsHandler.do_GET(handler)
-
-            mock_fn.assert_called_once()
-            handler._serve_json.assert_called_once_with({"status": "ok"})
-
-    def test_unknown_route_returns_404(self):
-        """GET /unknown should call send_error(404)."""
-        from overcode.web_server import AnalyticsHandler
-
-        handler = MagicMock(spec=AnalyticsHandler)
-        handler.path = "/nonexistent"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        AnalyticsHandler.do_GET(handler)
-
-        handler.send_error.assert_called_once_with(404, "Not Found")
-
     def test_sessions_route_with_time_params(self):
         """GET /api/analytics/sessions with start/end should parse datetime params."""
-        from overcode.web_server import AnalyticsHandler
         from datetime import datetime
 
-        handler = MagicMock(spec=AnalyticsHandler)
+        handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/sessions?start=2024-01-01T00:00:00&end=2024-01-31T23:59:59"
 
         start_dt = datetime(2024, 1, 1)
@@ -666,7 +603,7 @@ class TestAnalyticsHandlerRouteDispatching:
         with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
             mock_fn.return_value = {"sessions": []}
 
-            AnalyticsHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
             mock_fn.assert_called_once_with(start_dt, end_dt)
 

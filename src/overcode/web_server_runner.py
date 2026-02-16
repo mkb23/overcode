@@ -73,11 +73,13 @@ def main():
         signal.signal(signal.SIGINT, cleanup)
 
         # Import here to avoid circular imports
-        from .web_server import AnalyticsHandler
+        from .web_server import OvercodeHandler
+
+        OvercodeHandler.tmux_session = session
 
         server_address = ("127.0.0.1", port)
         log(session, f"Creating HTTP server at {server_address}")
-        server = HTTPServer(server_address, AnalyticsHandler)
+        server = HTTPServer(server_address, OvercodeHandler)
         log(session, "Server created, starting serve_forever()")
 
         # Redirect stdout/stderr AFTER setup is complete

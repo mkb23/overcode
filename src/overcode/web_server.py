@@ -36,7 +36,10 @@ from .web_api import (
 
 
 class OvercodeHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for overcode dashboard."""
+    """HTTP request handler for overcode dashboard.
+
+    Serves both the live monitoring dashboard and historical analytics.
+    """
 
     # Set by run_server before starting
     tmux_session: str = "agents"
@@ -55,7 +58,27 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+        # Parse time range from query params (for analytics APIs)
+        start = self._parse_datetime(query.get("start", [None])[0])
+        end = self._parse_datetime(query.get("end", [None])[0])
+
+        # Analytics routes
         if path == "/" or path == "/index.html":
+            self._serve_analytics_dashboard()
+        elif path == "/static/chart.min.js":
+            self._serve_chartjs()
+        elif path == "/api/analytics/sessions":
+            self._serve_json(get_analytics_sessions(start, end))
+        elif path == "/api/analytics/timeline":
+            self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
+        elif path == "/api/analytics/stats":
+            self._serve_json(get_analytics_stats(self.tmux_session, start, end))
+        elif path == "/api/analytics/daily":
+            self._serve_json(get_analytics_daily(start, end))
+        elif path == "/api/analytics/presets":
+            self._serve_json(get_time_presets())
+        # Live dashboard routes
+        elif path == "/dashboard":
             self._serve_dashboard()
         elif path == "/api/status":
             self._serve_json(get_status_data(self.tmux_session))
@@ -68,8 +91,17 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
+    def _parse_datetime(self, value: Optional[str]) -> Optional[datetime]:
+        """Parse ISO datetime string from query param."""
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+
     def _serve_dashboard(self) -> None:
-        """Serve the dashboard HTML page."""
+        """Serve the live monitoring dashboard HTML page."""
         try:
             html = get_dashboard_html()
             html_bytes = html.encode("utf-8")
@@ -82,10 +114,39 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_error(500, f"Internal error: {e}")
 
-    def _serve_json(self, data: dict) -> None:
+    def _serve_analytics_dashboard(self) -> None:
+        """Serve the analytics dashboard HTML page."""
+        try:
+            html = get_analytics_html()
+            html_bytes = html.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html_bytes)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(html_bytes)
+        except Exception as e:
+            self.send_error(500, f"Internal error: {e}")
+
+    def _serve_chartjs(self) -> None:
+        """Serve the embedded Chart.js library."""
+        try:
+            from .web_chartjs import CHARTJS_JS
+            js_bytes = CHARTJS_JS.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript")
+            self.send_header("Content-Length", str(len(js_bytes)))
+            # Cache for 1 year - it's a versioned static asset
+            self.send_header("Cache-Control", "public, max-age=31536000")
+            self.end_headers()
+            self.wfile.write(js_bytes)
+        except Exception as e:
+            self.send_error(500, f"Internal error: {e}")
+
+    def _serve_json(self, data) -> None:
         """Serve JSON data."""
         try:
-            body = json.dumps(data, indent=2)
+            body = json.dumps(data, indent=2, default=str)
             body_bytes = body.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -148,9 +209,13 @@ def run_server(
     # Get actual bound address for display
     bound_host, bound_port = server.server_address
 
-    print(f"Overcode Dashboard")
+    print(f"Overcode Web Server")
     print(f"====================")
     print(f"Monitoring tmux session: {tmux_session}")
+    print(f"")
+    print(f"  Analytics:  http://localhost:{bound_port}/")
+    print(f"  Dashboard:  http://localhost:{bound_port}/dashboard")
+    print(f"  API Status: http://localhost:{bound_port}/api/status")
     print(f"")
     print(f"Local:   http://localhost:{bound_port}")
 
@@ -350,161 +415,5 @@ def toggle_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
         return success, msg
 
 
-# =============================================================================
-# Analytics Web Server (for `overcode web` historical analytics dashboard)
-# =============================================================================
-
-
-class AnalyticsHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for analytics dashboard."""
-
-    # Set by run_analytics_server before starting
-    tmux_session: str = "agents"
-
-    def do_GET(self) -> None:
-        """Handle GET requests."""
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = parse_qs(parsed.query)
-
-        # Parse time range from query params
-        start = self._parse_datetime(query.get("start", [None])[0])
-        end = self._parse_datetime(query.get("end", [None])[0])
-
-        if path == "/" or path == "/index.html":
-            self._serve_analytics_dashboard()
-        elif path == "/static/chart.min.js":
-            self._serve_chartjs()
-        elif path == "/api/analytics/sessions":
-            self._serve_json(get_analytics_sessions(start, end))
-        elif path == "/api/analytics/timeline":
-            self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
-        elif path == "/api/analytics/stats":
-            self._serve_json(get_analytics_stats(self.tmux_session, start, end))
-        elif path == "/api/analytics/daily":
-            self._serve_json(get_analytics_daily(start, end))
-        elif path == "/api/analytics/presets":
-            self._serve_json(get_time_presets())
-        elif path == "/health":
-            self._serve_json(get_health_data())
-        else:
-            self.send_error(404, "Not Found")
-
-    def _parse_datetime(self, value: Optional[str]) -> Optional[datetime]:
-        """Parse ISO datetime string from query param."""
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None
-
-    def _serve_analytics_dashboard(self) -> None:
-        """Serve the analytics dashboard HTML page."""
-        try:
-            html = get_analytics_html()
-            html_bytes = html.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html_bytes)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(html_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
-
-    def _serve_chartjs(self) -> None:
-        """Serve the embedded Chart.js library."""
-        try:
-            from .web_chartjs import CHARTJS_JS
-            js_bytes = CHARTJS_JS.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/javascript")
-            self.send_header("Content-Length", str(len(js_bytes)))
-            # Cache for 1 year - it's a versioned static asset
-            self.send_header("Cache-Control", "public, max-age=31536000")
-            self.end_headers()
-            self.wfile.write(js_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
-
-    def _serve_json(self, data) -> None:
-        """Serve JSON data."""
-        try:
-            body = json.dumps(data, indent=2, default=str)
-            body_bytes = body.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body_bytes)))
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(body_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
-
-    def log_message(self, format: str, *args) -> None:
-        """Custom log format - less verbose than default."""
-        if args and len(args) >= 2:
-            status = str(args[1])
-            path = str(args[0])
-            # Don't log successful API polls
-            if status.startswith("2") and "/api/" in path:
-                return
-        sys.stderr.write(f"[analytics] {args[0] if args else format}\n")
-
-
-def run_analytics_server(
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    tmux_session: str = "agents",
-) -> None:
-    """Run the analytics web dashboard server.
-
-    Args:
-        host: Host to bind to (default: 127.0.0.1 for local only)
-        port: Port to listen on (default: 8080)
-        tmux_session: tmux session name for session-specific data
-    """
-    # Set the tmux session on the handler class
-    AnalyticsHandler.tmux_session = tmux_session
-
-    server_address = (host, port)
-
-    try:
-        server = HTTPServer(server_address, AnalyticsHandler)
-    except OSError as e:
-        if "Address already in use" in str(e):
-            print(f"Error: Port {port} is already in use. Try a different port with --port")
-            sys.exit(1)
-        raise
-
-    # Get actual bound address for display
-    bound_host, bound_port = server.server_address
-
-    print(f"Overcode Analytics Dashboard")
-    print(f"=============================")
-    print(f"")
-    print(f"Local:   http://localhost:{bound_port}")
-
-    if host == "0.0.0.0":
-        # Try to get the machine's IP for network access
-        try:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            print(f"Network: http://{ip}:{bound_port}")
-        except Exception:
-            print(f"Network: http://<your-ip>:{bound_port}")
-
-    print(f"")
-    print(f"Press Ctrl+C to stop")
-    print(f"")
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        server.shutdown()
+# Backward-compatible alias
+run_analytics_server = run_server
