@@ -161,6 +161,13 @@ class HookStatusDetector:
 
         # Hook state is fresh → use it for status
         event = hook_state.get("event", "")
+
+        if event == "SessionEnd":
+            # SessionEnd fires both on actual exit AND on /clear.
+            # Fall back to polling to distinguish: polling sees a shell prompt
+            # (terminated) vs Claude's prompt (waiting for user input).
+            return self._get_polling_fallback().detect_status(session)
+
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
 
         # For child agents, Stop → waiting_oversight instead of waiting_user

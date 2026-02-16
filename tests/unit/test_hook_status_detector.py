@@ -212,17 +212,40 @@ class TestStatusMapping:
         assert status == STATUS_RUNNING
         assert "tool" in activity.lower()
 
-    def test_session_end_is_terminated(self, tmp_path):
-        """SessionEnd → TERMINATED."""
+    def test_session_end_falls_back_to_polling_terminated(self, tmp_path):
+        """SessionEnd with shell prompt → TERMINATED (actual exit)."""
         state_dir = tmp_path / "sessions" / "agents"
         _write_hook_state(state_dir, "test-agent", "SessionEnd")
-        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
+        # Shell prompt indicates Claude actually exited
+        mock_tmux = create_mock_tmux_with_content("agents", 1, """
+mike@mac ~/Code/overcode %
+""")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, _, _ = detector.detect_status(session)
 
         assert status == STATUS_TERMINATED
+
+    def test_session_end_falls_back_to_polling_after_clear(self, tmp_path):
+        """SessionEnd with Claude prompt → WAITING_USER (/clear was used)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "SessionEnd")
+        # Claude prompt indicates /clear was used, not actual exit
+        mock_tmux = create_mock_tmux_with_content("agents", 1, """
+╭──────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                │
+╰──────────────────────────────────────────╯
+
+>
+  ? for shortcuts
+""")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
 
     def test_unknown_event_defaults_to_waiting_user(self, tmp_path):
         """Unknown event → WAITING_USER (safe default)."""
