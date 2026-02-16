@@ -37,6 +37,10 @@ def send_text_to_tmux_window(
     if startup_delay > 0:
         time.sleep(startup_delay)
 
+    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
+    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
+    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+
     # For large prompts, use tmux load-buffer/paste-buffer
     # to avoid escaping issues and line length limits
     lines = text.split('\n')
@@ -56,9 +60,9 @@ def send_text_to_tmux_window(
                 temp_path = f.name
                 f.write(batch_text)
 
-            subprocess.run(['tmux', 'load-buffer', temp_path], timeout=5, check=True)
-            subprocess.run([
-                'tmux', 'paste-buffer', '-t', target
+            subprocess.run(tmux_cmd + ['load-buffer', temp_path], timeout=5, check=True)
+            subprocess.run(tmux_cmd + [
+                'paste-buffer', '-t', target
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
             print(f"Failed to send text batch to tmux: {e}")
@@ -75,8 +79,8 @@ def send_text_to_tmux_window(
     # Send Enter to submit if requested
     if send_enter:
         try:
-            subprocess.run([
-                'tmux', 'send-keys', '-t', target,
+            subprocess.run(tmux_cmd + [
+                'send-keys', '-t', target,
                 '', 'Enter'
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
@@ -101,10 +105,14 @@ def get_tmux_pane_content(
     Returns:
         Captured content as string, or None on error
     """
+    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
+    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
+    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+
     try:
         result = subprocess.run(
-            [
-                "tmux", "capture-pane",
+            tmux_cmd + [
+                "capture-pane",
                 "-t", f"{tmux_session}:{window}",
                 "-p",  # Print to stdout
                 "-S", f"-{lines}",  # Capture last N lines

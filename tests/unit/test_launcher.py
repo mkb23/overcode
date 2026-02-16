@@ -5,6 +5,7 @@ These tests use MockTmux and a temp directory SessionManager to test
 all launcher operations without requiring real tmux or Claude.
 """
 
+import os
 import pytest
 import sys
 from pathlib import Path
@@ -20,9 +21,19 @@ from overcode.interfaces import MockTmux
 
 @pytest.fixture(autouse=True)
 def mock_dependency_checks():
-    """Mock dependency checks so tests don't require real tmux/claude installed."""
+    """Mock dependency checks so tests don't require real tmux/claude installed.
+
+    Also strips OVERCODE_* env vars that leak from the host agent when tests
+    run inside an overcode session (e.g. OVERCODE_SESSION_NAME=overcode).
+    Without this, the launcher's auto-parent-detection reads the env var,
+    tries to find a parent in the test's isolated SessionManager, and fails.
+    """
     with patch("overcode.launcher.require_tmux"), \
-         patch("overcode.launcher.require_claude"):
+         patch("overcode.launcher.require_claude"), \
+         patch.dict(os.environ, {}, clear=False) as patched_env:
+        for key in ["OVERCODE_SESSION_NAME", "OVERCODE_TMUX_SESSION",
+                     "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME"]:
+            patched_env.pop(key, None)
         yield
 
 
