@@ -9,6 +9,7 @@ auto-dispatches per-session based on session.hook_status_detection (#5).
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from .protocols import StatusDetectorProtocol
+from .status_constants import DEFAULT_CAPTURE_LINES
 
 if TYPE_CHECKING:
     from .protocols import TmuxInterface
@@ -63,11 +64,20 @@ class StatusDetectorDispatcher:
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
         self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
 
+    @property
+    def capture_lines(self) -> int:
+        return self.polling.capture_lines
+
+    @capture_lines.setter
+    def capture_lines(self, value: int) -> None:
+        self.polling.capture_lines = value
+        self.hooks.capture_lines = value
+
     def detect_status(self, session: "Session") -> Tuple[str, str, str]:
         """Detect status using the appropriate detector for the session."""
         detector = self.hooks if session.hook_status_detection else self.polling
         return detector.detect_status(session)
 
-    def get_pane_content(self, window: int, num_lines: int = 50) -> Optional[str]:
+    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get pane content (delegates to polling detector)."""
         return self.polling.get_pane_content(window, num_lines)

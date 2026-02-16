@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from textual.css.query import NoMatches
 
+from ..status_constants import DEFAULT_CAPTURE_LINES
+
 if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay, FullscreenPreview
 
@@ -439,9 +441,10 @@ class ViewActionsMixin:
             self.notify("No tmux window for this agent", severity="warning")
             return
 
-        # Do a fresh deep capture (500 lines) for scrollback review
+        # Do a fresh deep capture for scrollback review
+        capture_depth = max(DEFAULT_CAPTURE_LINES, self.detector.capture_lines)
         raw = self.detector.polling.tmux.capture_pane(
-            self.tmux_session, session.tmux_window, lines=500
+            self.tmux_session, session.tmux_window, lines=capture_depth
         )
         if raw is None:
             self.notify("Could not capture pane output", severity="warning")
