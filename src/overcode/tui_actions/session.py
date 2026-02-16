@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 class SessionActionsMixin:
     """Mixin providing session/agent actions for SupervisorTUI."""
 
+    def _guard_remote(self, session) -> bool:
+        """Return True (and notify) if session is remote — caller should return early."""
+        is_remote = getattr(session, 'is_remote', False)
+        if is_remote is True:
+            self.notify("Cannot modify remote agents", severity="warning")
+            return True
+        return False
+
     def _confirm_double_press(
         self,
         action_key: str,
@@ -81,6 +89,8 @@ class SessionActionsMixin:
             return
 
         session = focused.session
+        if self._guard_remote(session):
+            return
 
         # Only allow sleep toggle on root agents (not children)
         if session.parent_session_id is not None:
@@ -130,6 +140,8 @@ class SessionActionsMixin:
             return
 
         session = focused.session
+        if self._guard_remote(session):
+            return
         new_state = not session.time_context_enabled
 
         # Update the session in the session manager
@@ -160,6 +172,8 @@ class SessionActionsMixin:
             return
 
         session = focused.session
+        if self._guard_remote(session):
+            return
         new_state = not session.hook_status_detection
 
         # Update the session in the session manager
@@ -185,6 +199,8 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
+        if self._guard_remote(focused.session):
+            return
         session_name = focused.session.name
         session_id = focused.session.id
         self._confirm_double_press(
@@ -206,6 +222,8 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
+        if self._guard_remote(focused.session):
+            return
         session_name = focused.session.name
         self._confirm_double_press(
             "restart",
@@ -228,6 +246,8 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
+        if self._guard_remote(focused.session):
+            return
         session_name = focused.session.name
         self._confirm_double_press(
             "sync",
@@ -330,22 +350,42 @@ class SessionActionsMixin:
 
     def action_focus_command_bar(self) -> None:
         """Focus the command bar for input."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar()
 
     def action_focus_standing_orders(self) -> None:
         """Focus the command bar for editing standing orders."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar("standing_orders", lambda s: s.standing_instructions or "")
 
     def action_focus_human_annotation(self) -> None:
         """Focus input for editing human annotation (#74)."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar("annotation", lambda s: s.human_annotation or "")
 
     def action_edit_agent_value(self) -> None:
         """Focus the command bar for editing agent value (#61)."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar("value", lambda s: str(s.agent_value), fallback_prefill="1000")
 
     def action_edit_cost_budget(self) -> None:
         """Focus the command bar for editing cost budget (#173)."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar(
             "cost_budget",
             lambda s: str(s.cost_budget_usd) if s.cost_budget_usd > 0 else "",
@@ -353,6 +393,10 @@ class SessionActionsMixin:
 
     def action_configure_heartbeat(self) -> None:
         """Open command bar for heartbeat configuration (#171)."""
+        from ..tui_widgets import SessionSummary
+        focused = self.focused
+        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
+            return
         self._open_command_bar(
             "heartbeat_freq",
             lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",

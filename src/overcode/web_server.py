@@ -19,6 +19,7 @@ from .settings import (
     get_web_server_port_path,
     ensure_session_dir,
 )
+from .config import get_web_api_key
 from .pid_utils import is_process_running, stop_process
 from .web_templates import get_dashboard_html, get_analytics_html
 from .web_api import (
@@ -42,6 +43,14 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Handle GET requests."""
+        # API key authentication (when configured)
+        api_key = get_web_api_key()
+        if api_key:
+            request_key = self.headers.get("X-API-Key", "")
+            if request_key != api_key:
+                self.send_error(401, "Unauthorized: invalid or missing X-API-Key header")
+                return
+
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -101,17 +110,28 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
 
 def run_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     tmux_session: str = "agents"
 ) -> None:
     """Run the web dashboard server.
 
     Args:
-        host: Host to bind to (default: 0.0.0.0 for all interfaces)
+        host: Host to bind to (default: 127.0.0.1 for localhost only)
         port: Port to listen on (default: 8080)
         tmux_session: tmux session name to monitor
     """
+    # Security: require API key when binding to non-localhost
+    if host != "127.0.0.1" and host != "localhost":
+        if not get_web_api_key():
+            print("Error: Binding to non-localhost requires web.api_key in config.")
+            print("Set it in ~/.overcode/config.yaml:")
+            print()
+            print("  web:")
+            print('    api_key: "your-secret-key"')
+            print()
+            sys.exit(1)
+
     # Set the tmux session on the handler class
     OvercodeHandler.tmux_session = tmux_session
 

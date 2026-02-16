@@ -1414,7 +1414,7 @@ def supervisor(
 def serve(
     host: Annotated[
         str, typer.Option("--host", "-h", help="Host to bind to")
-    ] = "0.0.0.0",
+    ] = "127.0.0.1",
     port: Annotated[
         int, typer.Option("--port", "-p", help="Port to listen on")
     ] = 8080,
@@ -1422,15 +1422,13 @@ def serve(
 ):
     """Start web dashboard server for remote monitoring.
 
-    Provides a mobile-optimized read-only dashboard that displays
-    agent status and timeline data. Auto-refreshes every 5 seconds.
-
-    Access from your phone at http://<your-ip>:8080
+    Binds to localhost by default. Use --host 0.0.0.0 for LAN access
+    (requires web.api_key in config for security).
 
     Examples:
-        overcode serve                    # Listen on all interfaces, port 8080
-        overcode serve --port 3000        # Custom port
-        overcode serve --host 127.0.0.1   # Local only
+        overcode serve                        # Localhost only, port 8080
+        overcode serve --port 3000            # Custom port
+        overcode serve --host 0.0.0.0         # LAN access (needs api_key)
     """
     from .web_server import run_server
 

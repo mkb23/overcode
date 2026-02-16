@@ -319,6 +319,11 @@ class SessionSummary(Static, can_focus=True):
             status_changed_at=self._status_changed_at,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
+            # Sister integration (#245)
+            source_host=s.source_host,
+            is_remote=s.is_remote,
+            has_sisters=getattr(self.app, 'has_sisters', False),
+            local_hostname=getattr(self.app, 'local_hostname', ''),
         )
 
     def _render_content_area(self, content: Text, ctx: ColumnContext, term_width: int) -> None:
@@ -378,6 +383,14 @@ class SessionSummary(Static, can_focus=True):
     def _render_expanded_view(self, content: Text, ctx: ColumnContext) -> None:
         """Render the expanded view: standing instructions + pane content lines."""
         s = ctx.session
+
+        # Remote agents: show placeholder instead of pane content
+        if s.is_remote:
+            content.append("\n")
+            content.append("  ")
+            content.append("│ ", style=ctx.mono("cyan", "dim"))
+            content.append("(remote agent — no live preview)", style=ctx.mono("dim italic", "dim"))
+            return
 
         # Standing instructions
         if s.standing_instructions:

@@ -776,6 +776,83 @@ class TestFilterCollapsedParents:
 
 
 # =============================================================================
+# Remote-aware sorting (#245)
+# =============================================================================
+
+
+def make_remote_session(name: str, host: str, current_state: str = "running"):
+    """Create a mock remote session for testing."""
+    session = make_session_with_stats(name, current_state)
+    session.is_remote = True
+    session.source_host = host
+    return session
+
+
+def make_local_session(name: str, current_state: str = "running"):
+    """Create a mock local session for testing."""
+    session = make_session_with_stats(name, current_state)
+    session.is_remote = False
+    session.source_host = ""
+    return session
+
+
+class TestRemoteAwareSorting:
+    """Test that remote sessions sort after local ones."""
+
+    def test_local_before_remote_alphabetical(self):
+        sessions = [
+            make_remote_session("alpha", "remote-host"),
+            make_local_session("zeta"),
+        ]
+        result = sort_sessions_alphabetical(sessions)
+        assert result[0].name == "zeta"  # Local first
+        assert result[1].name == "alpha"  # Remote second
+
+    def test_remote_grouped_by_host(self):
+        sessions = [
+            make_remote_session("c", "host-b"),
+            make_remote_session("a", "host-a"),
+            make_remote_session("b", "host-b"),
+            make_local_session("local1"),
+        ]
+        result = sort_sessions_alphabetical(sessions)
+        assert result[0].name == "local1"
+        assert result[1].name == "a"  # host-a
+        assert result[2].name == "b"  # host-b
+        assert result[3].name == "c"  # host-b
+
+    def test_local_before_remote_by_status(self):
+        sessions = [
+            make_remote_session("remote-waiting", "host", "waiting_user"),
+            make_local_session("local-running", "running"),
+        ]
+        result = sort_sessions_by_status(sessions)
+        assert result[0].name == "local-running"  # Local first despite lower priority
+
+    def test_local_before_remote_by_value(self):
+        remote = make_remote_session("remote", "host")
+        remote.agent_value = 9999  # Very high value
+        local = make_local_session("local")
+        local.agent_value = 1  # Very low value
+
+        result = sort_sessions_by_value([remote, local])
+        assert result[0].name == "local"  # Local always first
+
+    def test_local_before_remote_tree(self):
+        sessions = [
+            make_remote_session("remote", "host"),
+            make_local_session("local"),
+        ]
+        # Remote has no parent, so it's a root
+        for s in sessions:
+            s.parent_session_id = None
+
+        result = sort_sessions_by_tree(sessions)
+        assert result[0].name == "local"
+        assert result[1].name == "remote"
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

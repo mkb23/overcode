@@ -127,6 +127,10 @@ class Session:
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
 
+    # Sister integration (#245) - remote agents from other machines
+    is_remote: bool = False
+    source_host: str = ""
+
     def to_dict(self) -> dict:
         data = asdict(self)
         # Convert stats to dict

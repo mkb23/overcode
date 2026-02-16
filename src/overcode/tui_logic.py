@@ -71,6 +71,17 @@ STATUS_ORDER_BY_VALUE = {
 }
 
 
+def _remote_sort_key(s) -> tuple:
+    """Primary sort key: local (0) first, then remote (1) grouped by host."""
+    is_remote = getattr(s, 'is_remote', False)
+    if not isinstance(is_remote, bool):
+        is_remote = False
+    host = getattr(s, 'source_host', '') or '' if is_remote else ''
+    if not isinstance(host, str):
+        host = ''
+    return (1 if is_remote else 0, host.lower())
+
+
 def sort_sessions_alphabetical(sessions: List[T]) -> List[T]:
     """Sort sessions alphabetically by name (case-insensitive).
 
@@ -80,7 +91,7 @@ def sort_sessions_alphabetical(sessions: List[T]) -> List[T]:
     Returns:
         New sorted list (does not mutate input)
     """
-    return sorted(sessions, key=lambda s: s.name.lower())
+    return sorted(sessions, key=lambda s: (*_remote_sort_key(s), s.name.lower()))
 
 
 def sort_sessions_by_status(sessions: List[S]) -> List[S]:
@@ -98,6 +109,7 @@ def sort_sessions_by_status(sessions: List[S]) -> List[S]:
     return sorted(
         sessions,
         key=lambda s: (
+            *_remote_sort_key(s),
             STATUS_ORDER_BY_ATTENTION.get(s.stats.current_state or "running", 4),
             s.name.lower()
         )
@@ -119,6 +131,7 @@ def sort_sessions_by_value(sessions: List[S]) -> List[S]:
     return sorted(
         sessions,
         key=lambda s: (
+            *_remote_sort_key(s),
             STATUS_ORDER_BY_VALUE.get(s.stats.current_state or "running", 1),
             -s.agent_value,
             s.name.lower()
@@ -150,8 +163,8 @@ def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
         else:
             children_map.setdefault(pid, []).append(s)
 
-    # Sort each group alphabetically
-    roots.sort(key=lambda s: s.name.lower())
+    # Sort each group: local first, then remote by host, then alphabetically
+    roots.sort(key=lambda s: (*_remote_sort_key(s), s.name.lower()))
     for kids in children_map.values():
         kids.sort(key=lambda s: s.name.lower())
 

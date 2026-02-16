@@ -94,6 +94,12 @@ class ColumnContext:
     max_repo_width: int
     max_branch_width: int
 
+    # Sister integration (#245)
+    source_host: str = ""
+    is_remote: bool = False
+    has_sisters: bool = False
+    local_hostname: str = ""
+
     def mono(self, colored: str, simple: str = "bold") -> str:
         """Return simplified style when monochrome is enabled."""
         return simple if self.monochrome else colored
@@ -552,6 +558,25 @@ def render_value_plain(ctx: ColumnContext) -> Optional[str]:
     return str(ctx.session.agent_value)
 
 
+def render_host(ctx: ColumnContext) -> ColumnOutput:
+    """Render host column — hidden when no sisters are configured."""
+    if not ctx.has_sisters:
+        return None
+    host = ctx.source_host or ctx.local_hostname
+    width = 14
+    label = host[:width].ljust(width)
+    if ctx.is_remote:
+        return [(label, ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+    else:
+        return [(label, ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+def render_host_plain(ctx: ColumnContext) -> Optional[str]:
+    if not ctx.has_sisters:
+        return None
+    return ctx.source_host or ctx.local_hostname
+
+
 # ---------------------------------------------------------------------------
 # Ordered column list — reorder by moving items
 # ---------------------------------------------------------------------------
@@ -563,6 +588,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
+    SummaryColumn(id="host", group="identity", detail_levels=ALL, render=render_host,
+                  label="Host", render_plain=render_host_plain),
 
     # Git group — repo, branch (full/custom only), diff stats
     SummaryColumn(id="repo_name", group="git", detail_levels=FULL_PLUS, render=render_repo_name,
@@ -689,6 +716,8 @@ def build_cli_context(
         status_changed_at=status_changed_at,
         max_repo_width=10,
         max_branch_width=10,
+        source_host=getattr(session, 'source_host', ''),
+        is_remote=getattr(session, 'is_remote', False),
     )
 
 

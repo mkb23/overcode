@@ -58,6 +58,9 @@ class InputActionsMixin:
             return
 
         session = focused.session
+        if getattr(session, 'is_remote', False) is True:
+            self.notify("Cannot modify remote agents", severity="warning")
+            return
         session_name = session.name
 
         # Auto-wake sleeping agent (#168)
@@ -84,6 +87,9 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
+        if getattr(focused.session, 'is_remote', False) is True:
+            self.notify("Cannot modify remote agents", severity="warning")
+            return
         session_name = focused.session.name
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
@@ -148,6 +154,9 @@ class InputActionsMixin:
             return
 
         session = focused.session
+        if getattr(session, 'is_remote', False) is True:
+            self.notify("Cannot modify remote agents", severity="warning")
+            return
         session_name = session.name
 
         # Auto-wake sleeping agent (#168)

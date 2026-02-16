@@ -53,6 +53,7 @@ class DaemonStatusBar(Static):
         self._mean_spin: float = 0.0
         self._spin_sample_count: int = 0
         self._spin_baseline_minutes: int = 0
+        self._sister_states: list = []  # List of SisterState (#245)
 
     def fetch_volatile_state(self, baseline_minutes: int = 0, active_session_names: Optional[list] = None) -> None:
         """Fetch all I/O-dependent state. Call from a background thread, NOT main thread.
@@ -281,5 +282,20 @@ class DaemonStatusBar(Static):
                 # Just show port
                 port = self._web_url.split(":")[-1] if self._web_url else ""
                 content.append(f":{port}", style="cyan")
+
+        # Sister status (#245)
+        if self._sister_states:
+            content.append(" │ ", style="dim")
+            content.append("Sisters: ", style="bold")
+            for i, sister in enumerate(self._sister_states):
+                if i > 0:
+                    content.append(" ", style="")
+                if sister.reachable:
+                    content.append(
+                        f"{sister.name}({sister.green_agents}/{sister.total_agents})",
+                        style="green",
+                    )
+                else:
+                    content.append(f"{sister.name}(--)", style="dim red")
 
         return content

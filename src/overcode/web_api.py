@@ -21,6 +21,7 @@ from .tui_helpers import (
     calculate_uptime,
     get_git_diff_stats,
 )
+from .config import get_hostname
 from .status_constants import (
     get_status_emoji,
     get_status_color,
@@ -60,6 +61,7 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
 
     result = {
         "timestamp": now.isoformat(),
+        "hostname": get_hostname(),
         "daemon": _build_daemon_info(state),
         "presence": _build_presence_info(state),
         "summary": _build_summary(state),
