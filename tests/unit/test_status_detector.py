@@ -333,7 +333,6 @@ class TestStatusDetectorEdgeCases:
 
     def test_handles_empty_pane(self):
         """Empty pane content should return waiting_user"""
-        # Empty string returns None from capture_pane (nothing to capture)
         mock_tmux = create_mock_tmux_with_content("agents", 1, "")
         detector = StatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
@@ -341,22 +340,21 @@ class TestStatusDetectorEdgeCases:
         status, activity, _ = detector.detect_status(session)
 
         assert status == StatusDetector.STATUS_WAITING_USER
-        # Empty content returns "Unable to read pane" because capture returns None
-        assert "Unable to read pane" in activity or "No output" in activity
+        assert "Empty pane" in activity
 
     def test_handles_missing_pane(self):
-        """Missing pane should return waiting_user with error message"""
+        """Missing pane (window gone) should return terminated"""
         mock_tmux = MockTmux()
         mock_tmux.new_session("agents")
-        # Don't create window 1
+        # Don't create window 1 — simulates a killed tmux window
 
         detector = StatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
-        assert "Unable to read pane" in activity
+        assert status == StatusDetector.STATUS_TERMINATED
+        assert "Window no longer exists" in activity
 
     def test_handles_whitespace_only_content(self):
         """Whitespace-only content should be treated as no output"""

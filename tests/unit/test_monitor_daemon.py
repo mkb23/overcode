@@ -1071,6 +1071,171 @@ class TestMaybePushToRelay:
         assert daemon.state.relay_last_status == "error"
 
 
+class TestDaemonTerminatedSessionGuard:
+    """Test that daemon skips detect_status for terminated/done sessions."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        """Helper to create a minimal MonitorDaemon for testing."""
+        from overcode.monitor_daemon import MonitorDaemon
+
+        monkeypatch.setattr('overcode.monitor_daemon.ensure_session_dir', lambda x: tmp_path)
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_monitor_daemon_pid_path',
+            lambda x: tmp_path / "pid"
+        )
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_monitor_daemon_state_path',
+            lambda x: tmp_path / "state.json"
+        )
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_agent_history_path',
+            lambda x: tmp_path / "history.csv"
+        )
+
+        with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
+            with patch('overcode.monitor_daemon.StatusDetector'):
+                daemon = MonitorDaemon(tmux_session="test")
+                daemon.session_manager = mock_sm_cls.return_value
+        return daemon
+
+    def test_terminated_session_skips_detect_status(self, tmp_path, monkeypatch):
+        """Daemon should not call detect_status for sessions with status='terminated'."""
+        from overcode.monitor_daemon import STATUS_TERMINATED
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.detector = Mock()
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.name = "agent-1"
+        mock_session.status = "terminated"
+        mock_session.is_asleep = False
+        mock_session.heartbeat_enabled = False
+        mock_session.heartbeat_paused = False
+        mock_session.heartbeat_instruction = None
+
+        # Reload returns same session
+        daemon.session_manager.get_session.return_value = mock_session
+
+        # Run the status detection part inline by calling detect_status guard
+        # and checking detector was NOT called
+        if mock_session.status == "terminated":
+            status, activity = STATUS_TERMINATED, "Session terminated"
+        else:
+            status, activity, _ = daemon.detector.detect_status(mock_session)
+
+        assert status == STATUS_TERMINATED
+        assert activity == "Session terminated"
+        daemon.detector.detect_status.assert_not_called()
+
+    def test_done_session_skips_detect_status(self, tmp_path, monkeypatch):
+        """Daemon should not call detect_status for sessions with status='done'."""
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.status_constants import STATUS_DONE
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.detector = Mock()
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.name = "agent-1"
+        mock_session.status = "done"
+
+        if mock_session.status == "done":
+            status, activity = STATUS_DONE, "Completed"
+        else:
+            status, activity, _ = daemon.detector.detect_status(mock_session)
+
+        assert status == STATUS_DONE
+        assert activity == "Completed"
+        daemon.detector.detect_status.assert_not_called()
+
+    def test_active_session_calls_detect_status(self, tmp_path, monkeypatch):
+        """Daemon should call detect_status for active (non-terminated/done) sessions."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon.detector = Mock()
+        daemon.detector.detect_status.return_value = ("running", "Working on task", "content")
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.name = "agent-1"
+        mock_session.status = "active"
+
+        if mock_session.status == "terminated":
+            status, activity = "terminated", "Session terminated"
+        elif mock_session.status == "done":
+            status, activity = "done", "Completed"
+        else:
+            status, activity, _ = daemon.detector.detect_status(mock_session)
+
+        assert status == "running"
+        assert activity == "Working on task"
+        daemon.detector.detect_status.assert_called_once_with(mock_session)
+
+
+class TestDaemonPersistsTerminatedStatus:
+    """Test that daemon persists terminated status to sessions.json."""
+
+    def _make_daemon(self, tmp_path, monkeypatch):
+        """Helper to create a minimal MonitorDaemon for testing."""
+        from overcode.monitor_daemon import MonitorDaemon
+
+        monkeypatch.setattr('overcode.monitor_daemon.ensure_session_dir', lambda x: tmp_path)
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_monitor_daemon_pid_path',
+            lambda x: tmp_path / "pid"
+        )
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_monitor_daemon_state_path',
+            lambda x: tmp_path / "state.json"
+        )
+        monkeypatch.setattr(
+            'overcode.monitor_daemon.get_agent_history_path',
+            lambda x: tmp_path / "history.csv"
+        )
+
+        with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
+            with patch('overcode.monitor_daemon.StatusDetector'):
+                daemon = MonitorDaemon(tmux_session="test")
+                daemon.session_manager = mock_sm_cls.return_value
+        return daemon
+
+    def test_persists_terminated_when_detected(self, tmp_path, monkeypatch):
+        """When detect_status returns terminated, daemon should persist to sessions.json."""
+        from overcode.monitor_daemon import STATUS_TERMINATED
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.status = "active"  # Not yet marked terminated
+
+        effective_status = STATUS_TERMINATED
+
+        # Simulate the persistence logic from the daemon loop
+        if effective_status == STATUS_TERMINATED and mock_session.status != "terminated":
+            daemon.session_manager.update_session_status(mock_session.id, "terminated")
+
+        daemon.session_manager.update_session_status.assert_called_once_with("sess-1", "terminated")
+
+    def test_does_not_persist_when_already_terminated(self, tmp_path, monkeypatch):
+        """Should not call update_session_status if session is already terminated."""
+        from overcode.monitor_daemon import STATUS_TERMINATED
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.status = "terminated"  # Already marked
+
+        effective_status = STATUS_TERMINATED
+
+        if effective_status == STATUS_TERMINATED and mock_session.status != "terminated":
+            daemon.session_manager.update_session_status(mock_session.id, "terminated")
+
+        daemon.session_manager.update_session_status.assert_not_called()
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

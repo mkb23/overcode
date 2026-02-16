@@ -98,8 +98,10 @@ class PollingStatusDetector:
         """
         content = self.get_pane_content(session.tmux_window)
 
+        if content is None:
+            return self.STATUS_TERMINATED, "Window no longer exists", ""
         if not content:
-            return self.STATUS_WAITING_USER, "Unable to read pane", ""
+            return self.STATUS_WAITING_USER, "Empty pane", ""
 
         # Strip ANSI escape sequences for pattern matching
         # The raw content (with colors) is returned for display, but pattern
