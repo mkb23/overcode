@@ -154,7 +154,8 @@ class SupervisorTUI(
         ("left_square_bracket", "supervisor_start", "Start supervisor"),
         ("right_square_bracket", "supervisor_stop", "Stop supervisor"),
         ("backslash", "monitor_restart", "Restart monitor"),
-        ("a", "toggle_summarizer", "AI summarizer"),
+        ("a", "focus_human_annotation", "Annotation"),
+        ("A", "toggle_summarizer", "AI summarizer"),
         # Manual refresh (useful in diagnostics mode)
         ("r", "manual_refresh", "Refresh"),
         # Agent management
@@ -173,8 +174,8 @@ class SupervisorTUI(
         ("5", "send_5_to_focused", "Send 5"),
         # Copy mode - disable mouse capture for native terminal selection
         ("y", "toggle_copy_mode", "Copy mode"),
-        # Tmux sync - sync navigation to external tmux pane
-        ("p", "toggle_tmux_sync", "Pane sync"),
+        # Heartbeat pause/resume toggle (#265) - promoted to lowercase
+        ("p", "toggle_heartbeat_pause", "Pause heartbeat"),
         # Web server toggle
         ("w", "toggle_web_server", "Web dashboard"),
         # Sleep mode toggle - mark agent as paused (excluded from stats)
@@ -197,8 +198,8 @@ class SupervisorTUI(
         ("B", "edit_cost_budget", "Cost budget"),
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
-        # Edit human annotation (#74)
-        ("I", "focus_human_annotation", "Annotation"),
+        # Tmux sync - sync navigation to external tmux pane (demoted to shift)
+        ("P", "toggle_tmux_sync", "Pane sync"),
         # Baseline time adjustment for mean spin calculation
         ("comma", "baseline_back", "Baseline -15m"),
         ("full_stop", "baseline_forward", "Baseline +15m"),
@@ -213,8 +214,6 @@ class SupervisorTUI(
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
-        # Heartbeat pause/resume toggle (#265)
-        ("P", "toggle_heartbeat_pause", "Pause heartbeat"),
         # Time context toggle - per-agent time awareness hook
         ("F", "toggle_time_context", "Time context"),
         # Hook-based status detection toggle (#5)
@@ -359,7 +358,7 @@ class SupervisorTUI(
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
-            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Sync | d:Daemon | t:Timeline | g:Killed",
+            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed",
             id="help-text"
         )
 
