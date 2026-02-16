@@ -227,6 +227,28 @@ mike@mac ~/Code/overcode %
 
         assert status == STATUS_TERMINATED
 
+    def test_session_end_terminated_with_claude_output_above(self, tmp_path):
+        """SessionEnd with shell prompt + ⏺ in preceding lines → TERMINATED.
+
+        After Claude exits, its output (with ⏺ markers) is still visible
+        above the shell prompt. This must not prevent terminated detection.
+        """
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "SessionEnd")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, """
+⏺ Here's my final response:
+
+  The task is complete. Let me know if you need anything else.
+
+mike@mac ~/Code/overcode %
+""")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_TERMINATED
+
     def test_session_end_falls_back_to_polling_after_clear(self, tmp_path):
         """SessionEnd with Claude prompt → WAITING_USER (/clear was used)."""
         state_dir = tmp_path / "sessions" / "agents"

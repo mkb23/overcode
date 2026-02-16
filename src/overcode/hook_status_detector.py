@@ -164,9 +164,14 @@ class HookStatusDetector:
 
         if event == "SessionEnd":
             # SessionEnd fires both on actual exit AND on /clear.
-            # Fall back to polling to distinguish: polling sees a shell prompt
-            # (terminated) vs Claude's prompt (waiting for user input).
-            return self._get_polling_fallback().detect_status(session)
+            # We know Claude reported ending, so do a targeted pane check:
+            # - Shell prompt on last line → actual exit → TERMINATED
+            # - Claude's prompt (› or >) on last line → /clear → fall back to polling
+            #
+            # We can't use the full polling _is_shell_prompt() here because it
+            # rejects shell prompts when Claude's ⏺ output is in the last 5 lines,
+            # which is always the case right after exit.
+            return self._detect_session_end_status(session)
 
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
 
@@ -181,6 +186,45 @@ class HookStatusDetector:
         activity = self._build_activity(event, hook_state, pane_content, session)
 
         return status, activity, pane_content
+
+    def _detect_session_end_status(self, session: "Session") -> Tuple[str, str, str]:
+        """Determine status after a SessionEnd hook event.
+
+        SessionEnd fires both on actual exit AND on /clear. We distinguish
+        by checking the last line of the pane:
+        - Shell prompt (user@host path %) → actual exit → TERMINATED
+        - Claude's prompt (› or >) → /clear was used → fall back to polling
+
+        Unlike the full polling _is_shell_prompt(), this does NOT reject shell
+        prompts when Claude's ⏺ output appears in nearby lines — that output
+        is always present right after exit and is irrelevant once we know
+        SessionEnd fired.
+        """
+        import re
+        from .status_patterns import strip_ansi
+
+        pane_content = self.get_pane_content(session.tmux_window) or ""
+        clean = strip_ansi(pane_content)
+        lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
+
+        if not lines:
+            return STATUS_TERMINATED, "Claude exited", pane_content
+
+        last_line = lines[-1]
+
+        # Shell prompt patterns (same as PollingStatusDetector._is_shell_prompt)
+        shell_prompt_patterns = [
+            r'\w+@\w+.*[%$]\s*$',
+            r'\[.*\][%$#]\s*$',
+            r'^[~\/].*[%$]\s*$',
+        ]
+
+        for pattern in shell_prompt_patterns:
+            if re.search(pattern, last_line):
+                return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
+
+        # No shell prompt → likely /clear, fall back to full polling
+        return self._get_polling_fallback().detect_status(session)
 
     def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""
