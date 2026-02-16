@@ -213,6 +213,8 @@ class SupervisorTUI(
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
+        # Heartbeat pause/resume toggle (#265)
+        ("P", "toggle_heartbeat_pause", "Pause heartbeat"),
         # Time context toggle - per-agent time awareness hook
         ("F", "toggle_time_context", "Time context"),
         # Hook-based status detection toggle (#5)

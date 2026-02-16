@@ -126,6 +126,52 @@ class SessionActionsMixin:
         # Force a refresh
         focused.refresh()
 
+    def action_toggle_heartbeat_pause(self) -> None:
+        """Toggle heartbeat pause/resume for the focused agent (#265).
+
+        Pauses an active heartbeat (keeps config) or resumes a paused one.
+        Press P again to toggle back.
+        """
+        from ..tui_widgets import SessionSummary
+        from ..settings import signal_activity
+
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        if self._guard_remote(session):
+            return
+
+        # Only allow on root agents (not children)
+        if session.parent_session_id is not None:
+            self.notify("Heartbeat pause is only available for root agents", severity="warning")
+            return
+
+        if not session.heartbeat_enabled:
+            self.notify("No heartbeat configured — press H to set up", severity="warning")
+            return
+
+        new_paused_state = not session.heartbeat_paused
+
+        # Update the session in the session manager
+        self.session_manager.update_session(session.id, heartbeat_paused=new_paused_state)
+
+        # Update the local session object
+        session.heartbeat_paused = new_paused_state
+
+        # Wake daemon so it picks up the change immediately
+        signal_activity(self.tmux_session)
+
+        if new_paused_state:
+            self.notify(f"Heartbeat paused for '{session.name}'", severity="information")
+        else:
+            self.notify(f"Heartbeat resumed for '{session.name}'", severity="information")
+
+        # Force a refresh
+        focused.refresh()
+
     def action_toggle_time_context(self) -> None:
         """Toggle time context hook for the focused agent.
 
