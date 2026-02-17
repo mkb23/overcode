@@ -451,6 +451,8 @@ class SupervisorTUI(
             if self.has_sisters:
                 self.set_interval(10, self._poll_sisters)
                 self._poll_sisters()  # Initial fetch
+                # Fast poll for the focused remote agent (1.5s)
+                self.set_interval(1.5, self._poll_focused_sister)
 
     def update_daemon_status(self) -> None:
         """Update daemon status bar (kicks off background worker)"""
@@ -917,6 +919,46 @@ class SupervisorTUI(
         """Store remote sessions and rebuild widget list."""
         self._remote_sessions = remote_sessions
         self.refresh_sessions()
+
+    def _poll_focused_sister(self) -> None:
+        """Fast-poll the focused remote agent (1.5s) for responsive preview."""
+        focused = self._get_focused_widget()
+        if focused is None or not focused.session.is_remote:
+            return
+        session = focused.session
+        if not session.source_url or not session.name:
+            return
+        self._poll_focused_sister_async(
+            session.source_url, session.source_api_key, session.name, session.id
+        )
+
+    @work(thread=True, exclusive=True, group="focused_sister_poll")
+    def _poll_focused_sister_async(
+        self, source_url: str, source_api_key: str, agent_name: str, session_id: str
+    ) -> None:
+        """Fetch single remote agent status in background thread."""
+        updated = self._sister_poller.poll_single_agent(source_url, source_api_key, agent_name)
+        if updated is not None:
+            self.call_from_thread(self._apply_focused_sister, updated, session_id)
+
+    def _apply_focused_sister(self, updated_session: "Session", session_id: str) -> None:
+        """Apply fast-polled remote session data to the matching widget."""
+        # Update the session in _remote_sessions so the fast path picks it up
+        for i, rs in enumerate(self._remote_sessions):
+            if rs.id == session_id:
+                self._remote_sessions[i] = updated_session
+                break
+
+        # Update the widget directly for immediate feedback
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.session = updated_session
+                widget.refresh()
+                break
+
+        # Refresh preview pane if in list_preview mode
+        if self.view_mode == "list_preview":
+            self._update_preview()
 
     # ── End sister integration ────────────────────────────────────────
 

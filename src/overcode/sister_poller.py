@@ -61,6 +61,37 @@ class SisterPoller:
             all_sessions.extend(sessions)
         return all_sessions
 
+    def poll_single_agent(self, source_url: str, source_api_key: str, agent_name: str) -> Optional[Session]:
+        """Fetch status for a single remote agent (lightweight — one pane capture).
+
+        Args:
+            source_url: Sister base URL (e.g., http://remote:15337)
+            source_api_key: API key for authentication
+            agent_name: Name of the agent to fetch
+
+        Returns:
+            Updated Session object, or None on failure
+        """
+        url = f"{source_url}/api/agents/{agent_name}/status"
+        req = Request(url, method="GET")
+        if source_api_key:
+            req.add_header("X-API-Key", source_api_key)
+
+        try:
+            with urlopen(req, timeout=3) as resp:
+                agent = json.loads(resp.read().decode("utf-8"))
+        except (URLError, socket.timeout, json.JSONDecodeError, OSError):
+            return None
+
+        # Find the sister to get host_name
+        host_name = agent_name  # fallback
+        for sister in self._sisters:
+            if sister.url == source_url:
+                host_name = sister.name
+                break
+
+        return _agent_to_session(agent, host_name, source_url, source_api_key)
+
     def get_sister_states(self) -> List[SisterState]:
         """Return current state of all sisters (for status bar display)."""
         return list(self._sisters)

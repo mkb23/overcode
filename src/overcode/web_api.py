@@ -92,6 +92,46 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     return result
 
 
+def get_single_agent_status(tmux_session: str, agent_name: str) -> Optional[Dict[str, Any]]:
+    """Get status data for a single agent (lightweight — only captures one pane).
+
+    Args:
+        tmux_session: tmux session name to monitor
+        agent_name: Name of the agent to fetch
+
+    Returns:
+        Agent info dict, or None if not found
+    """
+    state = get_monitor_daemon_state(tmux_session)
+    if not state or not state.sessions:
+        return None
+
+    now = datetime.now()
+
+    # Find the matching session
+    target = None
+    for s in state.sessions:
+        if s.name == agent_name:
+            target = s
+            break
+
+    if target is None:
+        return None
+
+    # Capture pane content for just this one agent
+    pane_content = ""
+    try:
+        from .implementations import RealTmux
+        tmux = RealTmux()
+        content = tmux.capture_pane(tmux_session, target.tmux_window, lines=100)
+        if content:
+            pane_content = content
+    except Exception:
+        pass
+
+    return _build_agent_info(target, now, pane_content)
+
+
 def _build_daemon_info(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     """Build daemon status information."""
     if state is None:

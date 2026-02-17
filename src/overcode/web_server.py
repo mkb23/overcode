@@ -25,6 +25,7 @@ from .pid_utils import is_process_running, stop_process
 from .web_templates import get_dashboard_html, get_analytics_html
 from .web_api import (
     get_status_data,
+    get_single_agent_status,
     get_timeline_data,
     get_health_data,
     # Analytics API functions
@@ -83,6 +84,13 @@ class OvercodeHandler(BaseHTTPRequestHandler):
             self._serve_dashboard()
         elif path == "/api/status":
             self._serve_json(get_status_data(self.tmux_session))
+        elif path.startswith("/api/agents/") and path.endswith("/status"):
+            name = path.split("/")[3]
+            agent_data = get_single_agent_status(self.tmux_session, name)
+            if agent_data is not None:
+                self._serve_json(agent_data)
+            else:
+                self.send_error(404, f"Agent '{name}' not found")
         elif path == "/api/timeline":
             hours = float(query.get("hours", [3.0])[0])
             slots = int(query.get("slots", [60])[0])
