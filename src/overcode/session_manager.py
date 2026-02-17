@@ -140,6 +140,8 @@ class Session:
     source_url: str = ""  # Sister web server URL (for sending control commands)
     source_api_key: str = ""  # Sister API key (for authentication)
     pane_content: str = ""  # Cached pane content from remote API (empty for local sessions)
+    remote_git_diff: Optional[tuple] = None  # (files, insertions, deletions) from remote API
+    remote_median_work_time: float = 0.0  # Median work time from remote API
 
     def to_dict(self) -> dict:
         data = asdict(self)

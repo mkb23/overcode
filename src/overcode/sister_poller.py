@@ -158,4 +158,24 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         source_url=source_url,
         source_api_key=source_api_key,
         pane_content=agent.get("pane_content", ""),
+        remote_git_diff=_parse_git_diff(agent),
+        remote_median_work_time=_parse_median_work(agent),
     )
+
+
+def _parse_git_diff(agent: dict) -> tuple | None:
+    """Extract git diff stats tuple from API agent dict."""
+    files = agent.get("git_diff_files", 0)
+    ins = agent.get("git_diff_insertions", 0)
+    dels = agent.get("git_diff_deletions", 0)
+    if files or ins or dels:
+        return (files, ins, dels)
+    return None
+
+
+def _parse_median_work(agent: dict) -> float:
+    """Extract median work time (seconds) from API agent dict."""
+    raw = agent.get("median_work_time_raw", 0.0)
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    return 0.0

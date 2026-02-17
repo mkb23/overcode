@@ -221,6 +221,7 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         "time_in_state": format_duration(time_in_state),
         "time_in_state_raw": time_in_state,
         "median_work_time": format_duration(s.median_work_time) if s.median_work_time > 0 else "-",
+        "median_work_time_raw": s.median_work_time,
         # New fields for TUI parity
         "uptime": uptime,
         "permissiveness_mode": s.permissiveness_mode,

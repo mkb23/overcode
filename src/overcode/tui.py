@@ -860,7 +860,19 @@ class SupervisorTUI(
             def fetch_stats(session):
                 try:
                     if session.is_remote:
-                        return (None, None)  # Stats come pre-populated from API
+                        # Synthesize ClaudeSessionStats from pre-populated SessionStats
+                        # so render columns (cost, tokens, interactions) display properly
+                        stats = session.stats
+                        mwt = session.remote_median_work_time
+                        synthetic = ClaudeSessionStats(
+                            interaction_count=stats.interaction_count,
+                            input_tokens=stats.total_tokens,
+                            output_tokens=0,
+                            cache_creation_tokens=0,
+                            cache_read_tokens=0,
+                            work_times=[mwt] if mwt > 0 else [],
+                        )
+                        return (synthetic, session.remote_git_diff)
                     claude_stats = get_session_stats(session)
                     git_diff = None
                     if session.start_directory:
