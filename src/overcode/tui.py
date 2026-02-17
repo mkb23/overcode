@@ -30,7 +30,7 @@ from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
-from .history_reader import get_session_stats, ClaudeSessionStats
+from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from .monitor_daemon import (
@@ -440,13 +440,13 @@ class SupervisorTUI(
             # Fast status updates every 250ms (detect_status + capture_pane only)
             self.set_interval(0.25, self.update_focused_status)
             # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
+            # Stagger the three 5s timers so background work doesn't burst all at once
             self.set_interval(5, self._update_stats_async)
-            # Update daemon status every 5 seconds
-            self.set_interval(5, self.update_daemon_status)
+            self.set_timer(1.7, lambda: self.set_interval(5, self.update_daemon_status))
             # Update timeline every 30 seconds
             self.set_interval(30, self.update_timeline)
             # Update AI summaries every 5 seconds (only runs if enabled)
-            self.set_interval(5, self._update_summaries_async)
+            self.set_timer(3.3, lambda: self.set_interval(5, self._update_summaries_async))
             # Poll sister instances every 10 seconds (only runs if configured)
             if self.has_sisters:
                 self.set_interval(10, self._poll_sisters)
@@ -841,6 +841,9 @@ class SupervisorTUI(
         These involve heavy file I/O (parsing JSONL session files, running
         git diff subprocess) and don't need 250ms updates. Runs independently
         from the fast status path so it never blocks preview pane updates.
+
+        Uses a shared HistoryFile so history.jsonl is parsed at most once
+        per cycle, regardless of how many sessions are checked.
         """
         if self._stats_update_in_progress:
             return
@@ -856,6 +859,9 @@ class SupervisorTUI(
             for widget in widgets:
                 session = fresh_sessions.get(widget.session.id, widget.session)
                 sessions_to_check.append((widget.session.id, session))
+
+            # Single HistoryFile shared across all sessions — parse once, reuse N times
+            history_file = HistoryFile()
 
             def fetch_stats(session):
                 try:
@@ -873,7 +879,7 @@ class SupervisorTUI(
                             work_times=[mwt] if mwt > 0 else [],
                         )
                         return (synthetic, session.remote_git_diff)
-                    claude_stats = get_session_stats(session)
+                    claude_stats = get_session_stats(session, history_file=history_file)
                     git_diff = None
                     if session.start_directory:
                         git_diff = get_git_diff_stats(session.start_directory)

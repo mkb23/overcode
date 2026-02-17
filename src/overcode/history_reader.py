@@ -18,6 +18,7 @@ Each assistant message in session files has usage data:
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from datetime import datetime
@@ -83,128 +84,157 @@ class HistoryEntry:
         return datetime.fromtimestamp(self.timestamp_ms / 1000)
 
 
-def read_history(history_path: Path = CLAUDE_HISTORY_PATH) -> List[HistoryEntry]:
-    """Read all entries from history.jsonl.
+class HistoryFile:
+    """Cached reader for Claude Code's history.jsonl.
 
-    Args:
-        history_path: Path to history file (defaults to ~/.claude/history.jsonl)
+    All access to history.jsonl should go through this class.  It parses
+    the file at most once per mtime+size change, so multiple callers in
+    the same update cycle share a single parse.
 
-    Returns:
-        List of HistoryEntry objects, oldest first
+    Thread-safe: a lock protects the cache so concurrent workers in a
+    ThreadPoolExecutor can call methods without re-parsing.
     """
-    if not history_path.exists():
-        return []
 
-    entries = []
-    try:
-        with open(history_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    entry = HistoryEntry(
-                        display=data.get("display", ""),
-                        timestamp_ms=data.get("timestamp", 0),
-                        project=data.get("project"),
-                        session_id=data.get("sessionId"),
-                    )
-                    entries.append(entry)
-                except (json.JSONDecodeError, KeyError):
-                    # Skip malformed entries
-                    continue
-    except IOError:
-        return []
+    def __init__(self, history_path: Path = CLAUDE_HISTORY_PATH):
+        self._path = history_path
+        self._lock = threading.Lock()
+        self._cached_mtime: float = 0.0
+        self._cached_size: int = 0
+        self._cached_entries: List[HistoryEntry] = []
+        # Separate cache for backward-read session ID lookups
+        self._session_id_cache: Dict[str, Tuple[float, int, Optional[str]]] = {}
 
-    return entries
+    # ── Core cache ────────────────────────────────────────────────────
 
+    def _entries(self) -> List[HistoryEntry]:
+        """Return parsed entries, re-parsing only if the file changed."""
+        try:
+            stat = self._path.stat()
+        except OSError:
+            return []
 
-def get_interactions_for_session(
-    session: "Session",
-    history_path: Path = CLAUDE_HISTORY_PATH
-) -> List[HistoryEntry]:
-    """Get history entries matching a session.
+        with self._lock:
+            if stat.st_mtime == self._cached_mtime and stat.st_size == self._cached_size:
+                return self._cached_entries
 
-    Matches by:
-    1. Project path == session.start_directory
-    2. Timestamp >= session.start_time
+            entries: List[HistoryEntry] = []
+            try:
+                with open(self._path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            entries.append(HistoryEntry(
+                                display=data.get("display", ""),
+                                timestamp_ms=data.get("timestamp", 0),
+                                project=data.get("project"),
+                                session_id=data.get("sessionId"),
+                            ))
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+            except IOError:
+                return []
 
-    Args:
-        session: The overcode Session to match
-        history_path: Path to history file
+            self._cached_entries = entries
+            self._cached_mtime = stat.st_mtime
+            self._cached_size = stat.st_size
+            return entries
 
-    Returns:
-        List of matching HistoryEntry objects
-    """
-    if not session.start_directory:
-        return []
+    # ── Public query methods ──────────────────────────────────────────
 
-    # Parse session start time
-    try:
-        session_start = datetime.fromisoformat(session.start_time)
-        session_start_ms = int(session_start.timestamp() * 1000)
-    except (ValueError, TypeError):
-        return []
+    def read_all(self) -> List[HistoryEntry]:
+        """Read all entries from history.jsonl (cached)."""
+        return list(self._entries())
 
-    # Normalize the project path for comparison
-    session_dir = str(Path(session.start_directory).resolve())
+    def get_interactions_for_session(
+        self, session: "Session"
+    ) -> List[HistoryEntry]:
+        """Get history entries matching a session's directory and time window."""
+        if not session.start_directory:
+            return []
 
-    entries = read_history(history_path)
-    matching = []
+        try:
+            session_start = datetime.fromisoformat(session.start_time)
+            session_start_ms = int(session_start.timestamp() * 1000)
+        except (ValueError, TypeError):
+            return []
 
-    for entry in entries:
-        # Must be after session started
-        if entry.timestamp_ms < session_start_ms:
-            continue
+        session_dir = str(Path(session.start_directory).resolve())
+        matching = []
 
-        # Must match project directory
-        if entry.project:
-            entry_dir = str(Path(entry.project).resolve())
-            if entry_dir == session_dir:
-                matching.append(entry)
+        for entry in self._entries():
+            if entry.timestamp_ms < session_start_ms:
+                continue
+            if entry.project:
+                entry_dir = str(Path(entry.project).resolve())
+                if entry_dir == session_dir:
+                    matching.append(entry)
 
-    return matching
+        return matching
 
+    def count_interactions(self, session: "Session") -> int:
+        """Count interactions for a session."""
+        return len(self.get_interactions_for_session(session))
 
-def count_interactions(
-    session: "Session",
-    history_path: Path = CLAUDE_HISTORY_PATH
-) -> int:
-    """Count interactions for a session.
+    def get_session_ids_for_session(self, session: "Session") -> List[str]:
+        """Get unique Claude Code sessionIds for an overcode session."""
+        entries = self.get_interactions_for_session(session)
+        session_ids = set()
+        for entry in entries:
+            if entry.session_id:
+                session_ids.add(entry.session_id)
+        return sorted(session_ids)
 
-    Args:
-        session: The overcode Session to count for
-        history_path: Path to history file
+    def get_current_session_id_for_directory(
+        self, directory: str, since: datetime
+    ) -> Optional[str]:
+        """Get the most recent Claude sessionId for a directory.
 
-    Returns:
-        Number of interactions (user prompts) for this session
-    """
-    return len(get_interactions_for_session(session, history_path))
+        Optimized: reads history.jsonl backwards and caches by mtime+size.
+        """
+        if not self._path.exists():
+            return None
 
+        try:
+            stat = self._path.stat()
+            file_mtime = stat.st_mtime
+            file_size = stat.st_size
+        except OSError:
+            return None
 
-def get_session_ids_for_session(
-    session: "Session",
-    history_path: Path = CLAUDE_HISTORY_PATH
-) -> List[str]:
-    """Get unique Claude Code sessionIds for an overcode session.
+        session_dir = str(Path(directory).resolve())
+        cache_key = session_dir
 
-    One overcode session may span multiple Claude Code sessions
-    (if Claude is restarted in the same tmux window).
+        with self._lock:
+            cached = self._session_id_cache.get(cache_key)
+            if cached and cached[0] == file_mtime and cached[1] == file_size:
+                return cached[2]
 
-    Args:
-        session: The overcode Session
-        history_path: Path to history file
+        since_ms = int(since.timestamp() * 1000)
 
-    Returns:
-        List of unique sessionId strings
-    """
-    entries = get_interactions_for_session(session, history_path)
-    session_ids = set()
-    for entry in entries:
-        if entry.session_id:
-            session_ids.add(entry.session_id)
-    return sorted(session_ids)
+        result = None
+        for line in _read_lines_reversed(self._path):
+            try:
+                data = json.loads(line)
+                ts = data.get("timestamp", 0)
+                if ts < since_ms:
+                    break
+                project = data.get("project")
+                if project:
+                    entry_dir = str(Path(project).resolve())
+                    if entry_dir == session_dir:
+                        sid = data.get("sessionId")
+                        if sid:
+                            result = sid
+                            break
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+
+        with self._lock:
+            self._session_id_cache[cache_key] = (file_mtime, file_size, result)
+        return result
 
 
 def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str]:
@@ -234,8 +264,50 @@ def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str
     return [line for line in reversed(lines) if line.strip()]
 
 
-# Cache for get_current_session_id_for_directory
-_session_id_cache: Dict[str, Tuple[float, int, Optional[str]]] = {}
+# ── Module-level singleton for backward-compat free functions ─────────
+
+_default_history = HistoryFile()
+
+
+def read_history(history_path: Path = CLAUDE_HISTORY_PATH) -> List[HistoryEntry]:
+    """Read all entries from history.jsonl.
+
+    Prefer using a HistoryFile instance directly for cached access.
+    """
+    if history_path == CLAUDE_HISTORY_PATH:
+        return _default_history.read_all()
+    return HistoryFile(history_path).read_all()
+
+
+def get_interactions_for_session(
+    session: "Session",
+    history_path: Path = CLAUDE_HISTORY_PATH
+) -> List[HistoryEntry]:
+    """Get history entries matching a session.
+
+    Prefer using a HistoryFile instance directly for cached access.
+    """
+    if history_path == CLAUDE_HISTORY_PATH:
+        return _default_history.get_interactions_for_session(session)
+    return HistoryFile(history_path).get_interactions_for_session(session)
+
+
+def count_interactions(
+    session: "Session",
+    history_path: Path = CLAUDE_HISTORY_PATH
+) -> int:
+    """Count interactions for a session."""
+    return len(get_interactions_for_session(session, history_path))
+
+
+def get_session_ids_for_session(
+    session: "Session",
+    history_path: Path = CLAUDE_HISTORY_PATH
+) -> List[str]:
+    """Get unique Claude Code sessionIds for an overcode session."""
+    if history_path == CLAUDE_HISTORY_PATH:
+        return _default_history.get_session_ids_for_session(session)
+    return HistoryFile(history_path).get_session_ids_for_session(session)
 
 
 def get_current_session_id_for_directory(
@@ -245,61 +317,11 @@ def get_current_session_id_for_directory(
 ) -> Optional[str]:
     """Get the most recent Claude sessionId for a directory since a given time.
 
-    Optimized for frequent calls: reads history.jsonl backwards (most recent
-    entries are at the end) and caches results by file mtime+size.
-
-    Args:
-        directory: The project directory path
-        since: Only consider entries after this time
-        history_path: Path to history file
-
-    Returns:
-        The most recent sessionId, or None if no matching entries
+    Prefer using a HistoryFile instance directly for cached access.
     """
-    if not history_path.exists():
-        return None
-
-    # Check cache — keyed on (directory, mtime, size)
-    try:
-        stat = history_path.stat()
-        file_mtime = stat.st_mtime
-        file_size = stat.st_size
-    except OSError:
-        return None
-
-    session_dir = str(Path(directory).resolve())
-    cache_key = f"{session_dir}:{history_path}"
-
-    cached = _session_id_cache.get(cache_key)
-    if cached and cached[0] == file_mtime and cached[1] == file_size:
-        return cached[2]
-
-    since_ms = int(since.timestamp() * 1000)
-
-    # Read backwards — most recent entries are at the end of the file.
-    # Since history is append-only and roughly chronological, the first
-    # match we find (reading backwards) for our directory is the most recent.
-    result = None
-    for line in _read_lines_reversed(history_path):
-        try:
-            data = json.loads(line)
-            ts = data.get("timestamp", 0)
-            if ts < since_ms:
-                # We've gone past our time window reading backwards — stop
-                break
-            project = data.get("project")
-            if project:
-                entry_dir = str(Path(project).resolve())
-                if entry_dir == session_dir:
-                    sid = data.get("sessionId")
-                    if sid:
-                        result = sid
-                        break
-        except (json.JSONDecodeError, KeyError, TypeError):
-            continue
-
-    _session_id_cache[cache_key] = (file_mtime, file_size, result)
-    return result
+    if history_path == CLAUDE_HISTORY_PATH:
+        return _default_history.get_current_session_id_for_directory(directory, since)
+    return HistoryFile(history_path).get_current_session_id_for_directory(directory, since)
 
 
 def encode_project_path(path: str) -> str:
@@ -491,7 +513,8 @@ def read_work_times_from_session_file(
 def get_session_stats(
     session: "Session",
     history_path: Path = CLAUDE_HISTORY_PATH,
-    projects_path: Path = CLAUDE_PROJECTS_PATH
+    projects_path: Path = CLAUDE_PROJECTS_PATH,
+    history_file: Optional["HistoryFile"] = None,
 ) -> Optional[ClaudeSessionStats]:
     """Get comprehensive stats for an overcode session.
 
@@ -505,6 +528,7 @@ def get_session_stats(
         session: The overcode Session
         history_path: Path to history.jsonl
         projects_path: Path to Claude projects directory
+        history_file: Optional HistoryFile for cached access (avoids re-parsing)
 
     Returns:
         ClaudeSessionStats if session has start_directory, None otherwise
@@ -518,8 +542,12 @@ def get_session_stats(
     except (ValueError, TypeError):
         return None
 
-    # Get interaction count and session IDs
-    interactions = get_interactions_for_session(session, history_path)
+    # Get interaction count and session IDs — use shared HistoryFile if provided
+    hf = history_file or (
+        _default_history if history_path == CLAUDE_HISTORY_PATH
+        else HistoryFile(history_path)
+    )
+    interactions = hf.get_interactions_for_session(session)
     interaction_count = len(interactions)
 
     # Get unique session IDs from interactions (for total token counting)
