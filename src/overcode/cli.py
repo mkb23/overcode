@@ -2067,21 +2067,19 @@ def sister_allow_control(
         raise typer.Exit(code=1)
 
     if on:
-        # Require API key to be set
         api_key = get_web_api_key()
-        if not api_key:
-            rprint("[red]Error: web.api_key must be set before enabling remote control[/red]")
-            rprint("[dim]Set it in ~/.overcode/config.yaml:[/dim]")
+        web["allow_control"] = True
+        save_config(config)
+        rprint(f"[green]✓ Remote control enabled (web.allow_control = true)[/green]")
+        if api_key:
+            masked_key = api_key[:4] + "..."
+            rprint(f"  API key: {masked_key}")
+        else:
+            rprint(f"  [yellow]Warning: web.api_key is not set — endpoints are unauthenticated[/yellow]")
+            rprint(f"  [dim]This is fine if you're using SSH tunnels. Otherwise set it in ~/.overcode/config.yaml:[/dim]")
             rprint()
             rprint("  web:")
             rprint('    api_key: "your-secret-key"')
-            raise typer.Exit(code=1)
-
-        web["allow_control"] = True
-        save_config(config)
-        masked_key = api_key[:4] + "..."
-        rprint(f"[green]✓ Remote control enabled (web.allow_control = true)[/green]")
-        rprint(f"  API key: {masked_key}")
         rprint(f"  Restart web server for changes to take effect.")
     elif off:
         web["allow_control"] = False
