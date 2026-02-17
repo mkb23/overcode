@@ -1508,6 +1508,7 @@ def monitor(
     """Launch the standalone TUI monitor."""
     if restart:
         from .monitor_daemon import stop_monitor_daemon, is_monitor_daemon_running, get_monitor_daemon_pid
+        from .web_server import is_web_server_running, stop_web_server, start_web_server, get_web_server_url
 
         if is_monitor_daemon_running(session):
             pid = get_monitor_daemon_pid(session)
@@ -1516,6 +1517,16 @@ def monitor(
             else:
                 rprint("[red]Failed to stop monitor daemon[/red]")
                 raise typer.Exit(1)
+
+        if is_web_server_running(session):
+            ok, msg = stop_web_server(session)
+            if ok:
+                rprint(f"[green]✓[/green] Web server stopped")
+                started, start_msg = start_web_server(session)
+                if started:
+                    rprint(f"[green]✓[/green] Web server restarted ({start_msg})")
+                else:
+                    rprint(f"[yellow]Warning: web server failed to restart: {start_msg}[/yellow]")
 
     from .tui import run_tui
 
