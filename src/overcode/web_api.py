@@ -63,8 +63,8 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     pane_contents: Dict[int, str] = {}
     if state and state.sessions:
         try:
-            from .implementations import TmuxController
-            tmux = TmuxController()
+            from .implementations import RealTmux
+            tmux = RealTmux()
             for s in state.sessions:
                 try:
                     content = tmux.capture_pane(tmux_session, s.tmux_window, lines=100)
