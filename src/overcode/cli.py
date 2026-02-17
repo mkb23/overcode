@@ -2042,6 +2042,65 @@ def sister_remove(
     rprint(f"[green]✓ Removed sister '{name}'[/green]")
 
 
+@sister_app.command("allow-control")
+def sister_allow_control(
+    on: Annotated[bool, typer.Option("--on", help="Enable remote control")] = False,
+    off: Annotated[bool, typer.Option("--off", help="Disable remote control")] = False,
+):
+    """Show or toggle remote control for this machine's web server.
+
+    When enabled, sister instances can send commands (kill, restart, send
+    instructions, etc.) to agents on this machine via POST endpoints.
+
+    Examples:
+        overcode sister allow-control          # Show current status
+        overcode sister allow-control --on     # Enable remote control
+        overcode sister allow-control --off    # Disable remote control
+    """
+    from .config import load_config, save_config, get_web_api_key
+
+    config = load_config()
+    web = config.setdefault("web", {})
+
+    if on and off:
+        rprint("[red]Error: Cannot use --on and --off together[/red]")
+        raise typer.Exit(code=1)
+
+    if on:
+        # Require API key to be set
+        api_key = get_web_api_key()
+        if not api_key:
+            rprint("[red]Error: web.api_key must be set before enabling remote control[/red]")
+            rprint("[dim]Set it in ~/.overcode/config.yaml:[/dim]")
+            rprint()
+            rprint("  web:")
+            rprint('    api_key: "your-secret-key"')
+            raise typer.Exit(code=1)
+
+        web["allow_control"] = True
+        save_config(config)
+        masked_key = api_key[:4] + "..."
+        rprint(f"[green]✓ Remote control enabled (web.allow_control = true)[/green]")
+        rprint(f"  API key: {masked_key}")
+        rprint(f"  Restart web server for changes to take effect.")
+    elif off:
+        web["allow_control"] = False
+        save_config(config)
+        rprint(f"[green]✓ Remote control disabled (web.allow_control = false)[/green]")
+    else:
+        # Show current status
+        enabled = web.get("allow_control", False)
+        api_key = get_web_api_key()
+        if enabled:
+            masked_key = (api_key[:4] + "...") if api_key else "(not set)"
+            rprint(f"Remote control: [green]enabled[/green]")
+            rprint(f"  API key: {masked_key}")
+        else:
+            rprint(f"Remote control: [red]disabled[/red]")
+            if not api_key:
+                rprint(f"  [dim]Note: web.api_key is also not set[/dim]")
+
+
 # =============================================================================
 # Config Commands
 # =============================================================================

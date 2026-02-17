@@ -2,6 +2,8 @@
 Session action methods for TUI.
 
 Handles agent/session operations like kill, new, sleep, command bar focus.
+Supports both local and remote (sister) agents — remote actions are dispatched
+through the SisterController HTTP client.
 """
 
 import time
@@ -19,13 +21,16 @@ if TYPE_CHECKING:
 class SessionActionsMixin:
     """Mixin providing session/agent actions for SupervisorTUI."""
 
-    def _guard_remote(self, session) -> bool:
-        """Return True (and notify) if session is remote — caller should return early."""
-        is_remote = getattr(session, 'is_remote', False)
-        if is_remote is True:
-            self.notify("Cannot modify remote agents", severity="warning")
-            return True
-        return False
+    def _is_remote(self, session) -> bool:
+        """Return True if session is a remote (sister) agent."""
+        return getattr(session, 'is_remote', False) is True
+
+    def _remote_notify(self, result, success_msg: str) -> None:
+        """Show notification based on a SisterController result."""
+        if result.ok:
+            self.notify(success_msg, severity="information")
+        else:
+            self.notify(f"Remote error: {result.error}", severity="error")
 
     def _confirm_double_press(
         self,
@@ -89,7 +94,15 @@ class SessionActionsMixin:
             return
 
         session = focused.session
-        if self._guard_remote(session):
+
+        if self._is_remote(session):
+            new_asleep_state = not session.is_asleep
+            result = self._sister_controller.set_sleep(
+                session.source_url, session.source_api_key,
+                session.name, asleep=new_asleep_state,
+            )
+            state_word = "asleep" if new_asleep_state else "awake"
+            self._remote_notify(result, f"Agent '{session.name}' is now {state_word}")
             return
 
         # Only allow sleep toggle on root agents (not children)
@@ -141,7 +154,18 @@ class SessionActionsMixin:
             return
 
         session = focused.session
-        if self._guard_remote(session):
+
+        if self._is_remote(session):
+            if session.heartbeat_paused:
+                result = self._sister_controller.resume_heartbeat(
+                    session.source_url, session.source_api_key, session.name,
+                )
+                self._remote_notify(result, f"Heartbeat resumed for '{session.name}'")
+            else:
+                result = self._sister_controller.pause_heartbeat(
+                    session.source_url, session.source_api_key, session.name,
+                )
+                self._remote_notify(result, f"Heartbeat paused for '{session.name}'")
             return
 
         # Only allow on root agents (not children)
@@ -191,8 +215,17 @@ class SessionActionsMixin:
             return
 
         session = focused.session
-        if self._guard_remote(session):
+
+        if self._is_remote(session):
+            new_state = not session.time_context_enabled
+            result = self._sister_controller.set_time_context(
+                session.source_url, session.source_api_key,
+                session.name, enabled=new_state,
+            )
+            state_word = "enabled" if new_state else "disabled"
+            self._remote_notify(result, f"Time context {state_word} for '{session.name}'")
             return
+
         new_state = not session.time_context_enabled
 
         # Update the session in the session manager
@@ -202,7 +235,7 @@ class SessionActionsMixin:
         session.time_context_enabled = new_state
 
         if new_state:
-            self.notify(f"Time context enabled for '{session.name}' 🕐", severity="information")
+            self.notify(f"Time context enabled for '{session.name}'", severity="information")
         else:
             self.notify(f"Time context disabled for '{session.name}'", severity="information")
 
@@ -223,8 +256,17 @@ class SessionActionsMixin:
             return
 
         session = focused.session
-        if self._guard_remote(session):
+
+        if self._is_remote(session):
+            new_state = not session.hook_status_detection
+            result = self._sister_controller.set_hook_detection(
+                session.source_url, session.source_api_key,
+                session.name, enabled=new_state,
+            )
+            state_word = "enabled" if new_state else "disabled"
+            self._remote_notify(result, f"Hook detection {state_word} for '{session.name}'")
             return
+
         new_state = not session.hook_status_detection
 
         # Update the session in the session manager
@@ -254,11 +296,20 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        if self._guard_remote(focused.session):
+        session = focused.session
+        session_name = session.name
+
+        if self._is_remote(session):
+            self._confirm_double_press(
+                "kill",
+                f"Press x again to kill remote agent '{session_name}'",
+                lambda: self._execute_remote_kill(session),
+                session_name=session_name,
+            )
             return
-        session_name = focused.session.name
-        session_id = focused.session.id
-        session_status = focused.session.status
+
+        session_id = session.id
+        session_status = session.status
 
         # Terminated/done agents: clean up (archive + remove) instead of kill
         if session_status in ("terminated", "done"):
@@ -276,6 +327,13 @@ class SessionActionsMixin:
                 session_name=session_name,
             )
 
+    def _execute_remote_kill(self, session: "Session") -> None:
+        """Kill a remote agent via the sister controller."""
+        result = self._sister_controller.kill_agent(
+            session.source_url, session.source_api_key, session.name,
+        )
+        self._remote_notify(result, f"Killed remote agent: {session.name}")
+
     def action_restart_focused(self) -> None:
         """Restart the currently focused agent (requires confirmation).
 
@@ -288,15 +346,31 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        if self._guard_remote(focused.session):
+        session = focused.session
+        session_name = session.name
+
+        if self._is_remote(session):
+            self._confirm_double_press(
+                "restart",
+                f"Press R again to restart remote agent '{session_name}'",
+                lambda: self._execute_remote_restart(session),
+                session_name=session_name,
+            )
             return
-        session_name = focused.session.name
+
         self._confirm_double_press(
             "restart",
             f"Press R again to restart '{session_name}'",
             lambda: self._execute_restart(focused),
             session_name=session_name,
         )
+
+    def _execute_remote_restart(self, session: "Session") -> None:
+        """Restart a remote agent via the sister controller."""
+        result = self._sister_controller.restart_agent(
+            session.source_url, session.source_api_key, session.name,
+        )
+        self._remote_notify(result, f"Restarted remote agent: {session.name}")
 
     def action_sync_to_main_and_clear(self) -> None:
         """Switch to main branch, pull, and clear agent context (requires confirmation).
@@ -312,15 +386,42 @@ class SessionActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        if self._guard_remote(focused.session):
+        session = focused.session
+
+        if self._is_remote(session):
+            # Sync requires multi-step tmux interaction — send as instruction
+            self._confirm_double_press(
+                "sync",
+                f"Press c again to sync remote '{session.name}' to main",
+                lambda: self._execute_remote_sync(session),
+                session_name=session.name,
+            )
             return
-        session_name = focused.session.name
+
+        session_name = session.name
         self._confirm_double_press(
             "sync",
             f"Press c again to sync '{session_name}' to main",
             lambda: self._execute_sync(focused),
             session_name=session_name,
         )
+
+    def _execute_remote_sync(self, session: "Session") -> None:
+        """Sync a remote agent to main via sister controller."""
+        sync_text = "!git checkout main && git pull"
+        result = self._sister_controller.send_instruction(
+            session.source_url, session.source_api_key,
+            session.name, text=sync_text,
+        )
+        if result.ok:
+            # Follow up with /clear
+            self._sister_controller.send_instruction(
+                session.source_url, session.source_api_key,
+                session.name, text="/clear",
+            )
+            self.notify(f"Synced remote '{session.name}' to main", severity="information")
+        else:
+            self.notify(f"Remote error: {result.error}", severity="error")
 
     def _execute_sync(self, widget: "SessionSummary") -> None:
         """Execute the actual sync operation after confirmation."""
@@ -416,42 +517,22 @@ class SessionActionsMixin:
 
     def action_focus_command_bar(self) -> None:
         """Focus the command bar for input."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar()
 
     def action_focus_standing_orders(self) -> None:
         """Focus the command bar for editing standing orders."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar("standing_orders", lambda s: s.standing_instructions or "")
 
     def action_focus_human_annotation(self) -> None:
         """Focus input for editing human annotation (#74)."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar("annotation", lambda s: s.human_annotation or "")
 
     def action_edit_agent_value(self) -> None:
         """Focus the command bar for editing agent value (#61)."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar("value", lambda s: str(s.agent_value), fallback_prefill="1000")
 
     def action_edit_cost_budget(self) -> None:
         """Focus the command bar for editing cost budget (#173)."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar(
             "cost_budget",
             lambda s: str(s.cost_budget_usd) if s.cost_budget_usd > 0 else "",
@@ -459,10 +540,6 @@ class SessionActionsMixin:
 
     def action_configure_heartbeat(self) -> None:
         """Open command bar for heartbeat configuration (#171)."""
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if isinstance(focused, SessionSummary) and self._guard_remote(focused.session):
-            return
         self._open_command_bar(
             "heartbeat_freq",
             lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",
@@ -526,8 +603,17 @@ class SessionActionsMixin:
 
         success_count = 0
         for session in sessions:
-            if launcher.send_to_session(session.name, handover_instruction):
-                success_count += 1
+            if self._is_remote(session):
+                # Send via sister controller for remote agents
+                result = self._sister_controller.send_instruction(
+                    session.source_url, session.source_api_key,
+                    session.name, text=handover_instruction,
+                )
+                if result.ok:
+                    success_count += 1
+            else:
+                if launcher.send_to_session(session.name, handover_instruction):
+                    success_count += 1
 
         if success_count == len(sessions):
             self.notify(

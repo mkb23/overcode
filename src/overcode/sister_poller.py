@@ -98,7 +98,7 @@ class SisterPoller:
         sessions: List[Session] = []
         total_cost = 0.0
         for agent in agents:
-            session = _agent_to_session(agent, host_name)
+            session = _agent_to_session(agent, host_name, sister.url, sister.api_key)
             sessions.append(session)
             total_cost += agent.get("cost_usd", 0.0)
 
@@ -107,7 +107,7 @@ class SisterPoller:
         return sessions
 
 
-def _agent_to_session(agent: dict, host_name: str) -> Session:
+def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_api_key: str = "") -> Session:
     """Convert an API agent dict to a virtual Session object."""
     name = agent.get("name", "unknown")
     session_id = f"remote:{host_name}:{name}"
@@ -155,5 +155,7 @@ def _agent_to_session(agent: dict, host_name: str) -> Session:
         cost_budget_usd=agent.get("cost_budget_usd", 0.0),
         is_remote=True,
         source_host=host_name,
+        source_url=source_url,
+        source_api_key=source_api_key,
         pane_content=agent.get("pane_content", ""),
     )

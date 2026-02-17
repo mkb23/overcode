@@ -247,6 +247,23 @@ def get_web_api_key() -> Optional[str]:
     return web.get("api_key") or None
 
 
+def get_web_allow_control() -> bool:
+    """Check if remote control is enabled for the web server.
+
+    When False (default), all POST/PUT/DELETE endpoints return 403.
+
+    Config format in ~/.overcode/config.yaml:
+        web:
+          allow_control: true
+
+    Returns:
+        True if remote control is enabled, False otherwise
+    """
+    config = load_config()
+    web = config.get("web", {})
+    return bool(web.get("allow_control", False))
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 

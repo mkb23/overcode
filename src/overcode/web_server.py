@@ -1,7 +1,8 @@
 """
-Web server for Overcode dashboard.
+Web server for Overcode dashboard and control API.
 
-Provides a mobile-optimized read-only dashboard for monitoring agents.
+Provides a mobile-optimized dashboard for monitoring agents (GET)
+and a control API for remote agent management (POST/PUT/DELETE).
 Uses Python stdlib http.server - no additional dependencies required.
 """
 
@@ -19,7 +20,7 @@ from .settings import (
     get_web_server_port_path,
     ensure_session_dir,
 )
-from .config import get_web_api_key
+from .config import get_web_api_key, get_web_allow_control
 from .pid_utils import is_process_running, stop_process
 from .web_templates import get_dashboard_html, get_analytics_html
 from .web_api import (
@@ -157,6 +158,220 @@ class OvercodeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body_bytes)
         except Exception as e:
             self.send_error(500, f"Internal error: {e}")
+
+    # -----------------------------------------------------------------
+    # Control API (POST / PUT / DELETE)
+    # -----------------------------------------------------------------
+
+    def _check_auth(self) -> bool:
+        """Check API key authentication. Returns True if authorized."""
+        api_key = get_web_api_key()
+        if api_key:
+            request_key = self.headers.get("X-API-Key", "")
+            if request_key != api_key:
+                self._send_json_error(401, "Unauthorized: invalid or missing X-API-Key header")
+                return False
+        return True
+
+    def _check_control_allowed(self) -> bool:
+        """Check if remote control is enabled. Returns True if allowed."""
+        if not get_web_allow_control():
+            self._send_json_error(403, "Remote control not enabled (set web.allow_control: true)")
+            return False
+        return True
+
+    def _read_json_body(self) -> Optional[dict]:
+        """Read and parse JSON body from request. Returns None on error."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            return {}
+        try:
+            body = self.rfile.read(content_length)
+            return json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            self._send_json_error(400, f"Invalid JSON body: {e}")
+            return None
+
+    def _send_json_response(self, data: dict, status: int = 200) -> None:
+        """Send a JSON response with the given status code."""
+        body = json.dumps(data, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json_error(self, status: int, message: str) -> None:
+        """Send a JSON error response."""
+        self._send_json_response({"ok": False, "error": message}, status=status)
+
+    def _route_control(self, method: str) -> None:
+        """Route POST/PUT/DELETE requests to control API handlers."""
+        from . import web_control_api as api
+        from .web_control_api import ControlError
+
+        if not self._check_auth():
+            return
+        if not self._check_control_allowed():
+            return
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        body = self._read_json_body()
+        if body is None:
+            return  # Error already sent
+
+        try:
+            result = self._dispatch_control(method, path, body)
+            self._send_json_response(result)
+        except ControlError as e:
+            self._send_json_error(e.status, str(e))
+        except Exception as e:
+            self._send_json_error(500, f"Internal error: {e}")
+
+    def _dispatch_control(self, method: str, path: str, body: dict) -> dict:
+        """Dispatch a control request to the appropriate handler."""
+        from . import web_control_api as api
+        from .web_control_api import ControlError
+
+        ts = self.tmux_session
+
+        # --- POST routes ---
+        if method == "POST":
+            # Agent interaction
+            if path.startswith("/api/agents/") and path.endswith("/send"):
+                name = path.split("/")[3]
+                return api.send_to_agent(
+                    ts, name,
+                    text=body.get("text", ""),
+                    enter=body.get("enter", True),
+                )
+
+            if path.startswith("/api/agents/") and path.endswith("/keys"):
+                name = path.split("/")[3]
+                return api.send_key_to_agent(ts, name, key=body.get("key", ""))
+
+            if path.startswith("/api/agents/") and path.endswith("/kill"):
+                name = path.split("/")[3]
+                return api.kill_agent(ts, name, cascade=body.get("cascade", True))
+
+            if path.startswith("/api/agents/") and path.endswith("/restart"):
+                name = path.split("/")[3]
+                return api.restart_agent(ts, name)
+
+            if path == "/api/agents/launch":
+                return api.launch_agent(
+                    ts,
+                    directory=body.get("directory", "."),
+                    name=body.get("name", ""),
+                    prompt=body.get("prompt"),
+                    permissions=body.get("permissions", "normal"),
+                )
+
+            if path.startswith("/api/agents/") and path.endswith("/sleep"):
+                name = path.split("/")[3]
+                return api.set_sleep(ts, name, asleep=body.get("asleep", True))
+
+            # Heartbeat control
+            if path.startswith("/api/agents/") and path.endswith("/heartbeat/pause"):
+                name = path.split("/")[3]
+                return api.pause_heartbeat(ts, name)
+
+            if path.startswith("/api/agents/") and path.endswith("/heartbeat/resume"):
+                name = path.split("/")[3]
+                return api.resume_heartbeat(ts, name)
+
+            # Bulk operations
+            if path == "/api/agents/transport":
+                return api.transport_all(ts)
+
+            if path == "/api/agents/cleanup":
+                return api.cleanup_agents(
+                    ts, include_done=body.get("include_done", False)
+                )
+
+            # System control
+            if path == "/api/daemon/monitor/restart":
+                return api.restart_monitor(ts)
+
+            if path == "/api/daemon/supervisor/start":
+                return api.start_supervisor(ts)
+
+            if path == "/api/daemon/supervisor/stop":
+                return api.stop_supervisor(ts)
+
+            if path == "/api/daemon/summarizer/toggle":
+                return api.toggle_summarizer(ts)
+
+        # --- PUT routes ---
+        elif method == "PUT":
+            if path.startswith("/api/agents/") and path.endswith("/standing-orders"):
+                name = path.split("/")[3]
+                return api.set_standing_orders(
+                    ts, name,
+                    text=body.get("text"),
+                    preset=body.get("preset"),
+                )
+
+            if path.startswith("/api/agents/") and path.endswith("/budget"):
+                name = path.split("/")[3]
+                return api.set_budget(ts, name, usd=float(body.get("usd", 0)))
+
+            if path.startswith("/api/agents/") and path.endswith("/value"):
+                name = path.split("/")[3]
+                return api.set_value(ts, name, value=int(body.get("value", 1000)))
+
+            if path.startswith("/api/agents/") and path.endswith("/annotation"):
+                name = path.split("/")[3]
+                return api.set_annotation(ts, name, text=body.get("text", ""))
+
+            if path.startswith("/api/agents/") and path.endswith("/heartbeat"):
+                name = path.split("/")[3]
+                return api.configure_heartbeat(
+                    ts, name,
+                    enabled=body.get("enabled", True),
+                    frequency=body.get("frequency"),
+                    instruction=body.get("instruction"),
+                )
+
+            if path.startswith("/api/agents/") and path.endswith("/time-context"):
+                name = path.split("/")[3]
+                return api.set_time_context(ts, name, enabled=body.get("enabled", True))
+
+            if path.startswith("/api/agents/") and path.endswith("/hook-detection"):
+                name = path.split("/")[3]
+                return api.set_hook_detection(ts, name, enabled=body.get("enabled", True))
+
+        # --- DELETE routes ---
+        elif method == "DELETE":
+            if path.startswith("/api/agents/") and path.endswith("/standing-orders"):
+                name = path.split("/")[3]
+                return api.clear_standing_orders(ts, name)
+
+        raise ControlError(f"Unknown {method} endpoint: {path}", status=404)
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        """Handle POST requests (control API)."""
+        self._route_control("POST")
+
+    def do_PUT(self) -> None:
+        """Handle PUT requests (control API)."""
+        self._route_control("PUT")
+
+    def do_DELETE(self) -> None:
+        """Handle DELETE requests (control API)."""
+        self._route_control("DELETE")
 
     def log_message(self, format: str, *args) -> None:
         """Custom log format - less verbose than default."""

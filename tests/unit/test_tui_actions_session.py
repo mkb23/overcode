@@ -29,7 +29,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -59,7 +59,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -91,7 +91,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -121,7 +121,7 @@ class TestToggleSleep:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -228,7 +228,7 @@ class TestToggleTimeContext:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -255,7 +255,7 @@ class TestToggleTimeContext:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -289,7 +289,7 @@ class TestKillFocused:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -409,7 +409,7 @@ class TestRestartFocused:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -498,7 +498,7 @@ class TestSyncToMainAndClear:
         mock_tui.focused = focused_widget
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -587,7 +587,7 @@ class TestTransportAll:
         mock_tui.sessions = sessions
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
         return mock_tui
 
     def test_first_press_sets_pending_with_active_sessions(self):
@@ -728,7 +728,7 @@ class TestFocusCommandBar:
         mock_tui.query_one.return_value = cmd_bar
         mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
         if sessions is not None:
             mock_tui.sessions = sessions
         return mock_tui

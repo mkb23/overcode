@@ -332,11 +332,13 @@ class SupervisorTUI(
         )
         self._summaries: dict[str, AgentSummary] = {}
 
-        # Sister integration (#245) - remote agent monitoring
+        # Sister integration (#245) - remote agent monitoring + control
         self._sister_poller = SisterPoller()
         self.has_sisters: bool = self._sister_poller.has_sisters
         self.local_hostname: str = self._sister_poller.local_hostname
         self._remote_sessions: List[Session] = []
+        from .sister_controller import SisterController
+        self._sister_controller = SisterController()
 
         # Pre-load session list synchronously so first render has data immediately
         try:
@@ -1418,10 +1420,35 @@ class SupervisorTUI(
         except NoMatches:
             pass
 
+    def _find_any_session_by_name(self, name: str):
+        """Find a session by name, including remote sessions."""
+        # Check local sessions first
+        session = self.session_manager.get_session_by_name(name)
+        if session:
+            return session
+        # Check remote sessions in self.sessions
+        for s in self.sessions:
+            if s.name == name and getattr(s, 'is_remote', False):
+                return s
+        return None
+
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
-        # Auto-wake sleeping agent if needed (#168)
-        session = self.session_manager.get_session_by_name(message.session_name)
+        session = self._find_any_session_by_name(message.session_name)
+
+        # Remote agent — dispatch through sister controller
+        if session and getattr(session, 'is_remote', False):
+            result = self._sister_controller.send_instruction(
+                session.source_url, session.source_api_key,
+                session.name, text=message.text,
+            )
+            if result.ok:
+                self.notify(f"Sent to remote agent {message.session_name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
+            return
+
+        # Local agent — auto-wake sleeping agent if needed (#168)
         if session and session.is_asleep:
             self.session_manager.update_session(session.id, is_asleep=False)
             # Update widget display immediately
@@ -1447,61 +1474,134 @@ class SupervisorTUI(
 
     def on_command_bar_standing_order_requested(self, message: CommandBar.StandingOrderRequested) -> None:
         """Handle standing order request from command bar."""
-        session = self.session_manager.get_session_by_name(message.session_name)
-        if session:
-            self.session_manager.set_standing_instructions(session.id, message.text)
-            if message.text:
-                self.notify(f"Standing order set for {message.session_name}")
-            else:
-                self.notify(f"Standing order cleared for {message.session_name}")
-            # Refresh session list to show updated standing order
-            self.refresh_sessions()
-        else:
+        session = self._find_any_session_by_name(message.session_name)
+        if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+            return
+
+        if getattr(session, 'is_remote', False):
+            if message.text:
+                result = self._sister_controller.set_standing_orders(
+                    session.source_url, session.source_api_key,
+                    session.name, text=message.text,
+                )
+            else:
+                result = self._sister_controller.clear_standing_orders(
+                    session.source_url, session.source_api_key, session.name,
+                )
+            if result.ok:
+                action = "set" if message.text else "cleared"
+                self.notify(f"Standing order {action} for remote {message.session_name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
+            return
+
+        self.session_manager.set_standing_instructions(session.id, message.text)
+        if message.text:
+            self.notify(f"Standing order set for {message.session_name}")
+        else:
+            self.notify(f"Standing order cleared for {message.session_name}")
+        self.refresh_sessions()
 
     def on_command_bar_value_updated(self, message: CommandBar.ValueUpdated) -> None:
         """Handle agent value update from command bar (#61)."""
-        session = self.session_manager.get_session_by_name(message.session_name)
-        if session:
-            self.session_manager.set_agent_value(session.id, message.value)
-            self.notify(f"Value set to {message.value} for {message.session_name}")
-            # Refresh and re-sort session list
-            self.refresh_sessions()
-        else:
+        session = self._find_any_session_by_name(message.session_name)
+        if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+            return
+
+        if getattr(session, 'is_remote', False):
+            result = self._sister_controller.set_value(
+                session.source_url, session.source_api_key,
+                session.name, value=message.value,
+            )
+            if result.ok:
+                self.notify(f"Value set to {message.value} for remote {message.session_name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
+            return
+
+        self.session_manager.set_agent_value(session.id, message.value)
+        self.notify(f"Value set to {message.value} for {message.session_name}")
+        self.refresh_sessions()
 
     def on_command_bar_budget_updated(self, message: CommandBar.BudgetUpdated) -> None:
         """Handle cost budget update from command bar (#173)."""
-        session = self.session_manager.get_session_by_name(message.session_name)
-        if session:
-            self.session_manager.set_cost_budget(session.id, message.budget_usd)
-            if message.budget_usd > 0:
-                self.notify(f"Budget set to ${message.budget_usd:.2f} for {message.session_name}")
-            else:
-                self.notify(f"Budget cleared for {message.session_name}")
-            self.refresh_sessions()
-        else:
+        session = self._find_any_session_by_name(message.session_name)
+        if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+            return
+
+        if getattr(session, 'is_remote', False):
+            result = self._sister_controller.set_budget(
+                session.source_url, session.source_api_key,
+                session.name, usd=message.budget_usd,
+            )
+            if result.ok:
+                if message.budget_usd > 0:
+                    self.notify(f"Budget set to ${message.budget_usd:.2f} for remote {message.session_name}")
+                else:
+                    self.notify(f"Budget cleared for remote {message.session_name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
+            return
+
+        self.session_manager.set_cost_budget(session.id, message.budget_usd)
+        if message.budget_usd > 0:
+            self.notify(f"Budget set to ${message.budget_usd:.2f} for {message.session_name}")
+        else:
+            self.notify(f"Budget cleared for {message.session_name}")
+        self.refresh_sessions()
 
     def on_command_bar_annotation_updated(self, message: CommandBar.AnnotationUpdated) -> None:
         """Handle human annotation update from command bar (#74)."""
-        session = self.session_manager.get_session_by_name(message.session_name)
-        if session:
-            self.session_manager.set_human_annotation(session.id, message.annotation)
-            if message.annotation:
-                self.notify(f"Annotation set for {message.session_name}")
-            else:
-                self.notify(f"Annotation cleared for {message.session_name}")
-            # Refresh session list to show updated annotation
-            self.refresh_sessions()
-        else:
+        session = self._find_any_session_by_name(message.session_name)
+        if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
+            return
+
+        if getattr(session, 'is_remote', False):
+            result = self._sister_controller.set_annotation(
+                session.source_url, session.source_api_key,
+                session.name, text=message.annotation,
+            )
+            if result.ok:
+                action = "set" if message.annotation else "cleared"
+                self.notify(f"Annotation {action} for remote {message.session_name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
+            return
+
+        self.session_manager.set_human_annotation(session.id, message.annotation)
+        if message.annotation:
+            self.notify(f"Annotation set for {message.session_name}")
+        else:
+            self.notify(f"Annotation cleared for {message.session_name}")
+        self.refresh_sessions()
 
     def on_command_bar_heartbeat_updated(self, message: CommandBar.HeartbeatUpdated) -> None:
         """Handle heartbeat configuration update from command bar (#171)."""
-        session = self.session_manager.get_session_by_name(message.session_name)
+        session = self._find_any_session_by_name(message.session_name)
         if not session:
             self.notify(f"Session not found: {message.session_name}", severity="error")
+            return
+
+        if getattr(session, 'is_remote', False):
+            result = self._sister_controller.configure_heartbeat(
+                session.source_url, session.source_api_key,
+                session.name,
+                enabled=message.enabled,
+                frequency=str(message.frequency),
+                instruction=message.instruction,
+            )
+            if result.ok:
+                if message.enabled:
+                    freq_str = format_duration(message.frequency)
+                    self.notify(f"Heartbeat enabled: every {freq_str} (remote)", severity="information")
+                else:
+                    self.notify("Heartbeat disabled (remote)", severity="information")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
             return
 
         self.session_manager.update_session(
