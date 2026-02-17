@@ -31,7 +31,7 @@ from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
-from .settings import signal_activity, get_session_dir, get_agent_history_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
+from .settings import signal_activity, get_session_dir, get_agent_history_path, get_event_loop_timing_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
@@ -346,6 +346,11 @@ class SupervisorTUI(
         except Exception:
             self._preloaded_sessions = None
 
+        # Event loop heartbeat probe — measures event loop responsiveness
+        self._heartbeat_last: float = 0.0  # monotonic timestamp of last tick
+        self._heartbeat_log: list = []  # buffered (iso_timestamp, delta_ms, event) tuples
+        self._heartbeat_csv_path = get_event_loop_timing_path(tmux_session)
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
@@ -424,6 +429,11 @@ class SupervisorTUI(
         self.update_timeline()
         # Kick off status fetch immediately (widgets already exist from pre-load)
         self.update_all_statuses()
+
+        # Event loop heartbeat probe — always on (negligible overhead)
+        self._heartbeat_last = time.monotonic()
+        self.set_interval(0.1, self._record_heartbeat)
+        self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -512,10 +522,12 @@ class SupervisorTUI(
         asleep_ids: set,
     ) -> None:
         """Apply daemon status results on main thread (no I/O)."""
+        self._mark_event("apply_daemon_start")
         daemon_bar.monitor_state = monitor_state
         daemon_bar._asleep_session_ids = asleep_ids
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
         daemon_bar.refresh()
+        self._mark_event("apply_daemon_end")
 
         # Check for multiple daemon processes (potential time tracking bug)
         if daemon_count > 1 and not self._multiple_daemon_warning_shown:
@@ -917,8 +929,10 @@ class SupervisorTUI(
 
     def _apply_remote_sessions(self, remote_sessions: List[Session]) -> None:
         """Store remote sessions and rebuild widget list."""
+        self._mark_event("apply_sisters_start")
         self._remote_sessions = remote_sessions
         self.refresh_sessions()
+        self._mark_event("apply_sisters_end")
 
     def _poll_focused_sister(self) -> None:
         """Fast-poll the focused remote agent (1.5s) for responsive preview."""
@@ -964,6 +978,7 @@ class SupervisorTUI(
 
     def _apply_status_results(self, status_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""
+        self._mark_event("apply_status_start")
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
@@ -1032,9 +1047,11 @@ class SupervisorTUI(
             widget = self._get_focused_widget()
             if widget is not None:
                 widget.focus()
+        self._mark_event("apply_status_end")
 
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
+        self._mark_event("apply_stats_start")
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
             claude_stats = stats_results.get(session_id)
@@ -1046,6 +1063,7 @@ class SupervisorTUI(
                 widget.git_diff_stats = git_diff
             if claude_stats is not None or git_diff is not None:
                 widget.refresh()
+        self._mark_event("apply_stats_end")
 
     @work(thread=True, exclusive=True, name="summarizer")
     def _update_summaries_async(self) -> None:
@@ -1071,6 +1089,7 @@ class SupervisorTUI(
 
     def _apply_summaries(self, summaries: dict) -> None:
         """Apply AI summaries to session widgets (runs on main thread)."""
+        self._mark_event("apply_summaries_start")
         self._summaries = summaries
         is_enabled = self._summarizer.config.enabled
 
@@ -1082,6 +1101,7 @@ class SupervisorTUI(
                 widget.ai_summary_short = summary.text or ""
                 widget.ai_summary_context = summary.context or ""
             widget.refresh()
+        self._mark_event("apply_summaries_end")
 
     def update_session_widgets(self, force_refresh: bool = True, preserve_focus: bool = True) -> None:
         """Update the session display incrementally.
@@ -2016,11 +2036,53 @@ class SupervisorTUI(
         # Default: allow the action
         return True
 
+    # ── Event loop heartbeat probe ──────────────────────────────────────
+
+    def _record_heartbeat(self) -> None:
+        """Record one heartbeat tick. Runs every 100ms on the event loop."""
+        now = time.monotonic()
+        if self._heartbeat_last > 0:
+            delta_ms = (now - self._heartbeat_last) * 1000.0
+            iso_ts = datetime.now().isoformat(timespec="milliseconds")
+            self._heartbeat_log.append((iso_ts, f"{delta_ms:.1f}", ""))
+        self._heartbeat_last = now
+
+    def _mark_event(self, name: str) -> None:
+        """Record a named event marker in the heartbeat log."""
+        now = time.monotonic()
+        delta_ms = (now - self._heartbeat_last) * 1000.0 if self._heartbeat_last > 0 else 0.0
+        iso_ts = datetime.now().isoformat(timespec="milliseconds")
+        self._heartbeat_log.append((iso_ts, f"{delta_ms:.1f}", name))
+        self._heartbeat_last = now
+
+    def _flush_heartbeat(self) -> None:
+        """Write buffered heartbeat data to CSV. Runs every 5s."""
+        if not self._heartbeat_log:
+            return
+        buf = self._heartbeat_log
+        self._heartbeat_log = []
+        try:
+            path = self._heartbeat_csv_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_header = not path.exists()
+            with open(path, "a") as f:
+                if write_header:
+                    f.write("timestamp,delta_ms,event\n")
+                for ts, delta, event in buf:
+                    f.write(f"{ts},{delta},{event}\n")
+        except OSError:
+            pass  # Best effort
+
+    # ── End heartbeat probe ──────────────────────────────────────────
+
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""
         import sys
         # Stop the summarizer (release API client resources)
         self._summarizer.stop()
+
+        # Flush remaining heartbeat data
+        self._flush_heartbeat()
 
         # Ensure mouse tracking is disabled
         sys.stdout.write('\033[?1000l')  # Disable mouse tracking
