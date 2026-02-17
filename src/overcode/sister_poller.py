@@ -123,6 +123,7 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         current_task=agent.get("activity", ""),
         green_time_seconds=agent.get("green_time_raw", 0.0),
         non_green_time_seconds=agent.get("non_green_time_raw", 0.0),
+        sleep_time_seconds=agent.get("sleep_time_raw", 0.0),
         steers_count=agent.get("robot_steers", 0),
         interaction_count=agent.get("human_interactions", 0) + agent.get("robot_steers", 0),
     )
@@ -137,6 +138,9 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         ).isoformat()
         stats.state_since = state_since
 
+    # Use actual start_time from API if available
+    start_time = agent.get("start_time", "") or datetime.now().isoformat()
+
     return Session(
         id=session_id,
         name=name,
@@ -144,7 +148,7 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         tmux_window=0,
         command=[],
         start_directory=None,
-        start_time=datetime.now().isoformat(),  # Approximate
+        start_time=start_time,
         repo_name=agent.get("repo", "") or None,
         branch=agent.get("branch", "") or None,
         status=status if status == "terminated" else "running",
@@ -153,6 +157,15 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         standing_orders_complete=agent.get("standing_orders_complete", False),
         stats=stats,
         cost_budget_usd=agent.get("cost_budget_usd", 0.0),
+        is_asleep=agent.get("is_asleep", False),
+        time_context_enabled=agent.get("time_context_enabled", False),
+        human_annotation=agent.get("human_annotation", ""),
+        # Heartbeat
+        heartbeat_enabled=agent.get("heartbeat_enabled", False),
+        heartbeat_frequency_seconds=agent.get("heartbeat_frequency_seconds", 300),
+        heartbeat_paused=agent.get("heartbeat_paused", False),
+        last_heartbeat_time=agent.get("last_heartbeat_time"),
+        # Sister metadata
         is_remote=True,
         source_host=host_name,
         source_url=source_url,
@@ -160,6 +173,9 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         pane_content=agent.get("pane_content", ""),
         remote_git_diff=_parse_git_diff(agent),
         remote_median_work_time=_parse_median_work(agent),
+        # AI summaries from remote summarizer
+        remote_activity_summary=agent.get("activity_summary", ""),
+        remote_activity_summary_context=agent.get("activity_summary_context", ""),
     )
 
 

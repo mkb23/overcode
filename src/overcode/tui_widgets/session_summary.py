@@ -397,14 +397,6 @@ class SessionSummary(Static, can_focus=True):
         """Render the expanded view: standing instructions + pane content lines."""
         s = ctx.session
 
-        # Remote agents: show placeholder instead of pane content
-        if s.is_remote:
-            content.append("\n")
-            content.append("  ")
-            content.append("│ ", style=ctx.mono("cyan", "dim"))
-            content.append("(remote agent — no live preview)", style=ctx.mono("dim italic", "dim"))
-            return
-
         # Standing instructions
         if s.standing_instructions:
             content.append("\n")

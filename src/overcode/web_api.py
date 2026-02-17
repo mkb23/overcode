@@ -231,7 +231,21 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         "git_diff_deletions": git_diff[2] if git_diff else 0,
         # Activity summary (if summarizer enabled)
         "activity_summary": s.activity_summary or "",
+        "activity_summary_context": s.activity_summary_context or "",
         "activity_summary_updated": s.activity_summary_updated,
+        # Heartbeat state
+        "heartbeat_enabled": s.heartbeat_enabled,
+        "heartbeat_frequency_seconds": s.heartbeat_frequency_seconds,
+        "heartbeat_paused": s.heartbeat_paused,
+        "last_heartbeat_time": s.last_heartbeat_time,
+        # Sleep state
+        "is_asleep": s.is_asleep,
+        "sleep_time_raw": s.sleep_time_seconds,
+        # Per-agent toggles
+        "time_context_enabled": s.time_context_enabled,
+        # Agent metadata
+        "human_annotation": getattr(s, "human_annotation", ""),
+        "start_time": s.start_time or "",
         # Pane content for sister preview sync
         "pane_content": pane_content,
     }

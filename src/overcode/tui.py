@@ -933,6 +933,10 @@ class SupervisorTUI(
             # Update AI summaries (if available)
             if session_id in ai_summaries:
                 widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
+            elif widget.session.is_remote:
+                # Use remote summarizer output carried on the session
+                widget.ai_summary_short = widget.session.remote_activity_summary
+                widget.ai_summary_context = widget.session.remote_activity_summary_context
 
             # Apply status if we have results for this widget
             if session_id in status_results:
