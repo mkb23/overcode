@@ -59,6 +59,22 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     state = get_monitor_daemon_state(tmux_session)
     now = datetime.now()
 
+    # Capture pane content for each agent (for sister preview sync)
+    pane_contents: Dict[int, str] = {}
+    if state and state.sessions:
+        try:
+            from .implementations import TmuxController
+            tmux = TmuxController()
+            for s in state.sessions:
+                try:
+                    content = tmux.capture_pane(tmux_session, s.tmux_window, lines=100)
+                    if content:
+                        pane_contents[s.tmux_window] = content
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     result = {
         "timestamp": now.isoformat(),
         "hostname": get_hostname(),
@@ -70,7 +86,8 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
 
     if state:
         for s in state.sessions:
-            result["agents"].append(_build_agent_info(s, now))
+            pane_content = pane_contents.get(s.tmux_window, "")
+            result["agents"].append(_build_agent_info(s, now, pane_content))
 
     return result
 
@@ -135,7 +152,7 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     }
 
 
-def _build_agent_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
+def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = "") -> Dict[str, Any]:
     """Build agent info dict from SessionDaemonState."""
     # Calculate time in current state
     time_in_state = 0.0
@@ -214,6 +231,8 @@ def _build_agent_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
         # Activity summary (if summarizer enabled)
         "activity_summary": s.activity_summary or "",
         "activity_summary_updated": s.activity_summary_updated,
+        # Pane content for sister preview sync
+        "pane_content": pane_content,
     }
 
 

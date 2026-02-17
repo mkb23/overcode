@@ -766,7 +766,7 @@ class SupervisorTUI(
             def fetch_status(session):
                 try:
                     if session.is_remote:
-                        return (session.stats.current_state or "running", session.stats.current_task, "")
+                        return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.status == "terminated":
                         return ("terminated", "(tmux window no longer exists)", "")
                     if session.status == "done":

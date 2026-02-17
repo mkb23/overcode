@@ -137,6 +137,7 @@ class Session:
     # Sister integration (#245) - remote agents from other machines
     is_remote: bool = False
     source_host: str = ""
+    pane_content: str = ""  # Cached pane content from remote API (empty for local sessions)
 
     def to_dict(self) -> dict:
         data = asdict(self)

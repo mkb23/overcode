@@ -155,4 +155,5 @@ def _agent_to_session(agent: dict, host_name: str) -> Session:
         cost_budget_usd=agent.get("cost_budget_usd", 0.0),
         is_remote=True,
         source_host=host_name,
+        pane_content=agent.get("pane_content", ""),
     )
