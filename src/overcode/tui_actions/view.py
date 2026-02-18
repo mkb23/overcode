@@ -457,3 +457,18 @@ class ViewActionsMixin:
             fs_preview.show(lines, session.name, self.monochrome)
         except NoMatches:
             pass
+
+    def action_cycle_notifications(self) -> None:
+        """Cycle macOS notification mode: off → sound → banner → both → off (#235)."""
+        from ..notifier import MacNotifier
+
+        modes = MacNotifier.MODES
+        current_idx = modes.index(self._notifier.mode) if self._notifier.mode in modes else 0
+        new_mode = modes[(current_idx + 1) % len(modes)]
+
+        self._notifier.mode = new_mode
+        self._prefs.notifications = new_mode
+        self._save_prefs()
+
+        labels = {"off": "Off", "sound": "Sound only", "banner": "Banner only", "both": "Sound + Banner"}
+        self.notify(f"Notifications: {labels[new_mode]}", severity="information")

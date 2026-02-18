@@ -221,6 +221,8 @@ class SupervisorTUI(
         ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
+        # macOS notifications cycle (#235)
+        ("N", "cycle_notifications", "Notifications"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -320,6 +322,9 @@ class SupervisorTUI(
         self.monochrome = self._prefs.monochrome
         # Initialize show_cost from preferences
         self.show_cost = self._prefs.show_cost
+        # macOS notification integration (#235)
+        from .notifier import MacNotifier
+        self._notifier = MacNotifier(mode=self._prefs.notifications)
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
 
@@ -1026,6 +1031,11 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
+                # Queue macOS notification for unvisited stalled agents (#235)
+                if is_unvisited_stalled:
+                    task = widget.session.stats.current_task if widget.session.stats else None
+                    self._notifier.queue(widget.session.name, task)
+
                 # Auto-dismiss bell after 5s if this agent is already being viewed
                 if is_unvisited_stalled and self.view_mode == "list_preview":
                     focused = self._get_focused_widget()
@@ -1053,6 +1063,8 @@ class SupervisorTUI(
             widget = self._get_focused_widget()
             if widget is not None:
                 widget.focus()
+        # Flush coalesced macOS notifications (#235)
+        self._notifier.flush()
         self._mark_event("apply_status_end")
 
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
