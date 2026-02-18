@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 
 from .tmux_manager import TmuxManager
-from .tmux_utils import send_text_to_tmux_window
+from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content
 from .session_manager import SessionManager, Session
 from .config import get_default_standing_instructions
 from .dependency_check import require_tmux, require_claude
@@ -210,13 +210,55 @@ class ClaudeLauncher:
 
         return session
 
+    # Characters that indicate Claude's input prompt is ready
+    PROMPT_READY_CHARS = {">", "›", "❯"}
+
+    def _wait_for_prompt(
+        self,
+        window_index: int,
+        timeout: float = 30.0,
+        poll_interval: float = 0.5,
+    ) -> bool:
+        """Poll pane content until Claude's input prompt appears.
+
+        Returns True if prompt detected, False on timeout.
+        """
+        from .status_patterns import strip_ansi
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            content = get_tmux_pane_content(
+                self.tmux.session_name, window_index, lines=5
+            )
+            if content:
+                for line in content.split('\n'):
+                    cleaned = strip_ansi(line).strip()
+                    if cleaned in self.PROMPT_READY_CHARS:
+                        return True
+            time.sleep(poll_interval)
+        return False
+
     def _send_prompt_to_window(
         self,
         window_index: int,
         prompt: str,
         startup_delay: float = 3.0,
     ) -> bool:
-        """Send a prompt to a Claude session via tmux load-buffer/paste-buffer."""
+        """Send a prompt to a Claude session via tmux load-buffer/paste-buffer.
+
+        Polls for Claude's input prompt before sending. Falls back to
+        startup_delay if the prompt is not detected within 30 seconds.
+        """
+        if self._wait_for_prompt(window_index):
+            # Prompt detected — send immediately, no delay needed
+            return send_text_to_tmux_window(
+                self.tmux.session_name,
+                window_index,
+                prompt,
+                send_enter=True,
+                startup_delay=0,
+            )
+        # Fallback: prompt not detected, use original delay
         return send_text_to_tmux_window(
             self.tmux.session_name,
             window_index,

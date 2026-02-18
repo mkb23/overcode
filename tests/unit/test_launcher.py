@@ -460,6 +460,95 @@ class TestSessionNameValidation:
             assert session is None, f"Name '{name}' should be invalid"
 
 
+class TestWaitForPrompt:
+    """Test _wait_for_prompt readiness polling"""
+
+    def test_detects_prompt_immediately(self, tmp_path):
+        """Returns True when Claude's prompt character is found in pane"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch("overcode.launcher.get_tmux_pane_content", return_value="some banner\n❯ \n"):
+            result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
+
+        assert result is True
+
+    def test_detects_angled_bracket_prompt(self, tmp_path):
+        """Also detects > prompt character"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch("overcode.launcher.get_tmux_pane_content", return_value="banner\n>\n"):
+            result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
+
+        assert result is True
+
+    def test_returns_false_on_timeout(self, tmp_path):
+        """Returns False when prompt never appears within timeout"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch("overcode.launcher.get_tmux_pane_content", return_value="loading..."):
+            with patch("time.sleep"):
+                result = launcher._wait_for_prompt(session.tmux_window, timeout=0.01)
+
+        assert result is False
+
+    def test_returns_false_when_pane_empty(self, tmp_path):
+        """Returns False when pane content is None"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch("overcode.launcher.get_tmux_pane_content", return_value=None):
+            with patch("time.sleep"):
+                result = launcher._wait_for_prompt(session.tmux_window, timeout=0.01)
+
+        assert result is False
+
+    def test_polls_until_prompt_appears(self, tmp_path):
+        """Polls multiple times until prompt appears"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        # First two calls: loading, third call: prompt ready
+        side_effects = ["loading...", "still loading...", "welcome\n❯ \n"]
+        with patch("overcode.launcher.get_tmux_pane_content", side_effect=side_effects):
+            with patch("time.sleep"):
+                result = launcher._wait_for_prompt(session.tmux_window, timeout=30.0)
+
+        assert result is True
+
+    def test_strips_ansi_before_matching(self, tmp_path):
+        """ANSI escape codes are stripped before checking for prompt"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        # Prompt wrapped in ANSI codes
+        ansi_prompt = "\x1b[32m❯\x1b[0m \n"
+        with patch("overcode.launcher.get_tmux_pane_content", return_value=ansi_prompt):
+            result = launcher._wait_for_prompt(session.tmux_window, timeout=5.0)
+
+        assert result is True
+
+
 class TestSendPromptToWindow:
     """Test _send_prompt_to_window prompt batching"""
 
@@ -482,10 +571,11 @@ class TestSendPromptToWindow:
         # Send a multi-line prompt (more than batch_size lines)
         large_prompt = "\n".join([f"line {i}" for i in range(25)])
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch("time.sleep"):
-                result = launcher._send_prompt_to_window(window_idx, large_prompt, startup_delay=0)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch("time.sleep"):
+                    result = launcher._send_prompt_to_window(window_idx, large_prompt, startup_delay=0)
 
         assert result is True
         # Should have multiple load-buffer and paste-buffer calls
@@ -507,12 +597,49 @@ class TestSendPromptToWindow:
         session = launcher.launch(name="test-agent")
         window_idx = session.tmux_window
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch("time.sleep"):
-                result = launcher._send_prompt_to_window(window_idx, "hello world", startup_delay=0)
+        with patch.object(launcher, "_wait_for_prompt", return_value=True):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch("time.sleep"):
+                    result = launcher._send_prompt_to_window(window_idx, "hello world", startup_delay=0)
 
         assert result is True
+
+    def test_falls_back_to_delay_when_prompt_not_detected(self, tmp_path):
+        """Uses startup_delay fallback when _wait_for_prompt times out"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch.object(launcher, "_wait_for_prompt", return_value=False):
+            with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+                result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
+
+        assert result is True
+        # Should have been called with the fallback startup_delay
+        mock_send.assert_called_once_with(
+            "agents", session.tmux_window, "hello", send_enter=True, startup_delay=5.0
+        )
+
+    def test_skips_delay_when_prompt_detected(self, tmp_path):
+        """Sends immediately with no delay when _wait_for_prompt succeeds"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        session = launcher.launch(name="test-agent")
+
+        with patch.object(launcher, "_wait_for_prompt", return_value=True):
+            with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+                result = launcher._send_prompt_to_window(session.tmux_window, "hello", startup_delay=5.0)
+
+        assert result is True
+        # Should have been called with startup_delay=0 since prompt was detected
+        mock_send.assert_called_once_with(
+            "agents", session.tmux_window, "hello", send_enter=True, startup_delay=0
+        )
 
 
 class TestListSessionsKillUntracked:
