@@ -150,8 +150,11 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
     name = agent.get("name", "unknown")
     session_id = f"remote:{host_name}:{name}"
 
-    # Map API status to session status
+    # Map API status to session status — pass through as-is so that
+    # filtering (hide done, hide asleep) and display (emoji, color, sort)
+    # work correctly for remote agents.
     status = agent.get("status", "running")
+    is_asleep = status == "asleep"
 
     # Build SessionStats from API fields
     stats = SessionStats(
@@ -189,7 +192,8 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         start_time=start_time,
         repo_name=agent.get("repo", "") or None,
         branch=agent.get("branch", "") or None,
-        status=status if status == "terminated" else "running",
+        status=status,
+        is_asleep=is_asleep,
         permissiveness_mode=agent.get("permissiveness_mode", "normal"),
         standing_instructions="(remote)" if agent.get("standing_orders") else "",
         standing_orders_complete=agent.get("standing_orders_complete", False),

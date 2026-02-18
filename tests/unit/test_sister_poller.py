@@ -95,6 +95,41 @@ class TestAgentToSession:
         session = _agent_to_session(agent, "host")
         assert session.cost_budget_usd == 5.0
 
+    def test_done_status_passes_through(self):
+        """Done agents from sisters should be filterable by hide-done (#D key)."""
+        agent = {"name": "finished", "status": "done"}
+        session = _agent_to_session(agent, "host")
+        assert session.status == "done"
+        assert session.stats.current_state == "done"
+        assert session.is_asleep is False
+
+    def test_asleep_status_passes_through(self):
+        """Asleep agents from sisters should be filterable by hide-asleep."""
+        agent = {"name": "sleeping", "status": "asleep"}
+        session = _agent_to_session(agent, "host")
+        assert session.status == "asleep"
+        assert session.is_asleep is True
+        assert session.stats.current_state == "asleep"
+
+    def test_waiting_user_status_passes_through(self):
+        """Non-running statuses should pass through for correct display."""
+        agent = {"name": "blocked", "status": "waiting_user"}
+        session = _agent_to_session(agent, "host")
+        assert session.status == "waiting_user"
+        assert session.stats.current_state == "waiting_user"
+
+    def test_error_status_passes_through(self):
+        agent = {"name": "broken", "status": "error"}
+        session = _agent_to_session(agent, "host")
+        assert session.status == "error"
+        assert session.stats.current_state == "error"
+
+    def test_waiting_approval_status_passes_through(self):
+        agent = {"name": "pending", "status": "waiting_approval"}
+        session = _agent_to_session(agent, "host")
+        assert session.status == "waiting_approval"
+        assert session.stats.current_state == "waiting_approval"
+
 
 class TestSisterPollerInit:
     """Test SisterPoller initialization."""
