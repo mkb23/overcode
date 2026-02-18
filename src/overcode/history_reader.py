@@ -151,7 +151,13 @@ class HistoryFile:
     def get_interactions_for_session(
         self, session: "Session"
     ) -> List[HistoryEntry]:
-        """Get history entries matching a session's directory and time window."""
+        """Get history entries matching a session's directory and time window.
+
+        When the session has known claude_session_ids, filters by sessionId
+        to avoid cross-contamination between agents sharing a directory (#264).
+        Falls back to directory+timestamp matching for older sessions without
+        tracked sessionIds.
+        """
         if not session.start_directory:
             return []
 
@@ -161,13 +167,21 @@ class HistoryFile:
         except (ValueError, TypeError):
             return []
 
+        # Use owned sessionIds when available for precise matching (#264)
+        owned_ids = set(getattr(session, 'claude_session_ids', None) or [])
+
         session_dir = str(Path(session.start_directory).resolve())
         matching = []
 
         for entry in self._entries():
             if entry.timestamp_ms < session_start_ms:
                 continue
-            if entry.project:
+            if owned_ids:
+                # Precise: only count interactions from this session's own Claude sessions
+                if entry.session_id in owned_ids:
+                    matching.append(entry)
+            elif entry.project:
+                # Fallback: directory matching for sessions without tracked IDs
                 entry_dir = str(Path(entry.project).resolve())
                 if entry_dir == session_dir:
                     matching.append(entry)

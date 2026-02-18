@@ -981,8 +981,10 @@ class TestGetSessionStatsOwnership:
 
         # Context should be from owned session only: 100 + 500 = 600
         assert stats.current_context_tokens == 600
-        # But total tokens should include both sessions
-        assert stats.input_tokens == 100 + 50000
+        # Total tokens also scoped to owned sessions only (#264)
+        assert stats.input_tokens == 100
+        # Interaction count should only reflect owned session entries
+        assert stats.interaction_count == 1
 
 
 class TestActiveSessionContext:
