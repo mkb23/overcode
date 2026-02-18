@@ -32,6 +32,30 @@ if TYPE_CHECKING:
 CLAUDE_HISTORY_PATH = Path.home() / ".claude" / "history.jsonl"
 CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 
+# Model name → context window size in tokens.
+# Default 200K for unknown models.  Update as new models ship.
+MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    "claude-opus-4-6": 200_000,
+    "claude-sonnet-4-5-20250929": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-5-haiku-20241022": 200_000,
+    "claude-3-opus-20240229": 200_000,
+    "claude-3-sonnet-20240229": 200_000,
+    "claude-3-haiku-20240307": 200_000,
+}
+DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def model_context_window(model: Optional[str]) -> int:
+    """Return the context window size for a given model name.
+
+    Falls back to DEFAULT_CONTEXT_WINDOW for unknown/None models.
+    """
+    if not model:
+        return DEFAULT_CONTEXT_WINDOW
+    return MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+
 
 @dataclass
 class ClaudeSessionStats:
@@ -46,6 +70,12 @@ class ClaudeSessionStats:
     subagent_count: int = 0  # Number of subagent files (#176)
     live_subagent_count: int = 0  # Subagents with recently-modified files (#256)
     background_task_count: int = 0  # Number of background/farm tasks (#177)
+    model: Optional[str] = None  # Most recently seen model name (#272)
+
+    @property
+    def max_context_tokens(self) -> int:
+        """Context window size for the detected model."""
+        return model_context_window(self.model)
 
     @property
     def total_tokens(self) -> int:
@@ -395,6 +425,7 @@ def read_token_usage_from_session_file(
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
         "current_context_tokens": 0,  # Most recent input_tokens
+        "model": None,  # Most recently seen model name (#272)
     }
 
     if not session_file.exists():
@@ -425,6 +456,9 @@ def read_token_usage_from_session_file(
                                     pass
 
                         message = data.get("message", {})
+                        model = message.get("model")
+                        if model:
+                            totals["model"] = model
                         usage = message.get("usage", {})
                         if usage:
                             input_tokens = usage.get("input_tokens", 0)
@@ -581,6 +615,7 @@ def get_session_stats(
     total_cache_creation = 0
     total_cache_read = 0
     current_context = 0
+    detected_model: Optional[str] = None
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
@@ -597,12 +632,17 @@ def get_session_stats(
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
 
-        # Context: prefer active session (#116), fall back to MAX across all
+        # Context & model: prefer active session (#116), fall back to MAX across all
         if active_session_id:
             if sid == active_session_id:
                 current_context = usage["current_context_tokens"]
-        elif usage["current_context_tokens"] > current_context:
-            current_context = usage["current_context_tokens"]
+                if usage["model"]:
+                    detected_model = usage["model"]
+        else:
+            if usage["current_context_tokens"] > current_context:
+                current_context = usage["current_context_tokens"]
+            if usage["model"]:
+                detected_model = usage["model"]
 
         # Collect work times from this session file
         work_times = read_work_times_from_session_file(session_file, since=session_start)
@@ -641,4 +681,5 @@ def get_session_stats(
         subagent_count=subagent_count,
         live_subagent_count=live_subagent_count,
         background_task_count=background_task_count,
+        model=detected_model,
     )

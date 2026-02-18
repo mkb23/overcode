@@ -512,8 +512,9 @@ class TestReadTokenUsageFromSessionFile:
 
         # Current context should be most recent: 8 + 129504 = 129512
         assert result["current_context_tokens"] == 129512
-        # Verify it's ~65% of 200K context window
-        assert result["current_context_tokens"] / 200_000 * 100 == pytest.approx(64.756, rel=0.01)
+        # Verify it's ~65% of default 200K context window
+        from overcode.history_reader import DEFAULT_CONTEXT_WINDOW
+        assert result["current_context_tokens"] / DEFAULT_CONTEXT_WINDOW * 100 == pytest.approx(64.756, rel=0.01)
 
     def test_current_context_uses_last_message(self, tmp_path):
         """Should use the most recent message for current context."""

@@ -113,6 +113,7 @@ def _make_claude_stats(**overrides):
         current_context_tokens=50000,
         interaction_count=10,
         median_work_time=120.0,
+        max_context_tokens=200_000,
     )
     defaults.update(overrides)
     mock = MagicMock()

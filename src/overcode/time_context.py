@@ -310,4 +310,6 @@ def generate_time_context(
     last_heartbeat = read_heartbeat_timestamp(tmux_session, session_name)
     heartbeat = format_heartbeat(interval, last_heartbeat, now)
 
-    return build_time_context_line(clock, presence, office, uptime, heartbeat)
+    line = build_time_context_line(clock, presence, office, uptime, heartbeat)
+    line += "\nPrefix each response with [HH:MM] using the Clock value above."
+    return line

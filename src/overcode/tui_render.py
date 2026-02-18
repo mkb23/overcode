@@ -372,7 +372,8 @@ def render_session_summary_line(
         else:
             content.append(f" Σ{format_tokens(total_tokens):>6}", style=f"bold orange1{bg}")
         if current_context_tokens and current_context_tokens > 0:
-            max_context = 200_000
+            from .history_reader import DEFAULT_CONTEXT_WINDOW
+            max_context = DEFAULT_CONTEXT_WINDOW
             ctx_pct = min(100, current_context_tokens / max_context * 100)
             content.append(f" c@{ctx_pct:>3.0f}%", style=f"bold orange1{bg}")
         else:

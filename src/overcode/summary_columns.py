@@ -232,7 +232,7 @@ def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
     """Context window usage (📚XX%). Always visible."""
     if ctx.claude_stats is not None:
         if ctx.claude_stats.current_context_tokens > 0:
-            max_context = 200_000
+            max_context = ctx.claude_stats.max_context_tokens
             ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
             return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
         else:
@@ -518,7 +518,8 @@ def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.claude_stats is None:
         return None
     if ctx.claude_stats.current_context_tokens > 0:
-        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / 200_000 * 100)
+        max_context = ctx.claude_stats.max_context_tokens
+        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
         return f"context {ctx_pct:.0f}%"
     return None
 
