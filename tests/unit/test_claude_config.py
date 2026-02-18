@@ -299,3 +299,120 @@ class TestListHooksMatching:
         assert len(result) == 2
         assert ("UserPromptSubmit", "overcode time-context") in result
         assert ("UserPromptSubmit", "overcode hook-handler") in result
+
+
+class TestAddPermission:
+
+    def test_add_to_empty(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("{}")
+        editor = ClaudeConfigEditor(f)
+        assert editor.add_permission("Bash(overcode report *)") is True
+        data = json.loads(f.read_text())
+        assert data["permissions"]["allow"] == ["Bash(overcode report *)"]
+
+    def test_add_to_nonexistent_file(self, tmp_path):
+        f = tmp_path / ".claude" / "settings.json"
+        editor = ClaudeConfigEditor(f)
+        assert editor.add_permission("Bash(overcode show *)") is True
+        assert f.exists()
+        data = json.loads(f.read_text())
+        assert "Bash(overcode show *)" in data["permissions"]["allow"]
+
+    def test_returns_false_when_exists(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.add_permission("Bash(overcode report *)") is False
+
+    def test_appends_to_existing_allow(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.add_permission("Bash(overcode show *)") is True
+        data = json.loads(f.read_text())
+        assert len(data["permissions"]["allow"]) == 2
+
+    def test_preserves_existing_settings(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"alwaysThinkingEnabled": True, "permissions": {"deny": ["something"]}}))
+        editor = ClaudeConfigEditor(f)
+        editor.add_permission("Bash(overcode list *)")
+        data = json.loads(f.read_text())
+        assert data["alwaysThinkingEnabled"] is True
+        assert data["permissions"]["deny"] == ["something"]
+        assert "Bash(overcode list *)" in data["permissions"]["allow"]
+
+
+class TestRemovePermission:
+
+    def test_remove_existing(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_permission("Bash(overcode report *)") is True
+        data = json.loads(f.read_text())
+        assert "permissions" not in data
+
+    def test_remove_nonexistent(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_permission("Bash(overcode show *)") is False
+
+    def test_remove_from_empty(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("{}")
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_permission("Bash(overcode report *)") is False
+
+    def test_remove_preserves_other_perms(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": [
+            "Bash(overcode report *)", "Bash(overcode show *)"
+        ]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.remove_permission("Bash(overcode report *)") is True
+        data = json.loads(f.read_text())
+        assert data["permissions"]["allow"] == ["Bash(overcode show *)"]
+
+    def test_remove_preserves_other_settings(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({
+            "other_key": True,
+            "permissions": {"allow": ["Bash(overcode report *)"], "deny": ["something"]},
+        }))
+        editor = ClaudeConfigEditor(f)
+        editor.remove_permission("Bash(overcode report *)")
+        data = json.loads(f.read_text())
+        assert data["other_key"] is True
+        assert data["permissions"]["deny"] == ["something"]
+        assert "allow" not in data["permissions"]
+
+
+class TestListPermissionsMatching:
+
+    def test_finds_overcode_perms(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": [
+            "Bash(overcode report *)",
+            "Bash(overcode show *)",
+            "Bash(npm test *)",
+        ]}}))
+        editor = ClaudeConfigEditor(f)
+        result = editor.list_permissions_matching("Bash(overcode ")
+        assert len(result) == 2
+        assert "Bash(overcode report *)" in result
+        assert "Bash(overcode show *)" in result
+
+    def test_no_matches(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps({"permissions": {"allow": ["Bash(npm test *)"]}}))
+        editor = ClaudeConfigEditor(f)
+        assert editor.list_permissions_matching("Bash(overcode ") == []
+
+    def test_empty_settings(self, tmp_path):
+        f = tmp_path / "settings.json"
+        f.write_text("{}")
+        editor = ClaudeConfigEditor(f)
+        assert editor.list_permissions_matching("Bash(overcode ") == []

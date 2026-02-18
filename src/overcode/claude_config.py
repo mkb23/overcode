@@ -137,3 +137,50 @@ class ClaudeConfigEditor:
                     if cmd.startswith(command_prefix):
                         results.append((event, cmd))
         return results
+
+    # ----- Permission management -----
+
+    def add_permission(self, tool_pattern: str) -> bool:
+        """Add to permissions.allow. Returns True if newly added."""
+        settings = self.load()
+        allow_list = settings.get("permissions", {}).get("allow", [])
+        if tool_pattern in allow_list:
+            return False
+
+        updated = copy.deepcopy(settings)
+        if "permissions" not in updated:
+            updated["permissions"] = {}
+        if "allow" not in updated["permissions"]:
+            updated["permissions"]["allow"] = []
+        updated["permissions"]["allow"].append(tool_pattern)
+        self.save(updated)
+        return True
+
+    def remove_permission(self, tool_pattern: str) -> bool:
+        """Remove from permissions.allow. Returns True if found."""
+        settings = self.load()
+        allow_list = settings.get("permissions", {}).get("allow", [])
+        if tool_pattern not in allow_list:
+            return False
+
+        updated = copy.deepcopy(settings)
+        updated["permissions"]["allow"].remove(tool_pattern)
+
+        # Clean up empty allow list
+        if not updated["permissions"]["allow"]:
+            del updated["permissions"]["allow"]
+
+        # Clean up empty permissions dict
+        if not updated["permissions"]:
+            del updated["permissions"]
+
+        self.save(updated)
+        return True
+
+    def list_permissions_matching(self, prefix: str) -> list[str]:
+        """Return entries from permissions.allow that start with prefix."""
+        settings = self.load()
+        return [
+            p for p in settings.get("permissions", {}).get("allow", [])
+            if p.startswith(prefix)
+        ]
