@@ -1018,7 +1018,8 @@ class SupervisorTUI(
 
                 # Detect transitions TO stalled state (waiting_user)
                 prev_status = self._previous_statuses.get(session_id)
-                if status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER:
+                is_new_stall = status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER
+                if is_new_stall:
                     self._prefs.visited_stalled_agents.discard(session_id)
                     prefs_changed = True
 
@@ -1031,8 +1032,8 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
-                # Queue macOS notification for unvisited stalled agents (#235)
-                if is_unvisited_stalled:
+                # Queue macOS notification only on transition, not every cycle (#235)
+                if is_new_stall and not widget.session.is_asleep:
                     task = widget.session.stats.current_task if widget.session.stats else None
                     self._notifier.queue(widget.session.name, task)
 

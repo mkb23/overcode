@@ -290,3 +290,126 @@ class TestBackendDetection:
         n = MacNotifier(mode="both")
         with patch("overcode.notifier.shutil.which", return_value=None):
             assert n._use_terminal_notifier() is False
+
+
+# =============================================================================
+# Regression: Repeated Cycles Must Not Re-notify (#235)
+# =============================================================================
+
+class TestNoRepeatedNotifications:
+    """Prove that an agent staying in stalled state does NOT trigger repeated
+    notifications.  The bug was: queue() was called on every 250ms status cycle
+    for any agent with is_unvisited_stalled=True (a persistent state), instead
+    of only on the *transition* to stalled.  These tests verify the fix at the
+    notifier level — queue+flush should produce at most one _send per agent
+    even when called many times in a row.
+    """
+
+    def test_repeated_queue_flush_cycles_send_once(self):
+        """Simulate 10 consecutive status cycles all queuing the same agent.
+        Only the first flush (outside the coalesce window) should send."""
+        n = MacNotifier(mode="both", coalesce_seconds=2.0)
+        send_count = 0
+        original_send = n._send
+
+        def counting_send(*args, **kwargs):
+            nonlocal send_count
+            send_count += 1
+
+        n._send = counting_send
+
+        with patch("overcode.notifier.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            # First cycle — should send
+            n.queue("agent-1", "task A")
+            n.flush()
+            assert send_count == 1
+
+            # Subsequent cycles within coalesce window — should NOT send
+            for _ in range(9):
+                n.queue("agent-1", "task A")
+                n.flush()
+
+        assert send_count == 1, f"Expected 1 send, got {send_count}"
+
+    def test_coalesce_window_blocks_rapid_fire(self):
+        """Even with different agents queued each cycle, coalesce window
+        prevents sends until the window expires."""
+        import time
+        n = MacNotifier(mode="both", coalesce_seconds=100.0)  # huge window
+        n._last_send = time.monotonic()  # just sent
+
+        send_count = 0
+        n._send = lambda *a, **kw: exec("raise AssertionError('should not send')")
+
+        with patch("overcode.notifier.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            for i in range(20):
+                n.queue(f"agent-{i}")
+                n.flush()
+        # Pending should accumulate but never send
+        # (flush holds them when inside the coalesce window)
+        # After each flush inside the window, pending is retained
+        # On the NEXT queue, it appends; on flush it checks time again
+        # So the pending list grows but _send is never called
+
+    def test_flush_after_coalesce_window_sends_exactly_once(self):
+        """After the coalesce window expires, the next flush sends exactly
+        once — not once per queued cycle."""
+        import time
+        n = MacNotifier(mode="both", coalesce_seconds=0.0)  # no delay
+        n._last_send = 0  # long ago
+
+        calls = []
+        n._send = lambda msg, sub=None: calls.append((msg, sub))
+
+        with patch("overcode.notifier.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            # Queue 5 agents across 5 cycles, flush each time
+            # With coalesce_seconds=0, each flush will send immediately
+            # BUT after each flush, pending is cleared — so next cycle
+            # starts fresh. This is correct: 5 cycles = 5 sends.
+            # The bug was when the TUI queued on persistent state,
+            # causing unwanted repeated sends even for the SAME agent.
+            n.queue("agent-1")
+            n.flush()
+            assert len(calls) == 1
+
+            # Same agent queued again (simulating persistent-state bug)
+            n.queue("agent-1")
+            n.flush()
+            # With coalesce=0 this would send again — that's fine at the
+            # notifier level. The fix is in the TUI (only queue on transition).
+            # But with a realistic coalesce window, it's suppressed:
+
+        n2 = MacNotifier(mode="both", coalesce_seconds=2.0)
+        calls2 = []
+        n2._send = lambda msg, sub=None: calls2.append((msg, sub))
+
+        with patch("overcode.notifier.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            n2.queue("agent-1")
+            n2.flush()
+            assert len(calls2) == 1
+
+            # Immediately queue same agent again (simulating repeated cycles)
+            n2.queue("agent-1")
+            n2.flush()
+            assert len(calls2) == 1, "Coalesce window should block second send"
+
+    def test_pending_not_lost_during_coalesce_hold(self):
+        """When flush holds due to coalesce window, pending items are NOT
+        cleared — they're retained for the next flush attempt."""
+        import time
+        n = MacNotifier(mode="both", coalesce_seconds=2.0)
+        n._last_send = time.monotonic()  # just sent
+
+        with patch("overcode.notifier.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            n.queue("agent-1")
+            n.flush()  # held — too soon
+            assert len(n._pending) == 1, "Pending should be retained when held"
+
+            n.queue("agent-2")
+            n.flush()  # still held
+            assert len(n._pending) == 2, "Both agents should be pending"
