@@ -276,11 +276,11 @@ class SessionSummary(Static, can_focus=True):
 
         # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
-            name_cap = 24
+            name_cap = 34
         elif self.summary_detail == "med":
-            name_cap = 20
+            name_cap = 30
         else:
-            name_cap = 16
+            name_cap = 26
         raw_max = getattr(self.app, 'max_name_width', name_cap)
         name_width = max(8, min(raw_max, name_cap))
 
