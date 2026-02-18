@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
+from .status_constants import ALL_STATUSES
 from .tui_helpers import (
     format_cost,
     format_duration,
@@ -466,8 +467,7 @@ def render_status_plain(ctx: ColumnContext) -> Optional[str]:
     s = ctx.session
     status = "unknown"
     # Reverse-lookup from status_symbol
-    for candidate in ["running", "waiting_user", "waiting_tool", "thinking",
-                       "terminated", "asleep", "stalled"]:
+    for candidate in ALL_STATUSES:
         sym, _ = get_status_symbol(candidate)
         if sym == ctx.status_symbol:
             status = candidate
