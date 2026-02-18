@@ -221,13 +221,14 @@ class ViewActionsMixin:
         session_id = focused_widget.session.id
 
         # Check if this session has children — if not, walk up to the parent
-        children = self.session_manager.get_children(session_id)
+        # Use self.sessions (not session_manager) so remote sessions are included
+        children = [s for s in self.sessions if s.parent_session_id == session_id]
         if not children:
             parent_id = focused_widget.session.parent_session_id
             if parent_id:
                 # Focused on a child — collapse/expand the parent's children instead
                 session_id = parent_id
-                children = self.session_manager.get_children(session_id)
+                children = [s for s in self.sessions if s.parent_session_id == session_id]
 
         if not children:
             self.notify("No children to collapse", severity="warning")
@@ -237,7 +238,7 @@ class ViewActionsMixin:
         if session_id == focused_widget.session.id:
             parent_name = focused_widget.session.name
         else:
-            parent_session = self.session_manager.get_session(session_id)
+            parent_session = next((s for s in self.sessions if s.id == session_id), None)
             parent_name = parent_session.name if parent_session else session_id[:8]
 
         if session_id in self.collapsed_parents:
