@@ -713,6 +713,12 @@ class SupervisorTUI(
                 return False
         except NoMatches:
             pass
+        try:
+            scm = self.query_one("#summary-config-modal", SummaryConfigModal)
+            if scm.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
         # Only recover if focus is not on a session or input widget
         if self.focused is None:
             return True
@@ -2036,6 +2042,17 @@ class SupervisorTUI(
                     return True
                 # Block all other actions - close help instead
                 help_overlay.remove_class("visible")
+                return False
+        except Exception:
+            pass
+
+        # Block actions when column config modal is visible
+        try:
+            scm = self.query_one("#summary-config-modal", SummaryConfigModal)
+            if scm.has_class("visible"):
+                # Only allow quit; all other keys go to the modal
+                if action == "quit":
+                    return True
                 return False
         except Exception:
             pass
