@@ -851,6 +851,33 @@ class TestRemoteAwareSorting:
         assert result[0].name == "local"
         assert result[1].name == "remote"
 
+    def test_remote_tree_hierarchy(self):
+        """Remote agents with parent-child relationships should nest in tree view."""
+        parent = make_remote_session("remote-parent", "host")
+        parent.id = "remote:host:remote-parent"
+        parent.parent_session_id = None
+
+        child_a = make_remote_session("remote-child-a", "host")
+        child_a.id = "remote:host:remote-child-a"
+        child_a.parent_session_id = "remote:host:remote-parent"
+
+        child_b = make_remote_session("remote-child-b", "host")
+        child_b.id = "remote:host:remote-child-b"
+        child_b.parent_session_id = "remote:host:remote-parent"
+
+        local = make_local_session("local-root")
+        local.parent_session_id = None
+
+        sessions = [child_b, local, child_a, parent]
+        result = sort_sessions_by_tree(sessions)
+
+        assert [s.name for s in result] == [
+            "local-root",           # Local root first
+            "remote-parent",        # Remote root
+            "remote-child-a",       # Remote child (alpha order)
+            "remote-child-b",       # Remote child (alpha order)
+        ]
+
 
 # =============================================================================
 # Run tests directly

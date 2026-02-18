@@ -133,6 +133,13 @@ class SisterPoller:
             sessions.append(session)
             total_cost += agent.get("cost_usd", 0.0)
 
+        # Resolve parent hierarchy: parent_name → parent_session_id (#244)
+        name_to_id = {s.name: s.id for s in sessions}
+        for i, agent in enumerate(agents):
+            parent_name = agent.get("parent_name", "")
+            if parent_name and parent_name in name_to_id:
+                sessions[i].parent_session_id = name_to_id[parent_name]
+
         sister.sessions = sessions
         sister.total_cost = total_cost
         return sessions

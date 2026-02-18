@@ -288,6 +288,8 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         "start_time": s.start_time or "",
         # Pane content for sister preview sync
         "pane_content": pane_content,
+        # Agent hierarchy (#244) - for sister tree view
+        "parent_name": s.parent_name or "",
     }
 
 
