@@ -534,9 +534,13 @@ def get_session_stats(
 
     Combines interaction counting with token usage from session files.
 
-    For context window calculation, only owned sessionIds are used to avoid
-    cross-contamination when multiple agents run in the same directory (#119).
-    Total token counting still uses all matched sessionIds.
+    Session scoping: get_interactions_for_session() is the single source of
+    truth for which Claude Code sessions belong to this overcode session.
+    When claude_session_ids are tracked, it filters precisely by sessionId;
+    otherwise falls back to directory+timestamp matching (#119, #264).
+
+    Context window uses active_claude_session_id after /clear (#116),
+    falling back to MAX across all matched sessions.
 
     Args:
         session: The overcode Session
@@ -556,7 +560,8 @@ def get_session_stats(
     except (ValueError, TypeError):
         return None
 
-    # Get interaction count and session IDs — use shared HistoryFile if provided
+    # get_interactions_for_session is the single gate for session scoping:
+    # uses claude_session_ids when available, else directory+timestamp fallback
     hf = history_file or (
         _default_history if history_path == CLAUDE_HISTORY_PATH
         else HistoryFile(history_path)
@@ -564,32 +569,25 @@ def get_session_stats(
     interactions = hf.get_interactions_for_session(session)
     interaction_count = len(interactions)
 
-    # Get unique session IDs from interactions (for total token counting)
-    all_session_ids = set()
-    for entry in interactions:
-        if entry.session_id:
-            all_session_ids.add(entry.session_id)
+    # Derive Claude sessionIds from the already-scoped interactions
+    session_ids = {e.session_id for e in interactions if e.session_id}
 
-    # Get owned sessionIds for token counting (#119)
-    owned_session_ids = getattr(session, 'claude_session_ids', None) or []
-
-    # Get active session ID for context calculation (#116)
-    # After /clear, only the active session's context is relevant
+    # Active session ID for context window after /clear (#116)
     active_session_id = getattr(session, 'active_claude_session_id', None)
 
-    # Sum token usage and work times across all session files
+    # Sum token usage and work times across session files
     total_input = 0
     total_output = 0
     total_cache_creation = 0
     total_cache_read = 0
-    current_context = 0  # Track context size from active session only (#116)
+    current_context = 0
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
     background_task_count = 0  # Count background task files (#177)
     now = time.time()
 
-    for sid in all_session_ids:
+    for sid in session_ids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
         )
@@ -599,13 +597,12 @@ def get_session_stats(
         total_cache_creation += usage["cache_creation_tokens"]
         total_cache_read += usage["cache_read_tokens"]
 
-        # Context: use only the active session (#116), fall back to MAX of owned (#119)
+        # Context: prefer active session (#116), fall back to MAX across all
         if active_session_id:
             if sid == active_session_id:
                 current_context = usage["current_context_tokens"]
-        elif sid in owned_session_ids:
-            if usage["current_context_tokens"] > current_context:
-                current_context = usage["current_context_tokens"]
+        elif usage["current_context_tokens"] > current_context:
+            current_context = usage["current_context_tokens"]
 
         # Collect work times from this session file
         work_times = read_work_times_from_session_file(session_file, since=session_start)
