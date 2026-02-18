@@ -88,6 +88,7 @@ from .tui_logic import (
     cycle_sort_mode,
     calculate_green_percentage,
     calculate_human_interaction_count,
+    compute_tree_metadata,
 )
 from .tui_widgets import (
     FullscreenPreview,
@@ -1397,29 +1398,16 @@ class SupervisorTUI(
 
         # Update tree prefix and child count for hierarchy display (#244)
         # Always runs (not gated by reorder) so prefixes are set on first mount.
+        # Uses compute_tree_metadata() which works for both local and remote sessions.
         is_tree_mode = self._prefs.sort_mode == "by_tree"
-        # Build child count map from self.sessions (not just visible widgets)
-        # so collapsed parents still show the correct count.
-        child_counts: dict[str, int] = {}
-        for s in self.sessions:
-            if s.parent_session_id is not None:
-                child_counts[s.parent_session_id] = child_counts.get(s.parent_session_id, 0) + 1
+        tree_meta = compute_tree_metadata(self.sessions)
         for widget in ordered_widgets:
-            widget.child_count = child_counts.get(widget.session.id, 0)
+            meta = tree_meta.get(widget.session.id)
+            widget.child_count = meta.child_count if meta else 0
             widget.children_collapsed = widget.session.id in self.collapsed_parents
-            if is_tree_mode:
-                depth = self.session_manager.compute_depth(widget.session)
-                # Determine if this is the last sibling at its level
-                parent_id = widget.session.parent_session_id
-                siblings = [w for w in ordered_widgets if w.session.parent_session_id == parent_id]
-                is_last = siblings and siblings[-1] is widget
-                if depth == 0:
-                    widget.tree_prefix = ""
-                else:
-                    indent = "  " * (depth - 1)
-                    connector = "└─" if is_last else "├─"
-                    widget.tree_prefix = indent + connector
-                widget.tree_depth = depth
+            if is_tree_mode and meta:
+                widget.tree_prefix = meta.prefix
+                widget.tree_depth = meta.depth
             else:
                 widget.tree_prefix = ""
                 widget.tree_depth = 0

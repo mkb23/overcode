@@ -244,6 +244,9 @@ def list_agents(
     cost: Annotated[
         bool, typer.Option("--cost", help="Show $ cost instead of token counts")
     ] = False,
+    sisters: Annotated[
+        bool, typer.Option("--sisters", help="Include sister (remote) agents")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """List running agents with status.
@@ -260,11 +263,20 @@ def list_agents(
     )
     from .monitor_daemon_state import get_monitor_daemon_state
     from .summary_columns import build_cli_context, SUMMARY_COLUMNS
+    from .tui_logic import compute_tree_metadata, sort_sessions_by_tree
     from rich.text import Text
     from rich.console import Console
 
     launcher = ClaudeLauncher(session)
     sessions = launcher.list_sessions()
+
+    # Merge sister sessions if --sisters flag
+    if sisters:
+        from .sister_poller import SisterPoller
+        poller = SisterPoller()
+        if poller.has_sisters:
+            remote_sessions = poller.poll_all()
+            sessions = sessions + remote_sessions
 
     if not sessions:
         rprint("[dim]No running agents[/dim]")
@@ -287,6 +299,10 @@ def list_agents(
     if not sessions:
         rprint("[dim]No running agents[/dim]")
         return
+
+    # Sort in tree order and compute tree metadata for depth/prefix
+    sessions = sort_sessions_by_tree(sessions)
+    tree_meta = compute_tree_metadata(sessions)
 
     # Columns to render in list mode (subset of TUI columns)
     list_columns = {
@@ -315,7 +331,11 @@ def list_agents(
     terminated_count = 0
 
     for sess in sessions:
-        if sess.status == "terminated":
+        if getattr(sess, 'is_remote', False):
+            # Remote sessions carry status in their stats
+            status = sess.stats.current_state or "running"
+            activity = sess.stats.current_task or ""
+        elif sess.status == "terminated":
             status = "terminated"
             activity = "(tmux window no longer exists)"
             terminated_count += 1
@@ -348,14 +368,18 @@ def list_agents(
 
         # Get git diff stats
         git_diff = None
-        try:
-            if sess.start_directory:
-                git_diff = get_git_diff_stats(sess.start_directory)
-        except Exception:
-            pass
+        if getattr(sess, 'is_remote', False):
+            git_diff = getattr(sess, 'remote_git_diff', None)
+        else:
+            try:
+                if sess.start_directory:
+                    git_diff = get_git_diff_stats(sess.start_directory)
+            except Exception:
+                pass
 
-        # Build column context
-        child_count = len(launcher.sessions.get_children(sess.id))
+        # Build column context using tree metadata for child count
+        meta = tree_meta.get(sess.id)
+        child_count = meta.child_count if meta else 0
         ctx = build_cli_context(
             session=sess, stats=sess.stats,
             claude_stats=claude_stats, git_diff_stats=git_diff,
@@ -370,8 +394,8 @@ def list_agents(
         ctx.summary_detail = "med"
         ctx.show_cost = cost
 
-        # Handle tree indentation (#244)
-        depth = launcher.sessions.compute_depth(sess)
+        # Handle tree indentation (#244) using compute_tree_metadata
+        depth = meta.depth if meta else 0
         indent = "  " * depth
         available = name_width - len(indent)
         ctx.display_name = (indent + sess.name[:available]).ljust(name_width)

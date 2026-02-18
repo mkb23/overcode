@@ -438,6 +438,88 @@ def calculate_green_percentage(green_time: float, non_green_time: float) -> floa
     return green_time / total_time * 100
 
 
+@dataclass
+class TreeNodeMeta:
+    """Tree metadata for a single session node."""
+    depth: int
+    prefix: str        # "├─", "└─", or "" for roots
+    child_count: int
+    is_last: bool
+
+
+def compute_tree_metadata(sessions: List[T], parent_id_fn=None) -> dict:
+    """Compute tree depth, prefix, and child count for each session.
+
+    Works with any session list (local, remote, or mixed).
+    Does NOT rely on session_manager — uses only the passed-in list.
+
+    Args:
+        sessions: List of session objects (already sorted in tree order)
+        parent_id_fn: Function to get parent_session_id from a session.
+            Defaults to accessing session.parent_session_id attribute.
+
+    Returns:
+        dict mapping session_id -> TreeNodeMeta
+    """
+    if parent_id_fn is None:
+        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+
+    # Build id -> session lookup
+    id_to_session = {s.id: s for s in sessions}
+
+    # Build parent -> children map (preserving input order)
+    children_map: dict = {}
+    for s in sessions:
+        pid = parent_id_fn(s)
+        if pid is not None:
+            children_map.setdefault(pid, []).append(s)
+
+    # Compute child counts
+    child_counts: dict = {}
+    for s in sessions:
+        child_counts[s.id] = len(children_map.get(s.id, []))
+
+    # Compute depth by walking parent chains
+    depth_cache: dict = {}
+
+    def _get_depth(session_id: str) -> int:
+        if session_id in depth_cache:
+            return depth_cache[session_id]
+        s = id_to_session.get(session_id)
+        if s is None:
+            depth_cache[session_id] = 0
+            return 0
+        pid = parent_id_fn(s)
+        if pid is None or pid not in id_to_session:
+            depth_cache[session_id] = 0
+            return 0
+        depth_cache[session_id] = _get_depth(pid) + 1
+        return depth_cache[session_id]
+
+    result = {}
+    for s in sessions:
+        depth = _get_depth(s.id)
+        pid = parent_id_fn(s)
+        siblings = children_map.get(pid, []) if pid is not None else []
+        is_last = bool(siblings) and siblings[-1].id == s.id
+
+        if depth == 0:
+            prefix = ""
+        else:
+            indent = "  " * (depth - 1)
+            connector = "└─" if is_last else "├─"
+            prefix = indent + connector
+
+        result[s.id] = TreeNodeMeta(
+            depth=depth,
+            prefix=prefix,
+            child_count=child_counts.get(s.id, 0),
+            is_last=is_last,
+        )
+
+    return result
+
+
 def calculate_human_interaction_count(
     total_interactions: Optional[int],
     robot_interactions: int,

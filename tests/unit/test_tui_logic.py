@@ -25,6 +25,8 @@ from overcode.tui_logic import (
     calculate_mean_spin_from_history,
     calculate_green_percentage,
     calculate_human_interaction_count,
+    compute_tree_metadata,
+    TreeNodeMeta,
     SpinStats,
     STATUS_ORDER_BY_ATTENTION,
     STATUS_ORDER_BY_VALUE,
@@ -877,6 +879,147 @@ class TestRemoteAwareSorting:
             "remote-child-a",       # Remote child (alpha order)
             "remote-child-b",       # Remote child (alpha order)
         ]
+
+
+# =============================================================================
+# Tree metadata computation
+# =============================================================================
+
+
+class TestComputeTreeMetadata:
+    """Tests for compute_tree_metadata() pure function."""
+
+    def _make_tree_session(self, name, session_id=None, parent_session_id=None,
+                           is_remote=False, source_host=""):
+        session = make_session(name, session_id=session_id or name)
+        session.parent_session_id = parent_session_id
+        session.is_remote = is_remote
+        session.source_host = source_host
+        return session
+
+    def test_root_sessions_get_depth_zero(self):
+        """Root sessions should have depth 0 and empty prefix."""
+        sessions = [
+            self._make_tree_session("alpha"),
+            self._make_tree_session("bravo"),
+        ]
+
+        meta = compute_tree_metadata(sessions)
+
+        assert meta["alpha"].depth == 0
+        assert meta["alpha"].prefix == ""
+        assert meta["bravo"].depth == 0
+        assert meta["bravo"].prefix == ""
+
+    def test_children_get_depth_one(self):
+        """Children of a root should have depth 1 with proper prefix."""
+        root = self._make_tree_session("root", session_id="root-id")
+        child_a = self._make_tree_session("child-a", session_id="ca",
+                                          parent_session_id="root-id")
+        child_b = self._make_tree_session("child-b", session_id="cb",
+                                          parent_session_id="root-id")
+
+        meta = compute_tree_metadata([root, child_a, child_b])
+
+        assert meta["root-id"].depth == 0
+        assert meta["ca"].depth == 1
+        assert meta["ca"].prefix == "├─"
+        assert meta["cb"].depth == 1
+        assert meta["cb"].prefix == "└─"
+        assert meta["cb"].is_last is True
+        assert meta["ca"].is_last is False
+
+    def test_nested_children_get_depth_two(self):
+        """Grandchildren should have depth 2 with indented prefix."""
+        root = self._make_tree_session("root", session_id="r")
+        child = self._make_tree_session("child", session_id="c",
+                                        parent_session_id="r")
+        grandchild = self._make_tree_session("grandchild", session_id="gc",
+                                             parent_session_id="c")
+
+        meta = compute_tree_metadata([root, child, grandchild])
+
+        assert meta["r"].depth == 0
+        assert meta["c"].depth == 1
+        assert meta["gc"].depth == 2
+        assert meta["gc"].prefix == "  └─"  # indented once + connector
+
+    def test_child_count(self):
+        """Should count direct children correctly."""
+        root = self._make_tree_session("root", session_id="r")
+        child_a = self._make_tree_session("child-a", session_id="ca",
+                                          parent_session_id="r")
+        child_b = self._make_tree_session("child-b", session_id="cb",
+                                          parent_session_id="r")
+        grandchild = self._make_tree_session("grandchild", session_id="gc",
+                                             parent_session_id="ca")
+
+        meta = compute_tree_metadata([root, child_a, child_b, grandchild])
+
+        assert meta["r"].child_count == 2   # child_a and child_b
+        assert meta["ca"].child_count == 1  # grandchild
+        assert meta["cb"].child_count == 0
+        assert meta["gc"].child_count == 0
+
+    def test_remote_sessions_with_parent(self):
+        """Remote sessions with parent_session_id should get correct depth."""
+        parent = self._make_tree_session(
+            "remote-parent", session_id="remote:host:remote-parent",
+            is_remote=True, source_host="host")
+        child = self._make_tree_session(
+            "remote-child", session_id="remote:host:remote-child",
+            parent_session_id="remote:host:remote-parent",
+            is_remote=True, source_host="host")
+
+        meta = compute_tree_metadata([parent, child])
+
+        assert meta["remote:host:remote-parent"].depth == 0
+        assert meta["remote:host:remote-child"].depth == 1
+        assert meta["remote:host:remote-child"].prefix == "└─"
+
+    def test_mixed_local_and_remote(self):
+        """Mixed local and remote sessions should all get correct metadata."""
+        local_root = self._make_tree_session("local-root", session_id="lr")
+        local_child = self._make_tree_session(
+            "local-child", session_id="lc", parent_session_id="lr")
+        remote_root = self._make_tree_session(
+            "remote-root", session_id="remote:host:rr",
+            is_remote=True, source_host="host")
+        remote_child = self._make_tree_session(
+            "remote-child", session_id="remote:host:rc",
+            parent_session_id="remote:host:rr",
+            is_remote=True, source_host="host")
+
+        sessions = [local_root, local_child, remote_root, remote_child]
+        meta = compute_tree_metadata(sessions)
+
+        assert meta["lr"].depth == 0
+        assert meta["lc"].depth == 1
+        assert meta["remote:host:rr"].depth == 0
+        assert meta["remote:host:rc"].depth == 1
+
+    def test_orphan_child_gets_depth_zero(self):
+        """A child whose parent is not in the list should get depth 0."""
+        orphan = self._make_tree_session(
+            "orphan", session_id="o", parent_session_id="missing-parent")
+
+        meta = compute_tree_metadata([orphan])
+
+        assert meta["o"].depth == 0
+        assert meta["o"].prefix == ""
+
+    def test_empty_list(self):
+        """Empty session list should return empty dict."""
+        meta = compute_tree_metadata([])
+        assert meta == {}
+
+    def test_single_session(self):
+        """Single root session should work."""
+        s = self._make_tree_session("solo")
+        meta = compute_tree_metadata([s])
+        assert meta["solo"].depth == 0
+        assert meta["solo"].prefix == ""
+        assert meta["solo"].child_count == 0
 
 
 # =============================================================================
