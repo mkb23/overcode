@@ -29,6 +29,12 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
         always_visible=True,  # Cannot be toggled off
     ),
     SummaryGroup(
+        id="sisters",
+        name="Sisters",
+        fields=["host"],
+        default_enabled=True,
+    ),
+    SummaryGroup(
         id="time",
         name="Time",
         fields=["time_in_state", "uptime", "running_time", "stalled_time", "sleep_time", "active_pct"],
@@ -86,6 +92,7 @@ SUMMARY_GROUPS_BY_ID: Dict[str, SummaryGroup] = {g.id: g for g in SUMMARY_GROUPS
 # Presets for common configurations
 PRESETS: Dict[str, Dict[str, bool]] = {
     "minimal": {
+        "sisters": True,
         "time": False,
         "llm_usage": True,
         "context": True,
@@ -96,6 +103,7 @@ PRESETS: Dict[str, Dict[str, bool]] = {
         "subprocesses": False,
     },
     "standard": {
+        "sisters": True,
         "time": True,
         "llm_usage": True,
         "context": True,
@@ -106,6 +114,7 @@ PRESETS: Dict[str, Dict[str, bool]] = {
         "subprocesses": True,
     },
     "full": {
+        "sisters": True,
         "time": True,
         "llm_usage": True,
         "context": True,

@@ -620,7 +620,7 @@ def render_host(ctx: ColumnContext) -> ColumnOutput:
         return None
     host = ctx.source_host or ctx.local_hostname
     width = 14
-    label = host[:width].ljust(width)
+    label = " " + host[:width].ljust(width)
     if ctx.is_remote:
         return [(label, ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
     else:
@@ -644,7 +644,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
-    SummaryColumn(id="host", group="identity", detail_levels=ALL, render=render_host,
+    SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
                   label="Host", render_plain=render_host_plain),
 
     # Git group — repo, branch (full/custom only), diff stats

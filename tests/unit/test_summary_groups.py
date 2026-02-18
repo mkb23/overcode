@@ -17,7 +17,7 @@ class TestSummaryGroups:
 
     def test_summary_groups_structure(self):
         """Test that SUMMARY_GROUPS has expected structure."""
-        assert len(SUMMARY_GROUPS) == 9  # identity, time, llm_usage, context, git, supervision, priority, performance, subprocesses
+        assert len(SUMMARY_GROUPS) == 10  # identity, sisters, time, llm_usage, context, git, supervision, priority, performance, subprocesses
 
         # All groups should have required fields
         for group in SUMMARY_GROUPS:
@@ -35,7 +35,7 @@ class TestSummaryGroups:
     def test_other_groups_toggleable(self):
         """Test that non-identity groups are toggleable."""
         toggleable = get_toggleable_groups()
-        assert len(toggleable) == 8  # All except identity
+        assert len(toggleable) == 9  # All except identity
 
         for group in toggleable:
             assert group.always_visible is False
@@ -75,7 +75,7 @@ class TestSummaryGroups:
         assert "identity" not in defaults
 
         # Should include all toggleable groups
-        assert len(defaults) == 8
+        assert len(defaults) == 9
 
         # All should be enabled by default
         for group_id, enabled in defaults.items():
