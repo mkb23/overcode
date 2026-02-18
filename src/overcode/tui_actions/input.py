@@ -47,6 +47,21 @@ class InputActionsMixin:
         self.notify(f"Woke agent '{session.name}' to send command", severity="information")
         return True
 
+    def _send_remote_key(self, session, key: str) -> bool:
+        """Send a key to a remote agent via the sister controller.
+
+        Returns True if the key was sent successfully.
+        """
+        result = self._sister_controller.send_key(
+            session.source_url, session.source_api_key,
+            session.name, key,
+        )
+        if result.ok:
+            self.notify(f"Sent '{key}' to {session.name}", severity="information")
+        else:
+            self.notify(f"Remote error: {result.error}", severity="error")
+        return result.ok
+
     def action_send_enter_to_focused(self) -> None:
         """Send Enter keypress to the focused agent (for approvals)."""
         from ..tui_widgets import SessionSummary
@@ -59,7 +74,7 @@ class InputActionsMixin:
 
         session = focused.session
         if getattr(session, 'is_remote', False) is True:
-            self.notify("Cannot modify remote agents", severity="warning")
+            self._send_remote_key(session, "enter")
             return
         session_name = session.name
 
@@ -87,10 +102,11 @@ class InputActionsMixin:
             self.notify("No agent focused", severity="warning")
             return
 
-        if getattr(focused.session, 'is_remote', False) is True:
-            self.notify("Cannot modify remote agents", severity="warning")
+        session = focused.session
+        if getattr(session, 'is_remote', False) is True:
+            self._send_remote_key(session, "escape")
             return
-        session_name = focused.session.name
+        session_name = session.name
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
@@ -155,7 +171,7 @@ class InputActionsMixin:
 
         session = focused.session
         if getattr(session, 'is_remote', False) is True:
-            self.notify("Cannot modify remote agents", severity="warning")
+            self._send_remote_key(session, key)
             return
         session_name = session.name
 
