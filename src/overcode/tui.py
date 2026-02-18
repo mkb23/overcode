@@ -286,6 +286,10 @@ class SupervisorTUI(
         self._suppress_focus_watcher = False
         # Track previous status of each session for detecting transitions to stalled state
         self._previous_statuses: dict[str, str] = {}
+        # Track when each session first stalled (monotonic time) for deferred notifications
+        self._stall_start_times: dict[str, float] = {}
+        # Sessions we've already sent a macOS notification for (current stall)
+        self._notified_stalls: set[str] = set()
         # Timers for auto-dismissing bell when the stalled agent is already focused
         self._bell_dismiss_timers: dict[str, object] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
@@ -1028,6 +1032,13 @@ class SupervisorTUI(
                 if is_new_stall:
                     self._prefs.visited_stalled_agents.discard(session_id)
                     prefs_changed = True
+                    self._stall_start_times[session_id] = time.monotonic()
+                    self._notified_stalls.discard(session_id)
+
+                # Clean up tracking when no longer stalled
+                if status != STATUS_WAITING_USER:
+                    self._stall_start_times.pop(session_id, None)
+                    self._notified_stalls.discard(session_id)
 
                 self._previous_statuses[session_id] = status
 
@@ -1038,10 +1049,24 @@ class SupervisorTUI(
                 )
                 widget.is_unvisited_stalled = is_unvisited_stalled
 
-                # Queue macOS notification only on transition, not every cycle (#235)
-                if is_new_stall and not widget.session.is_asleep:
-                    task = widget.session.stats.current_task if widget.session.stats else None
-                    self._notifier.queue(widget.session.name, task)
+                # Queue macOS notification with deferred delivery (#235):
+                # Only notify if session has been running >1min and stalled >30s
+                if (
+                    status == STATUS_WAITING_USER
+                    and session_id not in self._notified_stalls
+                    and not widget.session.is_asleep
+                    and session_id in self._stall_start_times
+                ):
+                    now = time.monotonic()
+                    stall_age = now - self._stall_start_times[session_id]
+                    try:
+                        uptime = (datetime.now() - datetime.fromisoformat(widget.session.start_time)).total_seconds()
+                    except (ValueError, TypeError):
+                        uptime = 0
+                    if stall_age >= 30 and uptime >= 60:
+                        task = widget.session.stats.current_task if widget.session.stats else None
+                        self._notifier.queue(widget.session.name, task)
+                        self._notified_stalls.add(session_id)
 
                 # Auto-dismiss bell after 5s if this agent is already being viewed
                 if is_unvisited_stalled and self.view_mode == "list_preview":
