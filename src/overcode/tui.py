@@ -983,11 +983,16 @@ class SupervisorTUI(
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
-        # Recalculate repo/branch widths from fresh session data (#143)
+        # Recalculate repo/branch widths from sessions matching actual widgets.
+        # Must use the widget set (current tmux + remotes), not fresh_sessions
+        # which includes ALL tmux sessions and excludes remotes (#143).
+        widgets = list(self.query(SessionSummary))
         if fresh_sessions:
-            self._recalc_column_widths(fresh_sessions.values())
+            visible = [fresh_sessions.get(w.session.id, w.session) for w in widgets]
+            if visible:
+                self._recalc_column_widths(visible)
 
-        for widget in self.query(SessionSummary):
+        for widget in widgets:
             session_id = widget.session.id
 
             # Update widget's session with fresh data
