@@ -1457,6 +1457,991 @@ class TestFormatStandingInstructions:
 
 
 # =============================================================================
+# New expanded tests for improved coverage of tui.py
+# =============================================================================
+
+
+class TestSupervisorTUIConstants:
+    """Test SupervisorTUI class-level constants and configuration."""
+
+    def test_detail_levels(self):
+        """DETAIL_LEVELS should contain expected values."""
+        from overcode.tui import SupervisorTUI
+        assert SupervisorTUI.DETAIL_LEVELS == [5, 10, 20, 50]
+
+    def test_timeline_presets(self):
+        """TIMELINE_PRESETS should contain expected hour values."""
+        from overcode.tui import SupervisorTUI
+        assert SupervisorTUI.TIMELINE_PRESETS == [1, 3, 6, 12, 24]
+
+    def test_summary_levels(self):
+        """SUMMARY_LEVELS should contain expected levels."""
+        from overcode.tui import SupervisorTUI
+        assert SupervisorTUI.SUMMARY_LEVELS == ["low", "med", "full", "custom"]
+
+    def test_sort_modes(self):
+        """SORT_MODES should contain expected sort modes."""
+        from overcode.tui import SupervisorTUI
+        assert "alphabetical" in SupervisorTUI.SORT_MODES
+        assert "by_status" in SupervisorTUI.SORT_MODES
+        assert "by_value" in SupervisorTUI.SORT_MODES
+        assert "by_tree" in SupervisorTUI.SORT_MODES
+
+    def test_summary_content_modes(self):
+        """SUMMARY_CONTENT_MODES should contain expected modes."""
+        from overcode.tui import SupervisorTUI
+        assert "ai_short" in SupervisorTUI.SUMMARY_CONTENT_MODES
+        assert "ai_long" in SupervisorTUI.SUMMARY_CONTENT_MODES
+        assert "orders" in SupervisorTUI.SUMMARY_CONTENT_MODES
+        assert "annotation" in SupervisorTUI.SUMMARY_CONTENT_MODES
+        assert "heartbeat" in SupervisorTUI.SUMMARY_CONTENT_MODES
+
+    def test_bindings_count(self):
+        """SupervisorTUI should have a rich set of key bindings."""
+        from overcode.tui import SupervisorTUI
+        assert len(SupervisorTUI.BINDINGS) > 30
+
+
+class TestUpdateSubtitleLogic:
+    """Test the subtitle formatting logic used by _update_subtitle.
+
+    Since _update_subtitle relies on Textual's reactive system (sub_title),
+    we test the formatting logic directly rather than calling the method on
+    a partially constructed app.
+    """
+
+    def _build_subtitle(self, tmux_session, view_mode, tmux_sync, diagnostics):
+        """Replicate _update_subtitle logic without needing a Textual App."""
+        mode_label = "Tree" if view_mode == "tree" else "List+Preview"
+        sync_label = " [Sync]" if tmux_sync else ""
+        if diagnostics:
+            return f"{tmux_session} [{mode_label}]{sync_label} [DIAGNOSTICS]"
+        else:
+            return f"{tmux_session} [{mode_label}]{sync_label}"
+
+    def test_tree_mode_subtitle(self):
+        """Should show 'Tree' label in tree mode."""
+        result = self._build_subtitle("agents", "tree", False, False)
+        assert result == "agents [Tree]"
+
+    def test_list_preview_mode_subtitle(self):
+        """Should show 'List+Preview' label in list_preview mode."""
+        result = self._build_subtitle("agents", "list_preview", False, False)
+        assert result == "agents [List+Preview]"
+
+    def test_sync_label_when_enabled(self):
+        """Should include [Sync] when tmux_sync is True."""
+        result = self._build_subtitle("test", "tree", True, False)
+        assert "[Sync]" in result
+
+    def test_diagnostics_label(self):
+        """Should include [DIAGNOSTICS] when diagnostics mode is on."""
+        result = self._build_subtitle("test", "tree", False, True)
+        assert "[DIAGNOSTICS]" in result
+
+    def test_all_labels_combined(self):
+        """Should show all labels when diagnostics + sync + list_preview."""
+        result = self._build_subtitle("mytest", "list_preview", True, True)
+        assert "mytest" in result
+        assert "List+Preview" in result
+        assert "[Sync]" in result
+        assert "[DIAGNOSTICS]" in result
+
+
+class TestRecalcColumnWidths:
+    """Test _recalc_column_widths method."""
+
+    def test_calculates_widths_from_sessions(self):
+        """Should compute max name/repo/branch widths from sessions."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 10
+        app.max_repo_width = 10
+        app.max_branch_width = 10
+        app.all_names_match_repos = False
+
+        s1 = Mock()
+        s1.name = "short"
+        s1.repo_name = "myrepo"
+        s1.branch = "main"
+
+        s2 = Mock()
+        s2.name = "longer-agent-name"
+        s2.repo_name = "big-repository"
+        s2.branch = "feature/very-long-branch"
+
+        changed = app._recalc_column_widths([s1, s2])
+
+        assert app.max_name_width == len("longer-agent-name")
+        assert app.max_repo_width == len("big-repository")
+        assert app.max_branch_width == len("feature/very-long-branch")
+        assert changed is True
+
+    def test_empty_sessions_resets_to_defaults(self):
+        """Should reset to defaults when no sessions."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 20
+        app.max_repo_width = 20
+        app.max_branch_width = 20
+        app.all_names_match_repos = True
+
+        changed = app._recalc_column_widths([])
+
+        assert app.max_name_width == 10
+        assert app.max_repo_width == 10
+        assert app.max_branch_width == 10
+        assert app.all_names_match_repos is False
+        assert changed is True
+
+    def test_returns_false_when_unchanged(self):
+        """Should return False when widths haven't changed."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 10
+        app.max_repo_width = 10
+        app.max_branch_width = 10
+        app.all_names_match_repos = False
+
+        # No sessions -> defaults (10, 10, 10, False) == current
+        changed = app._recalc_column_widths([])
+
+        assert changed is False
+
+    def test_names_match_repos_detection(self):
+        """Should detect when all names match their repo names."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 10
+        app.max_repo_width = 10
+        app.max_branch_width = 10
+        app.all_names_match_repos = False
+
+        s1 = Mock()
+        s1.name = "myrepo"
+        s1.repo_name = "myrepo"
+        s1.branch = "main"
+
+        s2 = Mock()
+        s2.name = "other"
+        s2.repo_name = "other"
+        s2.branch = "main"
+
+        app._recalc_column_widths([s1, s2])
+
+        assert app.all_names_match_repos is True
+
+    def test_names_dont_match_repos(self):
+        """Should return False for all_names_match_repos when names differ."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 10
+        app.max_repo_width = 10
+        app.max_branch_width = 10
+        app.all_names_match_repos = False
+
+        s1 = Mock()
+        s1.name = "agent-1"
+        s1.repo_name = "myrepo"
+        s1.branch = "main"
+
+        app._recalc_column_widths([s1])
+
+        assert app.all_names_match_repos is False
+
+    def test_handles_none_repo_and_branch(self):
+        """Should handle sessions with None repo_name or branch."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app.max_name_width = 10
+        app.max_repo_width = 10
+        app.max_branch_width = 10
+        app.all_names_match_repos = False
+
+        s1 = Mock()
+        s1.name = "agent"
+        s1.repo_name = None
+        s1.branch = None
+
+        app._recalc_column_widths([s1])
+
+        assert app.max_repo_width == len("n/a")
+        assert app.max_branch_width == len("n/a")
+
+
+class TestRecordHeartbeat:
+    """Test _record_heartbeat method."""
+
+    def test_records_heartbeat_tick(self):
+        """Should append a heartbeat entry to the log."""
+        from overcode.tui import SupervisorTUI
+        import time
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._heartbeat_last = time.monotonic() - 0.1  # 100ms ago
+
+        app._record_heartbeat()
+
+        assert len(app._heartbeat_log) == 1
+        ts, delta, event = app._heartbeat_log[0]
+        assert event == ""
+        assert float(delta) > 0
+
+    def test_skips_when_no_prior_heartbeat(self):
+        """Should skip recording when _heartbeat_last is 0."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._heartbeat_last = 0
+
+        app._record_heartbeat()
+
+        assert len(app._heartbeat_log) == 0
+
+    def test_updates_heartbeat_last(self):
+        """Should update _heartbeat_last after recording."""
+        from overcode.tui import SupervisorTUI
+        import time
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._heartbeat_last = time.monotonic() - 0.1
+
+        before = time.monotonic()
+        app._record_heartbeat()
+        after = time.monotonic()
+
+        assert before <= app._heartbeat_last <= after
+
+
+class TestMarkEvent:
+    """Test _mark_event method."""
+
+    def test_records_named_event(self):
+        """Should append event entry with name."""
+        from overcode.tui import SupervisorTUI
+        import time
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._heartbeat_last = time.monotonic() - 0.05
+
+        app._mark_event("apply_status_start")
+
+        assert len(app._heartbeat_log) == 1
+        ts, delta, event = app._heartbeat_log[0]
+        assert event == "apply_status_start"
+
+    def test_handles_zero_heartbeat_last(self):
+        """Should handle when _heartbeat_last is 0 (delta_ms defaults to 0)."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._heartbeat_last = 0
+
+        app._mark_event("test_event")
+
+        assert len(app._heartbeat_log) == 1
+        ts, delta, event = app._heartbeat_log[0]
+        assert event == "test_event"
+        assert float(delta) == 0.0
+
+
+class TestFlushHeartbeat:
+    """Test _flush_heartbeat method."""
+
+    def test_writes_csv_with_header_on_first_flush(self, tmp_path):
+        """Should write CSV header on first flush."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_csv_path = tmp_path / "heartbeat.csv"
+        app._heartbeat_log = [
+            ("2024-01-15T10:00:00.000", "100.0", ""),
+            ("2024-01-15T10:00:00.100", "99.5", "test_event"),
+        ]
+
+        app._flush_heartbeat()
+
+        content = app._heartbeat_csv_path.read_text()
+        assert content.startswith("timestamp,delta_ms,event\n")
+        assert "2024-01-15T10:00:00.000,100.0," in content
+        assert "2024-01-15T10:00:00.100,99.5,test_event" in content
+
+    def test_appends_without_header_on_subsequent_flush(self, tmp_path):
+        """Should not write header if file already exists."""
+        from overcode.tui import SupervisorTUI
+
+        csv_path = tmp_path / "heartbeat.csv"
+        csv_path.write_text("timestamp,delta_ms,event\n")
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_csv_path = csv_path
+        app._heartbeat_log = [
+            ("2024-01-15T10:00:01.000", "101.0", ""),
+        ]
+
+        app._flush_heartbeat()
+
+        content = csv_path.read_text()
+        # Only one header line
+        assert content.count("timestamp,delta_ms,event") == 1
+        assert "101.0" in content
+
+    def test_does_nothing_when_log_empty(self, tmp_path):
+        """Should not write anything when no heartbeat data buffered."""
+        from overcode.tui import SupervisorTUI
+
+        csv_path = tmp_path / "heartbeat.csv"
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_csv_path = csv_path
+        app._heartbeat_log = []
+
+        app._flush_heartbeat()
+
+        assert not csv_path.exists()
+
+    def test_clears_log_after_flush(self, tmp_path):
+        """Should clear _heartbeat_log after flushing."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_csv_path = tmp_path / "heartbeat.csv"
+        app._heartbeat_log = [("ts", "100", "")]
+
+        app._flush_heartbeat()
+
+        assert app._heartbeat_log == []
+
+    def test_creates_parent_directories(self, tmp_path):
+        """Should create parent dirs if they do not exist."""
+        from overcode.tui import SupervisorTUI
+
+        deep_path = tmp_path / "deep" / "nested" / "heartbeat.csv"
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_csv_path = deep_path
+        app._heartbeat_log = [("ts", "100", "")]
+
+        app._flush_heartbeat()
+
+        assert deep_path.exists()
+
+    def test_handles_os_error_silently(self, tmp_path):
+        """Should not raise on OSError (best effort)."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        # Use a path that will fail (directory named as file)
+        bad_path = tmp_path / "blocked"
+        bad_path.mkdir()
+        app._heartbeat_csv_path = bad_path  # Can't write to a directory
+        app._heartbeat_log = [("ts", "100", "")]
+
+        # Should not raise
+        app._flush_heartbeat()
+
+
+class TestInvalidateSessionsCache:
+    """Test _invalidate_sessions_cache method."""
+
+    def test_resets_cache_time_to_zero(self):
+        """Should set _sessions_cache_time to 0."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._sessions_cache_time = 12345.0
+
+        app._invalidate_sessions_cache()
+
+        assert app._sessions_cache_time == 0
+
+
+class TestGetCachedSessions:
+    """Test _get_cached_sessions method."""
+
+    def test_returns_cached_data_within_ttl(self):
+        """Should return cached data if TTL has not expired."""
+        import time as time_mod
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        mock_session = Mock()
+        mock_session.id = "s1"
+        app._sessions_cache = {"s1": mock_session}
+        app._sessions_cache_time = time_mod.time()  # Just now
+        app._sessions_cache_ttl = 1.0
+        app.session_manager = Mock()
+
+        result = app._get_cached_sessions()
+
+        assert result == {"s1": mock_session}
+        app.session_manager.list_sessions.assert_not_called()
+
+    def test_reloads_after_ttl_expires(self):
+        """Should reload from session_manager when TTL is expired."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._sessions_cache = {}
+        app._sessions_cache_time = 0  # Expired
+        app._sessions_cache_ttl = 1.0
+
+        s1 = Mock()
+        s1.id = "session1"
+        app.session_manager = Mock()
+        app.session_manager.list_sessions.return_value = [s1]
+
+        result = app._get_cached_sessions()
+
+        assert "session1" in result
+        app.session_manager.list_sessions.assert_called_once()
+
+
+class TestCalculateSafeBreakDuration:
+    """Test calculate_safe_break_duration from tui_helpers."""
+
+    def test_returns_none_with_no_sessions(self):
+        """Should return None when there are no sessions."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+        result = calculate_safe_break_duration([])
+        assert result is None
+
+    def test_returns_none_when_no_running_agents(self):
+        """Should return None when no agents are running."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        s = Mock()
+        s.current_status = "waiting_user"
+        s.median_work_time = 300
+
+        result = calculate_safe_break_duration([s])
+        assert result is None
+
+    def test_returns_none_when_no_median_work_time(self):
+        """Should return None when running agents have no work time data."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        s = Mock()
+        s.current_status = "running"
+        s.median_work_time = 0
+
+        result = calculate_safe_break_duration([s])
+        assert result is None
+
+    def test_calculates_break_with_single_agent(self):
+        """Should return remaining time for a single running agent."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        now = datetime.now()
+        s = Mock()
+        s.current_status = "running"
+        s.median_work_time = 300  # 5 minutes
+        s.status_since = (now - timedelta(seconds=60)).isoformat()  # 1 min in
+
+        result = calculate_safe_break_duration([s], now)
+
+        # 300 - 60 = 240 seconds remaining
+        assert result == pytest.approx(240, abs=2)
+
+    def test_calculates_break_with_multiple_agents(self):
+        """Should find when 50%+ agents need attention."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        now = datetime.now()
+
+        # Agent 1: will need attention in ~100s
+        s1 = Mock()
+        s1.current_status = "running"
+        s1.median_work_time = 200
+        s1.status_since = (now - timedelta(seconds=100)).isoformat()
+
+        # Agent 2: will need attention in ~250s
+        s2 = Mock()
+        s2.current_status = "running"
+        s2.median_work_time = 300
+        s2.status_since = (now - timedelta(seconds=50)).isoformat()
+
+        result = calculate_safe_break_duration([s1, s2], now)
+
+        # With 2 agents, half_point = 1, so first one to need attention
+        assert result == pytest.approx(100, abs=2)
+
+    def test_clamps_negative_remaining_to_zero(self):
+        """Should clamp to 0 when agent is past median work time."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        now = datetime.now()
+        s = Mock()
+        s.current_status = "running"
+        s.median_work_time = 60
+        s.status_since = (now - timedelta(seconds=120)).isoformat()  # Past median
+
+        result = calculate_safe_break_duration([s], now)
+
+        assert result == 0
+
+    def test_handles_invalid_status_since(self):
+        """Should handle invalid status_since gracefully."""
+        from overcode.tui_helpers import calculate_safe_break_duration
+
+        now = datetime.now()
+        s = Mock()
+        s.current_status = "running"
+        s.median_work_time = 300
+        s.status_since = "invalid-timestamp"
+
+        result = calculate_safe_break_duration([s], now)
+
+        # With invalid timestamp, time_in_state = 0, remaining = 300
+        assert result == 300
+
+
+class TestFormatCostAndBudget:
+    """Test format_cost and format_budget helper functions."""
+
+    def test_format_cost_zero(self):
+        """Should format zero cost with dollar sign."""
+        from overcode.tui_formatters import format_cost
+        result = format_cost(0.0)
+        assert "$" in result
+        assert "0" in result
+
+    def test_format_cost_small(self):
+        """Should format small cost."""
+        from overcode.tui_formatters import format_cost
+        result = format_cost(0.15)
+        assert "$" in result
+        assert "0.1" in result or "0.2" in result  # Rounded to 1 decimal
+
+    def test_format_cost_medium(self):
+        """Should format medium costs with 1 decimal."""
+        from overcode.tui_formatters import format_cost
+        result = format_cost(12.50)
+        assert "$12.5" in result
+
+    def test_format_cost_thousands(self):
+        """Should format thousands with K suffix."""
+        from overcode.tui_formatters import format_cost
+        result = format_cost(2500.0)
+        assert "$2.5K" == result
+
+    def test_format_cost_millions(self):
+        """Should format millions with M suffix."""
+        from overcode.tui_formatters import format_cost
+        result = format_cost(1_500_000.0)
+        assert "$1.5M" == result
+
+    def test_format_budget_no_budget(self):
+        """Should return cost only when budget is 0."""
+        from overcode.tui_formatters import format_budget
+        result = format_budget(1.5, 0.0)
+        assert "$" in result
+        assert "/" not in result
+
+    def test_format_budget_with_budget(self):
+        """Should format cost/budget when budget > 0."""
+        from overcode.tui_formatters import format_budget
+        result = format_budget(1.5, 5.0)
+        assert "/" in result
+        assert "$" in result
+
+
+class TestTuiLogicAdditional:
+    """Additional tests for tui_logic.py functions."""
+
+    def test_calculate_green_percentage_zero_total(self):
+        """Should return 0 when total time is 0."""
+        from overcode.tui_logic import calculate_green_percentage
+        assert calculate_green_percentage(0, 0) == 0.0
+
+    def test_calculate_green_percentage_all_green(self):
+        """Should return 100 when all time is green."""
+        from overcode.tui_logic import calculate_green_percentage
+        assert calculate_green_percentage(100, 0) == 100.0
+
+    def test_calculate_green_percentage_all_non_green(self):
+        """Should return 0 when all time is non-green."""
+        from overcode.tui_logic import calculate_green_percentage
+        assert calculate_green_percentage(0, 100) == 0.0
+
+    def test_calculate_green_percentage_mixed(self):
+        """Should return correct percentage for mixed time."""
+        from overcode.tui_logic import calculate_green_percentage
+        result = calculate_green_percentage(75, 25)
+        assert result == 75.0
+
+    def test_calculate_human_interaction_count_none_total(self):
+        """Should return 0 when total_interactions is None."""
+        from overcode.tui_logic import calculate_human_interaction_count
+        assert calculate_human_interaction_count(None, 5) == 0
+
+    def test_calculate_human_interaction_count_zero(self):
+        """Should return 0 when total equals robot."""
+        from overcode.tui_logic import calculate_human_interaction_count
+        assert calculate_human_interaction_count(5, 5) == 0
+
+    def test_calculate_human_interaction_count_clamps_negative(self):
+        """Should clamp to 0 when robot > total."""
+        from overcode.tui_logic import calculate_human_interaction_count
+        assert calculate_human_interaction_count(3, 5) == 0
+
+    def test_calculate_human_interaction_count_positive(self):
+        """Should return difference when total > robot."""
+        from overcode.tui_logic import calculate_human_interaction_count
+        assert calculate_human_interaction_count(10, 3) == 7
+
+    def test_get_sort_mode_display_name_all_modes(self):
+        """Should return display names for all known modes."""
+        from overcode.tui_logic import get_sort_mode_display_name
+        assert get_sort_mode_display_name("alphabetical") == "Alphabetical"
+        assert get_sort_mode_display_name("by_status") == "By Status"
+        assert get_sort_mode_display_name("by_value") == "By Value (priority)"
+        assert get_sort_mode_display_name("by_tree") == "By Tree (hierarchy)"
+
+    def test_get_sort_mode_display_name_unknown(self):
+        """Should return raw mode name for unknown modes."""
+        from overcode.tui_logic import get_sort_mode_display_name
+        assert get_sort_mode_display_name("custom_mode") == "custom_mode"
+
+    def test_cycle_sort_mode_normal(self):
+        """Should cycle to next mode."""
+        from overcode.tui_logic import cycle_sort_mode
+        modes = ["a", "b", "c"]
+        assert cycle_sort_mode("a", modes) == "b"
+        assert cycle_sort_mode("b", modes) == "c"
+        assert cycle_sort_mode("c", modes) == "a"  # wraps
+
+    def test_cycle_sort_mode_unknown_current(self):
+        """Should go to first mode if current is unknown."""
+        from overcode.tui_logic import cycle_sort_mode
+        modes = ["a", "b", "c"]
+        assert cycle_sort_mode("unknown", modes) == "a"
+
+    def test_cycle_sort_mode_empty_list(self):
+        """Should return current mode if list is empty."""
+        from overcode.tui_logic import cycle_sort_mode
+        assert cycle_sort_mode("current", []) == "current"
+
+
+class TestComputeTreeMetadata:
+    """Additional tests for compute_tree_metadata."""
+
+    def test_empty_sessions(self):
+        """Should return empty dict for empty sessions."""
+        from overcode.tui_logic import compute_tree_metadata
+        result = compute_tree_metadata([])
+        assert result == {}
+
+    def test_single_root(self):
+        """Single root session should have depth=0, no prefix."""
+        from overcode.tui_logic import compute_tree_metadata
+
+        s = Mock()
+        s.id = "root"
+        s.parent_session_id = None
+
+        result = compute_tree_metadata([s])
+        assert result["root"].depth == 0
+        assert result["root"].prefix == ""
+        assert result["root"].child_count == 0
+
+    def test_parent_with_children(self):
+        """Parent should show child count, children should have depth=1."""
+        from overcode.tui_logic import compute_tree_metadata
+
+        parent = Mock()
+        parent.id = "parent"
+        parent.parent_session_id = None
+
+        child1 = Mock()
+        child1.id = "child1"
+        child1.parent_session_id = "parent"
+
+        child2 = Mock()
+        child2.id = "child2"
+        child2.parent_session_id = "parent"
+
+        result = compute_tree_metadata([parent, child1, child2])
+
+        assert result["parent"].child_count == 2
+        assert result["parent"].depth == 0
+        assert result["child1"].depth == 1
+        assert result["child2"].depth == 1
+        assert result["child2"].is_last is True
+        assert result["child1"].is_last is False
+
+    def test_nested_tree(self):
+        """Deeply nested tree should compute correct depths and prefixes."""
+        from overcode.tui_logic import compute_tree_metadata
+
+        root = Mock()
+        root.id = "root"
+        root.parent_session_id = None
+
+        child = Mock()
+        child.id = "child"
+        child.parent_session_id = "root"
+
+        grandchild = Mock()
+        grandchild.id = "grandchild"
+        grandchild.parent_session_id = "child"
+
+        result = compute_tree_metadata([root, child, grandchild])
+
+        assert result["root"].depth == 0
+        assert result["child"].depth == 1
+        assert result["grandchild"].depth == 2
+        assert "└─" in result["grandchild"].prefix or "├─" in result["grandchild"].prefix
+
+
+class TestFilterVisibleSessions:
+    """Additional tests for filter_visible_sessions."""
+
+    def test_basic_passthrough(self):
+        """With no filters, should return all active sessions."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        s1 = Mock()
+        s1.id = "s1"
+        s1.is_asleep = False
+        s1.status = "active"
+
+        result = filter_visible_sessions([s1], [], hide_asleep=False, show_terminated=False)
+        assert len(result) == 1
+
+    def test_hide_asleep(self):
+        """Should filter out sleeping agents when hide_asleep=True."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        s1 = Mock()
+        s1.id = "s1"
+        s1.is_asleep = True
+        s1.status = "active"
+
+        s2 = Mock()
+        s2.id = "s2"
+        s2.is_asleep = False
+        s2.status = "active"
+
+        result = filter_visible_sessions([s1, s2], [], hide_asleep=True, show_terminated=False)
+        assert len(result) == 1
+        assert result[0].id == "s2"
+
+    def test_show_terminated(self):
+        """Should include terminated sessions when show_terminated=True."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        active = Mock()
+        active.id = "active"
+        active.is_asleep = False
+        active.status = "active"
+
+        terminated = Mock()
+        terminated.id = "killed"
+        terminated.is_asleep = False
+        terminated.status = "terminated"
+
+        result = filter_visible_sessions(
+            [active], [terminated],
+            hide_asleep=False, show_terminated=True
+        )
+        assert len(result) == 2
+
+    def test_hide_done_by_default(self):
+        """Should hide 'done' sessions when show_done=False."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        s1 = Mock()
+        s1.id = "s1"
+        s1.is_asleep = False
+        s1.status = "done"
+
+        s2 = Mock()
+        s2.id = "s2"
+        s2.is_asleep = False
+        s2.status = "active"
+
+        result = filter_visible_sessions(
+            [s1, s2], [],
+            hide_asleep=False, show_terminated=False, show_done=False
+        )
+        assert len(result) == 1
+        assert result[0].id == "s2"
+
+    def test_show_done(self):
+        """Should include 'done' sessions when show_done=True."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        s1 = Mock()
+        s1.id = "s1"
+        s1.is_asleep = False
+        s1.status = "done"
+
+        result = filter_visible_sessions(
+            [s1], [],
+            hide_asleep=False, show_terminated=False, show_done=True
+        )
+        assert len(result) == 1
+
+    def test_collapsed_parents_hide_children(self):
+        """Should hide children of collapsed parents."""
+        from overcode.tui_logic import filter_visible_sessions
+
+        parent = Mock()
+        parent.id = "parent"
+        parent.is_asleep = False
+        parent.status = "active"
+        parent.parent_session_id = None
+
+        child = Mock()
+        child.id = "child"
+        child.is_asleep = False
+        child.status = "active"
+        child.parent_session_id = "parent"
+
+        result = filter_visible_sessions(
+            [parent, child], [],
+            hide_asleep=False, show_terminated=False,
+            collapsed_parents={"parent"}
+        )
+        assert len(result) == 1
+        assert result[0].id == "parent"
+
+
+class TestSleepTimeAccumulation:
+    """Test sleep time accumulation in get_current_state_times."""
+
+    def test_adds_sleep_time_when_asleep(self):
+        """Should accumulate sleep_time when is_asleep=True."""
+        now = datetime.now()
+        stats = Mock()
+        stats.green_time_seconds = 100.0
+        stats.non_green_time_seconds = 50.0
+        stats.sleep_time_seconds = 10.0
+        stats.last_time_accumulation = None
+        stats.state_since = (now - timedelta(seconds=30)).isoformat()
+        stats.current_state = "running"  # Daemon hasn't updated yet
+
+        green, non_green, sleep = get_current_state_times(stats, now, is_asleep=True)
+
+        assert green == 100.0  # No change - overridden to asleep
+        assert non_green == 50.0
+        assert sleep == pytest.approx(40.0, rel=0.1)  # 10 + 30
+
+
+class TestMeanSpinFromHistory:
+    """Tests for calculate_mean_spin_from_history."""
+
+    def test_zero_baseline_returns_zero(self):
+        """Should return (0, 0) when baseline_minutes is 0."""
+        from overcode.tui_logic import calculate_mean_spin_from_history
+        result = calculate_mean_spin_from_history([], ["agent1"], 0)
+        assert result == (0.0, 0)
+
+    def test_empty_history_returns_zero(self):
+        """Should return (0, 0) with empty history."""
+        from overcode.tui_logic import calculate_mean_spin_from_history
+        result = calculate_mean_spin_from_history([], ["agent1"], 15)
+        assert result == (0.0, 0)
+
+    def test_empty_agent_names_returns_zero(self):
+        """Should return (0, 0) with no agent names."""
+        from overcode.tui_logic import calculate_mean_spin_from_history
+        now = datetime.now()
+        history = [(now, "agent1", "running", "working")]
+        result = calculate_mean_spin_from_history(history, [], 15, now)
+        assert result == (0.0, 0)
+
+    def test_all_running_agents(self):
+        """All running samples should give mean_spin = num_agents."""
+        from overcode.tui_logic import calculate_mean_spin_from_history
+
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=5), "agent1", "running", "working"),
+            (now - timedelta(minutes=5), "agent2", "running", "working"),
+            (now - timedelta(minutes=3), "agent1", "running", "working"),
+            (now - timedelta(minutes=3), "agent2", "running", "working"),
+        ]
+
+        mean_spin, count = calculate_mean_spin_from_history(
+            history, ["agent1", "agent2"], 15, now
+        )
+
+        assert count == 4
+        assert mean_spin == pytest.approx(2.0, rel=0.01)  # All running = 2 agents
+
+    def test_half_running(self):
+        """Half running samples should give mean_spin = num_agents * 0.5."""
+        from overcode.tui_logic import calculate_mean_spin_from_history
+
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=5), "agent1", "running", "working"),
+            (now - timedelta(minutes=5), "agent1", "waiting_user", "idle"),
+        ]
+
+        mean_spin, count = calculate_mean_spin_from_history(
+            history, ["agent1"], 15, now
+        )
+
+        assert count == 2
+        assert mean_spin == pytest.approx(0.5, rel=0.01)
+
+
+class TestSpinStats:
+    """Tests for calculate_spin_stats."""
+
+    def test_empty_sessions(self):
+        """Should handle empty sessions."""
+        from overcode.tui_logic import calculate_spin_stats
+        result = calculate_spin_stats([], set())
+        assert result.green_count == 0
+        assert result.total_count == 0
+        assert result.sleeping_count == 0
+        assert result.mean_spin == 0.0
+        assert result.total_tokens == 0
+
+    def test_excludes_sleeping_from_active_counts(self):
+        """Should exclude sleeping agents from active counts."""
+        from overcode.tui_logic import calculate_spin_stats
+
+        s1 = Mock()
+        s1.session_id = "s1"
+        s1.current_status = "running"
+        s1.green_time_seconds = 100
+        s1.non_green_time_seconds = 0
+        s1.input_tokens = 1000
+        s1.output_tokens = 2000
+
+        s2 = Mock()
+        s2.session_id = "s2"
+        s2.current_status = "running"
+        s2.green_time_seconds = 50
+        s2.non_green_time_seconds = 50
+        s2.input_tokens = 500
+        s2.output_tokens = 500
+
+        result = calculate_spin_stats([s1, s2], {"s2"})
+
+        assert result.total_count == 1  # Only s1 is active
+        assert result.green_count == 1
+        assert result.sleeping_count == 1
+        assert result.total_tokens == 4000  # All tokens counted
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 
