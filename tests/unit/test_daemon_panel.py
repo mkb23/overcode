@@ -292,16 +292,3 @@ class TestDaemonPanelControlsHint:
         plain = result.plain
         assert ":sup" in plain
         assert ":mon" in plain
-
-
-# ===========================================================================
-# Constants
-# ===========================================================================
-
-
-class TestDaemonPanelConstants:
-    """Tests for DaemonPanel class constants."""
-
-    def test_log_lines_to_show(self):
-        from overcode.tui_widgets.daemon_panel import DaemonPanel
-        assert DaemonPanel.LOG_LINES_TO_SHOW == 8

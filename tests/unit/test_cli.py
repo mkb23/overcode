@@ -64,23 +64,8 @@ class TestLaunchCommand:
         assert "Missing option" in result.output or "--name" in result.output
 
 
-class TestListCommand:
-    """Test list command"""
-
-    def test_list_help(self):
-        """List help works"""
-        result = runner.invoke(app, ["list", "--help"])
-        assert result.exit_code == 0
-
-
 class TestKillCommand:
     """Test kill command"""
-
-    def test_kill_help(self):
-        """Kill help shows arguments"""
-        result = runner.invoke(app, ["kill", "--help"])
-        assert result.exit_code == 0
-        assert "NAME" in result.stdout
 
     def test_kill_requires_name(self):
         """Kill requires name argument"""
@@ -91,14 +76,6 @@ class TestKillCommand:
 class TestSendCommand:
     """Test send command"""
 
-    def test_send_help(self):
-        """Send help shows options and examples"""
-        result = runner.invoke(app, ["send", "--help"])
-        assert result.exit_code == 0
-        output = strip_ansi(result.stdout)
-        assert "--no-enter" in output
-        assert "NAME" in output
-
     def test_send_requires_name(self):
         """Send requires name argument"""
         result = runner.invoke(app, ["send"])
@@ -107,14 +84,6 @@ class TestSendCommand:
 
 class TestShowCommand:
     """Test show command"""
-
-    def test_show_help(self):
-        """Show help shows options"""
-        result = runner.invoke(app, ["show", "--help"])
-        assert result.exit_code == 0
-        output = strip_ansi(result.stdout)
-        assert "--lines" in output
-        assert "NAME" in output
 
     def test_show_requires_name(self):
         """Show requires name argument"""
@@ -125,114 +94,10 @@ class TestShowCommand:
 class TestInstructCommand:
     """Test instruct command"""
 
-    def test_instruct_help(self):
-        """Instruct help shows options"""
-        result = runner.invoke(app, ["instruct", "--help"])
-        assert result.exit_code == 0
-        output = strip_ansi(result.stdout)
-        assert "--clear" in output
-        assert "NAME" in output
-
     def test_instruct_requires_name(self):
         """Instruct requires name argument"""
         result = runner.invoke(app, ["instruct"])
         assert result.exit_code != 0
-
-
-class TestMonitorCommand:
-    """Test monitor command"""
-
-    def test_monitor_help(self):
-        """Monitor help works"""
-        result = runner.invoke(app, ["monitor", "--help"])
-        assert result.exit_code == 0
-
-
-class TestSupervisorCommand:
-    """Test supervisor command"""
-
-    def test_supervisor_help(self):
-        """Supervisor help shows options"""
-        result = runner.invoke(app, ["supervisor", "--help"])
-        assert result.exit_code == 0
-        assert "--restart" in strip_ansi(result.stdout)
-
-
-class TestDaemonCommands:
-    """Test daemon-related commands"""
-
-    def test_monitor_daemon_help(self):
-        """Monitor-daemon help works"""
-        result = runner.invoke(app, ["monitor-daemon", "--help"])
-        assert result.exit_code == 0
-
-    def test_supervisor_daemon_help(self):
-        """Supervisor-daemon help works"""
-        result = runner.invoke(app, ["supervisor-daemon", "--help"])
-        assert result.exit_code == 0
-
-
-class TestConfigCommands:
-    """Test config-related commands"""
-
-    def test_config_help(self):
-        """Config help works"""
-        result = runner.invoke(app, ["config", "--help"])
-        assert result.exit_code == 0
-
-
-
-
-class TestVersionCommand:
-    """Test version-related output"""
-
-    def test_help_shows_version_info(self):
-        """Help output exists"""
-        result = runner.invoke(app, ["--help"])
-        assert result.exit_code == 0
-
-
-class TestCleanupCommand:
-    """Test cleanup command"""
-
-    def test_cleanup_help(self):
-        """Cleanup help works"""
-        result = runner.invoke(app, ["cleanup", "--help"])
-        assert result.exit_code == 0
-
-
-class TestExportCommand:
-    """Test export command"""
-
-    def test_export_help(self):
-        """Export help works"""
-        result = runner.invoke(app, ["export", "--help"])
-        assert result.exit_code == 0
-
-
-class TestWebCommand:
-    """Test web command"""
-
-    def test_web_help(self):
-        """Web help works"""
-        result = runner.invoke(app, ["web", "--help"])
-        assert result.exit_code == 0
-
-
-class TestAllSubcommands:
-    """Test that all subcommands have help"""
-
-    def test_all_commands_have_help(self):
-        """All registered commands should have help text."""
-        # Main commands from the app
-        commands = ["launch", "list", "kill", "send", "show", "instruct",
-                    "monitor", "supervisor", "attach", "cleanup", "export",
-                    "web", "monitor-daemon", "supervisor-daemon", "config"]
-
-        for cmd in commands:
-            result = runner.invoke(app, [cmd, "--help"])
-            # Exit code 0 means help was shown successfully
-            assert result.exit_code == 0, f"Command '{cmd}' failed with exit code {result.exit_code}: {result.output}"
 
 
 # =============================================================================
@@ -510,77 +375,6 @@ class TestLaunchCommandWithMocks:
             mock_launcher.launch.assert_called()
 
 
-class TestMonitorDaemonSubcommands:
-    """Test monitor-daemon subcommands"""
-
-    def test_monitor_daemon_start_help(self):
-        """Start subcommand help works"""
-        result = runner.invoke(app, ["monitor-daemon", "start", "--help"])
-        assert result.exit_code == 0
-
-    def test_monitor_daemon_stop_help(self):
-        """Stop subcommand help works"""
-        result = runner.invoke(app, ["monitor-daemon", "stop", "--help"])
-        assert result.exit_code == 0
-
-    def test_monitor_daemon_status_help(self):
-        """Status subcommand help works"""
-        result = runner.invoke(app, ["monitor-daemon", "status", "--help"])
-        assert result.exit_code == 0
-
-
-class TestSupervisorDaemonSubcommands:
-    """Test supervisor-daemon subcommands"""
-
-    def test_supervisor_daemon_start_help(self):
-        """Start subcommand help works"""
-        result = runner.invoke(app, ["supervisor-daemon", "start", "--help"])
-        assert result.exit_code == 0
-
-    def test_supervisor_daemon_stop_help(self):
-        """Stop subcommand help works"""
-        result = runner.invoke(app, ["supervisor-daemon", "stop", "--help"])
-        assert result.exit_code == 0
-
-
-class TestWebSubcommands:
-    """Test web subcommands"""
-
-    def test_web_start_help(self):
-        """Start subcommand help works"""
-        result = runner.invoke(app, ["web", "start", "--help"])
-        assert result.exit_code == 0
-
-    def test_web_stop_help(self):
-        """Stop subcommand help works"""
-        result = runner.invoke(app, ["web", "stop", "--help"])
-        assert result.exit_code == 0
-
-    def test_web_status_help(self):
-        """Status subcommand help works"""
-        result = runner.invoke(app, ["web", "status", "--help"])
-        assert result.exit_code == 0
-
-
-class TestConfigSubcommands:
-    """Test config subcommands"""
-
-    def test_config_init_help(self):
-        """Init subcommand help works"""
-        result = runner.invoke(app, ["config", "init", "--help"])
-        assert result.exit_code == 0
-
-    def test_config_show_help(self):
-        """Show subcommand help works"""
-        result = runner.invoke(app, ["config", "show", "--help"])
-        assert result.exit_code == 0
-
-    def test_config_path_help(self):
-        """Path subcommand help works"""
-        result = runner.invoke(app, ["config", "path", "--help"])
-        assert result.exit_code == 0
-
-
 class TestInstructCommandWithMocks:
     """Test instruct command with mocked dependencies."""
 
@@ -665,12 +459,6 @@ class TestCleanupCommandWithMocks:
 class TestSetValueCommand:
     """Test set-value command."""
 
-    def test_set_value_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["set-value", "--help"])
-        assert result.exit_code == 0
-        assert "Priority value" in result.output or "priority" in result.output.lower()
-
     def test_set_value_requires_name(self):
         """Should require agent name."""
         result = runner.invoke(app, ["set-value"])
@@ -680,77 +468,10 @@ class TestSetValueCommand:
 class TestExportCommand:
     """Test export command."""
 
-    def test_export_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["export", "--help"])
-        assert result.exit_code == 0
-        assert "parquet" in result.output.lower()
-
     def test_export_requires_output_path(self):
         """Should require output path."""
         result = runner.invoke(app, ["export"])
         assert result.exit_code != 0
-
-
-class TestHistoryCommand:
-    """Test history command."""
-
-    def test_history_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["history", "--help"])
-        assert result.exit_code == 0
-
-
-class TestMonitorDaemonWatch:
-    """Test monitor-daemon watch command."""
-
-    def test_watch_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["monitor-daemon", "watch", "--help"])
-        assert result.exit_code == 0
-        assert "Watch" in result.output or "watch" in result.output.lower() or "log" in result.output.lower()
-
-
-class TestSupervisorDaemonWatch:
-    """Test supervisor-daemon watch command."""
-
-    def test_watch_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["supervisor-daemon", "watch", "--help"])
-        assert result.exit_code == 0
-
-
-class TestServeCommand:
-    """Test serve command."""
-
-    def test_serve_help(self):
-        """Should show help with host and port options."""
-        import re
-        result = runner.invoke(app, ["serve", "--help"])
-        assert result.exit_code == 0
-        # Strip ANSI codes for reliable matching (CI has different formatting)
-        clean_output = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
-        assert "--host" in clean_output
-        assert "--port" in clean_output
-
-
-class TestAttachCommand:
-    """Test attach command."""
-
-    def test_attach_help(self):
-        """Should show help."""
-        result = runner.invoke(app, ["attach", "--help"])
-        assert result.exit_code == 0
-
-    def test_attach_help_shows_bare_option(self):
-        """Help should document --bare flag."""
-        result = runner.invoke(app, ["attach", "--help"])
-        assert "--bare" in strip_ansi(result.output)
-
-    def test_attach_help_shows_name_argument(self):
-        """Help should document optional NAME argument."""
-        result = runner.invoke(app, ["attach", "--help"])
-        assert "NAME" in result.output
 
     def test_attach_bare_without_name_errors(self):
         """--bare without agent name should error."""

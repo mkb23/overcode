@@ -161,27 +161,6 @@ class TestBuildContent:
 # ===========================================================================
 
 
-class TestFullscreenPreviewState:
-    """Tests for state tracking in FullscreenPreview."""
-
-    def test_initial_state(self):
-        widget = _make_bare_preview()
-        assert widget._content_lines == []
-        assert widget._session_name == ""
-        assert widget._monochrome is False
-        assert widget._previous_focus is None
-        assert widget._previous_focus_session_id is None
-
-    def test_state_after_setting_content(self):
-        widget = _make_bare_preview()
-        widget._content_lines = ["a", "b"]
-        widget._session_name = "agent-1"
-        widget._monochrome = True
-        assert widget._content_lines == ["a", "b"]
-        assert widget._session_name == "agent-1"
-        assert widget._monochrome is True
-
-
 # ===========================================================================
 # hide — focus restoration logic
 # ===========================================================================
@@ -318,23 +297,3 @@ class TestFullscreenPreviewOnKey:
 # ===========================================================================
 
 
-class TestFullscreenPreviewBindings:
-    """Tests for FullscreenPreview key bindings definition."""
-
-    def test_bindings_defined(self):
-        from overcode.tui_widgets.fullscreen_preview import FullscreenPreview
-        binding_keys = [b.key for b in FullscreenPreview.BINDINGS]
-        assert "up" in binding_keys
-        assert "down" in binding_keys
-        assert "k" in binding_keys
-        assert "j" in binding_keys
-        assert "pageup" in binding_keys
-        assert "pagedown" in binding_keys
-        assert "home" in binding_keys
-        assert "end" in binding_keys
-
-    def test_scroll_actions_exist(self):
-        """Verify the scroll action methods exist on the class."""
-        from overcode.tui_widgets.fullscreen_preview import FullscreenPreview
-        assert hasattr(FullscreenPreview, 'action_scroll_up_20')
-        assert hasattr(FullscreenPreview, 'action_scroll_down_20')

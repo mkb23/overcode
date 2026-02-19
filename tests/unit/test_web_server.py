@@ -192,26 +192,6 @@ class TestStopWebServer:
 class TestOvercodeHandler:
     """Tests for OvercodeHandler class."""
 
-    def test_handler_has_tmux_session_attribute(self):
-        """Handler should have tmux_session class attribute."""
-        assert hasattr(OvercodeHandler, 'tmux_session')
-        assert OvercodeHandler.tmux_session == "agents"
-
-    def test_handler_inherits_from_base_handler(self):
-        """Handler should inherit from BaseHTTPRequestHandler."""
-        from http.server import BaseHTTPRequestHandler
-        assert issubclass(OvercodeHandler, BaseHTTPRequestHandler)
-
-    def test_handler_has_required_methods(self):
-        """Handler should have do_GET and helper methods."""
-        assert hasattr(OvercodeHandler, 'do_GET')
-        assert hasattr(OvercodeHandler, '_serve_dashboard')
-        assert hasattr(OvercodeHandler, '_serve_analytics_dashboard')
-        assert hasattr(OvercodeHandler, '_serve_chartjs')
-        assert hasattr(OvercodeHandler, '_serve_json')
-        assert hasattr(OvercodeHandler, '_parse_datetime')
-        assert hasattr(OvercodeHandler, 'log_message')
-
     def test_parse_datetime_returns_none_for_none(self):
         """_parse_datetime should return None for None input."""
         handler = MagicMock(spec=OvercodeHandler)

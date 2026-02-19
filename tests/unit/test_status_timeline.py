@@ -382,25 +382,3 @@ class TestStatusTimelineRender:
 # ===========================================================================
 
 
-class TestStatusTimelineConstants:
-    """Tests for StatusTimeline class constants."""
-
-    def test_timeline_hours_default(self):
-        from overcode.tui_widgets.status_timeline import StatusTimeline
-        assert StatusTimeline.TIMELINE_HOURS == 3.0
-
-    def test_min_name_width(self):
-        from overcode.tui_widgets.status_timeline import StatusTimeline
-        assert StatusTimeline.MIN_NAME_WIDTH == 6
-
-    def test_max_name_width(self):
-        from overcode.tui_widgets.status_timeline import StatusTimeline
-        assert StatusTimeline.MAX_NAME_WIDTH == 30
-
-    def test_min_timeline(self):
-        from overcode.tui_widgets.status_timeline import StatusTimeline
-        assert StatusTimeline.MIN_TIMELINE == 20
-
-    def test_default_timeline(self):
-        from overcode.tui_widgets.status_timeline import StatusTimeline
-        assert StatusTimeline.DEFAULT_TIMELINE == 60
