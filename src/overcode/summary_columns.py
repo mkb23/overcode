@@ -152,11 +152,9 @@ def render_unvisited_alert(ctx: ColumnContext) -> ColumnOutput:
 
 def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
     state_start = ctx.status_changed_at
-    if ctx.stats.state_since:
+    if state_start is None and ctx.stats.state_since:
         try:
-            daemon_state_start = datetime.fromisoformat(ctx.stats.state_since)
-            if state_start is None or daemon_state_start > state_start:
-                state_start = daemon_state_start
+            state_start = datetime.fromisoformat(ctx.stats.state_since)
         except (ValueError, TypeError):
             pass
     if state_start:
@@ -474,11 +472,9 @@ def render_status_plain(ctx: ColumnContext) -> Optional[str]:
             break
 
     state_start = ctx.status_changed_at
-    if ctx.stats.state_since:
+    if state_start is None and ctx.stats.state_since:
         try:
-            daemon_state_start = datetime.fromisoformat(ctx.stats.state_since)
-            if state_start is None or daemon_state_start > state_start:
-                state_start = daemon_state_start
+            state_start = datetime.fromisoformat(ctx.stats.state_since)
         except (ValueError, TypeError):
             pass
 

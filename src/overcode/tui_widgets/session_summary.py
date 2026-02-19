@@ -14,6 +14,7 @@ from rich.text import Text
 
 from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
+from ..status_constants import get_status_color
 from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
@@ -223,9 +224,11 @@ class SessionSummary(Static, can_focus=True):
         new_status = "asleep" if self.session.is_asleep else status
 
         # Track status changes for immediate time-in-state reset (#73)
-        if new_status != self._last_known_status:
+        # Compare by color group so sub-status changes within the same color
+        # (e.g. running ↔ running_heartbeat) don't reset the timer.
+        if get_status_color(new_status) != get_status_color(self._last_known_status):
             self._status_changed_at = datetime.now()
-            self._last_known_status = new_status
+        self._last_known_status = new_status
 
         self.detected_status = new_status
 

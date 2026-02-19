@@ -324,11 +324,9 @@ def render_session_summary_line(
 
     # Time in current state
     state_start = local_status_changed_at
-    if state_since:
+    if state_start is None and state_since:
         try:
-            daemon_state_start = datetime.fromisoformat(state_since)
-            if state_start is None or daemon_state_start > state_start:
-                state_start = daemon_state_start
+            state_start = datetime.fromisoformat(state_since)
         except (ValueError, TypeError):
             pass
 
