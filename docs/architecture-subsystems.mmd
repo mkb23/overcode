@@ -1,0 +1,172 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'fontSize': '14px', 'fontFamily': 'Inter, Helvetica, sans-serif'}}}%%
+graph TB
+    classDef cli fill:#4a90d9,stroke:#2c5f8a,color:#fff
+    classDef tui fill:#7b68ee,stroke:#5a4cb5,color:#fff
+    classDef daemon fill:#e06666,stroke:#a34444,color:#fff
+    classDef data fill:#6aa84f,stroke:#4a7a35,color:#fff
+    classDef web fill:#f6b26b,stroke:#c48540,color:#000
+    classDef tmux fill:#cc99ff,stroke:#9966cc,color:#000
+    classDef infra fill:#999,stroke:#666,color:#fff
+
+    subgraph CLI ["CLI Layer (cli.py — 2449 lines)"]
+        direction LR
+        LAUNCH["launch / list\nattach / kill"]
+        DAEMON_CMD["monitor-daemon\nsupervisor-daemon"]
+        CONFIG_CMD["config / hooks\nskills / perms"]
+        MISC_CMD["follow / report\nexport / history"]
+    end
+
+    subgraph TUI ["TUI — Textual App (tui.py — 2159 lines)"]
+        direction TB
+        TUI_APP["SupervisorTUI\n(App)"]
+        subgraph WIDGETS ["Widgets"]
+            SS["SessionSummary"]
+            DSB["DaemonStatusBar"]
+            ST["StatusTimeline"]
+            CB["CommandBar"]
+            PP["PreviewPane"]
+        end
+        subgraph ACTIONS ["Action Mixins"]
+            AD["daemon"]
+            AI["input"]
+            AN["navigation"]
+            AS["session"]
+            AV["view"]
+        end
+        subgraph TUI_PURE ["Pure Logic"]
+            TL["tui_logic"]
+            TH["tui_helpers"]
+            TF["tui_formatters"]
+            TR["tui_render"]
+            SC["summary_columns"]
+        end
+    end
+
+    subgraph MONITOR ["Monitor Daemon (943 lines)"]
+        MD["MonitorDaemon\n(~2s loop)"]
+        MDC["monitor_daemon_core\n(pure functions)"]
+        MDS["MonitorDaemonState\n(published JSON)"]
+    end
+
+    subgraph SUPERVISOR ["Supervisor Daemon (821 lines)"]
+        SD["SupervisorDaemon"]
+        SDC["supervisor_daemon_core\n(pure functions)"]
+    end
+
+    subgraph STATUS ["Status Detection"]
+        SDF["StatusDetectorDispatcher"]
+        PSD["PollingStatusDetector"]
+        HSD["HookStatusDetector"]
+        SP["status_patterns\n(442 lines of regex)"]
+        SCON["status_constants"]
+    end
+
+    subgraph SESSION ["Session & Config"]
+        SM["SessionManager\n(sessions.json)"]
+        SETS["settings.py\n(path resolution)"]
+        CFG["config.py\n(config.yaml)"]
+    end
+
+    subgraph TMUX_LAYER ["Tmux Abstraction"]
+        TM["tmux_manager"]
+        TU["tmux_utils"]
+        IMPL["implementations.py\n(RealTmux)"]
+        PROTO["protocols.py"]
+    end
+
+    subgraph WEB ["Web Server"]
+        WS["web_server\n(stdlib HTTP)"]
+        WA["web_api"]
+        WCA["web_control_api"]
+        WT["web_templates\n(1656 lines HTML)"]
+    end
+
+    subgraph CLAUDE_INT ["Claude Integration"]
+        LAUNCH_LIB["launcher.py"]
+        HH["hook_handler"]
+        TC["time_context"]
+        SUM["summarizer"]
+        SI["standing_instructions"]
+    end
+
+    subgraph DATA ["Data & History"]
+        HR["history_reader\n(~/.claude/)"]
+        SH["status_history\n(CSV)"]
+        PL["presence_logger"]
+        DE["data_export\n(Parquet)"]
+    end
+
+    subgraph INFRA ["Daemon Infrastructure"]
+        PID["pid_utils"]
+        DU["daemon_utils"]
+        DL["daemon_logging"]
+    end
+
+    subgraph SISTER ["Sister Instances"]
+        SPO["sister_poller"]
+        SCO["sister_controller"]
+    end
+
+    %% CLI dispatches to everything
+    LAUNCH --> LAUNCH_LIB
+    DAEMON_CMD --> MD
+    DAEMON_CMD --> SD
+    MISC_CMD --> DE
+
+    %% Monitor daemon flow
+    MD --> SDF
+    SDF --> PSD
+    SDF --> HSD
+    PSD --> SP
+    HSD --> HH
+    MD --> MDC
+    MD --> MDS
+    MD --> HR
+    MD --> SH
+
+    %% Supervisor reads monitor state
+    SD --> MDS
+    SD --> SDC
+    SD --> TM
+
+    %% TUI reads everything
+    TUI_APP --> MDS
+    TUI_APP --> SM
+    TUI_APP --> SPO
+    TUI_APP --> SUM
+    TUI_APP --> WS
+    SS --> TL
+    DSB --> TL
+    ST --> SH
+
+    %% Web reads monitor state
+    WS --> WA
+    WS --> WCA
+    WA --> MDS
+
+    %% Launcher creates sessions
+    LAUNCH_LIB --> TM
+    LAUNCH_LIB --> SM
+
+    %% Sister
+    SPO --> WA
+    SCO --> WCA
+
+    %% Infrastructure
+    MD --> PID
+    SD --> PID
+    WS --> PID
+
+    %% Style assignments
+    class LAUNCH,DAEMON_CMD,CONFIG_CMD,MISC_CMD cli
+    class TUI_APP,SS,DSB,ST,CB,PP,AD,AI,AN,AS,AV,TL,TH,TF,TR,SC tui
+    class MD,MDC,MDS daemon
+    class SD,SDC daemon
+    class SDF,PSD,HSD,SP,SCON data
+    class SM,SETS,CFG data
+    class WS,WA,WCA,WT web
+    class TM,TU,IMPL,PROTO tmux
+    class LAUNCH_LIB,HH,TC,SUM,SI tmux
+    class HR,SH,PL,DE data
+    class PID,DU,DL infra
+    class SPO,SCO web
