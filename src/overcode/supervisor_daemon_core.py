@@ -5,6 +5,7 @@ These functions contain no I/O and are fully unit-testable.
 They are used by SupervisorDaemon but can be tested independently.
 """
 
+from dataclasses import dataclass
 from typing import List, Optional
 
 from .status_constants import STATUS_RUNNING, get_status_emoji, is_green_status
@@ -178,6 +179,105 @@ def should_launch_daemon_claude(
 
     reason = "with_instructions" if any_has_instructions else "non_user_blocked"
     return True, reason
+
+
+@dataclass
+class SupervisorAction:
+    """Result of supervisor decision tree."""
+    action: str    # "launch", "wait", "idle", "no_agents", "waiting_user"
+    reason: str    # Human-readable reason
+
+
+def determine_supervisor_action(
+    non_green_count: int,
+    daemon_claude_running: bool,
+    total_sessions: int,
+    all_waiting_user: bool,
+    any_has_instructions: bool,
+) -> SupervisorAction:
+    """Determine what the supervisor should do this cycle.
+
+    Pure function — replaces the inline if/elif tree in run().
+
+    Args:
+        non_green_count: Number of sessions needing attention
+        daemon_claude_running: Whether daemon claude is currently running
+        total_sessions: Total number of sessions
+        all_waiting_user: Whether all non-green sessions are waiting for user
+        any_has_instructions: Whether any non-green session has standing instructions
+
+    Returns:
+        SupervisorAction with action and reason
+    """
+    if non_green_count == 0:
+        if total_sessions > 0:
+            return SupervisorAction("idle", "All sessions GREEN")
+        else:
+            return SupervisorAction("no_agents", "No sessions found")
+
+    if daemon_claude_running:
+        return SupervisorAction("wait", "Daemon claude already running")
+
+    if all_waiting_user and not any_has_instructions:
+        return SupervisorAction("waiting_user", "All waiting for user (no instructions)")
+
+    reason = "with_instructions" if any_has_instructions else "non_user_blocked"
+    return SupervisorAction("launch", reason)
+
+
+def check_daemon_output_completion(content: str, active_indicators: List[str]) -> bool:
+    """Check if daemon claude output indicates completion.
+
+    Pure function — analyzes pane content for completion signals.
+
+    Returns True if the output shows an empty prompt with no active work.
+    Returns False if active work indicators are present or tool calls lack results.
+
+    Args:
+        content: Captured pane content (last ~30 lines)
+        active_indicators: List of strings that indicate active work
+
+    Returns:
+        True if daemon appears to have finished, False if still working
+    """
+    # Active work indicators
+    for indicator in active_indicators:
+        if indicator in content:
+            return False
+
+    # Check for tool calls without results
+    lines = content.split('\n')
+    for i, line in enumerate(lines):
+        if '⏺' in line and '(' in line:
+            remaining = '\n'.join(lines[i+1:])
+            if '⎿' not in remaining:
+                return False
+
+    # Check for empty prompt
+    last_lines = [l.strip() for l in lines[-8:] if l.strip()]
+    for line in last_lines:
+        if line == '>' or line == '›':
+            return True
+
+    return False
+
+
+def check_daemon_tool_activity(content: str, tool_indicators: List[str]) -> bool:
+    """Check if daemon claude output shows tool activity (has started working).
+
+    Pure function — analyzes pane content for tool usage indicators.
+
+    Args:
+        content: Captured pane content
+        tool_indicators: List of strings that indicate tool usage
+
+    Returns:
+        True if tool activity detected, False otherwise
+    """
+    for indicator in tool_indicators:
+        if indicator in content:
+            return True
+    return False
 
 
 def parse_intervention_log_line(

@@ -17,6 +17,10 @@ from overcode.monitor_daemon_core import (
     aggregate_session_stats,
     should_sync_stats,
     parse_datetime_safe,
+    is_heartbeat_eligible,
+    is_heartbeat_due,
+    should_auto_archive,
+    should_enforce_oversight_timeout,
 )
 
 
@@ -541,6 +545,285 @@ class TestParseDatetimeSafe:
         result = parse_datetime_safe("2024-01")
         # Could be None or parsed depending on Python version
         assert result is None or isinstance(result, datetime)
+
+
+class TestShouldAutoArchive:
+    """Tests for should_auto_archive()."""
+
+    def test_done_agent_past_timeout(self):
+        """Should return True for done agent past timeout."""
+        now = datetime(2024, 1, 15, 12, 0, 0)
+        assert should_auto_archive(
+            status="done",
+            state_since="2024-01-15T10:00:00",  # 2 hours ago
+            now=now,
+        ) is True
+
+    def test_done_agent_within_timeout(self):
+        """Should return False for done agent within timeout."""
+        now = datetime(2024, 1, 15, 10, 30, 0)
+        assert should_auto_archive(
+            status="done",
+            state_since="2024-01-15T10:00:00",  # 30 min ago
+            now=now,
+        ) is False
+
+    def test_non_done_agent(self):
+        """Should return False for non-done agent."""
+        now = datetime(2024, 1, 15, 12, 0, 0)
+        assert should_auto_archive(
+            status="running",
+            state_since="2024-01-15T10:00:00",
+            now=now,
+        ) is False
+
+    def test_no_state_since(self):
+        """Should return False when no state_since."""
+        now = datetime(2024, 1, 15, 12, 0, 0)
+        assert should_auto_archive(
+            status="done",
+            state_since=None,
+            now=now,
+        ) is False
+
+    def test_invalid_state_since(self):
+        """Should return False for invalid state_since."""
+        now = datetime(2024, 1, 15, 12, 0, 0)
+        assert should_auto_archive(
+            status="done",
+            state_since="not-a-date",
+            now=now,
+        ) is False
+
+    def test_custom_timeout(self):
+        """Should respect custom timeout."""
+        now = datetime(2024, 1, 15, 10, 10, 0)
+        # 10 minutes ago, with 5 minute timeout
+        assert should_auto_archive(
+            status="done",
+            state_since="2024-01-15T10:00:00",
+            now=now,
+            timeout_seconds=300,
+        ) is True
+
+
+class TestShouldEnforceOversightTimeout:
+    """Tests for should_enforce_oversight_timeout()."""
+
+    def test_timeout_expired(self):
+        """Should return True when deadline has passed."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy="timeout",
+            deadline="2024-01-15T10:30:00",
+            now=now,
+        ) is True
+
+    def test_deadline_not_reached(self):
+        """Should return False when deadline hasn't passed."""
+        now = datetime(2024, 1, 15, 10, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy="timeout",
+            deadline="2024-01-15T10:30:00",
+            now=now,
+        ) is False
+
+    def test_wrong_status(self):
+        """Should return False for non-waiting_oversight status."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="running",
+            policy="timeout",
+            deadline="2024-01-15T10:30:00",
+            now=now,
+        ) is False
+
+    def test_wait_policy(self):
+        """Should return False for wait policy."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy="wait",
+            deadline="2024-01-15T10:30:00",
+            now=now,
+        ) is False
+
+    def test_no_deadline(self):
+        """Should return False when no deadline set."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy="timeout",
+            deadline=None,
+            now=now,
+        ) is False
+
+    def test_invalid_deadline(self):
+        """Should return False for invalid deadline."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy="timeout",
+            deadline="not-a-date",
+            now=now,
+        ) is False
+
+    def test_none_policy_defaults_to_wait(self):
+        """Should treat None policy as wait."""
+        now = datetime(2024, 1, 15, 11, 0, 0)
+        assert should_enforce_oversight_timeout(
+            status="waiting_oversight",
+            policy=None,
+            deadline="2024-01-15T10:30:00",
+            now=now,
+        ) is False
+
+
+class TestIsHeartbeatEligible:
+    """Tests for is_heartbeat_eligible()."""
+
+    def test_all_conditions_met(self):
+        """Should return True when all conditions are met."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            is_asleep=False,
+            prev_status_green=False,
+            budget_exceeded=False,
+            has_instruction=True,
+        ) is True
+
+    def test_not_enabled(self):
+        """Should return False when heartbeat not enabled."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=False,
+            heartbeat_paused=False,
+            is_asleep=False,
+            prev_status_green=False,
+            budget_exceeded=False,
+            has_instruction=True,
+        ) is False
+
+    def test_paused(self):
+        """Should return False when heartbeat paused."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=True,
+            is_asleep=False,
+            prev_status_green=False,
+            budget_exceeded=False,
+            has_instruction=True,
+        ) is False
+
+    def test_asleep(self):
+        """Should return False when agent is asleep."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            is_asleep=True,
+            prev_status_green=False,
+            budget_exceeded=False,
+            has_instruction=True,
+        ) is False
+
+    def test_prev_status_green(self):
+        """Should return False when previous status was green."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            is_asleep=False,
+            prev_status_green=True,
+            budget_exceeded=False,
+            has_instruction=True,
+        ) is False
+
+    def test_budget_exceeded(self):
+        """Should return False when budget exceeded."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            is_asleep=False,
+            prev_status_green=False,
+            budget_exceeded=True,
+            has_instruction=True,
+        ) is False
+
+    def test_no_instruction(self):
+        """Should return False when no instruction configured."""
+        assert is_heartbeat_eligible(
+            heartbeat_enabled=True,
+            heartbeat_paused=False,
+            is_asleep=False,
+            prev_status_green=False,
+            budget_exceeded=False,
+            has_instruction=False,
+        ) is False
+
+
+class TestIsHeartbeatDue:
+    """Tests for is_heartbeat_due()."""
+
+    def test_heartbeat_due(self):
+        """Should return True when enough time has elapsed."""
+        now = datetime(2024, 1, 15, 10, 10, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time="2024-01-15T10:00:00",
+            session_start_time=None,
+            frequency_seconds=300,
+            now=now,
+        ) is True
+
+    def test_heartbeat_not_due(self):
+        """Should return False when not enough time has elapsed."""
+        now = datetime(2024, 1, 15, 10, 3, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time="2024-01-15T10:00:00",
+            session_start_time=None,
+            frequency_seconds=300,
+            now=now,
+        ) is False
+
+    def test_uses_session_start_as_fallback(self):
+        """Should use session start time when no last heartbeat."""
+        now = datetime(2024, 1, 15, 10, 10, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time=None,
+            session_start_time="2024-01-15T10:00:00",
+            frequency_seconds=300,
+            now=now,
+        ) is True
+
+    def test_no_reference_time_returns_false(self):
+        """Should return False when no reference time available."""
+        now = datetime(2024, 1, 15, 10, 10, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time=None,
+            session_start_time=None,
+            frequency_seconds=300,
+            now=now,
+        ) is False
+
+    def test_exact_frequency(self):
+        """Should return True at exactly the frequency boundary."""
+        now = datetime(2024, 1, 15, 10, 5, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time="2024-01-15T10:00:00",
+            session_start_time=None,
+            frequency_seconds=300,
+            now=now,
+        ) is True
+
+    def test_invalid_last_heartbeat_time(self):
+        """Should fall back to session start for invalid last heartbeat."""
+        now = datetime(2024, 1, 15, 10, 10, 0)
+        assert is_heartbeat_due(
+            last_heartbeat_time="not-a-date",
+            session_start_time="2024-01-15T10:00:00",
+            frequency_seconds=300,
+            now=now,
+        ) is True
 
 
 # =============================================================================

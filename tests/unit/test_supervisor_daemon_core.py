@@ -12,6 +12,10 @@ from overcode.supervisor_daemon_core import (
     calculate_daemon_claude_run_seconds,
     should_launch_daemon_claude,
     parse_intervention_log_line,
+    check_daemon_output_completion,
+    check_daemon_tool_activity,
+    determine_supervisor_action,
+    SupervisorAction,
 )
 
 
@@ -351,6 +355,114 @@ class TestParseInterventionLogLine:
             no_action_phrases=[],
         )
         assert result is None
+
+
+class TestDetermineSupervisorAction:
+    """Tests for determine_supervisor_action()."""
+
+    def test_no_agents(self):
+        """Should return no_agents when total is 0."""
+        result = determine_supervisor_action(0, False, 0, False, False)
+        assert result.action == "no_agents"
+
+    def test_all_green(self):
+        """Should return idle when no non-green sessions."""
+        result = determine_supervisor_action(0, False, 5, False, False)
+        assert result.action == "idle"
+        assert "GREEN" in result.reason
+
+    def test_daemon_already_running(self):
+        """Should return wait when daemon already running."""
+        result = determine_supervisor_action(3, True, 5, False, True)
+        assert result.action == "wait"
+
+    def test_all_waiting_user_no_instructions(self):
+        """Should return waiting_user when all blocked without instructions."""
+        result = determine_supervisor_action(3, False, 5, True, False)
+        assert result.action == "waiting_user"
+
+    def test_launch_with_instructions(self):
+        """Should launch when sessions have instructions."""
+        result = determine_supervisor_action(2, False, 5, True, True)
+        assert result.action == "launch"
+        assert result.reason == "with_instructions"
+
+    def test_launch_non_user_blocked(self):
+        """Should launch for non-user-blocked sessions."""
+        result = determine_supervisor_action(2, False, 5, False, False)
+        assert result.action == "launch"
+        assert result.reason == "non_user_blocked"
+
+    def test_launch_mixed_with_instructions(self):
+        """Should launch with_instructions when some have instructions."""
+        result = determine_supervisor_action(3, False, 5, False, True)
+        assert result.action == "launch"
+        assert result.reason == "with_instructions"
+
+
+class TestCheckDaemonOutputCompletion:
+    """Tests for check_daemon_output_completion()."""
+
+    def test_empty_prompt_means_done(self):
+        """Should return True when last lines contain empty prompt."""
+        content = "Some output\nMore output\n>\n"
+        assert check_daemon_output_completion(content, []) is True
+
+    def test_alternative_prompt_char(self):
+        """Should recognize › as empty prompt."""
+        content = "Some output\n›\n"
+        assert check_daemon_output_completion(content, []) is True
+
+    def test_active_indicator_means_not_done(self):
+        """Should return False when active indicators are present."""
+        content = "Working on task...\n⏳ Processing\n>\n"
+        assert check_daemon_output_completion(content, ["⏳ Processing"]) is False
+
+    def test_tool_call_without_result_means_not_done(self):
+        """Should return False when there's a tool call without a result marker."""
+        content = "⏺ Read(file.py)\n  Reading file...\n"
+        assert check_daemon_output_completion(content, []) is False
+
+    def test_tool_call_with_result_means_done(self):
+        """Should allow completion when tool call has a result."""
+        content = "⏺ Read(file.py)\n  Reading file...\n⎿ Done\n>\n"
+        assert check_daemon_output_completion(content, []) is True
+
+    def test_no_prompt_means_not_done(self):
+        """Should return False when no prompt character found."""
+        content = "Working on something...\nStill going...\n"
+        assert check_daemon_output_completion(content, []) is False
+
+    def test_empty_content(self):
+        """Should return False for empty content."""
+        assert check_daemon_output_completion("", []) is False
+
+
+class TestCheckDaemonToolActivity:
+    """Tests for check_daemon_tool_activity()."""
+
+    def test_no_indicators_means_no_activity(self):
+        """Should return False when no tool indicators found."""
+        content = "Starting up...\nWaiting for input...\n"
+        assert check_daemon_tool_activity(content, ["⏺", "Tool"]) is False
+
+    def test_tool_indicator_found(self):
+        """Should return True when a tool indicator is found."""
+        content = "Starting up...\n⏺ Read(file.py)\n"
+        assert check_daemon_tool_activity(content, ["⏺"]) is True
+
+    def test_empty_content(self):
+        """Should return False for empty content."""
+        assert check_daemon_tool_activity("", ["⏺"]) is False
+
+    def test_empty_indicators(self):
+        """Should return False when no indicators defined."""
+        assert check_daemon_tool_activity("⏺ Read(file.py)", []) is False
+
+    def test_multiple_indicators(self):
+        """Should match any indicator."""
+        content = "Tool call detected"
+        assert check_daemon_tool_activity(content, ["not-here", "Tool call"]) is True
 
 
 # =============================================================================

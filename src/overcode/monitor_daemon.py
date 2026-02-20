@@ -75,6 +75,10 @@ from .monitor_daemon_core import (
     calculate_median,
     should_sync_stats,
     parse_datetime_safe,
+    is_heartbeat_eligible,
+    is_heartbeat_due,
+    should_auto_archive,
+    should_enforce_oversight_timeout,
 )
 from .tmux_utils import send_text_to_tmux_window
 
@@ -397,47 +401,38 @@ class MonitorDaemon:
         triggered = set()
 
         for session in sessions:
-            # Skip if heartbeat not enabled or paused
-            if not session.heartbeat_enabled or session.heartbeat_paused:
-                continue
-            # Skip sleeping agents
-            if session.is_asleep:
-                continue
-            # Skip agents that are already green/active (#267)
             prev_status = self.previous_states.get(session.id)
-            if prev_status and is_green_status(prev_status):
-                continue
-            # Skip budget-exceeded agents (#173)
-            if _is_budget_exceeded(session, session.stats):
-                continue
-            # Skip if no instruction configured
-            if not session.heartbeat_instruction:
-                continue
-
-            # Check if heartbeat is due
-            last_hb = parse_datetime_safe(session.last_heartbeat_time)
-            if last_hb is None:
-                # Use session start time as initial reference
-                last_hb = parse_datetime_safe(session.start_time)
-            if last_hb is None:
+            if not is_heartbeat_eligible(
+                heartbeat_enabled=session.heartbeat_enabled,
+                heartbeat_paused=session.heartbeat_paused,
+                is_asleep=session.is_asleep,
+                prev_status_green=bool(prev_status and is_green_status(prev_status)),
+                budget_exceeded=_is_budget_exceeded(session, session.stats),
+                has_instruction=bool(session.heartbeat_instruction),
+            ):
                 continue
 
-            elapsed = (now - last_hb).total_seconds()
-            if elapsed >= session.heartbeat_frequency_seconds:
-                # Send the heartbeat instruction
-                if send_text_to_tmux_window(
-                    session.tmux_session,
-                    session.tmux_window,
-                    session.heartbeat_instruction,
-                    send_enter=True,
-                ):
-                    # Update last heartbeat time
-                    self.session_manager.update_session(
-                        session.id,
-                        last_heartbeat_time=now.isoformat()
-                    )
-                    triggered.add(session.id)
-                    self.log.info(f"[{session.name}] Heartbeat sent")
+            if not is_heartbeat_due(
+                last_heartbeat_time=session.last_heartbeat_time,
+                session_start_time=session.start_time,
+                frequency_seconds=session.heartbeat_frequency_seconds,
+                now=now,
+            ):
+                continue
+
+            # Send the heartbeat instruction
+            if send_text_to_tmux_window(
+                session.tmux_session,
+                session.tmux_window,
+                session.heartbeat_instruction,
+                send_enter=True,
+            ):
+                self.session_manager.update_session(
+                    session.id,
+                    last_heartbeat_time=now.isoformat()
+                )
+                triggered.add(session.id)
+                self.log.info(f"[{session.name}] Heartbeat sent")
 
         return triggered
 
@@ -613,20 +608,13 @@ class MonitorDaemon:
         Kills the tmux window and marks as terminated so cleanup can remove them.
         """
         now = datetime.now()
-        done_timeout_seconds = 3600  # 1 hour
 
         for session in sessions:
-            if session.status != "done":
-                continue
-            # Check how long agent has been in done state
-            if session.stats.state_since:
-                try:
-                    done_since = datetime.fromisoformat(session.stats.state_since)
-                    if (now - done_since).total_seconds() < done_timeout_seconds:
-                        continue
-                except (ValueError, TypeError):
-                    continue
-            else:
+            if not should_auto_archive(
+                session.status,
+                session.stats.state_since,
+                now,
+            ):
                 continue
 
             # Archive: kill tmux window and mark terminated
@@ -643,26 +631,20 @@ class MonitorDaemon:
         """Enforce oversight timeouts for waiting_oversight sessions."""
         now = datetime.now()
         for session in sessions:
-            if session.status != STATUS_WAITING_OVERSIGHT:
+            if not should_enforce_oversight_timeout(
+                session.status,
+                getattr(session, 'oversight_policy', 'wait'),
+                getattr(session, 'oversight_deadline', None),
+                now,
+            ):
                 continue
-            policy = getattr(session, 'oversight_policy', 'wait') or 'wait'
-            if policy != "timeout":
-                continue
-            deadline_str = getattr(session, 'oversight_deadline', None)
-            if not deadline_str:
-                continue
-            try:
-                deadline = datetime.fromisoformat(deadline_str)
-            except (ValueError, TypeError):
-                continue
-            if now >= deadline:
-                self.session_manager.update_session(
-                    session.id,
-                    report_status="failure",
-                    report_reason="Oversight timeout expired",
-                )
-                self.session_manager.update_session_status(session.id, "done")
-                self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
+            self.session_manager.update_session(
+                session.id,
+                report_status="failure",
+                report_reason="Oversight timeout expired",
+            )
+            self.session_manager.update_session_status(session.id, "done")
+            self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
 
     def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
         """Publish current state to JSON file."""

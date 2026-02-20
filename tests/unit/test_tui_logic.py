@@ -26,6 +26,12 @@ from overcode.tui_logic import (
     calculate_green_percentage,
     calculate_human_interaction_count,
     compute_tree_metadata,
+    compute_stall_state,
+    should_send_stall_notification,
+    compute_active_session_names,
+    compute_session_widget_diff,
+    detect_display_changes,
+    StallState,
     TreeNodeMeta,
     SpinStats,
     STATUS_ORDER_BY_ATTENTION,
@@ -1020,6 +1026,289 @@ class TestComputeTreeMetadata:
         assert meta["solo"].depth == 0
         assert meta["solo"].prefix == ""
         assert meta["solo"].child_count == 0
+
+
+# =============================================================================
+# Session widget diffing
+# =============================================================================
+
+
+class TestComputeSessionWidgetDiff:
+    """Tests for compute_session_widget_diff()."""
+
+    def test_no_changes(self):
+        """Should return empty sets when no changes needed."""
+        to_add, to_remove = compute_session_widget_diff({"a", "b"}, ["a", "b"])
+        assert to_add == set()
+        assert to_remove == set()
+
+    def test_additions_only(self):
+        """Should detect new sessions to add."""
+        to_add, to_remove = compute_session_widget_diff({"a"}, ["a", "b", "c"])
+        assert to_add == {"b", "c"}
+        assert to_remove == set()
+
+    def test_removals_only(self):
+        """Should detect sessions to remove."""
+        to_add, to_remove = compute_session_widget_diff({"a", "b", "c"}, ["a"])
+        assert to_add == set()
+        assert to_remove == {"b", "c"}
+
+    def test_mixed_add_remove(self):
+        """Should handle simultaneous adds and removes."""
+        to_add, to_remove = compute_session_widget_diff({"a", "b"}, ["b", "c"])
+        assert to_add == {"c"}
+        assert to_remove == {"a"}
+
+    def test_empty_existing(self):
+        """Should add all when no existing widgets."""
+        to_add, to_remove = compute_session_widget_diff(set(), ["a", "b"])
+        assert to_add == {"a", "b"}
+        assert to_remove == set()
+
+    def test_empty_display(self):
+        """Should remove all when no display sessions."""
+        to_add, to_remove = compute_session_widget_diff({"a", "b"}, [])
+        assert to_add == set()
+        assert to_remove == {"a", "b"}
+
+
+class TestDetectDisplayChanges:
+    """Tests for detect_display_changes()."""
+
+    def test_no_budget_no_oversight(self):
+        """Should return False, False when no budget/oversight."""
+        sessions = [Mock(cost_budget_usd=0, oversight_policy="wait", oversight_timeout_seconds=0)]
+        budget, oversight = detect_display_changes(sessions, False, False)
+        assert budget is False
+        assert oversight is False
+
+    def test_has_budget(self):
+        """Should detect cost budget."""
+        sessions = [Mock(cost_budget_usd=5.0, oversight_policy="wait", oversight_timeout_seconds=0)]
+        budget, oversight = detect_display_changes(sessions, False, False)
+        assert budget is True
+        assert oversight is False
+
+    def test_has_oversight(self):
+        """Should detect oversight timeout."""
+        sessions = [Mock(cost_budget_usd=0, oversight_policy="timeout", oversight_timeout_seconds=300)]
+        budget, oversight = detect_display_changes(sessions, False, False)
+        assert budget is False
+        assert oversight is True
+
+    def test_empty_sessions(self):
+        """Should return False, False for empty sessions."""
+        budget, oversight = detect_display_changes([], False, False)
+        assert budget is False
+        assert oversight is False
+
+
+# =============================================================================
+# Active session names
+# =============================================================================
+
+
+class TestComputeActiveSessionNames:
+    """Tests for compute_active_session_names()."""
+
+    def _make_daemon_state(self, session_id, name):
+        """Create a mock daemon state with proper name attribute."""
+        m = Mock(session_id=session_id)
+        m.name = name  # Set after construction to avoid Mock's name param
+        return m
+
+    def test_all_active(self):
+        """Should return all names when none are asleep."""
+        sessions = [
+            self._make_daemon_state("s1", "alpha"),
+            self._make_daemon_state("s2", "bravo"),
+        ]
+        result = compute_active_session_names(sessions, set())
+        assert result == ["alpha", "bravo"]
+
+    def test_filters_asleep(self):
+        """Should exclude asleep sessions."""
+        sessions = [
+            self._make_daemon_state("s1", "alpha"),
+            self._make_daemon_state("s2", "bravo"),
+            self._make_daemon_state("s3", "charlie"),
+        ]
+        result = compute_active_session_names(sessions, {"s2"})
+        assert result == ["alpha", "charlie"]
+
+    def test_empty_sessions(self):
+        """Should return empty list for no sessions."""
+        result = compute_active_session_names([], set())
+        assert result == []
+
+    def test_all_asleep(self):
+        """Should return empty list when all are asleep."""
+        sessions = [self._make_daemon_state("s1", "alpha")]
+        result = compute_active_session_names(sessions, {"s1"})
+        assert result == []
+
+
+# =============================================================================
+# Stall detection logic
+# =============================================================================
+
+
+class TestComputeStallState:
+    """Tests for compute_stall_state()."""
+
+    def test_new_stall_detected(self):
+        """Should detect transition to waiting_user."""
+        result = compute_stall_state(
+            status="waiting_user",
+            prev_status="running",
+            session_id="s1",
+            visited_stalled_agents=set(),
+            is_asleep=False,
+        )
+        assert result.is_new_stall is True
+        assert result.is_unvisited_stalled is True
+        assert result.should_clear_tracking is False
+
+    def test_continued_stall_not_new(self):
+        """Should not flag as new when already stalled."""
+        result = compute_stall_state(
+            status="waiting_user",
+            prev_status="waiting_user",
+            session_id="s1",
+            visited_stalled_agents=set(),
+            is_asleep=False,
+        )
+        assert result.is_new_stall is False
+        assert result.is_unvisited_stalled is True
+
+    def test_stall_cleared_when_running(self):
+        """Should clear tracking when no longer stalled."""
+        result = compute_stall_state(
+            status="running",
+            prev_status="waiting_user",
+            session_id="s1",
+            visited_stalled_agents=set(),
+            is_asleep=False,
+        )
+        assert result.should_clear_tracking is True
+        assert result.is_new_stall is False
+        assert result.is_unvisited_stalled is False
+
+    def test_visited_stall_not_unvisited(self):
+        """Should not flag as unvisited if already visited."""
+        result = compute_stall_state(
+            status="waiting_user",
+            prev_status="running",
+            session_id="s1",
+            visited_stalled_agents={"s1"},
+            is_asleep=False,
+        )
+        assert result.is_new_stall is True
+        assert result.is_unvisited_stalled is False
+
+    def test_asleep_not_unvisited(self):
+        """Asleep sessions should not be flagged as unvisited stalled."""
+        result = compute_stall_state(
+            status="waiting_user",
+            prev_status="running",
+            session_id="s1",
+            visited_stalled_agents=set(),
+            is_asleep=True,
+        )
+        assert result.is_unvisited_stalled is False
+
+    def test_first_observation_to_stalled(self):
+        """First status being waiting_user (prev=None) should be new stall."""
+        result = compute_stall_state(
+            status="waiting_user",
+            prev_status=None,
+            session_id="s1",
+            visited_stalled_agents=set(),
+            is_asleep=False,
+        )
+        assert result.is_new_stall is True
+
+
+class TestShouldSendStallNotification:
+    """Tests for should_send_stall_notification()."""
+
+    def test_eligible_notification(self):
+        """Should return True when all conditions met."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=False,
+            is_asleep=False,
+            has_stall_start=True,
+            stall_age_seconds=60,
+            uptime_seconds=120,
+        ) is True
+
+    def test_not_waiting_user(self):
+        """Should return False when not stalled."""
+        assert should_send_stall_notification(
+            status="running",
+            is_notified=False,
+            is_asleep=False,
+            has_stall_start=True,
+            stall_age_seconds=60,
+            uptime_seconds=120,
+        ) is False
+
+    def test_already_notified(self):
+        """Should return False when already notified."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=True,
+            is_asleep=False,
+            has_stall_start=True,
+            stall_age_seconds=60,
+            uptime_seconds=120,
+        ) is False
+
+    def test_asleep(self):
+        """Should return False when asleep."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=False,
+            is_asleep=True,
+            has_stall_start=True,
+            stall_age_seconds=60,
+            uptime_seconds=120,
+        ) is False
+
+    def test_stall_too_young(self):
+        """Should return False when stall is less than 30s old."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=False,
+            is_asleep=False,
+            has_stall_start=True,
+            stall_age_seconds=20,
+            uptime_seconds=120,
+        ) is False
+
+    def test_session_too_young(self):
+        """Should return False when session uptime is less than 60s."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=False,
+            is_asleep=False,
+            has_stall_start=True,
+            stall_age_seconds=60,
+            uptime_seconds=30,
+        ) is False
+
+    def test_no_stall_start(self):
+        """Should return False when no stall start time recorded."""
+        assert should_send_stall_notification(
+            status="waiting_user",
+            is_notified=False,
+            is_asleep=False,
+            has_stall_start=False,
+            stall_age_seconds=60,
+            uptime_seconds=120,
+        ) is False
 
 
 # =============================================================================

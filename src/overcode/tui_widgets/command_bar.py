@@ -4,7 +4,7 @@ Command bar widget for TUI.
 Inline command bar for sending instructions to agents.
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from textual.widgets import Static, Label, Input, TextArea
 from textual.containers import Horizontal
@@ -12,6 +12,48 @@ from textual.reactive import reactive
 from textual.app import ComposeResult
 from textual.message import Message
 from textual import events
+
+
+def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> Tuple[str, str]:
+    """Get the label text and placeholder for a given command bar mode.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        mode: The command bar mode (send, standing_orders, new_agent_dir, etc.)
+        target_session: The currently targeted session name, or None
+
+    Returns:
+        Tuple of (label_text, placeholder_text)
+    """
+    if mode == "new_agent_dir":
+        return "[New Agent: Directory] ", "Enter working directory path..."
+    elif mode == "new_agent_name":
+        return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
+    elif mode == "new_agent_perms":
+        return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
+    elif mode == "standing_orders":
+        prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
+        return prefix, "Enter standing orders (or empty to clear)..."
+    elif mode == "value":
+        prefix = f"[{target_session} Value] " if target_session else "[Value] "
+        return prefix, "Enter priority value (1000 = normal, higher = more important)..."
+    elif mode == "cost_budget":
+        prefix = f"[{target_session} Budget] " if target_session else "[Budget] "
+        return prefix, "Enter $ budget (e.g., 5.00) or 0 to clear..."
+    elif mode == "annotation":
+        prefix = f"[{target_session} Annotation] " if target_session else "[Annotation] "
+        return prefix, "Enter human annotation (or empty to clear)..."
+    elif mode == "heartbeat_freq":
+        prefix = f"[{target_session} Heartbeat: Frequency] " if target_session else "[Heartbeat: Frequency] "
+        return prefix, "Enter interval (e.g., 300, 5m, 1h) or empty to disable..."
+    elif mode == "heartbeat_instruction":
+        prefix = f"[{target_session} Heartbeat: Instruction] " if target_session else "[Heartbeat: Instruction] "
+        return prefix, "Enter instruction to send at each heartbeat..."
+    elif target_session:
+        return f"[{target_session}] ", "Type instruction (Enter to send)..."
+    else:
+        return "[no session] ", "Type instruction (Enter to send)..."
 
 
 class CommandBar(Static):
@@ -113,58 +155,9 @@ class CommandBar(Static):
         """Update the target session label based on mode."""
         label = self.query_one("#target-label", Label)
         input_widget = self.query_one("#cmd-input", Input)
-
-        if self.mode == "new_agent_dir":
-            label.update("[New Agent: Directory] ")
-            input_widget.placeholder = "Enter working directory path..."
-        elif self.mode == "new_agent_name":
-            label.update("[New Agent: Name] ")
-            input_widget.placeholder = "Enter agent name (or Enter to accept default)..."
-        elif self.mode == "new_agent_perms":
-            label.update("[New Agent: Permissions] ")
-            input_widget.placeholder = "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
-        elif self.mode == "standing_orders":
-            if self.target_session:
-                label.update(f"[{self.target_session} Standing Orders] ")
-            else:
-                label.update("[Standing Orders] ")
-            input_widget.placeholder = "Enter standing orders (or empty to clear)..."
-        elif self.mode == "value":
-            if self.target_session:
-                label.update(f"[{self.target_session} Value] ")
-            else:
-                label.update("[Value] ")
-            input_widget.placeholder = "Enter priority value (1000 = normal, higher = more important)..."
-        elif self.mode == "cost_budget":
-            if self.target_session:
-                label.update(f"[{self.target_session} Budget] ")
-            else:
-                label.update("[Budget] ")
-            input_widget.placeholder = "Enter $ budget (e.g., 5.00) or 0 to clear..."
-        elif self.mode == "annotation":
-            if self.target_session:
-                label.update(f"[{self.target_session} Annotation] ")
-            else:
-                label.update("[Annotation] ")
-            input_widget.placeholder = "Enter human annotation (or empty to clear)..."
-        elif self.mode == "heartbeat_freq":
-            if self.target_session:
-                label.update(f"[{self.target_session} Heartbeat: Frequency] ")
-            else:
-                label.update("[Heartbeat: Frequency] ")
-            input_widget.placeholder = "Enter interval (e.g., 300, 5m, 1h) or empty to disable..."
-        elif self.mode == "heartbeat_instruction":
-            if self.target_session:
-                label.update(f"[{self.target_session} Heartbeat: Instruction] ")
-            else:
-                label.update("[Heartbeat: Instruction] ")
-            input_widget.placeholder = "Enter instruction to send at each heartbeat..."
-        elif self.target_session:
-            label.update(f"[{self.target_session}] ")
-            input_widget.placeholder = "Type instruction (Enter to send)..."
-        else:
-            label.update("[no session] ")
-            input_widget.placeholder = "Type instruction (Enter to send)..."
+        label_text, placeholder = get_mode_label_and_placeholder(self.mode, self.target_session)
+        label.update(label_text)
+        input_widget.placeholder = placeholder
 
     def set_target(self, session_name: Optional[str]) -> None:
         """Set the target session for commands."""

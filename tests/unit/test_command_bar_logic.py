@@ -635,3 +635,91 @@ class TestActionToggleExpand:
             assert widget.expanded is True
             widget.action_toggle_expand()
             assert widget.expanded is False
+
+
+# ===========================================================================
+# get_mode_label_and_placeholder (pure function)
+# ===========================================================================
+
+
+class TestGetModeLabelAndPlaceholder:
+    """Tests for the pure get_mode_label_and_placeholder function."""
+
+    def test_new_agent_dir_mode(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("new_agent_dir", None)
+        assert label == "[New Agent: Directory] "
+        assert "directory" in placeholder.lower()
+
+    def test_new_agent_name_mode(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("new_agent_name", None)
+        assert label == "[New Agent: Name] "
+        assert "name" in placeholder.lower()
+
+    def test_new_agent_perms_mode(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("new_agent_perms", None)
+        assert label == "[New Agent: Permissions] "
+        assert "bypass" in placeholder.lower()
+
+    def test_standing_orders_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("standing_orders", "my-agent")
+        assert label == "[my-agent Standing Orders] "
+        assert "standing orders" in placeholder.lower()
+
+    def test_standing_orders_no_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, _ = get_mode_label_and_placeholder("standing_orders", None)
+        assert label == "[Standing Orders] "
+
+    def test_value_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("value", "agent-1")
+        assert label == "[agent-1 Value] "
+        assert "value" in placeholder.lower()
+
+    def test_cost_budget_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("cost_budget", "agent-1")
+        assert label == "[agent-1 Budget] "
+        assert "budget" in placeholder.lower()
+
+    def test_annotation_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("annotation", "agent-1")
+        assert label == "[agent-1 Annotation] "
+        assert "annotation" in placeholder.lower()
+
+    def test_heartbeat_freq_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("heartbeat_freq", "agent-1")
+        assert label == "[agent-1 Heartbeat: Frequency] "
+        assert "interval" in placeholder.lower()
+
+    def test_heartbeat_instruction_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("heartbeat_instruction", "agent-1")
+        assert label == "[agent-1 Heartbeat: Instruction] "
+        assert "instruction" in placeholder.lower()
+
+    def test_send_mode_with_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("send", "agent-1")
+        assert label == "[agent-1] "
+        assert "instruction" in placeholder.lower()
+
+    def test_send_mode_no_session(self):
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        label, placeholder = get_mode_label_and_placeholder("send", None)
+        assert label == "[no session] "
+
+    def test_all_session_modes_include_session_name(self):
+        """All session-dependent modes should include the session name."""
+        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
+        session_modes = ["standing_orders", "value", "cost_budget", "annotation",
+                         "heartbeat_freq", "heartbeat_instruction"]
+        for mode in session_modes:
+            label, _ = get_mode_label_and_placeholder(mode, "test-agent")
+            assert "test-agent" in label, f"Mode {mode} missing session name"

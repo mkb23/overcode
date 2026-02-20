@@ -65,6 +65,9 @@ from .supervisor_daemon_core import (
     calculate_daemon_claude_run_seconds,
     should_launch_daemon_claude,
     parse_intervention_log_line,
+    check_daemon_output_completion,
+    check_daemon_tool_activity,
+    determine_supervisor_action,
 )
 
 
@@ -227,28 +230,8 @@ class SupervisorDaemon:
                 return True
 
             content = result.stdout
-
-            # Active work indicators (from centralized patterns)
             patterns = get_patterns()
-            for indicator in patterns.daemon_active_indicators:
-                if indicator in content:
-                    return False
-
-            # Check for tool calls without results
-            lines = content.split('\n')
-            for i, line in enumerate(lines):
-                if '⏺' in line and '(' in line:
-                    remaining = '\n'.join(lines[i+1:])
-                    if '⎿' not in remaining:
-                        return False
-
-            # Check for empty prompt
-            last_lines = [l.strip() for l in lines[-8:] if l.strip()]
-            for line in last_lines:
-                if line == '>' or line == '›':
-                    return True
-
-            return False
+            return check_daemon_output_completion(content, patterns.daemon_active_indicators)
 
         except subprocess.TimeoutExpired:
             return False
@@ -278,11 +261,7 @@ class SupervisorDaemon:
 
             content = result.stdout
             patterns = get_patterns()
-            for indicator in patterns.daemon_tool_indicators:
-                if indicator in content:
-                    return True
-
-            return False
+            return check_daemon_tool_activity(content, patterns.daemon_tool_indicators)
 
         except subprocess.SubprocessError:
             return False
@@ -753,57 +732,48 @@ class SupervisorDaemon:
                     loop=self.loop_count
                 )
 
-                # Check if all non-green are waiting for user
-                all_waiting_user = (
-                    non_green and
-                    all(s.current_status == STATUS_WAITING_USER for s in non_green)
+                action = determine_supervisor_action(
+                    non_green_count=len(non_green),
+                    daemon_claude_running=self.is_daemon_claude_running(),
+                    total_sessions=total,
+                    all_waiting_user=(
+                        bool(non_green)
+                        and all(s.current_status == STATUS_WAITING_USER for s in non_green)
+                    ),
+                    any_has_instructions=any(s.standing_instructions for s in non_green),
                 )
 
-                # Check if any have standing instructions
-                any_has_instructions = any(
-                    s.standing_instructions for s in non_green
-                )
+                if action.action == "launch":
+                    self.log.info(f"Launching daemon claude for {len(non_green)} session(s) ({action.reason})...")
+                    if self.launch_daemon_claude(non_green):
+                        self.daemon_claude_launches += 1
+                        self.supervisor_stats.supervisor_launches += 1
+                        self.supervisor_stats.supervisor_claude_running = True
+                        self.supervisor_stats.supervisor_claude_started_at = datetime.now().isoformat()
+                        self.supervisor_stats.save(self.stats_path)
+                        self.status = "supervising"
+                        self.log.success(f"Daemon claude launched in window {self.daemon_claude_window}")
 
-                if non_green:
-                    if all_waiting_user and not any_has_instructions:
-                        self.status = "waiting_user"
-                        self.log.warn("All sessions waiting for user input (no instructions)")
+                if action.action in ("launch", "wait") and self.is_daemon_claude_running():
+                    completed = self.wait_for_daemon_claude()
+                    self.capture_daemon_claude_output()
+                    self._mark_daemon_claude_stopped()
+
+                    if completed:
+                        self.kill_daemon_claude()
+                        session_names = [s.name for s in non_green]
+                        self.update_intervention_counts(session_names)
+                        self._sync_daemon_claude_tokens()
                     else:
-                        # Launch daemon claude if not running
-                        if not self.is_daemon_claude_running():
-                            reason = "with instructions" if any_has_instructions else "non-user-blocked"
-                            self.log.info(f"Launching daemon claude for {len(non_green)} session(s) ({reason})...")
-                            if self.launch_daemon_claude(non_green):
-                                self.daemon_claude_launches += 1
-                                self.supervisor_stats.supervisor_launches += 1
-                                # Track daemon claude run start
-                                self.supervisor_stats.supervisor_claude_running = True
-                                self.supervisor_stats.supervisor_claude_started_at = datetime.now().isoformat()
-                                self.supervisor_stats.save(self.stats_path)
-                                self.status = "supervising"
-                                self.log.success(f"Daemon claude launched in window {self.daemon_claude_window}")
-
-                        # Wait for daemon claude
-                        if self.is_daemon_claude_running():
-                            completed = self.wait_for_daemon_claude()
-                            self.capture_daemon_claude_output()
-
-                            # Track daemon claude run end
-                            self._mark_daemon_claude_stopped()
-
-                            if completed:
-                                self.kill_daemon_claude()
-                                session_names = [s.name for s in non_green]
-                                self.update_intervention_counts(session_names)
-                                self._sync_daemon_claude_tokens()
-                            else:
-                                self.log.warn("Daemon claude still working, continuing...")
-                else:
-                    if total > 0:
-                        self.status = "idle"
-                        self.log.success("All sessions GREEN")
-                    else:
-                        self.status = "no_agents"
+                        self.log.warn("Daemon claude still working, continuing...")
+                elif action.action == "waiting_user":
+                    self.status = "waiting_user"
+                    self.log.warn(action.reason)
+                elif action.action == "idle":
+                    self.status = "idle"
+                    self.log.success(action.reason)
+                elif action.action == "no_agents":
+                    self.status = "no_agents"
 
                 time.sleep(check_interval)
 

@@ -33,6 +33,7 @@ from overcode.tui_helpers import (
     get_daemon_status_style,
     calculate_safe_break_duration,
     get_git_diff_stats,
+    get_summary_content_text,
 )
 
 
@@ -799,6 +800,147 @@ class TestHeartbeatStartStatus:
     def test_has_timeline_color(self):
         """heartbeat_start should have green timeline color."""
         assert get_agent_timeline_color("heartbeat_start") == "green"
+
+
+class TestGetSummaryContentText:
+    """Tests for get_summary_content_text()."""
+
+    _defaults = dict(
+        annotation=None,
+        standing_instructions=None,
+        standing_orders_complete=False,
+        preset_name=None,
+        ai_summary_short=None,
+        ai_summary_context=None,
+        heartbeat_enabled=False,
+        heartbeat_paused=False,
+        heartbeat_frequency_seconds=300,
+        heartbeat_instruction=None,
+        summarizer_enabled=True,
+        remaining_width=80,
+    )
+
+    def test_annotation_mode_with_text(self):
+        text, style = get_summary_content_text(mode="annotation", annotation="my note", **{
+            k: v for k, v in self._defaults.items() if k != "annotation"
+        })
+        assert "my note" in text
+        assert style == "bold_magenta"
+
+    def test_annotation_mode_empty(self):
+        text, style = get_summary_content_text(mode="annotation", **self._defaults)
+        assert "no annotation" in text
+        assert style == "dim"
+
+    def test_orders_mode_with_instructions(self):
+        text, style = get_summary_content_text(
+            mode="orders",
+            standing_instructions="run tests",
+            **{k: v for k, v in self._defaults.items() if k != "standing_instructions"}
+        )
+        assert "run tests" in text
+        assert style == "bold_yellow"
+
+    def test_orders_mode_complete(self):
+        text, style = get_summary_content_text(
+            mode="orders",
+            standing_instructions="done stuff",
+            standing_orders_complete=True,
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("standing_instructions", "standing_orders_complete")}
+        )
+        assert "✓" in text
+        assert style == "bold_green"
+
+    def test_orders_mode_with_preset(self):
+        text, style = get_summary_content_text(
+            mode="orders",
+            standing_instructions="preset instructions",
+            preset_name="auto",
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("standing_instructions", "preset_name")}
+        )
+        assert "auto" in text
+        assert style == "bold_cyan"
+
+    def test_orders_mode_empty(self):
+        text, style = get_summary_content_text(mode="orders", **self._defaults)
+        assert "no standing orders" in text
+        assert style == "dim"
+
+    def test_ai_long_mode_with_context(self):
+        text, style = get_summary_content_text(
+            mode="ai_long",
+            ai_summary_context="detailed context",
+            **{k: v for k, v in self._defaults.items() if k != "ai_summary_context"}
+        )
+        assert "detailed context" in text
+        assert style == "bold"
+
+    def test_ai_long_mode_disabled(self):
+        text, style = get_summary_content_text(
+            mode="ai_long",
+            summarizer_enabled=False,
+            **{k: v for k, v in self._defaults.items() if k != "summarizer_enabled"}
+        )
+        assert "disabled" in text
+        assert style == "dim"
+
+    def test_ai_short_mode_with_summary(self):
+        text, style = get_summary_content_text(
+            mode="ai_short",
+            ai_summary_short="quick summary",
+            **{k: v for k, v in self._defaults.items() if k != "ai_summary_short"}
+        )
+        assert "quick summary" in text
+        assert style == "bold"
+
+    def test_ai_short_mode_awaiting(self):
+        text, style = get_summary_content_text(mode="ai_short", **self._defaults)
+        assert "awaiting" in text
+        assert style == "dim"
+
+    def test_heartbeat_mode_active(self):
+        text, style = get_summary_content_text(
+            mode="heartbeat",
+            heartbeat_enabled=True,
+            heartbeat_instruction="check status",
+            heartbeat_frequency_seconds=300,
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("heartbeat_enabled", "heartbeat_instruction", "heartbeat_frequency_seconds")}
+        )
+        assert "check status" in text
+        assert style == "bold_magenta"
+
+    def test_heartbeat_mode_paused(self):
+        text, style = get_summary_content_text(
+            mode="heartbeat",
+            heartbeat_enabled=True,
+            heartbeat_paused=True,
+            heartbeat_instruction="check status",
+            heartbeat_frequency_seconds=300,
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("heartbeat_enabled", "heartbeat_paused", "heartbeat_instruction",
+                            "heartbeat_frequency_seconds")}
+        )
+        assert "check status" in text
+        assert style == "dim"
+
+    def test_heartbeat_mode_disabled(self):
+        text, style = get_summary_content_text(mode="heartbeat", **self._defaults)
+        assert "no heartbeat" in text
+        assert style == "dim"
+
+    def test_truncation(self):
+        """Should truncate text to remaining_width."""
+        text, _ = get_summary_content_text(
+            mode="annotation",
+            annotation="A" * 200,
+            remaining_width=30,
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("annotation", "remaining_width")}
+        )
+        assert len(text) <= 30
 
 
 # =============================================================================

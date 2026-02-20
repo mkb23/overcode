@@ -89,6 +89,11 @@ from .tui_logic import (
     calculate_green_percentage,
     calculate_human_interaction_count,
     compute_tree_metadata,
+    compute_stall_state,
+    should_send_stall_notification,
+    compute_active_session_names,
+    compute_session_widget_diff,
+    detect_display_changes,
 )
 from .tui_widgets import (
     FullscreenPreview,
@@ -500,12 +505,10 @@ class SupervisorTUI(
             }
 
         # Pre-compute active session names for spin rate calculation
-        active_session_names = []
-        if monitor_state and monitor_state.sessions:
-            active_session_names = [
-                s.name for s in monitor_state.sessions
-                if s.session_id not in asleep_ids
-            ]
+        active_session_names = compute_active_session_names(
+            monitor_state.sessions if monitor_state and monitor_state.sessions else [],
+            asleep_ids,
+        )
 
         # Fetch all volatile I/O state for the status bar (PID checks, CSV reads, etc.)
         baseline_minutes = getattr(self, 'baseline_minutes', 0)
@@ -1026,54 +1029,51 @@ class SupervisorTUI(
             if session_id in status_results:
                 status, activity, content = status_results[session_id]
 
-                # Detect transitions TO stalled state (waiting_user)
                 prev_status = self._previous_statuses.get(session_id)
-                is_new_stall = status == STATUS_WAITING_USER and prev_status != STATUS_WAITING_USER
-                if is_new_stall:
+                stall = compute_stall_state(
+                    status, prev_status, session_id,
+                    self._prefs.visited_stalled_agents,
+                    widget.session.is_asleep,
+                )
+
+                if stall.is_new_stall:
                     self._prefs.visited_stalled_agents.discard(session_id)
                     prefs_changed = True
                     self._stall_start_times[session_id] = time.monotonic()
                     self._notified_stalls.discard(session_id)
 
-                # Clean up tracking when no longer stalled
-                if status != STATUS_WAITING_USER:
+                if stall.should_clear_tracking:
                     self._stall_start_times.pop(session_id, None)
                     self._notified_stalls.discard(session_id)
 
                 self._previous_statuses[session_id] = status
+                widget.is_unvisited_stalled = stall.is_unvisited_stalled
 
-                is_unvisited_stalled = (
-                    status == STATUS_WAITING_USER and
-                    session_id not in self._prefs.visited_stalled_agents and
-                    not widget.session.is_asleep
-                )
-                widget.is_unvisited_stalled = is_unvisited_stalled
-
-                # Queue macOS notification with deferred delivery (#235):
-                # Only notify if session has been running >1min and stalled >30s
-                if (
-                    status == STATUS_WAITING_USER
-                    and session_id not in self._notified_stalls
-                    and not widget.session.is_asleep
-                    and session_id in self._stall_start_times
+                # Queue macOS notification with deferred delivery (#235)
+                now_mono = time.monotonic()
+                stall_age = now_mono - self._stall_start_times[session_id] if session_id in self._stall_start_times else 0
+                try:
+                    uptime = (datetime.now() - datetime.fromisoformat(widget.session.start_time)).total_seconds()
+                except (ValueError, TypeError):
+                    uptime = 0
+                if should_send_stall_notification(
+                    status,
+                    is_notified=session_id in self._notified_stalls,
+                    is_asleep=widget.session.is_asleep,
+                    has_stall_start=session_id in self._stall_start_times,
+                    stall_age_seconds=stall_age,
+                    uptime_seconds=uptime,
                 ):
-                    now = time.monotonic()
-                    stall_age = now - self._stall_start_times[session_id]
-                    try:
-                        uptime = (datetime.now() - datetime.fromisoformat(widget.session.start_time)).total_seconds()
-                    except (ValueError, TypeError):
-                        uptime = 0
-                    if stall_age >= 30 and uptime >= 60:
-                        task = widget.session.stats.current_task if widget.session.stats else None
-                        self._notifier.queue(widget.session.name, task)
-                        self._notified_stalls.add(session_id)
+                    task = widget.session.stats.current_task if widget.session.stats else None
+                    self._notifier.queue(widget.session.name, task)
+                    self._notified_stalls.add(session_id)
 
                 # Auto-dismiss bell after 5s if this agent is already being viewed
-                if is_unvisited_stalled and self.view_mode == "list_preview":
+                if stall.is_unvisited_stalled and self.view_mode == "list_preview":
                     focused = self._get_focused_widget()
                     if focused is not None and focused.session.id == session_id:
                         self._schedule_bell_dismiss(session_id)
-                elif not is_unvisited_stalled and session_id in self._bell_dismiss_timers:
+                elif not stall.is_unvisited_stalled and session_id in self._bell_dismiss_timers:
                     # Bell cleared by other means — cancel pending timer
                     self._bell_dismiss_timers.pop(session_id, None)
 
@@ -1179,13 +1179,9 @@ class SupervisorTUI(
 
         container = self.query_one("#sessions-container", ScrollableContainer)
 
-        # Check if any session has a cost budget for column alignment (#173)
-        any_has_budget = any(s.cost_budget_usd > 0 for s in self.sessions)
-        # Check if any session has an oversight timeout for countdown column
-        any_has_oversight_timeout = any(
-            getattr(s, 'oversight_policy', 'wait') == 'timeout'
-            and getattr(s, 'oversight_timeout_seconds', 0) > 0
-            for s in self.sessions
+        # Check if any session has a cost budget / oversight timeout
+        any_has_budget, any_has_oversight_timeout = detect_display_changes(
+            self.sessions, False, False
         )
 
         # Build the list of sessions to display using extracted logic
@@ -1200,7 +1196,6 @@ class SupervisorTUI(
 
         # Get existing widgets and their session IDs
         existing_widgets = {w.session.id: w for w in self.query(SessionSummary)}
-        new_session_ids = {s.id for s in display_sessions}
         existing_session_ids = set(existing_widgets.keys())
 
         # Check if we have an empty message widget that needs removal
@@ -1210,9 +1205,10 @@ class SupervisorTUI(
             for w in container.children
         )
 
-        # If sessions changed or we need to show/hide empty message, do incremental update
-        sessions_added = new_session_ids - existing_session_ids
-        sessions_removed = existing_session_ids - new_session_ids
+        # Compute which widgets to add/remove
+        sessions_added, sessions_removed = compute_session_widget_diff(
+            existing_session_ids, [s.id for s in display_sessions]
+        )
 
         if not sessions_added and not sessions_removed and not has_empty_message:
             # No structural changes needed - just update session data in existing widgets
