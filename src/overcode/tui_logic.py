@@ -550,10 +550,17 @@ def compute_stall_state(
         StallState with transition flags
     """
     is_waiting = status == "waiting_user"
-    was_waiting = prev_status == "waiting_user"
+    prev_was_green = prev_status is not None and is_green_status(prev_status)
 
-    is_new_stall = is_waiting and not was_waiting
-    should_clear_tracking = not is_waiting
+    # Only green→waiting or None→waiting is a potential new stall.
+    # Non-green waiting states (waiting_heartbeat, error, approval) transitioning
+    # back to waiting_user should NOT count as a new stall.
+    is_new_stall = is_waiting and (prev_was_green or prev_status is None)
+
+    # Only clear stall tracking during green (actively working) statuses.
+    # Non-green, non-waiting states (waiting_heartbeat, error, approval) are still
+    # conceptually "stalled" and should NOT clear notification tracking.
+    should_clear_tracking = is_green_status(status)
 
     is_unvisited_stalled = (
         is_waiting
