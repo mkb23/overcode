@@ -1,11 +1,20 @@
 """Tests for macOS notification integration (#235)."""
 
 import sys
+import time
 from unittest.mock import patch, MagicMock
 
 import pytest
 
 from overcode.notifier import MacNotifier
+from overcode.status_constants import (
+    STATUS_RUNNING,
+    STATUS_WAITING_USER,
+    STATUS_WAITING_HEARTBEAT,
+    STATUS_ERROR,
+    STATUS_WAITING_APPROVAL,
+    is_green_status,
+)
 
 
 # =============================================================================
@@ -648,3 +657,173 @@ class TestOsascriptEdgeCases:
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "osascript"
         assert 'sound name "Hero"' in cmd[2]
+
+
+# =============================================================================
+# Stall Debounce Logic (notification re-triggering fix)
+# =============================================================================
+
+
+class _StallTracker:
+    """Minimal harness replicating TUI stall detection logic for testing.
+
+    Mirrors the debounce logic in OvercodeApp._apply_status_results without
+    requiring a full Textual app.
+    """
+
+    def __init__(self):
+        self._previous_statuses: dict[str, str] = {}
+        self._stall_start_times: dict[str, float] = {}
+        self._notified_stalls: set[str] = set()
+        self._non_stall_since: dict[str, float] = {}
+        self.visited_stalled_agents: set[str] = set()
+        self.prefs_changed = False
+
+    def apply_status(self, session_id: str, status: str):
+        """Run the stall detection logic for one session/status pair."""
+        from overcode.tui_logic import compute_stall_state
+        prev_status = self._previous_statuses.get(session_id)
+        stall = compute_stall_state(
+            status, prev_status, session_id,
+            self.visited_stalled_agents, False,
+        )
+
+        prev_was_green = prev_status is not None and is_green_status(prev_status)
+        if stall.should_clear_tracking and not prev_was_green:
+            self._non_stall_since[session_id] = time.monotonic()
+
+        if stall.is_new_stall:
+            non_stall_start = self._non_stall_since.pop(session_id, None)
+            active_duration = (time.monotonic() - non_stall_start) if non_stall_start else float('inf')
+
+            if active_duration >= 60 or prev_status is None:
+                self.visited_stalled_agents.discard(session_id)
+                self.prefs_changed = True
+                self._stall_start_times[session_id] = time.monotonic()
+                self._notified_stalls.discard(session_id)
+            else:
+                if session_id not in self._stall_start_times:
+                    self._stall_start_times[session_id] = time.monotonic()
+
+        if stall.should_clear_tracking:
+            self._stall_start_times.pop(session_id, None)
+        elif status == STATUS_WAITING_USER:
+            self._non_stall_since.pop(session_id, None)
+
+        self._previous_statuses[session_id] = status
+
+
+class TestStallDebounce:
+    """Test that notification tracking is resilient to brief green flickers
+    and daemon enrichment status changes."""
+
+    def test_first_stall_sets_timer_and_clears_notified(self):
+        """First observation of waiting_user should start stall timer."""
+        t = _StallTracker()
+        t.apply_status("s1", STATUS_WAITING_USER)
+        assert "s1" in t._stall_start_times
+        assert "s1" not in t._notified_stalls
+
+    def test_brief_green_flicker_does_not_clear_notified(self):
+        """A <60s green flicker should NOT reset _notified_stalls."""
+        t = _StallTracker()
+        # Initial stall
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._stall_start_times["s1"] = time.monotonic() - 35  # stalled 35s
+        t._notified_stalls.add("s1")  # notification already sent
+
+        # Brief green flicker (< 60s)
+        t.apply_status("s1", STATUS_RUNNING)
+        # Back to waiting
+        t.apply_status("s1", STATUS_WAITING_USER)
+
+        # _notified_stalls must NOT have been cleared
+        assert "s1" in t._notified_stalls, "Brief flicker should not re-trigger notification"
+
+    def test_sustained_green_resets_notified_on_new_stall(self):
+        """After 60s+ of green work, a new stall should re-trigger notification."""
+        t = _StallTracker()
+        # Initial stall and notification
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+
+        # Transition to green
+        t.apply_status("s1", STATUS_RUNNING)
+        # Backdate the green start to > 60s ago
+        t._non_stall_since["s1"] = time.monotonic() - 90
+
+        # New stall after sustained green
+        t.apply_status("s1", STATUS_WAITING_USER)
+
+        assert "s1" not in t._notified_stalls, "Sustained green should allow re-notification"
+        assert "s1" in t._stall_start_times, "New stall timer should be set"
+
+    def test_waiting_heartbeat_does_not_clear_notified(self):
+        """WAITING_HEARTBEAT (daemon enrichment) should NOT clear _notified_stalls."""
+        t = _StallTracker()
+        # Stall and notify
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+        stall_time = t._stall_start_times["s1"]
+
+        # Daemon enriches to waiting_heartbeat
+        t.apply_status("s1", STATUS_WAITING_HEARTBEAT)
+
+        assert "s1" in t._notified_stalls, "waiting_heartbeat should not clear notification tracking"
+        assert t._stall_start_times.get("s1") == stall_time, "stall timer should be preserved"
+
+    def test_error_status_does_not_clear_notified(self):
+        """ERROR status should NOT clear _notified_stalls."""
+        t = _StallTracker()
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+
+        t.apply_status("s1", STATUS_ERROR)
+
+        assert "s1" in t._notified_stalls, "error should not clear notification tracking"
+
+    def test_waiting_approval_does_not_clear_notified(self):
+        """WAITING_APPROVAL status should NOT clear _notified_stalls."""
+        t = _StallTracker()
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+
+        t.apply_status("s1", STATUS_WAITING_APPROVAL)
+
+        assert "s1" in t._notified_stalls, "waiting_approval should not clear notification tracking"
+
+    def test_waiting_heartbeat_to_waiting_user_no_retrigger(self):
+        """WAITING_HEARTBEAT → WAITING_USER should NOT trigger a new stall."""
+        t = _StallTracker()
+        # Initial stall
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+
+        # Daemon enriches to waiting_heartbeat
+        t.apply_status("s1", STATUS_WAITING_HEARTBEAT)
+        # Back to waiting_user (daemon state file temporarily unreadable)
+        t.apply_status("s1", STATUS_WAITING_USER)
+
+        assert "s1" in t._notified_stalls, "enrichment flip should not re-trigger"
+
+    def test_green_clears_stall_timer(self):
+        """Green (running) status should clear the stall timer."""
+        t = _StallTracker()
+        t.apply_status("s1", STATUS_WAITING_USER)
+        assert "s1" in t._stall_start_times
+
+        t.apply_status("s1", STATUS_RUNNING)
+        assert "s1" not in t._stall_start_times
+
+    def test_multiple_brief_flickers_do_not_accumulate(self):
+        """Repeated brief green flickers should not eventually clear _notified_stalls."""
+        t = _StallTracker()
+        t.apply_status("s1", STATUS_WAITING_USER)
+        t._notified_stalls.add("s1")
+
+        # Simulate 5 brief green flickers
+        for _ in range(5):
+            t.apply_status("s1", STATUS_RUNNING)
+            t.apply_status("s1", STATUS_WAITING_USER)
+
+        assert "s1" in t._notified_stalls, "Repeated flickers should not re-trigger"

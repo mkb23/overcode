@@ -29,7 +29,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, write_tui_heartbeat, get_session_dir, get_agent_history_path, get_event_loop_timing_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
@@ -295,6 +295,8 @@ class SupervisorTUI(
         self._stall_start_times: dict[str, float] = {}
         # Sessions we've already sent a macOS notification for (current stall)
         self._notified_stalls: set[str] = set()
+        # Debounce: when each session last entered green (working) state
+        self._non_stall_since: dict[str, float] = {}
         # Timers for auto-dismissing bell when the stalled agent is already focused
         self._bell_dismiss_timers: dict[str, object] = {}
         # Session cache to avoid disk I/O on every status update (250ms interval)
@@ -1036,15 +1038,32 @@ class SupervisorTUI(
                     widget.session.is_asleep,
                 )
 
+                # Track when session transitions TO green (working) state
+                prev_was_green = prev_status is not None and is_green_status(prev_status)
+                if stall.should_clear_tracking and not prev_was_green:
+                    self._non_stall_since[session_id] = time.monotonic()
+
+                # Debounced stall detection: prevents notification re-triggering
+                # from brief green flickers and daemon enrichment changes
                 if stall.is_new_stall:
-                    self._prefs.visited_stalled_agents.discard(session_id)
-                    prefs_changed = True
-                    self._stall_start_times[session_id] = time.monotonic()
-                    self._notified_stalls.discard(session_id)
+                    non_stall_start = self._non_stall_since.pop(session_id, None)
+                    active_duration = (time.monotonic() - non_stall_start) if non_stall_start else float('inf')
+
+                    if active_duration >= 60 or prev_status is None:
+                        # Sustained work or first observation → genuine new stall
+                        self._prefs.visited_stalled_agents.discard(session_id)
+                        prefs_changed = True
+                        self._stall_start_times[session_id] = time.monotonic()
+                        self._notified_stalls.discard(session_id)
+                    else:
+                        # Brief green flicker → restore stall timer if needed, keep _notified_stalls
+                        if session_id not in self._stall_start_times:
+                            self._stall_start_times[session_id] = time.monotonic()
 
                 if stall.should_clear_tracking:
                     self._stall_start_times.pop(session_id, None)
-                    self._notified_stalls.discard(session_id)
+                elif status == STATUS_WAITING_USER:
+                    self._non_stall_since.pop(session_id, None)
 
                 self._previous_statuses[session_id] = status
                 widget.is_unvisited_stalled = stall.is_unvisited_stalled
