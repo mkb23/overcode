@@ -501,12 +501,12 @@ class TestRenderGitDiff:
     def test_no_diff_full_detail_shows_placeholder(self):
         ctx = _make_ctx(git_diff_stats=None, summary_detail="full")
         result = render_git_diff(ctx)
-        assert "Δ-" in result[0][0]
+        assert "Δ -" in result[0][0]
 
     def test_no_diff_low_detail_shows_compact_placeholder(self):
         ctx = _make_ctx(git_diff_stats=None, summary_detail="low")
         result = render_git_diff(ctx)
-        assert "Δ-" in result[0][0]
+        assert "Δ -" in result[0][0]
 
     def test_with_diff_full_shows_files_ins_dels(self):
         ctx = _make_ctx(git_diff_stats=(5, 100, 20), summary_detail="full")
