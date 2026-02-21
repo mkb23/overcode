@@ -241,7 +241,7 @@ class MonitorDaemonState:
 
     # Presence state (optional, macOS only)
     presence_available: bool = False
-    presence_state: Optional[int] = None  # 1=locked/sleep, 2=inactive, 3=active
+    presence_state: Optional[int] = None  # 0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active
     presence_idle_seconds: Optional[float] = None
 
     # Summary metrics (computed from sessions)

@@ -64,9 +64,11 @@ DAEMON_STATUS_NO_AGENTS = "no_agents"
 # Presence State Values
 # =============================================================================
 
+PRESENCE_ASLEEP = 0
 PRESENCE_LOCKED = 1
-PRESENCE_INACTIVE = 2
+PRESENCE_IDLE = 2       # Was PRESENCE_INACTIVE
 PRESENCE_ACTIVE = 3
+PRESENCE_TUI_ACTIVE = 4
 
 
 # =============================================================================
@@ -166,9 +168,11 @@ def get_agent_timeline_char(status: str) -> str:
 
 
 PRESENCE_TIMELINE_CHARS = {
+    PRESENCE_ASLEEP: " ",
     PRESENCE_LOCKED: "░",
-    PRESENCE_INACTIVE: "▒",
-    PRESENCE_ACTIVE: "█",
+    PRESENCE_IDLE: "▒",
+    PRESENCE_ACTIVE: "▓",
+    PRESENCE_TUI_ACTIVE: "█",
 }
 
 
@@ -182,9 +186,11 @@ def get_presence_timeline_char(state: int) -> str:
 # =============================================================================
 
 PRESENCE_COLORS = {
+    PRESENCE_ASLEEP: "#1a1a2e",
     PRESENCE_LOCKED: "red",
-    PRESENCE_INACTIVE: "yellow",
-    PRESENCE_ACTIVE: "green",
+    PRESENCE_IDLE: "orange1",
+    PRESENCE_ACTIVE: "yellow",
+    PRESENCE_TUI_ACTIVE: "green",
 }
 
 

@@ -45,12 +45,12 @@ def format_presence(presence_state: Optional[int]) -> str:
     """Format user presence state from monitor daemon.
 
     Args:
-        presence_state: 1=locked/sleep, 2=inactive, 3=active, None=unknown
+        presence_state: 0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active, None=unknown
 
     Returns:
-        One of: 'active', 'inactive', 'locked', 'unknown'
+        One of: 'asleep', 'locked', 'idle', 'active', 'tui_active', 'unknown'
     """
-    mapping = {1: "locked", 2: "inactive", 3: "active"}
+    mapping = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
     return mapping.get(presence_state, "unknown")
 
 

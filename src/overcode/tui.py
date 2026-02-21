@@ -31,7 +31,7 @@ from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
-from .settings import signal_activity, get_session_dir, get_agent_history_path, get_event_loop_timing_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
+from .settings import signal_activity, write_tui_heartbeat, get_session_dir, get_agent_history_path, get_event_loop_timing_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
 from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
@@ -2003,9 +2003,18 @@ class SupervisorTUI(
                 widget.summary_detail = self._column_config_original_detail
                 widget.refresh()
 
+    # Throttle TUI heartbeat writes to once per 5 seconds
+    _last_heartbeat_write: float = 0.0
+
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
+
+        # Write TUI heartbeat (throttled to every 5s)
+        now = time.monotonic()
+        if now - self._last_heartbeat_write >= 5.0:
+            self._last_heartbeat_write = now
+            write_tui_heartbeat(self.tmux_session)
 
         # Auto-recover if focus was lost or landed on a non-interactive widget
         # (e.g., clicking the terminal window focuses the preview pane)

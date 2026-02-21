@@ -259,26 +259,26 @@ class TestRenderPresenceIndicator:
         plain = result.plain
         assert "🔒" in plain
 
-    def test_renders_inactive_state(self):
-        """Should show sleeping icon for state 2."""
+    def test_renders_idle_state(self):
+        """Should show meditating icon for state 2."""
         result = render_presence_indicator(
             presence_state=2,
             idle_seconds=120,
         )
 
         plain = result.plain
-        assert "💤" in plain
+        assert "🧘" in plain
         assert "120s" in plain
 
     def test_renders_active_state(self):
-        """Should show active icon for state 3."""
+        """Should show walking icon for state 3."""
         result = render_presence_indicator(
             presence_state=3,
             idle_seconds=5,
         )
 
         plain = result.plain
-        assert "👤" in plain
+        assert "🚶" in plain
         assert "5s" in plain
 
 

@@ -217,8 +217,8 @@ def render_presence_indicator(
     """
     content = Text()
 
-    state_icons = {1: "🔒", 2: "💤", 3: "👤"}
-    state_colors = {1: "red", 2: "yellow", 3: "green"}
+    state_icons = {0: "⏻", 1: "🔒", 2: "🧘", 3: "🚶", 4: "🏃"}
+    state_colors = {0: "#1a1a2e", 1: "red", 2: "orange1", 3: "yellow", 4: "green"}
 
     icon = state_icons.get(presence_state, "?")
     color = state_colors.get(presence_state, "dim")

@@ -299,10 +299,10 @@ class TestStatusTimelineRender:
             with patch.object(type(widget), 'label_width', new_callable=PropertyMock, return_value=6):
                 result = widget.render()
         plain = result.plain
-        assert "active/running" in plain
-        assert "waiting/away" in plain
+        assert "TUI/running" in plain
+        assert "locked" in plain
         assert "terminated" in plain
-        assert "heartbeat start" in plain
+        assert "heartbeat" in plain
 
     def test_render_with_baseline_marker(self):
         widget = _make_bare_timeline(sessions=[], timeline_hours=3.0)

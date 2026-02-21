@@ -340,8 +340,12 @@ class TestPresenceStateToChar:
         assert presence_state_to_char(2) == "▒"
 
     def test_active_state(self):
-        """State 3 (active) returns full block"""
-        assert presence_state_to_char(3) == "█"
+        """State 3 (active) returns dense shade"""
+        assert presence_state_to_char(3) == "▓"
+
+    def test_tui_active_state(self):
+        """State 4 (TUI active) returns full block"""
+        assert presence_state_to_char(4) == "█"
 
     def test_unknown_state(self):
         """Unknown state returns dash"""
@@ -568,13 +572,17 @@ class TestGetPresenceColor:
         """State 1 (locked) is red"""
         assert get_presence_color(1) == "red"
 
-    def test_inactive_is_yellow(self):
-        """State 2 (inactive) is yellow"""
-        assert get_presence_color(2) == "yellow"
+    def test_idle_is_orange(self):
+        """State 2 (idle) is orange1"""
+        assert get_presence_color(2) == "orange1"
 
-    def test_active_is_green(self):
-        """State 3 (active) is green"""
-        assert get_presence_color(3) == "green"
+    def test_active_is_yellow(self):
+        """State 3 (active) is yellow"""
+        assert get_presence_color(3) == "yellow"
+
+    def test_tui_active_is_green(self):
+        """State 4 (TUI active) is green"""
+        assert get_presence_color(4) == "green"
 
     def test_unknown_is_dim(self):
         """Unknown state is dim"""
@@ -954,8 +962,8 @@ class TestStatusTimelineRender:
         result = widget.render()
         plain = result.plain
         assert "active" in plain
-        assert "inactive" in plain
-        assert "running" in plain
+        assert "idle" in plain
+        assert "running" in plain or "TUI" in plain
 
 
 @pytest.mark.skip(reason="Requires Textual app context")

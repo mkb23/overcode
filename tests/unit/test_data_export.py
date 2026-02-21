@@ -435,8 +435,8 @@ class TestBuildPresenceRecordsStateMapping:
             assert len(records) == 1
             assert records[0]["state_name"] == "unknown"
 
-    def test_inactive_state_maps_correctly(self):
-        """State 2 should map to 'inactive'."""
+    def test_idle_state_maps_correctly(self):
+        """State 2 should map to 'idle'."""
         with patch("overcode.data_export.read_presence_history") as mock_read:
             mock_read.return_value = [
                 (datetime(2024, 1, 1, 12, 0), 2),
@@ -444,7 +444,7 @@ class TestBuildPresenceRecordsStateMapping:
             records = _build_presence_records()
 
             assert len(records) == 1
-            assert records[0]["state_name"] == "inactive"
+            assert records[0]["state_name"] == "idle"
 
     def test_locked_state_maps_correctly(self):
         """State 1 should map to 'locked'."""
@@ -464,14 +464,14 @@ class TestBuildPresenceRecordsStateMapping:
             records = _build_presence_records()
             assert records[0]["state_name"] == "active"
 
-    def test_zero_state_maps_to_unknown(self):
-        """State 0 is not in the mapping, should be 'unknown'."""
+    def test_zero_state_maps_to_asleep(self):
+        """State 0 maps to 'asleep'."""
         with patch("overcode.data_export.read_presence_history") as mock_read:
             mock_read.return_value = [
                 (datetime(2024, 1, 1, 12, 0), 0),
             ]
             records = _build_presence_records()
-            assert records[0]["state_name"] == "unknown"
+            assert records[0]["state_name"] == "asleep"
 
 
 class TestExportToParquet:
