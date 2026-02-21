@@ -309,7 +309,8 @@ class TestStatusTimelineRender:
         widget.app.baseline_minutes = 60  # 1 hour baseline
         with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=40):
             with patch.object(type(widget), 'label_width', new_callable=PropertyMock, return_value=6):
-                result = widget.render()
+                with patch("overcode.tui_widgets.status_timeline.MACOS_APIS_AVAILABLE", True):
+                    result = widget.render()
         plain = result.plain
         # Baseline marker should appear as "|"
         assert "|" in plain
