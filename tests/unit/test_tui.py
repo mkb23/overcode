@@ -500,23 +500,27 @@ class TestBuildTimelineSlots:
         assert 30 in result
         assert result[30] == 3
 
-    def test_entry_before_window_excluded(self):
-        """Entry before window is excluded"""
+    def test_entry_before_window_forward_fills(self):
+        """Entry before window forward-fills all slots"""
         now = datetime.now()
         ts = now - timedelta(hours=5)  # 5 hours ago (outside 3h window)
         history = [(ts, 3)]
         result = build_timeline_slots(history, 60, 3.0, now)
-        assert result == {}
+        assert len(result) == 60
+        assert all(v == 3 for v in result.values())
 
     def test_multiple_entries(self):
-        """Multiple entries map correctly"""
+        """Multiple entries map correctly with forward-fill"""
         now = datetime.now()
         history = [
             (now - timedelta(minutes=30), "running"),
             (now - timedelta(minutes=90), "waiting_user"),
         ]
         result = build_timeline_slots(history, 60, 3.0, now)
-        assert len(result) == 2
+        # Forward-fill: slots from first entry to end are filled
+        assert len(result) > 2
+        assert result[30] == "waiting_user"  # 90min ago in 3h window = slot 30
+        assert result[50] == "running"       # 30min ago in 3h window = slot 50
 
 
 class TestBuildTimelineString:
