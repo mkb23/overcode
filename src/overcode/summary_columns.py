@@ -292,7 +292,7 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
             return [(f" Δ{files:>2}", ctx.mono(f"bold magenta{ctx.bg}" if has_changes else f"dim{ctx.bg}", "bold" if has_changes else "dim"))]
     else:
         if ctx.summary_detail in ("full", "custom"):
-            return [(" Δ -  +    -  -   ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+            return [(" Δ - +    - -    -", ctx.mono(f"dim{ctx.bg}", "dim"))]
         else:
             return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
