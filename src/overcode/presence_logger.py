@@ -95,6 +95,8 @@ class PresenceLoggerConfig:
     sample_interval: int = DEFAULT_SAMPLE_INTERVAL
     idle_threshold: int = DEFAULT_IDLE_THRESHOLD
     log_path: str = ""
+    tui_heartbeat_path: str = ""  # Path to TUI heartbeat file (optional)
+    tui_heartbeat_freshness: int = 60  # Seconds before heartbeat is stale
 
     def __post_init__(self):
         if not self.log_path:
@@ -230,6 +232,20 @@ class PresenceLogger:
             # Don't reuse threads
             self._thread = None
 
+    def _is_tui_active(self) -> bool:
+        """Check if TUI heartbeat file has a recent timestamp."""
+        if not self.config.tui_heartbeat_path:
+            return False
+        try:
+            hb_path = Path(self.config.tui_heartbeat_path)
+            if not hb_path.exists():
+                return False
+            ts = dt.datetime.fromisoformat(hb_path.read_text().strip())
+            age = (dt.datetime.now() - ts).total_seconds()
+            return age <= self.config.tui_heartbeat_freshness
+        except (ValueError, OSError):
+            return False
+
     def get_current_state(self) -> tuple[int, float, bool]:
         """Get current presence state without logging.
 
@@ -243,6 +259,7 @@ class PresenceLogger:
             idle_seconds=idle,
             slept=False,  # Can't infer sleep without history
             idle_threshold=self.config.idle_threshold,
+            tui_active=self._is_tui_active(),
         )
         return state, idle, locked
 
@@ -290,6 +307,7 @@ class PresenceLogger:
                     idle_seconds=idle,
                     slept=slept,
                     idle_threshold=cfg.idle_threshold,
+                    tui_active=self._is_tui_active(),
                 )
 
                 self._last_state = state

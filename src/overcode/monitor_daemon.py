@@ -164,7 +164,11 @@ class PresenceComponent:
         self._last_publish_time: Optional[datetime] = None
 
         if self.available and PresenceLogger is not None:
-            config = PresenceLoggerConfig()
+            heartbeat_path = str(get_tui_heartbeat_path(tmux_session))
+            config = PresenceLoggerConfig(
+                tui_heartbeat_path=heartbeat_path,
+                tui_heartbeat_freshness=self.TUI_HEARTBEAT_FRESHNESS,
+            )
             self._logger = PresenceLogger(config)
             self._logger.start()
 
