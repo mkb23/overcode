@@ -280,8 +280,8 @@ class DaemonStatusBar(Static):
             state = self.monitor_state.presence_state
             idle = self.monitor_state.presence_idle_seconds or 0
 
-            state_names = {1: "🔒", 2: "💤", 3: "👤"}
-            state_colors = {1: "red", 2: "yellow", 3: "green"}
+            state_names = {0: "⏻", 1: "🔒", 2: "🧘", 3: "🚶", 4: "🏃"}
+            state_colors = {0: "#1a1a2e", 1: "red", 2: "orange1", 3: "yellow", 4: "green"}
 
             icon = state_names.get(state, "?")
             color = state_colors.get(state, "dim")

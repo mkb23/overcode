@@ -165,7 +165,7 @@ def _build_presence_info(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     if not state or not state.presence_available:
         return {"available": False}
 
-    state_names = {1: "locked", 2: "inactive", 3: "active"}
+    state_names = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
     return {
         "available": True,
         "state": state.presence_state,
@@ -521,8 +521,8 @@ def get_analytics_timeline(
     # Get presence history
     presence_history = read_presence_history(hours=hours)
     presence_events = []
-    state_names = {1: "locked", 2: "inactive", 3: "active"}
-    presence_colors = {1: "#6b7280", 2: "#eab308", 3: "#22c55e"}
+    state_names = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
+    presence_colors = {0: "#1a1a2e", 1: "#ef4444", 2: "#f97316", 3: "#eab308", 4: "#22c55e"}
 
     for ts, state in presence_history:
         if ts < start or ts > end:
@@ -649,8 +649,8 @@ def _calculate_presence_efficiency(
 
     Samples agent status at regular intervals and calculates what percentage
     of agents were "green" (running) during:
-    - Present periods: user presence state = 3 (active)
-    - AFK periods: user presence state = 1 (locked) or 2 (inactive)
+    - Present periods: user presence state >= 3 (active or TUI active)
+    - AFK periods: user presence state <= 2 (asleep, locked, or idle)
 
     Args:
         tmux_session: tmux session name
@@ -745,9 +745,9 @@ def _calculate_presence_efficiency(
             green_percent = (green_count / total_agents) * 100
 
             # Bucket by presence state
-            if user_state == 3:  # Active/present
+            if user_state >= 3:  # Active or TUI active = present
                 present_green_percents.append(green_percent)
-            else:  # state 1 (locked) or 2 (inactive) = AFK
+            else:  # state 0-2 (asleep, locked, idle) = AFK
                 afk_green_percents.append(green_percent)
 
         current_time += timedelta(seconds=sample_interval_seconds)

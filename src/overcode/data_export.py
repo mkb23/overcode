@@ -230,7 +230,7 @@ def _build_presence_records():
         records.append({
             "timestamp": ts.isoformat() if isinstance(ts, datetime) else str(ts),
             "state": state,
-            "state_name": {1: "locked", 2: "inactive", 3: "active"}.get(state, "unknown"),
+            "state_name": {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}.get(state, "unknown"),
         })
 
     return records

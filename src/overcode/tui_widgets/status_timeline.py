@@ -28,7 +28,7 @@ class StatusTimeline(Static):
     """Widget displaying historical status timelines for user presence and agents.
 
     Shows the last N hours with each character representing a time slice.
-    - User presence: green=active, yellow=inactive, red/gray=locked/away
+    - User presence: green=TUI active, yellow=active, orange=idle, red=locked
     - Agent status: green=running, red=waiting, grey=terminated
 
     Timeline hours configurable via ~/.overcode/config.yaml (timeline.hours).
@@ -274,15 +274,15 @@ class StatusTimeline(Static):
         # Legend (combined on one line to save space)
         content.append(f"  {'Legend:':<14} ", style="dim")
         content.append("█", style="green")
-        content.append("active/running ", style="dim")
+        content.append("TUI/running ", style="dim")
+        content.append("▓", style="yellow")
+        content.append("active ", style="dim")
         content.append("💚", style="")
-        content.append("heartbeat start ", style="dim")
-        content.append("▒", style="yellow")
-        content.append("inactive ", style="dim")
+        content.append("heartbeat ", style="dim")
+        content.append("▒", style="orange1")
+        content.append("idle ", style="dim")
         content.append("░", style="red")
-        content.append("waiting/away ", style="dim")
-        content.append("░", style="dim")
-        content.append("asleep ", style="dim")
+        content.append("locked ", style="dim")
         content.append("×", style="dim")
         content.append("terminated", style="dim")
 

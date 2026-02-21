@@ -5,7 +5,7 @@ Mac-only presence logger that records user presence/absence stats.
 
 Records once per SAMPLE_INTERVAL:
 - timestamp (ISO8601 local time)
-- state (1=locked/sleep, 2=screen on inactive, 3=screen on active)
+- state (0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active)
 - idle_seconds
 - locked (0/1)
 - inferred_sleep (0/1)
@@ -157,18 +157,25 @@ def infer_sleep(last_ts: Optional[dt.datetime],
 def classify_state(locked: bool,
                    idle_seconds: float,
                    slept: bool,
-                   idle_threshold: int) -> int:
+                   idle_threshold: int,
+                   tui_active: bool = False) -> int:
     """
-    Map low-level measures to 3 presence states:
+    Map low-level measures to 5 presence states:
 
-    1: screen locked/hibernating
-    2: screen on, inactive (idle > idle_threshold)
-    3: screen on, active
+    0: PC asleep (inferred from publish gap)
+    1: screen locked
+    2: idle (idle > idle_threshold)
+    3: computer active (input but TUI not focused)
+    4: TUI active (recent TUI keypress)
     """
-    if locked or slept:
+    if slept:
+        return 0
+    elif locked:
         return 1
     elif idle_seconds > idle_threshold:
         return 2
+    elif tui_active:
+        return 4
     else:
         return 3
 
@@ -176,9 +183,11 @@ def classify_state(locked: bool,
 def state_to_name(state: int) -> str:
     """Convert state number to human-readable name."""
     return {
-        1: "locked/sleep",
-        2: "inactive",
+        0: "asleep",
+        1: "locked",
+        2: "idle",
         3: "active",
+        4: "tui_active",
     }.get(state, "unknown")
 
 
@@ -350,12 +359,12 @@ def get_singleton_logger() -> Optional[PresenceLogger]:
     return _singleton_logger
 
 
-def get_current_presence_state() -> tuple[int, float, bool]:
+def get_current_presence_state(tui_active: bool = False) -> tuple[int, float, bool]:
     """Get current presence state without needing a logger instance.
 
     Returns:
         Tuple of (state, idle_seconds, is_locked)
-        state: 1=locked/sleep, 2=inactive, 3=active
+        state: 0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active
     """
     idle = get_idle_seconds()
     locked = is_screen_locked()
@@ -364,6 +373,7 @@ def get_current_presence_state() -> tuple[int, float, bool]:
         idle_seconds=idle,
         slept=False,
         idle_threshold=DEFAULT_IDLE_THRESHOLD,
+        tui_active=tui_active,
     )
     return state, idle, locked
 

@@ -332,7 +332,7 @@ class TestBuildPresenceInfo:
         from overcode.web_api import _build_presence_info
         from overcode.monitor_daemon_state import MonitorDaemonState
 
-        for state_code, expected_name in [(1, "locked"), (2, "inactive"), (3, "active")]:
+        for state_code, expected_name in [(0, "asleep"), (1, "locked"), (2, "idle"), (3, "active"), (4, "tui_active")]:
             state = MonitorDaemonState(
                 presence_available=True,
                 presence_state=state_code,

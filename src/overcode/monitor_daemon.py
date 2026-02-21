@@ -51,6 +51,7 @@ from .settings import (
     get_agent_history_path,
     get_activity_signal_path,
     get_supervisor_stats_path,
+    get_tui_heartbeat_path,
 )
 from .config import get_relay_config
 from .status_constants import (
@@ -153,14 +154,46 @@ def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = N
 class PresenceComponent:
     """Presence tracking with graceful degradation for non-macOS."""
 
-    def __init__(self):
+    # TUI heartbeat is considered fresh if within this many seconds
+    TUI_HEARTBEAT_FRESHNESS = 60
+
+    def __init__(self, tmux_session: str = "agents"):
         self.available = MACOS_APIS_AVAILABLE
         self._logger: Optional[PresenceLogger] = None
+        self._tmux_session = tmux_session
+        self._last_publish_time: Optional[datetime] = None
 
         if self.available and PresenceLogger is not None:
             config = PresenceLoggerConfig()
             self._logger = PresenceLogger(config)
             self._logger.start()
+
+    def _is_tui_active(self) -> bool:
+        """Check if TUI heartbeat file has a recent timestamp."""
+        try:
+            heartbeat_path = get_tui_heartbeat_path(self._tmux_session)
+            if not heartbeat_path.exists():
+                return False
+            ts_str = heartbeat_path.read_text().strip()
+            ts = datetime.fromisoformat(ts_str)
+            age = (datetime.now() - ts).total_seconds()
+            return age <= self.TUI_HEARTBEAT_FRESHNESS
+        except (ValueError, OSError):
+            return False
+
+    def _detect_sleep(self) -> bool:
+        """Detect if the machine likely slept since last publish.
+
+        Returns True if the gap since last publish exceeds 2x the daemon interval.
+        """
+        now = datetime.now()
+        if self._last_publish_time is None:
+            self._last_publish_time = now
+            return False
+        gap = (now - self._last_publish_time).total_seconds()
+        slept = gap > 2 * DAEMON.interval_fast
+        self._last_publish_time = now
+        return slept
 
     def get_current_state(self) -> tuple:
         """Get current presence state.
@@ -172,7 +205,24 @@ class PresenceComponent:
             return None, None, None
 
         try:
-            return get_current_presence_state()
+            tui_active = self._is_tui_active()
+            slept = self._detect_sleep()
+
+            if slept:
+                # Machine just woke — override to asleep state for this sample
+                idle = 0.0
+                locked = False
+                from .presence_logger import classify_state, DEFAULT_IDLE_THRESHOLD
+                state = classify_state(
+                    locked=locked,
+                    idle_seconds=idle,
+                    slept=True,
+                    idle_threshold=DEFAULT_IDLE_THRESHOLD,
+                    tui_active=False,
+                )
+                return state, idle, locked
+
+            return get_current_presence_state(tui_active=tui_active)
         except Exception:
             return None, None, None
 
@@ -221,7 +271,7 @@ class MonitorDaemon:
         )
 
         # Presence tracking (graceful degradation)
-        self.presence = PresenceComponent()
+        self.presence = PresenceComponent(tmux_session=tmux_session)
 
         # Logging - session-specific log file
         self.log = _create_monitor_logger(session=tmux_session)

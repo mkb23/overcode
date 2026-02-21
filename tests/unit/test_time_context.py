@@ -79,8 +79,8 @@ class TestFormatPresence:
     def test_active(self):
         assert format_presence(3) == "active"
 
-    def test_inactive(self):
-        assert format_presence(2) == "inactive"
+    def test_idle(self):
+        assert format_presence(2) == "idle"
 
     def test_locked(self):
         assert format_presence(1) == "locked"
@@ -357,7 +357,7 @@ class TestGenerateTimeContext:
         now = datetime(2025, 1, 15, 14, 0, 0)
         result = generate_time_context("agents", "my-agent", now=now, config=config)
 
-        assert "User: inactive" in result
+        assert "User: idle" in result
         assert "Uptime" not in result
 
     def test_with_heartbeat(self, tmp_path, monkeypatch):

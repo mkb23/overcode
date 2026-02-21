@@ -62,31 +62,43 @@ class TestInferSleep:
 
 
 class TestClassifyState:
-    """Test state classification logic"""
+    """Test state classification logic (5-level model)"""
+
+    def test_slept_returns_state_0(self):
+        """Inferred sleep returns state 0 (asleep)"""
+        assert classify_state(locked=False, idle_seconds=0, slept=True, idle_threshold=60) == 0
 
     def test_locked_returns_state_1(self):
         """Locked screen returns state 1"""
         assert classify_state(locked=True, idle_seconds=0, slept=False, idle_threshold=60) == 1
-
-    def test_slept_returns_state_1(self):
-        """Inferred sleep returns state 1"""
-        assert classify_state(locked=False, idle_seconds=0, slept=True, idle_threshold=60) == 1
 
     def test_idle_over_threshold_returns_state_2(self):
         """Idle over threshold returns state 2"""
         assert classify_state(locked=False, idle_seconds=120, slept=False, idle_threshold=60) == 2
 
     def test_active_returns_state_3(self):
-        """Active user (low idle) returns state 3"""
+        """Active user (low idle, no TUI) returns state 3"""
         assert classify_state(locked=False, idle_seconds=30, slept=False, idle_threshold=60) == 3
 
-    def test_locked_takes_priority(self):
-        """Locked takes priority over idle time"""
-        assert classify_state(locked=True, idle_seconds=30, slept=False, idle_threshold=60) == 1
+    def test_tui_active_returns_state_4(self):
+        """TUI active returns state 4"""
+        assert classify_state(locked=False, idle_seconds=30, slept=False, idle_threshold=60, tui_active=True) == 4
 
-    def test_slept_takes_priority(self):
-        """Slept takes priority over idle time"""
-        assert classify_state(locked=False, idle_seconds=30, slept=True, idle_threshold=60) == 1
+    def test_locked_takes_priority_over_tui(self):
+        """Locked takes priority over TUI active"""
+        assert classify_state(locked=True, idle_seconds=30, slept=False, idle_threshold=60, tui_active=True) == 1
+
+    def test_slept_takes_priority_over_locked(self):
+        """Slept takes priority over locked"""
+        assert classify_state(locked=True, idle_seconds=30, slept=True, idle_threshold=60) == 0
+
+    def test_slept_takes_priority_over_tui(self):
+        """Slept takes priority over TUI active"""
+        assert classify_state(locked=False, idle_seconds=30, slept=True, idle_threshold=60, tui_active=True) == 0
+
+    def test_idle_takes_priority_over_tui(self):
+        """Idle threshold takes priority over TUI active"""
+        assert classify_state(locked=False, idle_seconds=120, slept=False, idle_threshold=60, tui_active=True) == 2
 
     def test_exactly_at_threshold(self):
         """At exactly threshold returns state 3 (not over)"""
@@ -96,21 +108,33 @@ class TestClassifyState:
         """Just over threshold returns state 2"""
         assert classify_state(locked=False, idle_seconds=61, slept=False, idle_threshold=60) == 2
 
+    def test_tui_active_default_false(self):
+        """tui_active defaults to False"""
+        assert classify_state(locked=False, idle_seconds=30, slept=False, idle_threshold=60) == 3
+
 
 class TestStateToName:
-    """Test state name conversion"""
+    """Test state name conversion (5-level model)"""
+
+    def test_state_0_name(self):
+        """State 0 is asleep"""
+        assert state_to_name(0) == "asleep"
 
     def test_state_1_name(self):
-        """State 1 is locked/sleep"""
-        assert state_to_name(1) == "locked/sleep"
+        """State 1 is locked"""
+        assert state_to_name(1) == "locked"
 
     def test_state_2_name(self):
-        """State 2 is inactive"""
-        assert state_to_name(2) == "inactive"
+        """State 2 is idle"""
+        assert state_to_name(2) == "idle"
 
     def test_state_3_name(self):
         """State 3 is active"""
         assert state_to_name(3) == "active"
+
+    def test_state_4_name(self):
+        """State 4 is tui_active"""
+        assert state_to_name(4) == "tui_active"
 
     def test_unknown_state(self):
         """Unknown state returns unknown"""
@@ -373,7 +397,7 @@ class TestGetCurrentPresenceState:
         assert len(result) == 3
         state, idle, locked = result
         assert isinstance(state, int)
-        assert state in [1, 2, 3]
+        assert state in [0, 1, 2, 3, 4]
         assert isinstance(idle, float)
         assert idle >= 0
         assert isinstance(locked, bool)

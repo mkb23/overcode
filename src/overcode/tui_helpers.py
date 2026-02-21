@@ -70,7 +70,7 @@ def presence_state_to_char(state: int) -> str:
     """Convert presence state to timeline character.
 
     Args:
-        state: 1=locked/sleep, 2=inactive, 3=active
+        state: 0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active
 
     Returns:
         Block character for timeline visualization
@@ -248,7 +248,7 @@ def get_presence_color(state: int) -> str:
     """Get color for presence state.
 
     Args:
-        state: Presence state (1=locked/sleep, 2=inactive, 3=active)
+        state: Presence state (0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active)
 
     Returns:
         Color name for Rich styling

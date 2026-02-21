@@ -383,6 +383,26 @@ def get_default_tmux_session() -> str:
 # TUI Preferences (persisted between launches)
 # =============================================================================
 
+def get_tui_heartbeat_path(session: str) -> Path:
+    """Get TUI heartbeat file path for a specific session."""
+    return get_session_dir(session) / "tui_heartbeat"
+
+
+def write_tui_heartbeat(session: str) -> None:
+    """Write current ISO timestamp to TUI heartbeat file.
+
+    Called by TUI on keypress (throttled) so the monitor daemon
+    can distinguish TUI-active from computer-active presence.
+    """
+    from datetime import datetime
+    heartbeat_path = get_tui_heartbeat_path(session)
+    try:
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        heartbeat_path.write_text(datetime.now().isoformat())
+    except OSError:
+        pass  # Best effort
+
+
 def get_tui_preferences_path(session: str) -> Path:
     """Get TUI preferences file path for a specific session."""
     return get_session_dir(session) / "tui_preferences.json"
