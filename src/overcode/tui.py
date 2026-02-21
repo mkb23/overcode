@@ -269,6 +269,11 @@ class SupervisorTUI(
         self.max_branch_width: int = 10
         self.max_name_width: int = 10
         self.all_names_match_repos: bool = False
+        # Epoch counter for column width race avoidance: incremented by the
+        # authoritative 10s _apply_sessions path.  The 250ms fast-path captures
+        # the epoch before reading sessions.json; if _apply_sessions has run
+        # since that snapshot, the fast-path skips its (now stale) width update.
+        self._width_epoch: int = 0
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -619,7 +624,9 @@ class SupervisorTUI(
         self.sessions = sessions + self._remote_sessions
         # Apply sorting (#61)
         self._sort_sessions()
-        # Calculate max repo/branch widths for alignment in full detail mode
+        # Calculate max repo/branch widths for alignment in full detail mode.
+        # Bump epoch so any in-flight 250ms fast-path knows its data is stale.
+        self._width_epoch += 1
         widths_changed = self._recalc_column_widths(self.sessions)
         # update_session_widgets handles focus preservation internally
         self.update_session_widgets(force_refresh=widths_changed)
@@ -790,6 +797,9 @@ class SupervisorTUI(
         Heavy operations (claude stats, git diff) run on a separate 5s timer.
         """
         try:
+            # Snapshot the width epoch *before* reading so the main-thread
+            # callback can detect if _apply_sessions ran in the meantime.
+            width_epoch = self._width_epoch
             # Load fresh session data (this does file I/O but we're in a thread)
             fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
 
@@ -865,7 +875,7 @@ class SupervisorTUI(
                 )
 
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries)
+            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries, width_epoch)
         finally:
             self._status_update_in_progress = False
 
@@ -997,20 +1007,25 @@ class SupervisorTUI(
 
     # ── End sister integration ────────────────────────────────────────
 
-    def _apply_status_results(self, status_results: dict, fresh_sessions: dict, ai_summaries: dict = None) -> None:
+    def _apply_status_results(self, status_results: dict, fresh_sessions: dict,
+                              ai_summaries: dict = None, width_epoch: int = 0) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""
         self._mark_event("apply_status_start")
         prefs_changed = False
         ai_summaries = ai_summaries or {}
 
-        # Recalculate repo/branch widths from sessions matching actual widgets.
-        # Must use the widget set (current tmux + remotes), not fresh_sessions
-        # which includes ALL tmux sessions and excludes remotes (#143).
+        # Recalculate column widths from fresh data — but only if the
+        # authoritative 10s _apply_sessions path hasn't run since our
+        # background thread read sessions.json.  If it has, our snapshot
+        # is stale and _apply_sessions already set correct widths.
         widgets = list(self.query(SessionSummary))
-        if fresh_sessions:
+        if fresh_sessions and width_epoch == self._width_epoch:
             visible = [fresh_sessions.get(w.session.id, w.session) for w in widgets]
             if visible:
-                self._recalc_column_widths(visible)
+                widths_changed = self._recalc_column_widths(visible)
+                if widths_changed:
+                    for w in widgets:
+                        w.refresh()
 
         for widget in widgets:
             session_id = widget.session.id
