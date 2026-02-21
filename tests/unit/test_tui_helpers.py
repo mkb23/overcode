@@ -473,16 +473,44 @@ class TestBuildTimelineSlots:
 
         assert len(result) > 0
 
-    def test_filters_old_entries(self):
-        """Should filter entries older than time window."""
+    def test_forward_fills_from_old_entry(self):
+        """Old entry before window should forward-fill all slots."""
         now = datetime.now()
         history = [
-            (now - timedelta(hours=5), 3),  # Too old
+            (now - timedelta(hours=5), 3),  # Before window, but state carries forward
         ]
 
         result = build_timeline_slots(history, width=60, hours=1.0, now=now)
 
+        # All 60 slots filled with forward-carried state
+        assert len(result) == 60
+        assert all(v == 3 for v in result.values())
+
+    def test_no_data_returns_empty(self):
+        """Should return empty dict when no history at all."""
+        now = datetime.now()
+        result = build_timeline_slots([], width=60, hours=1.0, now=now)
         assert result == {}
+
+    def test_forward_fills_gaps_between_samples(self):
+        """Sparse samples should forward-fill gaps between them."""
+        now = datetime.now()
+        history = [
+            (now - timedelta(minutes=50), "active"),
+            (now - timedelta(minutes=20), "idle"),
+        ]
+
+        result = build_timeline_slots(history, width=60, hours=1.0, now=now)
+
+        # Slots 0-9 empty (no state before first sample), 10-59 filled
+        assert len(result) == 50
+        # Slot at minute 10 (index 10) = "active"
+        assert result[10] == "active"
+        # Slots between samples forward-filled as "active"
+        assert result[30] == "active"
+        # Slot at minute 40 (index 40) = "idle", forward-filled to end
+        assert result[40] == "idle"
+        assert result[59] == "idle"
 
 
 class TestBuildTimelineString:

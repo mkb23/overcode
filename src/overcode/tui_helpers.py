@@ -197,13 +197,26 @@ def build_timeline_slots(
     slot_duration_sec = (hours * 3600) / width
     slot_states = {}
 
+    # Track the most recent state before the visible window for forward-fill
+    last_state = None
     for ts, state in history:
         if ts < start_time:
+            last_state = state
             continue
         elapsed = (ts - start_time).total_seconds()
         slot_idx = int(elapsed / slot_duration_sec)
         if 0 <= slot_idx < width:
             slot_states[slot_idx] = state
+
+    # Forward-fill: carry last known state into empty slots.
+    # Sparse data (e.g. presence sampled every 60s) leaves gaps when
+    # zoomed in — the state is continuous between samples.
+    if slot_states or last_state is not None:
+        for i in range(width):
+            if i in slot_states:
+                last_state = slot_states[i]
+            elif last_state is not None:
+                slot_states[i] = last_state
 
     return slot_states
 
