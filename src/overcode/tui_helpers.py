@@ -299,6 +299,85 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
     return _get_daemon_status_style(status)
 
 
+def get_summary_content_text(
+    mode: str,
+    annotation: Optional[str],
+    standing_instructions: Optional[str],
+    standing_orders_complete: bool,
+    preset_name: Optional[str],
+    ai_summary_short: Optional[str],
+    ai_summary_context: Optional[str],
+    heartbeat_enabled: bool,
+    heartbeat_paused: bool,
+    heartbeat_frequency_seconds: int,
+    heartbeat_instruction: Optional[str],
+    summarizer_enabled: bool,
+    remaining_width: int,
+) -> Tuple[str, str]:
+    """Compute the text and style category for summary content area.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        mode: Content mode (annotation, orders, ai_long, heartbeat, ai_short)
+        annotation: Human annotation text
+        standing_instructions: Standing orders text
+        standing_orders_complete: Whether standing orders are complete
+        preset_name: Standing instructions preset name
+        ai_summary_short: Short AI summary
+        ai_summary_context: Long AI context summary
+        heartbeat_enabled: Whether heartbeat is enabled
+        heartbeat_paused: Whether heartbeat is paused
+        heartbeat_frequency_seconds: Heartbeat interval
+        heartbeat_instruction: Heartbeat instruction text
+        summarizer_enabled: Whether summarizer is enabled
+        remaining_width: Available width for text
+
+    Returns:
+        Tuple of (text, style_category) where style_category is one of:
+        "bold", "dim", "bold_green", "bold_cyan", "bold_yellow", "bold_magenta"
+    """
+    if mode == "annotation":
+        if annotation:
+            return f"✏️ {annotation[:remaining_width-3]}", "bold_magenta"
+        return "✏️ (no annotation)", "dim"
+
+    elif mode == "orders":
+        if standing_instructions:
+            if standing_orders_complete:
+                return f"🎯✓ {standing_instructions[:remaining_width-4]}", "bold_green"
+            elif preset_name:
+                prefix = f"🎯 {preset_name}: "
+                return f"{prefix}{standing_instructions[:remaining_width-len(prefix)]}"[:remaining_width], "bold_cyan"
+            else:
+                return f"🎯 {standing_instructions[:remaining_width-3]}", "bold_yellow"
+        return "🎯 (no standing orders)", "dim"
+
+    elif mode == "ai_long":
+        if ai_summary_context:
+            return f"📖 {ai_summary_context[:remaining_width-3]}", "bold"
+        elif not summarizer_enabled:
+            return "📖 (summarizer disabled - press 'a')", "dim"
+        return "📖 (awaiting context...)", "dim"
+
+    elif mode == "heartbeat":
+        if heartbeat_enabled:
+            freq_str = format_duration(heartbeat_frequency_seconds)
+            hb_text = f"💓 {freq_str}: {heartbeat_instruction}"[:remaining_width]
+            if heartbeat_paused:
+                return hb_text, "dim"
+            return hb_text, "bold_magenta"
+        return "💓 (no heartbeat configured - press H)", "dim"
+
+    else:
+        # ai_short (default)
+        if ai_summary_short:
+            return f"💬 {ai_summary_short[:remaining_width-3]}", "bold"
+        elif not summarizer_enabled:
+            return "💬 (summarizer disabled - press 'a')", "dim"
+        return "💬 (awaiting summary...)", "dim"
+
+
 def calculate_safe_break_duration(sessions: list, now: Optional[datetime] = None) -> Optional[float]:
     """Calculate how long you can be AFK before 50%+ of agents need attention.
 

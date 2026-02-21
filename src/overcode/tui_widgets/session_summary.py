@@ -24,6 +24,7 @@ from ..tui_helpers import (
     get_status_symbol,
     style_pane_line,
     get_git_diff_stats,
+    get_summary_content_text,
 )
 from ..summary_columns import ColumnContext, SUMMARY_COLUMNS
 
@@ -347,54 +348,33 @@ class SessionSummary(Static, can_focus=True):
         content.append(" │ ", style=ctx.mono(f"bold dim{ctx.bg}", "dim"))
         current_len = len(content.plain)
         remaining = max(20, term_width - current_len - 2)
-        mode = self.summary_content_mode
 
-        if mode == "annotation":
-            if s.human_annotation:
-                content.append(f"✏️ {s.human_annotation[:remaining-3]}", style=ctx.mono(f"bold magenta{ctx.bg}", "bold"))
-            else:
-                content.append("✏️ (no annotation)", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
-        elif mode == "orders":
-            if s.standing_instructions:
-                if s.standing_orders_complete:
-                    order_style = ctx.mono(f"bold green{ctx.bg}", "bold")
-                    prefix = "🎯✓ "
-                elif s.standing_instructions_preset:
-                    order_style = ctx.mono(f"bold cyan{ctx.bg}", "bold")
-                    prefix = f"🎯 {s.standing_instructions_preset}: "
-                else:
-                    order_style = ctx.mono(f"bold italic yellow{ctx.bg}", "bold")
-                    prefix = "🎯 "
-                display_text = f"{prefix}{format_standing_instructions(s.standing_instructions, remaining - len(prefix))}"
-                content.append(display_text[:remaining], style=order_style)
-            else:
-                content.append("🎯 (no standing orders)", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
-        elif mode == "ai_long":
-            if self.ai_summary_context:
-                content.append(f"📖 {self.ai_summary_context[:remaining-3]}", style=ctx.mono(f"bold italic{ctx.bg}", "bold"))
-            elif not self.summarizer_enabled:
-                content.append("📖 (summarizer disabled - press 'a')", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
-            else:
-                content.append("📖 (awaiting context...)", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
-        elif mode == "heartbeat":
-            if s.heartbeat_enabled:
-                freq_str = format_duration(s.heartbeat_frequency_seconds)
-                if s.heartbeat_paused:
-                    hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
-                    content.append(hb_text[:remaining], style=ctx.mono(f"dim{ctx.bg}", "dim"))
-                else:
-                    hb_text = f"💓 {freq_str}: {s.heartbeat_instruction}"
-                    content.append(hb_text[:remaining], style=ctx.mono(f"bold magenta{ctx.bg}", "bold"))
-            else:
-                content.append("💓 (no heartbeat configured - press H)", style=ctx.mono(f"dim{ctx.bg}", "dim"))
-        else:
-            # ai_short
-            if self.ai_summary_short:
-                content.append(f"💬 {self.ai_summary_short[:remaining-3]}", style=ctx.mono(f"bold italic{ctx.bg}", "bold"))
-            elif not self.summarizer_enabled:
-                content.append("💬 (summarizer disabled - press 'a')", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
-            else:
-                content.append("💬 (awaiting summary...)", style=ctx.mono(f"dim italic{ctx.bg}", "dim"))
+        text, style_cat = get_summary_content_text(
+            mode=self.summary_content_mode,
+            annotation=s.human_annotation,
+            standing_instructions=s.standing_instructions,
+            standing_orders_complete=s.standing_orders_complete,
+            preset_name=s.standing_instructions_preset,
+            ai_summary_short=self.ai_summary_short,
+            ai_summary_context=self.ai_summary_context,
+            heartbeat_enabled=s.heartbeat_enabled,
+            heartbeat_paused=s.heartbeat_paused,
+            heartbeat_frequency_seconds=s.heartbeat_frequency_seconds,
+            heartbeat_instruction=s.heartbeat_instruction,
+            summarizer_enabled=self.summarizer_enabled,
+            remaining_width=remaining,
+        )
+
+        # Map style categories to Rich styles
+        style_map = {
+            "bold": ctx.mono(f"bold italic{ctx.bg}", "bold"),
+            "dim": ctx.mono(f"dim italic{ctx.bg}", "dim"),
+            "bold_green": ctx.mono(f"bold green{ctx.bg}", "bold"),
+            "bold_cyan": ctx.mono(f"bold cyan{ctx.bg}", "bold"),
+            "bold_yellow": ctx.mono(f"bold italic yellow{ctx.bg}", "bold"),
+            "bold_magenta": ctx.mono(f"bold magenta{ctx.bg}", "bold"),
+        }
+        content.append(text, style=style_map.get(style_cat, style_map["dim"]))
 
     def _render_expanded_view(self, content: Text, ctx: ColumnContext) -> None:
         """Render the expanded view: standing instructions + pane content lines."""

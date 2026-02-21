@@ -248,6 +248,132 @@ def should_sync_stats(
     return (now - last_sync).total_seconds() >= interval_seconds
 
 
+def should_auto_archive(
+    status: str,
+    state_since: Optional[str],
+    now: datetime,
+    timeout_seconds: int = 3600,
+) -> bool:
+    """Check whether a done agent should be auto-archived.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        status: Current agent status
+        state_since: ISO timestamp of when the agent entered current state
+        now: Current datetime
+        timeout_seconds: How long to wait before archiving (default: 1 hour)
+
+    Returns:
+        True if the agent should be auto-archived
+    """
+    if status != "done":
+        return False
+    if not state_since:
+        return False
+    try:
+        done_since = datetime.fromisoformat(state_since)
+        return (now - done_since).total_seconds() >= timeout_seconds
+    except (ValueError, TypeError):
+        return False
+
+
+def should_enforce_oversight_timeout(
+    status: str,
+    policy: Optional[str],
+    deadline: Optional[str],
+    now: datetime,
+) -> bool:
+    """Check whether an oversight timeout should be enforced.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        status: Current agent status
+        policy: Oversight policy (e.g., "wait", "timeout")
+        deadline: ISO timestamp of the oversight deadline
+        now: Current datetime
+
+    Returns:
+        True if the oversight timeout has expired
+    """
+    if status != "waiting_oversight":
+        return False
+    if (policy or "wait") != "timeout":
+        return False
+    if not deadline:
+        return False
+    try:
+        deadline_dt = datetime.fromisoformat(deadline)
+        return now >= deadline_dt
+    except (ValueError, TypeError):
+        return False
+
+
+def is_heartbeat_eligible(
+    heartbeat_enabled: bool,
+    heartbeat_paused: bool,
+    is_asleep: bool,
+    prev_status_green: bool,
+    budget_exceeded: bool,
+    has_instruction: bool,
+) -> bool:
+    """Check whether a session is eligible for heartbeat delivery.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        heartbeat_enabled: Whether heartbeat is enabled for the session
+        heartbeat_paused: Whether heartbeat is paused
+        is_asleep: Whether the session is asleep
+        prev_status_green: Whether the previous status was green/active
+        budget_exceeded: Whether the cost budget has been exceeded
+        has_instruction: Whether a heartbeat instruction is configured
+
+    Returns:
+        True if the session is eligible for heartbeat
+    """
+    if not heartbeat_enabled or heartbeat_paused:
+        return False
+    if is_asleep:
+        return False
+    if prev_status_green:
+        return False
+    if budget_exceeded:
+        return False
+    if not has_instruction:
+        return False
+    return True
+
+
+def is_heartbeat_due(
+    last_heartbeat_time: Optional[str],
+    session_start_time: Optional[str],
+    frequency_seconds: int,
+    now: datetime,
+) -> bool:
+    """Check whether a heartbeat is due for delivery.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        last_heartbeat_time: ISO timestamp of the last heartbeat, or None
+        session_start_time: ISO timestamp of session start, used as fallback
+        frequency_seconds: Required interval between heartbeats
+        now: Current datetime
+
+    Returns:
+        True if a heartbeat is due
+    """
+    last_hb = parse_datetime_safe(last_heartbeat_time)
+    if last_hb is None:
+        last_hb = parse_datetime_safe(session_start_time)
+    if last_hb is None:
+        return False
+    elapsed = (now - last_hb).total_seconds()
+    return elapsed >= frequency_seconds
+
+
 def parse_datetime_safe(value: Optional[str]) -> Optional[datetime]:
     """Safely parse an ISO datetime string.
 

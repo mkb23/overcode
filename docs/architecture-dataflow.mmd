@@ -1,0 +1,53 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'fontSize': '13px'}}}%%
+flowchart LR
+    classDef ext fill:#444,stroke:#888,color:#fff
+    classDef process fill:#4a90d9,stroke:#2c5f8a,color:#fff
+    classDef file fill:#6aa84f,stroke:#4a7a35,color:#fff
+    classDef ui fill:#7b68ee,stroke:#5a4cb5,color:#fff
+
+    TMUX["tmux panes\n(ANSI content)"]:::ext
+    HOOKS["Claude Code\nhook events"]:::ext
+    CLAUDE_HIST["~/.claude/\nhistory.jsonl"]:::ext
+    MACOS["macOS\npresence APIs"]:::ext
+
+    PSD["Polling\nDetector"]:::process
+    HSD["Hook\nDetector"]:::process
+    DISP["Dispatcher"]:::process
+
+    MON["Monitor\nDaemon\n(~2s loop)"]:::process
+
+    STATE["monitor_daemon\n_state.json"]:::file
+    SESSIONS["sessions.json"]:::file
+    CSV["agent_history\n.csv"]:::file
+    PRESENCE["presence_log\n.csv"]:::file
+
+    SUPER["Supervisor\nDaemon"]:::process
+    TUI_APP["TUI\n(Textual)"]:::ui
+    WEB["Web\nDashboard"]:::ui
+    SISTER["Sister\nPollers"]:::process
+    EXPORT["Parquet\nExport"]:::process
+
+    TMUX --> PSD
+    HOOKS --> HSD
+    PSD --> DISP
+    HSD --> DISP
+    DISP --> MON
+    CLAUDE_HIST --> MON
+    MACOS --> PRESENCE
+    MON --> STATE
+    MON --> CSV
+    MON --> SESSIONS
+
+    STATE --> TUI_APP
+    STATE --> WEB
+    STATE --> SUPER
+    SESSIONS --> TUI_APP
+    CSV --> TUI_APP
+    PRESENCE --> TUI_APP
+    SISTER --> TUI_APP
+
+    SESSIONS --> EXPORT
+    CSV --> EXPORT
+    PRESENCE --> EXPORT
+
+    SUPER -->|"launches\ndaemon claude"| TMUX

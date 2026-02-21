@@ -520,6 +520,153 @@ def compute_tree_metadata(sessions: List[T], parent_id_fn=None) -> dict:
     return result
 
 
+@dataclass
+class StallState:
+    """Result of stall detection computation."""
+    is_new_stall: bool          # Session just transitioned TO stalled
+    is_unvisited_stalled: bool  # Session is stalled and not yet visited
+    should_clear_tracking: bool  # Session left stalled state, clear tracking
+
+
+def compute_stall_state(
+    status: str,
+    prev_status: Optional[str],
+    session_id: str,
+    visited_stalled_agents: Set[str],
+    is_asleep: bool,
+) -> StallState:
+    """Compute stall state transitions for a session.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        status: Current agent status
+        prev_status: Previous agent status (or None)
+        session_id: The session's ID
+        visited_stalled_agents: Set of session IDs already visited while stalled
+        is_asleep: Whether the session is asleep
+
+    Returns:
+        StallState with transition flags
+    """
+    is_waiting = status == "waiting_user"
+    was_waiting = prev_status == "waiting_user"
+
+    is_new_stall = is_waiting and not was_waiting
+    should_clear_tracking = not is_waiting
+
+    is_unvisited_stalled = (
+        is_waiting
+        and session_id not in visited_stalled_agents
+        and not is_asleep
+    )
+
+    return StallState(
+        is_new_stall=is_new_stall,
+        is_unvisited_stalled=is_unvisited_stalled,
+        should_clear_tracking=should_clear_tracking,
+    )
+
+
+def should_send_stall_notification(
+    status: str,
+    is_notified: bool,
+    is_asleep: bool,
+    has_stall_start: bool,
+    stall_age_seconds: float,
+    uptime_seconds: float,
+) -> bool:
+    """Determine whether a macOS stall notification should be sent.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        status: Current agent status
+        is_notified: Whether we already sent a notification for this stall
+        is_asleep: Whether the session is asleep
+        has_stall_start: Whether we have a recorded stall start time
+        stall_age_seconds: How long the session has been stalled
+        uptime_seconds: Total session uptime
+
+    Returns:
+        True if a notification should be sent
+    """
+    if status != "waiting_user":
+        return False
+    if is_notified:
+        return False
+    if is_asleep:
+        return False
+    if not has_stall_start:
+        return False
+    return stall_age_seconds >= 30 and uptime_seconds >= 60
+
+
+def compute_session_widget_diff(
+    existing_ids: Set[str],
+    display_ids: List[str],
+) -> Tuple[Set[str], Set[str]]:
+    """Compute which session widgets need to be added/removed.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        existing_ids: Set of session IDs currently in the widget tree
+        display_ids: List of session IDs that should be displayed
+
+    Returns:
+        Tuple of (to_add, to_remove) sets of session IDs
+    """
+    new_ids = set(display_ids)
+    to_add = new_ids - existing_ids
+    to_remove = existing_ids - new_ids
+    return to_add, to_remove
+
+
+def detect_display_changes(
+    sessions: List,
+    any_has_budget: bool,
+    any_has_oversight: bool,
+) -> Tuple[bool, bool]:
+    """Compute budget and oversight flag changes from sessions.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        sessions: List of session objects
+        any_has_budget: Current value of any_has_budget flag
+        any_has_oversight: Current value of any_has_oversight flag
+
+    Returns:
+        Tuple of (new_any_has_budget, new_any_has_oversight)
+    """
+    new_budget = any(getattr(s, 'cost_budget_usd', 0) > 0 for s in sessions)
+    new_oversight = any(
+        getattr(s, 'oversight_policy', 'wait') == 'timeout'
+        and getattr(s, 'oversight_timeout_seconds', 0) > 0
+        for s in sessions
+    )
+    return new_budget, new_oversight
+
+
+def compute_active_session_names(
+    sessions: List,
+    asleep_ids: Set[str],
+) -> List[str]:
+    """Compute the names of active (non-asleep) sessions.
+
+    Pure function — no side effects, fully testable.
+
+    Args:
+        sessions: List of session objects with session_id and name attributes
+        asleep_ids: Set of session IDs that are asleep
+
+    Returns:
+        List of session names that are not asleep
+    """
+    return [s.name for s in sessions if s.session_id not in asleep_ids]
+
+
 def calculate_human_interaction_count(
     total_interactions: Optional[int],
     robot_interactions: int,

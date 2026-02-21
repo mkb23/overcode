@@ -144,6 +144,100 @@ class TestToggleSleep:
         assert "No agent focused" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "warning"
 
+    def test_remote_agent_toggle_sleep(self):
+        """Should toggle sleep via sister controller for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.is_asleep = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_sleep.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_sleep(mock_tui)
+
+        mock_tui._sister_controller.set_sleep.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", asleep=True,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "asleep" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+
+    def test_remote_agent_wake(self):
+        """Should wake a remote agent via sister controller."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.is_asleep = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_sleep.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_sleep(mock_tui)
+
+        mock_tui._sister_controller.set_sleep.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", asleep=False,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "awake" in mock_tui.notify.call_args[0][0]
+
+    def test_blocks_sleep_with_active_heartbeat(self):
+        """Should prevent sleeping agent with active heartbeat (#219)."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+        from overcode.status_constants import STATUS_WAITING_USER
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.is_asleep = False
+        mock_session.name = "heartbeat-agent"
+        mock_session.parent_session_id = None
+        mock_session.heartbeat_enabled = True
+        mock_session.heartbeat_paused = False
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+        mock_widget.detected_status = STATUS_WAITING_USER
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_sleep(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "active heartbeat" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+        mock_tui.session_manager.update_session.assert_not_called()
+
 
 class TestToggleFocused:
     """Test action_toggle_focused method."""
@@ -207,6 +301,224 @@ class TestToggleFocused:
 
         # Should not raise
         SessionActionsMixin.action_toggle_focused(mock_tui)
+
+
+class TestToggleHeartbeatPause:
+    """Test action_toggle_heartbeat_pause method."""
+
+    def test_no_agent_focused(self):
+        """Should warn when no agent is focused."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.focused = MagicMock()  # Not a SessionSummary
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "No agent focused" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    def test_child_agent_blocked(self):
+        """Should block heartbeat pause on child agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.parent_session_id = "parent-123"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "only available for root agents" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    def test_no_heartbeat_configured(self):
+        """Should warn when no heartbeat is configured."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.parent_session_id = None
+        mock_session.heartbeat_enabled = False
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "No heartbeat configured" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    @patch("overcode.settings.signal_activity")
+    def test_successful_pause(self, mock_signal):
+        """Should pause an active heartbeat."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.parent_session_id = None
+        mock_session.heartbeat_enabled = True
+        mock_session.heartbeat_paused = False
+        mock_session.is_asleep = False
+        mock_session.name = "test-agent"
+        mock_session.id = "session-123"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "session-123", heartbeat_paused=True
+        )
+        assert mock_session.heartbeat_paused is True
+        mock_signal.assert_called_once_with(mock_tui.tmux_session)
+        mock_tui.notify.assert_called_once()
+        assert "paused" in mock_tui.notify.call_args[0][0]
+        mock_widget.refresh.assert_called_once()
+
+    @patch("overcode.settings.signal_activity")
+    def test_successful_resume(self, mock_signal):
+        """Should resume a paused heartbeat."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.parent_session_id = None
+        mock_session.heartbeat_enabled = True
+        mock_session.heartbeat_paused = True
+        mock_session.is_asleep = False
+        mock_session.name = "test-agent"
+        mock_session.id = "session-123"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "session-123", heartbeat_paused=False
+        )
+        assert mock_session.heartbeat_paused is False
+        mock_signal.assert_called_once_with(mock_tui.tmux_session)
+        mock_tui.notify.assert_called_once()
+        assert "resumed" in mock_tui.notify.call_args[0][0]
+
+    def test_sleeping_agent_cannot_resume(self):
+        """Should prevent resuming heartbeat on a sleeping agent (#265)."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.parent_session_id = None
+        mock_session.heartbeat_enabled = True
+        mock_session.heartbeat_paused = True
+        mock_session.is_asleep = True
+        mock_session.name = "sleeping-agent"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "Cannot resume heartbeat on sleeping agent" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+        mock_tui.session_manager.update_session.assert_not_called()
+
+    def test_remote_agent_pause(self):
+        """Should pause heartbeat on remote agent via sister controller."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.heartbeat_paused = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.pause_heartbeat.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui._sister_controller.pause_heartbeat.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent",
+        )
+        mock_tui.notify.assert_called_once()
+        assert "paused" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_resume(self):
+        """Should resume heartbeat on remote agent via sister controller."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.heartbeat_paused = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.resume_heartbeat.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
+
+        mock_tui._sister_controller.resume_heartbeat.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent",
+        )
+        mock_tui.notify.assert_called_once()
+        assert "resumed" in mock_tui.notify.call_args[0][0]
 
 
 class TestToggleTimeContext:
@@ -276,6 +588,504 @@ class TestToggleTimeContext:
 
         mock_tui.notify.assert_called_once()
         assert "No agent focused" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_toggle_time_context(self):
+        """Should toggle time context via sister controller for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.time_context_enabled = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_time_context.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_time_context(mock_tui)
+
+        mock_tui._sister_controller.set_time_context.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", enabled=True,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "enabled" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+        # Should NOT update local session manager for remote agents
+        mock_tui.session_manager.update_session.assert_not_called()
+
+    def test_remote_agent_disable_time_context(self):
+        """Should disable time context via sister controller for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.time_context_enabled = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_time_context.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_time_context(mock_tui)
+
+        mock_tui._sister_controller.set_time_context.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", enabled=False,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "disabled" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_time_context_failure(self):
+        """Should notify error when remote time context toggle fails."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.time_context_enabled = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_result.error = "Connection refused"
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_time_context.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_time_context(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "Remote error: Connection refused" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "error"
+
+
+class TestToggleHookDetection:
+    """Test action_toggle_hook_detection method."""
+
+    def test_no_agent_focused(self):
+        """Should warn when no agent is focused."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.focused = MagicMock()  # Not a SessionSummary
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "No agent focused" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    def test_enable_hook_detection(self):
+        """Should enable hook detection on a local agent."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.hook_status_detection = False
+        mock_session.name = "test-agent"
+        mock_session.id = "session-123"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "session-123", hook_status_detection=True
+        )
+        assert mock_session.hook_status_detection is True
+        mock_tui.notify.assert_called_once()
+        assert "enabled" in mock_tui.notify.call_args[0][0]
+        mock_widget.refresh.assert_called_once()
+
+    def test_disable_hook_detection(self):
+        """Should disable hook detection on a local agent."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.hook_status_detection = True
+        mock_session.name = "test-agent"
+        mock_session.id = "session-123"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "session-123", hook_status_detection=False
+        )
+        assert mock_session.hook_status_detection is False
+        mock_tui.notify.assert_called_once()
+        assert "disabled" in mock_tui.notify.call_args[0][0]
+        assert "polling" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_enable_hook_detection(self):
+        """Should enable hook detection via sister controller for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.hook_status_detection = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui._sister_controller.set_hook_detection.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", enabled=True,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "enabled" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+        # Should NOT update local session manager for remote agents
+        mock_tui.session_manager.update_session.assert_not_called()
+
+    def test_remote_agent_disable_hook_detection(self):
+        """Should disable hook detection via sister controller for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.hook_status_detection = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui._sister_controller.set_hook_detection.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent", enabled=False,
+        )
+        mock_tui.notify.assert_called_once()
+        assert "disabled" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_hook_detection_failure(self):
+        """Should notify error when remote hook detection toggle fails."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.hook_status_detection = False
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_result.error = "Timeout"
+
+        mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.notify.assert_called_once()
+        assert "Remote error: Timeout" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "error"
+
+
+class TestExecuteRemoteKill:
+    """Test _execute_remote_kill method."""
+
+    def test_sends_kill_via_sister_controller(self):
+        """Should send kill command via sister controller."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_session = MagicMock()
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+        mock_session.name = "remote-agent"
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.kill_agent.return_value = mock_result
+
+        SessionActionsMixin._execute_remote_kill(mock_tui, mock_session)
+
+        mock_tui._sister_controller.kill_agent.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent",
+        )
+        mock_tui.notify.assert_called_once()
+        assert "Killed remote agent" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+
+    def test_kill_failure_shows_error(self):
+        """Should show error notification when remote kill fails."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_session = MagicMock()
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+        mock_session.name = "remote-agent"
+
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_result.error = "Agent not found"
+
+        mock_tui = MagicMock()
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.kill_agent.return_value = mock_result
+
+        SessionActionsMixin._execute_remote_kill(mock_tui, mock_session)
+
+        mock_tui.notify.assert_called_once()
+        assert "Remote error: Agent not found" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "error"
+
+
+class TestExecuteRemoteRestart:
+    """Test _execute_remote_restart method."""
+
+    def test_sends_restart_via_sister_controller(self):
+        """Should send restart command via sister controller."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_session = MagicMock()
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+        mock_session.name = "remote-agent"
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_tui = MagicMock()
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.restart_agent.return_value = mock_result
+
+        SessionActionsMixin._execute_remote_restart(mock_tui, mock_session)
+
+        mock_tui._sister_controller.restart_agent.assert_called_once_with(
+            "http://remote:8080", "key-abc", "remote-agent",
+        )
+        mock_tui.notify.assert_called_once()
+        assert "Restarted remote agent" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+
+    def test_restart_failure_shows_error(self):
+        """Should show error notification when remote restart fails."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        mock_session = MagicMock()
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+        mock_session.name = "remote-agent"
+
+        mock_result = MagicMock()
+        mock_result.ok = False
+        mock_result.error = "Restart failed"
+
+        mock_tui = MagicMock()
+        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
+        mock_tui._sister_controller.restart_agent.return_value = mock_result
+
+        SessionActionsMixin._execute_remote_restart(mock_tui, mock_session)
+
+        mock_tui.notify.assert_called_once()
+        assert "Remote error: Restart failed" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "error"
+
+
+class TestExecuteTransportAll:
+    """Test _execute_transport_all method."""
+
+    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    def test_mixed_local_and_remote(self, MockLauncher):
+        """Should send to both local and remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        local_session = MagicMock()
+        local_session.is_remote = False
+        local_session.name = "local-agent"
+
+        remote_session = MagicMock()
+        remote_session.is_remote = True
+        remote_session.name = "remote-agent"
+        remote_session.source_url = "http://remote:8080"
+        remote_session.source_api_key = "key-abc"
+
+        mock_result = MagicMock()
+        mock_result.ok = True
+
+        mock_launcher_instance = MockLauncher.return_value
+        mock_launcher_instance.send_to_session.return_value = True
+
+        mock_tui = MagicMock()
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_controller.send_instruction.return_value = mock_result
+
+        SessionActionsMixin._execute_transport_all(mock_tui, [local_session, remote_session])
+
+        # Local agent should be sent via launcher
+        mock_launcher_instance.send_to_session.assert_called_once()
+        assert mock_launcher_instance.send_to_session.call_args[0][0] == "local-agent"
+
+        # Remote agent should be sent via sister controller
+        mock_tui._sister_controller.send_instruction.assert_called_once()
+        call_args = mock_tui._sister_controller.send_instruction.call_args
+        assert call_args[0][0] == "http://remote:8080"
+        assert call_args[0][1] == "key-abc"
+        assert call_args[0][2] == "remote-agent"
+
+        # Both succeeded so notification should report all sent
+        mock_tui.notify.assert_called_once()
+        assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+
+    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    def test_partial_failures(self, MockLauncher):
+        """Should report partial failures when some sends fail."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session1 = MagicMock()
+        session1.is_remote = False
+        session1.name = "agent-1"
+
+        session2 = MagicMock()
+        session2.is_remote = False
+        session2.name = "agent-2"
+
+        mock_launcher_instance = MockLauncher.return_value
+        # First send succeeds, second fails
+        mock_launcher_instance.send_to_session.side_effect = [True, False]
+
+        mock_tui = MagicMock()
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin._execute_transport_all(mock_tui, [session1, session2])
+
+        mock_tui.notify.assert_called_once()
+        assert "Sent to 1" in mock_tui.notify.call_args[0][0]
+        assert "failed 1" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    def test_all_local_success(self, MockLauncher):
+        """Should report success when all local agents are transported."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session1 = MagicMock()
+        session1.is_remote = False
+        session1.name = "agent-1"
+
+        session2 = MagicMock()
+        session2.is_remote = False
+        session2.name = "agent-2"
+
+        mock_launcher_instance = MockLauncher.return_value
+        mock_launcher_instance.send_to_session.return_value = True
+
+        mock_tui = MagicMock()
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+
+        SessionActionsMixin._execute_transport_all(mock_tui, [session1, session2])
+
+        assert mock_launcher_instance.send_to_session.call_count == 2
+        mock_tui.notify.assert_called_once()
+        assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "information"
+
+    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    def test_remote_failure(self, MockLauncher):
+        """Should count remote failure in partial failure report."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        remote_session = MagicMock()
+        remote_session.is_remote = True
+        remote_session.name = "remote-agent"
+        remote_session.source_url = "http://remote:8080"
+        remote_session.source_api_key = "key-abc"
+
+        mock_result = MagicMock()
+        mock_result.ok = False
+
+        mock_tui = MagicMock()
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_controller.send_instruction.return_value = mock_result
+
+        SessionActionsMixin._execute_transport_all(mock_tui, [remote_session])
+
+        mock_tui.notify.assert_called_once()
+        assert "Sent to 0" in mock_tui.notify.call_args[0][0]
+        assert "failed 1" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
 
 
 class TestKillFocused:
@@ -397,6 +1207,78 @@ class TestKillFocused:
         mock_tui.notify.assert_called_once()
         assert "No agent focused" in mock_tui.notify.call_args[0][0]
 
+    def test_terminated_agent_triggers_cleanup(self):
+        """Should use cleanup confirmation for terminated agent instead of kill."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.name = "done-agent"
+        mock_session.id = "session-789"
+        mock_session.status = "terminated"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = self._make_mock_tui(mock_widget)
+
+        SessionActionsMixin.action_kill_focused(mock_tui)
+
+        # Should set "cleanup" pending, not "kill"
+        assert "cleanup" in mock_tui._pending_confirmations
+        assert "kill" not in mock_tui._pending_confirmations
+        mock_tui.notify.assert_called_once()
+        assert "clean up" in mock_tui.notify.call_args[0][0]
+
+    def test_done_agent_triggers_cleanup(self):
+        """Should use cleanup confirmation for done agent instead of kill."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = False
+        mock_session.name = "done-agent"
+        mock_session.id = "session-789"
+        mock_session.status = "done"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = self._make_mock_tui(mock_widget)
+
+        SessionActionsMixin.action_kill_focused(mock_tui)
+
+        assert "cleanup" in mock_tui._pending_confirmations
+        mock_tui.notify.assert_called_once()
+        assert "clean up" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_uses_sister_controller(self):
+        """Should use sister controller kill path for remote agents."""
+        import time
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = self._make_mock_tui(mock_widget)
+
+        # First press
+        SessionActionsMixin.action_kill_focused(mock_tui)
+        assert "kill" in mock_tui._pending_confirmations
+        assert "remote agent" in mock_tui.notify.call_args[0][0]
+
+        # Second press within timeout - should call _execute_remote_kill
+        SessionActionsMixin.action_kill_focused(mock_tui)
+        mock_tui._execute_remote_kill.assert_called_once_with(mock_session)
+
 
 class TestRestartFocused:
     """Test action_restart_focused method."""
@@ -485,6 +1367,31 @@ class TestRestartFocused:
 
         mock_tui.notify.assert_called_once()
         assert "No agent focused" in mock_tui.notify.call_args[0][0]
+
+    def test_remote_agent_uses_sister_controller(self):
+        """Should use sister controller restart path for remote agents."""
+        from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_session = MagicMock()
+        mock_session.is_remote = True
+        mock_session.name = "remote-agent"
+        mock_session.source_url = "http://remote:8080"
+        mock_session.source_api_key = "key-abc"
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = mock_session
+
+        mock_tui = self._make_mock_tui(mock_widget)
+
+        # First press
+        SessionActionsMixin.action_restart_focused(mock_tui)
+        assert "restart" in mock_tui._pending_confirmations
+        assert "remote agent" in mock_tui.notify.call_args[0][0]
+
+        # Second press within timeout - should call _execute_remote_restart
+        SessionActionsMixin.action_restart_focused(mock_tui)
+        mock_tui._execute_remote_restart.assert_called_once_with(mock_session)
 
 
 class TestSyncToMainAndClear:
