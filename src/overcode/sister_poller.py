@@ -153,7 +153,7 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
     # Map API status to session status — pass through as-is so that
     # filtering (hide done, hide asleep) and display (emoji, color, sort)
     # work correctly for remote agents.
-    status = agent.get("status", "running")
+    status = agent["status"]
     is_asleep = status == "asleep"
 
     # Build SessionStats from API fields
