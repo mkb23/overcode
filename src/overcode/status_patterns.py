@@ -444,21 +444,37 @@ def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80)
 
 # Regex for detecting sleep commands in pane content (#289)
 _SLEEP_PATTERN = re.compile(r'\bsleep\s+\d+', re.IGNORECASE)
-_SLEEP_DURATION_PATTERN = re.compile(r'\bsleep\s+(\d+)', re.IGNORECASE)
+# Matches enriched activity like "Sleeping 1.0m", "Sleeping 45s", "Sleeping 2.5h"
+_FORMATTED_SLEEP_PATTERN = re.compile(
+    r'\bsleeping\s+(\d+(?:\.\d+)?)(s|m|h|d)\b', re.IGNORECASE
+)
+# Matches raw commands like "sleep 300", "sleep 60 && echo done"
+# Negative lookahead prevents matching "1" from "1.0m"
+_RAW_SLEEP_PATTERN = re.compile(r'\bsleep\s+(\d+)(?![.\d])', re.IGNORECASE)
 
 
 def extract_sleep_duration(text: str) -> int | None:
-    """Extract sleep duration in seconds from a command string.
+    """Extract sleep duration in seconds from a command or activity string.
 
-    Returns None if no sleep duration is parseable.
-
-    Examples:
+    Handles both raw commands and enriched activity strings:
         extract_sleep_duration("sleep 30") → 30
         extract_sleep_duration("sleep 900 && echo check") → 900
         extract_sleep_duration('Bash("sleep 60")') → 60
+        extract_sleep_duration("Sleeping 60s") → 60
+        extract_sleep_duration("Sleeping 1.0m") → 60
+        extract_sleep_duration("Sleeping 2.5h") → 9000
         extract_sleep_duration("Reading config.json") → None
     """
-    m = _SLEEP_DURATION_PATTERN.search(text)
+    # Try formatted activity string first (e.g., "Sleeping 1.0m")
+    m = _FORMATTED_SLEEP_PATTERN.search(text)
+    if m:
+        value = float(m.group(1))
+        unit = m.group(2).lower()
+        multiplier = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+        return int(value * multiplier[unit])
+
+    # Fall back to raw command (e.g., "sleep 300")
+    m = _RAW_SLEEP_PATTERN.search(text)
     return int(m.group(1)) if m else None
 
 

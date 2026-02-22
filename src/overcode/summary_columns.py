@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
 from .status_constants import ALL_STATUSES
+from .status_patterns import extract_sleep_duration
 from .tui_helpers import (
     format_cost,
     format_duration,
@@ -804,6 +805,13 @@ def build_cli_context(
         except (ValueError, TypeError):
             pass
 
+    # Compute sleep wake estimate (#289)
+    sleep_wake_estimate = None
+    if status == "busy_sleeping" and status_changed_at:
+        dur = extract_sleep_duration(getattr(stats, 'current_task', '') or '')
+        if dur:
+            sleep_wake_estimate = status_changed_at + timedelta(seconds=dur)
+
     return ColumnContext(
         session=session,
         stats=stats,
@@ -839,6 +847,7 @@ def build_cli_context(
         max_branch_width=10,
         any_has_oversight_timeout=any_has_oversight_timeout,
         oversight_deadline=oversight_deadline,
+        sleep_wake_estimate=sleep_wake_estimate,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
     )

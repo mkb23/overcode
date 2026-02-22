@@ -493,7 +493,21 @@ class TestExtractSleepDuration:
 
     def test_enriched_activity_string(self):
         """Should extract duration from enriched activity like 'Sleeping 5.0m'."""
-        # The enriched activity doesn't contain the raw command, so it returns None
-        assert extract_sleep_duration("Sleeping 5.0m") is None
-        # But the raw pane content should work
+        assert extract_sleep_duration("Sleeping 5.0m") == 300
+        assert extract_sleep_duration("Sleeping 60s") == 60
+        assert extract_sleep_duration("Sleeping 45s") == 45
         assert extract_sleep_duration('Running Bash("sleep 300")') == 300
+
+    def test_formatted_duration_minutes(self):
+        """Should parse format_duration output like 'Sleeping 1.0m' → 60."""
+        assert extract_sleep_duration("Sleeping 1.0m") == 60
+        assert extract_sleep_duration("Sleeping 15.0m") == 900
+
+    def test_formatted_duration_hours(self):
+        """Should parse format_duration output like 'Sleeping 2.5h' → 9000."""
+        assert extract_sleep_duration("Sleeping 1.0h") == 3600
+        assert extract_sleep_duration("Sleeping 2.5h") == 9000
+
+    def test_formatted_duration_days(self):
+        """Should parse format_duration output like 'Sleeping 1.0d'."""
+        assert extract_sleep_duration("Sleeping 1.0d") == 86400
