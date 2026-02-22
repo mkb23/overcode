@@ -283,3 +283,109 @@ class TestSisterPollerWithServer:
             assert received_headers["X-API-Key"] == "my-secret"
         finally:
             key_server.shutdown()
+
+
+class TestPollAllTimelines:
+    """Test timeline polling from sisters."""
+
+    @patch("overcode.sister_poller.get_sisters_config", return_value=[])
+    @patch("overcode.sister_poller.get_hostname", return_value="local")
+    def test_no_sisters_returns_empty(self, mock_hostname, mock_config):
+        poller = SisterPoller()
+        result = poller.poll_all_timelines(hours=3.0)
+        assert result == {}
+
+    @patch("overcode.sister_poller.get_sisters_config", return_value=[
+        {"name": "down", "url": "http://localhost:99999"},
+    ])
+    @patch("overcode.sister_poller.get_hostname", return_value="local")
+    def test_unreachable_sister_returns_empty(self, mock_hostname, mock_config):
+        poller = SisterPoller()
+        result = poller.poll_all_timelines(hours=3.0)
+        assert result == {}
+
+
+class TestPollAllTimelinesWithServer:
+    """Integration-style test with a real HTTP server for timeline data."""
+
+    @pytest.fixture(autouse=True)
+    def setup_server(self):
+        """Start a server returning mock raw timeline data."""
+        self.timeline_data = {
+            "hours": 3.0,
+            "agents": {
+                "agent-a": [
+                    {"t": "2026-02-22T10:00:00", "s": "running"},
+                    {"t": "2026-02-22T10:05:00", "s": "waiting_user"},
+                ],
+                "agent-b": [
+                    {"t": "2026-02-22T10:10:00", "s": "running"},
+                ],
+            },
+        }
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if "/api/timeline/raw" in self.path:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(outer.timeline_data).encode())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        yield
+        self.server.shutdown()
+
+    @patch("overcode.sister_poller.get_hostname", return_value="local")
+    def test_poll_returns_parsed_histories(self, mock_hostname):
+        with patch("overcode.sister_poller.get_sisters_config", return_value=[
+            {"name": "test-sister", "url": f"http://127.0.0.1:{self.port}"},
+        ]):
+            poller = SisterPoller()
+            result = poller.poll_all_timelines(hours=3.0)
+
+        assert "agent-a" in result
+        assert "agent-b" in result
+        assert len(result["agent-a"]) == 2
+        assert len(result["agent-b"]) == 1
+        # Check parsed datetime and status
+        ts, status = result["agent-a"][0]
+        assert isinstance(ts, datetime)
+        assert status == "running"
+
+    @patch("overcode.sister_poller.get_hostname", return_value="local")
+    def test_404_returns_empty(self, mock_hostname):
+        """Server returning 404 (old version) should gracefully return {}."""
+        class Handler404(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(404)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler404)
+        port = server.server_address[1]
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        try:
+            with patch("overcode.sister_poller.get_sisters_config", return_value=[
+                {"name": "old-sister", "url": f"http://127.0.0.1:{port}"},
+            ]):
+                poller = SisterPoller()
+                result = poller.poll_all_timelines(hours=3.0)
+
+            assert result == {}
+        finally:
+            server.shutdown()

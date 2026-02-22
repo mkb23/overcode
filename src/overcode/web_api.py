@@ -354,6 +354,32 @@ def get_timeline_data(tmux_session: str, hours: float = 3.0, slots: int = 60) ->
     return result
 
 
+def get_raw_timeline_data(tmux_session: str, hours: float = 3.0) -> Dict[str, Any]:
+    """Get raw timeline history as (timestamp, status) pairs per agent.
+
+    Unlike get_timeline_data() which pre-computes fixed-width slots, this
+    returns the raw entries so callers (e.g. sister TUIs) can re-slot at
+    their own dynamic terminal width.
+
+    Args:
+        tmux_session: tmux session name
+        hours: How many hours of history (default 3)
+
+    Returns:
+        Dictionary with raw timeline entries per agent
+    """
+    history_path = get_agent_history_path(tmux_session)
+    all_history = read_agent_status_history(hours=hours, history_file=history_path)
+
+    agents: Dict[str, list] = {}
+    for ts, agent, status, activity in all_history:
+        if agent not in agents:
+            agents[agent] = []
+        agents[agent].append({"t": ts.isoformat(), "s": status})
+
+    return {"hours": hours, "agents": agents}
+
+
 def get_health_data() -> Dict[str, Any]:
     """Get health check data."""
     return {

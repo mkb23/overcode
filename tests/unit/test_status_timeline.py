@@ -379,6 +379,57 @@ class TestStatusTimelineRender:
 
 
 # ===========================================================================
+# Remote agent timeline rendering (#296)
+# ===========================================================================
+
+
+class TestRemoteAgentTimeline:
+    """Verify remote agent names with history data render non-empty timelines."""
+
+    def test_remote_agent_with_history_renders_timeline(self):
+        """A remote agent with history data should show colored blocks, not dashes."""
+        now = datetime.now()
+        sessions = [_make_mock_session("remote-agent")]
+        agent_hist = {
+            "remote-agent": [
+                (now - timedelta(minutes=60), "running"),
+                (now - timedelta(minutes=30), "waiting_user"),
+                (now - timedelta(minutes=10), "running"),
+            ]
+        }
+        widget = _make_bare_timeline(
+            sessions=sessions,
+            _agent_histories=agent_hist,
+            timeline_hours=3.0,
+        )
+        widget.app.baseline_minutes = 0
+        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=40):
+            with patch.object(type(widget), 'label_width', new_callable=PropertyMock, return_value=12):
+                result = widget.render()
+        plain = result.plain
+        assert "remote-agent" in plain
+        # Should show a percentage (not just dashes)
+        assert "%" in plain
+
+    def test_remote_agent_without_history_shows_dashes(self):
+        """A remote agent with no history should show empty dash timeline."""
+        sessions = [_make_mock_session("remote-no-data")]
+        widget = _make_bare_timeline(
+            sessions=sessions,
+            _agent_histories={},
+            timeline_hours=3.0,
+        )
+        widget.app.baseline_minutes = 0
+        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=40):
+            with patch.object(type(widget), 'label_width', new_callable=PropertyMock, return_value=14):
+                result = widget.render()
+        plain = result.plain
+        assert "remote-no-dat" in plain  # Truncated to label_width
+        # Should show dash placeholder, not a percentage
+        assert "-" in plain
+
+
+# ===========================================================================
 # Constants
 # ===========================================================================
 

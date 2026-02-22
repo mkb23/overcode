@@ -575,6 +575,13 @@ class SupervisorTUI(
         # Heavy CSV I/O happens here in the worker thread
         presence_history, agent_histories = timeline.fetch_history_data(sessions)
 
+        # Merge remote timeline data from sisters (#296)
+        if self._sister_poller.has_sisters:
+            remote_histories = self._sister_poller.poll_all_timelines(
+                timeline.timeline_hours
+            )
+            agent_histories.update(remote_histories)
+
         # Apply on main thread
         self.call_from_thread(
             timeline.apply_history_data, sessions, presence_history, agent_histories
@@ -949,8 +956,14 @@ class SupervisorTUI(
     def _apply_remote_sessions(self, remote_sessions: List[Session]) -> None:
         """Store remote sessions and rebuild widget list."""
         self._mark_event("apply_sisters_start")
+        had_remote = len(self._remote_sessions) > 0
         self._remote_sessions = remote_sessions
         self.refresh_sessions()
+        # On first remote arrival, kick off timeline update so remote
+        # agent timelines appear immediately instead of waiting for the
+        # 30s timeline cycle (#296).
+        if not had_remote and remote_sessions:
+            self.update_timeline()
         self._mark_event("apply_sisters_end")
 
     def _poll_focused_sister(self) -> None:

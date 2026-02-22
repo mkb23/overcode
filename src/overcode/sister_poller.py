@@ -10,7 +10,7 @@ import json
 import socket
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -95,6 +95,50 @@ class SisterPoller:
     def get_sister_states(self) -> List[SisterState]:
         """Return current state of all sisters (for status bar display)."""
         return list(self._sisters)
+
+    def poll_all_timelines(self, hours: float = 3.0) -> Dict[str, List[Tuple[datetime, str]]]:
+        """Fetch raw timeline data from all sisters, return merged agent histories.
+
+        Returns:
+            Dict mapping agent names to lists of (timestamp, status) tuples,
+            suitable for merging into StatusTimeline._agent_histories.
+        """
+        merged: Dict[str, List[Tuple[datetime, str]]] = {}
+        for sister in self._sisters:
+            histories = self._poll_sister_timeline(sister, hours)
+            merged.update(histories)
+        return merged
+
+    def _poll_sister_timeline(
+        self, sister: SisterState, hours: float
+    ) -> Dict[str, List[Tuple[datetime, str]]]:
+        """Fetch /api/timeline/raw from a single sister.
+
+        Returns {} on network failure or 404 (old server version).
+        """
+        url = f"{sister.url}/api/timeline/raw?hours={hours}"
+        req = Request(url, method="GET")
+        if sister.api_key:
+            req.add_header("X-API-Key", sister.api_key)
+
+        try:
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (URLError, socket.timeout, json.JSONDecodeError, OSError):
+            return {}
+
+        result: Dict[str, List[Tuple[datetime, str]]] = {}
+        for agent_name, entries in data.get("agents", {}).items():
+            pairs: List[Tuple[datetime, str]] = []
+            for entry in entries:
+                try:
+                    ts = datetime.fromisoformat(entry["t"])
+                    pairs.append((ts, entry["s"]))
+                except (KeyError, ValueError):
+                    continue
+            if pairs:
+                result[agent_name] = pairs
+        return result
 
     def _poll_sister(self, sister: SisterState) -> List[Session]:
         """Fetch /api/status from a single sister, update its state."""

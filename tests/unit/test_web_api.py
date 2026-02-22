@@ -1244,3 +1244,73 @@ class TestSessionToAnalyticsRecord:
 
         assert result["work_times"] == []
         assert result["median_work_time"] == 0.0
+
+
+class TestGetRawTimelineData:
+    """Tests for get_raw_timeline_data function."""
+
+    def test_returns_basic_structure(self):
+        """Should return dict with hours and agents."""
+        from overcode.web_api import get_raw_timeline_data
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history:
+            mock_history.return_value = []
+
+            result = get_raw_timeline_data("test-session", hours=3.0)
+
+            assert result["hours"] == 3.0
+            assert result["agents"] == {}
+
+    def test_groups_entries_by_agent(self):
+        """Should group raw entries by agent name."""
+        from overcode.web_api import get_raw_timeline_data
+
+        now = datetime.now()
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history:
+            mock_history.return_value = [
+                (now - timedelta(minutes=30), "agent1", "running", "coding"),
+                (now - timedelta(minutes=20), "agent2", "waiting_user", "blocked"),
+                (now - timedelta(minutes=10), "agent1", "waiting_user", "stuck"),
+            ]
+
+            result = get_raw_timeline_data("test-session", hours=1.0)
+
+            assert "agent1" in result["agents"]
+            assert "agent2" in result["agents"]
+            assert len(result["agents"]["agent1"]) == 2
+            assert len(result["agents"]["agent2"]) == 1
+
+    def test_entries_have_timestamp_and_status(self):
+        """Each entry should have 't' (ISO timestamp) and 's' (status)."""
+        from overcode.web_api import get_raw_timeline_data
+
+        now = datetime.now()
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history:
+            mock_history.return_value = [
+                (now, "agent1", "running", "working"),
+            ]
+
+            result = get_raw_timeline_data("test-session")
+
+            entry = result["agents"]["agent1"][0]
+            assert "t" in entry
+            assert "s" in entry
+            assert entry["s"] == "running"
+            # Verify 't' is a valid ISO timestamp
+            datetime.fromisoformat(entry["t"])
+
+    def test_uses_session_specific_history_path(self):
+        """Should pass the correct session history path to reader."""
+        from overcode.web_api import get_raw_timeline_data
+
+        with patch('overcode.web_api.read_agent_status_history') as mock_history, \
+             patch('overcode.web_api.get_agent_history_path') as mock_path:
+            mock_path.return_value = "/fake/session/path"
+            mock_history.return_value = []
+
+            get_raw_timeline_data("my-session", hours=6.0)
+
+            mock_path.assert_called_once_with("my-session")
+            mock_history.assert_called_once_with(hours=6.0, history_file="/fake/session/path")

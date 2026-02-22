@@ -27,6 +27,7 @@ from .web_api import (
     get_status_data,
     get_single_agent_status,
     get_timeline_data,
+    get_raw_timeline_data,
     get_health_data,
     # Analytics API functions
     get_analytics_sessions,
@@ -95,6 +96,9 @@ class OvercodeHandler(BaseHTTPRequestHandler):
             hours = float(query.get("hours", [3.0])[0])
             slots = int(query.get("slots", [60])[0])
             self._serve_json(get_timeline_data(self.tmux_session, hours=hours, slots=slots))
+        elif path == "/api/timeline/raw":
+            hours = float(query.get("hours", [3.0])[0])
+            self._serve_json(get_raw_timeline_data(self.tmux_session, hours=hours))
         elif path == "/health":
             self._serve_json(get_health_data())
         else:
