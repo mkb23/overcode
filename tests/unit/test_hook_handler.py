@@ -65,6 +65,23 @@ class TestWriteHookState:
         assert data["event"] == "PostToolUse"
         assert data["tool_name"] == "Bash"
 
+    def test_writes_tool_input(self, monkeypatch, tmp_path):
+        """tool_input dict should be persisted in hook state (#289)."""
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        write_hook_state("PostToolUse", "agents", "my-agent",
+                         tool_name="Bash", tool_input={"command": "sleep 60"})
+        path = tmp_path / "agents" / "hook_state_my-agent.json"
+        data = json.loads(path.read_text())
+        assert data["tool_input"] == {"command": "sleep 60"}
+
+    def test_omits_tool_input_when_none(self, monkeypatch, tmp_path):
+        """tool_input should not appear in state when not provided."""
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        write_hook_state("PostToolUse", "agents", "my-agent", tool_name="Bash")
+        path = tmp_path / "agents" / "hook_state_my-agent.json"
+        data = json.loads(path.read_text())
+        assert "tool_input" not in data
+
     def test_creates_directory(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "deep" / "nested"))
         write_hook_state("Stop", "agents", "my-agent")

@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import HookStatusDetector
-from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED
+from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_USER, STATUS_TERMINATED
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
@@ -405,3 +405,111 @@ class TestStatusDetectorAttributes:
         assert detector.STATUS_RUNNING == STATUS_RUNNING
         assert detector.STATUS_WAITING_USER == STATUS_WAITING_USER
         assert detector.STATUS_TERMINATED == STATUS_TERMINATED
+
+
+class TestBusySleepingDetection:
+    """Tests for busy_sleeping detection in hook-based detector (#289)."""
+
+    def test_sleep_in_pane_content(self, tmp_path):
+        """PostToolUse with sleep visible in pane → busy_sleeping."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Bash")
+        pane_content = '⏺ Running Bash("sleep 60")\n'
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"Sleep in pane should be busy_sleeping, got {status}: {activity}"
+        )
+
+    def test_activity_includes_duration_from_pane(self, tmp_path):
+        """Activity string should include parsed duration like 'Sleeping 60s'."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Bash")
+        pane_content = '⏺ Running Bash("sleep 60")\n'
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert "Sleeping" in activity, f"Activity should start with 'Sleeping', got: {activity}"
+        assert "60s" in activity or "1.0m" in activity, (
+            f"Activity should include '60s' or '1.0m', got: {activity}"
+        )
+
+    def test_activity_includes_duration_from_tool_input(self, tmp_path):
+        """Activity from tool_input should also include parsed duration."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PostToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 300"},
+        }
+        path = state_dir / "hook_state_test-agent.json"
+        path.write_text(json.dumps(data))
+
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert "Sleeping" in activity, f"Activity should start with 'Sleeping', got: {activity}"
+        assert "5.0m" in activity, f"Activity should include '5.0m' (300s), got: {activity}"
+
+    def test_sleep_in_tool_input(self, tmp_path):
+        """PostToolUse with tool_input containing sleep → busy_sleeping."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PostToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 300"},
+        }
+        path = state_dir / "hook_state_test-agent.json"
+        path.write_text(json.dumps(data))
+
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"Sleep in tool_input should be busy_sleeping, got {status}: {activity}"
+        )
+
+    def test_non_sleep_bash_stays_running(self, tmp_path):
+        """PostToolUse with non-sleep Bash → running."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Bash")
+        pane_content = '⏺ Running Bash("pytest tests/ -v")\n'
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_RUNNING, (
+            f"Non-sleep bash should be running, got {status}: {activity}"
+        )
+
+    def test_user_prompt_submit_with_sleep_in_pane(self, tmp_path):
+        """UserPromptSubmit with sleep visible in pane → busy_sleeping."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit")
+        pane_content = 'Processing...\n⏺ Bash  sleep 120\n'
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"UserPromptSubmit with sleep in pane should be busy_sleeping, got {status}: {activity}"
+        )

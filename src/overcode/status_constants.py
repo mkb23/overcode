@@ -30,6 +30,7 @@ STATUS_ERROR = "error"  # API timeout, etc. (#22)
 STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-triggered run (timeline only)
 STATUS_DONE = "done"  # Child agent completed its delegated work (#244)
 STATUS_WAITING_OVERSIGHT = "waiting_oversight"  # Child stopped, awaiting oversight report
+STATUS_BUSY_SLEEPING = "busy_sleeping"  # Agent running but executing a sleep command (#289)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -44,6 +45,7 @@ ALL_STATUSES = [
     STATUS_HEARTBEAT_START,
     STATUS_DONE,
     STATUS_WAITING_OVERSIGHT,
+    STATUS_BUSY_SLEEPING,
 ]
 
 
@@ -87,6 +89,7 @@ STATUS_EMOJIS = {
     STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
     STATUS_DONE: "☑️",  # Child agent completed delegated work (#244)
     STATUS_WAITING_OVERSIGHT: "👁️",  # Waiting for oversight report
+    STATUS_BUSY_SLEEPING: "🟡",  # Running but sleeping (#289)
 }
 
 
@@ -111,6 +114,7 @@ STATUS_COLORS = {
     STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
     STATUS_DONE: "dim",  # Done child agent (#244)
     STATUS_WAITING_OVERSIGHT: "yellow",  # Waiting for oversight report
+    STATUS_BUSY_SLEEPING: "yellow",  # Running but sleeping (#289)
 }
 
 
@@ -135,6 +139,7 @@ STATUS_SYMBOLS = {
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
     STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
     STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
+    STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289)
 }
 
 
@@ -159,6 +164,7 @@ AGENT_TIMELINE_CHARS = {
     STATUS_HEARTBEAT_START: "💚",  # Green heart emoji - rendered specially by timeline widget
     STATUS_DONE: "✓",  # Done child agent (#244)
     STATUS_WAITING_OVERSIGHT: "▒",  # Waiting for oversight report
+    STATUS_BUSY_SLEEPING: "█",  # Solid - doesn't need human input (#289)
 }
 
 
@@ -242,6 +248,11 @@ def is_user_blocked(status: str) -> bool:
 def is_asleep(status: str) -> bool:
     """Check if status indicates agent is asleep (paused by human)."""
     return status == STATUS_ASLEEP
+
+
+def is_busy_sleeping(status: str) -> bool:
+    """Check if status indicates agent is sleeping via a bash sleep command (#289)."""
+    return status == STATUS_BUSY_SLEEPING
 
 
 def is_done(status: str) -> bool:

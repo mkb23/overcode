@@ -21,10 +21,13 @@ from typing import Optional, Tuple, TYPE_CHECKING
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
+    STATUS_BUSY_SLEEPING,
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
 )
+from .status_patterns import is_sleep_command, extract_sleep_duration, strip_ansi
+from .tui_formatters import format_duration
 
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface
@@ -182,8 +185,18 @@ class HookStatusDetector:
         # Read pane for activity enrichment and content return value
         pane_content = self.get_pane_content(session.tmux_window) or ""
 
+        # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
+        if status == STATUS_RUNNING:
+            if self._is_sleep_in_pane(pane_content, hook_state):
+                status = STATUS_BUSY_SLEEPING
+
         # Build activity description
         activity = self._build_activity(event, hook_state, pane_content, session)
+
+        # Enrich activity for busy_sleeping with parsed duration (#289)
+        if status == STATUS_BUSY_SLEEPING:
+            dur = self._extract_sleep_duration_from_context(pane_content, hook_state)
+            activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
 
         return status, activity, pane_content
 
@@ -225,6 +238,52 @@ class HookStatusDetector:
 
         # No shell prompt → likely /clear, fall back to full polling
         return self._get_polling_fallback().detect_status(session)
+
+    def _is_sleep_in_pane(self, pane_content: str, hook_state: dict) -> bool:
+        """Check if the agent is executing a sleep command (#289).
+
+        Checks two signals:
+        1. Pane content shows a sleep command (e.g., "Running Bash("sleep 30")")
+        2. Hook state has tool_input with a sleep command (from PostToolUse)
+
+        Args:
+            pane_content: Raw tmux pane content
+            hook_state: Parsed hook state dict
+
+        Returns:
+            True if agent appears to be sleeping
+        """
+        # Check pane content for sleep patterns
+        clean = strip_ansi(pane_content)
+        for line in clean.strip().split('\n')[-10:]:
+            if is_sleep_command(line):
+                return True
+
+        # Check tool_input from hook state (PostToolUse includes tool_input)
+        tool_input = hook_state.get("tool_input")
+        if isinstance(tool_input, dict):
+            command = tool_input.get("command", "")
+            if is_sleep_command(command):
+                return True
+
+        return False
+
+    def _extract_sleep_duration_from_context(self, pane_content: str, hook_state: dict) -> int | None:
+        """Extract sleep duration from pane content or hook state (#289)."""
+        # Try pane content first
+        clean = strip_ansi(pane_content)
+        for line in clean.strip().split('\n')[-10:]:
+            dur = extract_sleep_duration(line)
+            if dur is not None:
+                return dur
+        # Try tool_input from hook state
+        tool_input = hook_state.get("tool_input")
+        if isinstance(tool_input, dict):
+            command = tool_input.get("command", "")
+            dur = extract_sleep_duration(command)
+            if dur is not None:
+                return dur
+        return None
 
     def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""

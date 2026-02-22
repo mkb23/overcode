@@ -7,6 +7,7 @@ from typing import Optional, Tuple, TYPE_CHECKING
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
     STATUS_RUNNING,
+    STATUS_BUSY_SLEEPING,
     STATUS_WAITING_USER,
     STATUS_TERMINATED,
     STATUS_WAITING_APPROVAL,
@@ -21,8 +22,11 @@ from .status_patterns import (
     count_command_menu_lines,
     clean_line,
     strip_ansi,
+    is_sleep_command,
+    extract_sleep_duration,
     StatusPatterns,
 )
+from .tui_formatters import format_duration
 
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface
@@ -209,6 +213,11 @@ class PollingStatusDetector:
             last_lines, self.patterns.execution_indicators, case_sensitive=True, reverse=True
         )
         if matching_line:
+            # Check if the executing tool is a sleep command (#289)
+            if is_sleep_command(matching_line):
+                dur = extract_sleep_duration(matching_line)
+                activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
+                return STATUS_BUSY_SLEEPING, activity, content
             return self.STATUS_RUNNING, clean_line(matching_line, self.patterns), content
 
         # Check for thinking/planning
@@ -266,7 +275,12 @@ class PollingStatusDetector:
         if not session.standing_instructions:
             return self.STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
 
-        # Otherwise, assume running
+        # Otherwise, assume running — but check for sleep first (#289)
+        for line in last_lines:
+            if is_sleep_command(line):
+                dur = extract_sleep_duration(line)
+                activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
+                return STATUS_BUSY_SLEEPING, activity, content
         return self.STATUS_RUNNING, self._extract_last_activity(last_lines), content
 
     def _extract_permission_request(self, lines: list) -> str:

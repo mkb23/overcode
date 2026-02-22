@@ -347,6 +347,21 @@ PANE_CONTENT_NARRATIVE_ERROR_PATTERNS = """
 """
 
 
+# Busy sleeping: agent executing a bash sleep command (#289)
+PANE_CONTENT_BASH_SLEEP = """
+⏺ Let me wait before checking again.
+
+  Running Bash("sleep 60")
+"""
+
+PANE_CONTENT_BASH_SLEEP_VARIANT = """
+⏺ Bash  sleep 300
+"""
+
+PANE_CONTENT_BASH_SLEEP_COMPOUND = """
+⏺ Running Bash("sleep 900 && echo 'checking status'")
+"""
+
 # Spawn failure: claude command not found (bash style)
 # Plan mode: idle session — captured from real `claude --permission-mode plan`
 # "plan mode" appears in the ⏸ status bar line, not the banner
