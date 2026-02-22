@@ -314,7 +314,7 @@ def list_agents(
 
     # Columns to render in list mode (subset of TUI columns)
     list_columns = {
-        "status_symbol", "time_in_state", "agent_name",
+        "status_symbol", "time_in_state", "sleep_countdown", "agent_name",
         "git_diff",
         "uptime", "running_time", "stalled_time", "sleep_time",
         "token_count", "cost", "budget", "context_usage",

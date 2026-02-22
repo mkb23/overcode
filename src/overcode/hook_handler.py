@@ -48,6 +48,7 @@ def write_hook_state(
     tmux_session: str,
     session_name: str,
     tool_name: str | None = None,
+    tool_input: dict | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
 
@@ -62,6 +63,8 @@ def write_hook_state(
     }
     if tool_name is not None:
         state["tool_name"] = tool_name
+    if tool_input is not None:
+        state["tool_input"] = tool_input
 
     state_path.write_text(json.dumps(state))
 
@@ -95,9 +98,10 @@ def handle_hook_event() -> None:
         return
 
     tool_name = data.get("tool_name")
+    tool_input = data.get("tool_input")
 
     # Write state file for status detection
-    write_hook_state(event, tmux_session, session_name, tool_name=tool_name)
+    write_hook_state(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 
     # For UserPromptSubmit, check budget and output time-context
     if event == "UserPromptSubmit":

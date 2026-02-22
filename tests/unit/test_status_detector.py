@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import StatusDetector
 from overcode.interfaces import MockTmux
+from overcode.status_constants import STATUS_BUSY_SLEEPING
 from tests.fixtures import (
     create_mock_session,
     create_mock_tmux_with_content,
@@ -40,6 +41,9 @@ from tests.fixtures import (
     PANE_CONTENT_NARRATIVE_ERROR_PATTERNS,
     PANE_CONTENT_PLAN_MODE_IDLE,
     PANE_CONTENT_PLAN_APPROVAL,
+    PANE_CONTENT_BASH_SLEEP,
+    PANE_CONTENT_BASH_SLEEP_VARIANT,
+    PANE_CONTENT_BASH_SLEEP_COMPOUND,
 )
 
 
@@ -592,6 +596,94 @@ class TestStatusDetectorSpawnFailure:
         assert "permission denied" in activity.lower(), (
             f"Activity should include 'permission denied', got: {activity}"
         )
+
+
+class TestBusySleepingDetection:
+    """Tests for STATUS_BUSY_SLEEPING detection (#289).
+
+    When an agent executes a Bash sleep command (e.g., as part of a heartbeat
+    polling loop), the status should be busy_sleeping (yellow) not running (green).
+    """
+
+    def test_detects_bash_sleep_as_busy_sleeping(self):
+        """Running Bash('sleep 60') should be detected as busy_sleeping."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"Bash sleep should be busy_sleeping, got {status}: {activity}"
+        )
+
+    def test_activity_string_includes_duration(self):
+        """Activity string should include parsed duration like 'Sleeping 1.0m'."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert activity == "Sleeping 60s", f"Activity should be 'Sleeping 60s', got: {activity}"
+
+    def test_detects_bash_sleep_variant(self):
+        """'Bash  sleep 300' format should also be detected."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP_VARIANT)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"Bash sleep variant should be busy_sleeping, got {status}: {activity}"
+        )
+
+    def test_detects_compound_sleep_command(self):
+        """'sleep 900 && echo ...' should be detected as busy_sleeping."""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP_COMPOUND)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_BUSY_SLEEPING, (
+            f"Compound sleep command should be busy_sleeping, got {status}: {activity}"
+        )
+
+    def test_regular_bash_still_running(self):
+        """Non-sleep Bash commands should remain STATUS_RUNNING."""
+        content = """
+⏺ Let me run the tests.
+
+  Running Bash("pytest tests/ -v")
+"""
+        mock_tmux = create_mock_tmux_with_content("agents", 1, content)
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
+
+        # Prime content hash
+        detector.detect_status(session)
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == StatusDetector.STATUS_RUNNING, (
+            f"Regular bash should be running, got {status}: {activity}"
+        )
+
+    def test_busy_sleeping_not_green(self):
+        """busy_sleeping should NOT be considered green status."""
+        from overcode.status_constants import is_green_status, is_busy_sleeping
+        assert not is_green_status(STATUS_BUSY_SLEEPING)
+        assert is_busy_sleeping(STATUS_BUSY_SLEEPING)
+        assert not is_busy_sleeping("running")
 
 
 class TestErrorDetection:
