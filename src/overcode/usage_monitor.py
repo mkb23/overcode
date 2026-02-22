@@ -6,12 +6,15 @@ Self-contained module: all failures produce UsageSnapshot(error=...), never rais
 """
 
 import json
+import os
 import subprocess
+import sys
 import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 
@@ -67,20 +70,34 @@ class UsageMonitor:
 
     @staticmethod
     def _get_access_token() -> Optional[str]:
-        """Retrieve the Claude Code OAuth access token from macOS Keychain."""
+        """Retrieve the Claude Code OAuth access token.
+
+        Tries macOS Keychain first, then falls back to ~/.claude/.credentials.json
+        (used on Linux and as a fallback on macOS).
+        """
+        if sys.platform == "darwin":
+            try:
+                result = subprocess.run(
+                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    raw = result.stdout.strip()
+                    data = json.loads(raw)
+                    token = data.get("claudeAiOauth", {}).get("accessToken")
+                    if token:
+                        return token
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError):
+                pass
+
+        # Fallback: read from credentials file (Linux, or macOS if Keychain failed)
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode != 0:
-                return None
-            raw = result.stdout.strip()
-            data = json.loads(raw)
+            creds_path = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / ".credentials.json"
+            data = json.loads(creds_path.read_text())
             return data.get("claudeAiOauth", {}).get("accessToken")
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError):
+        except (json.JSONDecodeError, KeyError, OSError):
             return None
 
     @staticmethod
