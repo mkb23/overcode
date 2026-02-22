@@ -323,7 +323,8 @@ class TestRenderSleepCountdown:
         assert result is not None
         text = result[0][0]
         assert text.strip() == ""  # All whitespace
-        assert len(text) == 8  # Same width as active countdown
+        # 9 ASCII spaces = 9 display cells (matches ⏰ column: 1 + ⏰(2) + 5 + 1)
+        assert len(text) == 9
 
     def test_shows_remaining_time(self):
         """Should show countdown when sleep_wake_estimate is in the future."""
@@ -351,6 +352,27 @@ class TestRenderSleepCountdown:
         ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True, monochrome=False)
         result = render_sleep_countdown(ctx)
         assert "yellow" in result[0][1]
+
+    def test_all_cases_same_display_width(self):
+        """Active, expired, and placeholder must all be 9 display cells."""
+        import unicodedata
+
+        def display_width(s):
+            """Compute terminal display width accounting for wide chars."""
+            return sum(2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in s)
+
+        # Active countdown
+        wake = datetime.now() + timedelta(seconds=120)
+        active = render_sleep_countdown(_make_ctx(sleep_wake_estimate=wake, any_is_sleeping=True))
+        # Expired countdown
+        expired = render_sleep_countdown(_make_ctx(
+            sleep_wake_estimate=datetime.now() - timedelta(seconds=10), any_is_sleeping=True))
+        # Placeholder
+        placeholder = render_sleep_countdown(_make_ctx(sleep_wake_estimate=None, any_is_sleeping=True))
+
+        assert display_width(active[0][0]) == 9
+        assert display_width(expired[0][0]) == 9
+        assert display_width(placeholder[0][0]) == 9
 
 
 class TestRenderExpandIcon:

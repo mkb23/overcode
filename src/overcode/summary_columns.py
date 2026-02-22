@@ -208,14 +208,13 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     agent is sleeping (to maintain column alignment), or None when no
     agents are sleeping.
     """
+    # Column width: 9 display cells = 1 space + ⏰(2 cells) + 5 char duration + 1 space
+    # Placeholder is 9 ASCII spaces to match (⏰ = 2 cells but 1 char)
     if ctx.sleep_wake_estimate is not None:
-        remaining = (ctx.sleep_wake_estimate - datetime.now()).total_seconds()
-        if remaining <= 0:
-            return [("  ⏰ 0s ", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+        remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
         return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
     if ctx.any_is_sleeping:
-        # Blank placeholder to keep columns aligned
-        return [("        ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("         ", ctx.mono(f"dim{ctx.bg}", "dim"))]
     return None
 
 
