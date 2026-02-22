@@ -1038,6 +1038,119 @@ class TestCascadeKill:
 
 
 # =============================================================================
+# Claude CLI Flag Passthrough Tests (#290)
+# =============================================================================
+
+
+class TestCLIFlagPassthrough:
+    """Test --allowed-tools and --claude-arg passthrough."""
+
+    def test_launch_with_allowed_tools(self, tmp_path):
+        """--allowedTools appears in the tmux command string."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="scoped", allowed_tools="Read,Glob,Grep")
+
+        assert session is not None
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("--allowedTools" in cmd and "Read,Glob,Grep" in cmd for cmd in sent_commands)
+
+    def test_launch_with_extra_claude_args(self, tmp_path):
+        """Extra args are appended to the claude command."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(
+            name="custom",
+            extra_claude_args=["--model haiku", "--effort low"],
+        )
+
+        assert session is not None
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("--model" in cmd and "haiku" in cmd for cmd in sent_commands)
+        assert any("--effort" in cmd and "low" in cmd for cmd in sent_commands)
+
+    def test_launch_with_both_allowed_tools_and_extra_args(self, tmp_path):
+        """Both --allowedTools and extra args appear in the command."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(
+            name="both",
+            allowed_tools="Read,Write",
+            extra_claude_args=["--model haiku"],
+        )
+
+        assert session is not None
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("--allowedTools" in cmd and "Read,Write" in cmd for cmd in sent_commands)
+        assert any("--model" in cmd and "haiku" in cmd for cmd in sent_commands)
+
+    def test_session_stores_allowed_tools(self, tmp_path):
+        """allowed_tools and extra_claude_args are persisted in session state."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(
+            name="persist",
+            allowed_tools="Read,Glob",
+            extra_claude_args=["--model haiku"],
+        )
+
+        # Reload from state to verify persistence
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded.allowed_tools == "Read,Glob"
+        assert reloaded.extra_claude_args == ["--model haiku"]
+
+    def test_session_without_flags_has_defaults(self, tmp_path):
+        """Sessions without flags have None/empty defaults."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="defaults")
+
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded.allowed_tools is None
+        assert reloaded.extra_claude_args == []
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

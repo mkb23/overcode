@@ -5,6 +5,8 @@ Skills are installed as directories with a SKILL.md entry point, following
 the Claude Code skill format. Each skill has a description and content field.
 """
 
+from pathlib import Path
+
 # Skill names that were renamed — installer removes these on install
 DEPRECATED_SKILL_NAMES = ["delegation"]
 
@@ -28,6 +30,8 @@ Overcode manages multiple Claude Code agent sessions in tmux.
 # Launch
 overcode launch -n <name> [-d <path>] [-p "<prompt>"] [--follow] [--bypass-permissions]
 overcode launch -n <name> --follow --oversight-timeout 5m -p "... When done: overcode report --status success"
+overcode launch -n <name> --allowed-tools "Read,Glob,Grep" --skip-permissions
+overcode launch -n <name> --claude-arg "--model haiku" --claude-arg "--effort low"
 
 # Monitor
 overcode list [name] [--show-done]
@@ -165,6 +169,26 @@ overcode budget set child-agent 3.00                  # Set directly
 
 Exceeded budget = heartbeats and supervisor stop, agent winds down naturally.
 
+## Tool Restrictions
+
+Scope agent capabilities with `--allowed-tools` for safety:
+
+```bash
+# Read-only agent — cannot modify files
+overcode launch -n safe-reader --follow --allowed-tools "Read,Glob,Grep" \\
+  -p "Analyze the codebase. Do NOT modify files. When done: overcode report --status success"
+
+# Code-only agent — no shell access
+overcode launch -n coder --follow --allowed-tools "Read,Write,Edit,Glob,Grep" --skip-permissions \\
+  -p "Refactor auth module. When done: overcode report --status success"
+```
+
+Pass arbitrary Claude CLI flags with `--claude-arg` (repeatable):
+
+```bash
+overcode launch -n fast --claude-arg "--model haiku" --claude-arg "--effort low" -p "Quick review"
+```
+
 ## Rules
 
 - Parent auto-detected from `OVERCODE_SESSION_NAME` \u2014 no `--parent` needed inside an overcode agent
@@ -173,3 +197,13 @@ Exceeded budget = heartbeats and supervisor stop, agent winds down naturally.
 """,
     },
 }
+
+
+def any_skills_stale() -> bool:
+    """Check if any installed skills are outdated vs bundled versions."""
+    base = Path.home() / ".claude" / "skills"
+    for name, skill in OVERCODE_SKILLS.items():
+        skill_file = base / name / "SKILL.md"
+        if skill_file.exists() and skill_file.read_text() != skill["content"]:
+            return True
+    return False

@@ -75,6 +75,8 @@ class ClaudeLauncher:
         skip_permissions: bool = False,
         dangerously_skip_permissions: bool = False,
         parent_name: Optional[str] = None,
+        allowed_tools: Optional[str] = None,
+        extra_claude_args: Optional[List[str]] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -88,6 +90,8 @@ class ClaudeLauncher:
                 (for testing only - bypasses folder trust dialog)
             parent_name: Optional parent agent name for hierarchy (#244).
                 If not set, auto-detects from OVERCODE_SESSION_NAME env var.
+            allowed_tools: Comma-separated tool list for --allowedTools
+            extra_claude_args: Extra Claude CLI flags (each a space-separated string)
 
         Returns:
             Session object if successful, None otherwise
@@ -157,6 +161,14 @@ class ClaudeLauncher:
         elif skip_permissions:
             claude_cmd.extend(["--permission-mode", "dontAsk"])
 
+        # Claude CLI flag passthrough (#290)
+        if allowed_tools:
+            claude_cmd.extend(["--allowedTools", allowed_tools])
+        if extra_claude_args:
+            import shlex
+            for arg in extra_claude_args:
+                claude_cmd.extend(shlex.split(arg))
+
         # Prepend overcode env vars so the agent knows its identity
         env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
 
@@ -194,7 +206,9 @@ class ClaudeLauncher:
             command=claude_cmd,
             start_directory=start_directory,
             standing_instructions=default_instructions,
-            permissiveness_mode=perm_mode
+            permissiveness_mode=perm_mode,
+            allowed_tools=allowed_tools,
+            extra_claude_args=extra_claude_args,
         )
 
         # Set parent if launching as child agent (#244)
