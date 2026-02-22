@@ -2,12 +2,9 @@
 Unit tests for skill staleness detection (#290).
 """
 
-import sys
 from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.bundled_skills import any_skills_stale, OVERCODE_SKILLS
 

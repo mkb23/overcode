@@ -10,6 +10,7 @@ Claude starts, not as CLI arguments.
 import time
 import subprocess
 import os
+import shlex
 from typing import List, Optional
 from pathlib import Path
 
@@ -165,7 +166,6 @@ class ClaudeLauncher:
         if allowed_tools:
             claude_cmd.extend(["--allowedTools", allowed_tools])
         if extra_claude_args:
-            import shlex
             for arg in extra_claude_args:
                 claude_cmd.extend(shlex.split(arg))
 
@@ -179,9 +179,9 @@ class ClaudeLauncher:
         # If MOCK_SCENARIO is set, prepend it to the command for testing
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
-            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {' '.join(claude_cmd)}"
+            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
         else:
-            cmd_str = f"{env_prefix} {' '.join(claude_cmd)}"
+            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
 
         # Send command to window to start interactive Claude
         if not self.tmux.send_keys(window_index, cmd_str, enter=True):

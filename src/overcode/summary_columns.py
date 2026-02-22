@@ -15,6 +15,17 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
 from .status_constants import ALL_STATUSES
+from .tui_helpers import (
+    format_cost,
+    format_duration,
+    format_line_count,
+    format_tokens,
+    format_budget,
+    calculate_uptime,
+    get_current_state_times,
+    get_status_symbol,
+)
+
 
 # ---------------------------------------------------------------------------
 # Tool name → emoji registry for allowed-tools column
@@ -46,16 +57,6 @@ def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI) -> s
     emojis = [TOOL_EMOJI.get(t, TOOL_EMOJI_DEFAULT) for t in tools[:max_n]]
     suffix = "…" if len(tools) > max_n else ""
     return "".join(emojis) + suffix
-from .tui_helpers import (
-    format_cost,
-    format_duration,
-    format_line_count,
-    format_tokens,
-    format_budget,
-    calculate_uptime,
-    get_current_state_times,
-    get_status_symbol,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +359,7 @@ def render_permission_mode(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
-    emojis = _tool_emojis(getattr(ctx.session, 'allowed_tools', None))
+    emojis = _tool_emojis(ctx.session.allowed_tools)
     if not emojis:
         return None
     return [(f" {emojis}", ctx.mono(f"white{ctx.bg}", ""))]
@@ -612,11 +613,10 @@ def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_tools_plain(ctx: ColumnContext) -> Optional[str]:
-    allowed = getattr(ctx.session, 'allowed_tools', None)
-    if not allowed:
+    if not ctx.session.allowed_tools:
         return None
-    emojis = _tool_emojis(allowed)
-    return f"{emojis}  ({allowed})"
+    emojis = _tool_emojis(ctx.session.allowed_tools)
+    return f"{emojis}  ({ctx.session.allowed_tools})"
 
 
 def render_heartbeat_plain(ctx: ColumnContext) -> Optional[str]:

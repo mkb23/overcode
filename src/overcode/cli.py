@@ -250,7 +250,7 @@ def launch(
         # Skill staleness check (#290)
         from .bundled_skills import any_skills_stale
         if any_skills_stale():
-            rprint("[yellow]Warning:[/yellow] Installed skills are outdated. Run [bold]overcode skills install[/bold] to update.")
+            rprint("[yellow]Warning:[/yellow] Installed skills are modified. Run [bold]overcode skills install[/bold] to update.")
 
         if follow:
             from .follow_mode import follow_agent
@@ -1295,7 +1295,7 @@ def skills_status():
             elif skill_file.read_text() == skill["content"]:
                 rprint(f"  {name:<20} [green]\u2713 installed[/green]")
             else:
-                rprint(f"  {name:<20} [yellow]\u26a0 outdated[/yellow] — run: overcode skills install")
+                rprint(f"  {name:<20} [yellow]\u26a0 modified[/yellow] — run: overcode skills install")
 
 
 # =============================================================================
