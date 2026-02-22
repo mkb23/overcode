@@ -215,7 +215,7 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
         return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
     if ctx.any_is_sleeping:
         # Blank placeholder to keep columns aligned
-        return [("        ", "")]
+        return [("        ", ctx.mono(f"dim{ctx.bg}", "dim"))]
     return None
 
 
