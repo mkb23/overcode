@@ -26,7 +26,7 @@ from .status_patterns import (
     extract_sleep_duration,
     StatusPatterns,
 )
-from .tui_formatters import format_duration
+from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface

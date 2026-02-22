@@ -1937,46 +1937,46 @@ class TestFormatCostAndBudget:
 
     def test_format_cost_zero(self):
         """Should format zero cost with dollar sign."""
-        from overcode.tui_formatters import format_cost
+        from overcode.tui_helpers import format_cost
         result = format_cost(0.0)
         assert "$" in result
         assert "0" in result
 
     def test_format_cost_small(self):
         """Should format small cost."""
-        from overcode.tui_formatters import format_cost
+        from overcode.tui_helpers import format_cost
         result = format_cost(0.15)
         assert "$" in result
         assert "0.1" in result or "0.2" in result  # Rounded to 1 decimal
 
     def test_format_cost_medium(self):
         """Should format medium costs with 1 decimal."""
-        from overcode.tui_formatters import format_cost
+        from overcode.tui_helpers import format_cost
         result = format_cost(12.50)
         assert "$12.5" in result
 
     def test_format_cost_thousands(self):
         """Should format thousands with K suffix."""
-        from overcode.tui_formatters import format_cost
+        from overcode.tui_helpers import format_cost
         result = format_cost(2500.0)
         assert "$2.5K" == result
 
     def test_format_cost_millions(self):
         """Should format millions with M suffix."""
-        from overcode.tui_formatters import format_cost
+        from overcode.tui_helpers import format_cost
         result = format_cost(1_500_000.0)
         assert "$1.5M" == result
 
     def test_format_budget_no_budget(self):
         """Should return cost only when budget is 0."""
-        from overcode.tui_formatters import format_budget
+        from overcode.tui_helpers import format_budget
         result = format_budget(1.5, 0.0)
         assert "$" in result
         assert "/" not in result
 
     def test_format_budget_with_budget(self):
         """Should format cost/budget when budget > 0."""
-        from overcode.tui_formatters import format_budget
+        from overcode.tui_helpers import format_budget
         result = format_budget(1.5, 5.0)
         assert "/" in result
         assert "$" in result

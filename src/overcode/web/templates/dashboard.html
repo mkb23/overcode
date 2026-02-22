@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0f172a">
+    <title>Overcode Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-dim: #64748b;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --orange: #f97316;
+            --red: #ef4444;
+            --cyan: #06b6d4;
+            --dim: #6b7280;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 12px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--bg-tertiary);
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.green { background: var(--green); }
+        .status-dot.red { background: var(--red); }
+        .status-dot.yellow { background: var(--yellow); }
+
+        /* Summary bar */
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .summary-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .summary-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .summary-value.green { color: var(--green); }
+        .summary-value.yellow { color: var(--yellow); }
+
+        .summary-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Agent cards */
+        .agents {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .agent-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 12px;
+            border-left: 4px solid var(--dim);
+        }
+
+        .agent-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .agent-emoji {
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        .agent-name {
+            font-weight: 600;
+            font-size: 16px;
+            flex: 1;
+        }
+
+        .agent-time {
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .agent-repo {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+
+        .agent-activity {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .agent-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+            font-size: 11px;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .stat-label {
+            color: var(--text-dim);
+            font-size: 10px;
+        }
+
+        /* Timeline section */
+        .timeline-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .timeline-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .timeline-label {
+            width: 80px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .timeline-bar {
+            flex: 1;
+            font-family: monospace;
+            font-size: 12px;
+            letter-spacing: -1px;
+            overflow-x: auto;
+            white-space: nowrap;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .timeline-pct {
+            width: 36px;
+            text-align: right;
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Update indicator */
+        .update-info {
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid var(--bg-tertiary);
+        }
+
+        .updating {
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Error state */
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--red);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            color: var(--red);
+        }
+
+        /* Empty state */
+        .empty {
+            text-align: center;
+            padding: 32px;
+            color: var(--text-dim);
+        }
+
+        /* Desktop enhancements */
+        @media (min-width: 640px) {
+            body {
+                padding: 24px;
+                max-width: 800px;
+                margin: 0 auto;
+            }
+
+            .summary {
+                grid-template-columns: repeat(4, 1fr);
+            }
+
+            .agent-stats {
+                grid-template-columns: repeat(6, 1fr);
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Overcode</h1>
+        <div class="header-status">
+            <span id="daemon-status">
+                <span class="status-dot" id="daemon-dot"></span>
+                <span id="daemon-text">Loading...</span>
+            </span>
+        </div>
+    </header>
+
+    <div id="content">
+        <div class="empty">Loading dashboard...</div>
+    </div>
+
+    <div class="update-info">
+        <span id="update-text">Last update: -</span>
+    </div>
+
+    <script>
+        const REFRESH_INTERVAL = 5000;
+        let lastUpdate = null;
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) throw new Error('API error');
+                return await response.json();
+            } catch (e) {
+                console.error('Fetch error:', e);
+                return null;
+            }
+        }
+
+        async function fetchTimeline() {
+            try {
+                const response = await fetch('/api/timeline');
+                if (!response.ok) throw new Error('API error');
+                return await response.json();
+            } catch (e) {
+                console.error('Timeline fetch error:', e);
+                return null;
+            }
+        }
+
+        function formatTime(isoString) {
+            if (!isoString) return '-';
+            const date = new Date(isoString);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function updateDaemonStatus(daemon) {
+            const dot = document.getElementById('daemon-dot');
+            const text = document.getElementById('daemon-text');
+
+            if (daemon.running) {
+                dot.className = 'status-dot green';
+                text.textContent = daemon.status;
+            } else {
+                dot.className = 'status-dot red';
+                text.textContent = 'stopped';
+            }
+        }
+
+        function renderSummary(summary) {
+            const greenPct = summary.total_agents > 0
+                ? Math.round((summary.green_agents / summary.total_agents) * 100)
+                : 0;
+
+            return `
+                <div class="summary">
+                    <div class="summary-card">
+                        <div class="summary-value green">${summary.green_agents}</div>
+                        <div class="summary-label">Green</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-value yellow">${summary.total_agents - summary.green_agents}</div>
+                        <div class="summary-label">Not Green</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-value">${summary.total_agents}</div>
+                        <div class="summary-label">Total</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-value">${greenPct}%</div>
+                        <div class="summary-label">Active</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAgent(agent) {
+            return `
+                <div class="agent-card" style="border-left-color: ${agent.status_color_hex}">
+                    <div class="agent-header">
+                        <span class="agent-emoji">${agent.status_emoji}</span>
+                        <span class="agent-name">${agent.name}</span>
+                        <span class="agent-time">${agent.time_in_state}</span>
+                    </div>
+                    ${agent.repo ? `<div class="agent-repo">${agent.repo}:${agent.branch}</div>` : ''}
+                    ${agent.activity ? `<div class="agent-activity">${agent.activity}</div>` : ''}
+                    <div class="agent-stats">
+                        <div class="stat">
+                            <span class="stat-value" style="color: var(--green)">${agent.green_time}</span>
+                            <span class="stat-label">Active</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" style="color: var(--yellow)">${agent.non_green_time}</span>
+                            <span class="stat-label">Paused</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value">${agent.percent_active}%</span>
+                            <span class="stat-label">Efficiency</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" style="color: var(--orange)">${agent.tokens}</span>
+                            <span class="stat-label">Tokens</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" style="color: var(--yellow)">${agent.human_interactions}</span>
+                            <span class="stat-label">Human</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" style="color: var(--cyan)">${agent.robot_steers}</span>
+                            <span class="stat-label">Robot</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTimeline(timeline) {
+            if (!timeline || !timeline.agents || Object.keys(timeline.agents).length === 0) {
+                return '';
+            }
+
+            const agentRows = Object.entries(timeline.agents).map(([name, data]) => {
+                // Build timeline string from slots
+                let timelineStr = '';
+                const colors = timeline.status_colors || {};
+                const chars = timeline.status_chars || {};
+
+                // Create array for all slots
+                const slotMap = {};
+                data.slots.forEach(s => { slotMap[s.index] = s; });
+
+                for (let i = 0; i < timeline.slot_count; i++) {
+                    if (slotMap[i]) {
+                        const s = slotMap[i];
+                        timelineStr += `<span style="color:${s.color}">${s.char}</span>`;
+                    } else {
+                        timelineStr += '<span style="color:var(--bg-tertiary)">-</span>';
+                    }
+                }
+
+                return `
+                    <div class="timeline-row">
+                        <span class="timeline-label">${name}</span>
+                        <span class="timeline-bar">${timelineStr}</span>
+                        <span class="timeline-pct">${data.percent_green}%</span>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="timeline-section">
+                    <div class="timeline-header">
+                        <span>-${timeline.hours}h</span>
+                        <span>Timeline</span>
+                        <span>now</span>
+                    </div>
+                    ${agentRows}
+                    <div class="legend">
+                        <span class="legend-item"><span style="color:var(--green)">█</span> running</span>
+                        <span class="legend-item"><span style="color:var(--yellow)">▓</span> idle</span>
+                        <span class="legend-item"><span style="color:var(--orange)">▒</span> waiting</span>
+                        <span class="legend-item"><span style="color:var(--red)">░</span> blocked</span>
+                        <span class="legend-item"><span style="color:var(--dim)">×</span> terminated</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderError(message) {
+            return `<div class="error">${message}</div>`;
+        }
+
+        function renderEmpty() {
+            return `<div class="empty">No agents found. Start a session with:<br><code>overcode launch --name my-agent</code></div>`;
+        }
+
+        async function refresh() {
+            const updateText = document.getElementById('update-text');
+            updateText.classList.add('updating');
+
+            const [status, timeline] = await Promise.all([
+                fetchStatus(),
+                fetchTimeline()
+            ]);
+
+            updateText.classList.remove('updating');
+
+            if (!status) {
+                document.getElementById('content').innerHTML = renderError('Failed to connect to server');
+                document.getElementById('daemon-dot').className = 'status-dot red';
+                document.getElementById('daemon-text').textContent = 'error';
+                return;
+            }
+
+            updateDaemonStatus(status.daemon);
+
+            let html = '';
+
+            if (status.agents.length === 0) {
+                html = renderEmpty();
+            } else {
+                html = renderSummary(status.summary);
+                html += '<div class="agents">';
+                status.agents.forEach(agent => {
+                    html += renderAgent(agent);
+                });
+                html += '</div>';
+                html += renderTimeline(timeline);
+            }
+
+            document.getElementById('content').innerHTML = html;
+            lastUpdate = new Date();
+            updateText.textContent = `Last update: ${formatTime(lastUpdate.toISOString())}`;
+        }
+
+        // Initial load
+        refresh();
+
+        // Auto-refresh
+        setInterval(refresh, REFRESH_INTERVAL);
+    </script>
+</body>
+</html>

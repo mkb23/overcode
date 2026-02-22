@@ -112,7 +112,7 @@ class TestListCommandWithMocks:
 
     def test_list_outputs_no_sessions(self):
         """List outputs message when no sessions exist"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = []
             mock_launcher_class.return_value = mock_launcher
@@ -129,7 +129,7 @@ class TestSendCommandWithMocks:
 
     def test_send_text_to_session(self):
         """Send text to existing session"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = True
             mock_launcher_class.return_value = mock_launcher
@@ -141,7 +141,7 @@ class TestSendCommandWithMocks:
 
     def test_send_key_with_no_enter(self):
         """Send key without pressing enter"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = True
             mock_launcher_class.return_value = mock_launcher
@@ -216,7 +216,7 @@ class TestShowCommandWithMocks:
 
     def test_show_session_output_no_stats(self):
         """Show --no-stats outputs only pane content"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = self._make_mock_session()
             mock_launcher.get_session_output.return_value = None
@@ -239,7 +239,7 @@ class TestShowCommandWithMocks:
         mock_session = self._make_mock_session()
         mock_claude_stats = self._make_mock_claude_stats()
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
@@ -270,7 +270,7 @@ class TestShowCommandWithMocks:
 
     def test_show_agent_not_found(self):
         """Show exits with error when agent not found"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = None
             mock_launcher_class.return_value = mock_launcher
@@ -283,7 +283,7 @@ class TestShowCommandWithMocks:
         """Show handles missing claude stats gracefully"""
         mock_session = self._make_mock_session()
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
@@ -308,7 +308,7 @@ class TestShowCommandWithMocks:
         mock_session = self._make_mock_session()
         mock_claude_stats = self._make_mock_claude_stats()
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
@@ -334,7 +334,7 @@ class TestKillCommandWithMocks:
 
     def test_kill_existing_session(self):
         """Kill existing session"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.kill_session.return_value = True
             mock_launcher_class.return_value = mock_launcher
@@ -345,7 +345,7 @@ class TestKillCommandWithMocks:
 
     def test_kill_nonexistent_session(self):
         """Kill nonexistent session shows message"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.kill_session.return_value = False
             mock_launcher_class.return_value = mock_launcher
@@ -360,7 +360,7 @@ class TestLaunchCommandWithMocks:
 
     def test_launch_creates_session(self):
         """Launch creates new session"""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_session = MagicMock()
             mock_session.name = "new-agent"
             mock_session.tmux_window = 1
@@ -433,7 +433,7 @@ class TestCleanupCommandWithMocks:
 
     def test_cleanup_removes_terminated_sessions(self):
         """Should remove terminated sessions."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.cleanup_terminated_sessions.return_value = 3
             mock_launcher_class.return_value = mock_launcher
@@ -445,7 +445,7 @@ class TestCleanupCommandWithMocks:
 
     def test_cleanup_no_terminated_sessions(self):
         """Should show message when no terminated sessions."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_launcher_class:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
             mock_launcher.cleanup_terminated_sessions.return_value = 0
             mock_launcher_class.return_value = mock_launcher
@@ -563,7 +563,7 @@ class TestLaunchExtended:
 
     def test_launch_with_prompt(self):
         """Launch with --prompt sends initial prompt."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "agent"
             mock_sess.parent_session_id = None
@@ -577,7 +577,7 @@ class TestLaunchExtended:
 
     def test_launch_with_parent(self):
         """Launch with --parent sets parent info."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = "parent-id"
@@ -591,7 +591,7 @@ class TestLaunchExtended:
 
     def test_launch_with_oversight_timeout(self):
         """Launch with --oversight-timeout stores policy."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = None
@@ -615,7 +615,7 @@ class TestLaunchExtended:
 
     def test_launch_invalid_oversight_timeout(self):
         """Launch with invalid --oversight-timeout errors."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.launch.return_value = None
             mock_cls.return_value = mock_launcher
@@ -626,7 +626,7 @@ class TestLaunchExtended:
 
     def test_launch_on_stuck_fail(self):
         """Launch with --on-stuck fail."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = None
@@ -645,7 +645,7 @@ class TestLaunchExtended:
 
     def test_launch_on_stuck_wait(self):
         """Launch with --on-stuck wait uses default (no oversight update)."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = None
@@ -658,7 +658,7 @@ class TestLaunchExtended:
 
     def test_launch_on_stuck_timeout(self):
         """Launch with --on-stuck timeout:1h."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = None
@@ -681,7 +681,7 @@ class TestLaunchExtended:
 
     def test_launch_on_stuck_timeout_invalid(self):
         """Launch with --on-stuck timeout:bad errors."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.launch.return_value = None
             mock_cls.return_value = mock_launcher
@@ -692,7 +692,7 @@ class TestLaunchExtended:
 
     def test_launch_on_stuck_invalid_value(self):
         """Launch with --on-stuck bogus errors."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.launch.return_value = None
             mock_cls.return_value = mock_launcher
@@ -703,7 +703,7 @@ class TestLaunchExtended:
 
     def test_launch_with_follow(self):
         """Launch with --follow calls follow_agent."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_sess = MagicMock()
             mock_sess.name = "child"
             mock_sess.parent_session_id = None
@@ -718,7 +718,7 @@ class TestLaunchExtended:
 
     def test_launch_returns_none(self):
         """Launch returns None when launch fails."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.launch.return_value = None
             mock_cls.return_value = mock_launcher
@@ -824,7 +824,7 @@ class TestCleanupExtended:
         mock_done_session = MagicMock()
         mock_done_session.status = "done"
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.cleanup_terminated_sessions.return_value = 1
             mock_launcher.sessions.list_sessions.return_value = [mock_done_session]
@@ -1202,7 +1202,7 @@ class TestSendExtended:
 
     def test_send_special_key(self):
         """Send special key (enter/escape) shows key name."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = True
             mock_cls.return_value = mock_launcher
@@ -1213,7 +1213,7 @@ class TestSendExtended:
 
     def test_send_no_enter_mode(self):
         """Send with --no-enter shows (no enter) in output."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = True
             mock_cls.return_value = mock_launcher
@@ -1224,7 +1224,7 @@ class TestSendExtended:
 
     def test_send_long_text_truncated(self):
         """Send long text truncates display to 50 chars."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = True
             mock_cls.return_value = mock_launcher
@@ -1236,7 +1236,7 @@ class TestSendExtended:
 
     def test_send_fails(self):
         """Send failure exits with code 1."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.send_to_session.return_value = False
             mock_cls.return_value = mock_launcher
@@ -1252,7 +1252,7 @@ class TestShowExtended:
     def test_show_stats_only(self):
         """Show with --stats-only omits pane output."""
         mock_session = _make_session()
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
@@ -1274,7 +1274,7 @@ class TestShowExtended:
     def test_show_terminated_session(self):
         """Show handles terminated session."""
         mock_session = _make_session(status="terminated")
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher.get_session_output.return_value = None
@@ -1290,7 +1290,7 @@ class TestShowExtended:
     def test_show_with_daemon_state(self):
         """Show uses daemon state when available."""
         mock_session = _make_session()
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
@@ -1319,7 +1319,7 @@ class TestShowExtended:
     def test_show_asleep_session(self):
         """Show handles asleep session."""
         mock_session = _make_session(is_asleep=True)
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
@@ -1339,7 +1339,7 @@ class TestShowExtended:
     def test_show_pane_fallback_for_terminated(self):
         """Show uses launcher.get_session_output for terminated sessions."""
         mock_session = _make_session(status="terminated")
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.sessions.get_session_by_name.return_value = mock_session
             mock_launcher.get_session_output.return_value = "fallback output here"
@@ -2654,7 +2654,7 @@ class TestAttachExtended:
 
     def test_attach_no_name(self):
         """Attach with no name attaches to session."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_cls.return_value = mock_launcher
 
@@ -2665,7 +2665,7 @@ class TestAttachExtended:
 
     def test_attach_with_name(self):
         """Attach with name jumps to that agent."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_cls.return_value = mock_launcher
 
@@ -2675,7 +2675,7 @@ class TestAttachExtended:
 
     def test_attach_bare_with_name(self):
         """Attach --bare with name uses bare mode."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_cls.return_value = mock_launcher
 
@@ -2692,7 +2692,7 @@ class TestListExtended:
         """List shows sessions with status columns."""
         mock_session = _make_session()
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [mock_session]
             mock_cls.return_value = mock_launcher
@@ -2719,7 +2719,7 @@ class TestListExtended:
         """List shows cleanup hint when terminated sessions exist."""
         mock_session = _make_session(status="terminated")
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [mock_session]
             mock_cls.return_value = mock_launcher
@@ -2743,7 +2743,7 @@ class TestListExtended:
 
     def test_list_filter_by_name_not_found(self):
         """List with name filter errors when agent not found."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [_make_session()]
             mock_launcher.sessions.get_session_by_name.return_value = None
@@ -2759,7 +2759,7 @@ class TestListExtended:
         root = _make_session(name="root")
         child = _make_session(name="child", id="child-id", parent_session_id="test-id")
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [root, child]
             mock_launcher.sessions.get_session_by_name.return_value = root
@@ -2794,7 +2794,7 @@ class TestListExtended:
         mock_ds.current_activity = "Coding"
         mock_daemon_state.get_session_by_name.return_value = mock_ds
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [mock_session]
             mock_cls.return_value = mock_launcher
@@ -2815,7 +2815,7 @@ class TestListExtended:
         done_session = _make_session(name="done-agent", status="done")
         running_session = _make_session(name="running-agent")
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [running_session, done_session]
             mock_cls.return_value = mock_launcher
@@ -2840,7 +2840,7 @@ class TestListExtended:
         """List without --show-done excludes done agents."""
         done_session = _make_session(name="done-only", status="done", id="done-id")
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [done_session]
             mock_cls.return_value = mock_launcher
@@ -2854,7 +2854,7 @@ class TestListExtended:
         """List handles asleep agent status."""
         mock_session = _make_session(is_asleep=True)
 
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [mock_session]
             mock_cls.return_value = mock_launcher
@@ -2881,7 +2881,7 @@ class TestKillExtended:
 
     def test_kill_with_no_cascade(self):
         """Kill with --no-cascade passes cascade=False."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_cls.return_value = mock_launcher
 
@@ -2891,7 +2891,7 @@ class TestKillExtended:
 
     def test_kill_default_cascades(self):
         """Kill without --no-cascade passes cascade=True."""
-        with patch('overcode.cli.ClaudeLauncher') as mock_cls:
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_cls.return_value = mock_launcher
 

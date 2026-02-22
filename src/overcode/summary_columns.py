@@ -164,6 +164,62 @@ class SummaryColumn:
 
 
 # ---------------------------------------------------------------------------
+# Render function factories
+# ---------------------------------------------------------------------------
+
+def _get_field(ctx: ColumnContext, field: str):
+    """Resolve a dotted field path, e.g. 'stats.steers_count'."""
+    obj = ctx
+    for part in field.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _make_simple_render(
+    field: str,
+    formatter: Optional[Callable] = None,
+    format_str: str = "{v}",
+    colored_style: str = "bold",
+    mono_style: str = "bold",
+) -> Callable[[ColumnContext], ColumnOutput]:
+    """Factory for single-segment render functions.
+
+    Args:
+        field: Attribute path on ColumnContext (dot-notation for nested)
+        formatter: Optional callable to transform the raw value
+        format_str: Format string with {v} placeholder for the formatted value
+        colored_style: Rich style when not monochrome (bg suffix added automatically)
+        mono_style: Rich style when monochrome
+    """
+    def render(ctx: ColumnContext) -> ColumnOutput:
+        val = _get_field(ctx, field)
+        if formatter is not None:
+            val = formatter(val)
+        return [(format_str.format(v=val), ctx.mono(f"{colored_style}{ctx.bg}", mono_style))]
+    return render
+
+
+def _make_simple_render_plain(
+    field: str,
+    formatter: Optional[Callable] = None,
+    template: str = "{v}",
+) -> Callable[[ColumnContext], Optional[str]]:
+    """Factory for simple plain-text render functions.
+
+    Args:
+        field: Attribute path on ColumnContext (dot-notation for nested)
+        formatter: Optional callable to transform the raw value
+        template: Format string with {v} placeholder
+    """
+    def render(ctx: ColumnContext) -> Optional[str]:
+        val = _get_field(ctx, field)
+        if formatter is not None:
+            val = formatter(val)
+        return template.format(v=val)
+    return render
+
+
+# ---------------------------------------------------------------------------
 # Render functions — each returns list of (text, style) or None
 # ---------------------------------------------------------------------------
 
@@ -228,8 +284,7 @@ def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
         return [(f"{ctx.expand_icon} ", ctx.status_color)]
 
 
-def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
-    return [(ctx.display_name, ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+render_agent_name = _make_simple_render("display_name", colored_style="bold cyan")
 
 
 def render_repo_name(ctx: ColumnContext) -> ColumnOutput:
@@ -245,16 +300,13 @@ def render_branch(ctx: ColumnContext) -> ColumnOutput:
     return [(f"{sep}{ctx.branch:<{w}} ", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
 
 
-def render_uptime(ctx: ColumnContext) -> ColumnOutput:
-    return [(f" ↑{ctx.uptime:>5}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+render_uptime = _make_simple_render("uptime", format_str=" ↑{v:>5}", colored_style="bold white")
 
 
-def render_running_time(ctx: ColumnContext) -> ColumnOutput:
-    return [(f" ▶{format_duration(ctx.green_time):>5}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+render_running_time = _make_simple_render("green_time", format_duration, " ▶{v:>5}", "bold green")
 
 
-def render_stalled_time(ctx: ColumnContext) -> ColumnOutput:
-    return [(f" ⏸{format_duration(ctx.non_green_time):>5}", ctx.mono(f"bold red{ctx.bg}", "dim"))]
+render_stalled_time = _make_simple_render("non_green_time", format_duration, " ⏸{v:>5}", "bold red", "dim")
 
 
 def render_sleep_time(ctx: ColumnContext) -> ColumnOutput:
@@ -351,9 +403,7 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
             return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
-def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
-    work_str = format_duration(ctx.median_work) if ctx.median_work > 0 else "0s"
-    return [(f" ⏱{work_str:>5}", ctx.mono(f"bold blue{ctx.bg}", "bold"))]
+render_median_work_time = _make_simple_render("median_work", format_duration, " ⏱{v:>5}", "bold blue")
 
 
 def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
@@ -376,8 +426,7 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     return [(f" 👶{count:>2}", style)]
 
 
-def render_permission_mode(ctx: ColumnContext) -> ColumnOutput:
-    return [(f" {ctx.perm_emoji}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", colored_style="bold white")
 
 
 def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
@@ -402,8 +451,7 @@ def render_human_count(ctx: ColumnContext) -> ColumnOutput:
         return [(" 👤  -", ctx.mono(f"dim yellow{ctx.bg}", "dim"))]
 
 
-def render_robot_count(ctx: ColumnContext) -> ColumnOutput:
-    return [(f" 🤖{ctx.stats.steers_count:>3}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+render_robot_count = _make_simple_render("stats.steers_count", format_str=" 🤖{v:>3}", colored_style="bold cyan")
 
 
 def render_standing_orders(ctx: ColumnContext) -> ColumnOutput:
@@ -547,8 +595,7 @@ def render_status_plain(ctx: ColumnContext) -> Optional[str]:
     return f"{ctx.status_symbol} {status}{time_str}"
 
 
-def render_uptime_plain(ctx: ColumnContext) -> Optional[str]:
-    return f"↑{ctx.uptime}"
+render_uptime_plain = _make_simple_render_plain("uptime", template="↑{v}")
 
 
 def render_time_plain(ctx: ColumnContext) -> Optional[str]:
@@ -623,8 +670,7 @@ def render_repo_name_plain(ctx: ColumnContext) -> Optional[str]:
     return ctx.repo_name
 
 
-def render_branch_plain(ctx: ColumnContext) -> Optional[str]:
-    return ctx.branch
+render_branch_plain = _make_simple_render_plain("branch")
 
 
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
@@ -675,8 +721,7 @@ def render_orders_plain(ctx: ColumnContext) -> Optional[str]:
     return f"📋 {prefix}{s.standing_instructions[:80]}"
 
 
-def render_value_plain(ctx: ColumnContext) -> Optional[str]:
-    return str(ctx.session.agent_value)
+render_value_plain = _make_simple_render_plain("session.agent_value", str)
 
 
 def render_host(ctx: ColumnContext) -> ColumnOutput:

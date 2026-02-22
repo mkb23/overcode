@@ -27,7 +27,7 @@ from .status_constants import (
     STATUS_TERMINATED,
 )
 from .status_patterns import is_sleep_command, extract_sleep_duration, strip_ansi
-from .tui_formatters import format_duration
+from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface

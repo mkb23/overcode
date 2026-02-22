@@ -102,7 +102,9 @@ class TestGetAccessToken:
         result.returncode = 0
         result.stdout = creds
 
-        with patch("overcode.usage_monitor.subprocess.run", return_value=result):
+        with patch("overcode.usage_monitor.subprocess.run", return_value=result), \
+             patch("overcode.usage_monitor.sys") as mock_sys:
+            mock_sys.platform = "darwin"
             token = UsageMonitor._get_access_token()
 
         assert token == "test-abc"

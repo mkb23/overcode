@@ -791,6 +791,168 @@ class MonitorDaemon:
             self.state.relay_last_status = "error"
             self.log.warn(f"Relay push error: {e}")
 
+    # ------------------------------------------------------------------
+    # Tick phases — decomposed from the monolithic run() loop
+    # ------------------------------------------------------------------
+
+    def _tick(self, now: datetime) -> None:
+        """Execute one monitoring loop iteration."""
+        sessions = [s for s in self.session_manager.list_sessions()
+                    if s.tmux_session == self.tmux_session]
+        self._sync_session_ids(sessions, now)
+        self._sync_session_stats(sessions, now)
+        self._dispatch_heartbeats(sessions)
+        session_states, all_waiting = self._detect_and_enrich(sessions, now)
+        self._cleanup_stale(sessions)
+        self._publish_and_enforce(sessions, session_states, all_waiting)
+
+    def _sync_session_ids(self, sessions: list, now: datetime) -> None:
+        """Fast session ID detection every 10s (#116).
+
+        Ensures active_claude_session_id updates promptly after /clear.
+        """
+        if should_sync_stats(self._last_session_id_sync, now, self._session_id_sync_interval):
+            for session in sessions:
+                self.sync_session_id(session)
+            self._last_session_id_sync = now
+
+    def _sync_session_stats(self, sessions: list, now: datetime) -> None:
+        """Full Claude Code stats sync every 60s (heavier I/O).
+
+        Ensures the first loop has accurate data (fixes #103).
+        """
+        if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
+            for session in sessions:
+                self.sync_claude_code_stats(session)
+            self._last_stats_sync = now
+
+    def _dispatch_heartbeats(self, sessions: list) -> None:
+        """Send heartbeats before status detection (#171)."""
+        self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
+        # Add newly triggered sessions to persistent heartbeat tracking
+        self._sessions_running_from_heartbeat.update(self._heartbeat_triggered_sessions)
+        # Track pending heartbeat starts for timeline marker
+        self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
+
+    def _detect_and_enrich(self, sessions: list, now: datetime) -> tuple:
+        """Detect status and build SessionDaemonState for each session.
+
+        Returns:
+            (session_states, all_waiting_user) tuple
+        """
+        session_states = []
+        all_waiting_user = True
+
+        for session in sessions:
+            # Skip sessions already known to be terminated/done —
+            # avoids a wasted tmux call and prevents desync where
+            # detect_status returns waiting_user for a gone window.
+            if session.status == "terminated":
+                status, activity = STATUS_TERMINATED, "Session terminated"
+            elif session.status == "done":
+                status, activity = STATUS_DONE, "Completed"
+            else:
+                # Detect status - dispatches per-session via dispatcher (#5)
+                status, activity, _ = self.detector.detect_status(session)
+
+            # Clear heartbeat tracking when session stops running
+            if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
+                self._sessions_running_from_heartbeat.discard(session.id)
+                self._heartbeat_start_pending.discard(session.id)
+
+            # Refresh git context (branch may have changed)
+            self.session_manager.refresh_git_context(session.id)
+
+            # Update current task in session
+            self.session_manager.update_stats(
+                session.id,
+                current_task=activity[:100] if activity else ""
+            )
+
+            # Reload session to get fresh stats
+            session = self.session_manager.get_session(session.id)
+            if session is None:
+                continue
+
+            # Track stats and build state
+            # Use "asleep" status if session is marked as sleeping (#68)
+            # Use "running_heartbeat" if running due to heartbeat trigger (#171)
+            if session.is_asleep:
+                effective_status = STATUS_ASLEEP
+            elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
+                if session.id in self._heartbeat_start_pending:
+                    effective_status = STATUS_HEARTBEAT_START
+                    self._heartbeat_start_pending.discard(session.id)
+                else:
+                    effective_status = STATUS_RUNNING_HEARTBEAT
+            elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
+                  and session.heartbeat_enabled
+                  and not session.heartbeat_paused
+                  and session.heartbeat_instruction):
+                effective_status = STATUS_WAITING_HEARTBEAT
+            else:
+                effective_status = status
+
+            # Persist terminated status so future loops skip detect_status
+            if effective_status == STATUS_TERMINATED and session.status != "terminated":
+                self.session_manager.update_session_status(session.id, "terminated")
+
+            session_state = self.track_session_stats(session, effective_status)
+            session_state.current_activity = activity
+            session_states.append(session_state)
+
+            # Log status history to session-specific file
+            log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
+
+            # Track if any session is not waiting for user
+            if status != "waiting_user":
+                all_waiting_user = False
+
+        return session_states, all_waiting_user
+
+    def _cleanup_stale(self, sessions: list) -> None:
+        """Remove stale tracking entries for deleted sessions."""
+        current_session_ids = {s.id for s in sessions}
+        stale_ids = set(self.operation_start_times.keys()) - current_session_ids
+        for stale_id in stale_ids:
+            del self.operation_start_times[stale_id]
+        stale_ids = set(self.previous_states.keys()) - current_session_ids
+        for stale_id in stale_ids:
+            del self.previous_states[stale_id]
+
+    def _publish_and_enforce(self, sessions: list, session_states: list, all_waiting_user: bool) -> None:
+        """Publish state, enforce policies, and log summary."""
+        # Calculate interval
+        interval = self.calculate_interval(sessions, all_waiting_user)
+        self.state.current_interval = interval
+
+        # Update status based on state
+        if not sessions:
+            self.state.status = "no_agents"
+        elif all_waiting_user:
+            self.state.status = "idle"
+        else:
+            self.state.status = "active"
+
+        # Publish state
+        self._publish_state(session_states)
+
+        # Enforce oversight timeouts every loop
+        self._enforce_oversight_timeouts(sessions)
+
+        # Auto-archive "done" agents after 1 hour (#244)
+        if self.state.loop_count % 60 == 0:
+            self._auto_archive_done_agents(sessions)
+
+        # Log summary
+        green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)
+        non_green = len(session_states) - green
+        self.log.info(f"Loop #{self.state.loop_count}: {len(sessions)} sessions ({green} green, {non_green} non-green), interval={interval}s")
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
     def run(self, check_interval: int = INTERVAL_FAST):
         """Main daemon loop."""
         # Atomically check if already running and acquire lock
@@ -824,140 +986,8 @@ class MonitorDaemon:
             while not self._shutdown:
                 self.state.loop_count += 1
                 now = datetime.now()
-
-                # Get sessions belonging to this tmux session only
-                all_sessions = self.session_manager.list_sessions()
-                sessions = [s for s in all_sessions if s.tmux_session == self.tmux_session]
-
-                # Fast session ID detection every 10s (#116)
-                # Ensures active_claude_session_id updates promptly after /clear
-                if should_sync_stats(self._last_session_id_sync, now, self._session_id_sync_interval):
-                    for session in sessions:
-                        self.sync_session_id(session)
-                    self._last_session_id_sync = now
-
-                # Full stats sync every 60s (heavier I/O)
-                # This ensures the first loop has accurate data (fixes #103)
-                if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
-                    for session in sessions:
-                        self.sync_claude_code_stats(session)
-                    self._last_stats_sync = now
-
-                # Send heartbeats before status detection (#171)
-                self._heartbeat_triggered_sessions = self.check_and_send_heartbeats(sessions)
-                # Add newly triggered sessions to persistent heartbeat tracking
-                self._sessions_running_from_heartbeat.update(self._heartbeat_triggered_sessions)
-                # Track pending heartbeat starts for timeline marker
-                self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
-
-                # Detect status and track stats for each session
-                session_states = []
-                all_waiting_user = True
-
-                for session in sessions:
-                    # Skip sessions already known to be terminated/done —
-                    # avoids a wasted tmux call and prevents desync where
-                    # detect_status returns waiting_user for a gone window.
-                    if session.status == "terminated":
-                        status, activity = STATUS_TERMINATED, "Session terminated"
-                    elif session.status == "done":
-                        status, activity = STATUS_DONE, "Completed"
-                    else:
-                        # Detect status - dispatches per-session via dispatcher (#5)
-                        status, activity, _ = self.detector.detect_status(session)
-
-                    # Clear heartbeat tracking when session stops running
-                    if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
-                        self._sessions_running_from_heartbeat.discard(session.id)
-                        self._heartbeat_start_pending.discard(session.id)
-
-                    # Refresh git context (branch may have changed)
-                    self.session_manager.refresh_git_context(session.id)
-
-                    # Update current task in session
-                    self.session_manager.update_stats(
-                        session.id,
-                        current_task=activity[:100] if activity else ""
-                    )
-
-                    # Reload session to get fresh stats
-                    session = self.session_manager.get_session(session.id)
-                    if session is None:
-                        continue
-
-                    # Track stats and build state
-                    # Use "asleep" status if session is marked as sleeping (#68)
-                    # Use "running_heartbeat" if running due to heartbeat trigger (#171)
-                    if session.is_asleep:
-                        effective_status = STATUS_ASLEEP
-                    elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
-                        if session.id in self._heartbeat_start_pending:
-                            effective_status = STATUS_HEARTBEAT_START
-                            self._heartbeat_start_pending.discard(session.id)
-                        else:
-                            effective_status = STATUS_RUNNING_HEARTBEAT
-                    elif (status not in (STATUS_RUNNING, STATUS_TERMINATED, STATUS_ASLEEP)
-                          and session.heartbeat_enabled
-                          and not session.heartbeat_paused
-                          and session.heartbeat_instruction):
-                        effective_status = STATUS_WAITING_HEARTBEAT
-                    else:
-                        effective_status = status
-
-                    # Persist terminated status so future loops skip detect_status
-                    if effective_status == STATUS_TERMINATED and session.status != "terminated":
-                        self.session_manager.update_session_status(session.id, "terminated")
-
-                    session_state = self.track_session_stats(session, effective_status)
-                    session_state.current_activity = activity
-                    session_states.append(session_state)
-
-                    # Log status history to session-specific file
-                    log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
-
-                    # Track if any session is not waiting for user
-                    if status != "waiting_user":
-                        all_waiting_user = False
-
-                # Clean up stale entries for deleted sessions
-                current_session_ids = {s.id for s in sessions}
-                stale_ids = set(self.operation_start_times.keys()) - current_session_ids
-                for stale_id in stale_ids:
-                    del self.operation_start_times[stale_id]
-                stale_ids = set(self.previous_states.keys()) - current_session_ids
-                for stale_id in stale_ids:
-                    del self.previous_states[stale_id]
-
-                # Calculate interval
-                interval = self.calculate_interval(sessions, all_waiting_user)
-                self.state.current_interval = interval
-
-                # Update status based on state
-                if not sessions:
-                    self.state.status = "no_agents"
-                elif all_waiting_user:
-                    self.state.status = "idle"
-                else:
-                    self.state.status = "active"
-
-                # Publish state
-                self._publish_state(session_states)
-
-                # Enforce oversight timeouts every loop
-                self._enforce_oversight_timeouts(sessions)
-
-                # Auto-archive "done" agents after 1 hour (#244)
-                if self.state.loop_count % 60 == 0:
-                    self._auto_archive_done_agents(sessions)
-
-                # Log summary
-                green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)
-                non_green = len(session_states) - green
-                self.log.info(f"Loop #{self.state.loop_count}: {len(sessions)} sessions ({green} green, {non_green} non-green), interval={interval}s")
-
-                # Sleep
-                self._interruptible_sleep(interval)
-
+                self._tick(now)
+                self._interruptible_sleep(self.state.current_interval)
         except Exception as e:
             self.log.error(f"Monitor daemon error: {e}")
             raise

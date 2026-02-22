@@ -68,7 +68,7 @@ tui-eye = "overcode.testing.tui_eye:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-overcode = ["*.md", "*.sh", "*.tcss"]
+overcode = ["*.md", "*.sh", "*.tcss", "web/templates/*.html"]
 
 [tool.black]
 line-length = 100
