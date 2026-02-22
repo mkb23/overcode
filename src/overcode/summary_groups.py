@@ -61,7 +61,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     SummaryGroup(
         id="supervision",
         name="Supervision",
-        fields=["permission_mode", "time_context", "human_count", "robot_count", "standing_orders", "heartbeat"],
+        fields=["permission_mode", "allowed_tools", "time_context", "human_count", "robot_count", "standing_orders", "heartbeat"],
         default_enabled=True,
     ),
     SummaryGroup(
