@@ -440,3 +440,37 @@ def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80)
         cleaned = cleaned[:max_length - 3] + "..."
 
     return cleaned
+
+
+# Regex for detecting sleep commands in pane content (#289)
+_SLEEP_PATTERN = re.compile(r'\bsleep\s+\d+', re.IGNORECASE)
+_SLEEP_DURATION_PATTERN = re.compile(r'\bsleep\s+(\d+)', re.IGNORECASE)
+
+
+def extract_sleep_duration(text: str) -> int | None:
+    """Extract sleep duration in seconds from a command string.
+
+    Returns None if no sleep duration is parseable.
+
+    Examples:
+        extract_sleep_duration("sleep 30") → 30
+        extract_sleep_duration("sleep 900 && echo check") → 900
+        extract_sleep_duration('Bash("sleep 60")') → 60
+        extract_sleep_duration("Reading config.json") → None
+    """
+    m = _SLEEP_DURATION_PATTERN.search(text)
+    return int(m.group(1)) if m else None
+
+
+def is_sleep_command(text: str) -> bool:
+    """Check if text contains a bash sleep command.
+
+    Matches patterns like: sleep 30, sleep 300, sleep 5m, Bash("sleep 60"), etc.
+
+    Args:
+        text: Line of pane content to check
+
+    Returns:
+        True if the text contains a sleep command
+    """
+    return bool(_SLEEP_PATTERN.search(text))

@@ -4,7 +4,7 @@ Session summary widget for TUI.
 Displays expandable session summary with status, metrics, and pane content.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from textual.widgets import Static
@@ -15,7 +15,7 @@ from rich.text import Text
 from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
-from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
+from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, extract_sleep_duration
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
     format_duration,
@@ -300,6 +300,13 @@ class SessionSummary(Static, can_focus=True):
             available = name_width - len(fold_suffix)
             display_name = (s.name[:available] + fold_suffix).ljust(name_width)
 
+        # Compute sleep wake estimate (#289)
+        sleep_wake_estimate = None
+        if self.detected_status == "busy_sleeping" and self._status_changed_at:
+            dur = extract_sleep_duration(s.stats.current_task or "")
+            if dur:
+                sleep_wake_estimate = self._status_changed_at + timedelta(seconds=dur)
+
         return ColumnContext(
             session=s,
             stats=s.stats,
@@ -335,6 +342,7 @@ class SessionSummary(Static, can_focus=True):
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
             any_has_oversight_timeout=self.any_has_oversight_timeout,
             oversight_deadline=self.oversight_deadline,
+            sleep_wake_estimate=sleep_wake_estimate,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

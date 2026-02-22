@@ -19,6 +19,8 @@ from overcode.status_patterns import (
     clean_line,
     extract_background_bash_count,
     extract_live_subagent_count,
+    is_sleep_command,
+    extract_sleep_duration,
 )
 
 
@@ -411,3 +413,87 @@ class TestExtractLiveSubagentCount:
 some output
 ⏵⏵ bypass permissions on · 2 local agents · esc to interrupt"""
         assert extract_live_subagent_count(content) == 2
+
+
+class TestIsSleepCommand:
+    """Tests for is_sleep_command function (#289)."""
+
+    def test_basic_sleep(self):
+        """Should detect 'sleep N' patterns."""
+        assert is_sleep_command("sleep 30") is True
+        assert is_sleep_command("sleep 300") is True
+        assert is_sleep_command("sleep 1") is True
+
+    def test_sleep_in_bash_tool_output(self):
+        """Should detect sleep in Claude Code tool execution lines."""
+        assert is_sleep_command('Running Bash("sleep 60")') is True
+        assert is_sleep_command("Bash  sleep 300") is True
+        assert is_sleep_command('⏺ Bash("sleep 120")') is True
+
+    def test_sleep_with_suffix(self):
+        """Should detect sleep with time suffixes like 30s, 5m."""
+        assert is_sleep_command("sleep 30s") is True
+        assert is_sleep_command("sleep 5m") is True
+
+    def test_sleep_in_compound_commands(self):
+        """Should detect sleep in 'sleep N && command' patterns."""
+        assert is_sleep_command("sleep 900 && echo 'checking'") is True
+        assert is_sleep_command("sleep 60 && curl http://localhost:3000") is True
+        assert is_sleep_command('Bash("sleep 300 && git status")') is True
+        assert is_sleep_command("sleep 120; echo done") is True
+
+    def test_no_sleep(self):
+        """Should not match non-sleep commands."""
+        assert is_sleep_command("Reading config.json") is False
+        assert is_sleep_command("Running pytest tests/") is False
+        assert is_sleep_command("Writing output.txt") is False
+
+    def test_sleep_in_narrative(self):
+        """Should detect sleep even in narrative text."""
+        assert is_sleep_command("I'll run sleep 60 to wait") is True
+
+    def test_empty_and_whitespace(self):
+        """Should handle empty/whitespace input."""
+        assert is_sleep_command("") is False
+        assert is_sleep_command("   ") is False
+
+
+class TestExtractSleepDuration:
+    """Tests for extract_sleep_duration function (#289)."""
+
+    def test_basic_sleep(self):
+        """Should extract duration from 'sleep N'."""
+        assert extract_sleep_duration("sleep 30") == 30
+        assert extract_sleep_duration("sleep 300") == 300
+        assert extract_sleep_duration("sleep 1") == 1
+
+    def test_sleep_in_bash_tool_output(self):
+        """Should extract duration from Claude Code tool execution lines."""
+        assert extract_sleep_duration('Running Bash("sleep 60")') == 60
+        assert extract_sleep_duration("Bash  sleep 300") == 300
+        assert extract_sleep_duration('⏺ Bash("sleep 120")') == 120
+
+    def test_sleep_in_compound_commands(self):
+        """Should extract duration from 'sleep N && command' patterns."""
+        assert extract_sleep_duration("sleep 900 && echo 'checking'") == 900
+        assert extract_sleep_duration("sleep 60 && curl http://localhost:3000") == 60
+        assert extract_sleep_duration('Bash("sleep 300 && git status")') == 300
+        assert extract_sleep_duration("sleep 120; echo done") == 120
+
+    def test_no_sleep(self):
+        """Should return None for non-sleep commands."""
+        assert extract_sleep_duration("Reading config.json") is None
+        assert extract_sleep_duration("Running pytest tests/") is None
+        assert extract_sleep_duration("Writing output.txt") is None
+
+    def test_empty_and_whitespace(self):
+        """Should return None for empty/whitespace input."""
+        assert extract_sleep_duration("") is None
+        assert extract_sleep_duration("   ") is None
+
+    def test_enriched_activity_string(self):
+        """Should extract duration from enriched activity like 'Sleeping 5.0m'."""
+        # The enriched activity doesn't contain the raw command, so it returns None
+        assert extract_sleep_duration("Sleeping 5.0m") is None
+        # But the raw pane content should work
+        assert extract_sleep_duration('Running Bash("sleep 300")') == 300

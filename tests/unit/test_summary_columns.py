@@ -18,6 +18,7 @@ from overcode.summary_columns import (
     render_status_symbol,
     render_unvisited_alert,
     render_time_in_state,
+    render_sleep_countdown,
     render_expand_icon,
     render_agent_name,
     render_repo_name,
@@ -305,6 +306,42 @@ class TestRenderTimeInState:
         text = result[0][0].strip()
         # Should show ~30s, not 1h
         assert text != "-"
+
+
+class TestRenderSleepCountdown:
+    """Tests for render_sleep_countdown column (#289)."""
+
+    def test_returns_none_when_not_sleeping(self):
+        """Should return None (zero width) when no sleep_wake_estimate."""
+        ctx = _make_ctx(sleep_wake_estimate=None)
+        assert render_sleep_countdown(ctx) is None
+
+    def test_shows_remaining_time(self):
+        """Should show countdown when sleep_wake_estimate is in the future."""
+        wake_time = datetime.now() + timedelta(seconds=270)  # ~4.5 minutes
+        ctx = _make_ctx(sleep_wake_estimate=wake_time)
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        text = result[0][0]
+        assert "⏰" in text
+        assert "4.5m" in text or "4.4m" in text  # Allow small timing variance
+
+    def test_shows_zero_when_expired(self):
+        """Should show '0s' when sleep_wake_estimate is in the past."""
+        wake_time = datetime.now() - timedelta(seconds=10)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time)
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        text = result[0][0]
+        assert "⏰" in text
+        assert "0s" in text
+
+    def test_style_is_yellow(self):
+        """Should use yellow style."""
+        wake_time = datetime.now() + timedelta(seconds=120)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, monochrome=False)
+        result = render_sleep_countdown(ctx)
+        assert "yellow" in result[0][1]
 
 
 class TestRenderExpandIcon:

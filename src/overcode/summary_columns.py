@@ -132,6 +132,9 @@ class ColumnContext:
     any_has_oversight_timeout: bool = False
     oversight_deadline: Optional[str] = None
 
+    # Sleep countdown (#289)
+    sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
+
     # Sister integration (#245)
     source_host: str = ""
     is_remote: bool = False
@@ -194,6 +197,19 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
         return [(f"{format_duration(elapsed):>5} ", ctx.status_color)]
     else:
         return [("    - ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
+    """Countdown to estimated sleep wake time (#289).
+
+    Returns None (hidden, zero width) when the agent is not sleeping.
+    """
+    if ctx.sleep_wake_estimate is None:
+        return None
+    remaining = (ctx.sleep_wake_estimate - datetime.now()).total_seconds()
+    if remaining <= 0:
+        return [("  ⏰ 0s ", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+    return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
 
 
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
@@ -685,6 +701,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Status", render_plain=render_status_plain),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert),
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state),
+    SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
