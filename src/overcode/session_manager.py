@@ -124,6 +124,10 @@ class Session:
     # Hook-based status detection - per-agent toggle (#5)
     hook_status_detection: bool = True
 
+    # Claude CLI flag passthrough (#290)
+    allowed_tools: Optional[str] = None  # Comma-separated tool list for --allowedTools
+    extra_claude_args: List[str] = field(default_factory=list)  # Extra CLI flags via --claude-arg
+
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
 
@@ -443,7 +447,9 @@ class SessionManager:
     def create_session(self, name: str, tmux_session: str, tmux_window: int,
                       command: List[str], start_directory: Optional[str] = None,
                       standing_instructions: str = "",
-                      permissiveness_mode: str = "normal") -> Session:
+                      permissiveness_mode: str = "normal",
+                      allowed_tools: Optional[str] = None,
+                      extra_claude_args: Optional[List[str]] = None) -> Session:
         """Create and register a new session.
 
         Args:
@@ -454,6 +460,8 @@ class SessionManager:
             start_directory: Working directory for the session
             standing_instructions: Initial standing instructions (e.g., from config)
             permissiveness_mode: Permission mode (normal, permissive, bypass)
+            allowed_tools: Comma-separated tool list for --allowedTools
+            extra_claude_args: Extra Claude CLI flags via --claude-arg
         """
         if self._skip_git_detection:
             repo_name, branch = None, None
@@ -471,7 +479,9 @@ class SessionManager:
             repo_name=repo_name,
             branch=branch,
             standing_instructions=standing_instructions,
-            permissiveness_mode=permissiveness_mode
+            permissiveness_mode=permissiveness_mode,
+            allowed_tools=allowed_tools,
+            extra_claude_args=extra_claude_args or [],
         )
 
         state = self._load_state()

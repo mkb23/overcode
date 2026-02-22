@@ -170,6 +170,14 @@ def launch(
         Optional[str],
         typer.Option("--oversight-timeout", help="Shorthand for --on-stuck timeout:DURATION (e.g. 5m, 1h)"),
     ] = None,
+    allowed_tools: Annotated[
+        Optional[str],
+        typer.Option("--allowed-tools", help="Comma-separated tools for Claude (e.g. 'Bash,Read,Write,Edit')"),
+    ] = None,
+    claude_args: Annotated[
+        Optional[List[str]],
+        typer.Option("--claude-arg", help="Extra Claude CLI flag (repeatable, e.g. '--model haiku')"),
+    ] = None,
     session: SessionOption = "agents",
 ):
     """Launch a new Claude agent."""
@@ -213,6 +221,8 @@ def launch(
         skip_permissions=skip_permissions,
         dangerously_skip_permissions=bypass_permissions,
         parent_name=parent,
+        allowed_tools=allowed_tools,
+        extra_claude_args=claude_args,
     )
 
     if result:
@@ -221,6 +231,10 @@ def launch(
             rprint(f"  Parent: {parent or os.environ.get('OVERCODE_SESSION_NAME', '?')}")
         if prompt:
             rprint("  Initial prompt sent")
+        if allowed_tools:
+            rprint(f"  Allowed tools: {allowed_tools}")
+        if claude_args:
+            rprint(f"  Extra Claude args: {' '.join(claude_args)}")
 
         # Store oversight policy on session
         if oversight_policy != "wait" or oversight_timeout_seconds > 0:
@@ -232,6 +246,11 @@ def launch(
                 oversight_timeout_seconds=oversight_timeout_seconds,
             )
             rprint(f"  Oversight: {oversight_policy}" + (f" ({oversight_timeout_seconds:.0f}s)" if oversight_timeout_seconds > 0 else ""))
+
+        # Skill staleness check (#290)
+        from .bundled_skills import any_skills_stale
+        if any_skills_stale():
+            rprint("[yellow]Warning:[/yellow] Installed skills are modified. Run [bold]overcode skills install[/bold] to update.")
 
         if follow:
             from .follow_mode import follow_agent
@@ -990,6 +1009,12 @@ def show(
         if activity:
             print(f"{'Activity:':<{label_width + 1}} {activity[:100]}")
 
+        # Claude CLI flag passthrough (#290)
+        if sess.allowed_tools:
+            print(f"{'Tools:':<{label_width + 1}} {sess.allowed_tools}")
+        if sess.extra_claude_args:
+            print(f"{'Claude args:':<{label_width + 1}} {' '.join(sess.extra_claude_args)}")
+
         print()
 
     # Pane output section (skip if --stats-only or --lines 0)
@@ -1270,7 +1295,7 @@ def skills_status():
             elif skill_file.read_text() == skill["content"]:
                 rprint(f"  {name:<20} [green]\u2713 installed[/green]")
             else:
-                rprint(f"  {name:<20} [yellow]modified[/yellow]")
+                rprint(f"  {name:<20} [yellow]\u26a0 modified[/yellow] — run: overcode skills install")
 
 
 # =============================================================================

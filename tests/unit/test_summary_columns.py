@@ -8,6 +8,10 @@ from overcode.summary_columns import (
     ALL,
     MED_PLUS,
     FULL_PLUS,
+    TOOL_EMOJI,
+    TOOL_EMOJI_DEFAULT,
+    MAX_TOOL_EMOJI,
+    _tool_emojis,
     ColumnContext,
     SummaryColumn,
     SUMMARY_COLUMNS,
@@ -33,6 +37,7 @@ from overcode.summary_columns import (
     render_subagent_count,
     render_bash_count,
     render_permission_mode,
+    render_allowed_tools,
     render_time_context,
     render_human_count,
     render_robot_count,
@@ -52,6 +57,7 @@ from overcode.summary_columns import (
     render_repo_name_plain,
     render_branch_plain,
     render_mode_plain,
+    render_tools_plain,
     render_heartbeat_plain,
     render_orders_plain,
     render_value_plain,
@@ -98,6 +104,7 @@ def _make_session(**overrides):
         last_heartbeat_time=None,
         heartbeat_instruction=None,
         cost_budget_usd=0.0,
+        allowed_tools=None,
         stats=_make_stats(),
     )
     defaults.update(overrides)
@@ -584,6 +591,79 @@ class TestRenderPermissionMode:
         ctx = _make_ctx(perm_emoji="🔥")
         result = render_permission_mode(ctx)
         assert "🔥" in result[0][0]
+
+
+class TestToolEmojisHelper:
+    def test_empty_string_returns_empty(self):
+        assert _tool_emojis("") == ""
+        assert _tool_emojis(None) == ""
+
+    def test_known_tools(self):
+        assert _tool_emojis("Read") == "📖"
+        assert _tool_emojis("Read,Glob") == "📖🔍"
+
+    def test_unknown_tool_uses_fallback(self):
+        assert _tool_emojis("Read,CustomTool") == "📖🔹"
+
+    def test_truncation_adds_ellipsis(self):
+        tools = ",".join(["Read"] * 12)
+        result = _tool_emojis(tools)
+        assert result.endswith("…")
+        # Should have exactly MAX_TOOL_EMOJI emojis + ellipsis
+        assert result == "📖" * 10 + "…"
+
+    def test_whitespace_stripped(self):
+        assert _tool_emojis("Read , Glob") == "📖🔍"
+
+    def test_custom_max(self):
+        result = _tool_emojis("Read,Glob,Grep", max_n=2)
+        assert result == "📖🔍…"
+
+
+class TestRenderAllowedTools:
+    def test_none_returns_none(self):
+        session = _make_session(allowed_tools=None)
+        ctx = _make_ctx(session=session)
+        assert render_allowed_tools(ctx) is None
+
+    def test_empty_returns_none(self):
+        session = _make_session(allowed_tools="")
+        ctx = _make_ctx(session=session)
+        assert render_allowed_tools(ctx) is None
+
+    def test_known_tools(self):
+        session = _make_session(allowed_tools="Read,Glob,Grep")
+        ctx = _make_ctx(session=session)
+        result = render_allowed_tools(ctx)
+        assert result is not None
+        assert "📖🔍🔎" in result[0][0]
+
+    def test_unknown_fallback(self):
+        session = _make_session(allowed_tools="Read,CustomTool")
+        ctx = _make_ctx(session=session)
+        result = render_allowed_tools(ctx)
+        assert "📖🔹" in result[0][0]
+
+    def test_truncation(self):
+        tools = ",".join(["Read"] * 12)
+        session = _make_session(allowed_tools=tools)
+        ctx = _make_ctx(session=session)
+        result = render_allowed_tools(ctx)
+        assert result[0][0].strip().endswith("…")
+
+
+class TestRenderToolsPlain:
+    def test_none_returns_none(self):
+        session = _make_session(allowed_tools=None)
+        ctx = _make_ctx(session=session)
+        assert render_tools_plain(ctx) is None
+
+    def test_shows_emojis_and_text(self):
+        session = _make_session(allowed_tools="Read,Glob")
+        ctx = _make_ctx(session=session)
+        result = render_tools_plain(ctx)
+        assert "📖🔍" in result
+        assert "(Read,Glob)" in result
 
 
 class TestRenderTimeContext:

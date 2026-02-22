@@ -28,6 +28,38 @@ from .tui_helpers import (
 
 
 # ---------------------------------------------------------------------------
+# Tool name → emoji registry for allowed-tools column
+# ---------------------------------------------------------------------------
+TOOL_EMOJI: dict[str, str] = {
+    "Bash": "🖥️",
+    "Read": "📖",
+    "Write": "✏️",
+    "Edit": "🔧",
+    "Glob": "🔍",
+    "Grep": "🔎",
+    "WebFetch": "🌐",
+    "WebSearch": "🕵️",
+    "Task": "🧵",
+    "Notebook": "📓",
+    "NotebookEdit": "📓",
+    "TodoRead": "📋",
+    "TodoWrite": "📝",
+}
+TOOL_EMOJI_DEFAULT = "🔹"  # Fallback for unknown tools
+MAX_TOOL_EMOJI = 10  # Configurable cap
+
+
+def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI) -> str:
+    """Convert comma-separated tool names to emoji string."""
+    if not allowed_tools:
+        return ""
+    tools = [t.strip() for t in allowed_tools.split(",") if t.strip()]
+    emojis = [TOOL_EMOJI.get(t, TOOL_EMOJI_DEFAULT) for t in tools[:max_n]]
+    suffix = "…" if len(tools) > max_n else ""
+    return "".join(emojis) + suffix
+
+
+# ---------------------------------------------------------------------------
 # Type alias for column output: list of (text, style) segments, or None to skip
 # ---------------------------------------------------------------------------
 ColumnOutput = Optional[List[Tuple[str, str]]]
@@ -326,6 +358,13 @@ def render_permission_mode(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {ctx.perm_emoji}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
 
 
+def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
+    emojis = _tool_emojis(ctx.session.allowed_tools)
+    if not emojis:
+        return None
+    return [(f" {emojis}", ctx.mono(f"white{ctx.bg}", ""))]
+
+
 def render_time_context(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.time_context_enabled:
         return [(" 🕐", ctx.mono(f"bold white{ctx.bg}", "bold"))]
@@ -573,6 +612,13 @@ def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
     return f"{mode}  Time ctx: {tc}"
 
 
+def render_tools_plain(ctx: ColumnContext) -> Optional[str]:
+    if not ctx.session.allowed_tools:
+        return None
+    emojis = _tool_emojis(ctx.session.allowed_tools)
+    return f"{emojis}  ({ctx.session.allowed_tools})"
+
+
 def render_heartbeat_plain(ctx: ColumnContext) -> Optional[str]:
     s = ctx.session
     if not s.heartbeat_enabled:
@@ -690,6 +736,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Supervision group
     SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
                   label="Mode", render_plain=render_mode_plain),
+    SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
+                  label="Tools", render_plain=render_tools_plain),
     SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context),
     SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count),
     SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count),

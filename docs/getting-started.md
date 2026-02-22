@@ -88,6 +88,9 @@ overcode launch -n my-agent -d ~/myproject --skip-permissions
 # Bypass all permissions (use with caution)
 overcode launch -n my-agent -d ~/myproject --bypass-permissions
 
+# Restrict agent to specific tools
+overcode launch -n my-agent -d ~/myproject --allowed-tools "Read,Glob,Grep,Edit"
+
 # Use a different tmux session
 overcode launch -n my-agent -d ~/myproject --session myteam
 ```

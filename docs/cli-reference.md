@@ -23,6 +23,8 @@ overcode launch --name <name> [options]
 | `--follow` | `-f` | Stream child output, block until report or timeout |
 | `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail`, `timeout:DURATION` |
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
+| `--allowed-tools` | | Comma-separated tools for Claude (e.g., `Read,Glob,Grep,Edit`). Maps to `--allowedTools` |
+| `--claude-arg` | | Extra Claude CLI flag (repeatable). Each value is a space-separated flag+value string |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Examples:**
@@ -41,6 +43,12 @@ overcode launch -n subtask --parent my-agent --follow -p "Fix the auth bug. When
 
 # With oversight timeout (fail after 5 minutes without report)
 overcode launch -n subtask --follow --oversight-timeout 5m -p "Fix the bug. When done: overcode report --status success"
+
+# Restrict agent to read-only tools
+overcode launch -n reviewer -d ~/project --allowed-tools "Read,Glob,Grep" --skip-permissions
+
+# Pass extra Claude CLI flags
+overcode launch -n fast -d ~/project --claude-arg "--model haiku" --claude-arg "--effort low"
 ```
 
 ### `overcode list`
