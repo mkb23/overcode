@@ -58,7 +58,7 @@ class TestToggleDaemon:
 
 
 class TestSupervisorStart:
-    """Test action_supervisor_start method."""
+    """Test action_supervisor_start double-press and _do_supervisor_start."""
 
     def test_method_exists(self):
         """Should have action_supervisor_start method."""
@@ -66,6 +66,19 @@ class TestSupervisorStart:
 
         assert hasattr(DaemonActionsMixin, 'action_supervisor_start')
         assert callable(getattr(DaemonActionsMixin, 'action_supervisor_start'))
+
+    def test_requires_double_press_confirmation(self):
+        """Should delegate to _confirm_double_press for double-press gate."""
+        from overcode.tui_actions.daemon import DaemonActionsMixin
+
+        mock_tui = MagicMock()
+
+        DaemonActionsMixin.action_supervisor_start(mock_tui)
+
+        mock_tui._confirm_double_press.assert_called_once()
+        args = mock_tui._confirm_double_press.call_args
+        assert args[0][0] == "supervisor_start"
+        assert "Press [ again" in args[0][1]
 
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=True)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
@@ -76,7 +89,7 @@ class TestSupervisorStart:
         mock_tui = MagicMock()
         mock_tui.tmux_session = "test"
 
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "already running" in mock_tui.notify.call_args[0][0]
@@ -92,7 +105,7 @@ class TestSupervisorStart:
         mock_tui = MagicMock()
         mock_tui.tmux_session = "test"
 
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_tui._ensure_monitor_daemon.assert_called_once()
         mock_sleep.assert_called_once_with(1.0)
@@ -110,7 +123,7 @@ class TestSupervisorStart:
 
         mock_sys.executable = "/usr/bin/python3"
 
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_subprocess.Popen.assert_called_once()
         call_args = mock_subprocess.Popen.call_args
@@ -136,7 +149,7 @@ class TestSupervisorStart:
         mock_tui.tmux_session = "test"
         mock_tui.query_one.return_value = mock_panel
 
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         assert any("Starting Supervisor Daemon" in line for line in mock_panel.log_lines)
 
@@ -150,7 +163,7 @@ class TestSupervisorStart:
         mock_tui = MagicMock()
         mock_tui.tmux_session = "test"
 
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "Failed" in mock_tui.notify.call_args[0][0]
@@ -170,13 +183,13 @@ class TestSupervisorStart:
         mock_tui.query_one.side_effect = NoMatches()
 
         # Should not raise
-        DaemonActionsMixin.action_supervisor_start(mock_tui)
+        DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_subprocess.Popen.assert_called_once()
 
 
 class TestSupervisorStop:
-    """Test action_supervisor_stop method."""
+    """Test action_supervisor_stop double-press and _do_supervisor_stop."""
 
     def test_method_exists(self):
         """Should have action_supervisor_stop method."""
@@ -184,6 +197,19 @@ class TestSupervisorStop:
 
         assert hasattr(DaemonActionsMixin, 'action_supervisor_stop')
         assert callable(getattr(DaemonActionsMixin, 'action_supervisor_stop'))
+
+    def test_requires_double_press_confirmation(self):
+        """Should delegate to _confirm_double_press for double-press gate."""
+        from overcode.tui_actions.daemon import DaemonActionsMixin
+
+        mock_tui = MagicMock()
+
+        DaemonActionsMixin.action_supervisor_stop(mock_tui)
+
+        mock_tui._confirm_double_press.assert_called_once()
+        args = mock_tui._confirm_double_press.call_args
+        assert args[0][0] == "supervisor_stop"
+        assert "Press ] again" in args[0][1]
 
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     def test_warns_when_not_running(self, mock_is_running):
@@ -193,7 +219,7 @@ class TestSupervisorStop:
         mock_tui = MagicMock()
         mock_tui.tmux_session = "test"
 
-        DaemonActionsMixin.action_supervisor_stop(mock_tui)
+        DaemonActionsMixin._do_supervisor_stop(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "not running" in mock_tui.notify.call_args[0][0]
@@ -212,7 +238,7 @@ class TestSupervisorStop:
         mock_tui.tmux_session = "test"
         mock_tui.query_one.return_value = mock_panel
 
-        DaemonActionsMixin.action_supervisor_stop(mock_tui)
+        DaemonActionsMixin._do_supervisor_stop(mock_tui)
 
         mock_stop.assert_called_once_with("test")
         mock_tui.notify.assert_called_once()
@@ -230,7 +256,7 @@ class TestSupervisorStop:
         mock_tui = MagicMock()
         mock_tui.tmux_session = "test"
 
-        DaemonActionsMixin.action_supervisor_stop(mock_tui)
+        DaemonActionsMixin._do_supervisor_stop(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "Failed" in mock_tui.notify.call_args[0][0]
@@ -249,7 +275,7 @@ class TestSupervisorStop:
         mock_tui.query_one.side_effect = NoMatches()
 
         # Should not raise
-        DaemonActionsMixin.action_supervisor_stop(mock_tui)
+        DaemonActionsMixin._do_supervisor_stop(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "Stopped" in mock_tui.notify.call_args[0][0]

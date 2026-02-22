@@ -35,7 +35,15 @@ class DaemonActionsMixin:
             pass
 
     def action_supervisor_start(self) -> None:
-        """Start the Supervisor Daemon (handles Claude orchestration)."""
+        """Start the Supervisor Daemon (requires double-press confirmation)."""
+        self._confirm_double_press(
+            "supervisor_start",
+            "Press [ again to start Supervisor Daemon",
+            self._do_supervisor_start,
+        )
+
+    def _do_supervisor_start(self) -> None:
+        """Actually start the Supervisor Daemon."""
         from ..monitor_daemon import is_monitor_daemon_running
         from ..supervisor_daemon import is_supervisor_daemon_running
         from ..tui_widgets import DaemonPanel
@@ -70,7 +78,15 @@ class DaemonActionsMixin:
             self.notify(f"Failed to start Supervisor Daemon: {e}", severity="error")
 
     def action_supervisor_stop(self) -> None:
-        """Stop the Supervisor Daemon."""
+        """Stop the Supervisor Daemon (requires double-press confirmation)."""
+        self._confirm_double_press(
+            "supervisor_stop",
+            "Press ] again to stop Supervisor Daemon",
+            self._do_supervisor_stop,
+        )
+
+    def _do_supervisor_stop(self) -> None:
+        """Actually stop the Supervisor Daemon."""
         from ..supervisor_daemon import is_supervisor_daemon_running, stop_supervisor_daemon
         from ..tui_widgets import DaemonPanel
 
