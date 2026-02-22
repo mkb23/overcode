@@ -357,9 +357,10 @@ def list_agents(
     console = Console()
     terminated_count = 0
 
+    # First pass: collect status/activity/stats per session
+    session_data = []
     for sess in sessions:
         if getattr(sess, 'is_remote', False):
-            # Remote sessions carry status in their stats
             status = sess.stats.current_state or "running"
             activity = sess.stats.current_task or ""
         elif sess.status == "terminated":
@@ -375,7 +376,6 @@ def list_agents(
                 status = ds.current_status
                 activity = ds.current_activity
             else:
-                # Session not yet in daemon state — detect directly
                 if detector is None:
                     from .status_detector_factory import StatusDetectorDispatcher
                     detector = StatusDetectorDispatcher(session)
@@ -386,14 +386,12 @@ def list_agents(
         if sess.is_asleep:
             status = "asleep"
 
-        # Get claude_stats for context%, tokens
         claude_stats = None
         try:
             claude_stats = get_session_stats(sess)
         except Exception:
             pass
 
-        # Get git diff stats
         git_diff = None
         if getattr(sess, 'is_remote', False):
             git_diff = getattr(sess, 'remote_git_diff', None)
@@ -404,7 +402,13 @@ def list_agents(
             except Exception:
                 pass
 
-        # Build column context using tree metadata for child count
+        session_data.append((sess, status, activity, claude_stats, git_diff))
+
+    # Compute cross-session flags
+    any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _ in session_data)
+
+    # Second pass: render
+    for sess, status, activity, claude_stats, git_diff in session_data:
         meta = tree_meta.get(sess.id)
         child_count = meta.child_count if meta else 0
         ctx = build_cli_context(
@@ -412,6 +416,7 @@ def list_agents(
             claude_stats=claude_stats, git_diff_stats=git_diff,
             status=status, bg_bash_count=0, live_sub_count=0,
             any_has_budget=any_has_budget, child_count=child_count,
+            any_is_sleeping=any_is_sleeping,
         )
 
         # Enable colors and set detail level for list view

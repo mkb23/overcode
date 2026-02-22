@@ -134,6 +134,7 @@ class ColumnContext:
     oversight_deadline: Optional[str] = None
 
     # Sleep countdown (#289)
+    any_is_sleeping: bool = False  # True if any agent is busy_sleeping
     sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
 
     # Sister integration (#245)
@@ -203,14 +204,19 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
 def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     """Countdown to estimated sleep wake time (#289).
 
-    Returns None (hidden, zero width) when the agent is not sleeping.
+    Shows countdown for sleeping agents, blank placeholder when any other
+    agent is sleeping (to maintain column alignment), or None when no
+    agents are sleeping.
     """
-    if ctx.sleep_wake_estimate is None:
-        return None
-    remaining = (ctx.sleep_wake_estimate - datetime.now()).total_seconds()
-    if remaining <= 0:
-        return [("  ⏰ 0s ", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
-    return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
+    if ctx.sleep_wake_estimate is not None:
+        remaining = (ctx.sleep_wake_estimate - datetime.now()).total_seconds()
+        if remaining <= 0:
+            return [("  ⏰ 0s ", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+        return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
+    if ctx.any_is_sleeping:
+        # Blank placeholder to keep columns aligned
+        return [("        ", "")]
+    return None
 
 
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
@@ -778,7 +784,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 def build_cli_context(
     session, stats, claude_stats, git_diff_stats,
     status: str, bg_bash_count: int, live_sub_count: int,
-    any_has_budget: bool = False, child_count: int = 0,
+    any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
@@ -847,6 +853,7 @@ def build_cli_context(
         max_branch_width=10,
         any_has_oversight_timeout=any_has_oversight_timeout,
         oversight_deadline=oversight_deadline,
+        any_is_sleeping=any_is_sleeping,
         sleep_wake_estimate=sleep_wake_estimate,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),

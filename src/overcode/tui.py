@@ -1195,6 +1195,12 @@ class SupervisorTUI(
             self.sessions, False, False
         )
 
+        # Check if any agent is busy_sleeping (#289)
+        any_is_sleeping = any(
+            getattr(w, 'detected_status', '') == "busy_sleeping"
+            for w in self.query(SessionSummary)
+        )
+
         # Build the list of sessions to display using extracted logic
         display_sessions = filter_visible_sessions(
             active_sessions=self.sessions,
@@ -1232,15 +1238,18 @@ class SupervisorTUI(
                 if widget.session.id in session_map:
                     new_session = session_map[widget.session.id]
                     old_budget = widget.any_has_budget
+                    old_sleeping = widget.any_is_sleeping
                     # Check if anything display-relevant actually changed
                     changed = (
                         force_refresh
                         or widget.session != new_session
                         or old_budget != any_has_budget
+                        or old_sleeping != any_is_sleeping
                     )
                     widget.session = new_session
                     widget.any_has_budget = any_has_budget
                     widget.any_has_oversight_timeout = any_has_oversight_timeout
+                    widget.any_is_sleeping = any_is_sleeping
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     # Update terminated visual state
                     if widget.session.status == "terminated":
@@ -1292,6 +1301,7 @@ class SupervisorTUI(
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
+                widget.any_is_sleeping = any_is_sleeping
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 # Apply column group visibility (#178)
                 widget.summary_groups = self._prefs.summary_groups

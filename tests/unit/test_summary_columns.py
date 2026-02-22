@@ -311,15 +311,24 @@ class TestRenderTimeInState:
 class TestRenderSleepCountdown:
     """Tests for render_sleep_countdown column (#289)."""
 
-    def test_returns_none_when_not_sleeping(self):
-        """Should return None (zero width) when no sleep_wake_estimate."""
-        ctx = _make_ctx(sleep_wake_estimate=None)
+    def test_returns_none_when_not_sleeping_and_no_others_sleeping(self):
+        """Should return None (zero width) when no one is sleeping."""
+        ctx = _make_ctx(sleep_wake_estimate=None, any_is_sleeping=False)
         assert render_sleep_countdown(ctx) is None
+
+    def test_shows_blank_placeholder_when_others_sleeping(self):
+        """Should show blank space for alignment when other agents are sleeping."""
+        ctx = _make_ctx(sleep_wake_estimate=None, any_is_sleeping=True)
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        text = result[0][0]
+        assert text.strip() == ""  # All whitespace
+        assert len(text) == 8  # Same width as active countdown
 
     def test_shows_remaining_time(self):
         """Should show countdown when sleep_wake_estimate is in the future."""
         wake_time = datetime.now() + timedelta(seconds=270)  # ~4.5 minutes
-        ctx = _make_ctx(sleep_wake_estimate=wake_time)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True)
         result = render_sleep_countdown(ctx)
         assert result is not None
         text = result[0][0]
@@ -329,7 +338,7 @@ class TestRenderSleepCountdown:
     def test_shows_zero_when_expired(self):
         """Should show '0s' when sleep_wake_estimate is in the past."""
         wake_time = datetime.now() - timedelta(seconds=10)
-        ctx = _make_ctx(sleep_wake_estimate=wake_time)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True)
         result = render_sleep_countdown(ctx)
         assert result is not None
         text = result[0][0]
@@ -339,7 +348,7 @@ class TestRenderSleepCountdown:
     def test_style_is_yellow(self):
         """Should use yellow style."""
         wake_time = datetime.now() + timedelta(seconds=120)
-        ctx = _make_ctx(sleep_wake_estimate=wake_time, monochrome=False)
+        ctx = _make_ctx(sleep_wake_estimate=wake_time, any_is_sleeping=True, monochrome=False)
         result = render_sleep_countdown(ctx)
         assert "yellow" in result[0][1]
 

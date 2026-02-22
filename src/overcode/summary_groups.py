@@ -37,7 +37,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     SummaryGroup(
         id="time",
         name="Time",
-        fields=["time_in_state", "uptime", "running_time", "stalled_time", "sleep_time", "active_pct"],
+        fields=["time_in_state", "sleep_countdown", "uptime", "running_time", "stalled_time", "sleep_time", "active_pct"],
         default_enabled=True,
     ),
     SummaryGroup(
