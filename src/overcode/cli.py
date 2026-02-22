@@ -1942,6 +1942,69 @@ def history(
                 f"${stats.estimated_cost_usd:.2f}{duration}"
             )
 
+@app.command()
+def usage():
+    """Show Claude Code subscription usage (5h session + 7d weekly limits)."""
+    from .usage_monitor import UsageMonitor
+
+    token = UsageMonitor._get_access_token()
+    if token is None:
+        rprint("[red]✗[/red] Could not retrieve Claude Code OAuth token from Keychain")
+        raise typer.Exit(1)
+
+    snap = UsageMonitor._fetch_usage(token)
+    if snap.error:
+        rprint(f"[red]✗[/red] API error: {snap.error}")
+        raise typer.Exit(1)
+
+    def _pct_style(pct: float) -> str:
+        if pct >= 90:
+            return "bold red"
+        elif pct >= 75:
+            return "bold yellow"
+        elif pct >= 50:
+            return "yellow"
+        return "green"
+
+    def _fmt_reset(reset_at: str | None) -> str:
+        if not reset_at:
+            return ""
+        from datetime import datetime, timezone
+        try:
+            reset_dt = datetime.fromisoformat(reset_at)
+            now = datetime.now(timezone.utc)
+            if reset_dt.tzinfo is None:
+                reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+            delta = reset_dt - now
+            total_secs = int(delta.total_seconds())
+            if total_secs <= 0:
+                return " [dim](resetting now)[/dim]"
+            hours, remainder = divmod(total_secs, 3600)
+            minutes = remainder // 60
+            if hours > 0:
+                return f" [dim](resets in {hours}h {minutes}m)[/dim]"
+            return f" [dim](resets in {minutes}m)[/dim]"
+        except (ValueError, TypeError):
+            return f" [dim](resets at {reset_at})[/dim]"
+
+    five_h_style = _pct_style(snap.five_hour_pct)
+    seven_d_style = _pct_style(snap.seven_day_pct)
+
+    rprint(f"\n[bold]Claude Code Usage[/bold]\n")
+    rprint(f"  5h session:  [{five_h_style}]{snap.five_hour_pct:.0f}%[/{five_h_style}]{_fmt_reset(snap.five_hour_resets_at)}")
+    rprint(f"  7d weekly:   [{seven_d_style}]{snap.seven_day_pct:.0f}%[/{seven_d_style}]{_fmt_reset(snap.seven_day_resets_at)}")
+
+    if snap.opus_pct is not None or snap.sonnet_pct is not None:
+        rprint(f"\n  [bold]Model breakdown (7d):[/bold]")
+        if snap.opus_pct is not None:
+            opus_style = _pct_style(snap.opus_pct)
+            rprint(f"    Opus:      [{opus_style}]{snap.opus_pct:.0f}%[/{opus_style}]")
+        if snap.sonnet_pct is not None:
+            sonnet_style = _pct_style(snap.sonnet_pct)
+            rprint(f"    Sonnet:    [{sonnet_style}]{snap.sonnet_pct:.0f}%[/{sonnet_style}]")
+
+    rprint(f"\n  [dim]Fetched at {snap.fetched_at:%H:%M:%S}[/dim]\n")
+
 
 # =============================================================================
 # Monitor Daemon Commands
