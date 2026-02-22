@@ -38,10 +38,12 @@ def main():
     parser = argparse.ArgumentParser(description="Run Overcode analytics web server")
     parser.add_argument("--session", "-s", required=True, help="Session name")
     parser.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
 
     session = args.session
     port = args.port
+    host = args.host
 
     log(session, f"Starting web server on port {port}")
 
@@ -77,7 +79,7 @@ def main():
 
         OvercodeHandler.tmux_session = session
 
-        server_address = ("127.0.0.1", port)
+        server_address = (host, port)
         log(session, f"Creating HTTP server at {server_address}")
         server = HTTPServer(server_address, OvercodeHandler)
         log(session, "Server created, starting serve_forever()")

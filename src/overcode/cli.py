@@ -1764,31 +1764,6 @@ def supervisor(
 
 
 @app.command()
-def serve(
-    host: Annotated[
-        str, typer.Option("--host", "-h", help="Host to bind to")
-    ] = "127.0.0.1",
-    port: Annotated[
-        int, typer.Option("--port", "-p", help="Port to listen on")
-    ] = 8080,
-    session: SessionOption = "agents",
-):
-    """Start web dashboard server (alias for 'overcode web').
-
-    Binds to localhost by default. Use --host 0.0.0.0 for LAN access
-    (requires web.api_key in config for security).
-
-    Examples:
-        overcode serve                        # Localhost only, port 8080
-        overcode serve --port 3000            # Custom port
-        overcode serve --host 0.0.0.0         # LAN access (needs api_key)
-    """
-    from .web_server import run_server
-
-    run_server(host=host, port=port, tmux_session=session)
-
-
-@app.command()
 def web(
     host: Annotated[
         str, typer.Option("--host", "-h", help="Host to bind to")
@@ -1796,38 +1771,63 @@ def web(
     port: Annotated[
         int, typer.Option("--port", "-p", help="Port to listen on")
     ] = 8080,
+    stop: Annotated[
+        bool, typer.Option("--stop", help="Stop the running web server")
+    ] = False,
     session: SessionOption = "agents",
 ):
-    """Launch web dashboard with analytics and live monitoring.
+    """Start or stop the web dashboard server (non-blocking).
 
-    Serves both the historical analytics dashboard (at /) and the
-    live monitoring dashboard (at /dashboard), plus the /api/status
-    endpoint used by sister instances.
+    Starts the web server in the background and exits immediately.
+    If the server is already running, shows the current URL.
+    Use --stop to stop a running server.
 
-    Features:
-        - Dashboard with summary stats and daily activity charts
-        - Session browser with sortable table
-        - Timeline view with agent status and user presence
-        - Efficiency metrics with cost analysis
-        - Live agent monitoring at /dashboard
-        - Sister-compatible /api/status endpoint
-
-    Time range presets can be configured in ~/.overcode/config.yaml:
-
-        web:
-          time_presets:
-            - name: "Morning"
-              start: "09:00"
-              end: "12:00"
+    The server provides analytics (at /), live monitoring (at /dashboard),
+    and the /api/status endpoint used by sister instances.
 
     Examples:
-        overcode web                    # Start on localhost:8080
-        overcode web --port 3000        # Custom port
-        overcode web --host 0.0.0.0     # Listen on all interfaces
+        overcode web                          # Start on localhost:8080
+        overcode web --port 3000              # Custom port
+        overcode web --host 0.0.0.0           # LAN access (needs api_key)
+        overcode web --stop                   # Stop the server
     """
-    from .web_server import run_server
+    from .web_server import (
+        start_web_server,
+        stop_web_server,
+        is_web_server_running,
+        get_web_server_url,
+    )
 
-    run_server(host=host, port=port, tmux_session=session)
+    if stop:
+        success, msg = stop_web_server(session)
+        if success:
+            print(f"Web server stopped.")
+        else:
+            print(f"Web server: {msg}")
+        return
+
+    if is_web_server_running(session):
+        url = get_web_server_url(session)
+        print(f"Web server already running at {url}")
+        return
+
+    # Security: require API key when binding to non-localhost
+    if host not in ("127.0.0.1", "localhost"):
+        from .config import get_web_api_key
+        if not get_web_api_key():
+            print("Error: Binding to non-localhost requires web.api_key in config.")
+            print("Set it in ~/.overcode/config.yaml:")
+            print()
+            print("  web:")
+            print('    api_key: "your-secret-key"')
+            raise typer.Exit(1)
+
+    success, msg = start_web_server(session, port, host)
+    if success:
+        print(f"Web server started: {msg}")
+    else:
+        print(f"Failed to start web server: {msg}")
+        raise typer.Exit(1)
 
 
 

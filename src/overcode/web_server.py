@@ -526,12 +526,13 @@ def _log_to_file(session: str, message: str) -> None:
         pass
 
 
-def start_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
+def start_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:
     """Start the analytics web server for a session.
 
     Args:
         session: tmux session name
         port: Preferred port (will try alternatives if busy)
+        host: Host to bind to (default: 127.0.0.1)
 
     Returns:
         Tuple of (success, message)
@@ -562,7 +563,8 @@ def start_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
         # Open log file in append mode for stderr
         log_file = open(log_path, "a")
         cmd = [sys.executable, "-m", "overcode.web_server_runner",
-               "--session", session, "--port", str(actual_port)]
+               "--session", session, "--port", str(actual_port),
+               "--host", host]
         _log_to_file(session, f"Starting subprocess: {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd,
@@ -624,12 +626,13 @@ def stop_web_server(session: str) -> Tuple[bool, str]:
         return False, "Failed to stop"
 
 
-def toggle_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
+def toggle_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:
     """Toggle the web server on/off for a session.
 
     Args:
         session: tmux session name
         port: Preferred port (used when starting)
+        host: Host to bind to (default: 127.0.0.1)
 
     Returns:
         Tuple of (is_now_running, message)
@@ -638,9 +641,5 @@ def toggle_web_server(session: str, port: int = 8080) -> Tuple[bool, str]:
         success, msg = stop_web_server(session)
         return False, msg
     else:
-        success, msg = start_web_server(session, port)
+        success, msg = start_web_server(session, port, host)
         return success, msg
-
-
-# Backward-compatible alias
-run_analytics_server = run_server

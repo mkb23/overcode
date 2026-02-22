@@ -262,25 +262,9 @@ overcode supervisor [options]
 | `--restart` | Restart if already running |
 | `--session` | Tmux session name |
 
-### `overcode serve`
-
-Start a web dashboard server for remote/mobile monitoring.
-
-```bash
-overcode serve [options]
-```
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--host` | `-h` | Host to bind (default: `0.0.0.0`) |
-| `--port` | `-p` | Port (default: `8080`) |
-| `--session` | | Tmux session name |
-
-The web dashboard is read-only and auto-refreshes every 5 seconds. Optimized for mobile viewing.
-
 ### `overcode web`
 
-Launch the analytics web dashboard for historical data.
+Start or stop the web dashboard server (non-blocking).
 
 ```bash
 overcode web [options]
@@ -290,13 +274,26 @@ overcode web [options]
 |--------|-------|-------------|
 | `--host` | `-h` | Host to bind (default: `127.0.0.1`) |
 | `--port` | `-p` | Port (default: `8080`) |
+| `--stop` | | Stop the running web server |
+| `--session` | | Tmux session name |
+
+Starts the server in the background and exits immediately. If already running, shows the current URL. Use `--stop` to stop a running server. Same toggle as the TUI `w` key.
 
 Features:
 - Summary statistics and daily activity charts
 - Session browser with sortable table
 - Timeline view with status history
 - Efficiency metrics and cost analysis
+- Live agent monitoring at `/dashboard`
+- Sister-compatible `/api/status` endpoint
 - Dark theme
+
+```bash
+overcode web                          # Start on localhost:8080
+overcode web --port 3000              # Custom port
+overcode web --host 0.0.0.0           # LAN access (needs api_key)
+overcode web --stop                   # Stop the server
+```
 
 ### `overcode export`
 

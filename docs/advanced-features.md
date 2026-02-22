@@ -321,37 +321,29 @@ Quickly reset an agent to the main branch.
 
 Monitor agents from anywhere with the web dashboard.
 
-### Mobile Dashboard
+### Web Dashboard
 
-Start the mobile-optimized dashboard:
-
-```bash
-overcode serve --host 0.0.0.0 --port 8080
-```
-
-Then access `http://<your-ip>:8080` from your phone or tablet.
-
-Features:
-- Read-only view
-- Auto-refreshes every 5 seconds
-- Shows agent status, costs, activity
-- Optimized for mobile screens
-
-### Analytics Dashboard
-
-For historical analysis:
+Start the dashboard server:
 
 ```bash
-overcode web --port 8080
+overcode web                          # Start on localhost:8080
+overcode web --host 0.0.0.0           # LAN access (needs api_key)
+overcode web --port 3000              # Custom port
+overcode web --stop                   # Stop the server
 ```
 
+The server runs in the background — the command exits immediately. Run `overcode web` again to see the URL if already running.
+
+Access `http://<your-ip>:8080` from your phone, tablet, or another machine.
+
 Features:
-- Summary statistics
-- Daily activity charts
+- Summary statistics and daily activity charts
 - Session browser with sorting
-- Timeline visualization
-- Efficiency metrics
-- Cost analysis
+- Timeline visualization with agent status and user presence
+- Efficiency metrics and cost analysis
+- Live agent monitoring at `/dashboard`
+- Sister-compatible `/api/status` endpoint
+- Auto-refreshes, optimized for mobile screens
 
 ### TUI Toggle
 
@@ -506,11 +498,11 @@ Aggregate agents from multiple machines into a single TUI. When running overcode
 
 ### Prerequisites
 
-Each machine must be running `overcode serve`:
+Each machine must be running `overcode web`:
 
 ```bash
 # On each remote machine
-overcode serve
+overcode web
 ```
 
 ### Setup Option A: SSH Tunnels (Recommended)
@@ -562,7 +554,7 @@ web:
 Start the server bound to all interfaces:
 
 ```bash
-overcode serve --host 0.0.0.0
+overcode web --host 0.0.0.0
 ```
 
 On the **monitoring machine**, configure sisters:
@@ -598,7 +590,7 @@ desktop        agent5     running    $0.67    5m      Adding endpoint...
 
 ### Troubleshooting
 
-- **Sister shows `--`**: Check that `overcode serve` is running on the remote machine and the tunnel/URL is reachable
+- **Sister shows `--`**: Check that `overcode web` is running on the remote machine and the tunnel/URL is reachable
 - **401 Unauthorized**: API key mismatch between server and client config
 - **No Host column**: Sisters config is empty or missing — the column is auto-hidden
 
