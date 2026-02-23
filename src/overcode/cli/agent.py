@@ -167,7 +167,7 @@ def list_agents(
     """
     from ..history_reader import get_session_stats
     from ..tui_helpers import (
-        get_current_state_times, get_status_symbol, get_git_diff_stats,
+        get_status_symbol, get_git_diff_stats,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import build_cli_context, SUMMARY_COLUMNS
@@ -426,7 +426,6 @@ def report(
     import os
     import json
     from datetime import datetime
-    from pathlib import Path
 
     if status not in ("success", "failure"):
         rprint(f"[red]Error: --status must be 'success' or 'failure', got '{status}'[/red]")
@@ -777,4 +776,4 @@ def show(
                 print(output)
                 print(f"=== end {name} ===")
             else:
-                rprint(f"[dim]No pane output available[/dim]")
+                rprint("[dim]No pane output available[/dim]")

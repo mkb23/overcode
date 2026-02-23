@@ -33,7 +33,7 @@ def hooks_install(
         level = "user"
 
     try:
-        settings = editor.load()
+        editor.load()
     except ValueError as e:
         rprint(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
@@ -52,7 +52,7 @@ def hooks_install(
         rprint(f"[green]\u2713[/green] Installed {installed} hook(s) in {level} settings")
         rprint(f"  [dim]{editor.path}[/dim]")
         rprint(f"\n  Events: {events}")
-        rprint(f"  All hooks run 'overcode hook-handler' (reads event from stdin).")
+        rprint("  All hooks run 'overcode hook-handler' (reads event from stdin).")
     elif already == len(OVERCODE_HOOKS):
         rprint(f"[green]\u2713[/green] All {already} hooks already installed in {level} settings")
 
@@ -106,12 +106,12 @@ def hooks_status():
             editor.load()
         except ValueError:
             rprint(f"\n{level_name} ({editor.path}):")
-            rprint(f"  [red](invalid JSON)[/red]")
+            rprint("  [red](invalid JSON)[/red]")
             continue
 
         if not editor.path.exists():
             rprint(f"\n{level_name} ({editor.path}):")
-            rprint(f"  [dim](no settings file)[/dim]")
+            rprint("  [dim](no settings file)[/dim]")
             continue
 
         rprint(f"\n{level_name} ({editor.path}):")

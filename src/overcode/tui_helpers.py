@@ -17,7 +17,6 @@ from .status_constants import (
     get_presence_color as _get_presence_color,
     get_daemon_status_style as _get_daemon_status_style,
     STATUS_ASLEEP,
-    STATUS_RUNNING,
     STATUS_TERMINATED,
     is_green_status,
 )

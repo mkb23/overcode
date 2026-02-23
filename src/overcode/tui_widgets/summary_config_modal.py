@@ -8,7 +8,6 @@ Updates live summary lines as you toggle groups.
 
 from typing import Dict, Optional, Any
 
-from textual.app import ComposeResult
 from textual.widgets import Static
 from textual.message import Message
 from textual import events

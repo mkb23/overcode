@@ -18,7 +18,6 @@ from ..status_constants import get_status_color
 from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, extract_sleep_duration
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
-    format_duration,
     calculate_uptime,
     get_current_state_times,
     get_status_symbol,

@@ -34,7 +34,6 @@ from .history_reader import get_session_stats, get_current_session_id_for_direct
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
-    get_monitor_daemon_state,
 )
 from .pid_utils import (
     acquire_daemon_lock,
@@ -44,7 +43,6 @@ from .session_manager import SessionManager
 from .settings import (
     DAEMON,
     DAEMON_VERSION,
-    PATHS,
     ensure_session_dir,
     get_monitor_daemon_pid_path,
     get_monitor_daemon_state_path,
@@ -62,11 +60,9 @@ from .status_constants import (
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
     STATUS_WAITING_HEARTBEAT,
-    STATUS_WAITING_OVERSIGHT,
     is_green_status,
 )
-from .status_detector import StatusDetector, PollingStatusDetector
-from .hook_status_detector import HookStatusDetector
+from .status_detector import StatusDetector
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import log_agent_status
 from .monitor_daemon_core import (
@@ -756,7 +752,7 @@ class MonitorDaemon:
             import urllib.error
 
             # Build status payload using web_api format
-            from .web_api import get_status_data, get_timeline_data
+            from .web_api import get_status_data
 
             payload = get_status_data(self.tmux_session)
 
@@ -779,7 +775,7 @@ class MonitorDaemon:
                 if resp.status == 200:
                     self.state.relay_last_push = now.isoformat()
                     self.state.relay_last_status = "ok"
-                    self.log.debug(f"Relay push OK")
+                    self.log.debug("Relay push OK")
                 else:
                     self.state.relay_last_status = "error"
                     self.log.warn(f"Relay push failed: HTTP {resp.status}")

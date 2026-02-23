@@ -4,7 +4,7 @@ Navigation action methods for TUI.
 Handles moving between sessions in the list.
 """
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary

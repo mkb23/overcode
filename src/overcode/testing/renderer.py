@@ -1,7 +1,6 @@
 """Render terminal output with ANSI codes to PNG images."""
 
 from pathlib import Path
-from typing import Optional
 import pyte
 from PIL import Image, ImageDraw, ImageFont
 
@@ -149,7 +148,6 @@ def render_terminal_to_png(
 
     # Find actual content bounds (non-empty rows)
     first_row = 0
-    last_row = internal_height - 1
     for y in range(internal_height):
         row_has_content = any(
             screen.buffer[y][x].data.strip()
@@ -159,7 +157,6 @@ def render_terminal_to_png(
         if row_has_content:
             if first_row == 0:
                 first_row = y
-            last_row = y
 
     # Use the requested height - the large internal buffer prevents scrolling,
     # and we render from first_row for `height` rows

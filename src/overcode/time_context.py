@@ -12,7 +12,7 @@ All functions are pure (no Rich/Typer dependencies) for easy testing.
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 

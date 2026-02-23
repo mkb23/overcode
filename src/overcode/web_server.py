@@ -7,11 +7,9 @@ Uses Python stdlib http.server - no additional dependencies required.
 """
 
 import json
-import os
 import sys
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
@@ -220,7 +218,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
     def _route_control(self, method: str) -> None:
         """Route POST/PUT/DELETE requests to control API handlers."""
-        from . import web_control_api as api
         from .web_control_api import ControlError
 
         if not self._check_auth():
@@ -436,14 +433,14 @@ def run_server(
     # Get actual bound address for display
     bound_host, bound_port = server.server_address
 
-    print(f"Overcode Web Server")
-    print(f"====================")
+    print("Overcode Web Server")
+    print("====================")
     print(f"Monitoring tmux session: {tmux_session}")
-    print(f"")
+    print("")
     print(f"  Analytics:  http://localhost:{bound_port}/")
     print(f"  Dashboard:  http://localhost:{bound_port}/dashboard")
     print(f"  API Status: http://localhost:{bound_port}/api/status")
-    print(f"")
+    print("")
     print(f"Local:   http://localhost:{bound_port}")
 
     if host == "0.0.0.0":
@@ -458,9 +455,9 @@ def run_server(
         except Exception:
             print(f"Network: http://<your-ip>:{bound_port}")
 
-    print(f"")
-    print(f"Press Ctrl+C to stop")
-    print(f"")
+    print("")
+    print("Press Ctrl+C to stop")
+    print("")
 
     try:
         server.serve_forever()

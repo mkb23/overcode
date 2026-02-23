@@ -27,7 +27,6 @@ from .status_constants import (
     get_status_color,
     is_green_status,
     AGENT_TIMELINE_CHARS,
-    PRESENCE_TIMELINE_CHARS,
 )
 
 

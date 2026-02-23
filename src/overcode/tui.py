@@ -9,21 +9,18 @@ TODO: Split this file into smaller modules for maintainability:
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 import subprocess
 import sys
 import time
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Vertical, ScrollableContainer, Horizontal
-from textual.widgets import Header, Footer, Static, Label, Input, TextArea
+from textual.containers import ScrollableContainer
+from textual.widgets import Header, Static, Input, TextArea
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual import events, work
-from textual.message import Message
-from rich.text import Text
-from rich.panel import Panel
 
 from . import __version__
 from .session_manager import SessionManager, Session
@@ -31,63 +28,27 @@ from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
-from .settings import signal_activity, write_tui_heartbeat, get_session_dir, get_agent_history_path, get_event_loop_timing_path, TUIPreferences, DAEMON_VERSION  # Activity signaling to daemon
-from .monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
+from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
+from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
-    stop_monitor_daemon,
 )
 from .pid_utils import count_daemon_processes
-from .supervisor_daemon import (
-    is_supervisor_daemon_running,
-    stop_supervisor_daemon,
-)
 from .summarizer_component import (
     SummarizerComponent,
     SummarizerConfig,
     AgentSummary,
 )
-from .summarizer_client import SummarizerClient
-from .web_server import (
-    is_web_server_running,
-    get_web_server_url,
-    toggle_web_server,
-)
-from .config import get_default_standing_instructions
 from .sister_poller import SisterPoller
-from .status_history import read_agent_status_history
 from .usage_monitor import UsageMonitor
-from .presence_logger import read_presence_history, MACOS_APIS_AVAILABLE
-from .launcher import ClaudeLauncher
 from .implementations import RealTmux
 from .tui_helpers import (
-    format_interval,
-    format_ago,
     format_duration,
-    format_tokens,
-    format_line_count,
-    calculate_uptime,
-    presence_state_to_char,
-    agent_status_to_char,
-    get_current_state_times,
-    build_timeline_slots,
-    build_timeline_string,
-    get_status_symbol,
-    get_presence_color,
-    get_agent_timeline_color,
-    style_pane_line,
-    truncate_name,
-    get_daemon_status_style,
     get_git_diff_stats,
-    calculate_safe_break_duration,
 )
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
-    get_sort_mode_display_name,
-    cycle_sort_mode,
-    calculate_green_percentage,
-    calculate_human_interaction_count,
     compute_tree_metadata,
     compute_stall_state,
     should_send_stall_notification,

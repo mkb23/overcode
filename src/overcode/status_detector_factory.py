@@ -9,7 +9,6 @@ auto-dispatches per-session based on session.hook_status_detection (#5).
 from typing import Optional, Tuple, TYPE_CHECKING
 
 from .protocols import StatusDetectorProtocol
-from .status_constants import DEFAULT_CAPTURE_LINES
 
 if TYPE_CHECKING:
     from .protocols import TmuxInterface

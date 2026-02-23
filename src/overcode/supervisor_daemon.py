@@ -44,16 +44,13 @@ from .pid_utils import (
 from .session_manager import SessionManager
 from .settings import (
     DAEMON,
-    PATHS,
     ensure_session_dir,
     get_supervisor_daemon_pid_path,
     get_supervisor_log_path,
     get_supervisor_stats_path,
 )
 from .status_constants import (
-    STATUS_RUNNING,
     STATUS_WAITING_USER,
-    get_status_emoji,
 )
 from .status_patterns import get_patterns
 from .tmux_manager import TmuxManager
@@ -63,8 +60,6 @@ from .supervisor_daemon_core import (
     build_daemon_claude_context as _build_daemon_claude_context,
     filter_non_green_sessions,
     calculate_daemon_claude_run_seconds,
-    should_launch_daemon_claude,
-    parse_intervention_log_line,
     check_daemon_output_completion,
     check_daemon_tool_activity,
     determine_supervisor_action,

@@ -9,7 +9,7 @@ from typing import Annotated, Optional, List
 import typer
 from rich import print as rprint
 
-from ._shared import app, SessionOption, _parse_duration
+from ._shared import app, SessionOption
 
 
 @app.command("hook-handler", hidden=True)
@@ -99,7 +99,7 @@ def instruct(
             rprint(f'  "{sess.standing_instructions}"')
         else:
             rprint(f"[dim]No standing instructions set for '{name}'[/dim]")
-            rprint(f"[dim]Tip: Use 'overcode presets' to see available presets[/dim]")
+            rprint("[dim]Tip: Use 'overcode presets' to see available presets[/dim]")
 
 
 def _signal_heartbeat_change(session: str) -> None:
@@ -274,7 +274,7 @@ def monitor(
     """Launch the standalone TUI monitor."""
     if restart:
         from ..monitor_daemon import stop_monitor_daemon, is_monitor_daemon_running, get_monitor_daemon_pid
-        from ..web_server import is_web_server_running, stop_web_server, start_web_server, get_web_server_url
+        from ..web_server import is_web_server_running, stop_web_server, start_web_server
 
         if is_monitor_daemon_running(session):
             pid = get_monitor_daemon_pid(session)
@@ -287,7 +287,7 @@ def monitor(
         if is_web_server_running(session):
             ok, msg = stop_web_server(session)
             if ok:
-                rprint(f"[green]✓[/green] Web server stopped")
+                rprint("[green]✓[/green] Web server stopped")
                 started, start_msg = start_web_server(session)
                 if started:
                     rprint(f"[green]✓[/green] Web server restarted ({start_msg})")
@@ -363,7 +363,7 @@ def web(
     if stop:
         success, msg = stop_web_server(session)
         if success:
-            print(f"Web server stopped.")
+            print("Web server stopped.")
         else:
             print(f"Web server: {msg}")
         return
@@ -466,7 +466,7 @@ def history(
             rprint(f"  Ended: {end_time}")
         rprint(f"  Directory: {session.start_directory or '-'}")
         rprint(f"  Repo: {session.repo_name or '-'} ({session.branch or '-'})")
-        rprint(f"\n  [bold]Stats:[/bold]")
+        rprint("\n  [bold]Stats:[/bold]")
         stats = session.stats
         rprint(f"    Interactions: {stats.interaction_count}")
         rprint(f"    Tokens: {format_tokens(stats.total_tokens)}")
@@ -550,12 +550,12 @@ def usage():
     five_h_style = _pct_style(snap.five_hour_pct)
     seven_d_style = _pct_style(snap.seven_day_pct)
 
-    rprint(f"\n[bold]Claude Code Usage[/bold]\n")
+    rprint("\n[bold]Claude Code Usage[/bold]\n")
     rprint(f"  5h session:  [{five_h_style}]{snap.five_hour_pct:.0f}%[/{five_h_style}]{_fmt_reset(snap.five_hour_resets_at)}")
     rprint(f"  7d weekly:   [{seven_d_style}]{snap.seven_day_pct:.0f}%[/{seven_d_style}]{_fmt_reset(snap.seven_day_resets_at)}")
 
     if snap.opus_pct is not None or snap.sonnet_pct is not None:
-        rprint(f"\n  [bold]Model breakdown (7d):[/bold]")
+        rprint("\n  [bold]Model breakdown (7d):[/bold]")
         if snap.opus_pct is not None:
             opus_style = _pct_style(snap.opus_pct)
             rprint(f"    Opus:      [{opus_style}]{snap.opus_pct:.0f}%[/{opus_style}]")

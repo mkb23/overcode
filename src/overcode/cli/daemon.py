@@ -76,9 +76,6 @@ def _monitor_daemon_status(session: str):
     """Internal function for showing monitor daemon status."""
     from ..monitor_daemon import is_monitor_daemon_running, get_monitor_daemon_pid
     from ..monitor_daemon_state import get_monitor_daemon_state
-    from ..settings import get_monitor_daemon_state_path
-
-    state_path = get_monitor_daemon_state_path(session)
 
     if not is_monitor_daemon_running(session):
         rprint(f"[dim]Monitor Daemon ({session}):[/dim] ○ stopped")

@@ -2,12 +2,9 @@
 Shared CLI state: Typer apps, console, options, and utilities.
 """
 
-import sys
-from pathlib import Path
-from typing import Annotated, Optional, List
+from typing import Annotated
 
 import typer
-from rich import print as rprint
 from rich.console import Console
 
 # Main app

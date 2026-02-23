@@ -13,9 +13,8 @@ Example usage:
     tui-eye stop
 """
 
-import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 import typer
 
 from .tmux_driver import TUIDriver
