@@ -9,7 +9,7 @@ No side effects, no external dependencies.
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Tuple
 from rich.text import Text
 
 from .status_constants import is_green_status
@@ -22,7 +22,6 @@ from .tui_helpers import (
     get_status_symbol,
     get_daemon_status_style,
     calculate_uptime,
-    get_current_state_times,
 )
 from .settings import DAEMON_VERSION
 

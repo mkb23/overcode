@@ -106,7 +106,6 @@ def budget_show(
         overcode budget show my-agent     # Specific agent
     """
     from ..session_manager import SessionManager
-    from ..tui_helpers import format_duration
 
     manager = SessionManager()
 

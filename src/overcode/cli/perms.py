@@ -129,12 +129,12 @@ def perms_status():
             editor.load()
         except ValueError:
             rprint(f"\n{level_name} ({editor.path}):")
-            rprint(f"  [red](invalid JSON)[/red]")
+            rprint("  [red](invalid JSON)[/red]")
             continue
 
         if not editor.path.exists():
             rprint(f"\n{level_name} ({editor.path}):")
-            rprint(f"  [dim](no settings file)[/dim]")
+            rprint("  [dim](no settings file)[/dim]")
             continue
 
         rprint(f"\n{level_name} ({editor.path}):")

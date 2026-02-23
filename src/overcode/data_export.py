@@ -6,7 +6,7 @@ Exports session data to Parquet format for analysis in Jupyter notebooks.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from .session_manager import SessionManager
 from .status_history import read_agent_status_history

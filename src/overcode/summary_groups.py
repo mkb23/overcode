@@ -4,7 +4,7 @@ Summary line group definitions for the TUI.
 Defines which fields belong to each group and their default visibility.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List
 
 

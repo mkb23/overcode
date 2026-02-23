@@ -8,7 +8,7 @@ They are used by SupervisorDaemon but can be tested independently.
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .status_constants import STATUS_RUNNING, get_status_emoji, is_green_status
+from .status_constants import get_status_emoji, is_green_status
 
 
 def build_daemon_claude_context(

@@ -18,7 +18,6 @@ from .status_patterns import (
     matches_any,
     find_matching_line,
     is_status_bar_line,
-    is_command_menu_line,
     count_command_menu_lines,
     clean_line,
     strip_ansi,
@@ -131,8 +130,6 @@ class PollingStatusDetector:
 
         if not last_lines:
             return self.STATUS_WAITING_USER, "No output", content
-
-        last_line = last_lines[-1]
 
         # Check for spawn failure FIRST (command not found, etc.)
         # This should be detected before shell prompt check because the error

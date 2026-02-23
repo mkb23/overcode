@@ -13,7 +13,6 @@ import sys
 import time
 from collections import deque
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from .session_manager import SessionManager

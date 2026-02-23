@@ -268,7 +268,7 @@ class DaemonStatusBar(Static):
                 content.append(" │ ", style="dim")
                 content.append("☕", style="bold")
                 if safe_break < 60:
-                    content.append(f" <1m", style="bold red")
+                    content.append(" <1m", style="bold red")
                 elif safe_break < 300:  # < 5 min
                     content.append(f" {format_duration(safe_break)}", style="bold yellow")
                 else:

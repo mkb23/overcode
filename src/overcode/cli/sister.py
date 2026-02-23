@@ -134,30 +134,30 @@ def sister_allow_control(
         api_key = get_web_api_key()
         web["allow_control"] = True
         save_config(config)
-        rprint(f"[green]✓ Remote control enabled (web.allow_control = true)[/green]")
+        rprint("[green]✓ Remote control enabled (web.allow_control = true)[/green]")
         if api_key:
             masked_key = api_key[:4] + "..."
             rprint(f"  API key: {masked_key}")
         else:
-            rprint(f"  [yellow]Warning: web.api_key is not set — endpoints are unauthenticated[/yellow]")
-            rprint(f"  [dim]This is fine if you're using SSH tunnels. Otherwise set it in ~/.overcode/config.yaml:[/dim]")
+            rprint("  [yellow]Warning: web.api_key is not set — endpoints are unauthenticated[/yellow]")
+            rprint("  [dim]This is fine if you're using SSH tunnels. Otherwise set it in ~/.overcode/config.yaml:[/dim]")
             rprint()
             rprint("  web:")
             rprint('    api_key: "your-secret-key"')
-        rprint(f"  Restart web server for changes to take effect.")
+        rprint("  Restart web server for changes to take effect.")
     elif off:
         web["allow_control"] = False
         save_config(config)
-        rprint(f"[green]✓ Remote control disabled (web.allow_control = false)[/green]")
+        rprint("[green]✓ Remote control disabled (web.allow_control = false)[/green]")
     else:
         # Show current status
         enabled = web.get("allow_control", False)
         api_key = get_web_api_key()
         if enabled:
             masked_key = (api_key[:4] + "...") if api_key else "(not set)"
-            rprint(f"Remote control: [green]enabled[/green]")
+            rprint("Remote control: [green]enabled[/green]")
             rprint(f"  API key: {masked_key}")
         else:
-            rprint(f"Remote control: [red]disabled[/red]")
+            rprint("Remote control: [red]disabled[/red]")
             if not api_key:
-                rprint(f"  [dim]Note: web.api_key is also not set[/dim]")
+                rprint("  [dim]Note: web.api_key is also not set[/dim]")

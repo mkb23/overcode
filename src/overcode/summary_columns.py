@@ -21,7 +21,6 @@ from .tui_helpers import (
     format_duration,
     format_line_count,
     format_tokens,
-    format_budget,
     calculate_uptime,
     get_current_state_times,
     get_status_symbol,
@@ -421,7 +420,7 @@ def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
 def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.child_count
     if count == 0:
-        return [(f" 👶 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(" 👶 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
     style = ctx.mono(f"bold cyan{ctx.bg}", "bold")
     return [(f" 👶{count:>2}", style)]
 
@@ -571,7 +570,6 @@ def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
 def render_status_plain(ctx: ColumnContext) -> Optional[str]:
     """Status with time-in-state."""
     # Determine status name from the symbol
-    s = ctx.session
     status = "unknown"
     # Reverse-lookup from status_symbol
     for candidate in ALL_STATUSES:
