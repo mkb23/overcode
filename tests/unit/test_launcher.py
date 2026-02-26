@@ -1149,6 +1149,42 @@ class TestCLIFlagPassthrough:
         assert reloaded.allowed_tools is None
         assert reloaded.extra_claude_args == []
 
+    def test_launch_with_agent_teams(self, tmp_path):
+        """--teams sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the env prefix."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="team-lead", agent_teams=True)
+
+        assert session is not None
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in cmd for cmd in sent_commands)
+
+    def test_launch_without_agent_teams(self, tmp_path):
+        """Without --teams, the agent teams env var is not set."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="solo")
+
+        assert session is not None
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert not any("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" in cmd for cmd in sent_commands)
+
 
 # =============================================================================
 # Run tests directly
