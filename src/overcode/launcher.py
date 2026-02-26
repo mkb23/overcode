@@ -77,6 +77,7 @@ class ClaudeLauncher:
         parent_name: Optional[str] = None,
         allowed_tools: Optional[str] = None,
         extra_claude_args: Optional[List[str]] = None,
+        agent_teams: bool = False,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -174,6 +175,10 @@ class ClaudeLauncher:
         # Add parent env vars for hierarchy (#244)
         if parent_session:
             env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent_session.id} OVERCODE_PARENT_NAME={parent_session.name}"
+
+        # Enable Claude Code agent teams if requested
+        if agent_teams:
+            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
 
         # If MOCK_SCENARIO is set, prepend it to the command for testing
         mock_scenario = os.environ.get("MOCK_SCENARIO")

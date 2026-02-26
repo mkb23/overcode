@@ -59,6 +59,10 @@ def launch(
         Optional[List[str]],
         typer.Option("--claude-arg", help="Extra Claude CLI flag (repeatable, e.g. '--model haiku')"),
     ] = None,
+    teams: Annotated[
+        bool,
+        typer.Option("--teams", help="Enable Claude Code agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)"),
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Launch a new Claude agent."""
@@ -104,6 +108,7 @@ def launch(
         parent_name=parent,
         allowed_tools=allowed_tools,
         extra_claude_args=claude_args,
+        agent_teams=teams,
     )
 
     if result:
@@ -116,6 +121,8 @@ def launch(
             rprint(f"  Allowed tools: {allowed_tools}")
         if claude_args:
             rprint(f"  Extra Claude args: {' '.join(claude_args)}")
+        if teams:
+            rprint("  Agent teams: enabled")
 
         # Store oversight policy on session
         if oversight_policy != "wait" or oversight_timeout_seconds > 0:
