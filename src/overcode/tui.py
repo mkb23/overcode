@@ -717,6 +717,8 @@ class SupervisorTUI(
         """Auto-focus the widget at the new index, update preview, and sync tmux."""
         if self._suppress_focus_watcher:
             return
+        if self._any_modal_visible():
+            return
         widget = self._get_focused_widget()
         if widget is None:
             return
