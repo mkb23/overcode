@@ -216,17 +216,24 @@ class DaemonStatusBar(Static):
             content.append("○ ", style="red")
             content.append("n/a", style="red dim")
 
-        # Spin rate stats (only when monitor running with sessions)
-        if monitor_running and self.monitor_state.sessions:
-            content.append(" │ ", style="dim")
-            # Filter out sleeping agents from stats
-            all_sessions = self.monitor_state.sessions
-            active_sessions = [s for s in all_sessions if s.session_id not in self._asleep_session_ids]
-            sleeping_count = len(all_sessions) - len(active_sessions)
+        # Spin rate stats — aggregate local + sister agents
+        local_sessions = self.monitor_state.sessions if monitor_running and self.monitor_state.sessions else []
+        reachable_sisters = [s for s in self._sister_states if s.reachable]
 
-            total_agents = len(active_sessions)
-            # Recalculate green_now excluding sleeping agents
-            green_now = sum(1 for s in active_sessions if is_green_status(s.current_status))
+        if local_sessions or reachable_sisters:
+            content.append(" │ ", style="dim")
+            # Local: filter out sleeping agents
+            active_sessions = [s for s in local_sessions if s.session_id not in self._asleep_session_ids]
+            sleeping_count = len(local_sessions) - len(active_sessions)
+            local_green = sum(1 for s in active_sessions if is_green_status(s.current_status))
+            local_total = len(active_sessions)
+
+            # Sister: use pre-computed green/total from API (already excludes sleeping)
+            sister_green = sum(s.green_agents for s in reachable_sisters)
+            sister_total = sum(s.total_agents for s in reachable_sisters)
+
+            green_now = local_green + sister_green
+            total_agents = local_total + sister_total
 
             content.append("Spin: ", style="bold")
             content.append(f"{green_now}", style="bold green" if green_now > 0 else "dim")
@@ -237,7 +244,20 @@ class DaemonStatusBar(Static):
             # Mean spin rate — use cached values from fetch_volatile_state()
             baseline_minutes = self._spin_baseline_minutes
             if baseline_minutes > 0:
-                if self._spin_sample_count > 0:
+                # Sister cumulative mean spin: sum of each agent's green fraction
+                sister_mean_spin = 0.0
+                for sister in reachable_sisters:
+                    for sess in sister.sessions:
+                        if sess.is_asleep:
+                            continue
+                        gt = sess.stats.green_time_seconds if sess.stats else 0.0
+                        ngt = sess.stats.non_green_time_seconds if sess.stats else 0.0
+                        if gt + ngt > 0:
+                            sister_mean_spin += gt / (gt + ngt)
+
+                combined_mean = self._mean_spin + sister_mean_spin
+                combined_samples = self._spin_sample_count + (1 if reachable_sisters else 0)
+                if combined_samples > 0:
                     # Format window label: "15m", "1h", "1h30m"
                     if baseline_minutes < 60:
                         window_label = f"{baseline_minutes}m"
@@ -245,7 +265,7 @@ class DaemonStatusBar(Static):
                         hours = baseline_minutes // 60
                         mins = baseline_minutes % 60
                         window_label = f"{hours}h" if mins == 0 else f"{hours}h{mins}m"
-                    content.append(f" μ{self._mean_spin:.1f} ({window_label})", style="cyan")
+                    content.append(f" μ{combined_mean:.1f} ({window_label})", style="cyan")
                 else:
                     content.append(" μ-- (no data)", style="dim")
             else:
@@ -254,11 +274,17 @@ class DaemonStatusBar(Static):
 
             # Total tokens/cost across all sessions (include sleeping agents - they used tokens too)
             if self.show_cost:
-                total_cost = sum(s.estimated_cost_usd for s in all_sessions)
+                total_cost = sum(s.estimated_cost_usd for s in local_sessions)
+                total_cost += sum(s.total_cost for s in reachable_sisters)
                 if total_cost > 0:
                     content.append(f" {format_cost(total_cost)}", style="orange1")
             else:
-                total_tokens = sum(s.input_tokens + s.output_tokens for s in all_sessions)
+                total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
+                for sister in reachable_sisters:
+                    total_tokens += sum(
+                        sess.stats.total_tokens for sess in sister.sessions
+                        if sess.stats
+                    )
                 if total_tokens > 0:
                     content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
 
