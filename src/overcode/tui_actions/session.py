@@ -450,6 +450,31 @@ class SessionActionsMixin:
         else:
             self.notify(f"Failed to send /clear to '{session_name}'", severity="error")
 
+    def action_new_remote_agent(self) -> None:
+        """Prompt to launch a new agent on a remote sister machine (#310).
+
+        Multi-step flow: sister name → directory → name → permissions.
+        """
+        from ..tui_widgets import CommandBar
+
+        if not self.has_sisters:
+            self.notify("No sisters configured", severity="warning")
+            return
+
+        try:
+            command_bar = self.query_one("#command-bar", CommandBar)
+            command_bar.add_class("visible")
+            command_bar.set_mode("new_remote_agent_sister")
+            # Pre-fill with available sister names as hint
+            from ..config import get_sisters_config
+            names = [s["name"] for s in get_sisters_config()]
+            input_widget = command_bar.query_one("#cmd-input", Input)
+            input_widget.placeholder = f"Enter sister name ({', '.join(names)})..."
+            input_widget.value = names[0] if len(names) == 1 else ""
+            command_bar.focus_input()
+        except NoMatches:
+            self.notify("Command bar not found", severity="error")
+
     def action_new_agent(self) -> None:
         """Prompt for directory and name to create a new agent.
 

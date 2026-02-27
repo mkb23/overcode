@@ -32,6 +32,14 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
     elif mode == "new_agent_perms":
         return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
+    elif mode == "new_remote_agent_sister":
+        return "[Remote Agent: Sister] ", "Enter sister name..."
+    elif mode == "new_remote_agent_dir":
+        return "[Remote Agent: Directory] ", "Enter remote directory (or Enter for '.')..."
+    elif mode == "new_remote_agent_name":
+        return "[Remote Agent: Name] ", "Enter agent name..."
+    elif mode == "new_remote_agent_perms":
+        return "[Remote Agent: Permissions] ", "Type 'bypass' or 'skip', or Enter for normal..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
         return prefix, "Enter standing orders (or empty to clear)..."
@@ -79,6 +87,7 @@ class CommandBar(Static):
     new_agent_dir: Optional[str] = None  # Store directory between steps
     new_agent_name: Optional[str] = None  # Store name between steps
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
+    new_remote_sister: Optional[str] = None  # Store selected sister name for remote agent flow (#310)
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
@@ -101,6 +110,15 @@ class CommandBar(Static):
             self.agent_name = agent_name
             self.directory = directory
             self.bypass_permissions = bypass_permissions
+
+    class NewRemoteAgentRequested(Message):
+        """Message sent when user wants to launch a remote agent on a sister (#310)."""
+        def __init__(self, sister_name: str, agent_name: str, directory: Optional[str] = None, permissions: str = "normal"):
+            super().__init__()
+            self.sister_name = sister_name
+            self.agent_name = agent_name
+            self.directory = directory
+            self.permissions = permissions
 
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
@@ -218,7 +236,22 @@ class CommandBar(Static):
         if event.input.id == "cmd-input":
             text = event.value.strip()
 
-            if self.mode == "new_agent_dir":
+            if self.mode == "new_remote_agent_sister":
+                self._handle_remote_agent_sister(text)
+                return
+            elif self.mode == "new_remote_agent_dir":
+                self._handle_remote_agent_dir(text)
+                return
+            elif self.mode == "new_remote_agent_name":
+                self._handle_remote_agent_name(text)
+                event.input.value = ""
+                return
+            elif self.mode == "new_remote_agent_perms":
+                self._handle_remote_agent_perms(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "new_agent_dir":
                 # Step 1: Directory entered, validate and move to name step
                 # Note: _handle_new_agent_dir sets input value to default name, don't clear it
                 self._handle_new_agent_dir(text if text else None)
@@ -373,6 +406,69 @@ class CommandBar(Static):
         self.mode = "send"
         self._update_target_label()
 
+    # --- Remote agent flow (#310) ---
+
+    def _handle_remote_agent_sister(self, text: str) -> None:
+        """Handle sister name input for remote agent creation."""
+        if not text:
+            self.app.notify("Sister name required", severity="error")
+            return
+
+        from overcode.config import get_sister_by_name
+        sister = get_sister_by_name(text)
+        if not sister:
+            from overcode.config import get_sisters_config
+            available = [s["name"] for s in get_sisters_config()]
+            if available:
+                self.app.notify(f"Sister '{text}' not found. Available: {', '.join(available)}", severity="error")
+            else:
+                self.app.notify("No sisters configured", severity="error")
+            return
+
+        self.new_remote_sister = text
+        self.mode = "new_remote_agent_dir"
+        self._update_target_label()
+        input_widget = self.query_one("#cmd-input", Input)
+        input_widget.value = "."
+
+    def _handle_remote_agent_dir(self, text: str) -> None:
+        """Handle directory input for remote agent creation."""
+        self.new_agent_dir = text if text else "."
+        self.mode = "new_remote_agent_name"
+        self._update_target_label()
+
+    def _handle_remote_agent_name(self, name: str) -> None:
+        """Handle name input for remote agent creation."""
+        if not name:
+            self.app.notify("Agent name required", severity="error")
+            return
+        self.new_agent_name = name
+        self.mode = "new_remote_agent_perms"
+        self._update_target_label()
+
+    def _handle_remote_agent_perms(self, text: str) -> None:
+        """Handle permissions input and post remote agent message."""
+        perms = text.lower().strip()
+        if perms in ("bypass", "!"):
+            permissions = "bypass"
+        elif perms in ("skip", "deny"):
+            permissions = "skip"
+        else:
+            permissions = "normal"
+
+        self.post_message(self.NewRemoteAgentRequested(
+            sister_name=self.new_remote_sister,
+            agent_name=self.new_agent_name,
+            directory=self.new_agent_dir,
+            permissions=permissions,
+        ))
+        # Reset state
+        self.new_remote_sister = None
+        self.new_agent_dir = None
+        self.new_agent_name = None
+        self.mode = "send"
+        self._update_target_label()
+
     def _set_standing_order(self, text: str) -> None:
         """Set text as standing order (empty string clears orders)."""
         if not self.target_session:
@@ -447,6 +543,7 @@ class CommandBar(Static):
         self.mode = "send"
         self.new_agent_dir = None
         self.new_agent_name = None
+        self.new_remote_sister = None  # Reset remote agent state (#310)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus

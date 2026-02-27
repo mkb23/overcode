@@ -63,10 +63,60 @@ def launch(
         bool,
         typer.Option("--teams", help="Enable Claude Code agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)"),
     ] = False,
+    sister: Annotated[
+        Optional[str],
+        typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
+    ] = None,
     session: SessionOption = "agents",
 ):
     """Launch a new Claude agent."""
     import os
+
+    # Remote launch via sister
+    if sister:
+        from ..config import get_sister_by_name
+        from ..sister_controller import SisterController
+
+        sister_config = get_sister_by_name(sister)
+        if not sister_config:
+            from ..config import get_sisters_config
+            available = [s["name"] for s in get_sisters_config()]
+            if available:
+                rprint(f"[red]Error: Sister '{sister}' not found. Available: {', '.join(available)}[/red]")
+            else:
+                rprint(f"[red]Error: No sisters configured. Add sisters to ~/.overcode/config.yaml[/red]")
+            raise typer.Exit(code=1)
+
+        remote_dir = directory if directory else "."
+        if not directory:
+            rprint("[yellow]Warning:[/yellow] No --directory given; remote agent will use '.'")
+
+        # Map permission flags to permissions string
+        if bypass_permissions:
+            permissions = "bypass"
+        elif skip_permissions:
+            permissions = "skip"
+        else:
+            permissions = "normal"
+
+        controller = SisterController()
+        result = controller.launch_agent(
+            sister_url=sister_config["url"],
+            api_key=sister_config.get("api_key", ""),
+            directory=remote_dir,
+            name=name,
+            prompt=prompt,
+            permissions=permissions,
+        )
+
+        if result.ok:
+            rprint(f"\n[green]✓[/green] Remote agent '[bold]{name}[/bold]' launched on [bold]{sister}[/bold]")
+            if prompt:
+                rprint("  Initial prompt sent")
+        else:
+            rprint(f"[red]Error: Remote launch failed: {result.error}[/red]")
+            raise typer.Exit(code=1)
+        return
 
     # Parse oversight policy
     oversight_policy = "wait"
