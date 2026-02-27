@@ -459,13 +459,6 @@ class ViewActionsMixin:
         except NoMatches:
             pass
 
-    def action_toggle_default_teams(self) -> None:
-        """Toggle default agent teams mode for new agents (#309)."""
-        self._prefs.default_teams = not self._prefs.default_teams
-        self._save_prefs()
-        state = "ON" if self._prefs.default_teams else "OFF"
-        self.notify(f"Default agent teams: {state}", severity="information")
-
     def action_cycle_notifications(self) -> None:
         """Cycle macOS notification mode: off → sound → banner → both → off (#235)."""
         from ..notifier import MacNotifier

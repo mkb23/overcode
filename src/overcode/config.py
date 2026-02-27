@@ -264,6 +264,36 @@ def get_web_allow_control() -> bool:
     return bool(web.get("allow_control", False))
 
 
+def get_new_agent_defaults() -> dict:
+    """Get new-agent default settings from config.
+
+    Config format in ~/.overcode/config.yaml:
+        new_agent_defaults:
+          bypass_permissions: false
+          agent_teams: false
+
+    Returns:
+        Dict with bypass_permissions (bool) and agent_teams (bool).
+    """
+    config = load_config()
+    defaults = config.get("new_agent_defaults", {})
+    return {
+        "bypass_permissions": bool(defaults.get("bypass_permissions", False)),
+        "agent_teams": bool(defaults.get("agent_teams", False)),
+    }
+
+
+def save_new_agent_defaults(defaults: dict) -> None:
+    """Save new-agent default settings to config.
+
+    Args:
+        defaults: Dict with bypass_permissions and agent_teams booleans.
+    """
+    config = load_config()
+    config["new_agent_defaults"] = defaults
+    save_config(config)
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 

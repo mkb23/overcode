@@ -66,6 +66,7 @@ from .tui_widgets import (
     SessionSummary,
     CommandBar,
     SummaryConfigModal,
+    NewAgentDefaultsModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -189,6 +190,8 @@ class SupervisorTUI(
         ("C", "open_column_config", "Columns"),
         # macOS notifications cycle (#235)
         ("N", "cycle_notifications", "Notifications"),
+        # New agent defaults modal
+        ("G", "open_new_agent_defaults", "Agent defaults"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -340,6 +343,8 @@ class SupervisorTUI(
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal")
+        # Modal for new-agent defaults
+        yield NewAgentDefaultsModal(id="new-agent-defaults-modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -2003,6 +2008,25 @@ class SupervisorTUI(
                 widget.summary_detail = self._column_config_original_detail
                 widget.refresh()
 
+    def action_open_new_agent_defaults(self) -> None:
+        """Open the new-agent defaults modal."""
+        from .config import get_new_agent_defaults
+        try:
+            modal = self.query_one("#new-agent-defaults-modal", NewAgentDefaultsModal)
+            modal.show(get_new_agent_defaults(), self)
+        except NoMatches:
+            pass
+
+    def on_new_agent_defaults_modal_defaults_changed(self, message: NewAgentDefaultsModal.DefaultsChanged) -> None:
+        """Handle new-agent defaults applied from modal."""
+        from .config import save_new_agent_defaults
+        save_new_agent_defaults(message.defaults)
+        self.notify("Defaults saved", severity="information")
+
+    def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
+        """Handle new-agent defaults modal cancellation."""
+        pass
+
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0
 
@@ -2086,6 +2110,17 @@ class SupervisorTUI(
                 return False
         except Exception:
             pass
+
+        # Block actions when new-agent defaults modal is visible
+        try:
+            nadm = self.query_one("#new-agent-defaults-modal", NewAgentDefaultsModal)
+            if nadm.has_class("visible"):
+                if action == "quit":
+                    return True
+                return False
+        except Exception:
+            pass
+
         # Default: allow the action
         return True
 

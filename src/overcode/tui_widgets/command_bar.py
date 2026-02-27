@@ -368,6 +368,7 @@ class CommandBar(Static):
         """Handle name input for new agent creation.
 
         Stores the name and transitions to permissions step.
+        Pre-fills bypass from config defaults.
         """
         self.new_agent_name = name
 
@@ -375,17 +376,22 @@ class CommandBar(Static):
         self.mode = "new_agent_perms"
         self._update_target_label()
 
+        # Pre-fill from config defaults
+        from ..config import get_new_agent_defaults
+        defaults = get_new_agent_defaults()
+        if defaults.get("bypass_permissions", False):
+            input_widget = self.query_one("#cmd-input", Input)
+            input_widget.value = "bypass"
+
     def _handle_new_agent_perms(self) -> None:
         """Handle permissions input for new agent creation.
 
         Stores the bypass flag and transitions to teams step.
+        Pre-fills teams from config defaults.
         """
-        # Initialize teams from default_teams pref
-        default_teams = getattr(self.app, '_prefs', None)
-        if default_teams is not None:
-            self.new_agent_teams = default_teams.default_teams
-        else:
-            self.new_agent_teams = False
+        from ..config import get_new_agent_defaults
+        defaults = get_new_agent_defaults()
+        self.new_agent_teams = defaults.get("agent_teams", False)
 
         self.mode = "new_agent_teams"
         self._update_target_label()

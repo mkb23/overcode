@@ -428,7 +428,6 @@ class TUIPreferences:
     show_cost: bool = False  # Show $ cost instead of token counts
     timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
-    default_teams: bool = False  # Default agent teams mode for new agents (#309)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
     # Column group visibility (group_id -> enabled) for summary line (#178)
@@ -478,7 +477,6 @@ class TUIPreferences:
                     summary_groups=data.get("summary_groups", default_summary_groups),
                     timeline_hours=data.get("timeline_hours", 3.0),
                     notifications=data.get("notifications", "off"),
-                    default_teams=data.get("default_teams", False),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -510,7 +508,6 @@ class TUIPreferences:
                     "summary_groups": self.summary_groups,
                     "timeline_hours": self.timeline_hours,
                     "notifications": self.notifications,
-                    "default_teams": self.default_teams,
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort
