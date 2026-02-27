@@ -14,6 +14,7 @@ from .status_timeline import StatusTimeline
 from .session_summary import SessionSummary
 from .command_bar import CommandBar
 from .summary_config_modal import SummaryConfigModal
+from .new_agent_defaults_modal import NewAgentDefaultsModal
 
 __all__ = [
     "FullscreenPreview",
@@ -25,4 +26,5 @@ __all__ = [
     "SessionSummary",
     "CommandBar",
     "SummaryConfigModal",
+    "NewAgentDefaultsModal",
 ]

@@ -63,6 +63,7 @@ class HelpOverlay(Static):
         row("H", "Heartbeat config", "K", "Hook status detection")
         row("F", "Toggle time context")
         row("T", "Handover all (2x) → draft PR")
+        row("G", "New agent defaults")
         t.append("\n")
 
         section("DAEMON CONTROL")
@@ -148,6 +149,9 @@ class HelpOverlay(Static):
         t.append("Standing orders active\n", style="white")
         t.append("✓   ", style="")
         t.append("Standing orders complete\n\n", style="white")
+
+        t.append("🤝  ", style="")
+        t.append("Agent teams enabled\n\n", style="white")
 
         section("TIMELINE LEGEND")
         t.append("█", style="green")

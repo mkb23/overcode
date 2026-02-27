@@ -235,3 +235,19 @@ SummaryConfigModal {
 SummaryConfigModal.visible {
     display: block;
 }
+
+/* New Agent Defaults Modal */
+NewAgentDefaultsModal {
+    display: none;
+    layer: above;
+    offset: 27 30;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+NewAgentDefaultsModal.visible {
+    display: block;
+}

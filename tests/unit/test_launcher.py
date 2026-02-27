@@ -1150,7 +1150,7 @@ class TestCLIFlagPassthrough:
         assert reloaded.extra_claude_args == []
 
     def test_launch_with_agent_teams(self, tmp_path):
-        """--teams sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the env prefix."""
+        """--teams sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the env prefix and persists on session."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -1166,6 +1166,12 @@ class TestCLIFlagPassthrough:
         assert session is not None
         sent_commands = [k[2] for k in mock_tmux.sent_keys]
         assert any("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in cmd for cmd in sent_commands)
+        # Verify agent_teams persisted on the session object
+        assert session.agent_teams is True
+        # Verify it round-trips through session manager
+        reloaded = session_manager.get_session_by_name("team-lead")
+        assert reloaded is not None
+        assert reloaded.agent_teams is True
 
     def test_launch_without_agent_teams(self, tmp_path):
         """Without --teams, the agent teams env var is not set."""

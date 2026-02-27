@@ -442,6 +442,18 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
 render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", colored_style="bold white")
 
 
+def render_agent_teams(ctx: ColumnContext) -> ColumnOutput:
+    if ctx.session.agent_teams:
+        return [(" 🤝", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+    return None
+
+
+def render_teams_plain(ctx: ColumnContext) -> Optional[str]:
+    if ctx.session.agent_teams:
+        return "teams"
+    return None
+
+
 def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
     emojis = _tool_emojis(ctx.session.allowed_tools)
     if not emojis:
@@ -818,6 +830,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Supervision group
     SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
                   label="Mode", render_plain=render_mode_plain),
+    SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
+                  label="Teams", render_plain=render_teams_plain),
     SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
                   label="Tools", render_plain=render_tools_plain),
     SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context),

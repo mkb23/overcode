@@ -216,6 +216,7 @@ class ClaudeLauncher:
             permissiveness_mode=perm_mode,
             allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args,
+            agent_teams=agent_teams,
         )
 
         # Set parent if launching as child agent (#244)

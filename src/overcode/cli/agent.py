@@ -275,6 +275,7 @@ def list_agents(
         "git_diff",
         "uptime", "running_time", "stalled_time", "sleep_time",
         "token_count", "cost", "budget", "context_usage",
+        "agent_teams",
     }
 
     # Pre-compute: any agent with budget, max name width
@@ -813,6 +814,8 @@ def show(
             print(f"{'Tools:':<{label_width + 1}} {sess.allowed_tools}")
         if sess.extra_claude_args:
             print(f"{'Claude args:':<{label_width + 1}} {' '.join(sess.extra_claude_args)}")
+        if sess.agent_teams:
+            print(f"{'Teams:':<{label_width + 1}} enabled")
 
         print()
 
