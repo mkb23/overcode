@@ -1801,7 +1801,8 @@ class SupervisorTUI(
             launcher.launch(
                 name=agent_name,
                 start_directory=directory,
-                dangerously_skip_permissions=bypass_permissions
+                dangerously_skip_permissions=bypass_permissions,
+                agent_teams=message.agent_teams,
             )
             dir_info = f" in {directory}" if directory else ""
             perm_info = " (bypass mode)" if bypass_permissions else ""

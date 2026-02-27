@@ -149,6 +149,9 @@ class HelpOverlay(Static):
         t.append("✓   ", style="")
         t.append("Standing orders complete\n\n", style="white")
 
+        t.append("🤝  ", style="")
+        t.append("Agent teams enabled\n\n", style="white")
+
         section("TIMELINE LEGEND")
         t.append("█", style="green")
         t.append(" active  ", style="dim")

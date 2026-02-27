@@ -32,6 +32,8 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
     elif mode == "new_agent_perms":
         return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
+    elif mode == "new_agent_teams":
+        return "[New Agent: Teams] ", "Type 'yes' to enable agent teams, or Enter to skip..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
         return prefix, "Enter standing orders (or empty to clear)..."
@@ -78,6 +80,8 @@ class CommandBar(Static):
     mode: str = "send"  # "send", "standing_orders", "new_agent_*", "heartbeat_freq", "heartbeat_instruction", etc.
     new_agent_dir: Optional[str] = None  # Store directory between steps
     new_agent_name: Optional[str] = None  # Store name between steps
+    new_agent_bypass: bool = False  # Store permissions between steps
+    new_agent_teams: bool = False  # Store teams flag between steps (#309)
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
 
     class SendRequested(Message):
@@ -96,11 +100,12 @@ class CommandBar(Static):
 
     class NewAgentRequested(Message):
         """Message sent when user wants to create a new agent."""
-        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False):
+        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False):
             super().__init__()
             self.agent_name = agent_name
             self.directory = directory
             self.bypass_permissions = bypass_permissions
+            self.agent_teams = agent_teams
 
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
@@ -235,9 +240,15 @@ class CommandBar(Static):
                 event.input.value = ""
                 return
             elif self.mode == "new_agent_perms":
-                # Step 3: Permissions chosen, create agent
-                bypass = text.lower().strip() in ("bypass", "y", "yes", "!")
-                self._create_new_agent(self.new_agent_name, bypass)
+                # Step 3: Permissions chosen, transition to teams step
+                self.new_agent_bypass = text.lower().strip() in ("bypass", "y", "yes", "!")
+                self._handle_new_agent_perms()
+                event.input.value = ""
+                return
+            elif self.mode == "new_agent_teams":
+                # Step 4: Teams chosen, create agent
+                teams = text.lower().strip() in ("yes", "y", "true", "1", "teams")
+                self._create_new_agent(self.new_agent_name, self.new_agent_bypass, teams)
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -364,12 +375,34 @@ class CommandBar(Static):
         self.mode = "new_agent_perms"
         self._update_target_label()
 
-    def _create_new_agent(self, name: str, bypass_permissions: bool = False) -> None:
-        """Create a new agent with the given name, directory, and permission mode."""
-        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions))
+    def _handle_new_agent_perms(self) -> None:
+        """Handle permissions input for new agent creation.
+
+        Stores the bypass flag and transitions to teams step.
+        """
+        # Initialize teams from default_teams pref
+        default_teams = getattr(self.app, '_prefs', None)
+        if default_teams is not None:
+            self.new_agent_teams = default_teams.default_teams
+        else:
+            self.new_agent_teams = False
+
+        self.mode = "new_agent_teams"
+        self._update_target_label()
+
+        # Pre-fill with current default
+        if self.new_agent_teams:
+            input_widget = self.query_one("#cmd-input", Input)
+            input_widget.value = "yes"
+
+    def _create_new_agent(self, name: str, bypass_permissions: bool = False, agent_teams: bool = False) -> None:
+        """Create a new agent with the given name, directory, permission mode, and teams flag."""
+        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams))
         # Reset state
         self.new_agent_dir = None
         self.new_agent_name = None
+        self.new_agent_bypass = False
+        self.new_agent_teams = False
         self.mode = "send"
         self._update_target_label()
 
@@ -447,6 +480,8 @@ class CommandBar(Static):
         self.mode = "send"
         self.new_agent_dir = None
         self.new_agent_name = None
+        self.new_agent_bypass = False
+        self.new_agent_teams = False
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus
