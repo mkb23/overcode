@@ -136,6 +136,10 @@ class ColumnContext:
     any_is_sleeping: bool = False  # True if any agent is busy_sleeping
     sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
 
+    # PR number (widget var, not session — survives session replacement)
+    pr_number: Optional[int] = None
+    any_has_pr: bool = False
+
     # Sister integration (#245)
     source_host: str = ""
     is_remote: bool = False
@@ -160,6 +164,8 @@ class SummaryColumn:
     render: Callable[[ColumnContext], ColumnOutput]
     label: str = ""  # Human-readable label for CLI (e.g., "Status", "Uptime")
     render_plain: Optional[Callable[[ColumnContext], Optional[str]]] = None
+    placeholder_width: int = 0  # When visible but render returns None, pad with N spaces
+    visible: Optional[Callable[[ColumnContext], bool]] = None  # App-level visibility gate
 
 
 # ---------------------------------------------------------------------------
@@ -259,17 +265,12 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
 def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     """Countdown to estimated sleep wake time (#289).
 
-    Shows countdown for sleeping agents, blank placeholder when any other
-    agent is sleeping (to maintain column alignment), or None when no
-    agents are sleeping.
+    Shows countdown for sleeping agents. Visibility and placeholder
+    alignment are handled by the column's visible + placeholder_width.
     """
-    # Column width: 9 display cells = 1 space + ⏰(2 cells) + 5 char duration + 1 space
-    # Placeholder is 9 ASCII spaces to match (⏰ = 2 cells but 1 char)
     if ctx.sleep_wake_estimate is not None:
         remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
         return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
-    if ctx.any_is_sleeping:
-        return [("         ", ctx.mono(f"dim{ctx.bg}", "dim"))]
     return None
 
 
@@ -367,16 +368,11 @@ def render_cost(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_budget(ctx: ColumnContext) -> ColumnOutput:
-    """Budget amount. Hidden when show_cost=False or no session has a budget."""
-    if not ctx.show_cost:
-        return None
-    if not ctx.any_has_budget:
-        return None
+    """Budget amount. Visibility gated by column's visible callback."""
     s = ctx.session
     if s.cost_budget_usd > 0:
         return [(f"/{format_cost(s.cost_budget_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
-    else:
-        return [("       ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    return None
 
 
 # Backward-compat alias
@@ -403,14 +399,14 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_pr_number(ctx: ColumnContext) -> ColumnOutput:
-    pr = ctx.session.pr_number
+    pr = ctx.pr_number
     if pr is not None:
         return [(f" PR#{pr}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
     return None
 
 
 def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
-    pr = ctx.session.pr_number
+    pr = ctx.pr_number
     if pr is not None:
         return f"PR#{pr}"
     return None
@@ -482,10 +478,7 @@ def render_standing_orders(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
-    """Oversight countdown timer. Hidden if no agent has a timeout."""
-    if not ctx.any_has_oversight_timeout:
-        return None
-
+    """Oversight countdown timer. Visibility gated by column's visible callback."""
     from .status_constants import STATUS_WAITING_OVERSIGHT
     status = ctx.stats.current_state if hasattr(ctx.stats, 'current_state') else ""
 
@@ -494,7 +487,7 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
     is_oversight = session_status == STATUS_WAITING_OVERSIGHT or status == STATUS_WAITING_OVERSIGHT
 
     if not is_oversight:
-        return [("        ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return None
 
     deadline_str = ctx.oversight_deadline
     if not deadline_str:
@@ -764,7 +757,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Status", render_plain=render_status_plain),
     SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert),
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state),
-    SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown),
+    SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
+                  visible=lambda ctx: ctx.any_is_sleeping, placeholder_width=9),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
@@ -778,7 +772,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
                   label="Git", render_plain=render_git_diff_plain),
     SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
-                  label="PR", render_plain=render_pr_number_plain),
+                  label="PR", render_plain=render_pr_number_plain,
+                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8),
 
     # Time group — uptime, running, stalled, sleep, active%
     SummaryColumn(id="uptime", group="time", detail_levels=MED_PLUS, render=render_uptime,
@@ -796,7 +791,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Tokens", render_plain=render_token_count_plain),
     SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
                   label="Cost", render_plain=render_cost_plain),
-    SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget),
+    SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget,
+                  visible=lambda ctx: ctx.show_cost and ctx.any_has_budget, placeholder_width=7),
 
     # Context group — always visible, independent of $ toggle
     SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage),
@@ -827,7 +823,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Orders", render_plain=render_orders_plain),
     SummaryColumn(id="heartbeat", group="supervision", detail_levels=ALL, render=render_heartbeat,
                   label="Heartbeat", render_plain=render_heartbeat_plain),
-    SummaryColumn(id="oversight_countdown", group="supervision", detail_levels=ALL, render=render_oversight_countdown),
+    SummaryColumn(id="oversight_countdown", group="supervision", detail_levels=ALL, render=render_oversight_countdown,
+                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8),
 
     # Priority group
     SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
@@ -844,6 +841,7 @@ def build_cli_context(
     status: str, bg_bash_count: int, live_sub_count: int,
     any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
+    pr_number: Optional[int] = None, any_has_pr: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -913,6 +911,8 @@ def build_cli_context(
         oversight_deadline=oversight_deadline,
         any_is_sleeping=any_is_sleeping,
         sleep_wake_estimate=sleep_wake_estimate,
+        pr_number=pr_number,
+        any_has_pr=any_has_pr,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
     )
