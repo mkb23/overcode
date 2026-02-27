@@ -375,11 +375,11 @@ class TestSendEscapeToFocused:
         mock_tui.focused = mock_widget
 
         mock_launcher_instance = MockLauncher.return_value
-        mock_launcher_instance.send_to_session.return_value = True
+        mock_launcher_instance.send_to_session_by_id.return_value = True
 
         InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
-        mock_launcher_instance.send_to_session.assert_called_once_with("local-agent", "escape")
+        mock_launcher_instance.send_to_session_by_id.assert_called_once_with(mock_session.id, "escape")
         mock_tui.notify.assert_called_once()
         assert "Sent Escape" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
@@ -401,7 +401,7 @@ class TestSendEscapeToFocused:
         mock_tui.focused = mock_widget
 
         mock_launcher_instance = MockLauncher.return_value
-        mock_launcher_instance.send_to_session.return_value = False
+        mock_launcher_instance.send_to_session_by_id.return_value = False
 
         InputActionsMixin.action_send_escape_to_focused(mock_tui)
 

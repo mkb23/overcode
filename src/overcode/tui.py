@@ -1537,7 +1537,10 @@ class SupervisorTUI(
             pass
 
     def _find_any_session_by_name(self, name: str):
-        """Find a session by name, including remote sessions."""
+        """Find a session by name, including remote sessions.
+
+        Deprecated: prefer _find_any_session_by_id() for unambiguous routing.
+        """
         # Check local sessions first
         session = self.session_manager.get_session_by_name(name)
         if session:
@@ -1548,9 +1551,27 @@ class SupervisorTUI(
                 return s
         return None
 
+    def _find_any_session_by_id(self, session_id: str):
+        """Find a session by ID, including remote sessions."""
+        if not session_id:
+            return None
+        session = self.session_manager.get_session(session_id)
+        if session:
+            return session
+        for s in self.sessions:
+            if s.id == session_id:
+                return s
+        return None
+
+    def _resolve_command_bar_session(self, session_id: str, session_name: str):
+        """Resolve session from command bar message, preferring ID over name."""
+        if session_id:
+            return self._find_any_session_by_id(session_id)
+        return self._find_any_session_by_name(session_name)
+
     def on_command_bar_send_requested(self, message: CommandBar.SendRequested) -> None:
         """Handle send request from command bar."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
 
         # Remote agent — dispatch through sister controller
         if session and getattr(session, 'is_remote', False):
@@ -1581,7 +1602,7 @@ class SupervisorTUI(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
-        success = launcher.send_to_session(message.session_name, message.text)
+        success = launcher.send_to_session_by_id(session.id, message.text) if session else False
         if success:
             self._invalidate_sessions_cache()  # Refresh to show updated stats
             self.notify(f"Sent to {message.session_name}")
@@ -1590,7 +1611,7 @@ class SupervisorTUI(
 
     def on_command_bar_standing_order_requested(self, message: CommandBar.StandingOrderRequested) -> None:
         """Handle standing order request from command bar."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
         if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
             return
@@ -1621,7 +1642,7 @@ class SupervisorTUI(
 
     def on_command_bar_value_updated(self, message: CommandBar.ValueUpdated) -> None:
         """Handle agent value update from command bar (#61)."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
         if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
             return
@@ -1643,7 +1664,7 @@ class SupervisorTUI(
 
     def on_command_bar_budget_updated(self, message: CommandBar.BudgetUpdated) -> None:
         """Handle cost budget update from command bar (#173)."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
         if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
             return
@@ -1671,7 +1692,7 @@ class SupervisorTUI(
 
     def on_command_bar_annotation_updated(self, message: CommandBar.AnnotationUpdated) -> None:
         """Handle human annotation update from command bar (#74)."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
         if not session:
             self.notify(f"Session '{message.session_name}' not found", severity="error")
             return
@@ -1697,7 +1718,7 @@ class SupervisorTUI(
 
     def on_command_bar_heartbeat_updated(self, message: CommandBar.HeartbeatUpdated) -> None:
         """Handle heartbeat configuration update from command bar (#171)."""
-        session = self._find_any_session_by_name(message.session_name)
+        session = self._resolve_command_bar_session(message.session_id, message.session_name)
         if not session:
             self.notify(f"Session not found: {message.session_name}", severity="error")
             return
@@ -1744,7 +1765,8 @@ class SupervisorTUI(
         try:
             # Disable and hide the command bar
             cmd_bar = self.query_one("#command-bar", CommandBar)
-            target_session_name = cmd_bar.target_session  # Remember before disabling
+            target_session_id = cmd_bar.target_session_id  # Remember before disabling
+            target_session_name = cmd_bar.target_session  # Fallback for name match
             cmd_bar.query_one("#cmd-input", Input).disabled = True
             cmd_bar.query_one("#cmd-textarea", TextArea).disabled = True
             cmd_bar.remove_class("visible")
@@ -1753,10 +1775,14 @@ class SupervisorTUI(
             if self.sessions:
                 widgets = self._get_widgets_in_session_order()
                 if widgets:
-                    # Find widget matching target session, fall back to current index
+                    # Find widget matching target session by ID, fall back to name
                     target_widget = None
                     for i, w in enumerate(widgets):
-                        if w.session.name == target_session_name:
+                        if target_session_id and w.session.id == target_session_id:
+                            target_widget = w
+                            self.focused_session_index = i
+                            break
+                        elif not target_session_id and w.session.name == target_session_name:
                             target_widget = w
                             self.focused_session_index = i
                             break
