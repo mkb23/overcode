@@ -298,3 +298,15 @@ def get_sisters_config() -> List[dict]:
         result.append(entry)
 
     return result
+
+
+def get_sister_by_name(name: str) -> Optional[dict]:
+    """Look up a sister config by name.
+
+    Returns:
+        Sister config dict (name, url, optional api_key) or None if not found.
+    """
+    for sister in get_sisters_config():
+        if sister["name"] == name:
+            return sister
+    return None

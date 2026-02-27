@@ -187,8 +187,8 @@ class SupervisorTUI(
         ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
-        # macOS notifications cycle (#235)
-        ("N", "cycle_notifications", "Notifications"),
+        # Remote agent launch on sister (#310)
+        ("N", "new_remote_agent", "Remote agent"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -1836,6 +1836,32 @@ class SupervisorTUI(
             self.refresh_sessions()
         except Exception as e:
             self.notify(f"Failed to create agent: {e}", severity="error")
+
+    def on_command_bar_new_remote_agent_requested(self, message: CommandBar.NewRemoteAgentRequested) -> None:
+        """Handle remote agent launch request (#310)."""
+        sister_name = message.sister_name
+        agent_name = message.agent_name
+        directory = message.directory
+        permissions = message.permissions
+
+        from .config import get_sister_by_name
+        sister_config = get_sister_by_name(sister_name)
+        if not sister_config:
+            self.notify(f"Sister '{sister_name}' not found", severity="error")
+            return
+
+        result = self._sister_controller.launch_agent(
+            sister_url=sister_config["url"],
+            api_key=sister_config.get("api_key", ""),
+            directory=directory or ".",
+            name=agent_name,
+            permissions=permissions,
+        )
+
+        if result.ok:
+            self.notify(f"Remote agent '{agent_name}' launched on {sister_name}", severity="information")
+        else:
+            self.notify(f"Remote launch failed: {result.error}", severity="error")
 
     def _ensure_monitor_daemon(self) -> None:
         """Start the Monitor Daemon if not running.
