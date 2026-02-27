@@ -11,6 +11,7 @@ import time
 import subprocess
 import os
 import shlex
+from pathlib import Path
 from typing import List, Optional
 
 import re
@@ -203,12 +204,14 @@ class ClaudeLauncher:
 
         # Register session with default standing instructions from config
         default_instructions = get_default_standing_instructions()
+        # Resolve to absolute path so daemon/CLI don't disagree on CWD (#312)
+        resolved_directory = str(Path(start_directory).resolve()) if start_directory else None
         session = self.sessions.create_session(
             name=name,
             tmux_session=self.tmux.session_name,
             tmux_window=window_index,
             command=claude_cmd,
-            start_directory=start_directory,
+            start_directory=resolved_directory,
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode,
             allowed_tools=allowed_tools,
