@@ -90,6 +90,8 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.git_diff_stats = None
     widget.background_bash_count = 0
     widget.live_subagent_count = 0
+    widget.pr_number = None
+    widget.any_has_pr = False
     widget.is_unvisited_stalled = False
     widget.monochrome = False
     widget.show_cost = False
@@ -350,10 +352,13 @@ class TestApplyStatusNoRefresh:
         widget.apply_status_no_refresh("running", "", "", None, None)
         assert widget.git_diff_stats == (3, 50, 10)
 
-    @patch("overcode.tui_widgets.session_summary.extract_background_bash_count", return_value=3)
-    @patch("overcode.tui_widgets.session_summary.extract_live_subagent_count", return_value=2)
-    def test_extracts_live_counts_from_content(self, mock_sub, mock_bash):
+    @patch("overcode.tui_widgets.session_summary.extract_from_pane")
+    def test_extracts_live_counts_from_content(self, mock_extract):
         """Background bash and subagent counts are extracted from content."""
+        from overcode.status_patterns import PaneExtraction
+        mock_extract.return_value = PaneExtraction(
+            background_bash_count=3, live_subagent_count=2, pr_number=None,
+        )
         widget = _make_bare_widget()
         widget.apply_status_no_refresh("running", "", "some pane content", None, None)
         assert widget.background_bash_count == 3

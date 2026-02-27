@@ -12,7 +12,7 @@ Each pattern set includes documentation about when it's used and what it matches
 
 import re
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
@@ -512,3 +512,35 @@ def is_sleep_command(text: str) -> bool:
         True if the text contains a sleep command
     """
     return bool(_SLEEP_PATTERN.search(text))
+
+
+@dataclass
+class PaneExtraction:
+    """All display-relevant values extracted from pane content.
+
+    This is the return type of extract_from_pane(). Keeping extractions in a
+    pure dataclass prevents accidental mutation of session objects (Pattern B
+    anti-pattern) and forces new extractions to follow the widget-var pattern.
+    """
+    background_bash_count: int = 0
+    live_subagent_count: int = 0
+    pr_number: Optional[int] = None
+
+
+def extract_from_pane(content: str) -> PaneExtraction:
+    """Pure function: extract all display-relevant data from pane content.
+
+    Returns a PaneExtraction dataclass. Results should be stored as widget
+    instance variables, never written to session objects.
+
+    Args:
+        content: Raw pane content (may include ANSI codes)
+
+    Returns:
+        PaneExtraction with all extracted values
+    """
+    return PaneExtraction(
+        background_bash_count=extract_background_bash_count(content),
+        live_subagent_count=extract_live_subagent_count(content),
+        pr_number=extract_pr_number(content),
+    )
