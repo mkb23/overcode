@@ -39,6 +39,7 @@ def _make_bare_command_bar(**extra_attrs):
     widget._running = False
     # Default CommandBar attributes (non-reactive)
     widget.target_session = None
+    widget.target_session_id = None
     widget.mode = "send"
     widget.new_agent_dir = None
     widget.new_agent_name = None
@@ -541,11 +542,12 @@ class TestHandleHeartbeatInstruction:
     def test_empty_instruction_uses_existing(self):
         """Empty input reuses existing heartbeat instruction from session."""
         mock_session = MagicMock()
+        mock_session.id = "uuid-123"
         mock_session.heartbeat_instruction = "existing instruction"
         mock_app = MagicMock()
-        mock_app.session_manager.get_session_by_name.return_value = mock_session
+        mock_app.sessions = [mock_session]
 
-        widget = _make_bare_command_bar(target_session="agent-1", heartbeat_freq=300)
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-123", heartbeat_freq=300)
         widget._mock_app = mock_app
         widget.post_message = MagicMock()
         widget._handle_heartbeat_instruction("")
@@ -556,11 +558,12 @@ class TestHandleHeartbeatInstruction:
     def test_empty_instruction_no_existing_errors(self):
         """Empty input with no existing instruction shows error."""
         mock_session = MagicMock()
+        mock_session.id = "uuid-123"
         mock_session.heartbeat_instruction = None
         mock_app = MagicMock()
-        mock_app.session_manager.get_session_by_name.return_value = mock_session
+        mock_app.sessions = [mock_session]
 
-        widget = _make_bare_command_bar(target_session="agent-1", heartbeat_freq=300)
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-123", heartbeat_freq=300)
         widget._mock_app = mock_app
         widget.post_message = MagicMock()
         widget._handle_heartbeat_instruction("")
@@ -723,3 +726,136 @@ class TestGetModeLabelAndPlaceholder:
         for mode in session_modes:
             label, _ = get_mode_label_and_placeholder(mode, "test-agent")
             assert "test-agent" in label, f"Mode {mode} missing session name"
+
+
+# ===========================================================================
+# Session ID routing (#316)
+# ===========================================================================
+
+
+class TestSessionIdRouting:
+    """Tests for session_id support in CommandBar and Messages."""
+
+    def test_set_target_stores_both_name_and_id(self):
+        widget = _make_bare_command_bar()
+        widget._update_target_label = MagicMock()
+        widget.set_target("agent-1", session_id="uuid-123")
+        assert widget.target_session == "agent-1"
+        assert widget.target_session_id == "uuid-123"
+
+    def test_set_target_id_defaults_to_none(self):
+        widget = _make_bare_command_bar()
+        widget._update_target_label = MagicMock()
+        widget.set_target("agent-1")
+        assert widget.target_session == "agent-1"
+        assert widget.target_session_id is None
+
+    def test_send_requested_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.SendRequested("agent-1", "hello", session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_send_requested_session_id_defaults_empty(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.SendRequested("agent-1", "hello")
+        assert msg.session_id == ""
+
+    def test_standing_order_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.StandingOrderRequested("agent-1", "test", session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_value_updated_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.ValueUpdated("agent-1", 2000, session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_annotation_updated_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.AnnotationUpdated("agent-1", "note", session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_heartbeat_updated_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.HeartbeatUpdated("agent-1", True, 300, "ping", session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_budget_updated_carries_session_id(self):
+        from overcode.tui_widgets.command_bar import CommandBar
+        msg = CommandBar.BudgetUpdated("agent-1", 5.0, session_id="uuid-123")
+        assert msg.session_id == "uuid-123"
+
+    def test_send_message_threads_session_id(self):
+        """_send_message should include target_session_id in the posted message."""
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget._send_message("hello")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_set_standing_order_threads_session_id(self):
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget._set_standing_order("always test")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_set_value_threads_session_id(self):
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget._set_value("2000")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_set_annotation_threads_session_id(self):
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget._set_annotation("review")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_set_cost_budget_threads_session_id(self):
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget._set_cost_budget("5.00")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_heartbeat_instruction_threads_session_id(self):
+        widget = _make_bare_command_bar(
+            target_session="agent-1", target_session_id="uuid-abc", heartbeat_freq=300
+        )
+        widget.post_message = MagicMock()
+        widget._handle_heartbeat_instruction("check in")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_heartbeat_disable_threads_session_id(self):
+        widget = _make_bare_command_bar(target_session="agent-1", target_session_id="uuid-abc")
+        widget.post_message = MagicMock()
+        widget.action_clear_and_unfocus = MagicMock()
+        widget._handle_heartbeat_freq("off")
+        msg = widget.post_message.call_args[0][0]
+        assert msg.session_id == "uuid-abc"
+
+    def test_find_target_session_by_id(self):
+        """_find_target_session should search app.sessions by ID."""
+        mock_session = MagicMock()
+        mock_session.id = "uuid-abc"
+        mock_app = MagicMock()
+        mock_app.sessions = [mock_session]
+
+        widget = _make_bare_command_bar(target_session_id="uuid-abc")
+        widget._mock_app = mock_app
+        assert widget._find_target_session() is mock_session
+
+    def test_find_target_session_returns_none_when_no_id(self):
+        widget = _make_bare_command_bar(target_session_id=None)
+        assert widget._find_target_session() is None
+
+    def test_find_target_session_returns_none_when_not_found(self):
+        mock_app = MagicMock()
+        mock_app.sessions = []
+        widget = _make_bare_command_bar(target_session_id="uuid-missing")
+        widget._mock_app = mock_app
+        assert widget._find_target_session() is None

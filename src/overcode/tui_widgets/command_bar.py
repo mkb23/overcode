@@ -32,6 +32,14 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
     elif mode == "new_agent_perms":
         return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
+    elif mode == "new_remote_agent_sister":
+        return "[Remote Agent: Sister] ", "Enter sister name..."
+    elif mode == "new_remote_agent_dir":
+        return "[Remote Agent: Directory] ", "Enter remote directory (or Enter for '.')..."
+    elif mode == "new_remote_agent_name":
+        return "[Remote Agent: Name] ", "Enter agent name..."
+    elif mode == "new_remote_agent_perms":
+        return "[Remote Agent: Permissions] ", "Type 'bypass' or 'skip', or Enter for normal..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
         return prefix, "Enter standing orders (or empty to clear)..."
@@ -75,24 +83,28 @@ class CommandBar(Static):
 
     expanded = reactive(False)  # Toggle single/multi-line mode
     target_session: Optional[str] = None
+    target_session_id: Optional[str] = None
     mode: str = "send"  # "send", "standing_orders", "new_agent_*", "heartbeat_freq", "heartbeat_instruction", etc.
     new_agent_dir: Optional[str] = None  # Store directory between steps
     new_agent_name: Optional[str] = None  # Store name between steps
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
+    new_remote_sister: Optional[str] = None  # Store selected sister name for remote agent flow (#310)
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
-        def __init__(self, session_name: str, text: str):
+        def __init__(self, session_name: str, text: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.text = text
+            self.session_id = session_id
 
     class StandingOrderRequested(Message):
         """Message sent when user wants to set a standing order."""
-        def __init__(self, session_name: str, text: str):
+        def __init__(self, session_name: str, text: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.text = text
+            self.session_id = session_id
 
     class NewAgentRequested(Message):
         """Message sent when user wants to create a new agent."""
@@ -102,35 +114,48 @@ class CommandBar(Static):
             self.directory = directory
             self.bypass_permissions = bypass_permissions
 
+    class NewRemoteAgentRequested(Message):
+        """Message sent when user wants to launch a remote agent on a sister (#310)."""
+        def __init__(self, sister_name: str, agent_name: str, directory: Optional[str] = None, permissions: str = "normal"):
+            super().__init__()
+            self.sister_name = sister_name
+            self.agent_name = agent_name
+            self.directory = directory
+            self.permissions = permissions
+
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
-        def __init__(self, session_name: str, value: int):
+        def __init__(self, session_name: str, value: int, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.value = value
+            self.session_id = session_id
 
     class AnnotationUpdated(Message):
         """Message sent when user updates human annotation (#74)."""
-        def __init__(self, session_name: str, annotation: str):
+        def __init__(self, session_name: str, annotation: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.annotation = annotation
+            self.session_id = session_id
 
     class HeartbeatUpdated(Message):
         """Message sent when user configures heartbeat (#171)."""
-        def __init__(self, session_name: str, enabled: bool, frequency: int, instruction: str):
+        def __init__(self, session_name: str, enabled: bool, frequency: int, instruction: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.enabled = enabled
             self.frequency = frequency
             self.instruction = instruction
+            self.session_id = session_id
 
     class BudgetUpdated(Message):
         """Message sent when user updates cost budget (#173)."""
-        def __init__(self, session_name: str, budget_usd: float):
+        def __init__(self, session_name: str, budget_usd: float, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.budget_usd = budget_usd
+            self.session_id = session_id
 
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
@@ -159,9 +184,10 @@ class CommandBar(Static):
         label.update(label_text)
         input_widget.placeholder = placeholder
 
-    def set_target(self, session_name: Optional[str]) -> None:
+    def set_target(self, session_name: Optional[str], session_id: Optional[str] = None) -> None:
         """Set the target session for commands."""
         self.target_session = session_name
+        self.target_session_id = session_id
         self.mode = "send"  # Reset to send mode when target changes
         self._update_target_label()
 
@@ -218,7 +244,22 @@ class CommandBar(Static):
         if event.input.id == "cmd-input":
             text = event.value.strip()
 
-            if self.mode == "new_agent_dir":
+            if self.mode == "new_remote_agent_sister":
+                self._handle_remote_agent_sister(text)
+                return
+            elif self.mode == "new_remote_agent_dir":
+                self._handle_remote_agent_dir(text)
+                return
+            elif self.mode == "new_remote_agent_name":
+                self._handle_remote_agent_name(text)
+                event.input.value = ""
+                return
+            elif self.mode == "new_remote_agent_perms":
+                self._handle_remote_agent_perms(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "new_agent_dir":
                 # Step 1: Directory entered, validate and move to name step
                 # Note: _handle_new_agent_dir sets input value to default name, don't clear it
                 self._handle_new_agent_dir(text if text else None)
@@ -288,7 +329,7 @@ class CommandBar(Static):
         """Send message to target session."""
         if not self.target_session or not text.strip():
             return
-        self.post_message(self.SendRequested(self.target_session, text.strip()))
+        self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def _handle_new_agent_dir(self, directory: Optional[str]) -> None:
         """Handle directory input for new agent creation.
@@ -373,11 +414,74 @@ class CommandBar(Static):
         self.mode = "send"
         self._update_target_label()
 
+    # --- Remote agent flow (#310) ---
+
+    def _handle_remote_agent_sister(self, text: str) -> None:
+        """Handle sister name input for remote agent creation."""
+        if not text:
+            self.app.notify("Sister name required", severity="error")
+            return
+
+        from overcode.config import get_sister_by_name
+        sister = get_sister_by_name(text)
+        if not sister:
+            from overcode.config import get_sisters_config
+            available = [s["name"] for s in get_sisters_config()]
+            if available:
+                self.app.notify(f"Sister '{text}' not found. Available: {', '.join(available)}", severity="error")
+            else:
+                self.app.notify("No sisters configured", severity="error")
+            return
+
+        self.new_remote_sister = text
+        self.mode = "new_remote_agent_dir"
+        self._update_target_label()
+        input_widget = self.query_one("#cmd-input", Input)
+        input_widget.value = "."
+
+    def _handle_remote_agent_dir(self, text: str) -> None:
+        """Handle directory input for remote agent creation."""
+        self.new_agent_dir = text if text else "."
+        self.mode = "new_remote_agent_name"
+        self._update_target_label()
+
+    def _handle_remote_agent_name(self, name: str) -> None:
+        """Handle name input for remote agent creation."""
+        if not name:
+            self.app.notify("Agent name required", severity="error")
+            return
+        self.new_agent_name = name
+        self.mode = "new_remote_agent_perms"
+        self._update_target_label()
+
+    def _handle_remote_agent_perms(self, text: str) -> None:
+        """Handle permissions input and post remote agent message."""
+        perms = text.lower().strip()
+        if perms in ("bypass", "!"):
+            permissions = "bypass"
+        elif perms in ("skip", "deny"):
+            permissions = "skip"
+        else:
+            permissions = "normal"
+
+        self.post_message(self.NewRemoteAgentRequested(
+            sister_name=self.new_remote_sister,
+            agent_name=self.new_agent_name,
+            directory=self.new_agent_dir,
+            permissions=permissions,
+        ))
+        # Reset state
+        self.new_remote_sister = None
+        self.new_agent_dir = None
+        self.new_agent_name = None
+        self.mode = "send"
+        self._update_target_label()
+
     def _set_standing_order(self, text: str) -> None:
         """Set text as standing order (empty string clears orders)."""
         if not self.target_session:
             return
-        self.post_message(self.StandingOrderRequested(self.target_session, text.strip()))
+        self.post_message(self.StandingOrderRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def _set_value(self, text: str) -> None:
         """Set agent value (#61)."""
@@ -388,7 +492,7 @@ class CommandBar(Static):
             if value < 0 or value > 9999:
                 self.app.notify("Value must be between 0 and 9999", severity="error")
                 return
-            self.post_message(self.ValueUpdated(self.target_session, value))
+            self.post_message(self.ValueUpdated(self.target_session, value, session_id=self.target_session_id or ""))
         except ValueError:
             # Invalid input, notify user but don't crash
             self.app.notify("Invalid value - please enter a number", severity="error")
@@ -403,7 +507,7 @@ class CommandBar(Static):
             if budget < 0:
                 self.app.notify("Budget cannot be negative", severity="error")
                 return
-            self.post_message(self.BudgetUpdated(self.target_session, budget))
+            self.post_message(self.BudgetUpdated(self.target_session, budget, session_id=self.target_session_id or ""))
         except ValueError:
             self.app.notify("Invalid budget - enter a dollar amount (e.g., 5.00)", severity="error")
 
@@ -411,7 +515,7 @@ class CommandBar(Static):
         """Set human annotation (empty string clears it) (#74)."""
         if not self.target_session:
             return
-        self.post_message(self.AnnotationUpdated(self.target_session, text.strip()))
+        self.post_message(self.AnnotationUpdated(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def action_toggle_expand(self) -> None:
         """Toggle between single and multi-line mode."""
@@ -447,6 +551,7 @@ class CommandBar(Static):
         self.mode = "send"
         self.new_agent_dir = None
         self.new_agent_name = None
+        self.new_remote_sister = None  # Reset remote agent state (#310)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus
@@ -457,6 +562,15 @@ class CommandBar(Static):
         input_widget = self.query_one("#cmd-input", Input)
         input_widget.disabled = False
         input_widget.focus()
+
+    def _find_target_session(self):
+        """Find the target session by ID from the app's session list."""
+        if not self.target_session_id:
+            return None
+        for s in self.app.sessions:
+            if s.id == self.target_session_id:
+                return s
+        return None
 
     def _parse_duration(self, text: str) -> Optional[int]:
         """Parse duration string like '5m', '1h', '300' into seconds (#171)."""
@@ -481,7 +595,8 @@ class CommandBar(Static):
             # Disable heartbeat
             if self.target_session:
                 self.post_message(self.HeartbeatUpdated(
-                    self.target_session, enabled=False, frequency=0, instruction=""
+                    self.target_session, enabled=False, frequency=0, instruction="",
+                    session_id=self.target_session_id or "",
                 ))
             self.action_clear_and_unfocus()
             return
@@ -500,7 +615,7 @@ class CommandBar(Static):
 
         # Pre-fill with existing heartbeat instruction if available
         if self.target_session:
-            session = self.app.session_manager.get_session_by_name(self.target_session)
+            session = self._find_target_session()
             if session and session.heartbeat_instruction:
                 input_widget = self.query_one("#cmd-input", Input)
                 input_widget.value = session.heartbeat_instruction
@@ -513,7 +628,7 @@ class CommandBar(Static):
         instruction = text.strip()
         # If empty, keep the existing instruction (user just hit Enter to confirm)
         if not instruction:
-            session = self.app.session_manager.get_session_by_name(self.target_session)
+            session = self._find_target_session()
             if session and session.heartbeat_instruction:
                 instruction = session.heartbeat_instruction
             else:
@@ -524,6 +639,7 @@ class CommandBar(Static):
             self.target_session,
             enabled=True,
             frequency=self.heartbeat_freq or 300,
-            instruction=instruction
+            instruction=instruction,
+            session_id=self.target_session_id or "",
         ))
         self.heartbeat_freq = None

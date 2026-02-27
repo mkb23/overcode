@@ -728,6 +728,110 @@ class TestLaunchExtended:
             assert "launched" not in result.output
 
 
+class TestLaunchSister:
+    """Test launch --sister flag (#310)."""
+
+    def test_launch_help_shows_sister_flag(self):
+        """--sister appears in launch help output."""
+        result = runner.invoke(app, ["launch", "--help"])
+        assert result.exit_code == 0
+        output = strip_ansi(result.stdout)
+        assert "--sister" in output
+
+    def test_launch_sister_not_found(self):
+        """Error when sister name not in config."""
+        with patch('overcode.config.get_sister_by_name', return_value=None):
+            with patch('overcode.config.get_sisters_config', return_value=[
+                {"name": "desktop", "url": "http://localhost:25337"},
+            ]):
+                result = runner.invoke(app, ["launch", "--name", "test", "--sister", "nonexistent"])
+                assert result.exit_code == 1
+                assert "not found" in result.output
+                assert "desktop" in result.output
+
+    def test_launch_sister_no_sisters_configured(self):
+        """Error when no sisters configured at all."""
+        with patch('overcode.config.get_sister_by_name', return_value=None):
+            with patch('overcode.config.get_sisters_config', return_value=[]):
+                result = runner.invoke(app, ["launch", "--name", "test", "--sister", "foo"])
+                assert result.exit_code == 1
+                assert "No sisters configured" in result.output
+
+    def test_launch_sister_success(self):
+        """Successful remote launch via sister."""
+        from overcode.sister_controller import ControlResult
+        mock_result = ControlResult(ok=True)
+
+        with patch('overcode.config.get_sister_by_name', return_value={
+            "name": "desktop", "url": "http://desktop:15337", "api_key": "secret",
+        }):
+            with patch('overcode.sister_controller.SisterController.launch_agent', return_value=mock_result) as mock_launch:
+                result = runner.invoke(app, [
+                    "launch", "--name", "test-remote",
+                    "--sister", "desktop",
+                    "--directory", "/tmp/work",
+                    "--prompt", "hello",
+                ])
+                assert result.exit_code == 0
+                assert "test-remote" in result.output
+                assert "desktop" in result.output
+                mock_launch.assert_called_once_with(
+                    sister_url="http://desktop:15337",
+                    api_key="secret",
+                    directory="/tmp/work",
+                    name="test-remote",
+                    prompt="hello",
+                    permissions="normal",
+                )
+
+    def test_launch_sister_remote_error(self):
+        """Error from remote sister is displayed."""
+        from overcode.sister_controller import ControlResult
+        mock_result = ControlResult(ok=False, error="Connection refused")
+
+        with patch('overcode.config.get_sister_by_name', return_value={
+            "name": "desktop", "url": "http://desktop:15337",
+        }):
+            with patch('overcode.sister_controller.SisterController.launch_agent', return_value=mock_result):
+                result = runner.invoke(app, [
+                    "launch", "--name", "test-remote", "--sister", "desktop",
+                ])
+                assert result.exit_code == 1
+                assert "Connection refused" in result.output
+
+    def test_launch_sister_with_bypass_permissions(self):
+        """--bypass-permissions maps to permissions='bypass'."""
+        from overcode.sister_controller import ControlResult
+        mock_result = ControlResult(ok=True)
+
+        with patch('overcode.config.get_sister_by_name', return_value={
+            "name": "desktop", "url": "http://desktop:15337",
+        }):
+            with patch('overcode.sister_controller.SisterController.launch_agent', return_value=mock_result) as mock_launch:
+                result = runner.invoke(app, [
+                    "launch", "--name", "test", "--sister", "desktop",
+                    "--bypass-permissions",
+                ])
+                assert result.exit_code == 0
+                assert mock_launch.call_args.kwargs["permissions"] == "bypass"
+
+    def test_launch_sister_no_directory_warns(self):
+        """Warning when no --directory given for remote launch."""
+        from overcode.sister_controller import ControlResult
+        mock_result = ControlResult(ok=True)
+
+        with patch('overcode.config.get_sister_by_name', return_value={
+            "name": "desktop", "url": "http://desktop:15337",
+        }):
+            with patch('overcode.sister_controller.SisterController.launch_agent', return_value=mock_result) as mock_launch:
+                result = runner.invoke(app, [
+                    "launch", "--name", "test", "--sister", "desktop",
+                ])
+                assert result.exit_code == 0
+                assert "Warning" in result.output
+                assert mock_launch.call_args.kwargs["directory"] == "."
+
+
 class TestFollowCommand:
     """Test follow command."""
 
