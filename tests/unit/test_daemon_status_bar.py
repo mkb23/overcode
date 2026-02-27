@@ -630,3 +630,170 @@ class TestDaemonStatusBarRenderSisters:
         plain = result.plain
         assert "sister-a(1/2)" in plain
         assert "sister-b(0/1)" in plain
+
+
+# ===========================================================================
+# render — spin stats include sister agents
+# ===========================================================================
+
+
+def _make_sister_state(name="remote-1", reachable=True, green_agents=0, total_agents=0, total_cost=0.0, sessions=None):
+    """Create a mock SisterState for testing."""
+    sister = MagicMock()
+    sister.name = name
+    sister.reachable = reachable
+    sister.green_agents = green_agents
+    sister.total_agents = total_agents
+    sister.total_cost = total_cost
+    sister.sessions = sessions or []
+    return sister
+
+
+def _make_sister_session(is_asleep=False, green_time=100.0, non_green_time=100.0, total_tokens=5000):
+    """Create a mock remote Session with stats for sister spin tests."""
+    sess = MagicMock()
+    sess.is_asleep = is_asleep
+    sess.stats = MagicMock()
+    sess.stats.green_time_seconds = green_time
+    sess.stats.non_green_time_seconds = non_green_time
+    sess.stats.total_tokens = total_tokens
+    return sess
+
+
+class TestDaemonStatusBarSpinWithSisters:
+    """Tests that spin metrics aggregate local + sister agents."""
+
+    def test_spin_counts_include_sister_agents(self):
+        """Spin green/total should sum local and sister counts."""
+        local = _make_session_state(
+            session_id="s1", name="local-1", current_status="running",
+            input_tokens=100, output_tokens=50,
+        )
+        state = _make_monitor_state(sessions=[local])
+        sister = _make_sister_state(green_agents=2, total_agents=3)
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+        )
+        result = widget.render()
+        plain = result.plain
+        assert "Spin:" in plain
+        # 1 local green + 2 sister green = 3
+        assert "3/4" in plain  # 1 local + 3 sister total = 4
+
+    def test_spin_shown_with_only_sisters_no_local(self):
+        """Spin section should render even when only sisters have agents."""
+        state = _make_monitor_state(sessions=[])
+        sister = _make_sister_state(green_agents=1, total_agents=2)
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+        )
+        result = widget.render()
+        plain = result.plain
+        assert "Spin:" in plain
+        assert "1/2" in plain
+
+    def test_spin_cost_includes_sisters(self):
+        """Cost aggregation should include sister total_cost."""
+        local = _make_session_state(
+            session_id="s1", current_status="running",
+            estimated_cost_usd=1.00, input_tokens=100, output_tokens=50,
+        )
+        state = _make_monitor_state(sessions=[local])
+        sister = _make_sister_state(
+            green_agents=1, total_agents=1, total_cost=2.50,
+        )
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+            show_cost=True,
+        )
+        result = widget.render()
+        plain = result.plain
+        # $1.00 local + $2.50 sister = $3.50
+        assert "$3.50" in plain
+
+    def test_spin_tokens_include_sisters(self):
+        """Token aggregation should include sister session tokens."""
+        local = _make_session_state(
+            session_id="s1", current_status="running",
+            input_tokens=10000, output_tokens=5000,
+        )
+        state = _make_monitor_state(sessions=[local])
+        sister_sess = _make_sister_session(total_tokens=20000)
+        sister = _make_sister_state(
+            green_agents=1, total_agents=1, sessions=[sister_sess],
+        )
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+            show_cost=False,
+        )
+        result = widget.render()
+        plain = result.plain
+        # 15000 local + 20000 sister = 35000
+        assert "35" in plain
+
+    def test_mean_spin_instantaneous_includes_sisters(self):
+        """Instantaneous μ (baseline=0) should equal total green_now."""
+        local = _make_session_state(
+            session_id="s1", current_status="running",
+            input_tokens=100, output_tokens=50,
+        )
+        state = _make_monitor_state(sessions=[local])
+        sister = _make_sister_state(green_agents=2, total_agents=3)
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+            _spin_baseline_minutes=0,
+        )
+        result = widget.render()
+        plain = result.plain
+        # μ should be green_now = 1 + 2 = 3
+        assert "μ3" in plain
+
+    def test_mean_spin_baseline_includes_sister_contribution(self):
+        """Windowed μ should combine local CSV mean + sister cumulative spin."""
+        local = _make_session_state(
+            session_id="s1", current_status="running",
+            input_tokens=100, output_tokens=50,
+        )
+        state = _make_monitor_state(sessions=[local])
+        # Sister session: 75% green (300s green, 100s non-green)
+        sister_sess = _make_sister_session(green_time=300.0, non_green_time=100.0)
+        sister = _make_sister_state(
+            green_agents=1, total_agents=1, sessions=[sister_sess],
+        )
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+            _spin_baseline_minutes=15,
+            _mean_spin=0.5,  # local CSV mean
+            _spin_sample_count=10,
+        )
+        result = widget.render()
+        plain = result.plain
+        # 0.5 local + 0.75 sister = 1.25 → "1.2" (1 decimal)
+        assert "1.2" in plain
+        assert "15m" in plain
+
+    def test_unreachable_sisters_excluded_from_spin(self):
+        """Unreachable sisters should not contribute to spin."""
+        local = _make_session_state(
+            session_id="s1", current_status="running",
+            input_tokens=100, output_tokens=50,
+        )
+        state = _make_monitor_state(sessions=[local])
+        sister = _make_sister_state(
+            reachable=False, green_agents=5, total_agents=10,
+        )
+        widget = _make_bare_status_bar(
+            monitor_state=state,
+            _sister_states=[sister],
+        )
+        result = widget.render()
+        plain = result.plain
+        assert "Spin:" in plain
+        # Only local: 1/1
+        assert "1/1" in plain
