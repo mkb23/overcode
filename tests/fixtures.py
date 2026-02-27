@@ -78,6 +78,7 @@ class MockSession:
     start_time: str
     repo_name: Optional[str] = None
     branch: Optional[str] = None
+    pr_number: Optional[int] = None
     status: str = "running"
     permissiveness_mode: str = "normal"
     standing_instructions: str = ""

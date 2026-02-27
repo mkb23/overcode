@@ -402,6 +402,20 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
             return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
+def render_pr_number(ctx: ColumnContext) -> ColumnOutput:
+    pr = ctx.session.pr_number
+    if pr is not None:
+        return [(f" PR#{pr}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+    return None
+
+
+def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
+    pr = ctx.session.pr_number
+    if pr is not None:
+        return f"PR#{pr}"
+    return None
+
+
 render_median_work_time = _make_simple_render("median_work", format_duration, " ⏱{v:>5}", "bold blue")
 
 
@@ -763,6 +777,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Branch", render_plain=render_branch_plain),
     SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
                   label="Git", render_plain=render_git_diff_plain),
+    SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
+                  label="PR", render_plain=render_pr_number_plain),
 
     # Time group — uptime, running, stalled, sleep, active%
     SummaryColumn(id="uptime", group="time", detail_levels=MED_PLUS, render=render_uptime,

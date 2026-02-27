@@ -62,6 +62,8 @@ from overcode.summary_columns import (
     render_heartbeat_plain,
     render_orders_plain,
     render_value_plain,
+    render_pr_number,
+    render_pr_number_plain,
     build_cli_context,
     render_cli_stats,
 )
@@ -106,6 +108,7 @@ def _make_session(**overrides):
         heartbeat_instruction=None,
         cost_budget_usd=0.0,
         allowed_tools=None,
+        pr_number=None,
         stats=_make_stats(),
     )
     defaults.update(overrides)
@@ -1172,3 +1175,37 @@ class TestRenderCliStats:
         for expected in ["Status", "Repo", "Branch", "Uptime", "Time", "Tokens", "Cost", "Git",
                          "Work", "Agents", "Mode", "Orders", "Heartbeat", "Value"]:
             assert expected in labels, f"Missing label: {expected}"
+
+
+class TestRenderPrNumber:
+    """Tests for PR number column rendering."""
+
+    def test_pr_number_set(self):
+        """Should render PR# when pr_number is set."""
+        session = _make_session(pr_number=123)
+        ctx = _make_ctx(session=session)
+        result = render_pr_number(ctx)
+        assert result is not None
+        text = result[0][0]
+        assert "PR#123" in text
+
+    def test_pr_number_none(self):
+        """Should return None when pr_number is not set."""
+        session = _make_session(pr_number=None)
+        ctx = _make_ctx(session=session)
+        result = render_pr_number(ctx)
+        assert result is None
+
+    def test_pr_number_plain_set(self):
+        """Should render plain text PR# when set."""
+        session = _make_session(pr_number=42)
+        ctx = _make_ctx(session=session)
+        result = render_pr_number_plain(ctx)
+        assert result == "PR#42"
+
+    def test_pr_number_plain_none(self):
+        """Should return None when pr_number not set."""
+        session = _make_session(pr_number=None)
+        ctx = _make_ctx(session=session)
+        result = render_pr_number_plain(ctx)
+        assert result is None
