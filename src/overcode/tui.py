@@ -342,9 +342,9 @@ class SupervisorTUI(
         yield PreviewPane(id="preview-pane")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
-        yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal")
+        yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
-        yield NewAgentDefaultsModal(id="new-agent-defaults-modal")
+        yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -674,11 +674,20 @@ class SupervisorTUI(
             self.focused_session_index = max(0, min(self.focused_session_index, len(widgets) - 1))
         return widgets[self.focused_session_index]
 
+    def _any_modal_visible(self) -> bool:
+        """Check if any modal dialog is currently visible.
+
+        Queries for widgets with both 'modal' and 'visible' CSS classes.
+        New modals automatically get focus protection and key blocking
+        by adding classes="modal" in compose().
+        """
+        return bool(self.query(".modal.visible"))
+
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
 
-        Returns False when an overlay is visible (fullscreen preview, help)
-        or focus is already on a session/input widget.
+        Returns False when an overlay is visible (fullscreen preview, help,
+        any modal) or focus is already on a session/input widget.
         """
         # Don't steal focus from overlays
         try:
@@ -693,12 +702,8 @@ class SupervisorTUI(
                 return False
         except NoMatches:
             pass
-        try:
-            scm = self.query_one("#summary-config-modal", SummaryConfigModal)
-            if scm.has_class("visible"):
-                return False
-        except NoMatches:
-            pass
+        if self._any_modal_visible():
+            return False
         # Only recover if focus is not on a session or input widget
         if self.focused is None:
             return True
@@ -711,6 +716,8 @@ class SupervisorTUI(
     def watch_focused_session_index(self, new_index: int) -> None:
         """Auto-focus the widget at the new index, update preview, and sync tmux."""
         if self._suppress_focus_watcher:
+            return
+        if self._any_modal_visible():
             return
         widget = self._get_focused_widget()
         if widget is None:
@@ -2152,26 +2159,11 @@ class SupervisorTUI(
         except Exception:
             pass
 
-        # Block actions when column config modal is visible
-        try:
-            scm = self.query_one("#summary-config-modal", SummaryConfigModal)
-            if scm.has_class("visible"):
-                # Only allow quit; all other keys go to the modal
-                if action == "quit":
-                    return True
-                return False
-        except Exception:
-            pass
-
-        # Block actions when new-agent defaults modal is visible
-        try:
-            nadm = self.query_one("#new-agent-defaults-modal", NewAgentDefaultsModal)
-            if nadm.has_class("visible"):
-                if action == "quit":
-                    return True
-                return False
-        except Exception:
-            pass
+        # Block actions when any modal is visible (generic — covers all .modal widgets)
+        if self._any_modal_visible():
+            if action == "quit":
+                return True
+            return False
 
         # Default: allow the action
         return True
