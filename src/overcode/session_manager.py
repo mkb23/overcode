@@ -78,6 +78,7 @@ class Session:
     # Git context
     repo_name: Optional[str] = None
     branch: Optional[str] = None
+    pr_number: Optional[int] = None
 
     # Management
     status: str = "running"

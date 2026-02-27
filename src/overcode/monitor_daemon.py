@@ -63,6 +63,7 @@ from .status_constants import (
     is_green_status,
 )
 from .status_detector import StatusDetector
+from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import log_agent_status
 from .monitor_daemon_core import (
@@ -849,7 +850,13 @@ class MonitorDaemon:
                 status, activity = STATUS_DONE, "Completed"
             else:
                 # Detect status - dispatches per-session via dispatcher (#5)
-                status, activity, _ = self.detector.detect_status(session)
+                status, activity, pane_content = self.detector.detect_status(session)
+
+                # Extract PR number from pane content
+                if pane_content:
+                    pr = extract_pr_number(pane_content)
+                    if pr is not None and pr != session.pr_number:
+                        self.session_manager.update_session(session.id, pr_number=pr)
 
             # Clear heartbeat tracking when session stops running
             if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:

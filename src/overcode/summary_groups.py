@@ -55,7 +55,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     SummaryGroup(
         id="git",
         name="Git",
-        fields=["repo_branch", "files_changed", "insertions", "deletions"],
+        fields=["repo_branch", "files_changed", "insertions", "deletions", "pr_number"],
         default_enabled=True,
     ),
     SummaryGroup(

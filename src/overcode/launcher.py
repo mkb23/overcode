@@ -11,6 +11,7 @@ import time
 import subprocess
 import os
 import shlex
+from pathlib import Path
 from typing import List, Optional
 
 import re
@@ -203,12 +204,14 @@ class ClaudeLauncher:
 
         # Register session with default standing instructions from config
         default_instructions = get_default_standing_instructions()
+        # Resolve to absolute path so daemon/CLI don't disagree on CWD (#312)
+        resolved_directory = str(Path(start_directory).resolve()) if start_directory else None
         session = self.sessions.create_session(
             name=name,
             tmux_session=self.tmux.session_name,
             tmux_window=window_index,
             command=claude_cmd,
-            start_directory=start_directory,
+            start_directory=resolved_directory,
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode,
             allowed_tools=allowed_tools,
@@ -473,6 +476,33 @@ class ClaudeLauncher:
             print(f"Session '{name}' not found")
             return False
 
+        return self._send_to_resolved_session(session, text, enter)
+
+    def send_to_session_by_id(self, session_id: str, text: str, enter: bool = True) -> bool:
+        """Send text/keys to a session by ID.
+
+        Preferred over send_to_session() when the session ID is known,
+        since IDs are unique even when local and remote agents share a name.
+
+        Args:
+            session_id: Unique session ID
+            text: Text to send (or special key like "Enter", "Escape")
+            enter: Whether to press Enter after the text (default: True)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        session = self.sessions.get_session(session_id)
+        if session is None:
+            return False
+
+        return self._send_to_resolved_session(session, text, enter)
+
+    def _send_to_resolved_session(self, session: Session, text: str, enter: bool = True) -> bool:
+        """Send text/keys to an already-resolved session.
+
+        Internal helper shared by send_to_session() and send_to_session_by_id().
+        """
         # Handle special keys
         special_keys = {
             "enter": "",  # Empty string + Enter = just press Enter

@@ -478,6 +478,28 @@ def extract_sleep_duration(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def extract_pr_number(content: str) -> int | None:
+    """Extract the most recent PR number from pane content.
+
+    Scans for GitHub PR URLs (github.com/.../pull/123) which appear when
+    Claude Code creates or interacts with a PR via `gh pr create`, etc.
+
+    Returns the last (most recent) PR number found, since pane content scrolls.
+
+    Args:
+        content: Raw pane content (may include ANSI codes)
+
+    Returns:
+        PR number as int, or None if no PR reference found
+    """
+    cleaned = strip_ansi(content)
+    # GitHub PR URLs: https://github.com/owner/repo/pull/123
+    matches = re.findall(r'github\.com/[^/]+/[^/]+/pull/(\d+)', cleaned)
+    if matches:
+        return int(matches[-1])
+    return None
+
+
 def is_sleep_command(text: str) -> bool:
     """Check if text contains a bash sleep command.
 

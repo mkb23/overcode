@@ -5,6 +5,7 @@ __pycache__/
 .claude/settings.local.json
 .coverage
 .coverage.*
+coverage*.json
 .DS_Store
 .eggs/
 .idea/
@@ -57,6 +58,10 @@ tmp/
 var/
 venv/
 wheels/
+
+# Generated architecture diagrams
+docs/architecture-*.svg
+docs/architecture-*.pdf
 
 # Environment files with secrets
 .env

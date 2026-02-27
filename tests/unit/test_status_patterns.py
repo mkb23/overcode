@@ -19,6 +19,7 @@ from overcode.status_patterns import (
     clean_line,
     extract_background_bash_count,
     extract_live_subagent_count,
+    extract_pr_number,
     is_sleep_command,
     extract_sleep_duration,
 )
@@ -511,3 +512,61 @@ class TestExtractSleepDuration:
     def test_formatted_duration_days(self):
         """Should parse format_duration output like 'Sleeping 1.0d'."""
         assert extract_sleep_duration("Sleeping 1.0d") == 86400
+
+
+class TestExtractPrNumber:
+    """Tests for extract_pr_number function."""
+
+    def test_github_pr_url(self):
+        """Should extract PR number from GitHub PR URL."""
+        content = "Created PR: https://github.com/owner/repo/pull/123\n"
+        assert extract_pr_number(content) == 123
+
+    def test_gh_pr_create_output(self):
+        """Should extract PR number from gh pr create output."""
+        content = (
+            "Creating pull request for feature-branch into main in owner/repo\n"
+            "\n"
+            "https://github.com/owner/repo/pull/456\n"
+        )
+        assert extract_pr_number(content) == 456
+
+    def test_returns_last_match(self):
+        """Should return the last (most recent) PR number when multiple appear."""
+        content = (
+            "https://github.com/owner/repo/pull/10\n"
+            "some other output\n"
+            "https://github.com/owner/repo/pull/42\n"
+        )
+        assert extract_pr_number(content) == 42
+
+    def test_no_match_returns_none(self):
+        """Should return None when no PR reference found."""
+        content = "Just some regular output\nNo PR here\n"
+        assert extract_pr_number(content) is None
+
+    def test_empty_content(self):
+        """Should return None for empty content."""
+        assert extract_pr_number("") is None
+
+    def test_ansi_codes_stripped(self):
+        """Should handle ANSI escape codes in content."""
+        content = "\x1b[32mhttps://github.com/owner/repo/pull/99\x1b[0m\n"
+        assert extract_pr_number(content) == 99
+
+    def test_pr_url_in_noisy_pane(self):
+        """Should find PR URL among typical pane output."""
+        content = """
+⏺ I've created the pull request with all the changes.
+
+  Running gh pr create --title "Add feature" --body "..."
+  ⎿ https://github.com/acme/project/pull/314
+
+⏺ The PR has been created successfully.
+
+──────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────
+  ? for shortcuts
+"""
+        assert extract_pr_number(content) == 314

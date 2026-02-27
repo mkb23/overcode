@@ -985,7 +985,7 @@ class TestExecuteTransportAll:
         mock_result.ok = True
 
         mock_launcher_instance = MockLauncher.return_value
-        mock_launcher_instance.send_to_session.return_value = True
+        mock_launcher_instance.send_to_session_by_id.return_value = True
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
@@ -994,8 +994,8 @@ class TestExecuteTransportAll:
         SessionActionsMixin._execute_transport_all(mock_tui, [local_session, remote_session])
 
         # Local agent should be sent via launcher
-        mock_launcher_instance.send_to_session.assert_called_once()
-        assert mock_launcher_instance.send_to_session.call_args[0][0] == "local-agent"
+        mock_launcher_instance.send_to_session_by_id.assert_called_once()
+        assert mock_launcher_instance.send_to_session_by_id.call_args[0][0] == local_session.id
 
         # Remote agent should be sent via sister controller
         mock_tui._sister_controller.send_instruction.assert_called_once()
@@ -1024,7 +1024,7 @@ class TestExecuteTransportAll:
 
         mock_launcher_instance = MockLauncher.return_value
         # First send succeeds, second fails
-        mock_launcher_instance.send_to_session.side_effect = [True, False]
+        mock_launcher_instance.send_to_session_by_id.side_effect = [True, False]
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
@@ -1050,14 +1050,14 @@ class TestExecuteTransportAll:
         session2.name = "agent-2"
 
         mock_launcher_instance = MockLauncher.return_value
-        mock_launcher_instance.send_to_session.return_value = True
+        mock_launcher_instance.send_to_session_by_id.return_value = True
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
 
         SessionActionsMixin._execute_transport_all(mock_tui, [session1, session2])
 
-        assert mock_launcher_instance.send_to_session.call_count == 2
+        assert mock_launcher_instance.send_to_session_by_id.call_count == 2
         mock_tui.notify.assert_called_once()
         assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
@@ -1660,7 +1660,7 @@ class TestFocusCommandBar:
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
         mock_cmd_bar.add_class.assert_called_once_with("visible")
-        mock_cmd_bar.set_target.assert_called_once_with("test-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("test-agent", session_id=mock_session.id)
         mock_input.focus.assert_called_once()
 
     def test_defaults_to_first_session_when_no_focus(self):
@@ -1680,7 +1680,7 @@ class TestFocusCommandBar:
 
         SessionActionsMixin.action_focus_command_bar(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("first-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("first-agent", session_id=mock_session.id)
 
     def test_handles_no_matches(self):
         """Should handle NoMatches gracefully."""
@@ -1721,7 +1721,7 @@ class TestFocusStandingOrders:
 
         SessionActionsMixin.action_focus_standing_orders(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("test-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("test-agent", session_id=mock_session.id)
         mock_cmd_bar.set_mode.assert_called_once_with("standing_orders")
         # Should pre-fill with existing standing orders
         assert mock_input.value == "Do the thing"
@@ -1753,7 +1753,7 @@ class TestFocusHumanAnnotation:
 
         SessionActionsMixin.action_focus_human_annotation(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("test-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("test-agent", session_id=mock_session.id)
         mock_cmd_bar.set_mode.assert_called_once_with("annotation")
         assert mock_input.value == "Needs review"
 
@@ -1784,7 +1784,7 @@ class TestEditAgentValue:
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("test-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("test-agent", session_id=mock_session.id)
         mock_cmd_bar.set_mode.assert_called_once_with("value")
         assert mock_input.value == "500"
 
@@ -1809,7 +1809,7 @@ class TestEditAgentValue:
 
         SessionActionsMixin.action_edit_agent_value(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("first-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("first-agent", session_id=mock_session.id)
         assert mock_input.value == "1000"
 
 
@@ -1840,7 +1840,7 @@ class TestConfigureHeartbeat:
 
         SessionActionsMixin.action_configure_heartbeat(mock_tui)
 
-        mock_cmd_bar.set_target.assert_called_once_with("test-agent")
+        mock_cmd_bar.set_target.assert_called_once_with("test-agent", session_id=mock_session.id)
         mock_cmd_bar.set_mode.assert_called_once_with("heartbeat_freq")
         assert mock_input.value == "600"
 
