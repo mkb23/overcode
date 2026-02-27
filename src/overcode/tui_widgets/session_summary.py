@@ -15,7 +15,7 @@ from rich.text import Text
 from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
-from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, extract_sleep_duration
+from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, extract_pr_number, extract_sleep_duration
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
     calculate_uptime,
@@ -213,6 +213,10 @@ class SessionSummary(Static, can_focus=True):
             # Extract live counts from status bar (#177)
             self.background_bash_count = extract_background_bash_count(content)
             self.live_subagent_count = extract_live_subagent_count(content)
+            # Extract PR number from pane content (immediate feedback, daemon also persists)
+            pr = extract_pr_number(content)
+            if pr is not None:
+                self.session.pr_number = pr
         else:
             self.pane_content = []
             self.background_bash_count = 0
