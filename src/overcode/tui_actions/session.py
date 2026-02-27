@@ -496,12 +496,12 @@ class SessionActionsMixin:
             # (Textual's internal focus) which diverges during DOM reordering
             focused = self._get_focused_widget()
             if focused:
-                cmd_bar.set_target(focused.session.name)
+                cmd_bar.set_target(focused.session.name, session_id=focused.session.id)
                 if get_prefill:
                     cmd_input = cmd_bar.query_one("#cmd-input", Input)
                     cmd_input.value = get_prefill(focused.session)
             elif not cmd_bar.target_session and self.sessions:
-                cmd_bar.set_target(self.sessions[0].name)
+                cmd_bar.set_target(self.sessions[0].name, session_id=self.sessions[0].id)
                 if fallback_prefill is not None:
                     cmd_input = cmd_bar.query_one("#cmd-input", Input)
                     cmd_input.value = fallback_prefill
@@ -612,7 +612,7 @@ class SessionActionsMixin:
                 if result.ok:
                     success_count += 1
             else:
-                if launcher.send_to_session(session.name, handover_instruction):
+                if launcher.send_to_session_by_id(session.id, handover_instruction):
                     success_count += 1
 
         if success_count == len(sessions):

@@ -75,6 +75,7 @@ class CommandBar(Static):
 
     expanded = reactive(False)  # Toggle single/multi-line mode
     target_session: Optional[str] = None
+    target_session_id: Optional[str] = None
     mode: str = "send"  # "send", "standing_orders", "new_agent_*", "heartbeat_freq", "heartbeat_instruction", etc.
     new_agent_dir: Optional[str] = None  # Store directory between steps
     new_agent_name: Optional[str] = None  # Store name between steps
@@ -82,17 +83,19 @@ class CommandBar(Static):
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
-        def __init__(self, session_name: str, text: str):
+        def __init__(self, session_name: str, text: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.text = text
+            self.session_id = session_id
 
     class StandingOrderRequested(Message):
         """Message sent when user wants to set a standing order."""
-        def __init__(self, session_name: str, text: str):
+        def __init__(self, session_name: str, text: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.text = text
+            self.session_id = session_id
 
     class NewAgentRequested(Message):
         """Message sent when user wants to create a new agent."""
@@ -104,33 +107,37 @@ class CommandBar(Static):
 
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
-        def __init__(self, session_name: str, value: int):
+        def __init__(self, session_name: str, value: int, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.value = value
+            self.session_id = session_id
 
     class AnnotationUpdated(Message):
         """Message sent when user updates human annotation (#74)."""
-        def __init__(self, session_name: str, annotation: str):
+        def __init__(self, session_name: str, annotation: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.annotation = annotation
+            self.session_id = session_id
 
     class HeartbeatUpdated(Message):
         """Message sent when user configures heartbeat (#171)."""
-        def __init__(self, session_name: str, enabled: bool, frequency: int, instruction: str):
+        def __init__(self, session_name: str, enabled: bool, frequency: int, instruction: str, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.enabled = enabled
             self.frequency = frequency
             self.instruction = instruction
+            self.session_id = session_id
 
     class BudgetUpdated(Message):
         """Message sent when user updates cost budget (#173)."""
-        def __init__(self, session_name: str, budget_usd: float):
+        def __init__(self, session_name: str, budget_usd: float, session_id: str = ""):
             super().__init__()
             self.session_name = session_name
             self.budget_usd = budget_usd
+            self.session_id = session_id
 
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
@@ -159,9 +166,10 @@ class CommandBar(Static):
         label.update(label_text)
         input_widget.placeholder = placeholder
 
-    def set_target(self, session_name: Optional[str]) -> None:
+    def set_target(self, session_name: Optional[str], session_id: Optional[str] = None) -> None:
         """Set the target session for commands."""
         self.target_session = session_name
+        self.target_session_id = session_id
         self.mode = "send"  # Reset to send mode when target changes
         self._update_target_label()
 
@@ -288,7 +296,7 @@ class CommandBar(Static):
         """Send message to target session."""
         if not self.target_session or not text.strip():
             return
-        self.post_message(self.SendRequested(self.target_session, text.strip()))
+        self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def _handle_new_agent_dir(self, directory: Optional[str]) -> None:
         """Handle directory input for new agent creation.
@@ -377,7 +385,7 @@ class CommandBar(Static):
         """Set text as standing order (empty string clears orders)."""
         if not self.target_session:
             return
-        self.post_message(self.StandingOrderRequested(self.target_session, text.strip()))
+        self.post_message(self.StandingOrderRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def _set_value(self, text: str) -> None:
         """Set agent value (#61)."""
@@ -388,7 +396,7 @@ class CommandBar(Static):
             if value < 0 or value > 9999:
                 self.app.notify("Value must be between 0 and 9999", severity="error")
                 return
-            self.post_message(self.ValueUpdated(self.target_session, value))
+            self.post_message(self.ValueUpdated(self.target_session, value, session_id=self.target_session_id or ""))
         except ValueError:
             # Invalid input, notify user but don't crash
             self.app.notify("Invalid value - please enter a number", severity="error")
@@ -403,7 +411,7 @@ class CommandBar(Static):
             if budget < 0:
                 self.app.notify("Budget cannot be negative", severity="error")
                 return
-            self.post_message(self.BudgetUpdated(self.target_session, budget))
+            self.post_message(self.BudgetUpdated(self.target_session, budget, session_id=self.target_session_id or ""))
         except ValueError:
             self.app.notify("Invalid budget - enter a dollar amount (e.g., 5.00)", severity="error")
 
@@ -411,7 +419,7 @@ class CommandBar(Static):
         """Set human annotation (empty string clears it) (#74)."""
         if not self.target_session:
             return
-        self.post_message(self.AnnotationUpdated(self.target_session, text.strip()))
+        self.post_message(self.AnnotationUpdated(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
     def action_toggle_expand(self) -> None:
         """Toggle between single and multi-line mode."""
@@ -458,6 +466,15 @@ class CommandBar(Static):
         input_widget.disabled = False
         input_widget.focus()
 
+    def _find_target_session(self):
+        """Find the target session by ID from the app's session list."""
+        if not self.target_session_id:
+            return None
+        for s in self.app.sessions:
+            if s.id == self.target_session_id:
+                return s
+        return None
+
     def _parse_duration(self, text: str) -> Optional[int]:
         """Parse duration string like '5m', '1h', '300' into seconds (#171)."""
         text = text.strip().lower()
@@ -481,7 +498,8 @@ class CommandBar(Static):
             # Disable heartbeat
             if self.target_session:
                 self.post_message(self.HeartbeatUpdated(
-                    self.target_session, enabled=False, frequency=0, instruction=""
+                    self.target_session, enabled=False, frequency=0, instruction="",
+                    session_id=self.target_session_id or "",
                 ))
             self.action_clear_and_unfocus()
             return
@@ -500,7 +518,7 @@ class CommandBar(Static):
 
         # Pre-fill with existing heartbeat instruction if available
         if self.target_session:
-            session = self.app.session_manager.get_session_by_name(self.target_session)
+            session = self._find_target_session()
             if session and session.heartbeat_instruction:
                 input_widget = self.query_one("#cmd-input", Input)
                 input_widget.value = session.heartbeat_instruction
@@ -513,7 +531,7 @@ class CommandBar(Static):
         instruction = text.strip()
         # If empty, keep the existing instruction (user just hit Enter to confirm)
         if not instruction:
-            session = self.app.session_manager.get_session_by_name(self.target_session)
+            session = self._find_target_session()
             if session and session.heartbeat_instruction:
                 instruction = session.heartbeat_instruction
             else:
@@ -524,6 +542,7 @@ class CommandBar(Static):
             self.target_session,
             enabled=True,
             frequency=self.heartbeat_freq or 300,
-            instruction=instruction
+            instruction=instruction,
+            session_id=self.target_session_id or "",
         ))
         self.heartbeat_freq = None

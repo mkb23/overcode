@@ -87,7 +87,7 @@ class InputActionsMixin:
         )
 
         # Send "enter" which the launcher handles as just pressing Enter
-        if launcher.send_to_session(session_name, "enter"):
+        if launcher.send_to_session_by_id(session.id, "enter"):
             self.notify(f"Sent Enter to {session_name}", severity="information")
         else:
             self.notify(f"Failed to send Enter to {session_name}", severity="error")
@@ -112,7 +112,7 @@ class InputActionsMixin:
             session_manager=self.session_manager
         )
 
-        if launcher.send_to_session(session_name, "escape"):
+        if launcher.send_to_session_by_id(session.id, "escape"):
             self.notify(f"Sent Escape to {session_name}", severity="information")
         else:
             self.notify(f"Failed to send Escape to {session_name}", severity="error")
@@ -188,7 +188,7 @@ class InputActionsMixin:
         is_freetext = self._is_freetext_option(pane_content, key)
 
         # Send the key followed by Enter (to select the numbered option)
-        if launcher.send_to_session(session_name, key, enter=True):
+        if launcher.send_to_session_by_id(session.id, key, enter=True):
             self.notify(f"Sent '{key}' to {session_name}", severity="information")
             # Open command bar if this was a free-text instruction option (#72)
             if is_freetext:
