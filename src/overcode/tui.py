@@ -233,6 +233,7 @@ class SupervisorTUI(
         self.max_branch_width: int = 10
         self.max_name_width: int = 10
         self.all_names_match_repos: bool = False
+        self.column_widths: list = []  # Per-cell column widths for alignment
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -634,6 +635,29 @@ class SupervisorTUI(
             self.max_branch_width = 10
             self.all_names_match_repos = False
         return old != (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
+
+    def _recompute_cell_column_widths(self) -> None:
+        """Recompute per-cell column widths across all visible widgets.
+
+        Collects render_summary_cells() output from every SessionSummary
+        widget, then computes max visual width per column position. Stored
+        as self.column_widths for use by widget render() via pad_and_join_cells().
+
+        This ensures all widgets align perfectly regardless of content width.
+        Same compute_column_widths() function is used by CLI's align_summary_rows(),
+        so testing `overcode list` validates the TUI alignment code.
+        """
+        from .summary_columns import render_summary_cells, compute_column_widths
+        widgets = list(self.query(SessionSummary))
+        if not widgets:
+            self.column_widths = []
+            return
+        all_cells = []
+        for w in widgets:
+            ctx = w._build_column_context()
+            cells = render_summary_cells(ctx, group_filter=w.group_enabled)
+            all_cells.append(cells)
+        self.column_widths = compute_column_widths(all_cells)
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -1083,7 +1107,11 @@ class SupervisorTUI(
 
                 # Pass None for claude_stats/git_diff — those come from the slow path
                 widget.apply_status_no_refresh(status, activity, content, None, None)
-                widget.refresh()
+
+        # Recompute column widths before refreshing widgets for alignment
+        self._recompute_cell_column_widths()
+        for widget in widgets:
+            widget.refresh()
 
         if prefs_changed:
             self._save_prefs()
@@ -1106,6 +1134,7 @@ class SupervisorTUI(
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
         self._mark_event("apply_stats_start")
+        changed_widgets = []
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
             claude_stats = stats_results.get(session_id)
@@ -1116,6 +1145,10 @@ class SupervisorTUI(
             if git_diff is not None:
                 widget.git_diff_stats = git_diff
             if claude_stats is not None or git_diff is not None:
+                changed_widgets.append(widget)
+        if changed_widgets:
+            self._recompute_cell_column_widths()
+            for widget in changed_widgets:
                 widget.refresh()
         self._mark_event("apply_stats_end")
 
@@ -1263,6 +1296,8 @@ class SupervisorTUI(
                     # handled via force_refresh=True when widths change)
                     if changed:
                         widget.refresh()
+            # Recompute cell column widths for alignment after data update
+            self._recompute_cell_column_widths()
             # Still reorder widgets to handle sort mode changes
             self._reorder_session_widgets(container)
             self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
@@ -1332,6 +1367,8 @@ class SupervisorTUI(
         # Reorder widgets to match display_sessions order
         # This must run after any structural changes AND after sort mode changes
         self._reorder_session_widgets(container)
+        # Recompute cell column widths for alignment after structural changes
+        self._recompute_cell_column_widths()
         self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
 
     def _restore_focus_in_update(self, focused_session_id: str | None, focus_was_on_session: bool) -> None:

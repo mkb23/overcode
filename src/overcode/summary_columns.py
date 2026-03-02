@@ -992,18 +992,18 @@ def render_summary_line(
     return content
 
 
-def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
-    """Pad cells in each column to the same width, then join into final lines.
+def compute_column_widths(cell_rows: "List[List[Text]]") -> "List[int]":
+    """Compute max visual width per column across all rows.
 
-    Each row is a list of Text cells (one per visible column) from
-    render_summary_cells(). Columns are padded to the max visual width
-    across all rows, guaranteeing perfect alignment regardless of content.
+    Args:
+        cell_rows: List of rows, each a list of Text cells from render_summary_cells().
+
+    Returns:
+        List of max visual widths, one per column position.
     """
     from rich.cells import cell_len
-    from rich.text import Text
     if not cell_rows:
         return []
-
     n_cols = max(len(row) for row in cell_rows)
     max_widths = [0] * n_cols
     for row in cell_rows:
@@ -1011,17 +1011,35 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
             w = cell_len(cell.plain)
             if w > max_widths[i]:
                 max_widths[i] = w
+    return max_widths
 
-    result = []
-    for row in cell_rows:
-        line = Text()
-        for i, cell in enumerate(row):
-            line.append_text(cell)
-            pad = max_widths[i] - cell_len(cell.plain)
+
+def pad_and_join_cells(cells: "List[Text]", column_widths: "List[int]") -> "Text":
+    """Pad one row's cells to the given column widths and join into a single Text.
+
+    This is the shared alignment function used by both TUI and CLI.
+    """
+    from rich.cells import cell_len
+    from rich.text import Text
+    line = Text()
+    for i, cell in enumerate(cells):
+        line.append_text(cell)
+        if i < len(column_widths):
+            pad = column_widths[i] - cell_len(cell.plain)
             if pad > 0:
                 line.append(" " * pad)
-        result.append(line)
-    return result
+    return line
+
+
+def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
+    """Convenience: compute column widths and pad all rows in one call.
+
+    Used by the CLI which has all rows available at once.
+    """
+    if not cell_rows:
+        return []
+    widths = compute_column_widths(cell_rows)
+    return [pad_and_join_cells(row, widths) for row in cell_rows]
 
 
 def render_cli_stats(ctx: ColumnContext) -> List[Tuple[str, str]]:

@@ -25,7 +25,7 @@ from ..tui_helpers import (
     get_git_diff_stats,
     get_summary_content_text,
 )
-from ..summary_columns import ColumnContext, SUMMARY_COLUMNS, render_summary_line
+from ..summary_columns import ColumnContext, SUMMARY_COLUMNS, render_summary_cells, pad_and_join_cells
 
 
 def format_standing_instructions(instructions: str, max_len: int = 95) -> str:
@@ -441,8 +441,17 @@ class SessionSummary(Static, can_focus=True):
         term_width = shutil.get_terminal_size().columns
         ctx = self._build_column_context()
 
-        # Render columns via shared canonical loop
-        content = render_summary_line(ctx, group_filter=self.group_enabled)
+        # Render columns via shared canonical loop with auto-alignment
+        cells = render_summary_cells(ctx, group_filter=self.group_enabled)
+        column_widths = getattr(self.app, 'column_widths', None)
+        if column_widths:
+            content = pad_and_join_cells(cells, column_widths)
+        else:
+            # Fallback: no alignment data yet (first render before batch update)
+            from rich.text import Text
+            content = Text()
+            for cell in cells:
+                content.append_text(cell)
 
         if not self.expanded:
             self._render_content_area(content, ctx, term_width)
