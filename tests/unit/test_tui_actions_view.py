@@ -410,6 +410,7 @@ class TestToggleShowTerminated:
         assert mock_tui._prefs.show_terminated is True
         mock_tui._save_prefs.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
         assert "visible" in mock_tui.notify.call_args[0][0]
         assert "2" in mock_tui.notify.call_args[0][0]
 
@@ -426,6 +427,7 @@ class TestToggleShowTerminated:
 
         assert mock_tui.show_terminated is False
         assert mock_tui._prefs.show_terminated is False
+        mock_tui.update_timeline.assert_called_once()
         assert "hidden" in mock_tui.notify.call_args[0][0]
 
 
@@ -453,6 +455,7 @@ class TestToggleHideAsleep:
         mock_tui._save_prefs.assert_called_once()
         mock_tui._update_subtitle.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
         assert "hidden" in mock_tui.notify.call_args[0][0]
         assert "1" in mock_tui.notify.call_args[0][0]
 
@@ -468,6 +471,7 @@ class TestToggleHideAsleep:
         ViewActionsMixin.action_toggle_hide_asleep(mock_tui)
 
         assert mock_tui.hide_asleep is False
+        mock_tui.update_timeline.assert_called_once()
         assert "visible" in mock_tui.notify.call_args[0][0]
 
 
@@ -699,6 +703,7 @@ class TestToggleShowDone:
         # show_done is ephemeral — not persisted (#319)
         mock_tui._save_prefs.assert_not_called()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
         assert "visible" in mock_tui.notify.call_args[0][0]
         assert "2" in mock_tui.notify.call_args[0][0]
 
@@ -716,6 +721,7 @@ class TestToggleShowDone:
         # show_done is ephemeral — not persisted (#319)
         mock_tui._save_prefs.assert_not_called()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
         assert "hidden" in mock_tui.notify.call_args[0][0]
 
     def test_shows_count_when_done_agents_exist(self):
@@ -818,6 +824,7 @@ class TestToggleCollapseChildren:
         assert "parent-agent" in mock_tui.notify.call_args[0][0]
         mock_tui._sort_sessions.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
 
     def test_expand_previously_collapsed_parent(self):
         """Should expand children when focused on a collapsed parent."""
@@ -849,6 +856,7 @@ class TestToggleCollapseChildren:
         assert "parent-agent" in mock_tui.notify.call_args[0][0]
         mock_tui._sort_sessions.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
+        mock_tui.update_timeline.assert_called_once()
 
     def test_focused_on_child_walks_up_to_parent(self):
         """Should walk up to parent when focused on a child session."""
@@ -988,8 +996,14 @@ class TestCycleTimelineHours:
         mock_tui.TIMELINE_PRESETS = [1, 3, 6, 12, 24]
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.timeline_hours = 1
+        mock_tui._prefs.sort_mode = "alphabetical"
         mock_tui.query_one.return_value = mock_timeline
         mock_tui.sessions = []
+        mock_tui._terminated_sessions = {}
+        mock_tui.hide_asleep = False
+        mock_tui.show_terminated = False
+        mock_tui.show_done = False
+        mock_tui.collapsed_parents = set()
 
         ViewActionsMixin.action_cycle_timeline_hours(mock_tui)
 
@@ -1008,8 +1022,14 @@ class TestCycleTimelineHours:
         mock_tui.TIMELINE_PRESETS = [1, 3, 6, 12, 24]
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.timeline_hours = 24
+        mock_tui._prefs.sort_mode = "alphabetical"
         mock_tui.query_one.return_value = mock_timeline
         mock_tui.sessions = []
+        mock_tui._terminated_sessions = {}
+        mock_tui.hide_asleep = False
+        mock_tui.show_terminated = False
+        mock_tui.show_done = False
+        mock_tui.collapsed_parents = set()
 
         ViewActionsMixin.action_cycle_timeline_hours(mock_tui)
 
@@ -1026,8 +1046,14 @@ class TestCycleTimelineHours:
         mock_tui.TIMELINE_PRESETS = [1, 3, 6, 12, 24]
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.timeline_hours = 7  # Not in presets
+        mock_tui._prefs.sort_mode = "alphabetical"
         mock_tui.query_one.return_value = mock_timeline
         mock_tui.sessions = []
+        mock_tui._terminated_sessions = {}
+        mock_tui.hide_asleep = False
+        mock_tui.show_terminated = False
+        mock_tui.show_done = False
+        mock_tui.collapsed_parents = set()
 
         ViewActionsMixin.action_cycle_timeline_hours(mock_tui)
 
@@ -1045,6 +1071,11 @@ class TestCycleTimelineHours:
         mock_tui._prefs.timeline_hours = 6
         mock_tui.query_one.side_effect = NoMatches()
         mock_tui.sessions = []
+        mock_tui._terminated_sessions = {}
+        mock_tui.hide_asleep = False
+        mock_tui.show_terminated = False
+        mock_tui.show_done = False
+        mock_tui.collapsed_parents = set()
 
         ViewActionsMixin.action_cycle_timeline_hours(mock_tui)
 
@@ -1063,8 +1094,14 @@ class TestCycleTimelineHours:
         mock_tui.TIMELINE_PRESETS = [1, 3, 6, 12, 24]
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.timeline_hours = 6
+        mock_tui._prefs.sort_mode = "alphabetical"
         mock_tui.query_one.return_value = mock_timeline
         mock_tui.sessions = []
+        mock_tui._terminated_sessions = {}
+        mock_tui.hide_asleep = False
+        mock_tui.show_terminated = False
+        mock_tui.show_done = False
+        mock_tui.collapsed_parents = set()
 
         ViewActionsMixin.action_cycle_timeline_hours(mock_tui)
 

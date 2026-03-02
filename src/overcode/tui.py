@@ -536,8 +536,15 @@ class SupervisorTUI(
         except NoMatches:
             return
 
-        # Snapshot sessions for the worker (avoid race with main thread)
-        sessions = list(self.sessions)
+        # Snapshot sessions + filter state for the worker (avoid race with main thread)
+        sessions = filter_visible_sessions(
+            active_sessions=list(self.sessions),
+            terminated_sessions=list(self._terminated_sessions.values()),
+            hide_asleep=self.hide_asleep,
+            show_terminated=self.show_terminated,
+            show_done=self.show_done,
+            collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
+        )
 
         # Heavy CSV I/O happens here in the worker thread
         presence_history, agent_histories = timeline.fetch_history_data(sessions)

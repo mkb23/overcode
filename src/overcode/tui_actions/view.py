@@ -156,6 +156,7 @@ class ViewActionsMixin:
         self._prefs.show_terminated = self.show_terminated
         self._save_prefs()
         self.update_session_widgets()
+        self.update_timeline()
 
         status = "visible" if self.show_terminated else "hidden"
         count = len(self._terminated_sessions)
@@ -173,6 +174,7 @@ class ViewActionsMixin:
         """
         self.show_done = not self.show_done
         self.update_session_widgets()
+        self.update_timeline()
 
         status = "visible" if self.show_done else "hidden"
         done_count = sum(1 for s in self.sessions if getattr(s, 'status', None) == 'done')
@@ -188,6 +190,7 @@ class ViewActionsMixin:
         self._save_prefs()
         self._update_subtitle()
         self.update_session_widgets()
+        self.update_timeline()
 
         # Count sleeping agents
         asleep_count = sum(1 for s in self.sessions if s.is_asleep)
@@ -260,6 +263,7 @@ class ViewActionsMixin:
         # Re-sort and refresh (update_session_widgets handles focus preservation)
         self._sort_sessions()
         self.update_session_widgets()
+        self.update_timeline()
 
     def action_toggle_copy_mode(self) -> None:
         """Toggle mouse capture to allow native terminal text selection.
@@ -351,7 +355,16 @@ class ViewActionsMixin:
         self._save_prefs()
         try:
             timeline = self.query_one("#timeline", StatusTimeline)
-            timeline.set_hours(new_hours, self.sessions)
+            from ..tui_logic import filter_visible_sessions
+            display_sessions = filter_visible_sessions(
+                active_sessions=self.sessions,
+                terminated_sessions=list(self._terminated_sessions.values()),
+                hide_asleep=self.hide_asleep,
+                show_terminated=self.show_terminated,
+                show_done=self.show_done,
+                collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
+            )
+            timeline.set_hours(new_hours, display_sessions)
         except Exception:
             pass
         self.notify(f"Timeline: {new_hours:.0f}h", severity="information")
