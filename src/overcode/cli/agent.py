@@ -289,10 +289,15 @@ def list_agents(
     sessions = sort_sessions_by_tree(sessions)
     tree_meta = compute_tree_metadata(sessions)
 
-    # Pre-compute: any agent with budget, max name width
+    # Pre-compute: any agent with budget, column alignment widths
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
     max_name_len = max(len(s.name) for s in sessions)
     name_width = min(max(max_name_len, 10), 20)
+    max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
+    max_branch_width = max((len(s.branch or "n/a") for s in sessions), default=5)
+    all_names_match_repos = all(
+        s.name == s.repo_name for s in sessions if s.repo_name
+    )
 
     # Prefer daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)
@@ -402,6 +407,10 @@ def list_agents(
             summary_detail=detail,
             has_sisters=has_sisters,
             local_hostname=local_hostname,
+            max_name_width=name_width,
+            max_repo_width=max_repo_width,
+            max_branch_width=max_branch_width,
+            all_names_match_repos=all_names_match_repos,
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = cost

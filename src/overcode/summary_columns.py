@@ -858,6 +858,8 @@ def build_cli_context(
     pr_number: Optional[int] = None, any_has_pr: bool = False,
     monochrome: bool = True, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
+    max_name_width: int = 16, max_repo_width: int = 10,
+    max_branch_width: int = 10, all_names_match_repos: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -915,14 +917,14 @@ def build_cli_context(
         branch=session.branch or "-",
         display_name=session.name,
         perm_emoji=perm_emoji,
-        all_names_match_repos=False,
+        all_names_match_repos=all_names_match_repos,
         live_subagent_count=live_sub_count,
         background_bash_count=bg_bash_count,
         child_count=child_count,
         status_changed_at=status_changed_at,
-        max_name_width=16,
-        max_repo_width=10,
-        max_branch_width=10,
+        max_name_width=max_name_width,
+        max_repo_width=max_repo_width,
+        max_branch_width=max_branch_width,
         any_has_oversight_timeout=any_has_oversight_timeout,
         oversight_deadline=oversight_deadline,
         any_is_sleeping=any_is_sleeping,
