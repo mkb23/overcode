@@ -165,10 +165,13 @@ class ViewActionsMixin:
             self.notify(f"Killed sessions: {status}", severity="information")
 
     def action_toggle_show_done(self) -> None:
-        """Toggle showing 'done' child agents (#244)."""
+        """Toggle showing 'done' child agents (#244).
+
+        This is an ephemeral toggle (not persisted) to match the CLI's
+        --show-done flag behavior: done agents are always hidden on
+        launch and must be explicitly revealed (#319).
+        """
         self.show_done = not self.show_done
-        self._prefs.show_done = self.show_done
-        self._save_prefs()
         self.update_session_widgets()
 
         status = "visible" if self.show_done else "hidden"

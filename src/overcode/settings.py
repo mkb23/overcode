@@ -467,7 +467,7 @@ class TUIPreferences:
                     tmux_sync=data.get("tmux_sync", False),
                     show_terminated=data.get("show_terminated", False),
                     hide_asleep=data.get("hide_asleep", False),
-                    show_done=data.get("show_done", False),
+                    show_done=False,  # Never persist — always start hidden (#319)
                     sort_mode=data.get("sort_mode", "alphabetical"),
                     summary_content_mode=data.get("summary_content_mode", "ai_short"),
                     baseline_minutes=data.get("baseline_minutes", 0),
@@ -498,7 +498,7 @@ class TUIPreferences:
                     "tmux_sync": self.tmux_sync,
                     "show_terminated": self.show_terminated,
                     "hide_asleep": self.hide_asleep,
-                    "show_done": self.show_done,
+                    # show_done intentionally not persisted (#319)
                     "sort_mode": self.sort_mode,
                     "summary_content_mode": self.summary_content_mode,
                     "baseline_minutes": self.baseline_minutes,

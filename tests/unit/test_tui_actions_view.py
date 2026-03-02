@@ -679,7 +679,7 @@ class TestToggleShowDone:
     """Test action_toggle_show_done method."""
 
     def test_enables_show_done(self):
-        """Should toggle show_done on, save prefs, and refresh widgets."""
+        """Should toggle show_done on (ephemeral, not persisted) and refresh widgets."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         session1 = MagicMock()
@@ -692,31 +692,29 @@ class TestToggleShowDone:
         mock_tui = MagicMock()
         mock_tui.show_done = False
         mock_tui.sessions = [session1, session2, session3]
-        mock_tui._prefs = MagicMock()
 
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
         assert mock_tui.show_done is True
-        assert mock_tui._prefs.show_done is True
-        mock_tui._save_prefs.assert_called_once()
+        # show_done is ephemeral — not persisted (#319)
+        mock_tui._save_prefs.assert_not_called()
         mock_tui.update_session_widgets.assert_called_once()
         assert "visible" in mock_tui.notify.call_args[0][0]
         assert "2" in mock_tui.notify.call_args[0][0]
 
     def test_disables_show_done(self):
-        """Should toggle show_done off, save prefs, and refresh widgets."""
+        """Should toggle show_done off (ephemeral, not persisted) and refresh widgets."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
         mock_tui.show_done = True
         mock_tui.sessions = []
-        mock_tui._prefs = MagicMock()
 
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
         assert mock_tui.show_done is False
-        assert mock_tui._prefs.show_done is False
-        mock_tui._save_prefs.assert_called_once()
+        # show_done is ephemeral — not persisted (#319)
+        mock_tui._save_prefs.assert_not_called()
         mock_tui.update_session_widgets.assert_called_once()
         assert "hidden" in mock_tui.notify.call_args[0][0]
 
@@ -730,7 +728,6 @@ class TestToggleShowDone:
         mock_tui = MagicMock()
         mock_tui.show_done = False
         mock_tui.sessions = [session1]
-        mock_tui._prefs = MagicMock()
 
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
@@ -747,7 +744,6 @@ class TestToggleShowDone:
         mock_tui = MagicMock()
         mock_tui.show_done = False
         mock_tui.sessions = [session1]
-        mock_tui._prefs = MagicMock()
 
         ViewActionsMixin.action_toggle_show_done(mock_tui)
 
