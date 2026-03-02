@@ -20,6 +20,8 @@ from overcode.status_patterns import (
     extract_background_bash_count,
     extract_live_subagent_count,
     extract_pr_number,
+    extract_from_pane,
+    PaneExtraction,
     is_sleep_command,
     extract_sleep_duration,
 )
@@ -570,3 +572,37 @@ class TestExtractPrNumber:
   ? for shortcuts
 """
         assert extract_pr_number(content) == 314
+
+
+class TestExtractFromPane:
+    """Tests for extract_from_pane pure function."""
+
+    def test_returns_pane_extraction_dataclass(self):
+        """Should return a PaneExtraction instance."""
+        result = extract_from_pane("")
+        assert isinstance(result, PaneExtraction)
+
+    def test_extracts_all_fields(self):
+        """Should extract bash count, subagent count, and PR number."""
+        content = (
+            "⏵⏵ bypass permissions on · 2 bashes · 3 local agents\n"
+            "https://github.com/owner/repo/pull/42\n"
+        )
+        result = extract_from_pane(content)
+        assert result.background_bash_count == 2
+        assert result.live_subagent_count == 3
+        assert result.pr_number == 42
+
+    def test_empty_content(self):
+        """Should return defaults for empty content."""
+        result = extract_from_pane("")
+        assert result.background_bash_count == 0
+        assert result.live_subagent_count == 0
+        assert result.pr_number is None
+
+    def test_no_pr_returns_none(self):
+        """PR number should be None when no PR URL found."""
+        content = "⏵⏵ bypass permissions on · (running)\n"
+        result = extract_from_pane(content)
+        assert result.background_bash_count == 1
+        assert result.pr_number is None

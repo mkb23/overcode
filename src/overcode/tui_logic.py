@@ -634,8 +634,8 @@ def detect_display_changes(
     sessions: List,
     any_has_budget: bool,
     any_has_oversight: bool,
-) -> Tuple[bool, bool]:
-    """Compute budget and oversight flag changes from sessions.
+) -> Tuple[bool, bool, bool]:
+    """Compute budget, oversight, and PR flag changes from sessions.
 
     Pure function — no side effects, fully testable.
 
@@ -645,7 +645,7 @@ def detect_display_changes(
         any_has_oversight: Current value of any_has_oversight flag
 
     Returns:
-        Tuple of (new_any_has_budget, new_any_has_oversight)
+        Tuple of (new_any_has_budget, new_any_has_oversight, new_any_has_pr)
     """
     new_budget = any(getattr(s, 'cost_budget_usd', 0) > 0 for s in sessions)
     new_oversight = any(
@@ -653,7 +653,8 @@ def detect_display_changes(
         and getattr(s, 'oversight_timeout_seconds', 0) > 0
         for s in sessions
     )
-    return new_budget, new_oversight
+    new_pr = any(getattr(s, 'pr_number', None) is not None for s in sessions)
+    return new_budget, new_oversight, new_pr
 
 
 def compute_active_session_names(

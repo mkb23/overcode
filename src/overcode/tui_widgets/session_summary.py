@@ -15,7 +15,7 @@ from rich.text import Text
 from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
-from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, extract_pr_number, extract_sleep_duration
+from ..status_patterns import extract_from_pane, extract_sleep_duration
 from ..history_reader import get_session_stats, ClaudeSessionStats
 from ..tui_helpers import (
     calculate_uptime,
@@ -83,6 +83,8 @@ class SessionSummary(Static, can_focus=True):
         self.background_bash_count: int = 0  # Live count from status bar (#177)
         self.live_subagent_count: int = 0  # Live count from status bar
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
+        self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
+        self.any_has_pr: bool = False  # App-level flag, set by TUI
         # Track if this is a stalled agent that hasn't been visited yet
         self.is_unvisited_stalled: bool = False
         # Track when status last changed (for immediate time-in-state updates)
@@ -210,13 +212,12 @@ class SessionSummary(Static, can_focus=True):
             # Keep all lines including blanks for proper formatting, just strip trailing blanks
             lines = content.rstrip().split('\n')
             self.pane_content = lines if lines else []
-            # Extract live counts from status bar (#177)
-            self.background_bash_count = extract_background_bash_count(content)
-            self.live_subagent_count = extract_live_subagent_count(content)
-            # Extract PR number from pane content (immediate feedback, daemon also persists)
-            pr = extract_pr_number(content)
-            if pr is not None:
-                self.session.pr_number = pr
+            # Pure extraction — results stored as widget vars, never on session
+            extracted = extract_from_pane(content)
+            self.background_bash_count = extracted.background_bash_count
+            self.live_subagent_count = extracted.live_subagent_count
+            if extracted.pr_number is not None:
+                self.pr_number = extracted.pr_number  # Sticky: only update, never clear
         else:
             self.pane_content = []
             self.background_bash_count = 0
@@ -348,6 +349,9 @@ class SessionSummary(Static, can_focus=True):
             oversight_deadline=self.oversight_deadline,
             any_is_sleeping=self.any_is_sleeping,
             sleep_wake_estimate=sleep_wake_estimate,
+            # PR number (widget var, not session)
+            pr_number=self.pr_number,
+            any_has_pr=self.any_has_pr,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,
@@ -444,10 +448,15 @@ class SessionSummary(Static, can_focus=True):
                 continue
             if not self.group_enabled(col.group):
                 continue
+            # App-level visibility gate (e.g., "any agent has PR" or "any agent sleeping")
+            if col.visible is not None and not col.visible(ctx):
+                continue
             segments = col.render(ctx)
             if segments:
                 for text, style in segments:
                     content.append(text, style=style)
+            elif col.placeholder_width > 0:
+                content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
 
         if not self.expanded:
             self._render_content_area(content, ctx, term_width)

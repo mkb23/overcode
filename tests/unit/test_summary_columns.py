@@ -214,6 +214,27 @@ class TestColumnStructure:
                 assert col.render_plain is not None and callable(col.render_plain), \
                     f"Column '{col.id}' has label '{col.label}' but no render_plain"
 
+    def test_visible_callback_is_callable_when_set(self):
+        """Every column with a visible callback must have it be callable."""
+        for col in SUMMARY_COLUMNS:
+            if col.visible is not None:
+                assert callable(col.visible), f"Column '{col.id}' visible is not callable"
+
+    def test_placeholder_width_positive_when_visible_set(self):
+        """Columns with a visible gate should have placeholder_width > 0."""
+        for col in SUMMARY_COLUMNS:
+            if col.visible is not None:
+                assert col.placeholder_width > 0, \
+                    f"Column '{col.id}' has visible gate but placeholder_width={col.placeholder_width}"
+
+    def test_columns_with_visible_gate(self):
+        """Known columns should have visible gates."""
+        gated_ids = {c.id for c in SUMMARY_COLUMNS if c.visible is not None}
+        assert "pr_number" in gated_ids
+        assert "budget" in gated_ids
+        assert "oversight_countdown" in gated_ids
+        assert "sleep_countdown" in gated_ids
+
 
 # ===========================================================================
 # ColumnContext tests
@@ -314,20 +335,15 @@ class TestRenderTimeInState:
 class TestRenderSleepCountdown:
     """Tests for render_sleep_countdown column (#289)."""
 
-    def test_returns_none_when_not_sleeping_and_no_others_sleeping(self):
-        """Should return None (zero width) when no one is sleeping."""
+    def test_returns_none_when_not_sleeping(self):
+        """Should return None when agent is not sleeping."""
         ctx = _make_ctx(sleep_wake_estimate=None, any_is_sleeping=False)
         assert render_sleep_countdown(ctx) is None
 
-    def test_shows_blank_placeholder_when_others_sleeping(self):
-        """Should show blank space for alignment when other agents are sleeping."""
+    def test_returns_none_when_no_estimate(self):
+        """Should return None (framework handles placeholder) when no estimate."""
         ctx = _make_ctx(sleep_wake_estimate=None, any_is_sleeping=True)
-        result = render_sleep_countdown(ctx)
-        assert result is not None
-        text = result[0][0]
-        assert text.strip() == ""  # All whitespace
-        # 9 ASCII spaces = 9 display cells (matches ⏰ column: 1 + ⏰(2) + 5 + 1)
-        assert len(text) == 9
+        assert render_sleep_countdown(ctx) is None
 
     def test_shows_remaining_time(self):
         """Should show countdown when sleep_wake_estimate is in the future."""
@@ -356,8 +372,8 @@ class TestRenderSleepCountdown:
         result = render_sleep_countdown(ctx)
         assert "yellow" in result[0][1]
 
-    def test_all_cases_same_display_width(self):
-        """Active, expired, and placeholder must all be 9 display cells."""
+    def test_active_and_expired_same_display_width(self):
+        """Active and expired countdowns must both be 9 display cells."""
         import unicodedata
 
         def display_width(s):
@@ -370,12 +386,9 @@ class TestRenderSleepCountdown:
         # Expired countdown
         expired = render_sleep_countdown(_make_ctx(
             sleep_wake_estimate=datetime.now() - timedelta(seconds=10), any_is_sleeping=True))
-        # Placeholder
-        placeholder = render_sleep_countdown(_make_ctx(sleep_wake_estimate=None, any_is_sleeping=True))
 
         assert display_width(active[0][0]) == 9
         assert display_width(expired[0][0]) == 9
-        assert display_width(placeholder[0][0]) == 9
 
 
 class TestRenderExpandIcon:
@@ -548,14 +561,6 @@ class TestRenderCost:
 
 
 class TestRenderBudget:
-    def test_hidden_when_not_show_cost(self):
-        ctx = _make_ctx(show_cost=False, any_has_budget=True)
-        assert render_budget(ctx) is None
-
-    def test_hidden_when_no_budgets(self):
-        ctx = _make_ctx(show_cost=True, any_has_budget=False)
-        assert render_budget(ctx) is None
-
     def test_shows_budget_value(self):
         session = _make_session(cost_budget_usd=5.0)
         ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
@@ -563,12 +568,26 @@ class TestRenderBudget:
         assert "/" in result[0][0]
         assert "$" in result[0][0]
 
-    def test_shows_spacer_when_session_has_no_budget(self):
+    def test_returns_none_when_session_has_no_budget(self):
+        """Framework placeholder handles alignment when render returns None."""
         session = _make_session(cost_budget_usd=0.0)
         ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
         result = render_budget(ctx)
-        assert result is not None
-        assert result[0][0].strip() == ""
+        assert result is None
+
+    def test_visibility_gate_on_column(self):
+        """The budget column's visible callback gates on show_cost and any_has_budget."""
+        budget_col = next(c for c in SUMMARY_COLUMNS if c.id == "budget")
+        assert budget_col.visible is not None
+        # Not visible when show_cost=False
+        ctx_no_cost = _make_ctx(show_cost=False, any_has_budget=True)
+        assert budget_col.visible(ctx_no_cost) is False
+        # Not visible when no budgets
+        ctx_no_budget = _make_ctx(show_cost=True, any_has_budget=False)
+        assert budget_col.visible(ctx_no_budget) is False
+        # Visible when both conditions met
+        ctx_visible = _make_ctx(show_cost=True, any_has_budget=True)
+        assert budget_col.visible(ctx_visible) is True
 
 
 # ===========================================================================
@@ -1181,9 +1200,8 @@ class TestRenderPrNumber:
     """Tests for PR number column rendering."""
 
     def test_pr_number_set(self):
-        """Should render PR# when pr_number is set."""
-        session = _make_session(pr_number=123)
-        ctx = _make_ctx(session=session)
+        """Should render PR# when pr_number is set on context."""
+        ctx = _make_ctx(pr_number=123)
         result = render_pr_number(ctx)
         assert result is not None
         text = result[0][0]
@@ -1191,21 +1209,18 @@ class TestRenderPrNumber:
 
     def test_pr_number_none(self):
         """Should return None when pr_number is not set."""
-        session = _make_session(pr_number=None)
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx(pr_number=None)
         result = render_pr_number(ctx)
         assert result is None
 
     def test_pr_number_plain_set(self):
         """Should render plain text PR# when set."""
-        session = _make_session(pr_number=42)
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx(pr_number=42)
         result = render_pr_number_plain(ctx)
         assert result == "PR#42"
 
     def test_pr_number_plain_none(self):
         """Should return None when pr_number not set."""
-        session = _make_session(pr_number=None)
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx(pr_number=None)
         result = render_pr_number_plain(ctx)
         assert result is None
