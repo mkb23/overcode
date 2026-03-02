@@ -462,6 +462,41 @@ class TestTUIPreferences:
             assert group_id in prefs.summary_groups
             assert isinstance(prefs.summary_groups[group_id], bool)
 
+    def test_show_done_always_starts_false(self, tmp_path):
+        """show_done should always load as False, even if saved as True (#319).
+
+        The TUI's D toggle is ephemeral (matching CLI --show-done behavior):
+        done agents are always hidden on launch.
+        """
+        from overcode.settings import TUIPreferences, ensure_session_dir
+        import json
+
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("test-session")
+
+            # Manually write a prefs file with show_done=true
+            prefs_file = tmp_path / "test-session" / "tui_preferences.json"
+            prefs_file.write_text(json.dumps({"show_done": True}))
+
+            # Load should ignore the persisted value
+            loaded = TUIPreferences.load("test-session")
+            assert loaded.show_done is False
+
+    def test_show_done_not_written_to_disk(self, tmp_path):
+        """show_done should not appear in saved preferences file (#319)."""
+        from overcode.settings import TUIPreferences, ensure_session_dir
+        import json
+
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("test-session")
+
+            prefs = TUIPreferences(show_done=True)
+            prefs.save("test-session")
+
+            prefs_file = tmp_path / "test-session" / "tui_preferences.json"
+            data = json.loads(prefs_file.read_text())
+            assert "show_done" not in data
+
     def test_summary_groups_persist(self, tmp_path):
         """TUIPreferences should persist summary_groups settings (#178)."""
         from overcode.settings import TUIPreferences, ensure_session_dir
