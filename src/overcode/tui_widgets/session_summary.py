@@ -25,7 +25,7 @@ from ..tui_helpers import (
     get_git_diff_stats,
     get_summary_content_text,
 )
-from ..summary_columns import ColumnContext, SUMMARY_COLUMNS
+from ..summary_columns import ColumnContext, SUMMARY_COLUMNS, render_summary_line
 
 
 def format_standing_instructions(instructions: str, max_len: int = 95) -> str:
@@ -440,23 +440,9 @@ class SessionSummary(Static, can_focus=True):
         import shutil
         term_width = shutil.get_terminal_size().columns
         ctx = self._build_column_context()
-        content = Text()
 
-        # Render columns via declarative loop
-        for col in SUMMARY_COLUMNS:
-            if ctx.summary_detail not in col.detail_levels:
-                continue
-            if not self.group_enabled(col.group):
-                continue
-            # App-level visibility gate (e.g., "any agent has PR" or "any agent sleeping")
-            if col.visible is not None and not col.visible(ctx):
-                continue
-            segments = col.render(ctx)
-            if segments:
-                for text, style in segments:
-                    content.append(text, style=style)
-            elif col.placeholder_width > 0:
-                content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+        # Render columns via shared canonical loop
+        content = render_summary_line(ctx, group_filter=self.group_enabled)
 
         if not self.expanded:
             self._render_content_area(content, ctx, term_width)
