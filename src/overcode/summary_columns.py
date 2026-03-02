@@ -999,6 +999,7 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
     render_summary_cells(). Columns are padded to the max visual width
     across all rows, guaranteeing perfect alignment regardless of content.
     """
+    from rich.cells import cell_len
     from rich.text import Text
     if not cell_rows:
         return []
@@ -1007,7 +1008,7 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
     max_widths = [0] * n_cols
     for row in cell_rows:
         for i, cell in enumerate(row):
-            w = len(cell.plain)
+            w = cell_len(cell.plain)
             if w > max_widths[i]:
                 max_widths[i] = w
 
@@ -1016,7 +1017,7 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
         line = Text()
         for i, cell in enumerate(row):
             line.append_text(cell)
-            pad = max_widths[i] - len(cell.plain)
+            pad = max_widths[i] - cell_len(cell.plain)
             if pad > 0:
                 line.append(" " * pad)
         result.append(line)
