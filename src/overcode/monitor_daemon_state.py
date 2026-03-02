@@ -14,6 +14,7 @@ The Monitor Daemon is the single source of truth for:
 import json
 import os
 import tempfile
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -109,114 +110,14 @@ class SessionDaemonState:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
-            "session_id": self.session_id,
-            "name": self.name,
-            "tmux_window": self.tmux_window,
-            "current_status": self.current_status,
-            "current_activity": self.current_activity,
-            "status_since": self.status_since,
-            "green_time_seconds": self.green_time_seconds,
-            "non_green_time_seconds": self.non_green_time_seconds,
-            "sleep_time_seconds": self.sleep_time_seconds,
-            "interaction_count": self.interaction_count,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "estimated_cost_usd": self.estimated_cost_usd,
-            "median_work_time": self.median_work_time,
-            "repo_name": self.repo_name,
-            "branch": self.branch,
-            "standing_instructions": self.standing_instructions,
-            "standing_orders_complete": self.standing_orders_complete,
-            "steers_count": self.steers_count,
-            "start_time": self.start_time,
-            "permissiveness_mode": self.permissiveness_mode,
-            "start_directory": self.start_directory,
-            "is_asleep": self.is_asleep,
-            "time_context_enabled": self.time_context_enabled,
-            "agent_value": self.agent_value,
-            "activity_summary": self.activity_summary,
-            "activity_summary_updated": self.activity_summary_updated,
-            "activity_summary_context": self.activity_summary_context,
-            "activity_summary_context_updated": self.activity_summary_context_updated,
-            # Heartbeat state (#171)
-            "heartbeat_enabled": self.heartbeat_enabled,
-            "heartbeat_frequency_seconds": self.heartbeat_frequency_seconds,
-            "heartbeat_paused": self.heartbeat_paused,
-            "last_heartbeat_time": self.last_heartbeat_time,
-            "next_heartbeat_due": self.next_heartbeat_due,
-            "running_from_heartbeat": self.running_from_heartbeat,
-            "waiting_for_heartbeat": self.waiting_for_heartbeat,
-            # Cost budget (#173)
-            "cost_budget_usd": self.cost_budget_usd,
-            "budget_exceeded": self.budget_exceeded,
-            # Agent hierarchy (#244)
-            "parent_name": self.parent_name,
-            "depth": self.depth,
-            "children_count": self.children_count,
-            # Oversight system
-            "oversight_policy": self.oversight_policy,
-            "oversight_timeout_seconds": self.oversight_timeout_seconds,
-            "oversight_deadline": self.oversight_deadline,
-        }
+        return dataclasses.asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionDaemonState":
-        """Create from dictionary."""
-        return cls(
-            session_id=data.get("session_id", ""),
-            name=data.get("name", ""),
-            tmux_window=data.get("tmux_window", 0),
-            current_status=data.get("current_status", "unknown"),
-            current_activity=data.get("current_activity", ""),
-            status_since=data.get("status_since"),
-            green_time_seconds=data.get("green_time_seconds", 0.0),
-            non_green_time_seconds=data.get("non_green_time_seconds", 0.0),
-            sleep_time_seconds=data.get("sleep_time_seconds", 0.0),
-            interaction_count=data.get("interaction_count", 0),
-            input_tokens=data.get("input_tokens", 0),
-            output_tokens=data.get("output_tokens", 0),
-            cache_creation_tokens=data.get("cache_creation_tokens", 0),
-            cache_read_tokens=data.get("cache_read_tokens", 0),
-            estimated_cost_usd=data.get("estimated_cost_usd", 0.0),
-            median_work_time=data.get("median_work_time", 0.0),
-            repo_name=data.get("repo_name"),
-            branch=data.get("branch"),
-            standing_instructions=data.get("standing_instructions", ""),
-            standing_orders_complete=data.get("standing_orders_complete", False),
-            steers_count=data.get("steers_count", 0),
-            start_time=data.get("start_time"),
-            permissiveness_mode=data.get("permissiveness_mode", "normal"),
-            start_directory=data.get("start_directory"),
-            is_asleep=data.get("is_asleep", False),
-            time_context_enabled=data.get("time_context_enabled", False),
-            agent_value=data.get("agent_value", 1000),
-            activity_summary=data.get("activity_summary", ""),
-            activity_summary_updated=data.get("activity_summary_updated"),
-            activity_summary_context=data.get("activity_summary_context", ""),
-            activity_summary_context_updated=data.get("activity_summary_context_updated"),
-            # Heartbeat state (#171)
-            heartbeat_enabled=data.get("heartbeat_enabled", False),
-            heartbeat_frequency_seconds=data.get("heartbeat_frequency_seconds", 300),
-            heartbeat_paused=data.get("heartbeat_paused", False),
-            last_heartbeat_time=data.get("last_heartbeat_time"),
-            next_heartbeat_due=data.get("next_heartbeat_due"),
-            running_from_heartbeat=data.get("running_from_heartbeat", False),
-            waiting_for_heartbeat=data.get("waiting_for_heartbeat", False),
-            # Cost budget (#173)
-            cost_budget_usd=data.get("cost_budget_usd", 0.0),
-            budget_exceeded=data.get("budget_exceeded", False),
-            # Agent hierarchy (#244)
-            parent_name=data.get("parent_name"),
-            depth=data.get("depth", 0),
-            children_count=data.get("children_count", 0),
-            # Oversight system
-            oversight_policy=data.get("oversight_policy", "wait"),
-            oversight_timeout_seconds=data.get("oversight_timeout_seconds", 0.0),
-            oversight_deadline=data.get("oversight_deadline"),
-        )
+        """Create from dictionary, ignoring unknown keys."""
+        fields = {f.name for f in dataclasses.fields(cls)}
+        known = {k: v for k, v in data.items() if k in fields}
+        return cls(**known)
 
 
 @dataclass
@@ -274,37 +175,7 @@ class MonitorDaemonState:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
-            "pid": self.pid,
-            "status": self.status,
-            "loop_count": self.loop_count,
-            "current_interval": self.current_interval,
-            "last_loop_time": self.last_loop_time,
-            "started_at": self.started_at,
-            "daemon_version": self.daemon_version,
-            "sessions": [s.to_dict() for s in self.sessions],
-            "presence_available": self.presence_available,
-            "presence_state": self.presence_state,
-            "presence_idle_seconds": self.presence_idle_seconds,
-            "total_green_time": self.total_green_time,
-            "total_non_green_time": self.total_non_green_time,
-            "total_sleep_time": self.total_sleep_time,
-            "green_sessions": self.green_sessions,
-            "non_green_sessions": self.non_green_sessions,
-            "total_supervisions": self.total_supervisions,
-            "supervisor_launches": self.supervisor_launches,
-            "supervisor_tokens": self.supervisor_tokens,
-            "supervisor_claude_running": self.supervisor_claude_running,
-            "supervisor_claude_started_at": self.supervisor_claude_started_at,
-            "supervisor_claude_total_run_seconds": self.supervisor_claude_total_run_seconds,
-            "summarizer_enabled": self.summarizer_enabled,
-            "summarizer_available": self.summarizer_available,
-            "summarizer_calls": self.summarizer_calls,
-            "summarizer_cost_usd": self.summarizer_cost_usd,
-            "relay_enabled": self.relay_enabled,
-            "relay_last_push": self.relay_last_push,
-            "relay_last_status": self.relay_last_status,
-        }
+        return dataclasses.asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> "MonitorDaemonState":
@@ -313,38 +184,9 @@ class MonitorDaemonState:
             SessionDaemonState.from_dict(s)
             for s in data.get("sessions", [])
         ]
-
-        return cls(
-            pid=data.get("pid", 0),
-            status=data.get("status", "stopped"),
-            loop_count=data.get("loop_count", 0),
-            current_interval=data.get("current_interval", DAEMON.interval_fast),
-            last_loop_time=data.get("last_loop_time"),
-            started_at=data.get("started_at"),
-            daemon_version=data.get("daemon_version", 0),
-            sessions=sessions,
-            presence_available=data.get("presence_available", False),
-            presence_state=data.get("presence_state"),
-            presence_idle_seconds=data.get("presence_idle_seconds"),
-            total_green_time=data.get("total_green_time", 0.0),
-            total_non_green_time=data.get("total_non_green_time", 0.0),
-            total_sleep_time=data.get("total_sleep_time", 0.0),
-            green_sessions=data.get("green_sessions", 0),
-            non_green_sessions=data.get("non_green_sessions", 0),
-            total_supervisions=data.get("total_supervisions", 0),
-            supervisor_launches=data.get("supervisor_launches", 0),
-            supervisor_tokens=data.get("supervisor_tokens", 0),
-            supervisor_claude_running=data.get("supervisor_claude_running", False),
-            supervisor_claude_started_at=data.get("supervisor_claude_started_at"),
-            supervisor_claude_total_run_seconds=data.get("supervisor_claude_total_run_seconds", 0.0),
-            summarizer_enabled=data.get("summarizer_enabled", False),
-            summarizer_available=data.get("summarizer_available", False),
-            summarizer_calls=data.get("summarizer_calls", 0),
-            summarizer_cost_usd=data.get("summarizer_cost_usd", 0.0),
-            relay_enabled=data.get("relay_enabled", False),
-            relay_last_push=data.get("relay_last_push"),
-            relay_last_status=data.get("relay_last_status", "disabled"),
-        )
+        fields = {f.name for f in dataclasses.fields(cls)}
+        known = {k: v for k, v in data.items() if k in fields and k != "sessions"}
+        return cls(sessions=sessions, **known)
 
     def update_summaries(self) -> None:
         """Recompute summary metrics from session data."""

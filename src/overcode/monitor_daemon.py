@@ -192,7 +192,7 @@ class PresenceComponent:
             self._last_publish_time = now
             return False
         gap = (now - self._last_publish_time).total_seconds()
-        slept = gap > 2 * DAEMON.interval_fast
+        slept = gap > 20  # Machine sleep produces gaps of 30s+; absolute threshold avoids false positives
         self._last_publish_time = now
         return slept
 
@@ -638,7 +638,7 @@ class MonitorDaemon:
 
     def _interruptible_sleep(self, total_seconds: int) -> None:
         """Sleep with activity signal checking."""
-        chunk_size = 10
+        chunk_size = 1
         elapsed = 0
 
         while elapsed < total_seconds and not self._shutdown:
