@@ -444,8 +444,9 @@ class SessionSummary(Static, can_focus=True):
         # Render columns via shared canonical loop with auto-alignment
         cells = render_summary_cells(ctx, group_filter=self.group_enabled)
         column_widths = getattr(self.app, 'column_widths', None)
+        pad_style = ctx.mono(f"{ctx.bg}", "") if ctx.bg else ""
         if column_widths:
-            content = pad_and_join_cells(cells, column_widths)
+            content = pad_and_join_cells(cells, column_widths, pad_style=pad_style)
         else:
             # Fallback: no alignment data yet (first render before batch update)
             from rich.text import Text

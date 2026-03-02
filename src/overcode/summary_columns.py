@@ -1014,10 +1014,13 @@ def compute_column_widths(cell_rows: "List[List[Text]]") -> "List[int]":
     return max_widths
 
 
-def pad_and_join_cells(cells: "List[Text]", column_widths: "List[int]") -> "Text":
+def pad_and_join_cells(cells: "List[Text]", column_widths: "List[int]", pad_style: str = "") -> "Text":
     """Pad one row's cells to the given column widths and join into a single Text.
 
     This is the shared alignment function used by both TUI and CLI.
+
+    Args:
+        pad_style: Style applied to padding spaces (e.g. "on #0d2137" for TUI background).
     """
     from rich.cells import cell_len
     from rich.text import Text
@@ -1027,7 +1030,7 @@ def pad_and_join_cells(cells: "List[Text]", column_widths: "List[int]") -> "Text
         if i < len(column_widths):
             pad = column_widths[i] - cell_len(cell.plain)
             if pad > 0:
-                line.append(" " * pad)
+                line.append(" " * pad, style=pad_style)
     return line
 
 
