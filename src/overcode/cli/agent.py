@@ -212,6 +212,15 @@ def list_agents(
     sisters: Annotated[
         bool, typer.Option("--sisters", help="Include sister (remote) agents")
     ] = False,
+    low: Annotated[
+        bool, typer.Option("--low", help="Low detail (identity only)")
+    ] = False,
+    med: Annotated[
+        bool, typer.Option("--med", help="Medium detail")
+    ] = False,
+    full: Annotated[
+        bool, typer.Option("--full", help="Full detail (default)")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """List running agents with status.
@@ -227,19 +236,30 @@ def list_agents(
         get_status_symbol, get_git_diff_stats,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
-    from ..summary_columns import build_cli_context, SUMMARY_COLUMNS
+    from ..summary_columns import build_cli_context, render_summary_line
     from ..tui_logic import compute_tree_metadata, sort_sessions_by_tree
-    from rich.text import Text
     from rich.console import Console
+
+    # Resolve detail level (mutually exclusive flags, default full)
+    if low:
+        detail = "low"
+    elif med:
+        detail = "med"
+    else:
+        detail = "full"
 
     launcher = ClaudeLauncher(session)
     sessions = launcher.list_sessions()
 
     # Merge sister sessions if --sisters flag
+    has_sisters = False
+    local_hostname = ""
     if sisters:
         from ..sister_poller import SisterPoller
         poller = SisterPoller()
-        if poller.has_sisters:
+        has_sisters = poller.has_sisters
+        local_hostname = poller.local_hostname
+        if has_sisters:
             remote_sessions = poller.poll_all()
             sessions = sessions + remote_sessions
 
@@ -269,15 +289,6 @@ def list_agents(
     sessions = sort_sessions_by_tree(sessions)
     tree_meta = compute_tree_metadata(sessions)
 
-    # Columns to render in list mode (subset of TUI columns)
-    list_columns = {
-        "status_symbol", "time_in_state", "sleep_countdown", "agent_name",
-        "git_diff",
-        "uptime", "running_time", "stalled_time", "sleep_time",
-        "token_count", "cost", "budget", "context_usage",
-        "agent_teams",
-    }
-
     # Pre-compute: any agent with budget, max name width
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
     max_name_len = max(len(s.name) for s in sessions)
@@ -286,6 +297,24 @@ def list_agents(
     # Prefer daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)
     use_daemon = daemon_state is not None and not daemon_state.is_stale()
+
+    # Compute cross-session flags from daemon state
+    any_has_oversight_timeout = False
+    any_has_pr = False
+    if use_daemon:
+        any_has_oversight_timeout = any(
+            ds.oversight_timeout_seconds > 0
+            for ds in daemon_state.sessions.values()
+        )
+    else:
+        any_has_oversight_timeout = any(
+            getattr(s, 'oversight_timeout_seconds', 0) > 0
+            for s in sessions
+        )
+    any_has_pr = any(
+        getattr(s, 'pr_number', None) is not None
+        for s in sessions
+    )
 
     # Only create detector as fallback when daemon isn't running
     detector = None
@@ -346,24 +375,37 @@ def list_agents(
     # Compute cross-session flags
     any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _ in session_data)
 
-    # Second pass: render
+    # Second pass: render using the shared canonical loop
     for sess, status, activity, claude_stats, git_diff in session_data:
         meta = tree_meta.get(sess.id)
         child_count = meta.child_count if meta else 0
+
+        # Get per-session daemon fields
+        oversight_deadline = None
+        if use_daemon:
+            ds = daemon_state.get_session_by_name(sess.name)
+            if ds:
+                oversight_deadline = ds.oversight_deadline
+
+        _, status_color = get_status_symbol(status)
         ctx = build_cli_context(
             session=sess, stats=sess.stats,
             claude_stats=claude_stats, git_diff_stats=git_diff,
             status=status, bg_bash_count=0, live_sub_count=0,
             any_has_budget=any_has_budget, child_count=child_count,
             any_is_sleeping=any_is_sleeping,
+            any_has_oversight_timeout=any_has_oversight_timeout,
+            oversight_deadline=oversight_deadline,
+            pr_number=getattr(sess, 'pr_number', None),
+            any_has_pr=any_has_pr,
+            monochrome=False,
+            summary_detail=detail,
+            has_sisters=has_sisters,
+            local_hostname=local_hostname,
         )
-
-        # Enable colors and set detail level for list view
-        ctx.monochrome = False
-        _, status_color = get_status_symbol(status)
         ctx.status_color = f"bold {status_color}"
-        ctx.summary_detail = "med"
         ctx.show_cost = cost
+        ctx.is_list_mode = True
 
         # Handle tree indentation (#244) using compute_tree_metadata
         depth = meta.depth if meta else 0
@@ -371,17 +413,8 @@ def list_agents(
         available = name_width - len(indent)
         ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
 
-        # Render line using column system
-        line = Text()
-        for col in SUMMARY_COLUMNS:
-            if col.id not in list_columns:
-                continue
-            if ctx.summary_detail not in col.detail_levels:
-                continue
-            segments = col.render(ctx)
-            if segments:
-                for text, style in segments:
-                    line.append(text, style=style)
+        # Render line using shared canonical loop
+        line = render_summary_line(ctx)
 
         # Append activity (truncate to fit terminal width)
         line.append(" │ ", style="dim")

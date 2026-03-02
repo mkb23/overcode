@@ -856,6 +856,8 @@ def build_cli_context(
     any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
+    monochrome: bool = True, summary_detail: str = "full",
+    has_sisters: bool = False, local_hostname: str = "",
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -896,8 +898,8 @@ def build_cli_context(
         status_symbol=status_symbol,
         status_color="bold",
         bg="",
-        monochrome=True,
-        summary_detail="full",
+        monochrome=monochrome,
+        summary_detail=summary_detail,
         show_cost=True,
         any_has_budget=any_has_budget,
         expand_icon="",
@@ -929,7 +931,42 @@ def build_cli_context(
         any_has_pr=any_has_pr,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
+        has_sisters=has_sisters,
+        local_hostname=local_hostname,
     )
+
+
+def render_summary_line(
+    ctx: ColumnContext,
+    group_filter: Optional[Callable[[str], bool]] = None,
+) -> "Text":
+    """Render a single summary line from SUMMARY_COLUMNS.
+
+    This is the canonical render loop — both TUI and CLI call this.
+
+    Args:
+        ctx: Pre-computed column context.
+        group_filter: Optional callback to check group visibility (used by TUI
+            custom mode). When None, all groups are enabled.
+    """
+    from rich.text import Text
+    content = Text()
+    for col in SUMMARY_COLUMNS:
+        if ctx.summary_detail not in col.detail_levels:
+            continue
+        if group_filter is not None and not group_filter(col.group):
+            continue
+        if col.visible is not None and not col.visible(ctx):
+            if col.placeholder_width > 0:
+                content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+            continue
+        segments = col.render(ctx)
+        if segments:
+            for text, style in segments:
+                content.append(text, style=style)
+        elif col.placeholder_width > 0:
+            content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+    return content
 
 
 def render_cli_stats(ctx: ColumnContext) -> List[Tuple[str, str]]:
