@@ -938,13 +938,15 @@ def build_cli_context(
     )
 
 
-def render_summary_line(
+def render_summary_cells(
     ctx: ColumnContext,
     group_filter: Optional[Callable[[str], bool]] = None,
-) -> "Text":
-    """Render a single summary line from SUMMARY_COLUMNS.
+) -> "List[Text]":
+    """Render each visible column as a separate Text cell.
 
-    This is the canonical render loop — both TUI and CLI call this.
+    Returns one Text per visible column position (including placeholders).
+    Used by the CLI for automatic cross-row alignment via align_summary_rows().
+    The TUI calls render_summary_line() which concatenates these.
 
     Args:
         ctx: Pre-computed column context.
@@ -952,23 +954,73 @@ def render_summary_line(
             custom mode). When None, all groups are enabled.
     """
     from rich.text import Text
-    content = Text()
+    cells = []
     for col in SUMMARY_COLUMNS:
         if ctx.summary_detail not in col.detail_levels:
             continue
         if group_filter is not None and not group_filter(col.group):
             continue
+        cell = Text()
         if col.visible is not None and not col.visible(ctx):
             if col.placeholder_width > 0:
-                content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+                cell.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+            cells.append(cell)
             continue
         segments = col.render(ctx)
         if segments:
             for text, style in segments:
-                content.append(text, style=style)
+                cell.append(text, style=style)
         elif col.placeholder_width > 0:
-            content.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+            cell.append(" " * col.placeholder_width, style=ctx.mono(f"dim{ctx.bg}", "dim"))
+        cells.append(cell)
+    return cells
+
+
+def render_summary_line(
+    ctx: ColumnContext,
+    group_filter: Optional[Callable[[str], bool]] = None,
+) -> "Text":
+    """Render a single summary line from SUMMARY_COLUMNS.
+
+    This is the canonical render loop — both TUI and CLI call this.
+    Concatenates cells from render_summary_cells() into a single Text.
+    """
+    from rich.text import Text
+    content = Text()
+    for cell in render_summary_cells(ctx, group_filter):
+        content.append_text(cell)
     return content
+
+
+def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
+    """Pad cells in each column to the same width, then join into final lines.
+
+    Each row is a list of Text cells (one per visible column) from
+    render_summary_cells(). Columns are padded to the max visual width
+    across all rows, guaranteeing perfect alignment regardless of content.
+    """
+    from rich.text import Text
+    if not cell_rows:
+        return []
+
+    n_cols = max(len(row) for row in cell_rows)
+    max_widths = [0] * n_cols
+    for row in cell_rows:
+        for i, cell in enumerate(row):
+            w = len(cell.plain)
+            if w > max_widths[i]:
+                max_widths[i] = w
+
+    result = []
+    for row in cell_rows:
+        line = Text()
+        for i, cell in enumerate(row):
+            line.append_text(cell)
+            pad = max_widths[i] - len(cell.plain)
+            if pad > 0:
+                line.append(" " * pad)
+        result.append(line)
+    return result
 
 
 def render_cli_stats(ctx: ColumnContext) -> List[Tuple[str, str]]:

@@ -236,7 +236,7 @@ def list_agents(
         get_status_symbol, get_git_diff_stats,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
-    from ..summary_columns import build_cli_context, render_summary_line
+    from ..summary_columns import build_cli_context, render_summary_cells, align_summary_rows
     from ..tui_logic import compute_tree_metadata, sort_sessions_by_tree
     from rich.console import Console
 
@@ -380,7 +380,9 @@ def list_agents(
     # Compute cross-session flags
     any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _ in session_data)
 
-    # Second pass: render using the shared canonical loop
+    # Second pass: build contexts and collect cells for auto-alignment
+    all_cells = []
+    activities = []
     for sess, status, activity, claude_stats, git_diff in session_data:
         meta = tree_meta.get(sess.id)
         child_count = meta.child_count if meta else 0
@@ -422,14 +424,15 @@ def list_agents(
         available = name_width - len(indent)
         ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
 
-        # Render line using shared canonical loop
-        line = render_summary_line(ctx)
+        all_cells.append(render_summary_cells(ctx))
+        activities.append(activity)
 
-        # Append activity (truncate to fit terminal width)
+    # Auto-align columns across all rows, then append activity
+    aligned_lines = align_summary_rows(all_cells)
+    for line, activity in zip(aligned_lines, activities):
         line.append(" │ ", style="dim")
         line.append(activity)
         line.truncate(console.width, pad=False)
-
         console.print(line, no_wrap=True)
 
     if terminated_count > 0:
