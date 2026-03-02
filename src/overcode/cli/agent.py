@@ -304,7 +304,7 @@ def list_agents(
     if use_daemon:
         any_has_oversight_timeout = any(
             ds.oversight_timeout_seconds > 0
-            for ds in daemon_state.sessions.values()
+            for ds in daemon_state.sessions
         )
     else:
         any_has_oversight_timeout = any(
