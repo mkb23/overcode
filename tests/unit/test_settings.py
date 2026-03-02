@@ -201,7 +201,7 @@ class TestDaemonSettings:
         from overcode.settings import DaemonSettings
 
         settings = DaemonSettings()
-        assert settings.interval_fast == 10
+        assert settings.interval_fast == 2
         assert settings.interval_slow == 300
         assert settings.interval_idle == 3600
 

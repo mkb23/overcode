@@ -152,7 +152,7 @@ class DaemonSettings:
     """Settings for the daemon."""
 
     # Polling intervals (seconds)
-    interval_fast: int = 10      # When active or agents working
+    interval_fast: int = 2       # When active or agents working
     interval_slow: int = 300     # When all agents need user input (5 min)
     interval_idle: int = 3600    # When no agents at all (1 hour)
 

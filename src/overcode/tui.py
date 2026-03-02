@@ -430,7 +430,7 @@ class SupervisorTUI(
             # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
             # Stagger the three 5s timers so background work doesn't burst all at once
             self.set_interval(5, self._update_stats_async)
-            self.set_timer(1.7, lambda: self.set_interval(5, self.update_daemon_status))
+            self.set_timer(1.7, lambda: self.set_interval(1, self.update_daemon_status))
             # Update timeline every 30 seconds
             self.set_interval(30, self.update_timeline)
             # Update AI summaries every 5 seconds (only runs if enabled)
@@ -789,38 +789,38 @@ class SupervisorTUI(
             for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
 
-            # Enrich status with heartbeat info from daemon state (#171)
+            # Enrich non-focused agents with daemon state (#291)
+            # The focused agent keeps its detect_status result for preview pane
+            # responsiveness. Non-focused agents use daemon's current_status
+            # directly when available and fresh (< 5s old), which includes
+            # heartbeat, oversight, and other enrichments already applied by
+            # the daemon.
+            focused_widget = self._get_focused_widget()
+            focused_id = focused_widget.session.id if focused_widget else None
             daemon_state = get_monitor_daemon_state(self.tmux_session)
-            if daemon_state and daemon_state.sessions:
-                heartbeat_sessions = {
-                    s.session_id for s in daemon_state.sessions
-                    if s.running_from_heartbeat
-                }
-                for session_id in heartbeat_sessions:
-                    if session_id in status_results:
-                        status, activity, content = status_results[session_id]
-                        if status == STATUS_RUNNING:
-                            status_results[session_id] = (STATUS_RUNNING_HEARTBEAT, activity, content)
-
-                waiting_heartbeat_sessions = {
-                    s.session_id for s in daemon_state.sessions
-                    if s.waiting_for_heartbeat
-                }
-                for session_id in waiting_heartbeat_sessions:
-                    if session_id in status_results:
-                        status, activity, content = status_results[session_id]
-                        if status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
-                            status_results[session_id] = (STATUS_WAITING_HEARTBEAT, activity, content)
-
-                # Enrich with waiting_oversight from daemon state
-                oversight_sessions = {
-                    s.session_id: s for s in daemon_state.sessions
-                    if s.current_status == STATUS_WAITING_OVERSIGHT
-                }
-                for session_id, ds in oversight_sessions.items():
-                    if session_id in status_results:
-                        _, _, content = status_results[session_id]
-                        status_results[session_id] = (STATUS_WAITING_OVERSIGHT, "Waiting for oversight report", content)
+            if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
+                daemon_by_id = {s.session_id: s for s in daemon_state.sessions}
+                for session_id in list(status_results):
+                    if session_id == focused_id:
+                        # Focused agent: still enrich with heartbeat/oversight
+                        # from daemon (detect_status can't see these)
+                        ds = daemon_by_id.get(session_id)
+                        if ds:
+                            status, activity, content = status_results[session_id]
+                            if ds.running_from_heartbeat and status == STATUS_RUNNING:
+                                status = STATUS_RUNNING_HEARTBEAT
+                            elif ds.waiting_for_heartbeat and status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
+                                status = STATUS_WAITING_HEARTBEAT
+                            elif ds.current_status == STATUS_WAITING_OVERSIGHT:
+                                status = STATUS_WAITING_OVERSIGHT
+                                activity = "Waiting for oversight report"
+                            status_results[session_id] = (status, activity, content)
+                    else:
+                        # Non-focused: use daemon's status directly
+                        ds = daemon_by_id.get(session_id)
+                        if ds:
+                            _, _, content = status_results[session_id]
+                            status_results[session_id] = (ds.current_status, ds.current_activity, content)
 
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}

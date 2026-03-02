@@ -404,31 +404,35 @@ def get_session_file_path(
     return projects_path / encoded / f"{session_id}.jsonl"
 
 
-def read_token_usage_from_session_file(
+def read_session_file_stats(
     session_file: Path,
-    since: Optional[datetime] = None
-) -> dict:
-    """Read token usage from a Claude Code session JSONL file.
+    since: Optional[datetime] = None,
+) -> Tuple[dict, List[float]]:
+    """Read token usage and work times from a session file in a single pass.
+
+    Combines the work of read_token_usage_from_session_file and
+    read_work_times_from_session_file so the file is only read once.
 
     Args:
         session_file: Path to the session JSONL file
-        since: Only count tokens from messages after this time
+        since: Only count data from messages after this time
 
     Returns:
-        Dict with input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        and current_context_tokens (most recent input_tokens value)
+        (token_usage_dict, work_times_list)
     """
     totals = {
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_creation_tokens": 0,
         "cache_read_tokens": 0,
-        "current_context_tokens": 0,  # Most recent input_tokens
-        "model": None,  # Most recently seen model name (#272)
+        "current_context_tokens": 0,
+        "model": None,
     }
 
     if not session_file.exists():
-        return totals
+        return totals, []
+
+    user_prompt_times: List[datetime] = []
 
     try:
         with open(session_file, 'r') as f:
@@ -438,14 +442,14 @@ def read_token_usage_from_session_file(
                     continue
                 try:
                     data = json.loads(line)
-                    # Only assistant messages have usage data
-                    if data.get("type") == "assistant":
+                    msg_type = data.get("type")
+
+                    if msg_type == "assistant":
                         # Check timestamp if filtering by time
                         if since:
                             ts_str = data.get("timestamp")
                             if ts_str:
                                 try:
-                                    # Parse ISO timestamp (e.g., "2026-01-02T06:56:01.975Z")
                                     msg_time = datetime.fromisoformat(
                                         ts_str.replace("Z", "+00:00")
                                     ).replace(tzinfo=None)
@@ -468,15 +472,62 @@ def read_token_usage_from_session_file(
                                 "cache_creation_input_tokens", 0
                             )
                             totals["cache_read_tokens"] += cache_read
-                            # Track most recent context size (input + cached context)
                             context_size = input_tokens + cache_read
                             if context_size > 0:
                                 totals["current_context_tokens"] = context_size
+
+                    elif msg_type == "user":
+                        # Check if this is an actual user prompt (not a tool result)
+                        message = data.get("message", {})
+                        content = message.get("content", "")
+                        if isinstance(content, list):
+                            if content and content[0].get("type") == "tool_result":
+                                continue
+
+                        ts_str = data.get("timestamp")
+                        if not ts_str:
+                            continue
+
+                        try:
+                            msg_time = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            ).replace(tzinfo=None)
+                            if since and msg_time < since:
+                                continue
+                            user_prompt_times.append(msg_time)
+                        except (ValueError, TypeError):
+                            continue
+
                 except (json.JSONDecodeError, KeyError, TypeError):
                     continue
     except IOError:
-        pass
+        return totals, []
 
+    # Calculate durations between consecutive prompts
+    work_times = []
+    for i in range(1, len(user_prompt_times)):
+        duration = (user_prompt_times[i] - user_prompt_times[i - 1]).total_seconds()
+        if duration > 0:
+            work_times.append(duration)
+
+    return totals, work_times
+
+
+def read_token_usage_from_session_file(
+    session_file: Path,
+    since: Optional[datetime] = None
+) -> dict:
+    """Read token usage from a Claude Code session JSONL file.
+
+    Args:
+        session_file: Path to the session JSONL file
+        since: Only count tokens from messages after this time
+
+    Returns:
+        Dict with input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+        and current_context_tokens (most recent input_tokens value)
+    """
+    totals, _ = read_session_file_stats(session_file, since)
     return totals
 
 
@@ -498,62 +549,7 @@ def read_work_times_from_session_file(
     Returns:
         List of work times in seconds
     """
-    if not session_file.exists():
-        return []
-
-    user_prompt_times: List[datetime] = []
-
-    try:
-        with open(session_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    if data.get("type") != "user":
-                        continue
-
-                    # Check if this is an actual user prompt (not a tool result)
-                    message = data.get("message", {})
-                    content = message.get("content", "")
-
-                    # Tool results have content as a list with tool_result type
-                    if isinstance(content, list):
-                        # Check if it's a tool result
-                        if content and content[0].get("type") == "tool_result":
-                            continue
-
-                    # Parse timestamp
-                    ts_str = data.get("timestamp")
-                    if not ts_str:
-                        continue
-
-                    try:
-                        msg_time = datetime.fromisoformat(
-                            ts_str.replace("Z", "+00:00")
-                        ).replace(tzinfo=None)
-
-                        # Filter by since time
-                        if since and msg_time < since:
-                            continue
-
-                        user_prompt_times.append(msg_time)
-                    except (ValueError, TypeError):
-                        continue
-
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    continue
-    except IOError:
-        return []
-
-    # Calculate durations between consecutive prompts
-    work_times = []
-    for i in range(1, len(user_prompt_times)):
-        duration = (user_prompt_times[i] - user_prompt_times[i - 1]).total_seconds()
-        if duration > 0:
-            work_times.append(duration)
-
+    _, work_times = read_session_file_stats(session_file, since)
     return work_times
 
 
@@ -625,7 +621,7 @@ def get_session_stats(
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
         )
-        usage = read_token_usage_from_session_file(session_file, since=session_start)
+        usage, work_times = read_session_file_stats(session_file, since=session_start)
         total_input += usage["input_tokens"]
         total_output += usage["output_tokens"]
         total_cache_creation += usage["cache_creation_tokens"]
@@ -644,7 +640,6 @@ def get_session_stats(
                 detected_model = usage["model"]
 
         # Collect work times from this session file
-        work_times = read_work_times_from_session_file(session_file, since=session_start)
         all_work_times.extend(work_times)
 
         # Check for subagent files in {sessionId}/subagents/
@@ -655,7 +650,7 @@ def get_session_stats(
                 subagent_count += 1
                 if now - subagent_file.stat().st_mtime < 30:
                     live_subagent_count += 1
-                sub_usage = read_token_usage_from_session_file(
+                sub_usage, _ = read_session_file_stats(
                     subagent_file, since=session_start
                 )
                 total_input += sub_usage["input_tokens"]

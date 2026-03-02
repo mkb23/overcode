@@ -903,7 +903,7 @@ class TestInterruptibleSleep:
         with patch('overcode.monitor_daemon.time.sleep', side_effect=track_sleep):
             daemon._interruptible_sleep(30)
 
-        # Should have slept in 10-second chunks: 10 + 10 + 10 = 30
+        # Should have slept in 1-second chunks totaling 30s
         assert sum(sleep_calls) == 30
 
 
