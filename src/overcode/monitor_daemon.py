@@ -6,7 +6,7 @@ This daemon handles all monitoring responsibilities:
 - Agent status detection (via StatusDetector)
 - Time tracking (green_time_seconds, non_green_time_seconds)
 - Claude Code stats sync (tokens, interactions)
-- Presence tracking (macOS only, graceful degradation)
+- Presence tracking (graceful degradation on non-macOS)
 - Status history logging (CSV)
 
 The Monitor Daemon publishes MonitorDaemonState to a JSON file that
@@ -149,18 +149,18 @@ def _create_monitor_logger(session: str = "agents", log_file: Optional[Path] = N
 
 
 class PresenceComponent:
-    """Presence tracking with graceful degradation for non-macOS."""
+    """Presence tracking (works on all platforms; richer on macOS with Quartz)."""
 
     # TUI heartbeat is considered fresh if within this many seconds
     TUI_HEARTBEAT_FRESHNESS = 60
 
     def __init__(self, tmux_session: str = "agents"):
-        self.available = MACOS_APIS_AVAILABLE
+        self.available = True
         self._logger: Optional[PresenceLogger] = None
         self._tmux_session = tmux_session
         self._last_publish_time: Optional[datetime] = None
 
-        if self.available and PresenceLogger is not None:
+        if PresenceLogger is not None:
             heartbeat_path = str(get_tui_heartbeat_path(tmux_session))
             config = PresenceLoggerConfig(
                 tui_heartbeat_path=heartbeat_path,
@@ -200,30 +200,39 @@ class PresenceComponent:
         """Get current presence state.
 
         Returns:
-            Tuple of (state, idle_seconds, locked) or (None, None, None) if unavailable
+            Tuple of (state, idle_seconds, locked) or (None, None, None) if unavailable.
+            On non-macOS, idle is always 0 and locked is always False, but sleep
+            detection and TUI heartbeat still produce meaningful state values.
         """
-        if not self.available or get_current_presence_state is None:
-            return None, None, None
-
         try:
+            from .presence_logger import classify_state, DEFAULT_IDLE_THRESHOLD
+
             tui_active = self._is_tui_active()
             slept = self._detect_sleep()
 
             if slept:
                 # Machine just woke — override to asleep state for this sample
-                idle = 0.0
-                locked = False
-                from .presence_logger import classify_state, DEFAULT_IDLE_THRESHOLD
                 state = classify_state(
-                    locked=locked,
-                    idle_seconds=idle,
+                    locked=False,
+                    idle_seconds=0.0,
                     slept=True,
                     idle_threshold=DEFAULT_IDLE_THRESHOLD,
                     tui_active=False,
                 )
-                return state, idle, locked
+                return state, 0.0, False
 
-            return get_current_presence_state(tui_active=tui_active)
+            if MACOS_APIS_AVAILABLE and get_current_presence_state is not None:
+                return get_current_presence_state(tui_active=tui_active)
+
+            # Non-macOS: idle=0, locked=False; TUI heartbeat still works
+            state = classify_state(
+                locked=False,
+                idle_seconds=0.0,
+                slept=False,
+                idle_threshold=DEFAULT_IDLE_THRESHOLD,
+                tui_active=tui_active,
+            )
+            return state, 0.0, False
         except Exception:
             return None, None, None
 
@@ -997,7 +1006,7 @@ class MonitorDaemon:
         self.log.section("Monitor Daemon")
         self.log.info(f"PID: {os.getpid()}")
         self.log.info(f"tmux session: {self.tmux_session}")
-        self.log.info(f"Presence tracking: {'available' if self.presence.available else 'unavailable (non-macOS)'}")
+        self.log.info(f"Presence tracking: available (macOS Quartz: {'yes' if MACOS_APIS_AVAILABLE else 'no'})")
 
         # Setup signal handlers
         def handle_shutdown(signum, frame):

@@ -8,7 +8,7 @@ The Monitor Daemon is the single source of truth for:
 - Agent status detection
 - Time tracking (green_time_seconds, non_green_time_seconds)
 - Claude Code stats (tokens, interactions)
-- User presence state (macOS only)
+- User presence state
 """
 
 import json
@@ -141,7 +141,7 @@ class MonitorDaemonState:
     # Session states (one per agent)
     sessions: List[SessionDaemonState] = field(default_factory=list)
 
-    # Presence state (optional, macOS only)
+    # Presence state
     presence_available: bool = False
     presence_state: Optional[int] = None  # 0=asleep, 1=locked, 2=idle, 3=active, 4=tui_active
     presence_idle_seconds: Optional[float] = None

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from textual.widgets import Static
 from rich.text import Text
 
-from ..presence_logger import read_presence_history, MACOS_APIS_AVAILABLE
+from ..presence_logger import read_presence_history
 from ..settings import get_agent_history_path
 from ..status_history import read_agent_status_history
 from ..config import get_timeline_config
@@ -194,10 +194,6 @@ class StatusTimeline(Static):
                     content.append(char, style=color)
                 else:
                     content.append("─", style="dim")
-        elif not MACOS_APIS_AVAILABLE:
-            # Show install instructions when presence deps not installed (macOS only)
-            msg = "macOS only - pip install overcode[presence]"
-            content.append(msg[:width], style="dim italic")
         else:
             # Empty timeline but still show baseline marker
             for i in range(width):

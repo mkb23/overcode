@@ -233,15 +233,17 @@ class TestCalculateInterval:
 class TestPresenceComponent:
     """Test PresenceComponent class."""
 
-    def test_get_current_state_returns_none_when_unavailable(self):
-        """Should return (None, None, None) when APIs unavailable."""
+    def test_get_current_state_falls_back_on_non_macos(self):
+        """Should return classify_state result with idle=0 when macOS APIs unavailable."""
         from overcode.monitor_daemon import PresenceComponent
 
         with patch('overcode.monitor_daemon.MACOS_APIS_AVAILABLE', False):
             component = PresenceComponent()
-            result = component.get_current_state()
+            state, idle, locked = component.get_current_state()
 
-            assert result == (None, None, None)
+            assert state in (0, 1, 2, 3, 4)  # Valid presence state
+            assert idle == 0.0
+            assert locked is False
 
     def test_stop_handles_no_logger(self):
         """Should handle stop when no logger initialized."""

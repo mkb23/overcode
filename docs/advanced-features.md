@@ -452,13 +452,13 @@ df.groupby('name')['cost'].sum().sort_values(ascending=False)
 df['efficiency'] = df['green_time'] / (df['green_time'] + df['idle_time'])
 ```
 
-## Presence Tracking (macOS)
+## Presence Tracking
 
-Overcode can track when you're at your computer to correlate with agent activity.
+Overcode tracks when you're at your computer to correlate with agent activity.
 
 ### How It Works
 
-On macOS, overcode uses IOKit to detect idle time. When you're away (keyboard/mouse inactive), it logs your presence state.
+Presence tracking works on all platforms. Sleep detection (gap inference), TUI heartbeat state, and CSV logging are cross-platform. On macOS, Quartz APIs provide richer idle-seconds and screen-lock detection; on other platforms idle is reported as 0 and locked as false.
 
 ### Data Location
 

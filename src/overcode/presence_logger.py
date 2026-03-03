@@ -1,7 +1,7 @@
 """
 presence_logger.py
 
-Mac-only presence logger that records user presence/absence stats.
+Presence logger that records user presence/absence stats.
 
 Records once per SAMPLE_INTERVAL:
 - timestamp (ISO8601 local time)
@@ -441,9 +441,9 @@ def main() -> int:
         overcode presence
     """
     if not MACOS_APIS_AVAILABLE:
-        print("Error: macOS APIs not available.")
-        print("Install dependencies: pip install pyobjc-framework-Quartz pyobjc-framework-ApplicationServices")
-        return 1
+        print("Note: macOS Quartz APIs not available; idle and screen-lock detection disabled.")
+        print("Sleep detection and TUI heartbeat still work.")
+        print()
 
     # Check if already running
     if is_presence_running():
