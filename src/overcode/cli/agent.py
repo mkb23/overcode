@@ -63,6 +63,10 @@ def launch(
         Optional[float],
         typer.Option("--budget", "-b", help="Cost budget in USD (deducted from parent if parent has budget)"),
     ] = None,
+    agent: Annotated[
+        Optional[str],
+        typer.Option("--agent", "-a", help="Claude agent to run as (from .claude/agents/)"),
+    ] = None,
     teams: Annotated[
         bool,
         typer.Option("--teams", help="Enable Claude Code agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)"),
@@ -164,6 +168,7 @@ def launch(
         extra_claude_args=claude_args,
         agent_teams=teams,
         budget_usd=budget,
+        claude_agent=agent,
     )
 
     if result:
@@ -176,6 +181,8 @@ def launch(
             rprint(f"  Allowed tools: {allowed_tools}")
         if claude_args:
             rprint(f"  Extra Claude args: {' '.join(claude_args)}")
+        if agent:
+            rprint(f"  Agent: {agent}")
         if teams:
             rprint("  Agent teams: enabled")
         if budget is not None and budget > 0:
@@ -878,6 +885,8 @@ def show(
             print(f"{'Tools:':<{label_width + 1}} {sess.allowed_tools}")
         if sess.extra_claude_args:
             print(f"{'Claude args:':<{label_width + 1}} {' '.join(sess.extra_claude_args)}")
+        if sess.claude_agent:
+            print(f"{'Agent:':<{label_width + 1}} {sess.claude_agent}")
         if sess.agent_teams:
             print(f"{'Teams:':<{label_width + 1}} enabled")
 
