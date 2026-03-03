@@ -259,3 +259,19 @@ NewAgentDefaultsModal {
 NewAgentDefaultsModal.visible {
     display: block;
 }
+
+/* Agent Selection Modal */
+AgentSelectModal {
+    display: none;
+    layer: above;
+    offset: 27 30;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+AgentSelectModal.visible {
+    display: block;
+}

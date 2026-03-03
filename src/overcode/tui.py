@@ -67,6 +67,7 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    AgentSelectModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -349,6 +350,8 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
+        # Modal for agent selection during new agent creation
+        yield AgentSelectModal(id="agent-select-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -1988,10 +1991,12 @@ class SupervisorTUI(
                 start_directory=directory,
                 dangerously_skip_permissions=bypass_permissions,
                 agent_teams=message.agent_teams,
+                claude_agent=message.claude_agent,
             )
             dir_info = f" in {directory}" if directory else ""
             perm_info = " (bypass mode)" if bypass_permissions else ""
-            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}", severity="information")
+            agent_info = f" (agent: {message.claude_agent})" if message.claude_agent else ""
+            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}{agent_info}", severity="information")
             # Refresh to show new agent
             self.refresh_sessions()
         except Exception as e:
@@ -2236,6 +2241,26 @@ class SupervisorTUI(
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
         pass
+
+    def on_agent_select_modal_agent_selected(self, message: AgentSelectModal.AgentSelected) -> None:
+        """Handle agent selection from modal."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.new_agent_claude_agent = message.agent_name
+            cmd_bar._transition_to_name_step()
+            cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_agent_select_modal_agent_select_skipped(self, message: AgentSelectModal.AgentSelectSkipped) -> None:
+        """Handle agent selection skipped (q/Esc)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.new_agent_claude_agent = None
+            cmd_bar._transition_to_name_step()
+            cmd_bar.focus_input()
+        except NoMatches:
+            pass
 
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0

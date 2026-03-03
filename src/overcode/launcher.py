@@ -80,6 +80,7 @@ class ClaudeLauncher:
         extra_claude_args: Optional[List[str]] = None,
         agent_teams: bool = False,
         budget_usd: Optional[float] = None,
+        claude_agent: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -164,6 +165,10 @@ class ClaudeLauncher:
         elif skip_permissions:
             claude_cmd.extend(["--permission-mode", "dontAsk"])
 
+        # Claude agent persona
+        if claude_agent:
+            claude_cmd.extend(["--agent", claude_agent])
+
         # Claude CLI flag passthrough (#290)
         if allowed_tools:
             claude_cmd.extend(["--allowedTools", allowed_tools])
@@ -218,6 +223,7 @@ class ClaudeLauncher:
             allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args,
             agent_teams=agent_teams,
+            claude_agent=claude_agent,
         )
 
         # Set parent if launching as child agent (#244)
