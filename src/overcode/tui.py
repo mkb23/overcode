@@ -880,6 +880,18 @@ class SupervisorTUI(
                             _, _, content = status_results[session_id]
                             status_results[session_id] = (ds.current_status, ds.current_activity, content)
 
+            # Extract subtree costs from daemon state (local agents)
+            subtree_costs = {}
+            if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
+                for ds in daemon_state.sessions:
+                    if ds.subtree_cost_usd > 0:
+                        subtree_costs[ds.session_id] = ds.subtree_cost_usd
+            # Also extract from remote sessions via forwarded daemon_state
+            for s in self._remote_sessions:
+                rds = getattr(s, 'remote_daemon_state', None)
+                if rds and rds.get('subtree_cost_usd', 0) > 0:
+                    subtree_costs[s.id] = rds['subtree_cost_usd']
+
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}
             for session_id, summary in self._summaries.items():
@@ -889,7 +901,7 @@ class SupervisorTUI(
                 )
 
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries)
+            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries, subtree_costs)
         finally:
             self._status_update_in_progress = False
 
@@ -1031,11 +1043,13 @@ class SupervisorTUI(
     # ── End sister integration ────────────────────────────────────────
 
     def _apply_status_results(self, status_results: dict, fresh_sessions: dict,
-                              ai_summaries: dict = None) -> None:
+                              ai_summaries: dict = None, subtree_costs: dict = None) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""
         self._mark_event("apply_status_start")
         prefs_changed = False
         ai_summaries = ai_summaries or {}
+        subtree_costs = subtree_costs or {}
+        any_has_subtree_cost = bool(subtree_costs)
 
         widgets = list(self.query(SessionSummary))
 
@@ -1057,6 +1071,10 @@ class SupervisorTUI(
                 # Use remote summarizer output carried on the session
                 widget.ai_summary_short = widget.session.remote_activity_summary
                 widget.ai_summary_context = widget.session.remote_activity_summary_context
+
+            # Propagate subtree cost from daemon state
+            widget.subtree_cost_usd = subtree_costs.get(session_id, 0.0)
+            widget.any_has_subtree_cost = any_has_subtree_cost
 
             # Apply status if we have results for this widget
             if session_id in status_results:
@@ -1242,6 +1260,20 @@ class SupervisorTUI(
         any_has_budget, any_has_oversight_timeout, any_has_pr = detect_display_changes(
             self.sessions, False, False
         )
+
+        # Read subtree costs from daemon state (local agents)
+        subtree_costs = {}
+        daemon_state = get_monitor_daemon_state(self.tmux_session)
+        if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
+            for ds in daemon_state.sessions:
+                if ds.subtree_cost_usd > 0:
+                    subtree_costs[ds.session_id] = ds.subtree_cost_usd
+        # Also extract from remote sessions via forwarded daemon_state
+        for s in self._remote_sessions:
+            rds = getattr(s, 'remote_daemon_state', None)
+            if rds and rds.get('subtree_cost_usd', 0) > 0:
+                subtree_costs[s.id] = rds['subtree_cost_usd']
+        any_has_subtree_cost = bool(subtree_costs)
         # Also check widget pr_number vars (sticky — survive session replacement)
         if not any_has_pr:
             any_has_pr = any(
@@ -1309,6 +1341,8 @@ class SupervisorTUI(
                     widget.any_is_sleeping = any_is_sleeping
                     widget.any_has_pr = any_has_pr
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
+                    widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
+                    widget.any_has_subtree_cost = any_has_subtree_cost
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -1364,6 +1398,8 @@ class SupervisorTUI(
                 widget.any_is_sleeping = any_is_sleeping
                 widget.any_has_pr = any_has_pr
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
+                widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
+                widget.any_has_subtree_cost = any_has_subtree_cost
                 # Apply per-level column overrides
                 current_level = self.SUMMARY_LEVELS[self.summary_level_index]
                 widget.column_overrides = self._prefs.column_config.get(current_level, {})

@@ -64,6 +64,8 @@ from overcode.summary_columns import (
     render_value_plain,
     render_pr_number,
     render_pr_number_plain,
+    render_subtree_cost,
+    render_subtree_cost_plain,
     build_cli_context,
     render_cli_stats,
 )
@@ -169,6 +171,8 @@ def _make_ctx(**overrides) -> ColumnContext:
         max_name_width=16,
         max_repo_width=10,
         max_branch_width=10,
+        subtree_cost_usd=0.0,
+        any_has_subtree_cost=False,
     )
     defaults.update(overrides)
     return ColumnContext(**defaults)
@@ -1223,4 +1227,50 @@ class TestRenderPrNumber:
         """Should return None when pr_number not set."""
         ctx = _make_ctx(pr_number=None)
         result = render_pr_number_plain(ctx)
+        assert result is None
+
+
+# ===========================================================================
+# Subtree cost column render tests
+# ===========================================================================
+
+class TestRenderSubtreeCost:
+    def test_shows_subtree_cost(self):
+        ctx = _make_ctx(subtree_cost_usd=5.50, any_has_subtree_cost=True, show_cost=True)
+        result = render_subtree_cost(ctx)
+        assert result is not None
+        assert "Σ" in result[0][0]
+        assert "$" in result[0][0]
+
+    def test_returns_none_when_zero(self):
+        ctx = _make_ctx(subtree_cost_usd=0.0, any_has_subtree_cost=True, show_cost=True)
+        result = render_subtree_cost(ctx)
+        assert result is None
+
+    def test_visibility_gate_on_column(self):
+        """The subtree_cost column's visible callback gates on show_cost and any_has_subtree_cost."""
+        col = next(c for c in SUMMARY_COLUMNS if c.id == "subtree_cost")
+        assert col.visible is not None
+        # Not visible when show_cost=False
+        ctx = _make_ctx(show_cost=False, any_has_subtree_cost=True)
+        assert col.visible(ctx) is False
+        # Not visible when no subtree costs
+        ctx = _make_ctx(show_cost=True, any_has_subtree_cost=False)
+        assert col.visible(ctx) is False
+        # Visible when both conditions met
+        ctx = _make_ctx(show_cost=True, any_has_subtree_cost=True)
+        assert col.visible(ctx) is True
+
+
+class TestRenderSubtreeCostPlain:
+    def test_shows_subtree_cost(self):
+        ctx = _make_ctx(subtree_cost_usd=3.25)
+        result = render_subtree_cost_plain(ctx)
+        assert result is not None
+        assert "Σ" in result
+        assert "$" in result
+
+    def test_returns_none_when_zero(self):
+        ctx = _make_ctx(subtree_cost_usd=0.0)
+        result = render_subtree_cost_plain(ctx)
         assert result is None

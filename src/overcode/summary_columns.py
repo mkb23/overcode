@@ -138,6 +138,10 @@ class ColumnContext:
     any_is_sleeping: bool = False  # True if any agent is busy_sleeping
     sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
 
+    # Subtree cost (parent + all descendants)
+    subtree_cost_usd: float = 0.0
+    any_has_subtree_cost: bool = False
+
     # PR number (widget var, not session — survives session replacement)
     pr_number: Optional[int] = None
     any_has_pr: bool = False
@@ -376,6 +380,20 @@ def render_budget(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if s.cost_budget_usd > 0:
         return [(f"/{format_cost(s.cost_budget_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+    return None
+
+
+def render_subtree_cost(ctx: ColumnContext) -> ColumnOutput:
+    """Subtree cost (self + descendants). Visibility gated by column's visible callback."""
+    if ctx.subtree_cost_usd > 0:
+        return [(f" Σ{format_cost(ctx.subtree_cost_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+    return None
+
+
+def render_subtree_cost_plain(ctx: ColumnContext) -> Optional[str]:
+    """Subtree cost for CLI."""
+    if ctx.subtree_cost_usd > 0:
+        return f"Σ{format_cost(ctx.subtree_cost_usd)}"
     return None
 
 
@@ -818,6 +836,11 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget,
                   visible=lambda ctx: ctx.show_cost and ctx.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget"),
+    SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=ALL,
+                  render=render_subtree_cost, label="Subtree",
+                  render_plain=render_subtree_cost_plain,
+                  visible=lambda ctx: ctx.show_cost and ctx.any_has_subtree_cost,
+                  placeholder_width=8, header="SUB$", name="Subtree Cost"),
 
     # Context group — always visible, independent of $ toggle
     SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
@@ -882,6 +905,7 @@ def build_cli_context(
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
     max_branch_width: int = 10, all_names_match_repos: bool = False,
+    subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status)
@@ -957,6 +981,8 @@ def build_cli_context(
         is_remote=getattr(session, 'is_remote', False),
         has_sisters=has_sisters,
         local_hostname=local_hostname,
+        subtree_cost_usd=subtree_cost_usd,
+        any_has_subtree_cost=any_has_subtree_cost,
     )
 
 

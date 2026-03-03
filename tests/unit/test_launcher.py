@@ -1193,6 +1193,129 @@ class TestCLIFlagPassthrough:
 
 
 # =============================================================================
+# Budget at launch tests
+# =============================================================================
+
+class TestBudgetAtLaunch:
+    """Test budget_usd parameter on ClaudeLauncher.launch()."""
+
+    def test_budget_no_parent_sets_directly(self, tmp_path):
+        """Budget without parent sets cost_budget_usd directly."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="budgeted", budget_usd=5.00)
+        assert session is not None
+        # Reload to verify persistence
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded.cost_budget_usd == 5.00
+
+    def test_budget_with_unlimited_parent(self, tmp_path):
+        """Budget with unlimited parent (0) sets child budget without deducting from parent."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent")
+        assert parent is not None
+        assert parent.cost_budget_usd == 0.0  # unlimited
+
+        child = launcher.launch(name="child", parent_name="parent", budget_usd=3.00)
+        assert child is not None
+        child_reloaded = session_manager.get_session(child.id)
+        assert child_reloaded.cost_budget_usd == 3.00
+        # Parent unchanged (unlimited)
+        parent_reloaded = session_manager.get_session(parent.id)
+        assert parent_reloaded.cost_budget_usd == 0.0
+
+    def test_budget_with_finite_parent_deducts(self, tmp_path):
+        """Budget with finite parent deducts from parent's budget."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent", budget_usd=10.00)
+        assert parent is not None
+
+        child = launcher.launch(name="child", parent_name="parent", budget_usd=3.00)
+        assert child is not None
+        child_reloaded = session_manager.get_session(child.id)
+        assert child_reloaded.cost_budget_usd == 3.00
+        parent_reloaded = session_manager.get_session(parent.id)
+        assert parent_reloaded.cost_budget_usd == 7.00  # 10 - 3
+
+    def test_budget_insufficient_parent_fails(self, tmp_path):
+        """Budget exceeding parent's finite budget fails and cleans up."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        parent = launcher.launch(name="parent", budget_usd=2.00)
+        assert parent is not None
+
+        result = launcher.launch(name="child", parent_name="parent", budget_usd=5.00)
+        assert result is None  # Should fail
+        # Parent budget unchanged
+        parent_reloaded = session_manager.get_session(parent.id)
+        assert parent_reloaded.cost_budget_usd == 2.00
+        # Child session cleaned up
+        assert session_manager.get_session_by_name("child") is None
+
+    def test_budget_none_does_nothing(self, tmp_path):
+        """budget_usd=None (default) doesn't set any budget."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="no-budget")
+        assert session is not None
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded.cost_budget_usd == 0.0
+
+    def test_budget_zero_does_nothing(self, tmp_path):
+        """budget_usd=0 doesn't set any budget."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="zero-budget", budget_usd=0.0)
+        assert session is not None
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded.cost_budget_usd == 0.0
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

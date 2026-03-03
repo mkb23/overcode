@@ -25,6 +25,7 @@ overcode launch --name <name> [options]
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
 | `--allowed-tools` | | Comma-separated tools for Claude (e.g., `Read,Glob,Grep,Edit`). Maps to `--allowedTools` |
 | `--claude-arg` | | Extra Claude CLI flag (repeatable). Each value is a space-separated flag+value string |
+| `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Examples:**
@@ -49,6 +50,9 @@ overcode launch -n reviewer -d ~/project --allowed-tools "Read,Glob,Grep" --skip
 
 # Pass extra Claude CLI flags
 overcode launch -n fast -d ~/project --claude-arg "--model haiku" --claude-arg "--effort low"
+
+# Launch with a cost budget (auto-deducted from parent if parent has budget)
+overcode launch -n task --budget 2.00 -p "Fix the bug. When done: overcode report --status success"
 ```
 
 ### `overcode list`
