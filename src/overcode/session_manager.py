@@ -150,6 +150,7 @@ class Session:
     remote_median_work_time: float = 0.0  # Median work time from remote API
     remote_activity_summary: str = ""  # AI summary from remote summarizer
     remote_activity_summary_context: str = ""  # AI context summary from remote summarizer
+    remote_daemon_state: Optional[dict] = None  # Raw daemon state dict from sister API (for generic forwarding)
 
     def to_dict(self) -> dict:
         data = asdict(self)
