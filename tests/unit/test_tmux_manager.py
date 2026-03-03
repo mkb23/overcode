@@ -681,6 +681,15 @@ class TestTmuxManagerLibtmuxWindows:
         assert result is False
 
 
+def _our_sleep_calls(mock_sleep):
+    """Filter mock_sleep calls to only those with durations used by send_keys (0.1, 0.15).
+
+    Background threads may pollute the mock with unrelated time.sleep(1.0) calls,
+    causing flaky assert_called_once_with / assert_not_called failures (#333).
+    """
+    return [c for c in mock_sleep.call_args_list if c in (call(0.1), call(0.15))]
+
+
 class TestTmuxManagerLibtmuxKeys:
     """Test send_keys via libtmux path including ! command handling."""
 
@@ -708,7 +717,7 @@ class TestTmuxManagerLibtmuxKeys:
         assert mock_pane.send_keys.call_count == 2
         mock_pane.send_keys.assert_any_call("echo hello", enter=False)
         mock_pane.send_keys.assert_any_call("", enter=True)
-        mock_sleep.assert_called_once_with(0.1)
+        assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_normal_text_without_enter(self, mock_sleep):
@@ -721,7 +730,7 @@ class TestTmuxManagerLibtmuxKeys:
         assert result is True
         mock_pane.send_keys.assert_called_once_with("partial text", enter=False)
         # No Enter call
-        mock_sleep.assert_called_once_with(0.1)
+        assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_empty_text_with_enter(self, mock_sleep):
@@ -734,7 +743,7 @@ class TestTmuxManagerLibtmuxKeys:
         assert result is True
         # Empty keys means the `if keys:` block is skipped
         mock_pane.send_keys.assert_called_once_with("", enter=True)
-        mock_sleep.assert_not_called()
+        assert _our_sleep_calls(mock_sleep) == []
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_empty_text_without_enter(self, mock_sleep):
@@ -746,7 +755,7 @@ class TestTmuxManagerLibtmuxKeys:
 
         assert result is True
         mock_pane.send_keys.assert_not_called()
-        mock_sleep.assert_not_called()
+        assert _our_sleep_calls(mock_sleep) == []
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_bang_command_splits_exclamation(self, mock_sleep):
@@ -764,9 +773,7 @@ class TestTmuxManagerLibtmuxKeys:
         assert calls[1] == call("ls -la", enter=False)
         assert calls[2] == call("", enter=True)
         # Two sleeps: 0.15 after !, 0.1 after rest
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_any_call(0.15)
-        mock_sleep.assert_any_call(0.1)
+        assert _our_sleep_calls(mock_sleep) == [call(0.15), call(0.1)]
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_bang_only_not_split(self, mock_sleep):
@@ -781,7 +788,7 @@ class TestTmuxManagerLibtmuxKeys:
         calls = mock_pane.send_keys.call_args_list
         assert calls[0] == call("!", enter=False)
         assert calls[1] == call("", enter=True)
-        mock_sleep.assert_called_once_with(0.1)
+        assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
     @patch("overcode.tmux_manager.time.sleep")
     def test_send_keys_bang_command_without_enter(self, mock_sleep):
