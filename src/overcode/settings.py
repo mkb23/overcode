@@ -430,12 +430,11 @@ class TUIPreferences:
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
-    # Column group visibility (group_id -> enabled) for summary line (#178)
-    summary_groups: dict = field(default_factory=lambda: {
-        "time": True, "llm_usage": True, "context": True, "git": True,
-        "supervision": True, "priority": True, "performance": True,
-        "subprocesses": True,
-    })
+    # Per-level column overrides: {"low": {"uptime": true, ...}, "med": {...}, "high": {...}}
+    # Only stores explicit user overrides. Missing = use default from detail_levels.
+    column_config: dict = field(default_factory=dict)
+    # Show abbreviated column headers above summary lines
+    show_column_headers: bool = False
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -452,14 +451,13 @@ class TUIPreferences:
                 if not isinstance(data, dict):
                     return cls()
 
-                # Default summary groups visibility
-                default_summary_groups = {
-                    "time": True, "llm_usage": True, "context": True, "git": True,
-                    "supervision": True, "priority": True, "performance": True,
-                    "subprocesses": True,
-                }
+                # Migration: map "custom" detail level to "full"
+                summary_detail = data.get("summary_detail", "low")
+                if summary_detail == "custom":
+                    summary_detail = "full"
+
                 return cls(
-                    summary_detail=data.get("summary_detail", "low"),
+                    summary_detail=summary_detail,
                     detail_lines=data.get("detail_lines", 5),
                     timeline_visible=data.get("timeline_visible", True),
                     daemon_panel_visible=data.get("daemon_panel_visible", False),
@@ -474,7 +472,8 @@ class TUIPreferences:
                     monochrome=data.get("monochrome", False),
                     show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
-                    summary_groups=data.get("summary_groups", default_summary_groups),
+                    column_config=data.get("column_config", {}),
+                    show_column_headers=data.get("show_column_headers", False),
                     timeline_hours=data.get("timeline_hours", 3.0),
                     notifications=data.get("notifications", "off"),
                 )
@@ -505,7 +504,8 @@ class TUIPreferences:
                     "monochrome": self.monochrome,
                     "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
-                    "summary_groups": self.summary_groups,
+                    "column_config": self.column_config,
+                    "show_column_headers": self.show_column_headers,
                     "timeline_hours": self.timeline_hours,
                     "notifications": self.notifications,
                 }, f, indent=2)

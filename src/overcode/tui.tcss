@@ -28,6 +28,14 @@ Header {
     border-bottom: solid $panel;
 }
 
+#column-headers {
+    height: 1;
+    width: 100%;
+    background: $surface;
+    color: $text-muted;
+    padding: 0 1;
+}
+
 #sessions-container {
     height: 1fr;
     width: 100%;

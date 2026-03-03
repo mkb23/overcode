@@ -198,9 +198,9 @@ class TestColumnStructure:
 
     def test_convenience_constants(self):
         """Verify convenience constant values."""
-        assert ALL == {"low", "med", "full", "custom"}
-        assert MED_PLUS == {"med", "full", "custom"}
-        assert FULL_PLUS == {"full", "custom"}
+        assert ALL == {"low", "med", "high", "full"}
+        assert MED_PLUS == {"med", "high", "full"}
+        assert FULL_PLUS == {"high", "full"}  # FULL_PLUS is alias for HIGH_PLUS
 
     def test_every_column_has_render_callable(self):
         """Every column must have a callable render function."""
@@ -279,7 +279,7 @@ class TestColumnGating:
         """Columns with ALL detail should be visible in every mode."""
         for col in SUMMARY_COLUMNS:
             if col.detail_levels == ALL:
-                for level in ("low", "med", "full", "custom"):
+                for level in ("low", "med", "high", "full"):
                     assert level in col.detail_levels
 
 

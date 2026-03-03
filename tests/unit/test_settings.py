@@ -449,18 +449,18 @@ class TestTUIPreferences:
             assert loaded.show_terminated is True
             assert loaded.view_mode == "list_preview"
 
-    def test_has_summary_groups(self):
-        """TUIPreferences should have summary_groups field for column visibility (#178)."""
+    def test_has_column_config(self):
+        """TUIPreferences should have column_config field for per-level overrides."""
         from overcode.settings import TUIPreferences
 
         prefs = TUIPreferences()
-        assert hasattr(prefs, 'summary_groups')
-        assert isinstance(prefs.summary_groups, dict)
-        # All toggleable groups should be present
-        expected_groups = ["time", "llm_usage", "context", "git", "supervision", "priority", "performance"]
-        for group_id in expected_groups:
-            assert group_id in prefs.summary_groups
-            assert isinstance(prefs.summary_groups[group_id], bool)
+        assert hasattr(prefs, 'column_config')
+        assert isinstance(prefs.column_config, dict)
+        # Starts empty (no overrides)
+        assert prefs.column_config == {}
+        # Also has show_column_headers
+        assert hasattr(prefs, 'show_column_headers')
+        assert prefs.show_column_headers is False
 
     def test_show_done_always_starts_false(self, tmp_path):
         """show_done should always load as False, even if saved as True (#319).
@@ -497,35 +497,43 @@ class TestTUIPreferences:
             data = json.loads(prefs_file.read_text())
             assert "show_done" not in data
 
-    def test_summary_groups_persist(self, tmp_path):
-        """TUIPreferences should persist summary_groups settings (#178)."""
+    def test_column_config_persist(self, tmp_path):
+        """TUIPreferences should persist column_config settings."""
         from overcode.settings import TUIPreferences, ensure_session_dir
 
         with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
             ensure_session_dir("test-session")
 
-            # Save preferences with modified summary_groups
+            # Save preferences with per-level column overrides
             original = TUIPreferences()
-            original.summary_groups = {
-                "time": False,
-                "tokens": True,
-                "git": False,
-                "supervision": True,
-                "priority": False,
-                "performance": True,
-                "subprocesses": True,
+            original.column_config = {
+                "low": {"uptime": True, "running_time": True},
+                "med": {"active_pct": True},
             }
+            original.show_column_headers = True
             original.save("test-session")
 
             # Load and verify
             loaded = TUIPreferences.load("test-session")
-            assert loaded.summary_groups["time"] is False
-            assert loaded.summary_groups["tokens"] is True
-            assert loaded.summary_groups["git"] is False
-            assert loaded.summary_groups["supervision"] is True
-            assert loaded.summary_groups["priority"] is False
-            assert loaded.summary_groups["performance"] is True
-            assert loaded.summary_groups["subprocesses"] is True
+            assert loaded.column_config["low"]["uptime"] is True
+            assert loaded.column_config["low"]["running_time"] is True
+            assert loaded.column_config["med"]["active_pct"] is True
+            assert loaded.show_column_headers is True
+
+    def test_custom_detail_level_migrates_to_full(self, tmp_path):
+        """Loading 'custom' summary_detail should migrate to 'full'."""
+        from overcode.settings import TUIPreferences, ensure_session_dir
+        import json
+
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("test-session")
+
+            # Write old-style prefs with custom detail level
+            prefs_file = tmp_path / "test-session" / "tui_preferences.json"
+            prefs_file.write_text(json.dumps({"summary_detail": "custom"}))
+
+            loaded = TUIPreferences.load("test-session")
+            assert loaded.summary_detail == "full"
 
 
 # =============================================================================

@@ -236,14 +236,16 @@ class TestCycleSummary:
 
         mock_tui = MagicMock()
         mock_tui.summary_level_index = 0
-        mock_tui.SUMMARY_LEVELS = ["low", "med", "full", "custom"]
+        mock_tui.SUMMARY_LEVELS = ["low", "med", "high", "full"]
         mock_tui.query.return_value = [widget1]
         mock_tui._prefs = MagicMock()
+        mock_tui._prefs.column_config = {}
 
         ViewActionsMixin.action_cycle_summary(mock_tui)
 
         assert mock_tui.summary_level_index == 1
         assert widget1.summary_detail == "med"
+        assert widget1.column_overrides == {}
         assert mock_tui._prefs.summary_detail == "med"
         mock_tui._save_prefs.assert_called_once()
         assert "med" in mock_tui.notify.call_args[0][0]
@@ -253,10 +255,11 @@ class TestCycleSummary:
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.summary_level_index = 3  # Last (custom)
-        mock_tui.SUMMARY_LEVELS = ["low", "med", "full", "custom"]
+        mock_tui.summary_level_index = 3  # Last (full)
+        mock_tui.SUMMARY_LEVELS = ["low", "med", "high", "full"]
         mock_tui.query.return_value = []
         mock_tui._prefs = MagicMock()
+        mock_tui._prefs.column_config = {}
 
         ViewActionsMixin.action_cycle_summary(mock_tui)
 

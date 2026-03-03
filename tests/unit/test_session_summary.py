@@ -99,15 +99,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget._status_changed_at = None
     widget._last_known_status = "running"
     widget.summary_detail = "low"
-    widget.summary_groups = {
-        "time": True,
-        "tokens": True,
-        "git": True,
-        "supervision": True,
-        "priority": True,
-        "performance": True,
-        "subprocesses": True,
-    }
+    widget.column_overrides = {}
     # Apply any caller-specified overrides
     for k, v in extra_attrs.items():
         setattr(widget, k, v)
@@ -203,64 +195,56 @@ class TestFormatStandingInstructions:
 
 
 # ===========================================================================
-# group_enabled
+# column_visible
 # ===========================================================================
 
 
-class TestGroupEnabled:
-    """Tests for SessionSummary.group_enabled."""
+class TestColumnVisible:
+    """Tests for SessionSummary.column_visible with per-level overrides."""
 
-    def test_non_custom_mode_always_returns_true(self):
-        """In low/med/full modes all groups are enabled regardless of settings."""
-        for mode in ("low", "med", "full"):
-            widget = _make_bare_widget(summary_detail=mode)
-            widget.summary_groups = {"time": False, "tokens": False}
-            assert widget.group_enabled("time") is True
-            assert widget.group_enabled("tokens") is True
+    def test_full_mode_always_visible(self):
+        """In full mode all columns are visible regardless of overrides."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="full")
+        widget.column_overrides = {"uptime": False, "running_time": False}
+        for col in SUMMARY_COLUMNS:
+            assert widget.column_visible(col) is True
 
-    def test_custom_mode_respects_enabled_group(self):
-        """In custom mode, an enabled group returns True."""
-        widget = _make_bare_widget(
-            summary_detail="custom",
-            summary_groups={"time": True},
-        )
-        assert widget.group_enabled("time") is True
+    def test_default_visibility_from_detail_levels(self):
+        """Without overrides, visibility comes from detail_levels."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="low")
+        widget.column_overrides = {}
+        # status_symbol has ALL detail_levels, should be visible in low
+        status_col = next(c for c in SUMMARY_COLUMNS if c.id == "status_symbol")
+        assert widget.column_visible(status_col) is True
+        # uptime has MED_PLUS, should not be visible in low
+        uptime_col = next(c for c in SUMMARY_COLUMNS if c.id == "uptime")
+        assert widget.column_visible(uptime_col) is False
 
-    def test_custom_mode_respects_disabled_group(self):
-        """In custom mode, a disabled group returns False."""
-        widget = _make_bare_widget(
-            summary_detail="custom",
-            summary_groups={"tokens": False},
-        )
-        assert widget.group_enabled("tokens") is False
+    def test_override_adds_column(self):
+        """Override can add a column not in default detail_levels."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="low")
+        widget.column_overrides = {"uptime": True}
+        uptime_col = next(c for c in SUMMARY_COLUMNS if c.id == "uptime")
+        assert widget.column_visible(uptime_col) is True
 
-    def test_custom_mode_unknown_group_defaults_true(self):
-        """Unknown group IDs default to True even in custom mode."""
-        widget = _make_bare_widget(
-            summary_detail="custom",
-            summary_groups={},
-        )
-        assert widget.group_enabled("nonexistent_group") is True
+    def test_override_removes_column(self):
+        """Override can remove a column that is in default detail_levels."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="med")
+        widget.column_overrides = {"uptime": False}
+        uptime_col = next(c for c in SUMMARY_COLUMNS if c.id == "uptime")
+        assert widget.column_visible(uptime_col) is False
 
-    def test_custom_mode_multiple_groups_mixed(self):
-        """In custom mode, each group is checked independently."""
-        widget = _make_bare_widget(
-            summary_detail="custom",
-            summary_groups={
-                "time": True,
-                "tokens": False,
-                "git": True,
-                "supervision": False,
-                "priority": True,
-                "performance": False,
-            },
-        )
-        assert widget.group_enabled("time") is True
-        assert widget.group_enabled("tokens") is False
-        assert widget.group_enabled("git") is True
-        assert widget.group_enabled("supervision") is False
-        assert widget.group_enabled("priority") is True
-        assert widget.group_enabled("performance") is False
+    def test_high_level_includes_subprocess_columns(self):
+        """High detail level should include HIGH_PLUS columns like subagent_count."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="high")
+        widget.column_overrides = {}
+        sub_col = next(c for c in SUMMARY_COLUMNS if c.id == "subagent_count")
+        assert widget.column_visible(sub_col) is True
 
 
 # ===========================================================================

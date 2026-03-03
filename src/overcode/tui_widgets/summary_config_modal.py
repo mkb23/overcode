@@ -1,109 +1,244 @@
 """
 Summary line configuration modal for TUI.
 
-Simple keyboard-navigable list to toggle column group visibility.
-Creates a "custom" summary detail level alongside low/med/full.
-Updates live summary lines as you toggle groups.
+Two-level tree: groups expand to show individual columns.
+Edits per-level column overrides (low/med/high).
+Updates live summary lines as you toggle groups/columns.
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
 
-from ..summary_groups import get_toggleable_groups
+from ..summary_groups import SUMMARY_GROUPS, SUMMARY_GROUPS_BY_ID
+from ..summary_columns import SUMMARY_COLUMNS, SummaryColumn, resolve_column_visible
+
+
+# Build group -> columns mapping
+def _columns_by_group() -> Dict[str, List[SummaryColumn]]:
+    result: Dict[str, List[SummaryColumn]] = {}
+    for col in SUMMARY_COLUMNS:
+        result.setdefault(col.group, []).append(col)
+    return result
 
 
 class SummaryConfigModal(Static, can_focus=True):
-    """Modal dialog for configuring summary line column visibility.
+    """Modal dialog for configuring per-level column visibility.
 
-    Navigate with j/k or up/down arrows, toggle with space/enter.
-    Updates live summary lines as you make changes.
+    Two-level tree: groups expand to show individual columns.
+    Navigate with j/k, toggle with space, expand/collapse with l/h.
     """
 
     class ConfigChanged(Message):
         """Message sent when configuration is applied."""
 
-        def __init__(self, summary_groups: Dict[str, bool]) -> None:
+        def __init__(self, level: str, overrides: Dict[str, bool]) -> None:
             super().__init__()
-            self.summary_groups = summary_groups
+            self.level = level
+            self.overrides = overrides
 
     class Cancelled(Message):
         """Message sent when modal is cancelled."""
         pass
 
-    def __init__(self, current_config: Dict[str, bool], *args, **kwargs) -> None:
+    def __init__(self, current_config: dict = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.groups = get_toggleable_groups()
-        self.config = dict(current_config)
-        self.original_config: Dict[str, bool] = {}
-        for group in self.groups:
-            if group.id not in self.config:
-                self.config[group.id] = group.default_enabled
-        self.selected_index = 0
+        self.level: str = "med"
+        self.overrides: Dict[str, bool] = {}
+        self.original_overrides: Dict[str, bool] = {}
+        self.expanded_groups: set = set()
+        self.cursor_pos: int = 0
         self._app_ref: Optional[Any] = None
         self._previous_focus: Optional[Any] = None
+        self._cols_by_group = _columns_by_group()
+        self._flat_rows: List[Tuple[str, str]] = []
+        self._rebuild_flat_rows()
+
+    def _rebuild_flat_rows(self) -> None:
+        """Rebuild flattened row list from groups + expanded state."""
+        rows: List[Tuple[str, str]] = []
+        for group in SUMMARY_GROUPS:
+            rows.append(("group", group.id))
+            if group.id in self.expanded_groups:
+                for col in self._cols_by_group.get(group.id, []):
+                    rows.append(("column", col.id))
+        self._flat_rows = rows
+        # Clamp cursor
+        if self._flat_rows:
+            self.cursor_pos = min(self.cursor_pos, len(self._flat_rows) - 1)
+
+    def _col_effective(self, col_id: str) -> bool:
+        """Get effective visibility for a column at current level."""
+        col = next((c for c in SUMMARY_COLUMNS if c.id == col_id), None)
+        if col is None:
+            return False
+        return resolve_column_visible(col, self.level, self.overrides)
+
+    def _col_default(self, col_id: str) -> bool:
+        """Get default visibility for a column at current level (no overrides)."""
+        col = next((c for c in SUMMARY_COLUMNS if c.id == col_id), None)
+        if col is None:
+            return False
+        return self.level in col.detail_levels
+
+    def _group_state(self, group_id: str) -> str:
+        """Get group checkbox state: 'all', 'none', or 'mixed'."""
+        cols = self._cols_by_group.get(group_id, [])
+        if not cols:
+            return "all"
+        on_count = sum(1 for c in cols if self._col_effective(c.id))
+        if on_count == len(cols):
+            return "all"
+        elif on_count == 0:
+            return "none"
+        return "mixed"
 
     def render(self) -> Text:
         """Render the modal content."""
-        return self._build_list_text()
-
-    def _build_list_text(self) -> Text:
-        """Build the list of groups with checkboxes."""
         text = Text()
-        text.append("Column Configuration\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  a:accept  q:cancel\n\n", style="dim")
+        text.append(f"Column Configuration ({self.level})\n", style="bold cyan")
+        text.append("j/k:move  space:toggle  l/h:expand  a:accept  q:cancel  r:reset\n\n", style="dim")
 
-        for i, group in enumerate(self.groups):
-            is_selected = i == self.selected_index
-            is_enabled = self.config.get(group.id, True)
+        for i, (row_type, row_id) in enumerate(self._flat_rows):
+            is_cursor = i == self.cursor_pos
+            prefix = "> " if is_cursor else "  "
+            cursor_style = "bold cyan" if is_cursor else ""
 
-            if is_selected:
-                text.append("> ", style="bold cyan")
-            else:
-                text.append("  ", style="")
+            if row_type == "group":
+                group = SUMMARY_GROUPS_BY_ID.get(row_id)
+                if group is None:
+                    continue
+                is_identity = group.always_visible
+                state = self._group_state(row_id)
+                expanded = row_id in self.expanded_groups
+                has_cols = bool(self._cols_by_group.get(row_id))
 
-            if is_enabled:
-                text.append("[x] ", style="bold green")
-            else:
-                text.append("[ ] ", style="dim")
+                # Checkbox
+                if state == "all":
+                    check = "[x]"
+                    check_style = "bold green" if not is_identity else "dim green"
+                elif state == "none":
+                    check = "[ ]"
+                    check_style = "dim"
+                else:
+                    check = "[-]"
+                    check_style = "bold yellow"
 
-            style = "bold" if is_selected else ""
-            text.append(f"{group.name}\n", style=style)
+                # Expand indicator
+                if has_cols:
+                    arrow = " \u25be " if expanded else " \u25b8 "
+                else:
+                    arrow = "   "
+
+                text.append(prefix, style=cursor_style)
+                text.append(check, style=check_style if not is_identity else "dim")
+                text.append(arrow, style="dim")
+                name_style = "bold" if is_cursor else ("dim" if is_identity else "")
+                text.append(f"{group.name}\n", style=name_style)
+
+            elif row_type == "column":
+                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
+                if col is None:
+                    continue
+                is_on = self._col_effective(row_id)
+                is_default = self._col_default(row_id)
+                is_identity = col.group == "identity"
+
+                check = "[x]" if is_on else "[ ]"
+                check_style = "bold green" if is_on else "dim"
+
+                # Marker for non-default state
+                marker = ""
+                if is_on and not is_default:
+                    marker = " +"
+                elif not is_on and is_default:
+                    marker = " -"
+
+                display_name = col.name or col.id
+
+                text.append(prefix, style=cursor_style)
+                text.append("     ", style="")  # indent under group
+                text.append(check, style=check_style if not is_identity else "dim")
+                text.append(" ", style="")
+                name_style = "bold" if is_cursor else ("dim" if is_identity else "")
+                text.append(display_name, style=name_style)
+                if marker:
+                    text.append(marker, style="bold cyan" if marker == " +" else "bold red")
+                text.append("\n", style="")
 
         return text
 
     def _update_live_summaries(self) -> None:
-        """Update the live summary lines with current config."""
+        """Update the live summary lines with current overrides."""
         if self._app_ref is None:
             return
         try:
             from .session_summary import SessionSummary
             for widget in self._app_ref.query(SessionSummary):
-                widget.summary_groups = self.config
+                widget.column_overrides = self.overrides
                 widget.refresh()
+            # Recompute column widths
+            if hasattr(self._app_ref, '_recompute_cell_column_widths'):
+                self._app_ref._recompute_cell_column_widths()
+                for widget in self._app_ref.query(SessionSummary):
+                    widget.refresh()
         except Exception:
             pass
 
     def on_key(self, event: events.Key) -> None:
         """Handle keyboard navigation."""
         key = event.key
+        if not self._flat_rows:
+            if key in ("escape", "q", "Q"):
+                self._cancel()
+                event.stop()
+            return
 
         if key in ("j", "down"):
-            self.selected_index = (self.selected_index + 1) % len(self.groups)
+            self.cursor_pos = (self.cursor_pos + 1) % len(self._flat_rows)
             self.refresh()
             event.stop()
 
         elif key in ("k", "up"):
-            self.selected_index = (self.selected_index - 1) % len(self.groups)
+            self.cursor_pos = (self.cursor_pos - 1) % len(self._flat_rows)
             self.refresh()
             event.stop()
 
+        elif key in ("l", "right"):
+            # Expand group
+            row_type, row_id = self._flat_rows[self.cursor_pos]
+            if row_type == "group" and row_id not in self.expanded_groups:
+                self.expanded_groups.add(row_id)
+                self._rebuild_flat_rows()
+                self.refresh()
+            event.stop()
+
+        elif key in ("h", "left"):
+            # Collapse group
+            row_type, row_id = self._flat_rows[self.cursor_pos]
+            if row_type == "group" and row_id in self.expanded_groups:
+                self.expanded_groups.discard(row_id)
+                self._rebuild_flat_rows()
+                self.refresh()
+            elif row_type == "column":
+                # Find parent group and collapse it
+                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
+                if col and col.group in self.expanded_groups:
+                    self.expanded_groups.discard(col.group)
+                    # Move cursor to the parent group row
+                    self._rebuild_flat_rows()
+                    for j, (rt, rid) in enumerate(self._flat_rows):
+                        if rt == "group" and rid == col.group:
+                            self.cursor_pos = j
+                            break
+                    self.refresh()
+            event.stop()
+
         elif key in ("space", "enter"):
-            group_id = self.groups[self.selected_index].id
-            self.config[group_id] = not self.config.get(group_id, True)
+            self._toggle_current()
             self.refresh()
             self._update_live_summaries()
             event.stop()
@@ -112,14 +247,45 @@ class SummaryConfigModal(Static, can_focus=True):
             self._apply_config()
             event.stop()
 
+        elif key in ("r", "R"):
+            # Reset current level to defaults (clear all overrides)
+            self.overrides = {}
+            self.refresh()
+            self._update_live_summaries()
+            event.stop()
+
         elif key in ("escape", "q", "Q"):
             self._cancel()
             event.stop()
 
+    def _toggle_current(self) -> None:
+        """Toggle the currently selected row."""
+        if not self._flat_rows:
+            return
+        row_type, row_id = self._flat_rows[self.cursor_pos]
+
+        if row_type == "group":
+            group = SUMMARY_GROUPS_BY_ID.get(row_id)
+            if group and group.always_visible:
+                return  # Can't toggle identity group
+            cols = self._cols_by_group.get(row_id, [])
+            # Determine current group state
+            state = self._group_state(row_id)
+            # If all on -> set all off; otherwise -> set all on
+            new_val = state != "all"
+            for col in cols:
+                self.overrides[col.id] = new_val
+
+        elif row_type == "column":
+            col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
+            if col and col.group == "identity":
+                return  # Can't toggle identity columns
+            current = self._col_effective(row_id)
+            self.overrides[row_id] = not current
+
     def _hide(self) -> None:
         """Hide the modal and restore focus."""
         self.remove_class("visible")
-        # Restore focus to previously focused widget
         if self._previous_focus is not None:
             try:
                 self._previous_focus.focus()
@@ -129,35 +295,38 @@ class SummaryConfigModal(Static, can_focus=True):
 
     def _apply_config(self) -> None:
         """Apply the current configuration."""
-        self.post_message(self.ConfigChanged(self.config))
+        # Clean up overrides that match defaults (no need to store them)
+        cleaned = {}
+        for col_id, val in self.overrides.items():
+            if val != self._col_default(col_id):
+                cleaned[col_id] = val
+        self.post_message(self.ConfigChanged(self.level, cleaned))
         self._hide()
 
     def _cancel(self) -> None:
         """Cancel and restore original config."""
-        self.config = dict(self.original_config)
+        self.overrides = dict(self.original_overrides)
         self._update_live_summaries()
         self.post_message(self.Cancelled())
         self._hide()
 
-    def show(self, current_config: Dict[str, bool], app_ref: Optional[Any] = None) -> None:
-        """Show the modal with the given configuration."""
-        self.config = dict(current_config)
-        self.original_config = dict(current_config)
+    def show(self, level: str, overrides: Dict[str, bool], app_ref: Optional[Any] = None) -> None:
+        """Show the modal for editing a specific level's column overrides."""
+        self.level = level
+        self.overrides = dict(overrides)
+        self.original_overrides = dict(overrides)
         self._app_ref = app_ref
-        # Store the currently focused widget to restore later
         self._previous_focus = None
         if app_ref:
             try:
                 self._previous_focus = app_ref.focused
             except Exception:
                 pass
-        for group in self.groups:
-            if group.id not in self.config:
-                self.config[group.id] = group.default_enabled
-        self.selected_index = 0
+        self.expanded_groups = set()
+        self.cursor_pos = 0
+        self._rebuild_flat_rows()
         self.refresh()
         self.add_class("visible")
-        # Position is set via CSS offset
         try:
             self.focus()
         except Exception:

@@ -1335,20 +1335,15 @@ class TestSupervisorTUIPilot:
 
     @pytest.mark.asyncio
     async def test_summary_detail_cycling(self):
-        """Pressing s cycles summary detail level through low->med->full->custom"""
+        """Pressing s cycles summary detail level through low->med->high->full"""
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
-            # Starts at index 2 ("full") - the new default
-            assert app.summary_level_index == 2
-            assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
-
-            # Cycle to "custom"
-            await pilot.press("s")
+            # Starts at index 3 ("full") - the default
             assert app.summary_level_index == 3
-            assert app.SUMMARY_LEVELS[app.summary_level_index] == "custom"
+            assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
 
             # Cycle to "low"
             await pilot.press("s")
@@ -1360,9 +1355,14 @@ class TestSupervisorTUIPilot:
             assert app.summary_level_index == 1
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "med"
 
-            # Cycle back to "full"
+            # Cycle to "high"
             await pilot.press("s")
             assert app.summary_level_index == 2
+            assert app.SUMMARY_LEVELS[app.summary_level_index] == "high"
+
+            # Cycle back to "full"
+            await pilot.press("s")
+            assert app.summary_level_index == 3
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
 
     @pytest.mark.asyncio
