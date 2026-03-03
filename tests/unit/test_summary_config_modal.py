@@ -58,33 +58,14 @@ class TestSummaryConfigModal:
         modal.overrides = {c.id: False for c in time_cols}
         assert modal._group_state("time") == "none"
 
-    def test_flat_rows_initially_groups_only(self):
-        """Initially only group rows are shown (none expanded)."""
+    def test_flat_rows_includes_groups_and_columns(self):
+        """All groups and their columns are shown from the start."""
         modal = SummaryConfigModal()
-        assert all(rt == "group" for rt, _ in modal._flat_rows)
-        assert len(modal._flat_rows) == len(SUMMARY_GROUPS)
-
-    def test_expand_group_adds_columns(self):
-        """Expanding a group should add column rows."""
-        modal = SummaryConfigModal()
-        initial_count = len(modal._flat_rows)
-        modal.expanded_groups.add("time")
-        modal._rebuild_flat_rows()
-        assert len(modal._flat_rows) > initial_count
-        # Check that time column rows are present
-        time_rows = [(rt, rid) for rt, rid in modal._flat_rows if rt == "column"]
-        assert len(time_rows) > 0
-
-    def test_collapse_group_removes_columns(self):
-        """Collapsing an expanded group should remove column rows."""
-        modal = SummaryConfigModal()
-        modal.expanded_groups.add("time")
-        modal._rebuild_flat_rows()
-        expanded_count = len(modal._flat_rows)
-
-        modal.expanded_groups.discard("time")
-        modal._rebuild_flat_rows()
-        assert len(modal._flat_rows) < expanded_count
+        group_rows = [r for r in modal._flat_rows if r[0] == "group"]
+        col_rows = [r for r in modal._flat_rows if r[0] == "column"]
+        assert len(group_rows) == len(SUMMARY_GROUPS)
+        assert len(col_rows) > 0
+        assert len(modal._flat_rows) == len(group_rows) + len(col_rows)
 
     def test_show_sets_level_and_overrides(self):
         """show() should set level and overrides."""

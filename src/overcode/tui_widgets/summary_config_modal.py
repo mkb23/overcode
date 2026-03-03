@@ -1,7 +1,7 @@
 """
 Summary line configuration modal for TUI.
 
-Two-level tree: groups expand to show individual columns.
+Groups with individual columns shown inline.
 Edits per-level column overrides (low/med/high).
 Updates live summary lines as you toggle groups/columns.
 """
@@ -28,8 +28,8 @@ def _columns_by_group() -> Dict[str, List[SummaryColumn]]:
 class SummaryConfigModal(Static, can_focus=True):
     """Modal dialog for configuring per-level column visibility.
 
-    Two-level tree: groups expand to show individual columns.
-    Navigate with j/k, toggle with space, expand/collapse with l/h.
+    Groups with individual columns always shown.
+    Navigate with j/k, toggle with space.
     """
 
     class ConfigChanged(Message):
@@ -49,7 +49,6 @@ class SummaryConfigModal(Static, can_focus=True):
         self.level: str = "med"
         self.overrides: Dict[str, bool] = {}
         self.original_overrides: Dict[str, bool] = {}
-        self.expanded_groups: set = set()
         self.cursor_pos: int = 0
         self._app_ref: Optional[Any] = None
         self._previous_focus: Optional[Any] = None
@@ -58,13 +57,12 @@ class SummaryConfigModal(Static, can_focus=True):
         self._rebuild_flat_rows()
 
     def _rebuild_flat_rows(self) -> None:
-        """Rebuild flattened row list from groups + expanded state."""
+        """Rebuild flattened row list — all groups and columns shown."""
         rows: List[Tuple[str, str]] = []
         for group in SUMMARY_GROUPS:
             rows.append(("group", group.id))
-            if group.id in self.expanded_groups:
-                for col in self._cols_by_group.get(group.id, []):
-                    rows.append(("column", col.id))
+            for col in self._cols_by_group.get(group.id, []):
+                rows.append(("column", col.id))
         self._flat_rows = rows
         # Clamp cursor
         if self._flat_rows:
@@ -100,7 +98,7 @@ class SummaryConfigModal(Static, can_focus=True):
         """Render the modal content."""
         text = Text()
         text.append(f"Column Configuration ({self.level})\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  l/h:expand  a:accept  q:cancel  r:reset\n\n", style="dim")
+        text.append("j/k:move  space:toggle  a:accept  q:cancel  r:reset\n\n", style="dim")
 
         for i, (row_type, row_id) in enumerate(self._flat_rows):
             is_cursor = i == self.cursor_pos
@@ -113,8 +111,6 @@ class SummaryConfigModal(Static, can_focus=True):
                     continue
                 is_identity = group.always_visible
                 state = self._group_state(row_id)
-                expanded = row_id in self.expanded_groups
-                has_cols = bool(self._cols_by_group.get(row_id))
 
                 # Checkbox
                 if state == "all":
@@ -127,15 +123,9 @@ class SummaryConfigModal(Static, can_focus=True):
                     check = "[-]"
                     check_style = "bold yellow"
 
-                # Expand indicator
-                if has_cols:
-                    arrow = " \u25be " if expanded else " \u25b8 "
-                else:
-                    arrow = "   "
-
                 text.append(prefix, style=cursor_style)
                 text.append(check, style=check_style if not is_identity else "dim")
-                text.append(arrow, style="dim")
+                text.append(" ", style="")
                 name_style = "bold" if is_cursor else ("dim" if is_identity else "")
                 text.append(f"{group.name}\n", style=name_style)
 
@@ -205,36 +195,6 @@ class SummaryConfigModal(Static, can_focus=True):
         elif key in ("k", "up"):
             self.cursor_pos = (self.cursor_pos - 1) % len(self._flat_rows)
             self.refresh()
-            event.stop()
-
-        elif key in ("l", "right"):
-            # Expand group
-            row_type, row_id = self._flat_rows[self.cursor_pos]
-            if row_type == "group" and row_id not in self.expanded_groups:
-                self.expanded_groups.add(row_id)
-                self._rebuild_flat_rows()
-                self.refresh()
-            event.stop()
-
-        elif key in ("h", "left"):
-            # Collapse group
-            row_type, row_id = self._flat_rows[self.cursor_pos]
-            if row_type == "group" and row_id in self.expanded_groups:
-                self.expanded_groups.discard(row_id)
-                self._rebuild_flat_rows()
-                self.refresh()
-            elif row_type == "column":
-                # Find parent group and collapse it
-                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
-                if col and col.group in self.expanded_groups:
-                    self.expanded_groups.discard(col.group)
-                    # Move cursor to the parent group row
-                    self._rebuild_flat_rows()
-                    for j, (rt, rid) in enumerate(self._flat_rows):
-                        if rt == "group" and rid == col.group:
-                            self.cursor_pos = j
-                            break
-                    self.refresh()
             event.stop()
 
         elif key in ("space", "enter"):
@@ -322,7 +282,6 @@ class SummaryConfigModal(Static, can_focus=True):
                 self._previous_focus = app_ref.focused
             except Exception:
                 pass
-        self.expanded_groups = set()
         self.cursor_pos = 0
         self._rebuild_flat_rows()
         self.refresh()
