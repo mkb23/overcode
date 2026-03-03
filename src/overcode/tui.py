@@ -997,6 +997,13 @@ class SupervisorTUI(
             self.update_timeline()
         self._mark_event("apply_sisters_end")
 
+    def _refresh_remote_session(self, session: "Session") -> None:
+        """Trigger an immediate poll of a remote agent to reflect local changes (#305)."""
+        if session.source_url and session.name:
+            self._poll_focused_sister_async(
+                session.source_url, session.source_api_key, session.name, session.id
+            )
+
     def _poll_focused_sister(self) -> None:
         """Fast-poll the focused remote agent (1.5s) for responsive preview."""
         focused = self._get_focused_widget()
@@ -1788,6 +1795,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.text else "cleared"
                 self.notify(f"Standing order {action} for remote {message.session_name}")
+                self._refresh_remote_session(session)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1813,6 +1821,7 @@ class SupervisorTUI(
             )
             if result.ok:
                 self.notify(f"Value set to {message.value} for remote {message.session_name}")
+                self._refresh_remote_session(session)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1838,6 +1847,7 @@ class SupervisorTUI(
                     self.notify(f"Budget set to ${message.budget_usd:.2f} for remote {message.session_name}")
                 else:
                     self.notify(f"Budget cleared for remote {message.session_name}")
+                self._refresh_remote_session(session)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1864,6 +1874,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.annotation else "cleared"
                 self.notify(f"Annotation {action} for remote {message.session_name}")
+                self._refresh_remote_session(session)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1896,6 +1907,7 @@ class SupervisorTUI(
                     self.notify(f"Heartbeat enabled: every {freq_str} (remote)", severity="information")
                 else:
                     self.notify("Heartbeat disabled (remote)", severity="information")
+                self._refresh_remote_session(session)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
