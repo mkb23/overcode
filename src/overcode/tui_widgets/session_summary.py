@@ -73,6 +73,8 @@ class SessionSummary(Static, can_focus=True):
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
         self.show_cost: bool = False  # Show $ cost instead of token counts
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
+        self.subtree_cost_usd: float = 0.0  # Subtree cost from daemon
+        self.any_has_subtree_cost: bool = False  # True if any parent has subtree cost
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
@@ -349,6 +351,9 @@ class SessionSummary(Static, can_focus=True):
             oversight_deadline=self.oversight_deadline,
             any_is_sleeping=self.any_is_sleeping,
             sleep_wake_estimate=sleep_wake_estimate,
+            # Subtree cost
+            subtree_cost_usd=self.subtree_cost_usd,
+            any_has_subtree_cost=self.any_has_subtree_cost,
             # PR number (widget var, not session)
             pr_number=self.pr_number,
             any_has_pr=self.any_has_pr,

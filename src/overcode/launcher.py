@@ -79,6 +79,7 @@ class ClaudeLauncher:
         allowed_tools: Optional[str] = None,
         extra_claude_args: Optional[List[str]] = None,
         agent_teams: bool = False,
+        budget_usd: Optional[float] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -223,6 +224,19 @@ class ClaudeLauncher:
         if parent_session:
             self.sessions.update_session(session.id, parent_session_id=parent_session.id)
             session.parent_session_id = parent_session.id
+
+        # Apply budget at launch time
+        if budget_usd is not None and budget_usd > 0:
+            if parent_session:
+                # transfer_budget handles unlimited parent (budget=0) correctly
+                success = self.sessions.transfer_budget(parent_session.id, session.id, budget_usd)
+                if not success:
+                    print(f"Cannot launch: parent has insufficient budget for ${budget_usd:.2f}")
+                    self.tmux.kill_window(window_index)
+                    self.sessions.delete_session(session.id)
+                    return None
+            else:
+                self.sessions.set_cost_budget(session.id, budget_usd)
 
         print(f"✓ Launched '{name}' in tmux window {window_index}")
 

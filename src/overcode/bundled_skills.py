@@ -32,6 +32,7 @@ overcode launch -n <name> [-d <path>] [-p "<prompt>"] [--follow] [--bypass-permi
 overcode launch -n <name> --follow --oversight-timeout 5m -p "... When done: overcode report --status success"
 overcode launch -n <name> --allowed-tools "Read,Glob,Grep" --skip-permissions
 overcode launch -n <name> --claude-arg "--model haiku" --claude-arg "--effort low"
+overcode launch -n <name> --budget 2.00 -p "..."  # Set cost budget (auto-deducted from parent)
 
 # Monitor
 overcode list [name] [--show-done]
@@ -127,8 +128,8 @@ overcode launch --name fix-auth-bug -d ~/project --follow --bypass-permissions \
 ## Parallel (Non-Blocking)
 
 ```bash
-overcode launch -n refactor-api -d ~/project -p "Refactor REST API. When done: overcode report --status success" --bypass-permissions
-overcode launch -n write-tests -d ~/project -p "Write auth tests. When done: overcode report --status success" --bypass-permissions
+overcode launch -n refactor-api -d ~/project --budget 3.00 -p "Refactor REST API. When done: overcode report --status success" --bypass-permissions
+overcode launch -n write-tests -d ~/project --budget 2.00 -p "Write auth tests. When done: overcode report --status success" --bypass-permissions
 
 overcode list                       # Monitor progress
 overcode show refactor-api -n 100   # Read output
@@ -163,6 +164,10 @@ Children must call `overcode report --status success|failure [--reason "..."]` w
 ## Budget Control
 
 ```bash
+# Preferred: set budget at launch (auto-deducted from parent if parent has budget)
+overcode launch -n child-agent -d ~/project --bypass-permissions --budget 2.00 -p "..."
+
+# Manual budget management
 overcode budget transfer my-agent child-agent 2.00   # Transfer from your budget
 overcode budget set child-agent 3.00                  # Set directly
 ```

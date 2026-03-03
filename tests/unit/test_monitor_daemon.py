@@ -1291,6 +1291,71 @@ class TestDaemonPersistsTerminatedStatus:
 
 
 # =============================================================================
+# Subtree cost computation tests
+# =============================================================================
+
+class TestComputeSubtreeCosts:
+    """Test _compute_subtree_costs method."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        with patch.object(MonitorDaemon, '__init__', lambda self: None):
+            return MonitorDaemon.__new__(MonitorDaemon)
+
+    def _make_state(self, name, cost, parent_name=None):
+        from overcode.monitor_daemon_state import SessionDaemonState
+        return SessionDaemonState(
+            session_id=f"id-{name}",
+            name=name,
+            estimated_cost_usd=cost,
+            parent_name=parent_name,
+        )
+
+    def test_leaf_agent_no_subtree_cost(self):
+        """Leaf agents (no children) should keep subtree_cost_usd=0."""
+        daemon = self._make_daemon()
+        leaf = self._make_state("leaf", 1.50)
+        daemon._compute_subtree_costs([leaf])
+        assert leaf.subtree_cost_usd == 0.0
+
+    def test_single_parent_with_one_child(self):
+        """Parent subtree cost = parent cost + child cost."""
+        daemon = self._make_daemon()
+        parent = self._make_state("parent", 2.00)
+        child = self._make_state("child", 1.50, parent_name="parent")
+        daemon._compute_subtree_costs([parent, child])
+        assert parent.subtree_cost_usd == 3.50
+        assert child.subtree_cost_usd == 0.0
+
+    def test_deep_hierarchy(self):
+        """Three-level hierarchy: grandparent includes all descendants."""
+        daemon = self._make_daemon()
+        gp = self._make_state("gp", 1.00)
+        parent = self._make_state("parent", 2.00, parent_name="gp")
+        child = self._make_state("child", 3.00, parent_name="parent")
+        daemon._compute_subtree_costs([gp, parent, child])
+        assert gp.subtree_cost_usd == 6.00  # 1 + 2 + 3
+        assert parent.subtree_cost_usd == 5.00  # 2 + 3
+        assert child.subtree_cost_usd == 0.0  # leaf
+
+    def test_multiple_children(self):
+        """Parent with two children sums all."""
+        daemon = self._make_daemon()
+        parent = self._make_state("parent", 1.00)
+        c1 = self._make_state("c1", 2.00, parent_name="parent")
+        c2 = self._make_state("c2", 3.00, parent_name="parent")
+        daemon._compute_subtree_costs([parent, c1, c2])
+        assert parent.subtree_cost_usd == 6.00  # 1 + 2 + 3
+
+    def test_orphan_child_ignored(self):
+        """Child whose parent is not in session_states is not counted."""
+        daemon = self._make_daemon()
+        orphan = self._make_state("orphan", 5.00, parent_name="missing")
+        daemon._compute_subtree_costs([orphan])
+        assert orphan.subtree_cost_usd == 0.0
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 
