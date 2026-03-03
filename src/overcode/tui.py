@@ -1015,9 +1015,8 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             if widget.session.id == session_id:
                 widget.session = updated_session
-                # Re-seed pr_number from session if widget doesn't have one yet
-                if widget.pr_number is None and updated_session.pr_number is not None:
-                    widget.pr_number = updated_session.pr_number
+                # Sync pr_number from session (propagates both detection and clearing)
+                widget.pr_number = updated_session.pr_number
                 widget.refresh()
                 break
 
@@ -1045,9 +1044,8 @@ class SupervisorTUI(
             if session_id in fresh_sessions:
                 new_sess = fresh_sessions[session_id]
                 widget.session = new_sess
-                # Re-seed pr_number from session if widget doesn't have one yet
-                if widget.pr_number is None and new_sess.pr_number is not None:
-                    widget.pr_number = new_sess.pr_number
+                # Sync pr_number from session (propagates both detection and clearing)
+                widget.pr_number = new_sess.pr_number
 
             # Update AI summaries (if available)
             if session_id in ai_summaries:
@@ -1318,9 +1316,8 @@ class SupervisorTUI(
                         or old_sleeping != any_is_sleeping
                     )
                     widget.session = new_session
-                    # Re-seed pr_number from session if widget doesn't have one yet
-                    if widget.pr_number is None and new_session.pr_number is not None:
-                        widget.pr_number = new_session.pr_number
+                    # Sync pr_number from session (propagates both detection and clearing)
+                    widget.pr_number = new_session.pr_number
                     widget.any_has_budget = any_has_budget
                     widget.any_has_oversight_timeout = any_has_oversight_timeout
                     widget.any_is_sleeping = any_is_sleeping

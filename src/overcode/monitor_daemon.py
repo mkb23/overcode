@@ -856,7 +856,7 @@ class MonitorDaemon:
                 if pane_content:
                     pr = extract_pr_number(pane_content)
                     if pr is not None and pr != session.pr_number:
-                        self.session_manager.update_session(session.id, pr_number=pr)
+                        self.session_manager.update_session(session.id, pr_number=pr, pr_branch=session.branch)
 
             # Clear heartbeat tracking when session stops running
             if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
@@ -864,7 +864,12 @@ class MonitorDaemon:
                 self._heartbeat_start_pending.discard(session.id)
 
             # Refresh git context (branch may have changed)
-            self.session_manager.refresh_git_context(session.id)
+            git_changed = self.session_manager.refresh_git_context(session.id)
+            if git_changed and session.pr_branch is not None:
+                # Re-read session to get updated branch
+                refreshed = self.session_manager.get_session(session.id)
+                if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
+                    self.session_manager.update_session(session.id, pr_number=None, pr_branch=None)
 
             # Update current task in session
             self.session_manager.update_stats(

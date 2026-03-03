@@ -79,6 +79,7 @@ class Session:
     repo_name: Optional[str] = None
     branch: Optional[str] = None
     pr_number: Optional[int] = None
+    pr_branch: Optional[str] = None
 
     # Management
     status: str = "running"

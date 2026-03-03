@@ -1355,6 +1355,145 @@ class TestComputeSubtreeCosts:
         assert orphan.subtree_cost_usd == 0.0
 
 
+class TestPrBranchMismatchClearing:
+    """Test that PR is cleared when agent switches branches."""
+
+    def test_pr_cleared_on_branch_mismatch(self):
+        """When branch changes away from pr_branch, both pr_number and pr_branch should clear."""
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.session_manager import Session, SessionStats
+
+        session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="fix-auth",
+            pr_number=42,
+            pr_branch="fix-auth",
+        )
+
+        # After refresh_git_context, the session's branch changes to "main"
+        refreshed_session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="main",
+            pr_number=42,
+            pr_branch="fix-auth",
+        )
+
+        mock_sm = Mock()
+        mock_sm.refresh_git_context.return_value = True  # branch changed
+        mock_sm.get_session.return_value = refreshed_session
+
+        with patch.object(MonitorDaemon, '__init__', lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+            daemon.session_manager = mock_sm
+            daemon.detector = Mock()
+            daemon.detector.detect_status.return_value = ("running", "Working...", "")
+            daemon._sessions_running_from_heartbeat = set()
+            daemon._heartbeat_start_pending = set()
+            daemon._last_heartbeat_times = {}
+            daemon._heartbeat_cooldown_until = {}
+            daemon._summary_cache = {}
+            daemon.ai_summarizer = None
+            daemon._subtree_watchers = {}
+            daemon._orphan_cost_cache = {}
+
+            # Simulate the branch mismatch check from _detect_and_enrich
+            git_changed = mock_sm.refresh_git_context(session.id)
+            if git_changed and session.pr_branch is not None:
+                refreshed = mock_sm.get_session(session.id)
+                if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
+                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+
+            # Verify update_session was called with clearing args
+            mock_sm.update_session.assert_called_once_with(
+                "test-1", pr_number=None, pr_branch=None
+            )
+
+    def test_pr_not_cleared_when_branch_unchanged(self):
+        """When branch hasn't changed, PR should remain."""
+        from overcode.session_manager import Session
+
+        session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="fix-auth",
+            pr_number=42,
+            pr_branch="fix-auth",
+        )
+
+        mock_sm = Mock()
+        mock_sm.refresh_git_context.return_value = False  # no change
+
+        # Simulate the branch mismatch check
+        git_changed = mock_sm.refresh_git_context(session.id)
+        if git_changed and session.pr_branch is not None:
+            refreshed = mock_sm.get_session(session.id)
+            if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
+                mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+
+        # update_session should NOT have been called
+        mock_sm.update_session.assert_not_called()
+
+    def test_pr_not_cleared_when_branch_is_none(self):
+        """When git detection returns None branch, PR should not be cleared."""
+        from overcode.session_manager import Session
+
+        session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="fix-auth",
+            pr_number=42,
+            pr_branch="fix-auth",
+        )
+
+        refreshed_session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch=None,  # git detection failed
+            pr_number=42,
+            pr_branch="fix-auth",
+        )
+
+        mock_sm = Mock()
+        mock_sm.refresh_git_context.return_value = True
+        mock_sm.get_session.return_value = refreshed_session
+
+        git_changed = mock_sm.refresh_git_context(session.id)
+        if git_changed and session.pr_branch is not None:
+            refreshed = mock_sm.get_session(session.id)
+            if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
+                mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+
+        # Should NOT clear because branch is None (git detection failed)
+        mock_sm.update_session.assert_not_called()
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

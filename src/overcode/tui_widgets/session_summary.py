@@ -218,8 +218,6 @@ class SessionSummary(Static, can_focus=True):
             extracted = extract_from_pane(content)
             self.background_bash_count = extracted.background_bash_count
             self.live_subagent_count = extracted.live_subagent_count
-            if extracted.pr_number is not None:
-                self.pr_number = extracted.pr_number  # Sticky: only update, never clear
         else:
             self.pane_content = []
             self.background_bash_count = 0

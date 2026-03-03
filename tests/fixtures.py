@@ -21,6 +21,8 @@ def create_mock_session(
     start_time: str = None,
     repo_name: Optional[str] = None,
     branch: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    pr_branch: Optional[str] = None,
     status: str = "running",
     permissiveness_mode: str = "normal",
     standing_instructions: str = "",
@@ -42,6 +44,8 @@ def create_mock_session(
         start_time=start_time or datetime.now().isoformat(),
         repo_name=repo_name,
         branch=branch,
+        pr_number=pr_number,
+        pr_branch=pr_branch,
         status=status,
         permissiveness_mode=permissiveness_mode,
         standing_instructions=standing_instructions,
@@ -79,6 +83,7 @@ class MockSession:
     repo_name: Optional[str] = None
     branch: Optional[str] = None
     pr_number: Optional[int] = None
+    pr_branch: Optional[str] = None
     status: str = "running"
     permissiveness_mode: str = "normal"
     standing_instructions: str = ""
