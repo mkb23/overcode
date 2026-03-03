@@ -865,12 +865,17 @@ class SupervisorTUI(
                             _, _, content = status_results[session_id]
                             status_results[session_id] = (ds.current_status, ds.current_activity, content)
 
-            # Extract subtree costs from daemon state
+            # Extract subtree costs from daemon state (local agents)
             subtree_costs = {}
             if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
                 for ds in daemon_state.sessions:
                     if ds.subtree_cost_usd > 0:
                         subtree_costs[ds.session_id] = ds.subtree_cost_usd
+            # Also extract from remote sessions via forwarded daemon_state
+            for s in self._remote_sessions:
+                rds = getattr(s, 'remote_daemon_state', None)
+                if rds and rds.get('subtree_cost_usd', 0) > 0:
+                    subtree_costs[s.id] = rds['subtree_cost_usd']
 
             # Use local summaries from TUI's summarizer (not daemon state)
             ai_summaries = {}
@@ -1241,13 +1246,18 @@ class SupervisorTUI(
             self.sessions, False, False
         )
 
-        # Read subtree costs from daemon state
+        # Read subtree costs from daemon state (local agents)
         subtree_costs = {}
         daemon_state = get_monitor_daemon_state(self.tmux_session)
         if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
             for ds in daemon_state.sessions:
                 if ds.subtree_cost_usd > 0:
                     subtree_costs[ds.session_id] = ds.subtree_cost_usd
+        # Also extract from remote sessions via forwarded daemon_state
+        for s in self._remote_sessions:
+            rds = getattr(s, 'remote_daemon_state', None)
+            if rds and rds.get('subtree_cost_usd', 0) > 0:
+                subtree_costs[s.id] = rds['subtree_cost_usd']
         any_has_subtree_cost = bool(subtree_costs)
         # Also check widget pr_number vars (sticky — survive session replacement)
         if not any_has_pr:

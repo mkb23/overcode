@@ -322,7 +322,12 @@ def list_agents(
         for ds in daemon_state.sessions:
             if ds.subtree_cost_usd > 0:
                 subtree_costs[ds.session_id] = ds.subtree_cost_usd
-    else:
+    # Also extract from remote sessions via forwarded daemon_state
+    for s in sessions:
+        rds = getattr(s, 'remote_daemon_state', None)
+        if rds and rds.get('subtree_cost_usd', 0) > 0:
+            subtree_costs[s.id] = rds['subtree_cost_usd']
+    if not use_daemon:
         any_has_oversight_timeout = any(
             getattr(s, 'oversight_timeout_seconds', 0) > 0
             for s in sessions

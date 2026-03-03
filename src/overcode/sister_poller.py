@@ -261,6 +261,9 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         # AI summaries from remote summarizer
         remote_activity_summary=agent.get("activity_summary", ""),
         remote_activity_summary_context=agent.get("activity_summary_context", ""),
+        # Raw daemon state for generic field forwarding — new SessionDaemonState
+        # fields automatically flow through without manual plumbing here.
+        remote_daemon_state=agent.get("daemon_state"),
     )
 
 

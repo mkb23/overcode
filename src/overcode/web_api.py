@@ -289,6 +289,12 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         "pane_content": pane_content,
         # Agent hierarchy (#244) - for sister tree view
         "parent_name": s.parent_name or "",
+        # Subtree cost (self + all descendants)
+        "subtree_cost_usd": s.subtree_cost_usd,
+        # Raw daemon state — sisters can forward any field without manual mapping.
+        # When adding new fields to SessionDaemonState, they automatically appear
+        # here. The sister poller reads from this dict as a fallback.
+        "daemon_state": s.to_dict(),
     }
 
 
