@@ -59,6 +59,10 @@ def launch(
         Optional[List[str]],
         typer.Option("--claude-arg", help="Extra Claude CLI flag (repeatable, e.g. '--model haiku')"),
     ] = None,
+    budget: Annotated[
+        Optional[float],
+        typer.Option("--budget", "-b", help="Cost budget in USD (deducted from parent if parent has budget)"),
+    ] = None,
     teams: Annotated[
         bool,
         typer.Option("--teams", help="Enable Claude Code agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)"),
@@ -159,6 +163,7 @@ def launch(
         allowed_tools=allowed_tools,
         extra_claude_args=claude_args,
         agent_teams=teams,
+        budget_usd=budget,
     )
 
     if result:
@@ -173,6 +178,8 @@ def launch(
             rprint(f"  Extra Claude args: {' '.join(claude_args)}")
         if teams:
             rprint("  Agent teams: enabled")
+        if budget is not None and budget > 0:
+            rprint(f"  Budget: ${budget:.2f}")
 
         # Store oversight policy on session
         if oversight_policy != "wait" or oversight_timeout_seconds > 0:
@@ -306,16 +313,21 @@ def list_agents(
     # Compute cross-session flags from daemon state
     any_has_oversight_timeout = False
     any_has_pr = False
+    subtree_costs = {}
     if use_daemon:
         any_has_oversight_timeout = any(
             ds.oversight_timeout_seconds > 0
             for ds in daemon_state.sessions
         )
+        for ds in daemon_state.sessions:
+            if ds.subtree_cost_usd > 0:
+                subtree_costs[ds.session_id] = ds.subtree_cost_usd
     else:
         any_has_oversight_timeout = any(
             getattr(s, 'oversight_timeout_seconds', 0) > 0
             for s in sessions
         )
+    any_has_subtree_cost = bool(subtree_costs)
     any_has_pr = any(
         getattr(s, 'pr_number', None) is not None
         for s in sessions
@@ -413,6 +425,8 @@ def list_agents(
             max_repo_width=max_repo_width,
             max_branch_width=max_branch_width,
             all_names_match_repos=all_names_match_repos,
+            subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
+            any_has_subtree_cost=any_has_subtree_cost,
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = cost

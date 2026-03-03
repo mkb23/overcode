@@ -92,12 +92,18 @@ Set a spending limit on individual agents to manage usage.
 
 ### Setting a Budget
 
+**At launch** (preferred):
+```bash
+overcode launch -n my-agent --budget 5.00 -p "..."
+```
+If launched as a child agent, the budget is automatically deducted from the parent's budget. If the parent has an unlimited budget (0), the child gets the budget without any parent deduction.
+
 **TUI**: Select an agent and press `B`, enter a dollar amount (e.g., `5.00`). Enter `0` to clear.
 
-**CLI**:
+**CLI** (post-launch):
 ```bash
-overcode set-budget my-agent 5.00    # $5 budget
-overcode set-budget my-agent 0       # Clear budget
+overcode budget set my-agent 5.00    # $5 budget
+overcode budget set my-agent 0       # Clear budget
 ```
 
 ### Display

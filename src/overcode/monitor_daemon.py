@@ -911,7 +911,28 @@ class MonitorDaemon:
             if status != "waiting_user":
                 all_waiting_user = False
 
+        # Compute subtree costs for parent agents
+        self._compute_subtree_costs(session_states)
+
         return session_states, all_waiting_user
+
+    def _compute_subtree_costs(self, session_states):
+        """Compute subtree cost (self + all descendants) for each parent agent."""
+        by_name = {s.name: s for s in session_states}
+        children_map = {}
+        for s in session_states:
+            if s.parent_name and s.parent_name in by_name:
+                children_map.setdefault(s.parent_name, []).append(s.name)
+
+        def _sum(name):
+            total = by_name[name].estimated_cost_usd
+            for child in children_map.get(name, []):
+                total += _sum(child)
+            return total
+
+        for s in session_states:
+            if children_map.get(s.name):
+                s.subtree_cost_usd = _sum(s.name)
 
     def _cleanup_stale(self, sessions: list) -> None:
         """Remove stale tracking entries for deleted sessions."""

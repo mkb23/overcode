@@ -97,6 +97,7 @@ class SessionDaemonState:
     # Cost budget (#173)
     cost_budget_usd: float = 0.0  # 0 = unlimited
     budget_exceeded: bool = False  # True when cost >= budget
+    subtree_cost_usd: float = 0.0  # self + all descendants (0 = leaf or not computed)
 
     # Agent hierarchy (#244)
     parent_name: Optional[str] = None  # Name of parent agent (None = root)
