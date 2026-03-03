@@ -874,11 +874,13 @@ class MonitorDaemon:
 
             # Refresh git context (branch may have changed)
             git_changed = self.session_manager.refresh_git_context(session.id)
-            if git_changed and session.pr_branch is not None:
+            if git_changed and session.pr_number is not None:
                 # Re-read session to get updated branch
                 refreshed = self.session_manager.get_session(session.id)
-                if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
-                    self.session_manager.update_session(session.id, pr_number=None, pr_branch=None)
+                if refreshed and refreshed.branch is not None:
+                    # Clear if pr_branch not set (pre-migration) or branch mismatch
+                    if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                        self.session_manager.update_session(session.id, pr_number=None, pr_branch=None)
 
             # Update current task in session
             self.session_manager.update_stats(

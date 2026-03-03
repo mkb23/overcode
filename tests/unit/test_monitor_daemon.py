@@ -1412,10 +1412,11 @@ class TestPrBranchMismatchClearing:
 
             # Simulate the branch mismatch check from _detect_and_enrich
             git_changed = mock_sm.refresh_git_context(session.id)
-            if git_changed and session.pr_branch is not None:
+            if git_changed and session.pr_number is not None:
                 refreshed = mock_sm.get_session(session.id)
-                if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
-                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+                if refreshed and refreshed.branch is not None:
+                    if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                        mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
 
             # Verify update_session was called with clearing args
             mock_sm.update_session.assert_called_once_with(
@@ -1444,10 +1445,11 @@ class TestPrBranchMismatchClearing:
 
         # Simulate the branch mismatch check
         git_changed = mock_sm.refresh_git_context(session.id)
-        if git_changed and session.pr_branch is not None:
+        if git_changed and session.pr_number is not None:
             refreshed = mock_sm.get_session(session.id)
-            if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
-                mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+            if refreshed and refreshed.branch is not None:
+                if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
 
         # update_session should NOT have been called
         mock_sm.update_session.assert_not_called()
@@ -1487,13 +1489,60 @@ class TestPrBranchMismatchClearing:
         mock_sm.get_session.return_value = refreshed_session
 
         git_changed = mock_sm.refresh_git_context(session.id)
-        if git_changed and session.pr_branch is not None:
+        if git_changed and session.pr_number is not None:
             refreshed = mock_sm.get_session(session.id)
-            if refreshed and refreshed.branch is not None and refreshed.branch != refreshed.pr_branch:
-                mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+            if refreshed and refreshed.branch is not None:
+                if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
 
         # Should NOT clear because branch is None (git detection failed)
         mock_sm.update_session.assert_not_called()
+
+    def test_pr_cleared_when_pr_branch_is_none_premigration(self):
+        """Pre-migration sessions with pr_number but no pr_branch should clear on any branch change."""
+        from overcode.session_manager import Session
+
+        session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="main",
+            pr_number=42,
+            pr_branch=None,  # pre-migration: no pr_branch recorded
+        )
+
+        refreshed_session = Session(
+            id="test-1",
+            name="test",
+            tmux_session="agents",
+            tmux_window=1,
+            command=["claude"],
+            start_directory="/tmp/repo",
+            start_time="2024-01-01T00:00:00",
+            branch="feature-x",  # switched to different branch
+            pr_number=42,
+            pr_branch=None,
+        )
+
+        mock_sm = Mock()
+        mock_sm.refresh_git_context.return_value = True
+        mock_sm.get_session.return_value = refreshed_session
+
+        git_changed = mock_sm.refresh_git_context(session.id)
+        if git_changed and session.pr_number is not None:
+            refreshed = mock_sm.get_session(session.id)
+            if refreshed and refreshed.branch is not None:
+                if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
+                    mock_sm.update_session(session.id, pr_number=None, pr_branch=None)
+
+        # Should clear because pr_branch is None (pre-migration) and branch changed
+        mock_sm.update_session.assert_called_once_with(
+            "test-1", pr_number=None, pr_branch=None
+        )
 
 
 # =============================================================================
