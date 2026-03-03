@@ -700,6 +700,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_normal_text_with_enter(self, mock_sleep):
         """send_keys sends text then Enter separately with delay."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "echo hello", enter=True)
 
@@ -713,6 +714,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_normal_text_without_enter(self, mock_sleep):
         """send_keys sends text only when enter=False."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "partial text", enter=False)
 
@@ -725,6 +727,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_empty_text_with_enter(self, mock_sleep):
         """send_keys with empty text and enter=True sends only Enter."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "", enter=True)
 
@@ -737,6 +740,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_empty_text_without_enter(self, mock_sleep):
         """send_keys with empty text and enter=False does nothing."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "", enter=False)
 
@@ -748,6 +752,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_bang_command_splits_exclamation(self, mock_sleep):
         """send_keys with ! prefix sends ! first then the rest (#139)."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "!ls -la", enter=True)
 
@@ -767,6 +772,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_bang_only_not_split(self, mock_sleep):
         """send_keys with just '!' does NOT split (len == 1)."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "!", enter=True)
 
@@ -781,6 +787,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_bang_command_without_enter(self, mock_sleep):
         """send_keys with ! prefix and enter=False sends ! then rest, no Enter."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         result = manager.send_keys(1, "!pwd", enter=False)
 
@@ -804,6 +811,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_returns_false_on_exception(self, mock_sleep):
         """send_keys returns False when pane.send_keys raises LibTmuxException."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
         mock_pane.send_keys.side_effect = LibTmuxException()
 
         result = manager.send_keys(1, "echo hello")
@@ -814,6 +822,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_sleep_order_for_normal_text(self, mock_sleep):
         """Verify sleep happens between text send and Enter send."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         call_order = []
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
@@ -831,6 +840,7 @@ class TestTmuxManagerLibtmuxKeys:
     def test_send_keys_sleep_order_for_bang_command(self, mock_sleep):
         """Verify sleep timing for ! commands: 0.15 after !, 0.1 after rest."""
         manager, mock_pane = self._make_manager_with_pane()
+        mock_sleep.reset_mock()  # clear any pollution from background threads
 
         call_order = []
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
