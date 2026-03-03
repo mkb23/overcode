@@ -232,10 +232,10 @@ SessionSummary:focus.list-mode {
 SummaryConfigModal {
     display: none;
     layer: above;
-    offset: 27 2;
+    offset: 27 20;
     width: auto;
-    height: 1fr;
-    max-height: 90%;
+    height: auto;
+    max-height: 60%;
     overflow-y: auto;
     background: $surface;
     border: thick $primary;
