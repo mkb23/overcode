@@ -3,87 +3,125 @@
 import pytest
 
 from overcode.tui_widgets.summary_config_modal import SummaryConfigModal
-from overcode.summary_groups import get_default_group_visibility
+from overcode.summary_groups import SUMMARY_GROUPS
 
 
 class TestSummaryConfigModal:
     """Tests for SummaryConfigModal widget."""
 
-    def test_init_with_empty_config(self):
-        """Modal should initialize missing groups with defaults."""
-        modal = SummaryConfigModal({})
-        # All toggleable groups should be present
-        expected_groups = ["time", "llm_usage", "context", "git", "supervision", "priority", "performance"]
-        for group_id in expected_groups:
-            assert group_id in modal.config
+    def test_init_defaults(self):
+        """Modal should initialize with default state."""
+        modal = SummaryConfigModal()
+        assert modal.level == "med"
+        assert modal.overrides == {}
+        assert modal.cursor_pos == 0
 
-    def test_init_preserves_existing_config(self):
-        """Modal should preserve provided configuration values."""
-        config = {"time": False, "llm_usage": True, "git": False}
-        modal = SummaryConfigModal(config)
-        assert modal.config["time"] is False
-        assert modal.config["llm_usage"] is True
-        assert modal.config["git"] is False
+    def test_col_effective_default(self):
+        """Column effective visibility follows detail_levels when no overrides."""
+        modal = SummaryConfigModal()
+        modal.level = "low"
+        modal.overrides = {}
+        # status_symbol is in ALL — visible at low
+        assert modal._col_effective("status_symbol") is True
+        # uptime is in MED_PLUS — not visible at low
+        assert modal._col_effective("uptime") is False
 
-    def test_config_is_copied(self):
-        """Modal should not modify the original config dict."""
-        original_config = {"time": True, "llm_usage": True}
-        modal = SummaryConfigModal(original_config)
-        modal.config["time"] = False
-        # Original should be unchanged
-        assert original_config["time"] is True
+    def test_col_effective_with_override(self):
+        """Override should change effective visibility."""
+        modal = SummaryConfigModal()
+        modal.level = "low"
+        modal.overrides = {"uptime": True}
+        assert modal._col_effective("uptime") is True
 
-    def test_selected_index_starts_at_zero(self):
-        """Modal should start with first item selected."""
-        modal = SummaryConfigModal({})
-        assert modal.selected_index == 0
+    def test_col_default(self):
+        """Default should reflect detail_levels without overrides."""
+        modal = SummaryConfigModal()
+        modal.level = "med"
+        assert modal._col_default("uptime") is True  # uptime is MED_PLUS
+        assert modal._col_default("active_pct") is False  # active_pct is HIGH_PLUS
 
-    def test_build_list_text_shows_all_groups(self):
-        """List text should include all toggleable groups."""
-        modal = SummaryConfigModal(get_default_group_visibility())
-        text = modal._build_list_text()
-        plain = text.plain
+    def test_group_state_all(self):
+        """Group state 'all' when all columns are visible."""
+        modal = SummaryConfigModal()
+        modal.level = "low"
+        modal.overrides = {}
+        # Identity group — all columns are ALL, so all visible at low
+        assert modal._group_state("identity") == "all"
 
-        # All group names should be in the text
-        assert "Time" in plain
-        assert "Budget" in plain
-        assert "Context" in plain
-        assert "Git" in plain
-        assert "Supervision" in plain
-        assert "Priority" in plain
-        assert "Performance" in plain
+    def test_group_state_none(self):
+        """Group state 'none' when all columns are hidden."""
+        modal = SummaryConfigModal()
+        modal.level = "low"
+        # Override all time columns to False
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        time_cols = [c for c in SUMMARY_COLUMNS if c.group == "time"]
+        modal.overrides = {c.id: False for c in time_cols}
+        assert modal._group_state("time") == "none"
 
-    def test_build_list_text_shows_checkmarks(self):
-        """List text should show checkmarks for enabled groups."""
-        modal = SummaryConfigModal({"time": True, "llm_usage": False})
-        text = modal._build_list_text()
-        plain = text.plain
+    def test_flat_rows_initially_groups_only(self):
+        """Initially only group rows are shown (none expanded)."""
+        modal = SummaryConfigModal()
+        assert all(rt == "group" for rt, _ in modal._flat_rows)
+        assert len(modal._flat_rows) == len(SUMMARY_GROUPS)
 
-        # Should have both checked and unchecked states
-        assert "[x]" in plain
-        assert "[ ]" in plain
+    def test_expand_group_adds_columns(self):
+        """Expanding a group should add column rows."""
+        modal = SummaryConfigModal()
+        initial_count = len(modal._flat_rows)
+        modal.expanded_groups.add("time")
+        modal._rebuild_flat_rows()
+        assert len(modal._flat_rows) > initial_count
+        # Check that time column rows are present
+        time_rows = [(rt, rid) for rt, rid in modal._flat_rows if rt == "column"]
+        assert len(time_rows) > 0
 
-    def test_show_stores_original_config(self):
-        """Show should store original config for cancel."""
-        modal = SummaryConfigModal({})
-        config = {"time": False, "llm_usage": True}
-        modal.show(config)
-        assert modal.original_config == config
+    def test_collapse_group_removes_columns(self):
+        """Collapsing an expanded group should remove column rows."""
+        modal = SummaryConfigModal()
+        modal.expanded_groups.add("time")
+        modal._rebuild_flat_rows()
+        expanded_count = len(modal._flat_rows)
 
-    def test_cancel_restores_original_config(self):
-        """Cancel should restore original config."""
-        modal = SummaryConfigModal({})
-        original = {"time": True, "llm_usage": True, "git": True,
-                   "supervision": True, "priority": True, "performance": True,
-                   "subprocesses": True}
-        modal.show(original)
-        # Change some values
-        modal.config["time"] = False
-        modal.config["llm_usage"] = False
+        modal.expanded_groups.discard("time")
+        modal._rebuild_flat_rows()
+        assert len(modal._flat_rows) < expanded_count
+
+    def test_show_sets_level_and_overrides(self):
+        """show() should set level and overrides."""
+        modal = SummaryConfigModal()
+        overrides = {"uptime": True, "cost": False}
+        modal.show("high", overrides)
+        assert modal.level == "high"
+        assert modal.overrides == overrides
+        assert modal.original_overrides == overrides
+
+    def test_cancel_restores_overrides(self):
+        """Cancel should restore original overrides."""
+        modal = SummaryConfigModal()
+        original = {"uptime": True}
+        modal.show("med", original)
+        # Modify overrides
+        modal.overrides["uptime"] = False
+        modal.overrides["cost"] = True
         # Cancel
         modal._cancel()
-        # Config should be restored
-        assert modal.config == original
+        assert modal.overrides == original
+
+    def test_apply_cleans_default_overrides(self):
+        """Apply should remove overrides that match defaults."""
+        modal = SummaryConfigModal()
+        modal.level = "med"
+        # uptime default at med is True — setting override to True is redundant
+        modal.overrides = {"uptime": True, "active_pct": True}  # active_pct default at med is False
+        # Test the cleaning logic directly
+        cleaned = {}
+        for col_id, val in modal.overrides.items():
+            if val != modal._col_default(col_id):
+                cleaned[col_id] = val
+        # uptime=True matches default at med, should be cleaned
+        assert "uptime" not in cleaned
+        # active_pct=True doesn't match default (False) at med, should remain
+        assert cleaned["active_pct"] is True
 
 
 MODAL_TEST_CSS = """
@@ -108,7 +146,7 @@ class TestModalVisibility:
 
     @pytest.mark.asyncio
     async def test_modal_shows_and_hides(self):
-        """Modal should show when triggered and hide when dismissed."""
+        """Modal should show when show() is called and hide on cancel."""
         from textual.app import App, ComposeResult
         from textual.widgets import Static
 
@@ -117,10 +155,10 @@ class TestModalVisibility:
 
             def compose(self) -> ComposeResult:
                 yield Static('Background')
-                yield SummaryConfigModal(get_default_group_visibility(), id='modal')
+                yield SummaryConfigModal(id='modal')
 
             def key_c(self):
-                self.query_one('#modal').show(get_default_group_visibility())
+                self.query_one('#modal').show("med", {})
 
         app = TestApp()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -144,32 +182,41 @@ class TestModalNavigation:
     """Tests for keyboard navigation in the modal."""
 
     def test_navigation_wraps_around_forward(self):
-        """Moving down from last item should wrap to first."""
-        modal = SummaryConfigModal({})
-        num_groups = len(modal.groups)
-        modal.selected_index = num_groups - 1
+        """Moving cursor past last item should wrap to first."""
+        modal = SummaryConfigModal()
+        num_rows = len(modal._flat_rows)
+        modal.cursor_pos = num_rows - 1
 
-        # Simulate moving down
-        modal.selected_index = (modal.selected_index + 1) % num_groups
-        assert modal.selected_index == 0
+        modal.cursor_pos = (modal.cursor_pos + 1) % num_rows
+        assert modal.cursor_pos == 0
 
     def test_navigation_wraps_around_backward(self):
-        """Moving up from first item should wrap to last."""
-        modal = SummaryConfigModal({})
-        num_groups = len(modal.groups)
-        modal.selected_index = 0
+        """Moving cursor before first item should wrap to last."""
+        modal = SummaryConfigModal()
+        num_rows = len(modal._flat_rows)
+        modal.cursor_pos = 0
 
-        # Simulate moving up
-        modal.selected_index = (modal.selected_index - 1) % num_groups
-        assert modal.selected_index == num_groups - 1
+        modal.cursor_pos = (modal.cursor_pos - 1) % num_rows
+        assert modal.cursor_pos == num_rows - 1
 
-    def test_toggle_changes_config(self):
-        """Toggling should flip the boolean value."""
-        modal = SummaryConfigModal({"time": True})
-        modal.selected_index = 0  # Assuming time is first
-
-        # Toggle
-        group_id = modal.groups[0].id
-        modal.config[group_id] = not modal.config.get(group_id, True)
-
-        assert modal.config[group_id] is False
+    def test_toggle_group_sets_all_columns(self):
+        """Toggling a group should set overrides for all its columns."""
+        modal = SummaryConfigModal()
+        modal.level = "low"
+        modal.overrides = {}
+        # Find the time group row
+        for i, (rt, rid) in enumerate(modal._flat_rows):
+            if rt == "group" and rid == "time":
+                modal.cursor_pos = i
+                break
+        # At low, all time columns are off (MED_PLUS/HIGH_PLUS).
+        # Toggle should set all ON (because state is "none").
+        modal._toggle_current()
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        time_cols = [c for c in SUMMARY_COLUMNS if c.group == "time"]
+        for col in time_cols:
+            assert modal.overrides.get(col.id) is True
+        # Toggle again — all are now on, so should turn all OFF
+        modal._toggle_current()
+        for col in time_cols:
+            assert modal.overrides.get(col.id) is False

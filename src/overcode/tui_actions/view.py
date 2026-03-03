@@ -82,20 +82,25 @@ class ViewActionsMixin:
         self.notify(f"Detail: {new_level} lines", severity="information")
 
     def action_cycle_summary(self) -> None:
-        """Cycle through summary detail levels (low, med, full, custom)."""
+        """Cycle through summary detail levels (low, med, high, full)."""
         from ..tui_widgets import SessionSummary
-        # Cycle through all levels including custom
         new_idx = (self.summary_level_index + 1) % len(self.SUMMARY_LEVELS)
         new_level = self.SUMMARY_LEVELS[new_idx]
         self.summary_level_index = new_idx
 
-        # Update all session widgets
+        # Push the right per-level overrides to each widget
+        overrides = self._prefs.column_config.get(new_level, {})
         for widget in self.query(SessionSummary):
             widget.summary_detail = new_level
+            widget.column_overrides = overrides
 
         # Save preference
         self._prefs.summary_detail = new_level
         self._save_prefs()
+
+        # Update footer and column headers
+        self._update_footer()
+        self._recompute_cell_column_widths()
 
         self.notify(f"Summary: {new_level}", severity="information")
 
@@ -489,3 +494,11 @@ class ViewActionsMixin:
 
         labels = {"off": "Off", "sound": "Sound only", "banner": "Banner only", "both": "Sound + Banner"}
         self.notify(f"Notifications: {labels[new_mode]}", severity="information")
+
+    def action_toggle_column_headers(self) -> None:
+        """Toggle column headers row above summary lines."""
+        self._prefs.show_column_headers = not self._prefs.show_column_headers
+        self._save_prefs()
+        self._update_column_headers()
+        state = "shown" if self._prefs.show_column_headers else "hidden"
+        self.notify(f"Column headers {state}", severity="information")

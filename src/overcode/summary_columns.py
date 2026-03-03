@@ -68,9 +68,11 @@ ColumnOutput = Optional[List[Tuple[str, str]]]
 # ---------------------------------------------------------------------------
 # Detail-level convenience sets
 # ---------------------------------------------------------------------------
-ALL = {"low", "med", "full", "custom"}
-MED_PLUS = {"med", "full", "custom"}
-FULL_PLUS = {"full", "custom"}
+ALL = {"low", "med", "high", "full"}
+MED_PLUS = {"med", "high", "full"}
+HIGH_PLUS = {"high", "full"}
+# Backward-compat alias
+FULL_PLUS = HIGH_PLUS
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +172,8 @@ class SummaryColumn:
     render_plain: Optional[Callable[[ColumnContext], Optional[str]]] = None
     placeholder_width: int = 0  # When visible but render returns None, pad with N spaces
     visible: Optional[Callable[[ColumnContext], bool]] = None  # App-level visibility gate
+    header: str = ""  # Short header label for column header row (e.g., "UPT", "TOK")
+    name: str = ""  # Human-readable display name for config modal
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +404,7 @@ render_tokens = render_token_count
 def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
     if ctx.git_diff_stats:
         files, ins, dels = ctx.git_diff_stats
-        if ctx.summary_detail in ("full", "custom"):
+        if ctx.summary_detail in ("full", "high"):
             return [
                 (f" Δ{files:>2}", ctx.mono(f"bold magenta{ctx.bg}", "bold")),
                 (f" +{format_line_count(ins):>5}", ctx.mono(f"bold green{ctx.bg}", "bold")),
@@ -410,7 +414,7 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
             has_changes = files > 0
             return [(f" Δ{files:>2}", ctx.mono(f"bold magenta{ctx.bg}" if has_changes else f"dim{ctx.bg}", "bold" if has_changes else "dim"))]
     else:
-        if ctx.summary_detail in ("full", "custom"):
+        if ctx.summary_detail in ("full", "high"):
             return [(" Δ - +    - -    -", ctx.mono(f"dim{ctx.bg}", "dim"))]
         else:
             return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
@@ -589,7 +593,7 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
 
 def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
-    if ctx.summary_detail in ("full", "custom"):
+    if ctx.summary_detail in ("full", "high"):
         return [(f" 💰{s.agent_value:>4}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
     else:
         if s.agent_value > 1000:
@@ -784,61 +788,75 @@ def render_host_plain(ctx: ColumnContext) -> Optional[str]:
 SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Identity group — always visible
     SummaryColumn(id="status_symbol", group="identity", detail_levels=ALL, render=render_status_symbol,
-                  label="Status", render_plain=render_status_plain),
-    SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert),
-    SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state),
+                  label="Status", render_plain=render_status_plain, name="Status"),
+    SummaryColumn(id="unvisited_alert", group="identity", detail_levels=ALL, render=render_unvisited_alert,
+                  name="Alert"),
+    SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state,
+                  header="ST", name="Time in State"),
     SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
-                  visible=lambda ctx: ctx.any_is_sleeping, placeholder_width=9),
-    SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon),
-    SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name),
+                  visible=lambda ctx: ctx.any_is_sleeping, placeholder_width=9, header="SLP", name="Sleep Countdown"),
+    SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
+                  name="Expand"),
+    SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
+                  name="Agent Name"),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
-                  label="Host", render_plain=render_host_plain),
+                  label="Host", render_plain=render_host_plain, header="HST", name="Host"),
 
-    # Git group — repo, branch (full/custom only), diff stats
-    SummaryColumn(id="repo_name", group="git", detail_levels=FULL_PLUS, render=render_repo_name,
-                  label="Repo", render_plain=render_repo_name_plain),
-    SummaryColumn(id="branch", group="git", detail_levels=FULL_PLUS, render=render_branch,
-                  label="Branch", render_plain=render_branch_plain),
+    # Git group — repo, branch (high/full only), diff stats
+    SummaryColumn(id="repo_name", group="git", detail_levels=HIGH_PLUS, render=render_repo_name,
+                  label="Repo", render_plain=render_repo_name_plain, header="RPO", name="Repo Name"),
+    SummaryColumn(id="branch", group="git", detail_levels=HIGH_PLUS, render=render_branch,
+                  label="Branch", render_plain=render_branch_plain, header="BR", name="Branch"),
     SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
-                  label="Git", render_plain=render_git_diff_plain),
+                  label="Git", render_plain=render_git_diff_plain, header="GIT", name="Git Diff"),
     SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
                   label="PR", render_plain=render_pr_number_plain,
-                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8),
+                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number"),
 
     # Time group — uptime, running, stalled, sleep, active%
     SummaryColumn(id="uptime", group="time", detail_levels=MED_PLUS, render=render_uptime,
-                  label="Uptime", render_plain=render_uptime_plain),
-    SummaryColumn(id="running_time", group="time", detail_levels=MED_PLUS, render=render_running_time),
-    SummaryColumn(id="stalled_time", group="time", detail_levels=MED_PLUS, render=render_stalled_time),
-    SummaryColumn(id="sleep_time", group="time", detail_levels=MED_PLUS, render=render_sleep_time),
-    SummaryColumn(id="active_pct", group="time", detail_levels=FULL_PLUS, render=render_active_pct),
+                  label="Uptime", render_plain=render_uptime_plain, header="UPT", name="Uptime"),
+    SummaryColumn(id="running_time", group="time", detail_levels=MED_PLUS, render=render_running_time,
+                  header="RUN", name="Running Time"),
+    SummaryColumn(id="stalled_time", group="time", detail_levels=MED_PLUS, render=render_stalled_time,
+                  header="STL", name="Stalled Time"),
+    SummaryColumn(id="sleep_time", group="time", detail_levels=MED_PLUS, render=render_sleep_time,
+                  header="ZZZ", name="Sleep Time"),
+    SummaryColumn(id="active_pct", group="time", detail_levels=HIGH_PLUS, render=render_active_pct,
+                  header="ACT", name="Active %"),
     # Synthetic CLI-only: combined time line
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain),
 
     # Budget group — token count, cost, budget ($-toggled); context always visible
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
-                  label="Tokens", render_plain=render_token_count_plain),
+                  label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count"),
     SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
-                  label="Cost", render_plain=render_cost_plain),
+                  label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget,
-                  visible=lambda ctx: ctx.show_cost and ctx.any_has_budget, placeholder_width=7),
+                  visible=lambda ctx: ctx.show_cost and ctx.any_has_budget, placeholder_width=7,
+                  header="BDG", name="Budget"),
     SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=ALL,
                   render=render_subtree_cost, label="Subtree",
                   render_plain=render_subtree_cost_plain,
                   visible=lambda ctx: ctx.show_cost and ctx.any_has_subtree_cost,
-                  placeholder_width=8),
+                  placeholder_width=8, header="SUB$", name="Subtree Cost"),
 
     # Context group — always visible, independent of $ toggle
-    SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage),
+    SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
+                  header="CTX", name="Context Usage"),
 
     # Performance group
-    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time),
+    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
+                  header="MED", name="Median Work Time"),
 
     # Subprocesses group
-    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_subagent_count),
-    SummaryColumn(id="bash_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_bash_count),
-    SummaryColumn(id="child_count", group="subprocesses", detail_levels=FULL_PLUS, render=render_child_count),
+    SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_subagent_count,
+                  header="SUB", name="Subagent Count"),
+    SummaryColumn(id="bash_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_bash_count,
+                  header="SH", name="Bash Count"),
+    SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
+                  header="CH", name="Child Count"),
     # Synthetic CLI-only: combined work + interactions line
     SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain),
@@ -848,24 +866,28 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 
     # Supervision group
     SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
-                  label="Mode", render_plain=render_mode_plain),
+                  label="Mode", render_plain=render_mode_plain, header="MOD", name="Permission Mode"),
     SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
-                  label="Teams", render_plain=render_teams_plain),
+                  label="Teams", render_plain=render_teams_plain, header="TM", name="Teams"),
     SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
-                  label="Tools", render_plain=render_tools_plain),
-    SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context),
-    SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count),
-    SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count),
+                  label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools"),
+    SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context,
+                  header="TC", name="Time Context"),
+    SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count,
+                  header="H#", name="Human Count"),
+    SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count,
+                  header="R#", name="Robot Count"),
     SummaryColumn(id="standing_orders", group="supervision", detail_levels=ALL, render=render_standing_orders,
-                  label="Orders", render_plain=render_orders_plain),
+                  label="Orders", render_plain=render_orders_plain, header="ORD", name="Standing Orders"),
     SummaryColumn(id="heartbeat", group="supervision", detail_levels=ALL, render=render_heartbeat,
-                  label="Heartbeat", render_plain=render_heartbeat_plain),
+                  label="Heartbeat", render_plain=render_heartbeat_plain, header="HB", name="Heartbeat"),
     SummaryColumn(id="oversight_countdown", group="supervision", detail_levels=ALL, render=render_oversight_countdown,
-                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8),
+                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8,
+                  header="OVR", name="Oversight Countdown"),
 
     # Priority group
     SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
-                  label="Value", render_plain=render_value_plain),
+                  label="Value", render_plain=render_value_plain, header="VAL", name="Agent Value"),
 ]
 
 
@@ -964,8 +986,24 @@ def build_cli_context(
     )
 
 
+def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict) -> bool:
+    """Determine if a column is visible at a given level with user overrides.
+
+    - full: always shows every column, no overrides applied
+    - low/med/high: start from col.detail_levels default, then apply overrides
+    """
+    if level == "full":
+        return True
+    base = level in col.detail_levels
+    col_override = overrides.get(col.id)
+    if col_override is not None:
+        return col_override
+    return base
+
+
 def render_summary_cells(
     ctx: ColumnContext,
+    column_filter: Optional[Callable[[SummaryColumn], bool]] = None,
     group_filter: Optional[Callable[[str], bool]] = None,
 ) -> "List[Text]":
     """Render each visible column as a separate Text cell.
@@ -976,16 +1014,23 @@ def render_summary_cells(
 
     Args:
         ctx: Pre-computed column context.
-        group_filter: Optional callback to check group visibility (used by TUI
-            custom mode). When None, all groups are enabled.
+        column_filter: Optional callback to check column visibility. Takes a
+            SummaryColumn and returns bool. When provided, replaces the default
+            detail_levels check and group_filter.
+        group_filter: Legacy callback to check group visibility. Ignored when
+            column_filter is provided.
     """
     from rich.text import Text
     cells = []
     for col in SUMMARY_COLUMNS:
-        if ctx.summary_detail not in col.detail_levels:
-            continue
-        if group_filter is not None and not group_filter(col.group):
-            continue
+        if column_filter is not None:
+            if not column_filter(col):
+                continue
+        else:
+            if ctx.summary_detail not in col.detail_levels:
+                continue
+            if group_filter is not None and not group_filter(col.group):
+                continue
         cell = Text()
         if col.visible is not None and not col.visible(ctx):
             if col.placeholder_width > 0:
@@ -1004,6 +1049,7 @@ def render_summary_cells(
 
 def render_summary_line(
     ctx: ColumnContext,
+    column_filter: Optional[Callable[[SummaryColumn], bool]] = None,
     group_filter: Optional[Callable[[str], bool]] = None,
 ) -> "Text":
     """Render a single summary line from SUMMARY_COLUMNS.
@@ -1013,7 +1059,7 @@ def render_summary_line(
     """
     from rich.text import Text
     content = Text()
-    for cell in render_summary_cells(ctx, group_filter):
+    for cell in render_summary_cells(ctx, column_filter=column_filter, group_filter=group_filter):
         content.append_text(cell)
     return content
 
@@ -1069,6 +1115,45 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
         return []
     widths = compute_column_widths(cell_rows)
     return [pad_and_join_cells(row, widths) for row in cell_rows]
+
+
+def render_header_cells(
+    column_filter: Optional[Callable[[SummaryColumn], bool]] = None,
+    column_widths: Optional["List[int]"] = None,
+) -> "Text":
+    """Render a column header row using short header labels.
+
+    Args:
+        column_filter: Same filter used for data rows — ensures headers align.
+        column_widths: Per-column widths from compute_column_widths(). Headers
+            are truncated to fit but never contribute to width computation.
+
+    Returns:
+        A single Text line with dim-styled abbreviated headers.
+    """
+    from rich.text import Text
+    from rich.cells import cell_len
+    line = Text()
+    col_idx = 0
+    for col in SUMMARY_COLUMNS:
+        if column_filter is not None:
+            if not column_filter(col):
+                continue
+        header = col.header
+        if column_widths and col_idx < len(column_widths):
+            w = column_widths[col_idx]
+            # Truncate header to column width
+            if cell_len(header) > w:
+                header = header[:w]
+            # Pad to column width
+            pad = w - cell_len(header)
+            line.append(header, style="dim")
+            if pad > 0:
+                line.append(" " * pad, style="dim")
+        else:
+            line.append(header, style="dim")
+        col_idx += 1
+    return line
 
 
 def render_cli_stats(ctx: ColumnContext) -> List[Tuple[str, str]]:

@@ -188,6 +188,8 @@ class SupervisorTUI(
         ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
+        # Column headers toggle
+        ("L", "toggle_column_headers", "Column headers"),
         # Remote agent launch on sister (#310)
         ("N", "new_remote_agent", "Remote agent"),
         # New agent defaults modal
@@ -198,8 +200,8 @@ class SupervisorTUI(
     DETAIL_LEVELS = [5, 10, 20, 50]
     # Timeline scope presets in hours (#191)
     TIMELINE_PRESETS = [1, 3, 6, 12, 24]
-    # Summary detail levels: low (minimal), med (timing), full (all + repo), custom (user-configured)
-    SUMMARY_LEVELS = ["low", "med", "full", "custom"]
+    # Summary detail levels: low (minimal), med (timing), high (all metrics), full (everything)
+    SUMMARY_LEVELS = ["low", "med", "high", "full"]
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value", "by_tree"]
     # Summary content modes: what to show in the summary line (#74)
@@ -339,17 +341,18 @@ class SupervisorTUI(
         yield DaemonStatusBar(tmux_session=self.tmux_session, session_manager=self.session_manager, id="daemon-status")
         yield StatusTimeline([], tmux_session=self.tmux_session, id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
+        yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
-        yield SummaryConfigModal(self._prefs.summary_groups, id="summary-config-modal", classes="modal")
+        yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
-            "h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed",
+            self._build_footer_text(),
             id="help-text"
         )
 
@@ -399,6 +402,16 @@ class SupervisorTUI(
             preview.monochrome = self._prefs.monochrome
         except NoMatches:
             pass
+
+        # Hide column headers widget initially (shown via L key)
+        try:
+            header_widget = self.query_one("#column-headers", Static)
+            header_widget.display = self._prefs.show_column_headers
+        except NoMatches:
+            pass
+
+        # Update footer with current detail level
+        self._update_footer()
 
         # Set view_mode from preferences (triggers watch_view_mode)
         self.view_mode = self._prefs.view_mode
@@ -662,9 +675,11 @@ class SupervisorTUI(
         all_cells = []
         for w in widgets:
             ctx = w._build_column_context()
-            cells = render_summary_cells(ctx, group_filter=w.group_enabled)
+            cells = render_summary_cells(ctx, column_filter=w.column_visible)
             all_cells.append(cells)
         self.column_widths = compute_column_widths(all_cells)
+        # Update column headers if visible
+        self._update_column_headers()
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -1382,8 +1397,9 @@ class SupervisorTUI(
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost
-                # Apply column group visibility (#178)
-                widget.summary_groups = self._prefs.summary_groups
+                # Apply per-level column overrides
+                current_level = self.SUMMARY_LEVELS[self.summary_level_index]
+                widget.column_overrides = self._prefs.column_config.get(current_level, {})
                 # Apply list-mode class if in list_preview view
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
@@ -1617,6 +1633,42 @@ class SupervisorTUI(
             self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label} [DIAGNOSTICS]"
         else:
             self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}"
+
+    def _build_footer_text(self) -> str:
+        """Build the footer help text string with current detail level."""
+        level = self.SUMMARY_LEVELS[self.summary_level_index] if hasattr(self, 'summary_level_index') else "low"
+        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed"
+
+    def _update_footer(self) -> None:
+        """Update the footer help-text with current detail level."""
+        try:
+            help_text = self.query_one("#help-text", Static)
+            help_text.update(self._build_footer_text())
+        except NoMatches:
+            pass
+
+    def _update_column_headers(self) -> None:
+        """Update the column headers widget based on current state."""
+        try:
+            header_widget = self.query_one("#column-headers", Static)
+            if not self._prefs.show_column_headers:
+                header_widget.display = False
+                return
+            header_widget.display = True
+            from .summary_columns import render_header_cells, resolve_column_visible
+            level = self.SUMMARY_LEVELS[self.summary_level_index]
+            overrides = self._prefs.column_config.get(level, {})
+
+            def col_filter(col):
+                return resolve_column_visible(col, level, overrides)
+
+            header_line = render_header_cells(
+                column_filter=col_filter,
+                column_widths=self.column_widths,
+            )
+            header_widget.update(header_line)
+        except NoMatches:
+            pass
 
     def _select_first_agent(self) -> None:
         """Select the first agent so something is highlighted from the start."""
@@ -2120,47 +2172,51 @@ class SupervisorTUI(
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
     def action_open_column_config(self) -> None:
-        """Open the column configuration modal (#178)."""
+        """Open the column configuration modal (#178).
+
+        Edits the currently active detail level. Full shows all columns
+        and cannot be configured.
+        """
+        current_level = self.SUMMARY_LEVELS[self.summary_level_index]
+        if current_level == "full":
+            self.notify("Full shows all columns", severity="information")
+            return
         try:
             modal = self.query_one("#summary-config-modal", SummaryConfigModal)
-            # Save original state for cancel
-            self._column_config_original_detail = self._prefs.summary_detail
-            self._column_config_original_index = self.summary_level_index
-            # Switch to custom mode immediately so live summary lines update
-            self._prefs.summary_detail = "custom"
-            self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
-            for widget in self.query(SessionSummary):
-                widget.summary_detail = "custom"
-                widget.summary_groups = self._prefs.summary_groups
-            modal.show(self._prefs.summary_groups, self)
+            overrides = self._prefs.column_config.get(current_level, {})
+            modal.show(current_level, overrides, self)
         except NoMatches:
             pass
 
     def on_summary_config_modal_config_changed(self, message: SummaryConfigModal.ConfigChanged) -> None:
         """Handle column configuration changes from modal (#178)."""
-        self._prefs.summary_groups = message.summary_groups
-        # Switch to "custom" summary detail level
-        self._prefs.summary_detail = "custom"
-        self.summary_level_index = self.SUMMARY_LEVELS.index("custom")
+        level = message.level
+        if message.overrides:
+            self._prefs.column_config[level] = message.overrides
+        elif level in self._prefs.column_config:
+            # Empty overrides after reset — remove the key
+            del self._prefs.column_config[level]
         self._save_prefs()
 
-        # Update all session widgets with new group visibility and custom mode
+        # Push updated overrides to all widgets
+        current_level = self.SUMMARY_LEVELS[self.summary_level_index]
+        new_overrides = self._prefs.column_config.get(current_level, {})
         for widget in self.query(SessionSummary):
-            widget.summary_groups = message.summary_groups
-            widget.summary_detail = "custom"
+            widget.column_overrides = new_overrides
             widget.refresh()
+        self._recompute_cell_column_widths()
 
-        self.notify("Custom column config saved (press 's' to cycle modes)", severity="information")
+        self.notify(f"Column config saved for {level}", severity="information")
 
     def on_summary_config_modal_cancelled(self, message: SummaryConfigModal.Cancelled) -> None:
         """Handle modal cancellation (#178)."""
-        # Restore original detail level
-        if hasattr(self, '_column_config_original_detail'):
-            self._prefs.summary_detail = self._column_config_original_detail
-            self.summary_level_index = self._column_config_original_index
-            for widget in self.query(SessionSummary):
-                widget.summary_detail = self._column_config_original_detail
-                widget.refresh()
+        # Restore original overrides
+        current_level = self.SUMMARY_LEVELS[self.summary_level_index]
+        original_overrides = self._prefs.column_config.get(current_level, {})
+        for widget in self.query(SessionSummary):
+            widget.column_overrides = original_overrides
+            widget.refresh()
+        self._recompute_cell_column_widths()
 
     def action_open_new_agent_defaults(self) -> None:
         """Open the new-agent defaults modal."""

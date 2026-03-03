@@ -5,10 +5,10 @@ import pytest
 from overcode.summary_groups import (
     SUMMARY_GROUPS,
     SUMMARY_GROUPS_BY_ID,
-    PRESETS,
     SummaryGroup,
     get_default_group_visibility,
     get_toggleable_groups,
+    get_default_columns_for_level,
 )
 
 
@@ -41,32 +41,6 @@ class TestSummaryGroups:
             assert group.always_visible is False
             assert group.id != "identity"
 
-    def test_presets_have_all_toggleable_groups(self):
-        """Test that presets define visibility for all toggleable groups."""
-        toggleable_ids = {g.id for g in get_toggleable_groups()}
-
-        for preset_name, preset_config in PRESETS.items():
-            preset_ids = set(preset_config.keys())
-            assert preset_ids == toggleable_ids, f"Preset '{preset_name}' missing groups"
-
-    def test_minimal_preset_values(self):
-        """Test minimal preset configuration."""
-        minimal = PRESETS["minimal"]
-        assert minimal["time"] is False
-        assert minimal["llm_usage"] is True
-        assert minimal["context"] is True
-        assert minimal["git"] is False
-        assert minimal["supervision"] is False
-        assert minimal["priority"] is False
-        assert minimal["performance"] is False
-        assert minimal["subprocesses"] is False
-
-    def test_full_preset_enables_all(self):
-        """Test full preset enables all groups."""
-        full = PRESETS["full"]
-        for group_id, enabled in full.items():
-            assert enabled is True, f"Full preset should enable '{group_id}'"
-
     def test_get_default_group_visibility(self):
         """Test default visibility configuration."""
         defaults = get_default_group_visibility()
@@ -93,3 +67,37 @@ class TestSummaryGroupsById:
     def test_all_groups_in_lookup(self):
         """Test all groups are in the lookup dict."""
         assert len(SUMMARY_GROUPS_BY_ID) == len(SUMMARY_GROUPS)
+
+
+class TestGetDefaultColumnsForLevel:
+    """Tests for get_default_columns_for_level helper."""
+
+    def test_low_level_basics(self):
+        """Test that low level has identity columns visible."""
+        cols = get_default_columns_for_level("low")
+        assert cols["status_symbol"] is True
+        assert cols["agent_name"] is True
+        # med+ columns should be off
+        assert cols["uptime"] is False
+
+    def test_med_level_includes_time(self):
+        """Test that med level includes time columns."""
+        cols = get_default_columns_for_level("med")
+        assert cols["uptime"] is True
+        assert cols["running_time"] is True
+        # high+ columns should be off
+        assert cols["active_pct"] is False
+
+    def test_high_level_includes_subprocess(self):
+        """Test that high level includes subprocess columns."""
+        cols = get_default_columns_for_level("high")
+        assert cols["subagent_count"] is True
+        assert cols["active_pct"] is True
+
+    def test_full_level_shows_all_real_columns(self):
+        """Test that full level shows all columns with non-empty detail_levels."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        cols = get_default_columns_for_level("full")
+        for col in SUMMARY_COLUMNS:
+            if col.detail_levels:  # Skip synthetic CLI-only columns with empty set
+                assert cols[col.id] is True, f"Column {col.id} should be visible at full"

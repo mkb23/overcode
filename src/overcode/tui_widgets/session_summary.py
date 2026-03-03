@@ -25,7 +25,7 @@ from ..tui_helpers import (
     get_git_diff_stats,
     get_summary_content_text,
 )
-from ..summary_columns import ColumnContext, SUMMARY_COLUMNS, render_summary_cells, pad_and_join_cells
+from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
 
 
 def format_standing_instructions(instructions: str, max_len: int = 95) -> str:
@@ -98,12 +98,8 @@ class SessionSummary(Static, can_focus=True):
             except (ValueError, TypeError):
                 pass
         self._last_known_status: str = self.detected_status
-        # Column group visibility (#178)
-        self.summary_groups: dict = {
-            "time": True, "llm_usage": True, "context": True, "git": True,
-            "supervision": True, "priority": True, "performance": True,
-            "subprocesses": True,
-        }
+        # Per-level column overrides for current detail level
+        self.column_overrides: dict = {}
         # Agent hierarchy (#244)
         self.tree_depth: int = 0  # Set by TUI when sort mode is by_tree
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
@@ -112,16 +108,9 @@ class SessionSummary(Static, can_focus=True):
         # Start with expanded class since expanded=True by default
         self.add_class("expanded")
 
-    def group_enabled(self, group_id: str) -> bool:
-        """Check if a column group is enabled for display.
-
-        Only applies custom visibility settings when in 'custom' mode.
-        In low/med/full modes, all groups are enabled (visibility is
-        controlled by the mode itself, not the group settings).
-        """
-        if self.summary_detail != "custom":
-            return True
-        return self.summary_groups.get(group_id, True)
+    def column_visible(self, col: SummaryColumn) -> bool:
+        """Check if a column is visible at the current detail level with overrides."""
+        return resolve_column_visible(col, self.summary_detail, self.column_overrides)
 
     def on_click(self) -> None:
         """Toggle expanded state on click (disabled in list+preview mode)"""
@@ -445,7 +434,7 @@ class SessionSummary(Static, can_focus=True):
         ctx = self._build_column_context()
 
         # Render columns via shared canonical loop with auto-alignment
-        cells = render_summary_cells(ctx, group_filter=self.group_enabled)
+        cells = render_summary_cells(ctx, column_filter=self.column_visible)
         column_widths = getattr(self.app, 'column_widths', None)
         pad_style = ctx.mono(f"{ctx.bg}", "") if ctx.bg else ""
         if column_widths:

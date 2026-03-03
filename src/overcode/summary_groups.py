@@ -89,44 +89,6 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
 SUMMARY_GROUPS_BY_ID: Dict[str, SummaryGroup] = {g.id: g for g in SUMMARY_GROUPS}
 
 
-# Presets for common configurations
-PRESETS: Dict[str, Dict[str, bool]] = {
-    "minimal": {
-        "sisters": True,
-        "time": False,
-        "llm_usage": True,
-        "context": True,
-        "git": False,
-        "supervision": False,
-        "priority": False,
-        "performance": False,
-        "subprocesses": False,
-    },
-    "standard": {
-        "sisters": True,
-        "time": True,
-        "llm_usage": True,
-        "context": True,
-        "git": False,
-        "supervision": True,
-        "priority": True,
-        "performance": False,
-        "subprocesses": True,
-    },
-    "full": {
-        "sisters": True,
-        "time": True,
-        "llm_usage": True,
-        "context": True,
-        "git": True,
-        "supervision": True,
-        "priority": True,
-        "performance": True,
-        "subprocesses": True,
-    },
-}
-
-
 def get_default_group_visibility() -> Dict[str, bool]:
     """Get the default visibility settings for all toggleable groups."""
     return {
@@ -139,3 +101,9 @@ def get_default_group_visibility() -> Dict[str, bool]:
 def get_toggleable_groups() -> List[SummaryGroup]:
     """Get list of groups that can be toggled (excludes always_visible groups)."""
     return [g for g in SUMMARY_GROUPS if not g.always_visible]
+
+
+def get_default_columns_for_level(level: str) -> Dict[str, bool]:
+    """Get the default column visibility for a level based on detail_levels sets."""
+    from .summary_columns import SUMMARY_COLUMNS
+    return {col.id: level in col.detail_levels for col in SUMMARY_COLUMNS}
