@@ -733,7 +733,8 @@ class SupervisorTUI(
         """Check if focus recovery should run.
 
         Returns False when an overlay is visible (fullscreen preview, help,
-        any modal) or focus is already on a session/input widget.
+        any modal), the command bar is open, or focus is already on a
+        session/input widget.
         """
         # Don't steal focus from overlays
         try:
@@ -750,6 +751,13 @@ class SupervisorTUI(
             pass
         if self._any_modal_visible():
             return False
+        # Don't steal focus from command bar during instruction input (#321)
+        try:
+            cmd_bar = self.query_one("#command-bar")
+            if cmd_bar.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
         # Only recover if focus is not on a session or input widget
         if self.focused is None:
             return True
