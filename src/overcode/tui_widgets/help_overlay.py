@@ -57,7 +57,7 @@ class HelpOverlay(Static):
         row("a", "Edit annotation", "Enter", "Approve (send Enter)")
         row("1-5", "Send number", "Esc", "Interrupt agent")
         row("n", "New agent", "x", "Kill agent")
-        row("R", "Restart agent", "z", "Toggle sleep")
+        row("R", "Restart/revive agent", "z", "Toggle sleep")
         row("V", "Edit agent value", "b", "Jump to attention")
         row("B", "Edit cost budget", "p", "Pause/resume heartbeat")
         row("H", "Heartbeat config", "K", "Hook status detection")

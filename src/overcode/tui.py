@@ -1973,12 +1973,6 @@ class SupervisorTUI(
             self.notify("Agent name cannot contain spaces", severity="error")
             return
 
-        # Check if agent with this name already exists
-        existing = self.session_manager.get_session_by_name(agent_name)
-        if existing:
-            self.notify(f"Agent '{agent_name}' already exists", severity="error")
-            return
-
         # Create new agent using launcher
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
@@ -2131,10 +2125,18 @@ class SupervisorTUI(
 
         Sends Ctrl-C to kill the current Claude process, then restarts it
         with the same configuration (directory, permissions).
+        If the tmux window is gone (terminated agent), delegates to _execute_revive.
         """
         import os
+        from .tmux_manager import TmuxManager
         session = focused.session
         session_name = session.name
+        tmux = TmuxManager(self.tmux_session)
+
+        # If the tmux window is gone, revive instead of restart
+        if not tmux.window_exists(session.tmux_window):
+            self._execute_revive(focused, tmux)
+            return
 
         # Build the claude command based on permissiveness mode
         claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
@@ -2149,10 +2151,6 @@ class SupervisorTUI(
             cmd_parts.extend(["--permission-mode", "dontAsk"])
 
         cmd_str = " ".join(cmd_parts)
-
-        # Get tmux manager
-        from .tmux_manager import TmuxManager
-        tmux = TmuxManager(self.tmux_session)
 
         # Send Ctrl-C to kill the current process
         if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
@@ -2175,6 +2173,87 @@ class SupervisorTUI(
             self.session_manager.update_session(session.id, claude_session_ids=[])
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
+
+    def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
+        """Revive a terminated agent by creating a new tmux window and resuming.
+
+        If the agent has an active_claude_session_id, resumes that session.
+        Otherwise starts a fresh claude instance.
+        """
+        import os
+        session = focused.session
+        session_name = session.name
+
+        # Create new tmux window
+        window_index = tmux.create_window(session_name, session.start_directory)
+        if window_index is None:
+            self.notify(f"Failed to create tmux window for '{session_name}'", severity="error")
+            return
+
+        # Build the claude command
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        if session.active_claude_session_id:
+            # Resume existing session — `claude --resume` (no `code` subcommand)
+            if claude_command == "claude":
+                cmd_parts = ["claude", "--resume", session.active_claude_session_id]
+            else:
+                cmd_parts = [claude_command, "--resume", session.active_claude_session_id]
+        else:
+            # Fresh start
+            if claude_command == "claude":
+                cmd_parts = ["claude", "code"]
+            else:
+                cmd_parts = [claude_command]
+
+        # Permission flags
+        if session.permissiveness_mode == "bypass":
+            cmd_parts.append("--dangerously-skip-permissions")
+        elif session.permissiveness_mode == "permissive":
+            cmd_parts.extend(["--permission-mode", "dontAsk"])
+
+        # Agent persona
+        if session.claude_agent:
+            cmd_parts.extend(["--agent", session.claude_agent])
+
+        # Environment prefix
+        env_prefix = f"OVERCODE_SESSION_NAME={session_name} OVERCODE_TMUX_SESSION={self.tmux_session}"
+
+        # Parent env vars
+        if session.parent_session_id:
+            parent = self.session_manager.get_session(session.parent_session_id)
+            if parent:
+                env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent.id} OVERCODE_PARENT_NAME={parent.name}"
+
+        # Agent teams
+        if session.agent_teams:
+            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+
+        cmd_str = f"{env_prefix} {' '.join(cmd_parts)}"
+
+        # Send command to new window
+        if not tmux.send_keys(window_index, cmd_str, enter=True):
+            tmux.kill_window(window_index)
+            self.notify(f"Failed to revive agent: {session_name}", severity="error")
+            return
+
+        # Update session state
+        self.session_manager.update_session(
+            session.id,
+            tmux_window=window_index,
+            status="running",
+        )
+        self.session_manager.update_stats(
+            session.id,
+            current_task="Reviving..."
+        )
+
+        # Remove from terminated cache
+        if session.id in self._terminated_sessions:
+            del self._terminated_sessions[session.id]
+
+        resume_info = " (resuming session)" if session.active_claude_session_id else ""
+        self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
+        self.refresh_sessions()
 
     def action_open_column_config(self) -> None:
         """Open the column configuration modal (#178).

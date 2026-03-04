@@ -358,9 +358,10 @@ class SessionActionsMixin:
             )
             return
 
+        verb = "revive" if session.status in ("terminated", "done") else "restart"
         self._confirm_double_press(
             "restart",
-            f"Press R again to restart '{session_name}'",
+            f"Press R again to {verb} '{session_name}'",
             lambda: self._execute_restart(focused),
             session_name=session_name,
         )
