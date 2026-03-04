@@ -456,16 +456,17 @@ def build_timeline_string(
     return "".join(timeline)
 
 
-def get_status_symbol(status: str) -> Tuple[str, str]:
+def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
     """Get status emoji and base style for agent status.
 
     Args:
         status: Agent status string
+        emoji_free: If True, return ASCII fallback instead of emoji
 
     Returns:
         Tuple of (emoji, color) for the status
     """
-    return _get_status_symbol(status)
+    return _get_status_symbol(status, emoji_free=emoji_free)
 
 
 def get_presence_color(state: int) -> str:
