@@ -146,6 +146,17 @@ class TmuxManager:
                     if rest:
                         pane.send_keys(rest, enter=False)
                         time.sleep(0.1)
+                elif keys.startswith('/') and len(keys) > 1:
+                    # Special handling for slash commands (#307)
+                    # Claude Code shows a command menu when / is typed;
+                    # send / separately so the menu has time to appear
+                    # before the rest of the command and Enter arrive.
+                    pane.send_keys('/', enter=False)
+                    time.sleep(0.3)
+                    rest = keys[1:]
+                    if rest:
+                        pane.send_keys(rest, enter=False)
+                        time.sleep(0.15)
                 else:
                     pane.send_keys(keys, enter=False)
                     # Small delay for Claude Code to process text
