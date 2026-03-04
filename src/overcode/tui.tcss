@@ -277,3 +277,19 @@ AgentSelectModal {
 AgentSelectModal.visible {
     display: block;
 }
+
+/* Sister Selection Modal (#323) */
+SisterSelectionModal {
+    display: none;
+    layer: above;
+    offset: 27 20;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+SisterSelectionModal.visible {
+    display: block;
+}
