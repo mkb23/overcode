@@ -49,14 +49,16 @@ TOOL_EMOJI_DEFAULT = "🔹"  # Fallback for unknown tools
 MAX_TOOL_EMOJI = 10  # Configurable cap
 
 
-def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI) -> str:
+def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI, emoji_free: bool = False) -> str:
     """Convert comma-separated tool names to emoji string."""
     if not allowed_tools:
         return ""
+    from .status_constants import emoji_or_ascii
     tools = [t.strip() for t in allowed_tools.split(",") if t.strip()]
-    emojis = [TOOL_EMOJI.get(t, TOOL_EMOJI_DEFAULT) for t in tools[:max_n]]
+    emojis = [emoji_or_ascii(TOOL_EMOJI.get(t, TOOL_EMOJI_DEFAULT), emoji_free) for t in tools[:max_n]]
+    sep = " " if emoji_free else ""
     suffix = "…" if len(tools) > max_n else ""
-    return "".join(emojis) + suffix
+    return sep.join(emojis) + suffix
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ class ColumnContext:
     status_color: str
     bg: str  # background style suffix, e.g. " on #0d2137" or ""
     monochrome: bool
+    emoji_free: bool
     summary_detail: str
     show_cost: bool
     any_has_budget: bool  # True if any agent has a cost budget (#173)
@@ -155,6 +158,13 @@ class ColumnContext:
     def mono(self, colored: str, simple: str = "bold") -> str:
         """Return simplified style when monochrome is enabled."""
         return simple if self.monochrome else colored
+
+    def e(self, char: str) -> str:
+        """Return ASCII fallback if emoji_free mode is active (#315)."""
+        if self.emoji_free:
+            from .status_constants import EMOJI_ASCII
+            return EMOJI_ASCII.get(char, char)
+        return char
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +261,7 @@ def render_status_symbol(ctx: ColumnContext) -> ColumnOutput:
 
 def render_unvisited_alert(ctx: ColumnContext) -> ColumnOutput:
     if ctx.is_unvisited_stalled:
-        return [("🔔", ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
+        return [(ctx.e("🔔"), ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
     else:
         return [("  ", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
@@ -278,7 +288,7 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
     """
     if ctx.sleep_wake_estimate is not None:
         remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
-        return [(f" ⏰{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('⏰')}{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
     return None
 
 
@@ -440,21 +450,21 @@ render_median_work_time = _make_simple_render("median_work", format_duration, " 
 def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.live_subagent_count
     style = ctx.mono(f"bold purple{ctx.bg}", "bold") if count > 0 else ctx.mono(f"dim{ctx.bg}", "dim")
-    return [(f" 🤿{count:>2}", style)]
+    return [(f" {ctx.e('🤿')}{count:>2}", style)]
 
 
 def render_bash_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.background_bash_count
     style = ctx.mono(f"bold yellow{ctx.bg}", "bold") if count > 0 else ctx.mono(f"dim{ctx.bg}", "dim")
-    return [(f" 🐚{count:>2}", style)]
+    return [(f" {ctx.e('🐚')}{count:>2}", style)]
 
 
 def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     count = ctx.child_count
     if count == 0:
-        return [(" 👶 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {ctx.e('👶')} 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
     style = ctx.mono(f"bold cyan{ctx.bg}", "bold")
-    return [(f" 👶{count:>2}", style)]
+    return [(f" {ctx.e('👶')}{count:>2}", style)]
 
 
 render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", colored_style="bold white")
@@ -462,7 +472,7 @@ render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", co
 
 def render_agent_teams(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.agent_teams:
-        return [(" 🤝", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🤝')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
     return None
 
 
@@ -473,7 +483,7 @@ def render_teams_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
-    emojis = _tool_emojis(ctx.session.allowed_tools)
+    emojis = _tool_emojis(ctx.session.allowed_tools, emoji_free=ctx.emoji_free)
     if not emojis:
         return None
     return [(f" {emojis}", ctx.mono(f"white{ctx.bg}", ""))]
@@ -481,7 +491,7 @@ def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
 
 def render_time_context(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.time_context_enabled:
-        return [(" 🕐", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🕐')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
     else:
         return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
@@ -489,24 +499,26 @@ def render_time_context(ctx: ColumnContext) -> ColumnOutput:
 def render_human_count(ctx: ColumnContext) -> ColumnOutput:
     if ctx.claude_stats is not None:
         human_count = max(0, ctx.claude_stats.interaction_count - ctx.stats.steers_count)
-        return [(f" 👤{human_count:>3}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('👤')}{human_count:>3}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
     else:
-        return [(" 👤  -", ctx.mono(f"dim yellow{ctx.bg}", "dim"))]
+        return [(f" {ctx.e('👤')}  -", ctx.mono(f"dim yellow{ctx.bg}", "dim"))]
 
 
-render_robot_count = _make_simple_render("stats.steers_count", format_str=" 🤖{v:>3}", colored_style="bold cyan")
+def render_robot_count(ctx: ColumnContext) -> ColumnOutput:
+    v = ctx.stats.steers_count
+    return [(f" {ctx.e('🤖')}{v:>3}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
 
 
 def render_standing_orders(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if s.standing_instructions:
         if s.standing_orders_complete:
-            return [(" ✓", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('✓')}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
         elif s.standing_instructions_preset:
             preset_display = f" {s.standing_instructions_preset[:8]}"
             return [(preset_display, ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
         else:
-            return [(" 📋", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('📋')}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
     else:
         return [(" ➖", ctx.mono(f"bold dim{ctx.bg}", "dim"))]
 
@@ -525,24 +537,26 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
 
     deadline_str = ctx.oversight_deadline
     if not deadline_str:
-        return [(" ⏳ --:--", ctx.mono(f"yellow{ctx.bg}", "dim"))]
+        hg = ctx.e("⏳")
+        return [(f" {hg} --:--", ctx.mono(f"yellow{ctx.bg}", "dim"))]
 
     try:
+        hg = ctx.e("⏳")
         deadline = datetime.fromisoformat(deadline_str)
         remaining = (deadline - datetime.now()).total_seconds()
         if remaining <= 0:
-            return [(" ⏳ 0s  ", ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
+            return [(f" {hg} 0s  ", ctx.mono(f"bold blink red{ctx.bg}", "bold"))]
 
         if remaining < 60:
-            text = f" ⏳ {remaining:>3.0f}s"
+            text = f" {hg} {remaining:>3.0f}s"
         elif remaining < 3600:
             mins = int(remaining // 60)
             secs = int(remaining % 60)
-            text = f" ⏳{mins:>2}m{secs:02d}s"
+            text = f" {hg}{mins:>2}m{secs:02d}s"
         else:
             hrs = int(remaining // 3600)
             mins = int((remaining % 3600) // 60)
-            text = f" ⏳{hrs:>2}h{mins:02d}m"
+            text = f" {hg}{hrs:>2}h{mins:02d}m"
 
         if remaining < 30:
             style = ctx.mono(f"bold blink red{ctx.bg}", "bold")
@@ -552,14 +566,15 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
             style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
         return [(text, style)]
     except (ValueError, TypeError):
-        return [(" ⏳ --:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {hg} --:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
 def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
+    hb = ctx.e("💓")
     if s.heartbeat_enabled and not s.heartbeat_paused:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
-        segments = [(f" 💓{freq_str:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+        segments = [(f" {hb}{freq_str:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
         # Next heartbeat time in 24hr format
         next_time_str = None
         if s.last_heartbeat_time:
@@ -584,24 +599,24 @@ def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
     elif s.heartbeat_enabled and s.heartbeat_paused:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
         return [
-            (f" 💓{freq_str:>5}", ctx.mono(f"dim{ctx.bg}", "dim")),
+            (f" {hb}{freq_str:>5}", ctx.mono(f"dim{ctx.bg}", "dim")),
             ("     ⏸ ", ctx.mono(f"bold yellow{ctx.bg}", "bold")),
         ]
     else:
-        return [(" 💓    - @--:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {hb}    - @--:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
 def render_agent_value(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     if ctx.summary_detail in ("full", "high"):
-        return [(f" 💰{s.agent_value:>4}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('💰')}{s.agent_value:>4}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
     else:
         if s.agent_value > 1000:
-            return [(" ⏫️", ctx.mono(f"bold red{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('⏫️')}", ctx.mono(f"bold red{ctx.bg}", "bold"))]
         elif s.agent_value < 1000:
-            return [(" ⏬️", ctx.mono(f"bold blue{ctx.bg}", "bold"))]
+            return [(f" {ctx.e('⏬️')}", ctx.mono(f"bold blue{ctx.bg}", "bold"))]
         else:
-            return [(" ⏹️ ", ctx.mono(f"dim{ctx.bg}", "dim"))]
+            return [(f" {ctx.e('⏹️')} ", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
 # ---------------------------------------------------------------------------
@@ -901,14 +916,15 @@ def build_cli_context(
     any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
-    monochrome: bool = True, summary_detail: str = "full",
+    monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
     max_branch_width: int = 10, all_names_match_repos: bool = False,
     subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
-    status_symbol, _ = get_status_symbol(status)
+    from .status_constants import emoji_or_ascii
+    status_symbol, _ = get_status_symbol(status, emoji_free=emoji_free)
     uptime = calculate_uptime(session.start_time) if session.start_time else "-"
     green_time, non_green_time, sleep_time = get_current_state_times(
         stats, is_asleep=session.is_asleep
@@ -917,11 +933,11 @@ def build_cli_context(
 
     # Permissiveness mode emoji
     if session.permissiveness_mode == "bypass":
-        perm_emoji = "🔥"
+        perm_emoji = emoji_or_ascii("🔥", emoji_free)
     elif session.permissiveness_mode == "permissive":
-        perm_emoji = "🏃"
+        perm_emoji = emoji_or_ascii("🏃", emoji_free)
     else:
-        perm_emoji = "👮"
+        perm_emoji = emoji_or_ascii("👮", emoji_free)
 
     # Parse state_since for time-in-state
     status_changed_at = None
@@ -947,6 +963,7 @@ def build_cli_context(
         status_color="bold",
         bg="",
         monochrome=monochrome,
+        emoji_free=emoji_free,
         summary_detail=summary_detail,
         show_cost=True,
         any_has_budget=any_has_budget,

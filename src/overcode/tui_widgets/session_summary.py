@@ -71,6 +71,7 @@ class SessionSummary(Static, can_focus=True):
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+        self.emoji_free: bool = False  # ASCII fallbacks for emoji (#315)
         self.show_cost: bool = False  # Show $ cost instead of token counts
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
         self.subtree_cost_usd: float = 0.0  # Subtree cost from daemon
@@ -255,22 +256,24 @@ class SessionSummary(Static, can_focus=True):
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
 
         # Status styling
+        from ..status_constants import emoji_or_ascii
+        ef = self.emoji_free
         if self.monochrome:
             bg = ""
-            status_symbol, _ = get_status_symbol(self.detected_status)
+            status_symbol, _ = get_status_symbol(self.detected_status, emoji_free=ef)
             status_color = "bold"
         else:
             bg = " on #0d2137"
-            status_symbol, base_color = get_status_symbol(self.detected_status)
+            status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
             status_color = f"bold {base_color}{bg}"
 
         # Permissiveness mode emoji
         if s.permissiveness_mode == "bypass":
-            perm_emoji = "🔥"
+            perm_emoji = emoji_or_ascii("🔥", ef)
         elif s.permissiveness_mode == "permissive":
-            perm_emoji = "🏃"
+            perm_emoji = emoji_or_ascii("🏃", ef)
         else:
-            perm_emoji = "👮"
+            perm_emoji = emoji_or_ascii("👮", ef)
 
         # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
@@ -310,6 +313,7 @@ class SessionSummary(Static, can_focus=True):
             status_color=status_color,
             bg=bg,
             monochrome=self.monochrome,
+            emoji_free=self.emoji_free,
             summary_detail=self.summary_detail,
             show_cost=self.show_cost,
             any_has_budget=self.any_has_budget,

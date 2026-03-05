@@ -93,9 +93,86 @@ STATUS_EMOJIS = {
 }
 
 
-def get_status_emoji(status: str) -> str:
+# ASCII fallbacks for all emoji used in the TUI (#315)
+# Used when emoji_free mode is active (terminals without emoji font support).
+EMOJI_ASCII = {
+    # Status indicators
+    "🟢": "[R]",
+    "🔴": "[W]",
+    "⚫": "[X]",
+    "💤": "[Z]",
+    "💚": "[H]",
+    "🟠": "[A]",
+    "💛": "[h]",
+    "🟣": "[E]",
+    "☑️": "[D]",
+    "👁️": "[O]",
+    "🟡": "[S]",
+    "⚪": "[?]",
+    # Tool indicators
+    "🖥️": "Sh",
+    "📖": "Rd",
+    "✏️": "Wr",
+    "🔧": "Ed",
+    "🔍": "Gl",
+    "🔎": "Gr",
+    "🌐": "Wf",
+    "🕵️": "Ws",
+    "🧵": "Tk",
+    "📓": "Nb",
+    "📋": "Cb",
+    "📝": "Tw",
+    "🔹": "--",
+    # Permission modes
+    "🔥": "B!",
+    "🏃": "P>",
+    "👮": "N:",
+    # Activity/metrics
+    "🔔": "(!)",
+    "⏰": "AL",
+    "📚": "CW",
+    "💓": "<3",
+    "💰": "$$",
+    "⏳": "~~",
+    "🤖": "Ro",
+    "👤": "Hu",
+    "🤿": "Su",
+    "🐚": "Bg",
+    "👶": "Ch",
+    "🤝": "Tm",
+    "🕐": "Tc",
+    # Content modes
+    "💬": "Sm",
+    "🎯": "SO",
+    # Presence states
+    "⏻": "Pw",
+    "🔒": "Lk",
+    "🧘": "Id",
+    "🚶": "Ac",
+    # Value arrows
+    "⏫️": "^^",
+    "⏬️": "vv",
+    "⏹️": "==",
+    # Misc
+    "⚠": "!W",
+    "➖": "--",
+    "✓": "ok",
+    "▼": "v ",
+    "▶": "> ",
+}
+
+
+def emoji_or_ascii(char: str, emoji_free: bool) -> str:
+    """Return ASCII fallback if emoji_free mode is active, else the emoji."""
+    if emoji_free:
+        return EMOJI_ASCII.get(char, char)
+    return char
+
+
+def get_status_emoji(status: str, emoji_free: bool = False) -> str:
     """Get emoji for an agent status."""
-    return STATUS_EMOJIS.get(status, "⚪")
+    e = STATUS_EMOJIS.get(status, "⚪")
+    return emoji_or_ascii(e, emoji_free)
 
 
 # =============================================================================
@@ -143,9 +220,10 @@ STATUS_SYMBOLS = {
 }
 
 
-def get_status_symbol(status: str) -> Tuple[str, str]:
+def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
     """Get (emoji, color) tuple for an agent status."""
-    return STATUS_SYMBOLS.get(status, ("⚪", "dim"))
+    symbol, color = STATUS_SYMBOLS.get(status, ("⚪", "dim"))
+    return (emoji_or_ascii(symbol, emoji_free), color)
 
 
 # =============================================================================

@@ -75,7 +75,7 @@ class HelpOverlay(Static):
 
         section("OTHER")
         row("y", "Copy mode (mouse sel)", "P", "Sync to tmux pane")
-        row("M", "Monochrome mode")
+        row("M", "Monochrome mode", "E", "Emoji-free mode")
         t.append("\n")
 
         section("COMMAND BAR (i or :)")

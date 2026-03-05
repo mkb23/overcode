@@ -178,6 +178,8 @@ class SupervisorTUI(
         ("less_than_sign", "cycle_timeline_hours", "Timeline scope"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
+        # Emoji-free mode for terminals without emoji fonts (#315)
+        ("E", "toggle_emoji_free", "Emoji-free"),
         # Toggle between token count and dollar cost display
         ("dollar_sign", "toggle_cost_display", "Show $"),
         # Transport/handover - prepare all sessions for handoff (double-press)
@@ -221,6 +223,7 @@ class SupervisorTUI(
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
+    emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
     show_cost: reactive[bool] = reactive(False)  # Show $ cost instead of token counts
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
@@ -302,6 +305,8 @@ class SupervisorTUI(
         self.baseline_minutes = self._prefs.baseline_minutes
         # Initialize monochrome from preferences (#138)
         self.monochrome = self._prefs.monochrome
+        # Initialize emoji_free from preferences (#315)
+        self.emoji_free = self._prefs.emoji_free
         # Initialize show_cost from preferences
         self.show_cost = self._prefs.show_cost
         # macOS notification integration (#235)
@@ -1350,6 +1355,9 @@ class SupervisorTUI(
                         or old_sleeping != any_is_sleeping
                     )
                     widget.session = new_session
+                    # Sync display modes
+                    widget.monochrome = self.monochrome
+                    widget.emoji_free = self.emoji_free
                     # Sync pr_number from session (propagates both detection and clearing)
                     widget.pr_number = new_session.pr_number
                     widget.any_has_budget = any_has_budget
@@ -1407,7 +1415,9 @@ class SupervisorTUI(
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
                 widget.summary_content_mode = self.summary_content_mode
-                # Apply cost display mode
+                # Apply display modes
+                widget.monochrome = self.monochrome
+                widget.emoji_free = self.emoji_free
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
