@@ -520,6 +520,27 @@ class TestTUIPreferences:
             assert loaded.column_config["med"]["active_pct"] is True
             assert loaded.show_column_headers is True
 
+    def test_disabled_sisters_persist(self, tmp_path):
+        """disabled_sisters should round-trip through save/load (#323)."""
+        from overcode.settings import TUIPreferences, ensure_session_dir
+
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("test-session")
+
+            original = TUIPreferences()
+            original.disabled_sisters = {"desktop", "server"}
+            original.save("test-session")
+
+            loaded = TUIPreferences.load("test-session")
+            assert loaded.disabled_sisters == {"desktop", "server"}
+
+    def test_disabled_sisters_default_empty(self):
+        """disabled_sisters should default to empty set."""
+        from overcode.settings import TUIPreferences
+
+        prefs = TUIPreferences()
+        assert prefs.disabled_sisters == set()
+
     def test_custom_detail_level_migrates_to_full(self, tmp_path):
         """Loading 'custom' summary_detail should migrate to 'full'."""
         from overcode.settings import TUIPreferences, ensure_session_dir

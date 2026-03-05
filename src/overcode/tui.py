@@ -68,6 +68,7 @@ from .tui_widgets import (
     SummaryConfigModal,
     NewAgentDefaultsModal,
     AgentSelectModal,
+    SisterSelectionModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -195,6 +196,8 @@ class SupervisorTUI(
         ("N", "new_remote_agent", "Remote agent"),
         # New agent defaults modal
         ("G", "open_new_agent_defaults", "Agent defaults"),
+        # Sister selection modal (#323)
+        ("U", "open_sister_selection", "Sisters"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -352,6 +355,8 @@ class SupervisorTUI(
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
+        # Modal for sister instance visibility (#323)
+        yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -612,8 +617,8 @@ class SupervisorTUI(
         old_names = {s.name for s in self.sessions}
 
         self._invalidate_sessions_cache()
-        # Merge local + remote sessions (#245)
-        self.sessions = sessions + self._remote_sessions
+        # Merge local + remote sessions (#245), filtering disabled sisters (#323)
+        self.sessions = sessions + self._visible_remote_sessions()
         # Apply sorting (#61)
         self._sort_sessions()
         # update_session_widgets handles focus preservation internally
@@ -986,6 +991,17 @@ class SupervisorTUI(
         """Fetch remote sessions from all sisters."""
         remote = self._sister_poller.poll_all()
         self.call_from_thread(self._apply_remote_sessions, remote)
+
+    def _visible_remote_sessions(self) -> List[Session]:
+        """Return remote sessions excluding disabled sisters (#323)."""
+        disabled = self._prefs.disabled_sisters
+        if not disabled:
+            return list(self._remote_sessions)
+        disabled_urls = {
+            s.url for s in self._sister_poller.get_sister_states()
+            if s.name in disabled
+        }
+        return [s for s in self._remote_sessions if s.source_url not in disabled_urls]
 
     def _apply_remote_sessions(self, remote_sessions: List[Session]) -> None:
         """Store remote sessions and rebuild widget list."""
@@ -2340,6 +2356,37 @@ class SupervisorTUI(
             cmd_bar.focus_input()
         except NoMatches:
             pass
+
+    def action_open_sister_selection(self) -> None:
+        """Open the sister selection modal (#323)."""
+        sisters = [
+            {"name": s.name, "url": s.url}
+            for s in self._sister_poller.get_sister_states()
+        ]
+        if not sisters:
+            self.notify("No sisters configured", severity="warning")
+            return
+        try:
+            modal = self.query_one("#sister-selection-modal", SisterSelectionModal)
+            modal.show(sisters, self._prefs.disabled_sisters, self)
+        except NoMatches:
+            pass
+
+    def on_sister_selection_modal_selection_changed(self, message: SisterSelectionModal.SelectionChanged) -> None:
+        """Handle sister visibility changes from modal (#323)."""
+        self._prefs.disabled_sisters = message.disabled_sisters
+        self._save_prefs()
+        # Re-filter remote sessions and rebuild widget list
+        self.refresh_sessions()
+        count = len(message.disabled_sisters)
+        if count:
+            self.notify(f"{count} sister(s) hidden", severity="information")
+        else:
+            self.notify("All sisters visible", severity="information")
+
+    def on_sister_selection_modal_cancelled(self, message: SisterSelectionModal.Cancelled) -> None:
+        """Handle sister selection modal cancellation (#323)."""
+        pass
 
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0
