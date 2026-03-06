@@ -425,6 +425,7 @@ class TUIPreferences:
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+    emoji_free: bool = False  # ASCII fallbacks for terminals without emoji (#315)
     show_cost: bool = False  # Show $ cost instead of token counts
     timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
@@ -435,6 +436,8 @@ class TUIPreferences:
     column_config: dict = field(default_factory=dict)
     # Show abbreviated column headers above summary lines
     show_column_headers: bool = False
+    # Sister instances hidden from agent list (#323)
+    disabled_sisters: Set[str] = field(default_factory=set)
 
     @classmethod
     def load(cls, session: str) -> "TUIPreferences":
@@ -470,12 +473,14 @@ class TUIPreferences:
                     summary_content_mode=data.get("summary_content_mode", "ai_short"),
                     baseline_minutes=data.get("baseline_minutes", 0),
                     monochrome=data.get("monochrome", False),
+                    emoji_free=data.get("emoji_free", False),
                     show_cost=data.get("show_cost", False),
                     visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
                     column_config=data.get("column_config", {}),
                     show_column_headers=data.get("show_column_headers", False),
                     timeline_hours=data.get("timeline_hours", 3.0),
                     notifications=data.get("notifications", "off"),
+                    disabled_sisters=set(data.get("disabled_sisters", [])),
                 )
         except (json.JSONDecodeError, IOError):
             return cls()
@@ -502,12 +507,14 @@ class TUIPreferences:
                     "summary_content_mode": self.summary_content_mode,
                     "baseline_minutes": self.baseline_minutes,
                     "monochrome": self.monochrome,
+                    "emoji_free": self.emoji_free,
                     "show_cost": self.show_cost,
                     "visited_stalled_agents": list(self.visited_stalled_agents),
                     "column_config": self.column_config,
                     "show_column_headers": self.show_column_headers,
                     "timeline_hours": self.timeline_hours,
                     "notifications": self.notifications,
+                    "disabled_sisters": sorted(self.disabled_sisters),
                 }, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

@@ -15,6 +15,8 @@ from .session_summary import SessionSummary
 from .command_bar import CommandBar
 from .summary_config_modal import SummaryConfigModal
 from .new_agent_defaults_modal import NewAgentDefaultsModal
+from .agent_select_modal import AgentSelectModal
+from .sister_selection_modal import SisterSelectionModal
 
 __all__ = [
     "FullscreenPreview",
@@ -27,4 +29,6 @@ __all__ = [
     "CommandBar",
     "SummaryConfigModal",
     "NewAgentDefaultsModal",
+    "AgentSelectModal",
+    "SisterSelectionModal",
 ]

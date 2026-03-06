@@ -409,6 +409,27 @@ class ViewActionsMixin:
             severity="information"
         )
 
+    def action_toggle_emoji_free(self) -> None:
+        """Toggle emoji-free mode for terminals without emoji fonts (#315).
+
+        When enabled:
+        - Replaces all emoji with ASCII text equivalents
+        - Helps with terminals where emoji render as tofu or misaligned
+        """
+        self.emoji_free = not self.emoji_free
+
+        self._prefs.emoji_free = self.emoji_free
+        self._save_prefs()
+
+        # Force all session widgets to repaint with new emoji setting
+        self.update_session_widgets()
+        self._update_footer()
+
+        self.notify(
+            "Emoji-free mode ON" if self.emoji_free else "Emoji-free mode OFF",
+            severity="information"
+        )
+
     def action_toggle_cost_display(self) -> None:
         """Toggle between showing token counts and dollar costs.
 

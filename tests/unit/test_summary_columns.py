@@ -147,6 +147,7 @@ def _make_ctx(**overrides) -> ColumnContext:
         status_color="bold green on #0d2137",
         bg=" on #0d2137",
         monochrome=False,
+        emoji_free=False,
         summary_detail="full",
         show_cost=False,
         any_has_budget=False,

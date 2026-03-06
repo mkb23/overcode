@@ -91,6 +91,7 @@ class CommandBar(Static):
     new_agent_name: Optional[str] = None  # Store name between steps
     new_agent_bypass: bool = False  # Store permissions between steps
     new_agent_teams: bool = False  # Store teams flag between steps (#309)
+    new_agent_claude_agent: Optional[str] = None  # Store selected Claude agent between steps
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
     new_remote_sister: Optional[str] = None  # Store selected sister name for remote agent flow (#310)
 
@@ -112,12 +113,13 @@ class CommandBar(Static):
 
     class NewAgentRequested(Message):
         """Message sent when user wants to create a new agent."""
-        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False):
+        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False, claude_agent: Optional[str] = None):
             super().__init__()
             self.agent_name = agent_name
             self.directory = directory
             self.bypass_permissions = bypass_permissions
             self.agent_teams = agent_teams
+            self.claude_agent = claude_agent
 
     class NewRemoteAgentRequested(Message):
         """Message sent when user wants to launch a remote agent on a sister (#310)."""
@@ -368,6 +370,28 @@ class CommandBar(Static):
             # Use current working directory if none specified
             self.new_agent_dir = str(Path.cwd())
 
+        # Check for available Claude agents
+        from ..agent_scanner import scan_agents
+        agents = scan_agents(self.new_agent_dir)
+
+        if agents:
+            # Show agent selection modal (TUI will handle the message and
+            # transition us to name step afterwards)
+            from .agent_select_modal import AgentSelectModal
+            try:
+                modal = self.app.query_one("#agent-select-modal", AgentSelectModal)
+                modal.show(agents, self.app)
+            except Exception:
+                # Modal not found — fall through to name step
+                self._transition_to_name_step()
+        else:
+            # No agents found — skip straight to name step
+            self._transition_to_name_step()
+
+    def _transition_to_name_step(self) -> None:
+        """Transition to the name input step of new agent creation."""
+        from pathlib import Path
+
         # Derive default agent name from directory basename (#131)
         # If an agent with that name exists, increment (foo -> foo2 -> foo3)
         base_name = Path(self.new_agent_dir).name
@@ -444,12 +468,13 @@ class CommandBar(Static):
 
     def _create_new_agent(self, name: str, bypass_permissions: bool = False, agent_teams: bool = False) -> None:
         """Create a new agent with the given name, directory, permission mode, and teams flag."""
-        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams))
+        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent))
         # Reset state
         self.new_agent_dir = None
         self.new_agent_name = None
         self.new_agent_bypass = False
         self.new_agent_teams = False
+        self.new_agent_claude_agent = None
         self.mode = "send"
         self._update_target_label()
 
@@ -583,6 +608,7 @@ class CommandBar(Static):
         if self.expanded:
             textarea = self.query_one("#cmd-textarea", TextArea)
             textarea.text = ""
+            self.expanded = False  # Reset to single-line mode
         else:
             input_widget = self.query_one("#cmd-input", Input)
             input_widget.value = ""
@@ -592,6 +618,7 @@ class CommandBar(Static):
         self.new_agent_name = None
         self.new_agent_bypass = False
         self.new_agent_teams = False
+        self.new_agent_claude_agent = None
         self.new_remote_sister = None  # Reset remote agent state (#310)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()

@@ -18,6 +18,7 @@ import time
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer
 from textual.widgets import Header, Static, Input, TextArea
+from textual.widget import MountError
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual import events, work
@@ -67,6 +68,8 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    AgentSelectModal,
+    SisterSelectionModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -176,6 +179,8 @@ class SupervisorTUI(
         ("less_than_sign", "cycle_timeline_hours", "Timeline scope"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
+        # Emoji-free mode for terminals without emoji fonts (#315)
+        ("E", "toggle_emoji_free", "Emoji-free"),
         # Toggle between token count and dollar cost display
         ("dollar_sign", "toggle_cost_display", "Show $"),
         # Transport/handover - prepare all sessions for handoff (double-press)
@@ -194,6 +199,8 @@ class SupervisorTUI(
         ("N", "new_remote_agent", "Remote agent"),
         # New agent defaults modal
         ("G", "open_new_agent_defaults", "Agent defaults"),
+        # Sister selection modal (#323)
+        ("U", "open_sister_selection", "Sisters"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -217,6 +224,7 @@ class SupervisorTUI(
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
+    emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
     show_cost: reactive[bool] = reactive(False)  # Show $ cost instead of token counts
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
@@ -298,6 +306,8 @@ class SupervisorTUI(
         self.baseline_minutes = self._prefs.baseline_minutes
         # Initialize monochrome from preferences (#138)
         self.monochrome = self._prefs.monochrome
+        # Initialize emoji_free from preferences (#315)
+        self.emoji_free = self._prefs.emoji_free
         # Initialize show_cost from preferences
         self.show_cost = self._prefs.show_cost
         # macOS notification integration (#235)
@@ -349,6 +359,10 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
+        # Modal for agent selection during new agent creation
+        yield AgentSelectModal(id="agent-select-modal", classes="modal")
+        # Modal for sister instance visibility (#323)
+        yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -609,12 +623,17 @@ class SupervisorTUI(
         old_names = {s.name for s in self.sessions}
 
         self._invalidate_sessions_cache()
-        # Merge local + remote sessions (#245)
-        self.sessions = sessions + self._remote_sessions
+        # Merge local + remote sessions (#245), filtering disabled sisters (#323)
+        self.sessions = sessions + self._visible_remote_sessions()
         # Apply sorting (#61)
         self._sort_sessions()
         # update_session_widgets handles focus preservation internally
-        self.update_session_widgets(force_refresh=False)
+        # Guard against race where background worker delivers sessions before
+        # the ScrollableContainer is fully mounted (#286).
+        try:
+            self.update_session_widgets(force_refresh=False)
+        except MountError:
+            return
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
         new_names = {s.name for s in sessions}
@@ -984,6 +1003,17 @@ class SupervisorTUI(
         remote = self._sister_poller.poll_all()
         self.call_from_thread(self._apply_remote_sessions, remote)
 
+    def _visible_remote_sessions(self) -> List[Session]:
+        """Return remote sessions excluding disabled sisters (#323)."""
+        disabled = self._prefs.disabled_sisters
+        if not disabled:
+            return list(self._remote_sessions)
+        disabled_urls = {
+            s.url for s in self._sister_poller.get_sister_states()
+            if s.name in disabled
+        }
+        return [s for s in self._remote_sessions if s.source_url not in disabled_urls]
+
     def _apply_remote_sessions(self, remote_sessions: List[Session]) -> None:
         """Store remote sessions and rebuild widget list."""
         self._mark_event("apply_sisters_start")
@@ -996,13 +1026,6 @@ class SupervisorTUI(
         if not had_remote and remote_sessions:
             self.update_timeline()
         self._mark_event("apply_sisters_end")
-
-    def _refresh_remote_session(self, session: "Session") -> None:
-        """Trigger an immediate poll of a remote agent to reflect local changes (#305)."""
-        if session.source_url and session.name:
-            self._poll_focused_sister_async(
-                session.source_url, session.source_api_key, session.name, session.id
-            )
 
     def _poll_focused_sister(self) -> None:
         """Fast-poll the focused remote agent (1.5s) for responsive preview."""
@@ -1043,6 +1066,25 @@ class SupervisorTUI(
                 break
 
         # Refresh preview pane if in list_preview mode
+        if self.view_mode == "list_preview":
+            self._update_preview()
+
+    def _optimistic_update_remote(self, session_id: str, **fields) -> None:
+        """Optimistically update a remote session's local copy for instant UI feedback.
+
+        After a successful remote API call, update the in-memory session and
+        widget immediately instead of waiting for the next polling cycle (#305).
+        """
+        from dataclasses import replace
+        for i, rs in enumerate(self._remote_sessions):
+            if rs.id == session_id:
+                self._remote_sessions[i] = replace(rs, **fields)
+                break
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.session = replace(widget.session, **fields)
+                widget.refresh()
+                break
         if self.view_mode == "list_preview":
             self._update_preview()
 
@@ -1338,6 +1380,9 @@ class SupervisorTUI(
                         or old_sleeping != any_is_sleeping
                     )
                     widget.session = new_session
+                    # Sync display modes
+                    widget.monochrome = self.monochrome
+                    widget.emoji_free = self.emoji_free
                     # Sync pr_number from session (propagates both detection and clearing)
                     widget.pr_number = new_session.pr_number
                     widget.any_has_budget = any_has_budget
@@ -1395,7 +1440,9 @@ class SupervisorTUI(
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
                 widget.summary_content_mode = self.summary_content_mode
-                # Apply cost display mode
+                # Apply display modes
+                widget.monochrome = self.monochrome
+                widget.emoji_free = self.emoji_free
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
@@ -1795,7 +1842,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.text else "cleared"
                 self.notify(f"Standing order {action} for remote {message.session_name}")
-                self._refresh_remote_session(session)
+                self._optimistic_update_remote(session.id, standing_instructions=message.text)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1821,7 +1868,7 @@ class SupervisorTUI(
             )
             if result.ok:
                 self.notify(f"Value set to {message.value} for remote {message.session_name}")
-                self._refresh_remote_session(session)
+                self._optimistic_update_remote(session.id, agent_value=message.value)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1847,7 +1894,7 @@ class SupervisorTUI(
                     self.notify(f"Budget set to ${message.budget_usd:.2f} for remote {message.session_name}")
                 else:
                     self.notify(f"Budget cleared for remote {message.session_name}")
-                self._refresh_remote_session(session)
+                self._optimistic_update_remote(session.id, cost_budget_usd=message.budget_usd)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1874,7 +1921,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.annotation else "cleared"
                 self.notify(f"Annotation {action} for remote {message.session_name}")
-                self._refresh_remote_session(session)
+                self._optimistic_update_remote(session.id, human_annotation=message.annotation)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1982,12 +2029,6 @@ class SupervisorTUI(
             self.notify("Agent name cannot contain spaces", severity="error")
             return
 
-        # Check if agent with this name already exists
-        existing = self.session_manager.get_session_by_name(agent_name)
-        if existing:
-            self.notify(f"Agent '{agent_name}' already exists", severity="error")
-            return
-
         # Create new agent using launcher
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
@@ -2000,10 +2041,12 @@ class SupervisorTUI(
                 start_directory=directory,
                 dangerously_skip_permissions=bypass_permissions,
                 agent_teams=message.agent_teams,
+                claude_agent=message.claude_agent,
             )
             dir_info = f" in {directory}" if directory else ""
             perm_info = " (bypass mode)" if bypass_permissions else ""
-            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}", severity="information")
+            agent_info = f" (agent: {message.claude_agent})" if message.claude_agent else ""
+            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}{agent_info}", severity="information")
             # Refresh to show new agent
             self.refresh_sessions()
         except Exception as e:
@@ -2138,10 +2181,18 @@ class SupervisorTUI(
 
         Sends Ctrl-C to kill the current Claude process, then restarts it
         with the same configuration (directory, permissions).
+        If the tmux window is gone (terminated agent), delegates to _execute_revive.
         """
         import os
+        from .tmux_manager import TmuxManager
         session = focused.session
         session_name = session.name
+        tmux = TmuxManager(self.tmux_session)
+
+        # If the tmux window is gone, revive instead of restart
+        if not tmux.window_exists(session.tmux_window):
+            self._execute_revive(focused, tmux)
+            return
 
         # Build the claude command based on permissiveness mode
         claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
@@ -2156,10 +2207,6 @@ class SupervisorTUI(
             cmd_parts.extend(["--permission-mode", "dontAsk"])
 
         cmd_str = " ".join(cmd_parts)
-
-        # Get tmux manager
-        from .tmux_manager import TmuxManager
-        tmux = TmuxManager(self.tmux_session)
 
         # Send Ctrl-C to kill the current process
         if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
@@ -2182,6 +2229,87 @@ class SupervisorTUI(
             self.session_manager.update_session(session.id, claude_session_ids=[])
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
+
+    def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
+        """Revive a terminated agent by creating a new tmux window and resuming.
+
+        If the agent has an active_claude_session_id, resumes that session.
+        Otherwise starts a fresh claude instance.
+        """
+        import os
+        session = focused.session
+        session_name = session.name
+
+        # Create new tmux window
+        window_index = tmux.create_window(session_name, session.start_directory)
+        if window_index is None:
+            self.notify(f"Failed to create tmux window for '{session_name}'", severity="error")
+            return
+
+        # Build the claude command
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        if session.active_claude_session_id:
+            # Resume existing session — `claude --resume` (no `code` subcommand)
+            if claude_command == "claude":
+                cmd_parts = ["claude", "--resume", session.active_claude_session_id]
+            else:
+                cmd_parts = [claude_command, "--resume", session.active_claude_session_id]
+        else:
+            # Fresh start
+            if claude_command == "claude":
+                cmd_parts = ["claude", "code"]
+            else:
+                cmd_parts = [claude_command]
+
+        # Permission flags
+        if session.permissiveness_mode == "bypass":
+            cmd_parts.append("--dangerously-skip-permissions")
+        elif session.permissiveness_mode == "permissive":
+            cmd_parts.extend(["--permission-mode", "dontAsk"])
+
+        # Agent persona
+        if session.claude_agent:
+            cmd_parts.extend(["--agent", session.claude_agent])
+
+        # Environment prefix
+        env_prefix = f"OVERCODE_SESSION_NAME={session_name} OVERCODE_TMUX_SESSION={self.tmux_session}"
+
+        # Parent env vars
+        if session.parent_session_id:
+            parent = self.session_manager.get_session(session.parent_session_id)
+            if parent:
+                env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent.id} OVERCODE_PARENT_NAME={parent.name}"
+
+        # Agent teams
+        if session.agent_teams:
+            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+
+        cmd_str = f"{env_prefix} {' '.join(cmd_parts)}"
+
+        # Send command to new window
+        if not tmux.send_keys(window_index, cmd_str, enter=True):
+            tmux.kill_window(window_index)
+            self.notify(f"Failed to revive agent: {session_name}", severity="error")
+            return
+
+        # Update session state
+        self.session_manager.update_session(
+            session.id,
+            tmux_window=window_index,
+            status="running",
+        )
+        self.session_manager.update_stats(
+            session.id,
+            current_task="Reviving..."
+        )
+
+        # Remove from terminated cache
+        if session.id in self._terminated_sessions:
+            del self._terminated_sessions[session.id]
+
+        resume_info = " (resuming session)" if session.active_claude_session_id else ""
+        self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
+        self.refresh_sessions()
 
     def action_open_column_config(self) -> None:
         """Open the column configuration modal (#178).
@@ -2247,6 +2375,57 @@ class SupervisorTUI(
 
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
+        pass
+
+    def on_agent_select_modal_agent_selected(self, message: AgentSelectModal.AgentSelected) -> None:
+        """Handle agent selection from modal."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.new_agent_claude_agent = message.agent_name
+            cmd_bar._transition_to_name_step()
+            cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_agent_select_modal_agent_select_skipped(self, message: AgentSelectModal.AgentSelectSkipped) -> None:
+        """Handle agent selection skipped (q/Esc)."""
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.new_agent_claude_agent = None
+            cmd_bar._transition_to_name_step()
+            cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def action_open_sister_selection(self) -> None:
+        """Open the sister selection modal (#323)."""
+        sisters = [
+            {"name": s.name, "url": s.url}
+            for s in self._sister_poller.get_sister_states()
+        ]
+        if not sisters:
+            self.notify("No sisters configured", severity="warning")
+            return
+        try:
+            modal = self.query_one("#sister-selection-modal", SisterSelectionModal)
+            modal.show(sisters, self._prefs.disabled_sisters, self)
+        except NoMatches:
+            pass
+
+    def on_sister_selection_modal_selection_changed(self, message: SisterSelectionModal.SelectionChanged) -> None:
+        """Handle sister visibility changes from modal (#323)."""
+        self._prefs.disabled_sisters = message.disabled_sisters
+        self._save_prefs()
+        # Re-filter remote sessions and rebuild widget list
+        self.refresh_sessions()
+        count = len(message.disabled_sisters)
+        if count:
+            self.notify(f"{count} sister(s) hidden", severity="information")
+        else:
+            self.notify("All sisters visible", severity="information")
+
+    def on_sister_selection_modal_cancelled(self, message: SisterSelectionModal.Cancelled) -> None:
+        """Handle sister selection modal cancellation (#323)."""
         pass
 
     # Throttle TUI heartbeat writes to once per 5 seconds

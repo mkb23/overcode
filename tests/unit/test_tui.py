@@ -1242,6 +1242,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             # Help should start hidden
             help_overlay = app.query_one("#help-overlay")
             assert not help_overlay.has_class("visible")
@@ -1262,6 +1263,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             # Daemon panel should start hidden (display=False via CSS)
             daemon_panel = app.query_one("#daemon-panel")
             initial_display = daemon_panel.display
@@ -1282,6 +1284,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             help_overlay = app.query_one("#help-overlay")
             await pilot.press("question_mark")
             assert help_overlay.has_class("visible")
@@ -1294,6 +1297,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             await pilot.press("q")
             # App should be in process of exiting
             # (run_test handles cleanup)
@@ -1306,6 +1310,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             timeline = app.query_one("#timeline")
             initial_display = timeline.display
 
@@ -1326,6 +1331,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             initial_index = app.detail_level_index
 
             # Cycle through levels
@@ -1341,6 +1347,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             # Starts at index 3 ("full") - the default
             assert app.summary_level_index == 3
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
@@ -1372,7 +1379,8 @@ class TestSupervisorTUIPilot:
 
         app = SupervisorTUI(tmux_session="test-pilot")
 
-        async with app.run_test():
+        async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             # Check daemon status bar is mounted
             daemon_bar = app.query_one("#daemon-status", DaemonStatusBar)
             assert daemon_bar is not None
@@ -1393,6 +1401,7 @@ class TestSupervisorTUIPilot:
         app = SupervisorTUI(tmux_session="test-pilot")
 
         async with app.run_test() as pilot:
+            await pilot.pause()  # let mount lifecycle complete
             # Press e to expand all
             await pilot.press("e")
             # This tests the binding works without crashing

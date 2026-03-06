@@ -44,7 +44,8 @@ class HelpOverlay(Static):
         row("l", "Cycle content  (💬 short → 📖 ctx → 🎯 orders → ✏️ note)")
         row("v", "Cycle detail lines  (5 → 10 → 20 → 50)")
         row("S", "Cycle sort  (alpha → status → value → tree)")
-        row("C", "Column config modal", "$", "Toggle cost/$")
+        row("C", "Column config modal", "U", "Sister visibility")
+        row("$", "Toggle cost/$")
         row("t", "Toggle timeline", "d", "Toggle daemon panel")
         row("g", "Show killed agents", "Z", "Hide sleeping agents")
         row("D", "Show done agents", "X", "Collapse/expand children")
@@ -57,7 +58,7 @@ class HelpOverlay(Static):
         row("a", "Edit annotation", "Enter", "Approve (send Enter)")
         row("1-5", "Send number", "Esc", "Interrupt agent")
         row("n", "New agent", "x", "Kill agent")
-        row("R", "Restart agent", "z", "Toggle sleep")
+        row("R", "Restart/revive agent", "z", "Toggle sleep")
         row("V", "Edit agent value", "b", "Jump to attention")
         row("B", "Edit cost budget", "p", "Pause/resume heartbeat")
         row("H", "Heartbeat config", "K", "Hook status detection")
@@ -74,7 +75,7 @@ class HelpOverlay(Static):
 
         section("OTHER")
         row("y", "Copy mode (mouse sel)", "P", "Sync to tmux pane")
-        row("M", "Monochrome mode")
+        row("M", "Monochrome mode", "E", "Emoji-free mode")
         t.append("\n")
 
         section("COMMAND BAR (i or :)")
