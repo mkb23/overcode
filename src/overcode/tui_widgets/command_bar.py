@@ -608,6 +608,7 @@ class CommandBar(Static):
         if self.expanded:
             textarea = self.query_one("#cmd-textarea", TextArea)
             textarea.text = ""
+            self.expanded = False  # Reset to single-line mode
         else:
             input_widget = self.query_one("#cmd-input", Input)
             input_widget.value = ""
