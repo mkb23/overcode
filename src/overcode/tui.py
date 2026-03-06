@@ -18,6 +18,7 @@ import time
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer
 from textual.widgets import Header, Static, Input, TextArea
+from textual.widget import MountError
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual import events, work
@@ -627,7 +628,12 @@ class SupervisorTUI(
         # Apply sorting (#61)
         self._sort_sessions()
         # update_session_widgets handles focus preservation internally
-        self.update_session_widgets(force_refresh=False)
+        # Guard against race where background worker delivers sessions before
+        # the ScrollableContainer is fully mounted (#286).
+        try:
+            self.update_session_widgets(force_refresh=False)
+        except MountError:
+            return
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
         new_names = {s.name for s in sessions}
@@ -1060,6 +1066,25 @@ class SupervisorTUI(
                 break
 
         # Refresh preview pane if in list_preview mode
+        if self.view_mode == "list_preview":
+            self._update_preview()
+
+    def _optimistic_update_remote(self, session_id: str, **fields) -> None:
+        """Optimistically update a remote session's local copy for instant UI feedback.
+
+        After a successful remote API call, update the in-memory session and
+        widget immediately instead of waiting for the next polling cycle (#305).
+        """
+        from dataclasses import replace
+        for i, rs in enumerate(self._remote_sessions):
+            if rs.id == session_id:
+                self._remote_sessions[i] = replace(rs, **fields)
+                break
+        for widget in self.query(SessionSummary):
+            if widget.session.id == session_id:
+                widget.session = replace(widget.session, **fields)
+                widget.refresh()
+                break
         if self.view_mode == "list_preview":
             self._update_preview()
 
@@ -1817,6 +1842,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.text else "cleared"
                 self.notify(f"Standing order {action} for remote {message.session_name}")
+                self._optimistic_update_remote(session.id, standing_instructions=message.text)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1842,6 +1868,7 @@ class SupervisorTUI(
             )
             if result.ok:
                 self.notify(f"Value set to {message.value} for remote {message.session_name}")
+                self._optimistic_update_remote(session.id, agent_value=message.value)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1867,6 +1894,7 @@ class SupervisorTUI(
                     self.notify(f"Budget set to ${message.budget_usd:.2f} for remote {message.session_name}")
                 else:
                     self.notify(f"Budget cleared for remote {message.session_name}")
+                self._optimistic_update_remote(session.id, cost_budget_usd=message.budget_usd)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
@@ -1893,6 +1921,7 @@ class SupervisorTUI(
             if result.ok:
                 action = "set" if message.annotation else "cleared"
                 self.notify(f"Annotation {action} for remote {message.session_name}")
+                self._optimistic_update_remote(session.id, human_annotation=message.annotation)
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
