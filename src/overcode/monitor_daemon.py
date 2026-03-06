@@ -876,6 +876,7 @@ class MonitorDaemon:
             # Skip sessions already known to be terminated/done —
             # avoids a wasted tmux call and prevents desync where
             # detect_status returns waiting_user for a gone window.
+            pane_content = ""
             if session.status == "terminated":
                 status, activity = STATUS_TERMINATED, "Session terminated"
             elif session.status == "done":
@@ -935,8 +936,13 @@ class MonitorDaemon:
             else:
                 effective_status = status
 
-            # Persist terminated status so future loops skip detect_status
-            if effective_status == STATUS_TERMINATED and session.status != "terminated":
+            # Persist terminated status so future loops skip detect_status.
+            # Only persist when the window is actually gone (empty pane_content),
+            # not when a shell prompt is briefly visible (e.g. during agent revival).
+            # launcher.list_sessions() handles the authoritative window-gone check.
+            if (effective_status == STATUS_TERMINATED
+                    and session.status != "terminated"
+                    and not pane_content):
                 self.session_manager.update_session_status(session.id, "terminated")
 
             session_state = self.track_session_stats(session, effective_status)

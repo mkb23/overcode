@@ -856,7 +856,10 @@ class SupervisorTUI(
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.status == "terminated":
-                        return ("terminated", "(tmux window no longer exists)", "")
+                        # Don't short-circuit — run detect_status to verify.
+                        # After revival, session_manager may still say "terminated"
+                        # while the new tmux window is already running.
+                        return self.detector.detect_status(session)
                     if session.status == "done":
                         # Still capture pane content so preview shows output
                         content = self.detector.get_pane_content(session.tmux_window) or ""
