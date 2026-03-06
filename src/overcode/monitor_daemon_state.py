@@ -174,6 +174,9 @@ class MonitorDaemonState:
     relay_last_push: Optional[str] = None  # ISO timestamp of last successful push
     relay_last_status: str = "disabled"  # "ok", "error", "disabled"
 
+    # Untracked tmux windows (#344)
+    untracked_window_count: int = 0
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)

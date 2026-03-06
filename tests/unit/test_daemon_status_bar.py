@@ -84,6 +84,7 @@ def _make_monitor_state(**overrides):
         supervisor_claude_total_run_seconds=0.0,
         relay_enabled=False,
         relay_last_status="disabled",
+        untracked_window_count=0,
     )
     defaults.update(overrides)
     mock = MagicMock(spec=MonitorDaemonState)

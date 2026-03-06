@@ -464,6 +464,11 @@ def list_agents(
     if terminated_count > 0:
         rprint(f"\n[dim]{terminated_count} terminated session(s). Run 'overcode cleanup' to remove.[/dim]")
 
+    # Hint about untracked tmux windows (#344)
+    if use_daemon and daemon_state.untracked_window_count > 0:
+        n = daemon_state.untracked_window_count
+        rprint(f"\n[dim]{n} untracked tmux window(s). Run 'overcode cleanup --untracked' to remove.[/dim]")
+
 
 @app.command()
 def attach(
@@ -598,6 +603,9 @@ def cleanup(
     done: Annotated[
         bool, typer.Option("--done", help="Also archive 'done' child agents (#244)")
     ] = False,
+    untracked: Annotated[
+        bool, typer.Option("--untracked", help="Kill tmux windows not tracked by any agent (#344)")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Remove terminated sessions from tracking.
@@ -606,6 +614,7 @@ def cleanup(
     (e.g., after a machine reboot). Use 'overcode list' to see them.
 
     Use --done to also archive done child agents (kill tmux window, move to archive).
+    Use --untracked to kill tmux windows that exist but aren't tracked by any agent.
     """
     launcher = ClaudeLauncher(session)
     count = launcher.cleanup_terminated_sessions()
@@ -619,6 +628,10 @@ def cleanup(
             launcher._kill_single_session(sess)
             done_count += 1
 
+    # Kill untracked tmux windows (#344)
+    if untracked:
+        launcher.list_sessions(kill_untracked=True)
+
     total = count + done_count
     if total > 0:
         parts = []
@@ -627,7 +640,7 @@ def cleanup(
         if done_count > 0:
             parts.append(f"{done_count} done")
         rprint(f"[green]✓ Cleaned up {' + '.join(parts)} session(s)[/green]")
-    else:
+    elif not untracked:
         rprint("[dim]No sessions to clean up[/dim]")
 
 

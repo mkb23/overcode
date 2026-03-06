@@ -1545,6 +1545,98 @@ class TestPrBranchMismatchClearing:
         )
 
 
+class TestCountUntrackedWindows:
+    """Test _count_untracked_windows method (#344)."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        with patch.object(MonitorDaemon, '__init__', lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+            daemon.tmux_session = "agents"
+            return daemon
+
+    def test_no_untracked_windows(self):
+        """Returns 0 when all windows are tracked."""
+        daemon = self._make_daemon()
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = 1
+
+        mock_tmux = MagicMock()
+        mock_tmux.session_exists.return_value = True
+        mock_tmux.list_windows.return_value = [
+            {'index': '0', 'name': 'bash'},
+            {'index': '1', 'name': 'agent1'},
+        ]
+
+        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
+            result = daemon._count_untracked_windows([session])
+            assert result == 0
+
+    def test_untracked_windows_detected(self):
+        """Returns count of windows not tracked by any session."""
+        daemon = self._make_daemon()
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = 1
+
+        mock_tmux = MagicMock()
+        mock_tmux.session_exists.return_value = True
+        mock_tmux.list_windows.return_value = [
+            {'index': '0', 'name': 'bash'},
+            {'index': '1', 'name': 'agent1'},
+            {'index': '2', 'name': 'rogue1'},
+            {'index': '3', 'name': 'rogue2'},
+        ]
+
+        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
+            result = daemon._count_untracked_windows([session])
+            assert result == 2
+
+    def test_window_0_excluded(self):
+        """Window 0 (default shell) is never counted as untracked."""
+        daemon = self._make_daemon()
+
+        mock_tmux = MagicMock()
+        mock_tmux.session_exists.return_value = True
+        mock_tmux.list_windows.return_value = [
+            {'index': '0', 'name': 'bash'},
+        ]
+
+        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
+            result = daemon._count_untracked_windows([])
+            assert result == 0
+
+    def test_terminated_sessions_not_tracked(self):
+        """Terminated sessions don't count as tracked windows."""
+        daemon = self._make_daemon()
+        session = MagicMock()
+        session.status = "terminated"
+        session.tmux_window = 1
+
+        mock_tmux = MagicMock()
+        mock_tmux.session_exists.return_value = True
+        mock_tmux.list_windows.return_value = [
+            {'index': '0', 'name': 'bash'},
+            {'index': '1', 'name': 'orphan'},
+        ]
+
+        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
+            result = daemon._count_untracked_windows([session])
+            assert result == 1
+
+    def test_session_not_exists_returns_zero(self):
+        """Returns 0 when tmux session doesn't exist."""
+        daemon = self._make_daemon()
+
+        mock_tmux = MagicMock()
+        mock_tmux.session_exists.return_value = False
+
+        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
+            result = daemon._count_untracked_windows([])
+            assert result == 0
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

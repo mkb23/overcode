@@ -679,13 +679,36 @@ class MonitorDaemon:
 
             # Archive: kill tmux window and mark terminated
             try:
-                from .tmux_utils import TmuxHelper
-                tmux = TmuxHelper()
+                from .implementations import RealTmux
+                tmux = RealTmux()
                 tmux.kill_window(self.tmux_session, session.tmux_window)
             except Exception:
                 pass  # Window may already be gone
             self.session_manager.update_session_status(session.id, "terminated")
             self.log.info(f"Auto-archived done agent: {session.name}")
+
+    def _count_untracked_windows(self, sessions: list) -> int:
+        """Count tmux windows not tracked by any active session (#344).
+
+        Returns count of windows that exist in tmux but aren't tracked
+        (excluding window 0 which is the default shell).
+        """
+        try:
+            from .implementations import RealTmux
+            tmux = RealTmux()
+            if not tmux.session_exists(self.tmux_session):
+                return 0
+            tmux_windows = tmux.list_windows(self.tmux_session)
+            active_sessions = [s for s in sessions if s.status != "terminated"]
+            tracked_windows = {s.tmux_window for s in active_sessions}
+            count = 0
+            for window_info in tmux_windows:
+                window_idx = int(window_info['index'])
+                if window_idx != 0 and window_idx not in tracked_windows:
+                    count += 1
+            return count
+        except Exception:
+            return 0
 
     def _enforce_oversight_timeouts(self, sessions: list) -> None:
         """Enforce oversight timeouts for waiting_oversight sessions."""
@@ -981,8 +1004,10 @@ class MonitorDaemon:
         self._enforce_oversight_timeouts(sessions)
 
         # Auto-archive "done" agents after 1 hour (#244)
+        # Count untracked tmux windows every 2 minutes (#344)
         if self.state.loop_count % 60 == 0:
             self._auto_archive_done_agents(sessions)
+            self.state.untracked_window_count = self._count_untracked_windows(sessions)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

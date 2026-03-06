@@ -155,6 +155,9 @@ class DaemonStatusBar(Static):
             # Version mismatch warning
             if state.daemon_version != DAEMON_VERSION:
                 content.append(f" ⚠v{state.daemon_version}→{DAEMON_VERSION}", style="bold yellow")
+            # Untracked tmux windows warning (#344)
+            if state.untracked_window_count > 0:
+                content.append(f" ⚠{state.untracked_window_count} untracked", style="bold yellow")
         else:
             content.append("○ ", style="red")
             content.append("stopped", style="red")

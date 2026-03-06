@@ -2893,6 +2893,7 @@ class TestListExtended:
 
         mock_daemon_state = MagicMock()
         mock_daemon_state.is_stale.return_value = False
+        mock_daemon_state.untracked_window_count = 0
         mock_ds = MagicMock()
         mock_ds.current_status = "running"
         mock_ds.current_activity = "Coding"
@@ -3002,6 +3003,47 @@ class TestKillExtended:
             result = runner.invoke(app, ["kill", "my-agent"])
             assert result.exit_code == 0
             mock_launcher.kill_session.assert_called_once_with("my-agent", cascade=True)
+
+
+class TestCleanupUntracked:
+    """Test cleanup --untracked flag (#344)."""
+
+    def test_cleanup_untracked_calls_kill_untracked(self):
+        """Cleanup with --untracked calls list_sessions(kill_untracked=True)."""
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 0
+            mock_launcher.list_sessions.return_value = []
+            mock_cls.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup", "--untracked"])
+            assert result.exit_code == 0
+            mock_launcher.list_sessions.assert_called_once_with(kill_untracked=True)
+
+    def test_cleanup_untracked_with_terminated(self):
+        """Cleanup with --untracked also cleans terminated sessions."""
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 2
+            mock_launcher.list_sessions.return_value = []
+            mock_cls.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup", "--untracked"])
+            assert result.exit_code == 0
+            assert "2 terminated" in result.output
+            mock_launcher.list_sessions.assert_called_once_with(kill_untracked=True)
+
+    def test_cleanup_untracked_no_message_when_nothing_terminated(self):
+        """Cleanup with --untracked doesn't show 'no sessions' message."""
+        with patch('overcode.cli.agent.ClaudeLauncher') as mock_cls:
+            mock_launcher = MagicMock()
+            mock_launcher.cleanup_terminated_sessions.return_value = 0
+            mock_launcher.list_sessions.return_value = []
+            mock_cls.return_value = mock_launcher
+
+            result = runner.invoke(app, ["cleanup", "--untracked"])
+            assert result.exit_code == 0
+            assert "No sessions to clean up" not in result.output
 
 
 # =============================================================================
