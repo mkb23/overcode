@@ -864,6 +864,43 @@ class TestTmuxManagerLibtmuxKeys:
         ]
 
 
+    @patch("overcode.tmux_manager.time.sleep")
+    def test_send_keys_slash_command_splits_and_delays(self, mock_sleep):
+        """send_keys with / prefix sends / first with longer delay (#307)."""
+        manager, mock_pane = self._make_manager_with_pane()
+
+        call_order = []
+        mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
+        mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
+
+        manager.send_keys(1, "/clear", enter=True)
+
+        assert call_order == [
+            ("send", ("/",), {"enter": False}),
+            ("sleep", 0.3),
+            ("send", ("clear",), {"enter": False}),
+            ("sleep", 0.15),
+            ("send", ("",), {"enter": True}),
+        ]
+
+    @patch("overcode.tmux_manager.time.sleep")
+    def test_send_keys_slash_only_not_split(self, mock_sleep):
+        """send_keys with just '/' does NOT split (len == 1)."""
+        manager, mock_pane = self._make_manager_with_pane()
+
+        call_order = []
+        mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
+        mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
+
+        manager.send_keys(1, "/", enter=True)
+
+        assert call_order == [
+            ("send", ("/",), {"enter": False}),
+            ("sleep", 0.1),
+            ("send", ("",), {"enter": True}),
+        ]
+
+
 class TestTmuxManagerLibtmuxKillSession:
     """Test kill_session via libtmux."""
 
