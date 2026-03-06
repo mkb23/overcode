@@ -1389,7 +1389,6 @@ class SupervisorTUI(
                     )
                     widget.session = new_session
                     # Sync display modes
-                    widget.monochrome = self.monochrome
                     widget.emoji_free = self.emoji_free
                     # Sync pr_number from session (propagates both detection and clearing)
                     widget.pr_number = new_session.pr_number
@@ -1449,7 +1448,6 @@ class SupervisorTUI(
                 # Apply current summary content mode (#140)
                 widget.summary_content_mode = self.summary_content_mode
                 # Apply display modes
-                widget.monochrome = self.monochrome
                 widget.emoji_free = self.emoji_free
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget

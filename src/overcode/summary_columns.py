@@ -156,8 +156,8 @@ class ColumnContext:
     local_hostname: str = ""
 
     def mono(self, colored: str, simple: str = "bold") -> str:
-        """Return simplified style when monochrome is enabled."""
-        return simple if self.monochrome else colored
+        """Return colored style (monochrome only applies to preview pane, not summaries)."""
+        return colored
 
     def e(self, char: str) -> str:
         """Return ASCII fallback if emoji_free mode is active (#315)."""

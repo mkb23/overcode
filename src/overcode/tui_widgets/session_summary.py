@@ -70,7 +70,7 @@ class SessionSummary(Static, can_focus=True):
         # AI-generated summaries (from daemon's SummarizerComponent)
         self.ai_summary_short: str = ""  # Short: current activity (~50 chars)
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
-        self.monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
+        self.monochrome: bool = False  # Legacy, kept for compatibility but no longer used for summaries
         self.emoji_free: bool = False  # ASCII fallbacks for emoji (#315)
         self.show_cost: bool = False  # Show $ cost instead of token counts
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
@@ -258,14 +258,9 @@ class SessionSummary(Static, can_focus=True):
         # Status styling
         from ..status_constants import emoji_or_ascii
         ef = self.emoji_free
-        if self.monochrome:
-            bg = ""
-            status_symbol, _ = get_status_symbol(self.detected_status, emoji_free=ef)
-            status_color = "bold"
-        else:
-            bg = " on #0d2137"
-            status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
-            status_color = f"bold {base_color}{bg}"
+        bg = " on #0d2137"
+        status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
+        status_color = f"bold {base_color}{bg}"
 
         # Permissiveness mode emoji
         if s.permissiveness_mode == "bypass":

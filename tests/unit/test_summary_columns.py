@@ -252,13 +252,14 @@ class TestColumnContext:
         ctx = _make_ctx(monochrome=False)
         assert ctx.mono("bold green on #0d2137", "bold") == "bold green on #0d2137"
 
-    def test_mono_returns_simple_when_monochrome(self):
+    def test_mono_always_returns_colored_even_when_monochrome(self):
+        """Summary lines always render full color (#345); monochrome only affects preview pane."""
         ctx = _make_ctx(monochrome=True)
-        assert ctx.mono("bold green on #0d2137", "bold") == "bold"
+        assert ctx.mono("bold green on #0d2137", "bold") == "bold green on #0d2137"
 
-    def test_mono_default_simple_is_bold(self):
+    def test_mono_default_simple_is_ignored(self):
         ctx = _make_ctx(monochrome=True)
-        assert ctx.mono("bold green") == "bold"
+        assert ctx.mono("bold green") == "bold green"
 
 
 # ===========================================================================
