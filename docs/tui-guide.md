@@ -104,7 +104,7 @@ Press `i` or `:` to open the command bar for sending instructions to the selecte
 |-----|--------|
 | `Enter` | Send instruction |
 | `Ctrl+E` | Toggle multi-line editing |
-| `Ctrl+Enter` | Send (in multi-line mode) |
+| `Ctrl+S` / `Ctrl+Enter` | Send (in multi-line mode) |
 | `Ctrl+O` | Set as standing order instead of sending |
 | `Escape` | Clear and close command bar |
 

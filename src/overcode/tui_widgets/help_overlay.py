@@ -81,7 +81,7 @@ class HelpOverlay(Static):
         section("COMMAND BAR (i or :)")
         row("Enter", "Send instruction", "Esc", "Clear & unfocus")
         row("Ctrl+E", "Multi-line mode", "Ctrl+O", "Set standing order")
-        row("Ctrl+Enter", "Send (multi-line)")
+        row("Ctrl+S", "Send (multi-line)")
 
         return t
 
