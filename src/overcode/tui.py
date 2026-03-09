@@ -900,7 +900,10 @@ class SupervisorTUI(
                         ds = daemon_by_id.get(session_id)
                         if ds:
                             status, activity, content = status_results[session_id]
-                            if ds.running_from_heartbeat and status == STATUS_RUNNING:
+                            if ds.current_status == STATUS_TERMINATED:
+                                status = STATUS_TERMINATED
+                                activity = ds.current_activity
+                            elif ds.running_from_heartbeat and status == STATUS_RUNNING:
                                 status = STATUS_RUNNING_HEARTBEAT
                             elif ds.waiting_for_heartbeat and status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
                                 status = STATUS_WAITING_HEARTBEAT
