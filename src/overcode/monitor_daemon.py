@@ -872,12 +872,21 @@ class MonitorDaemon:
         session_states = []
         all_waiting_user = True
 
+        # Build set of window indices owned by active (non-terminated) sessions
+        # so we can detect window index reuse and avoid reading another agent's pane
+        active_windows = {
+            s.tmux_window for s in sessions
+            if s.status not in ("terminated", "done")
+        }
+
         for session in sessions:
-            # Re-check terminated sessions to detect revival (window reuse
-            # or agent still alive but falsely marked terminated).
-            # Done sessions are stable and can be skipped.
+            # Re-check terminated sessions to detect revival, but only if
+            # no other active session owns this window index (reuse).
             pane_content = ""
-            if session.status == "done":
+            if session.status == "terminated" and session.tmux_window in active_windows:
+                # Window was reused by another agent — truly terminated
+                status, activity = STATUS_TERMINATED, "Session terminated"
+            elif session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
             else:
                 # Detect status - dispatches per-session via dispatcher (#5)
