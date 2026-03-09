@@ -27,7 +27,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
@@ -856,15 +856,10 @@ class SupervisorTUI(
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.status == "terminated":
-                        # Re-check to detect revival: session_manager may still
-                        # say "terminated" while a new tmux window is running.
-                        # Only allow revival if detect_status finds active work
-                        # (content changing = green status). A stale prompt or
-                        # empty pane should stay terminated, not flip to red.
-                        result = self.detector.detect_status(session)
-                        if is_green_status(result[0]):
-                            return result
-                        return (STATUS_TERMINATED, "Session ended", result[2])
+                        # Don't short-circuit — run detect_status to verify.
+                        # After revival, session_manager may still say "terminated"
+                        # while the new tmux window is already running.
+                        return self.detector.detect_status(session)
                     if session.status == "done":
                         # Still capture pane content so preview shows output
                         content = self.detector.get_pane_content(session.tmux_window) or ""
@@ -900,14 +895,7 @@ class SupervisorTUI(
                         ds = daemon_by_id.get(session_id)
                         if ds:
                             status, activity, content = status_results[session_id]
-                            if ds.current_status == STATUS_TERMINATED and not is_green_status(status):
-                                # Daemon says terminated and detect_status didn't
-                                # find active work — trust daemon. If the agent was
-                                # revived, detect_status would see STATUS_RUNNING
-                                # (content changing) and we'd skip this branch.
-                                status = STATUS_TERMINATED
-                                activity = ds.current_activity
-                            elif ds.running_from_heartbeat and status == STATUS_RUNNING:
+                            if ds.running_from_heartbeat and status == STATUS_RUNNING:
                                 status = STATUS_RUNNING_HEARTBEAT
                             elif ds.waiting_for_heartbeat and status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
                                 status = STATUS_WAITING_HEARTBEAT

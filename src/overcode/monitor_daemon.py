@@ -873,13 +873,11 @@ class MonitorDaemon:
         all_waiting_user = True
 
         for session in sessions:
-            # Skip sessions already known to be terminated/done —
-            # avoids a wasted tmux call and prevents desync where
-            # detect_status returns waiting_user for a gone window.
+            # Re-check terminated sessions to detect revival (window reuse
+            # or agent still alive but falsely marked terminated).
+            # Done sessions are stable and can be skipped.
             pane_content = ""
-            if session.status == "terminated":
-                status, activity = STATUS_TERMINATED, "Session terminated"
-            elif session.status == "done":
+            if session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
             else:
                 # Detect status - dispatches per-session via dispatcher (#5)
@@ -936,14 +934,17 @@ class MonitorDaemon:
             else:
                 effective_status = status
 
-            # Persist terminated status so future loops skip detect_status.
-            # Only persist when the window is actually gone (empty pane_content),
-            # not when a shell prompt is briefly visible (e.g. during agent revival).
-            # launcher.list_sessions() handles the authoritative window-gone check.
+            # Persist terminated status when window is truly gone.
+            # Only persist when pane_content is empty (window gone), not when
+            # a shell prompt is briefly visible (e.g. during agent revival).
             if (effective_status == STATUS_TERMINATED
                     and session.status != "terminated"
                     and not pane_content):
                 self.session_manager.update_session_status(session.id, "terminated")
+            # Un-persist terminated if agent is found alive (revival or false positive)
+            elif (session.status == "terminated"
+                    and effective_status != STATUS_TERMINATED):
+                self.session_manager.update_session_status(session.id, "running")
 
             session_state = self.track_session_stats(session, effective_status)
             session_state.current_activity = activity
