@@ -27,7 +27,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
@@ -856,10 +856,15 @@ class SupervisorTUI(
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.status == "terminated":
-                        # Don't short-circuit — run detect_status to verify.
-                        # After revival, session_manager may still say "terminated"
-                        # while the new tmux window is already running.
-                        return self.detector.detect_status(session)
+                        # Re-check to detect revival: session_manager may still
+                        # say "terminated" while a new tmux window is running.
+                        # But if detect_status finds an empty/gone pane, keep
+                        # terminated — don't flip to waiting_user for a dead window.
+                        result = self.detector.detect_status(session)
+                        status = result[0]
+                        if status in (STATUS_TERMINATED, STATUS_WAITING_USER):
+                            return (STATUS_TERMINATED, "Session ended", result[2])
+                        return result
                     if session.status == "done":
                         # Still capture pane content so preview shows output
                         content = self.detector.get_pane_content(session.tmux_window) or ""
