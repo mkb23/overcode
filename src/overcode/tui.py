@@ -850,23 +850,29 @@ class SupervisorTUI(
                 session = fresh_sessions.get(widget.session.id, widget.session)
                 sessions_to_check.append((widget.session.id, session))
 
-            # Build set of window indices owned by active sessions
-            # to detect window reuse (terminated session's window taken by another)
-            active_windows = {
-                s.tmux_window for _, s in sessions_to_check
-                if s.status not in ("terminated", "done")
-            }
+            # Detect window index collisions: when multiple sessions share
+            # a window, only the most recently launched one owns it.
+            from collections import Counter
+            all_sessions = [s for _, s in sessions_to_check if s.status != "done"]
+            window_counts = Counter(s.tmux_window for s in all_sessions)
+            window_owner = {}
+            for s in all_sessions:
+                w = s.tmux_window
+                if window_counts[w] > 1:
+                    if w not in window_owner or s.start_time > window_owner[w].start_time:
+                        window_owner[w] = s
 
             # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
             def fetch_status(session):
                 try:
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
+                    # Window index collision — not the owner, truly terminated
+                    if (window_counts.get(session.tmux_window, 0) > 1
+                            and window_owner.get(session.tmux_window) is not session):
+                        return (STATUS_TERMINATED, "Session terminated", "")
                     if session.status == "terminated":
-                        # Re-check to detect revival, but skip if window was
-                        # reused by another active session (would read wrong pane)
-                        if session.tmux_window in active_windows:
-                            return (STATUS_TERMINATED, "Session terminated", "")
+                        # Re-check to detect revival (window is uncontested)
                         return self.detector.detect_status(session)
                     if session.status == "done":
                         # Still capture pane content so preview shows output

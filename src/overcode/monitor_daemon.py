@@ -872,20 +872,30 @@ class MonitorDaemon:
         session_states = []
         all_waiting_user = True
 
-        # Build set of window indices owned by active (non-terminated) sessions
-        # so we can detect window index reuse and avoid reading another agent's pane
-        active_windows = {
-            s.tmux_window for s in sessions
-            if s.status not in ("terminated", "done")
-        }
+        # Detect window index collisions: when multiple sessions share
+        # a window index, only the most recently launched one owns it.
+        # Others are truly terminated (their window was reused).
+        from collections import Counter
+        window_counts = Counter(s.tmux_window for s in sessions if s.status != "done")
+        # For colliding windows, find the rightful owner (latest start_time)
+        window_owner = {}
+        for s in sessions:
+            if s.status == "done":
+                continue
+            w = s.tmux_window
+            if window_counts[w] > 1:
+                # Multiple sessions claim this window — latest launch wins
+                if w not in window_owner or s.start_time > window_owner[w].start_time:
+                    window_owner[w] = s
 
         for session in sessions:
-            # Re-check terminated sessions to detect revival, but only if
-            # no other active session owns this window index (reuse).
+            # If this window is contested and we're not the owner, skip
             pane_content = ""
-            if session.status == "terminated" and session.tmux_window in active_windows:
-                # Window was reused by another agent — truly terminated
+            if (window_counts.get(session.tmux_window, 0) > 1
+                    and window_owner.get(session.tmux_window) is not session):
                 status, activity = STATUS_TERMINATED, "Session terminated"
+                if session.status != "terminated":
+                    self.session_manager.update_session_status(session.id, "terminated")
             elif session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
             else:
