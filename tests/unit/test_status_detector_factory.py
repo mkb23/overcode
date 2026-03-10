@@ -96,7 +96,7 @@ class TestStatusDetectorDispatcher:
 
         result = dispatcher.detect_status(session)
 
-        mock_hooks.detect_status.assert_called_once_with(session)
+        mock_hooks.detect_status.assert_called_once_with(session, num_lines=0)
         mock_polling.detect_status.assert_not_called()
         assert result == ("running", "working", "hooks")
 
@@ -116,7 +116,7 @@ class TestStatusDetectorDispatcher:
 
         result = dispatcher.detect_status(session)
 
-        mock_polling.detect_status.assert_called_once_with(session)
+        mock_polling.detect_status.assert_called_once_with(session, num_lines=0)
         mock_hooks.detect_status.assert_not_called()
         assert result == ("waiting_user", "prompt", "polling")
 

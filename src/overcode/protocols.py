@@ -112,7 +112,7 @@ class StatusDetectorProtocol(Protocol):
     tmux_session: str
     capture_lines: int
 
-    def detect_status(self, session: "Session") -> Tuple[str, str, str]:
+    def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Detect session status and current activity.
 
         Returns:

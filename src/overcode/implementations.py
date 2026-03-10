@@ -211,6 +211,9 @@ class RealTmux:
                 kwargs['window_shell'] = ' '.join(command)
 
             window = sess.new_window(**kwargs)
+            # Prevent tmux from auto-renaming the window based on the
+            # running process — we rely on stable window names for lookups.
+            window.set_window_option('automatic-rename', 'off')
             return window.window_name
         except (LibTmuxException, ValueError):
             return None

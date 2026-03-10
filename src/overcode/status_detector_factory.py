@@ -72,10 +72,10 @@ class StatusDetectorDispatcher:
         self.polling.capture_lines = value
         self.hooks.capture_lines = value
 
-    def detect_status(self, session: "Session") -> Tuple[str, str, str]:
+    def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Detect status using the appropriate detector for the session."""
         detector = self.hooks if session.hook_status_detection else self.polling
-        return detector.detect_status(session)
+        return detector.detect_status(session, num_lines=num_lines)
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get pane content (delegates to polling detector)."""

@@ -146,7 +146,7 @@ class HookStatusDetector:
         fallback.capture_lines = self.capture_lines
         return fallback.get_pane_content(window, num_lines)
 
-    def detect_status(self, session: "Session") -> Tuple[str, str, str]:
+    def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Detect session status using hook state files.
 
         When fresh hook state exists, uses that for status determination.
@@ -160,7 +160,7 @@ class HookStatusDetector:
 
         if hook_state is None:
             # No hook state or stale → full polling fallback
-            return self._get_polling_fallback().detect_status(session)
+            return self._get_polling_fallback().detect_status(session, num_lines=num_lines)
 
         # Hook state is fresh → use it for status
         event = hook_state.get("event", "")
@@ -183,7 +183,7 @@ class HookStatusDetector:
             status = STATUS_WAITING_OVERSIGHT
 
         # Read pane for activity enrichment and content return value
-        pane_content = self.get_pane_content(session.tmux_window) or ""
+        pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
 
         # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
         if status == STATUS_RUNNING:
