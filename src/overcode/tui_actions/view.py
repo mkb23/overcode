@@ -154,15 +154,23 @@ class ViewActionsMixin:
         if terminal.has_class("visible"):
             # Switch back to preview pane
             terminal.remove_class("visible")
+            terminal.passthrough = False
             terminal.detach()
             if self.view_mode == "list_preview":
                 preview.add_class("visible")
                 self._update_preview()
             self.notify("Preview mode", severity="information")
         else:
-            # Switch to terminal pane
+            # Ensure list_preview mode (terminal needs the split layout)
+            if self.view_mode != "list_preview":
+                self.view_mode = "list_preview"
+                self._prefs.view_mode = self.view_mode
+                self._save_prefs()
+            # Switch preview → terminal
             preview.remove_class("visible")
             terminal.add_class("visible")
+            # Focus the terminal widget so it receives key events
+            terminal.focus()
             # Attach to currently focused session
             self._update_terminal_pane()
             self.notify("Terminal mode (Enter=interactive, Ctrl+]=back)", severity="information")

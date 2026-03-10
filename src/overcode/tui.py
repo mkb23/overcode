@@ -769,6 +769,13 @@ class SupervisorTUI(
                 return False
         except NoMatches:
             pass
+        # Don't steal focus from terminal pane
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
         # Only recover if focus is not on a session or input widget
         if self.focused is None:
             return True
@@ -1673,12 +1680,18 @@ class SupervisorTUI(
             preview = self.query_one("#preview-pane", PreviewPane)
             container = self.query_one("#sessions-container", ScrollableContainer)
             if view_mode == "list_preview":
-                # Collapse all sessions, show preview pane
+                # Collapse all sessions, show preview/terminal pane
                 container.add_class("list-mode")
                 for widget in self.query(SessionSummary):
                     widget.add_class("list-mode")
                     widget.expanded = False  # Force collapsed
-                preview.add_class("visible")
+                # Only show preview if terminal pane isn't active
+                try:
+                    terminal = self.query_one("#terminal-pane", TerminalPane)
+                    if not terminal.has_class("visible"):
+                        preview.add_class("visible")
+                except NoMatches:
+                    preview.add_class("visible")
                 self._update_preview()
             else:
                 # Restore tree mode, hide preview and terminal

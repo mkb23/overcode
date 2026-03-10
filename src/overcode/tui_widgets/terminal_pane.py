@@ -76,6 +76,8 @@ class TerminalPane(Widget):
     - Passthrough mode: keys forwarded to the embedded tmux session
     """
 
+    can_focus = True
+
     passthrough = reactive(False)
     """When True, keystrokes are forwarded to the PTY instead of Textual."""
 
