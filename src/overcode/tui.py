@@ -26,7 +26,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
@@ -49,6 +49,7 @@ from .tui_helpers import (
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
+    compute_child_counts,
     compute_tree_metadata,
     compute_stall_state,
     should_send_stall_notification,
@@ -836,6 +837,11 @@ class SupervisorTUI(
                 sessions_to_check.append((widget.session.id, session))
 
             # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
+            # Non-focused agents use reduced capture lines (STATUS_CAPTURE_LINES)
+            # since their pane content is only needed for status detection, not preview.
+            focused_w = self._get_focused_widget()
+            focused_session_id = focused_w.session.id if focused_w else None
+
             def fetch_status(session):
                 try:
                     if session.is_remote:
@@ -847,7 +853,10 @@ class SupervisorTUI(
                         # Still capture pane content so preview shows output
                         content = self.detector.get_pane_content(session.tmux_window) or ""
                         return ("done", "Completed", content)
-                    return self.detector.detect_status(session)
+                    # Focused agent: full capture for preview pane display
+                    # Non-focused: reduced capture for status detection only
+                    capture = 0 if session.id == focused_session_id else STATUS_CAPTURE_LINES
+                    return self.detector.detect_status(session, num_lines=capture)
                 except Exception:
                     return (STATUS_WAITING_USER, "Error", "")
 
@@ -1611,17 +1620,22 @@ class SupervisorTUI(
 
         # Update tree prefix and child count for hierarchy display (#244)
         # Always runs (not gated by reorder) so prefixes are set on first mount.
-        # Uses compute_tree_metadata() which works for both local and remote sessions.
+        # In tree mode: full metadata (prefix, depth, child_count) via compute_tree_metadata
+        # Otherwise: lightweight child_count only via compute_child_counts
         is_tree_mode = self._prefs.sort_mode == "by_tree"
-        tree_meta = compute_tree_metadata(self.sessions)
-        for widget in ordered_widgets:
-            meta = tree_meta.get(widget.session.id)
-            widget.child_count = meta.child_count if meta else 0
-            widget.children_collapsed = widget.session.id in self.collapsed_parents
-            if is_tree_mode and meta:
-                widget.tree_prefix = meta.prefix
-                widget.tree_depth = meta.depth
-            else:
+        if is_tree_mode:
+            tree_meta = compute_tree_metadata(self.sessions)
+            for widget in ordered_widgets:
+                meta = tree_meta.get(widget.session.id)
+                widget.child_count = meta.child_count if meta else 0
+                widget.children_collapsed = widget.session.id in self.collapsed_parents
+                widget.tree_prefix = meta.prefix if meta else ""
+                widget.tree_depth = meta.depth if meta else 0
+        else:
+            child_counts = compute_child_counts(self.sessions)
+            for widget in ordered_widgets:
+                widget.child_count = child_counts.get(widget.session.id, 0)
+                widget.children_collapsed = widget.session.id in self.collapsed_parents
                 widget.tree_prefix = ""
                 widget.tree_depth = 0
 
