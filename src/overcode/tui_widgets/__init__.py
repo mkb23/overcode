@@ -8,6 +8,7 @@ for better maintainability and testability.
 from .fullscreen_preview import FullscreenPreview
 from .help_overlay import HelpOverlay
 from .preview_pane import PreviewPane
+from .terminal_pane import TerminalPane
 from .daemon_panel import DaemonPanel
 from .daemon_status_bar import DaemonStatusBar
 from .status_timeline import StatusTimeline
@@ -22,6 +23,7 @@ __all__ = [
     "FullscreenPreview",
     "HelpOverlay",
     "PreviewPane",
+    "TerminalPane",
     "DaemonPanel",
     "DaemonStatusBar",
     "StatusTimeline",

@@ -61,6 +61,7 @@ from .tui_widgets import (
     FullscreenPreview,
     HelpOverlay,
     PreviewPane,
+    TerminalPane,
     DaemonPanel,
     DaemonStatusBar,
     StatusTimeline,
@@ -203,6 +204,8 @@ class SupervisorTUI(
         ("G", "open_new_agent_defaults", "Agent defaults"),
         # Sister selection modal (#323)
         ("U", "open_sister_selection", "Sisters"),
+        # Embedded terminal toggle (prototype)
+        ("ctrl+e", "toggle_terminal_pane", "Terminal"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -354,6 +357,7 @@ class SupervisorTUI(
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
+        yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
@@ -786,6 +790,7 @@ class SupervisorTUI(
         widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
+            self._update_terminal_pane()
         self._sync_tmux_window(widget)
 
     def update_focused_status(self) -> None:
@@ -1676,7 +1681,7 @@ class SupervisorTUI(
                 preview.add_class("visible")
                 self._update_preview()
             else:
-                # Restore tree mode, hide preview
+                # Restore tree mode, hide preview and terminal
                 container.remove_class("list-mode")
                 for widget in self.query(SessionSummary):
                     widget.remove_class("list-mode")
@@ -1684,6 +1689,12 @@ class SupervisorTUI(
                     saved = self.expanded_states.get(widget.session.id, True)
                     widget.expanded = saved
                 preview.remove_class("visible")
+                try:
+                    terminal = self.query_one("#terminal-pane", TerminalPane)
+                    terminal.remove_class("visible")
+                    terminal.detach()
+                except NoMatches:
+                    pass
         except NoMatches:
             pass
 
@@ -1754,6 +1765,18 @@ class SupervisorTUI(
             widgets = self._get_widgets_in_session_order()
             if 0 <= self.focused_session_index < len(widgets):
                 preview.update_from_widget(widgets[self.focused_session_index])
+        except NoMatches:
+            pass
+
+    def _update_terminal_pane(self) -> None:
+        """Update terminal pane to show the focused session's tmux window."""
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if not terminal.has_class("visible"):
+                return
+            widgets = self._get_widgets_in_session_order()
+            if 0 <= self.focused_session_index < len(widgets):
+                terminal.update_from_widget(widgets[self.focused_session_index])
         except NoMatches:
             pass
 
@@ -2471,6 +2494,17 @@ class SupervisorTUI(
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0
 
+    def on_terminal_pane_passthrough_changed(self, message: TerminalPane.PassthroughChanged) -> None:
+        """Handle terminal pane passthrough mode changes."""
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if message.active:
+                terminal.add_class("passthrough")
+            else:
+                terminal.remove_class("passthrough")
+        except NoMatches:
+            pass
+
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
         signal_activity(self.tmux_session)
@@ -2480,6 +2514,16 @@ class SupervisorTUI(
         if now - self._last_heartbeat_write >= 5.0:
             self._last_heartbeat_write = now
             write_tui_heartbeat(self.tmux_session)
+
+        # When terminal pane is in passthrough mode, suppress all TUI keybindings
+        # except Ctrl+] (which the TerminalPane handles to exit passthrough)
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible") and terminal.passthrough:
+                # Let the terminal pane handle all keys
+                return
+        except NoMatches:
+            pass
 
         # Auto-recover if focus was lost or landed on a non-interactive widget
         # (e.g., clicking the terminal window focuses the preview pane)
@@ -2515,6 +2559,17 @@ class SupervisorTUI(
         When help overlay is visible, only allow help toggle and quit.
         Other actions are blocked - pressing those keys just closes help.
         """
+        # Block actions when terminal pane is in passthrough mode
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible") and terminal.passthrough:
+                # Only allow quit — everything else goes to terminal
+                if action == "quit":
+                    return True
+                return False
+        except Exception:
+            pass
+
         # Block actions when fullscreen preview is visible
         try:
             from .tui_widgets import FullscreenPreview

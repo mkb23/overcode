@@ -140,6 +140,33 @@ class ViewActionsMixin:
         self._prefs.view_mode = self.view_mode
         self._save_prefs()
 
+    def action_toggle_terminal_pane(self) -> None:
+        """Toggle embedded terminal pane (replaces preview pane with live tmux)."""
+        from ..tui_widgets.terminal_pane import TerminalPane
+        from ..tui_widgets.preview_pane import PreviewPane
+
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            preview = self.query_one("#preview-pane", PreviewPane)
+        except NoMatches:
+            return
+
+        if terminal.has_class("visible"):
+            # Switch back to preview pane
+            terminal.remove_class("visible")
+            terminal.detach()
+            if self.view_mode == "list_preview":
+                preview.add_class("visible")
+                self._update_preview()
+            self.notify("Preview mode", severity="information")
+        else:
+            # Switch to terminal pane
+            preview.remove_class("visible")
+            terminal.add_class("visible")
+            # Attach to currently focused session
+            self._update_terminal_pane()
+            self.notify("Terminal mode (Enter=interactive, Ctrl+]=back)", severity="information")
+
     def action_toggle_tmux_sync(self) -> None:
         """Toggle tmux pane sync - syncs navigation to external tmux pane."""
         self.tmux_sync = not self.tmux_sync
