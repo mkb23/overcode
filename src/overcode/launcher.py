@@ -18,7 +18,7 @@ from typing import List, Optional
 import re
 
 from .tmux_manager import TmuxManager
-from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content
+from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content, tmux_window_target
 from .session_manager import SessionManager, Session
 from .config import get_default_standing_instructions
 from .dependency_check import require_tmux, require_claude
@@ -357,6 +357,11 @@ class ClaudeLauncher:
         # Filter to only sessions belonging to this tmux session
         my_sessions = [s for s in all_sessions if s.tmux_session == self.tmux.session_name]
 
+        # Migrate legacy digit-string tmux_window values to actual window names.
+        # Pre-name-based sessions stored window index (e.g. 4 → "4") but the new
+        # code expects the window name (e.g. "overcode2"). Resolve via tmux.
+        self._migrate_legacy_window_ids(my_sessions)
+
         # Detect terminated sessions (tmux window gone but session still tracked)
         if detect_terminated:
             from .follow_mode import _check_hook_stop, _check_report
@@ -565,6 +570,24 @@ class ClaudeLauncher:
 
         return success
 
+    def _migrate_legacy_window_ids(self, sessions: List[Session]) -> None:
+        """Migrate legacy digit-string tmux_window values to actual window names.
+
+        Legacy sessions stored the window index (int) which got converted to a
+        digit string like "4". We resolve these to the actual window name by
+        looking up the tmux window list by index.
+        """
+        windows = self.tmux.list_windows()
+        if not windows:
+            return
+        index_to_name = {str(w['index']): w['name'] for w in windows}
+
+        for session in sessions:
+            if session.tmux_window.isdigit() and session.tmux_window in index_to_name:
+                new_name = index_to_name[session.tmux_window]
+                session.tmux_window = new_name
+                self.sessions.update_session(session.id, tmux_window=new_name)
+
     def get_session_output(self, name: str, lines: int = 50) -> Optional[str]:
         """Get recent output from a session.
 
@@ -584,7 +607,7 @@ class ClaudeLauncher:
             result = subprocess.run(
                 [
                     "tmux", "capture-pane",
-                    "-t", f"{self.tmux.session_name}:={session.tmux_window}",
+                    "-t", tmux_window_target(self.tmux.session_name, session.tmux_window),
                     "-p",  # Print to stdout
                     "-S", f"-{lines}",  # Capture last N lines
                 ],

@@ -321,6 +321,27 @@ class MonitorDaemon:
         self._sessions_running_from_heartbeat: set = set()  # Persistent: sessions currently running due to heartbeat
         self._heartbeat_start_pending: set = set()  # One-shot: sessions awaiting first "running" observation after heartbeat
 
+        # Legacy migration flag — runs once on first tick
+        self._legacy_windows_migrated = False
+
+    def _migrate_legacy_window_ids(self, sessions: list) -> None:
+        """Migrate legacy digit-string tmux_window values to actual window names."""
+        try:
+            from .implementations import RealTmux
+            tmux = RealTmux()
+            tmux_windows = tmux.list_windows(self.tmux_session)
+            if not tmux_windows:
+                return
+            index_to_name = {str(w['index']): w['name'] for w in tmux_windows}
+            for session in sessions:
+                if session.tmux_window.isdigit() and session.tmux_window in index_to_name:
+                    new_name = index_to_name[session.tmux_window]
+                    session.tmux_window = new_name
+                    self.session_manager.update_session(session.id, tmux_window=new_name)
+                    self.log.info(f"Migrated {session.name} window: {session.tmux_window} → {new_name}")
+        except Exception as e:
+            self.log.warning(f"Legacy window migration failed: {e}")
+
     def _get_parent_name(self, session) -> Optional[str]:
         """Get the name of a session's parent, if any (#244)."""
         if not session.parent_session_id:
@@ -829,6 +850,9 @@ class MonitorDaemon:
         """Execute one monitoring loop iteration."""
         sessions = [s for s in self.session_manager.list_sessions()
                     if s.tmux_session == self.tmux_session]
+        if not self._legacy_windows_migrated:
+            self._migrate_legacy_window_ids(sessions)
+            self._legacy_windows_migrated = True
         self._sync_session_ids(sessions, now)
         self._sync_session_stats(sessions, now)
         self._dispatch_heartbeats(sessions)

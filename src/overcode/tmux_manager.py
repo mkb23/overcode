@@ -55,13 +55,22 @@ class TmuxManager:
             return None
 
     def _get_window(self, window_name: str) -> Optional[libtmux.Window]:
-        """Get a window by name."""
+        """Get a window by name.
+
+        Falls back to index-based lookup for legacy digit-string values.
+        """
         sess = self._get_session()
         if sess is None:
             return None
         try:
             return sess.windows.get(window_name=window_name)
         except (LibTmuxException, ObjectDoesNotExist):
+            # Fallback: legacy sessions may have digit-string window indices
+            if window_name.isdigit():
+                try:
+                    return sess.windows.get(window_index=window_name)
+                except (LibTmuxException, ObjectDoesNotExist):
+                    pass
             return None
 
     def _get_pane(self, window_name: str) -> Optional[libtmux.Pane]:
@@ -184,7 +193,8 @@ class TmuxManager:
         if bare:
             self._attach_bare(window)
         else:
-            target = f"{self.session_name}:={window}" if window is not None else self.session_name
+            from .tmux_utils import tmux_window_target
+            target = tmux_window_target(self.session_name, window) if window is not None else self.session_name
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def _attach_bare(self, window: str):
@@ -195,6 +205,7 @@ class TmuxManager:
         session is cleaned up when the terminal closes.
         """
         import subprocess
+        from .tmux_utils import tmux_window_target
 
         bare_session = f"bare-{self.session_name}-{window}"
 
@@ -221,7 +232,7 @@ class TmuxManager:
             ["tmux", "set", "-t", bare_session, "mouse", "off"],
             ["tmux", "set-hook", "-t", bare_session, "client-attached",
              "set destroy-unattached on"],
-            ["tmux", "select-window", "-t", f"{bare_session}:={window}"],
+            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
         ]:
             subprocess.run(cmd, capture_output=True)
 
@@ -293,13 +304,21 @@ class TmuxManager:
             return False
 
     def window_exists(self, window_name: str) -> bool:
-        """Check if a specific window exists"""
+        """Check if a specific window exists.
+
+        Falls back to index-based lookup for legacy digit-string values.
+        """
         if not self.session_exists():
             return False
 
         if self._tmux:
             windows = self._tmux.list_windows(self.session_name)
-            return any(w.get('name') == window_name for w in windows)
+            if any(w.get('name') == window_name for w in windows):
+                return True
+            # Fallback: legacy digit-string index
+            if window_name.isdigit():
+                return any(str(w.get('index')) == window_name for w in windows)
+            return False
 
         try:
             sess = self._get_session()
@@ -309,6 +328,11 @@ class TmuxManager:
             for win in sess.windows:
                 if win.window_name == window_name:
                     return True
+            # Fallback: legacy digit-string index
+            if window_name.isdigit():
+                for win in sess.windows:
+                    if win.window_index == window_name:
+                        return True
             return False
         except LibTmuxException:
             return False

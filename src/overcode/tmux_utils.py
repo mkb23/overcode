@@ -12,6 +12,18 @@ import time
 from typing import Optional
 
 
+def tmux_window_target(session: str, window) -> str:
+    """Build tmux target string for a window.
+
+    For name-based windows (new style), uses `session:=name` (exact name match).
+    For legacy digit-string/int windows (e.g. "4" or 4), uses `session:4` (index match).
+    """
+    window = str(window)
+    if window.isdigit():
+        return f"{session}:{window}"
+    return f"{session}:={window}"
+
+
 def send_text_to_tmux_window(
     tmux_session: str,
     window: str,
@@ -45,7 +57,7 @@ def send_text_to_tmux_window(
     # to avoid escaping issues and line length limits
     lines = text.split('\n')
     batch_size = 10
-    target = f"{tmux_session}:={window}"
+    target = tmux_window_target(tmux_session, window)
 
     for i in range(0, len(lines), batch_size):
         batch = lines[i:i + batch_size]
@@ -113,7 +125,7 @@ def get_tmux_pane_content(
         result = subprocess.run(
             tmux_cmd + [
                 "capture-pane",
-                "-t", f"{tmux_session}:={window}",
+                "-t", tmux_window_target(tmux_session, window),
                 "-p",  # Print to stdout
                 "-S", f"-{lines}",  # Capture last N lines
             ],

@@ -66,13 +66,23 @@ class RealTmux:
             return None
 
     def _get_window(self, session: str, window: str) -> Optional[libtmux.Window]:
-        """Get a window by session name and window name."""
+        """Get a window by session name and window name.
+
+        Falls back to index-based lookup for legacy sessions that still have
+        digit-string window values (e.g. "4" from pre-name-based era).
+        """
         sess = self._get_session(session)
         if sess is None:
             return None
         try:
             return sess.windows.get(window_name=window)
         except (LibTmuxException, ObjectDoesNotExist):
+            # Fallback: if window looks like a legacy index, try index lookup
+            if window.isdigit():
+                try:
+                    return sess.windows.get(window_index=window)
+                except (LibTmuxException, ObjectDoesNotExist):
+                    pass
             return None
 
     def _get_pane(self, session: str, window: str) -> Optional[libtmux.Pane]:
@@ -246,12 +256,14 @@ class RealTmux:
         if bare:
             self._attach_bare(session, window)
         else:
-            target = f"{session}:={window}" if window is not None else session
+            from .tmux_utils import tmux_window_target
+            target = tmux_window_target(session, window) if window is not None else session
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
         import subprocess
+        from .tmux_utils import tmux_window_target
 
         bare_session = f"bare-{session}-{window}"
 
@@ -271,7 +283,7 @@ class RealTmux:
             ["tmux", "set", "-t", bare_session, "status", "off"],
             ["tmux", "set", "-t", bare_session, "mouse", "off"],
             ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
-            ["tmux", "select-window", "-t", f"{bare_session}:={window}"],
+            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
         ]:
             subprocess.run(cmd, capture_output=True)
 
