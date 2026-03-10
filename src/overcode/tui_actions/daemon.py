@@ -4,7 +4,6 @@ Daemon action methods for TUI.
 Handles Monitor Daemon, Supervisor Daemon, and Web Server controls.
 """
 
-import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -64,18 +63,16 @@ class DaemonActionsMixin:
         except NoMatches:
             pass
 
-        try:
-            subprocess.Popen(
-                [sys.executable, "-m", "overcode.supervisor_daemon",
-                 "--session", self.tmux_session],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+        from ..pid_utils import spawn_daemon
+        pid = spawn_daemon([
+            sys.executable, "-m", "overcode.supervisor_daemon",
+            "--session", self.tmux_session,
+        ])
+        if pid:
             self.notify("Started Supervisor Daemon", severity="information")
             self.set_timer(1.0, self.update_daemon_status)
-        except (OSError, subprocess.SubprocessError) as e:
-            self.notify(f"Failed to start Supervisor Daemon: {e}", severity="error")
+        else:
+            self.notify("Failed to start Supervisor Daemon", severity="error")
 
     def action_supervisor_stop(self) -> None:
         """Stop the Supervisor Daemon (requires double-press confirmation)."""
@@ -170,17 +167,14 @@ class DaemonActionsMixin:
 
     def _start_monitor_daemon(self) -> None:
         """Start the monitor daemon (called by action_monitor_restart)."""
+        from ..pid_utils import spawn_daemon
         from ..tui_widgets import DaemonPanel
 
-        try:
-            subprocess.Popen(
-                [sys.executable, "-m", "overcode.monitor_daemon",
-                 "--session", self.tmux_session],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-
+        pid = spawn_daemon([
+            sys.executable, "-m", "overcode.monitor_daemon",
+            "--session", self.tmux_session,
+        ])
+        if pid:
             self.notify("Monitor Daemon restarted", severity="information")
             try:
                 panel = self.query_one("#daemon-panel", DaemonPanel)
@@ -188,8 +182,8 @@ class DaemonActionsMixin:
             except NoMatches:
                 pass
             self.set_timer(1.0, self.update_daemon_status)
-        except (OSError, subprocess.SubprocessError) as e:
-            self.notify(f"Failed to restart Monitor Daemon: {e}", severity="error")
+        else:
+            self.notify("Failed to restart Monitor Daemon", severity="error")
 
     def action_toggle_web_server(self) -> None:
         """Toggle the web analytics dashboard server on/off."""

@@ -11,7 +11,6 @@ TODO: Split this file into smaller modules for maintainability:
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional
-import subprocess
 import sys
 import time
 
@@ -34,7 +33,7 @@ from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
 )
-from .pid_utils import count_daemon_processes
+from .pid_utils import is_daemon_lock_held, spawn_daemon
 from .summarizer_component import (
     SummarizerComponent,
     SummarizerConfig,
@@ -281,8 +280,6 @@ class SupervisorTUI(
         # Flags to prevent overlapping async updates (fast and slow paths are independent)
         self._status_update_in_progress = False
         self._stats_update_in_progress = False
-        # Track if we've warned about multiple daemons (to avoid spam)
-        self._multiple_daemon_warning_shown = False
         # Track whether sessions have been loaded at least once (for startup sequencing)
         self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
@@ -490,7 +487,8 @@ class SupervisorTUI(
         # All I/O happens here in the worker thread
         self._usage_monitor.fetch()  # Internally throttled to 90s
         monitor_state = get_monitor_daemon_state(self.tmux_session)
-        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
+        from .settings import get_monitor_daemon_pid_path
+        daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
 
         # Gather data that DaemonStatusBar.update_status() would fetch
         asleep_ids = set()
@@ -520,14 +518,14 @@ class SupervisorTUI(
 
         # Apply results on main thread
         self.call_from_thread(
-            self._apply_daemon_status, daemon_bar, monitor_state, daemon_count, asleep_ids
+            self._apply_daemon_status, daemon_bar, monitor_state, daemon_lock_held, asleep_ids
         )
 
     def _apply_daemon_status(
         self,
         daemon_bar: "DaemonStatusBar",
         monitor_state,
-        daemon_count: int,
+        daemon_lock_held: bool,
         asleep_ids: set,
     ) -> None:
         """Apply daemon status results on main thread (no I/O)."""
@@ -537,19 +535,6 @@ class SupervisorTUI(
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
         daemon_bar.refresh()
         self._mark_event("apply_daemon_end")
-
-        # Check for multiple daemon processes (potential time tracking bug)
-        if daemon_count > 1 and not self._multiple_daemon_warning_shown:
-            self._multiple_daemon_warning_shown = True
-            self.notify(
-                f"WARNING: {daemon_count} monitor daemons detected! "
-                "This causes time tracking bugs. Press \\ to restart daemon.",
-                severity="error",
-                timeout=30
-            )
-        elif daemon_count <= 1:
-            # Reset warning flag when back to normal
-            self._multiple_daemon_warning_shown = False
 
     def update_timeline(self) -> None:
         """Update the status timeline widget (kicks off background worker)"""
@@ -2092,27 +2077,23 @@ class SupervisorTUI(
         The Monitor Daemon handles status tracking, time accumulation,
         stats sync, and user presence detection.
         """
-        # Check PID file first
-        if is_monitor_daemon_running(self.tmux_session):
+        # Check lock file first (authoritative: daemon holds flock for its lifetime)
+        from .settings import get_monitor_daemon_pid_path
+        if is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session)):
             return  # Already running
 
-        # Also check for running processes (in case PID file is stale or daemon is starting)
-        # This prevents race conditions where multiple TUIs start daemons simultaneously
-        daemon_count = count_daemon_processes("monitor_daemon", session=self.tmux_session)
-        if daemon_count > 0:
-            return  # Daemon process exists, just PID file might be missing/stale
+        # Fallback: PID file check (covers startup window before lock is acquired)
+        if is_monitor_daemon_running(self.tmux_session):
+            return
 
-        try:
-            subprocess.Popen(
-                [sys.executable, "-m", "overcode.monitor_daemon",
-                 "--session", self.tmux_session],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+        pid = spawn_daemon([
+            sys.executable, "-m", "overcode.monitor_daemon",
+            "--session", self.tmux_session,
+        ])
+        if pid:
             self.notify("Monitor Daemon started", severity="information")
-        except (OSError, subprocess.SubprocessError) as e:
-            self.notify(f"Failed to start Monitor Daemon: {e}", severity="warning")
+        else:
+            self.notify("Failed to start Monitor Daemon", severity="warning")
 
     def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
         """Execute the actual kill operation after confirmation."""

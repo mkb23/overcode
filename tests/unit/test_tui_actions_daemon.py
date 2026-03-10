@@ -110,12 +110,12 @@ class TestSupervisorStart:
         mock_tui._ensure_monitor_daemon.assert_called_once()
         mock_sleep.assert_called_once_with(1.0)
 
-    @patch("overcode.tui_actions.daemon.subprocess")
+    @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
-    def test_successful_start_calls_popen(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_subprocess):
-        """Should call Popen to start supervisor daemon."""
+    def test_successful_start_calls_spawn_daemon(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_spawn):
+        """Should call spawn_daemon to start supervisor daemon."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
 
         mock_tui = MagicMock()
@@ -125,20 +125,19 @@ class TestSupervisorStart:
 
         DaemonActionsMixin._do_supervisor_start(mock_tui)
 
-        mock_subprocess.Popen.assert_called_once()
-        call_args = mock_subprocess.Popen.call_args
-        assert call_args[0][0] == ["/usr/bin/python3", "-m", "overcode.supervisor_daemon", "--session", "test"]
-        assert call_args[1]["start_new_session"] is True
+        mock_spawn.assert_called_once()
+        call_args = mock_spawn.call_args[0][0]
+        assert call_args == ["/usr/bin/python3", "-m", "overcode.supervisor_daemon", "--session", "test"]
         mock_tui.notify.assert_called_once()
         assert "Started" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
         mock_tui.set_timer.assert_called_once_with(1.0, mock_tui.update_daemon_status)
 
-    @patch("overcode.tui_actions.daemon.subprocess")
+    @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
-    def test_start_logs_to_daemon_panel(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_subprocess):
+    def test_start_logs_to_daemon_panel(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_spawn):
         """Should log startup message to daemon panel."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
 
@@ -153,11 +152,11 @@ class TestSupervisorStart:
 
         assert any("Starting Supervisor Daemon" in line for line in mock_panel.log_lines)
 
-    @patch("overcode.tui_actions.daemon.subprocess.Popen", side_effect=OSError("No such file"))
+    @patch("overcode.pid_utils.spawn_daemon", return_value=None)
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
-    def test_start_handles_oserror(self, mock_monitor_running, mock_supervisor_running, mock_popen):
-        """Should notify error when Popen raises OSError."""
+    def test_start_handles_spawn_failure(self, mock_monitor_running, mock_supervisor_running, mock_spawn):
+        """Should notify error when spawn_daemon fails."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
 
         mock_tui = MagicMock()
@@ -169,11 +168,11 @@ class TestSupervisorStart:
         assert "Failed" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "error"
 
-    @patch("overcode.tui_actions.daemon.subprocess")
+    @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
     @patch("overcode.supervisor_daemon.is_supervisor_daemon_running", return_value=False)
     @patch("overcode.monitor_daemon.is_monitor_daemon_running", return_value=True)
-    def test_start_handles_missing_panel(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_subprocess):
+    def test_start_handles_missing_panel(self, mock_monitor_running, mock_supervisor_running, mock_sys, mock_spawn):
         """Should not crash when daemon panel is not mounted."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
         from textual.css.query import NoMatches
@@ -185,7 +184,7 @@ class TestSupervisorStart:
         # Should not raise
         DaemonActionsMixin._do_supervisor_start(mock_tui)
 
-        mock_subprocess.Popen.assert_called_once()
+        mock_spawn.assert_called_once()
 
 
 class TestSupervisorStop:
@@ -473,10 +472,10 @@ class TestMonitorRestart:
 class TestStartMonitorDaemon:
     """Test _start_monitor_daemon method."""
 
-    @patch("overcode.tui_actions.daemon.subprocess")
+    @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
-    def test_successful_start(self, mock_sys, mock_subprocess):
-        """Should call Popen to start monitor daemon."""
+    def test_successful_start(self, mock_sys, mock_spawn):
+        """Should call spawn_daemon to start monitor daemon."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
 
         mock_sys.executable = "/usr/bin/python3"
@@ -490,19 +489,18 @@ class TestStartMonitorDaemon:
 
         DaemonActionsMixin._start_monitor_daemon(mock_tui)
 
-        mock_subprocess.Popen.assert_called_once()
-        call_args = mock_subprocess.Popen.call_args
-        assert call_args[0][0] == ["/usr/bin/python3", "-m", "overcode.monitor_daemon", "--session", "test"]
-        assert call_args[1]["start_new_session"] is True
+        mock_spawn.assert_called_once()
+        call_args = mock_spawn.call_args[0][0]
+        assert call_args == ["/usr/bin/python3", "-m", "overcode.monitor_daemon", "--session", "test"]
         mock_tui.notify.assert_called_once()
         assert "restarted" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
         assert any("restarted" in line for line in mock_panel.log_lines)
         mock_tui.set_timer.assert_called_once_with(1.0, mock_tui.update_daemon_status)
 
-    @patch("overcode.tui_actions.daemon.subprocess.Popen", side_effect=OSError("Command not found"))
-    def test_oserror(self, mock_popen):
-        """Should notify error when Popen raises OSError."""
+    @patch("overcode.pid_utils.spawn_daemon", return_value=None)
+    def test_spawn_failure(self, mock_spawn):
+        """Should notify error when spawn_daemon fails."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
 
         mock_tui = MagicMock()
@@ -516,9 +514,9 @@ class TestStartMonitorDaemon:
         # Should NOT set timer on failure
         mock_tui.set_timer.assert_not_called()
 
-    @patch("overcode.tui_actions.daemon.subprocess")
+    @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
-    def test_start_handles_missing_panel(self, mock_sys, mock_subprocess):
+    def test_start_handles_missing_panel(self, mock_sys, mock_spawn):
         """Should not crash when daemon panel is not mounted."""
         from overcode.tui_actions.daemon import DaemonActionsMixin
         from textual.css.query import NoMatches
@@ -530,7 +528,7 @@ class TestStartMonitorDaemon:
         # Should not raise
         DaemonActionsMixin._start_monitor_daemon(mock_tui)
 
-        mock_subprocess.Popen.assert_called_once()
+        mock_spawn.assert_called_once()
         mock_tui.notify.assert_called_once()
         assert "restarted" in mock_tui.notify.call_args[0][0]
 
