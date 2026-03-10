@@ -1590,7 +1590,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
-        session.tmux_window = 1
+        session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True
@@ -1608,7 +1608,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
-        session.tmux_window = 1
+        session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True
@@ -1642,7 +1642,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "terminated"
-        session.tmux_window = 1
+        session.tmux_window = "orphan"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True

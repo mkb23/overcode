@@ -703,8 +703,9 @@ class MonitorDaemon:
             tracked_windows = {s.tmux_window for s in active_sessions}
             count = 0
             for window_info in tmux_windows:
+                w_name = window_info['name']
                 window_idx = int(window_info['index'])
-                if window_idx != 0 and window_idx not in tracked_windows:
+                if window_idx != 0 and w_name not in tracked_windows:
                     count += 1
             return count
         except Exception:
@@ -872,31 +873,9 @@ class MonitorDaemon:
         session_states = []
         all_waiting_user = True
 
-        # Detect window index collisions: when multiple sessions share
-        # a window index, only the most recently launched one owns it.
-        # Others are truly terminated (their window was reused).
-        from collections import Counter
-        window_counts = Counter(s.tmux_window for s in sessions if s.status != "done")
-        # For colliding windows, find the rightful owner (latest start_time)
-        window_owner = {}
-        for s in sessions:
-            if s.status == "done":
-                continue
-            w = s.tmux_window
-            if window_counts[w] > 1:
-                # Multiple sessions claim this window — latest launch wins
-                if w not in window_owner or s.start_time > window_owner[w].start_time:
-                    window_owner[w] = s
-
         for session in sessions:
-            # If this window is contested and we're not the owner, skip
             pane_content = ""
-            if (window_counts.get(session.tmux_window, 0) > 1
-                    and window_owner.get(session.tmux_window) is not session):
-                status, activity = STATUS_TERMINATED, "Session terminated"
-                if session.status != "terminated":
-                    self.session_manager.update_session_status(session.id, "terminated")
-            elif session.status == "done":
+            if session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
             else:
                 # Detect status - dispatches per-session via dispatcher (#5)

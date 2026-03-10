@@ -38,23 +38,23 @@ class TestMockTmux:
     def test_set_and_capture_pane_content(self):
         """Should be able to set and retrieve pane content."""
         mock = MockTmux()
-        mock.set_pane_content("test-session", 1, "Hello\nWorld\nFoo")
+        mock.set_pane_content("test-session", "win1", "Hello\nWorld\nFoo")
 
-        content = mock.capture_pane("test-session", 1)
+        content = mock.capture_pane("test-session", "win1")
         assert content == "Hello\nWorld\nFoo"
 
     def test_capture_pane_respects_line_limit(self):
         """capture_pane should respect the lines parameter."""
         mock = MockTmux()
-        mock.set_pane_content("test-session", 1, "Line1\nLine2\nLine3\nLine4\nLine5")
+        mock.set_pane_content("test-session", "win1", "Line1\nLine2\nLine3\nLine4\nLine5")
 
-        content = mock.capture_pane("test-session", 1, lines=2)
+        content = mock.capture_pane("test-session", "win1", lines=2)
         assert content == "Line4\nLine5"
 
     def test_capture_pane_nonexistent_session(self):
         """capture_pane should return None for nonexistent session."""
         mock = MockTmux()
-        assert mock.capture_pane("nonexistent", 1) is None
+        assert mock.capture_pane("nonexistent", "win1") is None
 
     def test_has_session(self):
         """has_session should return True only for existing sessions."""
@@ -81,13 +81,13 @@ class TestMockTmux:
         assert result is False
 
     def test_new_window(self):
-        """new_window should create a window and return its index."""
+        """new_window should create a window and return its name."""
         mock = MockTmux()
         mock.new_session("test-session")
 
         window = mock.new_window("test-session", "my-window")
         assert window is not None
-        assert window >= 1
+        assert window == "my-window"
 
     def test_new_window_nonexistent_session(self):
         """new_window should fail for nonexistent session."""
@@ -141,12 +141,12 @@ class TestMockTmux:
         mock = MockTmux()
         mock.new_session("test-session")
 
-        mock.send_keys("test-session", 1, "hello", enter=True)
-        mock.send_keys("test-session", 1, "world", enter=False)
+        mock.send_keys("test-session", "win1", "hello", enter=True)
+        mock.send_keys("test-session", "win1", "world", enter=False)
 
         assert len(mock.sent_keys) == 2
-        assert mock.sent_keys[0] == ("test-session", 1, "hello", True)
-        assert mock.sent_keys[1] == ("test-session", 1, "world", False)
+        assert mock.sent_keys[0] == ("test-session", "win1", "hello", True)
+        assert mock.sent_keys[1] == ("test-session", "win1", "world", False)
 
     def test_attach_is_noop(self):
         """attach should be a no-op in mocks."""

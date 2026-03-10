@@ -11,6 +11,7 @@ import time
 import subprocess
 import os
 import shlex
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -150,9 +151,13 @@ class ClaudeLauncher:
             print(f"Failed to create tmux session '{self.tmux.session_name}'")
             return None
 
+        # Generate session_id FIRST so we can use it in the window name
+        session_id = str(uuid.uuid4())
+        window_name = f"{name}-{session_id[:4]}"
+
         # Create window
-        window_index = self.tmux.create_window(name, start_directory)
-        if window_index is None:
+        window_name = self.tmux.create_window(window_name, start_directory)
+        if window_name is None:
             print(f"Failed to create tmux window '{name}'")
             return None
 
@@ -177,7 +182,7 @@ class ClaudeLauncher:
                 claude_cmd.extend(shlex.split(arg))
 
         # Prepend overcode env vars so the agent knows its identity
-        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
+        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
 
         # Add parent env vars for hierarchy (#244)
         if parent_session:
@@ -195,9 +200,9 @@ class ClaudeLauncher:
             cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
 
         # Send command to window to start interactive Claude
-        if not self.tmux.send_keys(window_index, cmd_str, enter=True):
-            print(f"Failed to send command to window {window_index}")
-            self.tmux.kill_window(window_index)
+        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
+            print(f"Failed to send command to window {window_name}")
+            self.tmux.kill_window(window_name)
             return None
 
         # Determine permissiveness mode based on flags
@@ -215,7 +220,7 @@ class ClaudeLauncher:
         session = self.sessions.create_session(
             name=name,
             tmux_session=self.tmux.session_name,
-            tmux_window=window_index,
+            tmux_window=window_name,
             command=claude_cmd,
             start_directory=resolved_directory,
             standing_instructions=default_instructions,
@@ -224,6 +229,7 @@ class ClaudeLauncher:
             extra_claude_args=extra_claude_args,
             agent_teams=agent_teams,
             claude_agent=claude_agent,
+            session_id=session_id,
         )
 
         # Set parent if launching as child agent (#244)
@@ -238,17 +244,17 @@ class ClaudeLauncher:
                 success = self.sessions.transfer_budget(parent_session.id, session.id, budget_usd)
                 if not success:
                     print(f"Cannot launch: parent has insufficient budget for ${budget_usd:.2f}")
-                    self.tmux.kill_window(window_index)
+                    self.tmux.kill_window(window_name)
                     self.sessions.delete_session(session.id)
                     return None
             else:
                 self.sessions.set_cost_budget(session.id, budget_usd)
 
-        print(f"✓ Launched '{name}' in tmux window {window_index}")
+        print(f"✓ Launched '{name}' in tmux window {window_name}")
 
         # Send initial prompt if provided (after Claude starts)
         if initial_prompt:
-            self._send_prompt_to_window(window_index, initial_prompt)
+            self._send_prompt_to_window(window_name, initial_prompt)
 
         return session
 
@@ -257,7 +263,7 @@ class ClaudeLauncher:
 
     def _wait_for_prompt(
         self,
-        window_index: int,
+        window_name: str,
         timeout: float = 30.0,
         poll_interval: float = 0.5,
     ) -> bool:
@@ -270,7 +276,7 @@ class ClaudeLauncher:
         deadline = time.time() + timeout
         while time.time() < deadline:
             content = get_tmux_pane_content(
-                self.tmux.session_name, window_index, lines=5
+                self.tmux.session_name, window_name, lines=5
             )
             if content:
                 for line in content.split('\n'):
@@ -282,7 +288,7 @@ class ClaudeLauncher:
 
     def _send_prompt_to_window(
         self,
-        window_index: int,
+        window_name: str,
         prompt: str,
         startup_delay: float = 3.0,
     ) -> bool:
@@ -291,11 +297,11 @@ class ClaudeLauncher:
         Polls for Claude's input prompt before sending. Falls back to
         startup_delay if the prompt is not detected within 30 seconds.
         """
-        if self._wait_for_prompt(window_index):
+        if self._wait_for_prompt(window_name):
             # Prompt detected — send immediately, no delay needed
             return send_text_to_tmux_window(
                 self.tmux.session_name,
-                window_index,
+                window_name,
                 prompt,
                 send_enter=True,
                 startup_delay=0,
@@ -303,7 +309,7 @@ class ClaudeLauncher:
         # Fallback: prompt not detected, use original delay
         return send_text_to_tmux_window(
             self.tmux.session_name,
-            window_index,
+            window_name,
             prompt,
             send_enter=True,
             startup_delay=startup_delay,
@@ -401,12 +407,12 @@ class ClaudeLauncher:
 
             untracked_count = 0
             for window_info in tmux_windows:
+                w_name = window_info['name']
                 window_idx = int(window_info['index'])
                 # Don't kill window 0 (default shell) or tracked windows
-                if window_idx != 0 and window_idx not in tracked_windows:
-                    window_name = window_info['name']
-                    print(f"Killing untracked window {window_idx}: {window_name}")
-                    self.tmux.kill_window(window_idx)
+                if window_idx != 0 and w_name not in tracked_windows:
+                    print(f"Killing untracked window {w_name}")
+                    self.tmux.kill_window(w_name)
                     untracked_count += 1
 
             if untracked_count > 0:
@@ -578,7 +584,7 @@ class ClaudeLauncher:
             result = subprocess.run(
                 [
                     "tmux", "capture-pane",
-                    "-t", f"{self.tmux.session_name}:{session.tmux_window}",
+                    "-t", f"{self.tmux.session_name}:={session.tmux_window}",
                     "-p",  # Print to stdout
                     "-S", f"-{lines}",  # Capture last N lines
                 ],

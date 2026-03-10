@@ -179,7 +179,7 @@ class SupervisorDaemon:
         self.supervisor_stats = SupervisorStats.load(self.stats_path)
 
         # Daemon claude tracking
-        self.daemon_claude_window: Optional[int] = None
+        self.daemon_claude_window: Optional[str] = None
         self.daemon_claude_launch_time: Optional[datetime] = None
 
         # State tracking
@@ -212,7 +212,7 @@ class SupervisorDaemon:
             result = subprocess.run(
                 [
                     "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:{self.daemon_claude_window}",
+                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
                     "-p",
                     "-S", "-30",
                 ],
@@ -242,7 +242,7 @@ class SupervisorDaemon:
             result = subprocess.run(
                 [
                     "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:{self.daemon_claude_window}",
+                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
                     "-p",
                     "-S", "-30",
                 ],
@@ -319,10 +319,10 @@ class SupervisorDaemon:
         windows = self.tmux.list_windows()
         for window in windows:
             if window['name'] == self.DAEMON_CLAUDE_WINDOW_NAME:
-                window_idx = int(window['index'])
-                if self.daemon_claude_window != window_idx:
-                    self.log.info(f"Killing orphaned daemon claude window {window_idx}")
-                    self.tmux.kill_window(window_idx)
+                w_name = window['name']
+                if self.daemon_claude_window != w_name:
+                    self.log.info(f"Killing orphaned daemon claude window {w_name}")
+                    self.tmux.kill_window(w_name)
 
     def capture_daemon_claude_output(self) -> None:
         """Capture and log output from daemon claude window."""
@@ -333,7 +333,7 @@ class SupervisorDaemon:
             result = subprocess.run(
                 [
                     "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:{self.daemon_claude_window}",
+                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
                     "-p",
                     "-S", "-50",
                 ],
@@ -543,11 +543,11 @@ class SupervisorDaemon:
         ]
         return _build_daemon_claude_context(self.tmux_session, session_dicts)
 
-    def _send_prompt_to_window(self, window_index: int, prompt: str) -> bool:
+    def _send_prompt_to_window(self, window_name: str, prompt: str) -> bool:
         """Send a large prompt to a tmux window via load-buffer/paste-buffer."""
         return send_text_to_tmux_window(
             self.tmux.session_name,
-            window_index,
+            window_name,
             prompt,
             send_enter=True,
         )
@@ -577,29 +577,29 @@ class SupervisorDaemon:
             return False
 
         # Create window
-        window_index = self.tmux.create_window(
+        window_name = self.tmux.create_window(
             self.DAEMON_CLAUDE_WINDOW_NAME,
             str(Path.home() / '.overcode')
         )
-        if window_index is None:
+        if window_name is None:
             self.log.error("Failed to create daemon claude window")
             return False
 
-        self.daemon_claude_window = window_index
+        self.daemon_claude_window = window_name
         self.daemon_claude_launch_time = datetime.now()
 
         # Start Claude with auto-permissions
         claude_cmd = "claude --dangerously-skip-permissions"
-        if not self.tmux.send_keys(window_index, claude_cmd, enter=True):
+        if not self.tmux.send_keys(window_name, claude_cmd, enter=True):
             self.log.error("Failed to start Claude in daemon claude window")
-            self.tmux.kill_window(window_index)
+            self.tmux.kill_window(window_name)
             return False
 
         # Wait for Claude startup
         time.sleep(3.0)
 
         # Send prompt
-        return self._send_prompt_to_window(window_index, full_prompt)
+        return self._send_prompt_to_window(window_name, full_prompt)
 
     # =========================================================================
     # Main Loop

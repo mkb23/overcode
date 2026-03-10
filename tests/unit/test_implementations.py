@@ -291,7 +291,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux._get_window("test_session", 1)
+            result = tmux._get_window("test_session", "win1")
 
             assert result == mock_window
 
@@ -305,7 +305,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux._get_window("nonexistent", 1)
+            result = tmux._get_window("nonexistent", "win1")
 
             assert result is None
 
@@ -322,7 +322,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux._get_pane("test_session", 1)
+            result = tmux._get_pane("test_session", "win1")
 
             assert result == mock_pane
 
@@ -338,7 +338,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux._get_pane("test_session", 1)
+            result = tmux._get_pane("test_session", "win1")
 
             assert result is None
 
@@ -356,7 +356,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.capture_pane("test_session", 1, lines=50)
+            result = tmux.capture_pane("test_session", "win1", lines=50)
 
             assert result == "line 1\nline 2"
             mock_pane.capture_pane.assert_called_once_with(start=-50, escape_sequences=True)
@@ -375,7 +375,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.capture_pane("test_session", 1)
+            result = tmux.capture_pane("test_session", "win1")
 
             assert result == "single string"
 
@@ -389,7 +389,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.capture_pane("nonexistent", 1)
+            result = tmux.capture_pane("nonexistent", "win1")
 
             assert result is None
 
@@ -409,7 +409,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.capture_pane("test_session", 1)
+            result = tmux.capture_pane("test_session", "win1")
 
             assert result is None
 
@@ -427,7 +427,7 @@ class TestRealTmux:
                 mock_server_class.return_value = mock_server
 
                 tmux = RealTmux()
-                result = tmux.send_keys("test_session", 1, "echo hello", enter=True)
+                result = tmux.send_keys("test_session", "win1", "echo hello", enter=True)
 
                 assert result is True
                 # Should send text without enter first
@@ -449,7 +449,7 @@ class TestRealTmux:
                 mock_server_class.return_value = mock_server
 
                 tmux = RealTmux()
-                result = tmux.send_keys("test_session", 1, "text", enter=False)
+                result = tmux.send_keys("test_session", "win1", "text", enter=False)
 
                 assert result is True
                 mock_pane.send_keys.assert_called_once_with("text", enter=False)
@@ -467,7 +467,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.send_keys("test_session", 1, "", enter=True)
+            result = tmux.send_keys("test_session", "win1", "", enter=True)
 
             assert result is True
             mock_pane.send_keys.assert_called_once_with('', enter=True)
@@ -482,7 +482,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.send_keys("nonexistent", 1, "text")
+            result = tmux.send_keys("nonexistent", "win1", "text")
 
             assert result is False
 
@@ -556,7 +556,7 @@ class TestRealTmux:
         """Should create new window."""
         with patch('overcode.implementations.libtmux.Server') as mock_server_class:
             mock_window = MagicMock()
-            mock_window.window_index = "2"
+            mock_window.window_name = "window_name"
             mock_session = MagicMock()
             mock_session.new_window.return_value = mock_window
             mock_server = MagicMock()
@@ -566,7 +566,7 @@ class TestRealTmux:
             tmux = RealTmux()
             result = tmux.new_window("test_session", "window_name")
 
-            assert result == 2
+            assert result == "window_name"
 
     def test_new_window_with_cwd(self):
         """Should create window with working directory."""
@@ -629,7 +629,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.kill_window("test_session", 1)
+            result = tmux.kill_window("test_session", "win1")
 
             assert result is True
             mock_window.kill.assert_called_once()
@@ -646,7 +646,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.kill_window("test_session", 99)
+            result = tmux.kill_window("test_session", "nonexistent")
 
             assert result is False
 
@@ -728,7 +728,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.select_window("test_session", 1)
+            result = tmux.select_window("test_session", "win1")
 
             assert result is True
             mock_window.select.assert_called_once()
@@ -745,7 +745,7 @@ class TestRealTmux:
             mock_server_class.return_value = mock_server
 
             tmux = RealTmux()
-            result = tmux.select_window("test_session", 99)
+            result = tmux.select_window("test_session", "nonexistent")
 
             assert result is False
 
@@ -765,9 +765,9 @@ class TestRealTmux:
             tmux = RealTmux()
 
             # First call - should hit tmux
-            result1 = tmux.capture_pane("test_session", 1)
+            result1 = tmux.capture_pane("test_session", "win1")
             # Second call - should use cache
-            result2 = tmux.capture_pane("test_session", 1)
+            result2 = tmux.capture_pane("test_session", "win1")
 
             assert result1 == "line1\nline2"
             assert result2 == "line1\nline2"
@@ -790,9 +790,9 @@ class TestRealTmux:
             tmux = RealTmux()
 
             # Multiple capture_pane calls for different windows in same session
-            tmux.capture_pane("test_session", 1)
-            tmux.capture_pane("test_session", 2)
-            tmux.capture_pane("test_session", 3)
+            tmux.capture_pane("test_session", "win1")
+            tmux.capture_pane("test_session", "win2")
+            tmux.capture_pane("test_session", "win3")
 
             # Session should only be looked up once
             assert mock_server.sessions.get.call_count == 1
@@ -813,14 +813,14 @@ class TestRealTmux:
             tmux = RealTmux()
 
             # First call - populates cache
-            tmux.capture_pane("test_session", 1)
+            tmux.capture_pane("test_session", "win1")
             assert mock_server.sessions.get.call_count == 1
 
             # Invalidate all caches
             tmux.invalidate_cache()
 
             # Next call should hit tmux again
-            tmux.capture_pane("test_session", 1)
+            tmux.capture_pane("test_session", "win1")
             assert mock_server.sessions.get.call_count == 2
 
     def test_invalidate_cache_specific_window(self):
@@ -839,16 +839,16 @@ class TestRealTmux:
             tmux = RealTmux()
 
             # Populate cache for two windows
-            tmux.capture_pane("test_session", 1)
-            tmux.capture_pane("test_session", 2)
+            tmux.capture_pane("test_session", "win1")
+            tmux.capture_pane("test_session", "win2")
 
             # Invalidate only window 1
-            tmux.invalidate_cache("test_session", 1)
+            tmux.invalidate_cache("test_session", "win1")
 
             # Window 2 should still be cached, window 1 should refetch
             initial_window_calls = mock_session.windows.get.call_count
-            tmux.capture_pane("test_session", 2)  # Should use cache
-            tmux.capture_pane("test_session", 1)  # Should refetch
+            tmux.capture_pane("test_session", "win2")  # Should use cache
+            tmux.capture_pane("test_session", "win1")  # Should refetch
 
             # Only window 1 should have caused a new lookup
             assert mock_session.windows.get.call_count == initial_window_calls + 1

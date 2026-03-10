@@ -65,17 +65,17 @@ class RealTmux:
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
-    def _get_window(self, session: str, window: int) -> Optional[libtmux.Window]:
-        """Get a window by session name and window index."""
+    def _get_window(self, session: str, window: str) -> Optional[libtmux.Window]:
+        """Get a window by session name and window name."""
         sess = self._get_session(session)
         if sess is None:
             return None
         try:
-            return sess.windows.get(window_index=str(window))
+            return sess.windows.get(window_name=window)
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
-    def _get_pane(self, session: str, window: int) -> Optional[libtmux.Pane]:
+    def _get_pane(self, session: str, window: str) -> Optional[libtmux.Pane]:
         """Get the first pane of a window, with caching."""
         cache_key = (session, window)
         now = time.time()
@@ -94,7 +94,7 @@ class RealTmux:
         self._pane_cache[cache_key] = (pane, now)
         return pane
 
-    def invalidate_cache(self, session: str = None, window: int = None) -> None:
+    def invalidate_cache(self, session: str = None, window: str = None) -> None:
         """Invalidate cached objects.
 
         Args:
@@ -113,7 +113,7 @@ class RealTmux:
             for k in keys_to_remove:
                 del self._pane_cache[k]
 
-    def capture_pane(self, session: str, window: int, lines: int = 100) -> Optional[str]:
+    def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
         try:
             pane = self._get_pane(session, window)
             if pane is None:
@@ -129,7 +129,7 @@ class RealTmux:
             self.invalidate_cache(session, window)
             return None
 
-    def send_keys(self, session: str, window: int, keys: str, enter: bool = True) -> bool:
+    def send_keys(self, session: str, window: str, keys: str, enter: bool = True) -> bool:
         try:
             pane = self._get_pane(session, window)
             if pane is None:
@@ -188,7 +188,7 @@ class RealTmux:
             return False
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[int]:
+                   cwd: Optional[str] = None) -> Optional[str]:
         try:
             sess = self._get_session(session)
             if sess is None:
@@ -201,11 +201,11 @@ class RealTmux:
                 kwargs['window_shell'] = ' '.join(command)
 
             window = sess.new_window(**kwargs)
-            return int(window.window_index)
+            return window.window_name
         except (LibTmuxException, ValueError):
             return None
 
-    def kill_window(self, session: str, window: int) -> bool:
+    def kill_window(self, session: str, window: str) -> bool:
         try:
             win = self._get_window(session, window)
             if win is None:
@@ -242,14 +242,14 @@ class RealTmux:
         except LibTmuxException:
             return []
 
-    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+    def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         if bare:
             self._attach_bare(session, window)
         else:
             target = f"{session}:={window}" if window is not None else session
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
-    def _attach_bare(self, session: str, window: int) -> None:
+    def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
         import subprocess
 
@@ -277,7 +277,7 @@ class RealTmux:
 
         os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
 
-    def select_window(self, session: str, window: int) -> bool:
+    def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""
         try:
             win = self._get_window(session, window)

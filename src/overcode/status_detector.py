@@ -70,7 +70,7 @@ class PollingStatusDetector:
         self._previous_content: dict[int, str] = {}  # window -> content hash
         self._content_changed: dict[int, bool] = {}  # window -> changed flag
 
-    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
+    def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane.
 
         Captures more content than requested and filters out trailing blank lines

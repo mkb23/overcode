@@ -140,7 +140,7 @@ class HookStatusDetector:
 
         return data
 
-    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
+    def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get pane content via the polling detector's tmux interface."""
         fallback = self._get_polling_fallback()
         fallback.capture_lines = self.capture_lines

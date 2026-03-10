@@ -14,17 +14,17 @@ class MockTmux:
     """Mock implementation of TmuxInterface for testing"""
 
     def __init__(self):
-        self.sessions: Dict[str, Dict[int, str]] = {}  # session -> {window: content}
+        self.sessions: Dict[str, Dict[str, str]] = {}  # session -> {window_name: content}
         self.sent_keys: List[tuple] = []  # Record of sent keys
         self._next_window = 1
 
-    def set_pane_content(self, session: str, window: int, content: str):
+    def set_pane_content(self, session: str, window: str, content: str):
         """Set up mock pane content for testing"""
         if session not in self.sessions:
             self.sessions[session] = {}
         self.sessions[session][window] = content
 
-    def capture_pane(self, session: str, window: int, lines: int = 100) -> Optional[str]:
+    def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
         if session in self.sessions and window in self.sessions[session]:
             content = self.sessions[session][window]
             # Simulate line limit
@@ -32,7 +32,7 @@ class MockTmux:
             return '\n'.join(content_lines[-lines:])
         return None
 
-    def send_keys(self, session: str, window: int, keys: str, enter: bool = True) -> bool:
+    def send_keys(self, session: str, window: str, keys: str, enter: bool = True) -> bool:
         self.sent_keys.append((session, window, keys, enter))
         return session in self.sessions
 
@@ -46,15 +46,13 @@ class MockTmux:
         return False
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[int]:
+                   cwd: Optional[str] = None) -> Optional[str]:
         if session not in self.sessions:
             return None
-        window = self._next_window
-        self._next_window += 1
-        self.sessions[session][window] = ""
-        return window
+        self.sessions[session][name] = ""
+        return name
 
-    def kill_window(self, session: str, window: int) -> bool:
+    def kill_window(self, session: str, window: str) -> bool:
         if session in self.sessions and window in self.sessions[session]:
             del self.sessions[session][window]
             return True
@@ -70,14 +68,14 @@ class MockTmux:
         if session not in self.sessions:
             return []
         return [
-            {'index': idx, 'name': f'window-{idx}', 'active': False}
-            for idx in self.sessions[session].keys()
+            {'index': 0, 'name': key, 'active': False}
+            for key in self.sessions[session].keys()
         ]
 
-    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+    def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         pass  # No-op in tests
 
-    def select_window(self, session: str, window: int) -> bool:
+    def select_window(self, session: str, window: str) -> bool:
         """Select a window - no-op in tests, just return True."""
         return session in self.sessions
 
