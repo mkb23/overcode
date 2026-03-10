@@ -63,14 +63,8 @@ class PreviewPane(ScrollableContainer):
 
     def update_from_widget(self, widget: "SessionSummary") -> None:
         """Update preview content from a SessionSummary widget."""
-        session_changed = widget.session.name != self.session_name
         self.session_name = widget.session.name
         self.content_lines = list(widget.pane_content) if widget.pane_content else []
-
-        # When switching to a different session, always scroll to bottom
-        if session_changed:
-            self._auto_scroll = True
-            self._user_scrolled = False
 
         # Save scroll position before content replacement
         saved_scroll = self.scroll_offset.y
