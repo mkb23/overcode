@@ -15,7 +15,7 @@ def create_mock_session(
     id: str = None,
     name: str = "test-session",
     tmux_session: str = "agents",
-    tmux_window: int = 1,
+    tmux_window: str = "test-window-1",
     command: List[str] = None,
     start_directory: Optional[str] = None,
     start_time: str = None,
@@ -76,7 +76,7 @@ class MockSession:
     id: str
     name: str
     tmux_session: str
-    tmux_window: int
+    tmux_window: str
     command: List[str]
     start_directory: Optional[str]
     start_time: str
@@ -245,7 +245,7 @@ PANE_CONTENT_AUTOCOMPLETE_SUGGESTION = """
 # Helper functions
 # =============================================================================
 
-def create_mock_tmux_with_content(session: str, window: int, content: str):
+def create_mock_tmux_with_content(session: str, window: str, content: str):
     """Create a MockTmux with pre-configured pane content.
 
     Usage:

@@ -74,10 +74,10 @@ class TestTmuxManagerWindows:
         mock_tmux.new_session("agents")
         manager = TmuxManager("agents", tmux=mock_tmux)
 
-        window_idx = manager.create_window("my-window")
+        window_name = manager.create_window("my-window")
 
-        assert window_idx is not None
-        assert window_idx >= 1
+        assert window_name is not None
+        assert window_name == "my-window"
 
     def test_create_window_with_directory(self):
         """Can create window with start directory"""
@@ -111,7 +111,7 @@ class TestTmuxManagerWindows:
         window_idx = manager.create_window("my-window")
 
         assert manager.window_exists(window_idx) is True
-        assert manager.window_exists(999) is False
+        assert manager.window_exists("nonexistent") is False
 
     def test_list_windows(self):
         """Can list all windows"""
@@ -405,16 +405,16 @@ class TestTmuxManagerLibtmuxWindows:
         manager._server.sessions.get.return_value = mock_session
         return manager, mock_session
 
-    def test_create_window_returns_index(self):
-        """create_window returns the window index on success."""
+    def test_create_window_returns_name(self):
+        """create_window returns the window name on success."""
         manager, mock_session = self._make_manager_with_session()
         mock_window = MagicMock()
-        mock_window.window_index = "3"
+        mock_window.window_name = "my-window"
         mock_session.new_window.return_value = mock_window
 
         result = manager.create_window("my-window")
 
-        assert result == 3
+        assert result == "my-window"
         mock_session.new_window.assert_called_once_with(
             window_name="my-window", attach=False
         )
@@ -423,12 +423,12 @@ class TestTmuxManagerLibtmuxWindows:
         """create_window passes start_directory when provided."""
         manager, mock_session = self._make_manager_with_session()
         mock_window = MagicMock()
-        mock_window.window_index = "5"
+        mock_window.window_name = "my-window"
         mock_session.new_window.return_value = mock_window
 
         result = manager.create_window("my-window", start_directory="/tmp")
 
-        assert result == 5
+        assert result == "my-window"
         mock_session.new_window.assert_called_once_with(
             window_name="my-window", attach=False, start_directory="/tmp"
         )
@@ -455,26 +455,24 @@ class TestTmuxManagerLibtmuxWindows:
         assert result is None
 
     def test_create_window_returns_none_on_value_error(self):
-        """create_window returns None when int() conversion fails (ValueError)."""
+        """create_window returns None when new_window raises ValueError."""
         manager, mock_session = self._make_manager_with_session()
-        mock_window = MagicMock()
-        mock_window.window_index = "not-a-number"
-        mock_session.new_window.return_value = mock_window
+        mock_session.new_window.side_effect = ValueError("bad value")
 
         result = manager.create_window("my-window")
 
         assert result is None
 
     def test_get_window_returns_window(self):
-        """_get_window returns the window when found by index."""
+        """_get_window returns the window when found by name."""
         manager, mock_session = self._make_manager_with_session()
         mock_window = MagicMock()
         mock_session.windows.get.return_value = mock_window
 
-        result = manager._get_window(2)
+        result = manager._get_window("my-window")
 
         assert result is mock_window
-        mock_session.windows.get.assert_called_once_with(window_index="2")
+        mock_session.windows.get.assert_called_once_with(window_name="my-window")
 
     def test_get_window_returns_none_when_no_session(self):
         """_get_window returns None when session doesn't exist."""
@@ -482,7 +480,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager._server = MagicMock()
         manager._server.sessions.get.side_effect = ObjectDoesNotExist()
 
-        result = manager._get_window(1)
+        result = manager._get_window("my-window")
 
         assert result is None
 
@@ -491,7 +489,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager, mock_session = self._make_manager_with_session()
         mock_session.windows.get.side_effect = ObjectDoesNotExist()
 
-        result = manager._get_window(99)
+        result = manager._get_window("nonexistent")
 
         assert result is None
 
@@ -503,7 +501,7 @@ class TestTmuxManagerLibtmuxWindows:
         mock_window.panes = [mock_pane, MagicMock()]
         mock_session.windows.get.return_value = mock_window
 
-        result = manager._get_pane(1)
+        result = manager._get_pane("my-window")
 
         assert result is mock_pane
 
@@ -513,7 +511,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager._server = MagicMock()
         manager._server.sessions.get.side_effect = ObjectDoesNotExist()
 
-        result = manager._get_pane(1)
+        result = manager._get_pane("my-window")
 
         assert result is None
 
@@ -524,7 +522,7 @@ class TestTmuxManagerLibtmuxWindows:
         mock_window.panes = []
         mock_session.windows.get.return_value = mock_window
 
-        result = manager._get_pane(1)
+        result = manager._get_pane("my-window")
 
         assert result is None
 
@@ -612,7 +610,7 @@ class TestTmuxManagerLibtmuxWindows:
         mock_window = MagicMock()
         mock_session.windows.get.return_value = mock_window
 
-        result = manager.kill_window(3)
+        result = manager.kill_window("my-window")
 
         assert result is True
         mock_window.kill.assert_called_once()
@@ -622,7 +620,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager, mock_session = self._make_manager_with_session()
         mock_session.windows.get.side_effect = ObjectDoesNotExist()
 
-        result = manager.kill_window(99)
+        result = manager.kill_window("nonexistent")
 
         assert result is False
 
@@ -633,29 +631,29 @@ class TestTmuxManagerLibtmuxWindows:
         mock_window.kill.side_effect = LibTmuxException()
         mock_session.windows.get.return_value = mock_window
 
-        result = manager.kill_window(3)
+        result = manager.kill_window("my-window")
 
         assert result is False
 
     def test_window_exists_true(self):
-        """window_exists returns True when window index is found."""
+        """window_exists returns True when window name is found."""
         manager, mock_session = self._make_manager_with_session()
         mock_win = MagicMock()
-        mock_win.window_index = "2"
+        mock_win.window_name = "my-window"
         mock_session.windows = [mock_win]
 
-        result = manager.window_exists(2)
+        result = manager.window_exists("my-window")
 
         assert result is True
 
     def test_window_exists_false(self):
-        """window_exists returns False when window index is not found."""
+        """window_exists returns False when window name is not found."""
         manager, mock_session = self._make_manager_with_session()
         mock_win = MagicMock()
-        mock_win.window_index = "1"
+        mock_win.window_name = "other-window"
         mock_session.windows = [mock_win]
 
-        result = manager.window_exists(99)
+        result = manager.window_exists("nonexistent")
 
         assert result is False
 
@@ -665,7 +663,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager._server = MagicMock()
         manager._server.has_session.return_value = False
 
-        result = manager.window_exists(1)
+        result = manager.window_exists("my-window")
 
         assert result is False
 
@@ -676,7 +674,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager._server.has_session.return_value = True
         manager._server.sessions.get.side_effect = LibTmuxException()
 
-        result = manager.window_exists(1)
+        result = manager.window_exists("my-window")
 
         assert result is False
 
@@ -711,7 +709,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "echo hello", enter=True)
+        result = manager.send_keys("my-window", "echo hello", enter=True)
 
         assert result is True
         assert mock_pane.send_keys.call_count == 2
@@ -725,7 +723,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "partial text", enter=False)
+        result = manager.send_keys("my-window", "partial text", enter=False)
 
         assert result is True
         mock_pane.send_keys.assert_called_once_with("partial text", enter=False)
@@ -738,7 +736,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "", enter=True)
+        result = manager.send_keys("my-window", "", enter=True)
 
         assert result is True
         # Empty keys means the `if keys:` block is skipped
@@ -751,7 +749,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "", enter=False)
+        result = manager.send_keys("my-window", "", enter=False)
 
         assert result is True
         mock_pane.send_keys.assert_not_called()
@@ -763,7 +761,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "!ls -la", enter=True)
+        result = manager.send_keys("my-window", "!ls -la", enter=True)
 
         assert result is True
         # Three send_keys calls: !, rest, Enter
@@ -781,7 +779,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "!", enter=True)
+        result = manager.send_keys("my-window", "!", enter=True)
 
         assert result is True
         # Normal path: send text, then Enter
@@ -796,7 +794,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager, mock_pane = self._make_manager_with_pane()
         mock_sleep.reset_mock()  # clear any pollution from background threads
 
-        result = manager.send_keys(1, "!pwd", enter=False)
+        result = manager.send_keys("my-window", "!pwd", enter=False)
 
         assert result is True
         assert mock_pane.send_keys.call_count == 2
@@ -810,7 +808,7 @@ class TestTmuxManagerLibtmuxKeys:
         manager._server = MagicMock()
         manager._server.sessions.get.side_effect = ObjectDoesNotExist()
 
-        result = manager.send_keys(99, "echo hello")
+        result = manager.send_keys("nonexistent", "echo hello")
 
         assert result is False
 
@@ -821,7 +819,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_sleep.reset_mock()  # clear any pollution from background threads
         mock_pane.send_keys.side_effect = LibTmuxException()
 
-        result = manager.send_keys(1, "echo hello")
+        result = manager.send_keys("my-window", "echo hello")
 
         assert result is False
 
@@ -835,7 +833,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
         mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
 
-        manager.send_keys(1, "test", enter=True)
+        manager.send_keys("my-window", "test", enter=True)
 
         assert call_order == [
             ("send", ("test",), {"enter": False}),
@@ -853,7 +851,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
         mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
 
-        manager.send_keys(1, "!cmd", enter=True)
+        manager.send_keys("my-window", "!cmd", enter=True)
 
         assert call_order == [
             ("send", ("!",), {"enter": False}),
@@ -873,7 +871,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
         mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
 
-        manager.send_keys(1, "/clear", enter=True)
+        manager.send_keys("my-window", "/clear", enter=True)
 
         assert call_order == [
             ("send", ("/",), {"enter": False}),
@@ -892,7 +890,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.side_effect = lambda *a, **kw: call_order.append(("send", a, kw))
         mock_sleep.side_effect = lambda t: call_order.append(("sleep", t))
 
-        manager.send_keys(1, "/", enter=True)
+        manager.send_keys("my-window", "/", enter=True)
 
         assert call_order == [
             ("send", ("/",), {"enter": False}),
@@ -958,21 +956,10 @@ class TestTmuxManagerAttachSession:
         """attach_session includes window in target when specified."""
         manager = TmuxManager("agents")
 
-        manager.attach_session(window=3)
+        manager.attach_session(window="my-window")
 
         mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "agents:=3"
-        )
-
-    @patch("overcode.tmux_manager.os.execlp")
-    def test_attach_session_with_window_zero(self, mock_execlp):
-        """attach_session handles window=0 correctly (not treated as falsy)."""
-        manager = TmuxManager("agents")
-
-        manager.attach_session(window=0)
-
-        mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "agents:=0"
+            "tmux", "tmux", "attach-session", "-t", "agents:=my-window"
         )
 
     @patch("overcode.tmux_manager.TmuxManager._attach_bare")
@@ -980,9 +967,9 @@ class TestTmuxManagerAttachSession:
         """attach_session with bare=True delegates to _attach_bare."""
         manager = TmuxManager("agents")
 
-        manager.attach_session(window=2, bare=True)
+        manager.attach_session(window="my-window", bare=True)
 
-        mock_attach_bare.assert_called_once_with(2)
+        mock_attach_bare.assert_called_once_with("my-window")
 
 
 class TestTmuxManagerAttachBare:
@@ -996,51 +983,51 @@ class TestTmuxManagerAttachBare:
         # All subprocess.run calls succeed
         mock_run.return_value = MagicMock(returncode=0)
 
-        manager._attach_bare(2)
+        manager._attach_bare("my-window")
 
         # Verify the subprocess.run calls
         calls = mock_run.call_args_list
 
         # 1. Kill stale bare session
         assert calls[0] == call(
-            ["tmux", "kill-session", "-t", "bare-agents-2"],
+            ["tmux", "kill-session", "-t", "bare-agents-my-window"],
             capture_output=True,
         )
 
         # 2. Create linked session
         assert calls[1] == call(
-            ["tmux", "new-session", "-d", "-s", "bare-agents-2", "-t", "agents"],
+            ["tmux", "new-session", "-d", "-s", "bare-agents-my-window", "-t", "agents"],
             capture_output=True,
         )
 
         # 3. Configure: status off
         assert calls[2] == call(
-            ["tmux", "set", "-t", "bare-agents-2", "status", "off"],
+            ["tmux", "set", "-t", "bare-agents-my-window", "status", "off"],
             capture_output=True,
         )
 
         # 4. Configure: mouse off
         assert calls[3] == call(
-            ["tmux", "set", "-t", "bare-agents-2", "mouse", "off"],
+            ["tmux", "set", "-t", "bare-agents-my-window", "mouse", "off"],
             capture_output=True,
         )
 
         # 5. Configure: destroy-unattached hook
         assert calls[4] == call(
-            ["tmux", "set-hook", "-t", "bare-agents-2", "client-attached",
+            ["tmux", "set-hook", "-t", "bare-agents-my-window", "client-attached",
              "set destroy-unattached on"],
             capture_output=True,
         )
 
         # 6. Select window
         assert calls[5] == call(
-            ["tmux", "select-window", "-t", "bare-agents-2:=2"],
+            ["tmux", "select-window", "-t", "bare-agents-my-window:=my-window"],
             capture_output=True,
         )
 
         # 7. Final attach via execlp
         mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "bare-agents-2"
+            "tmux", "tmux", "attach-session", "-t", "bare-agents-my-window"
         )
 
     @patch("overcode.tmux_manager.os.execlp")
@@ -1060,7 +1047,7 @@ class TestTmuxManagerAttachBare:
 
         mock_run.side_effect = run_side_effect
 
-        manager._attach_bare(5)
+        manager._attach_bare("my-window")
 
         # Should have called kill-session and new-session, then stopped
         assert mock_run.call_count == 2
@@ -1074,15 +1061,15 @@ class TestTmuxManagerAttachBare:
         manager = TmuxManager("my-session")
         mock_run.return_value = MagicMock(returncode=0)
 
-        manager._attach_bare(7)
+        manager._attach_bare("win-7")
 
         # Check the bare session name in kill-session call
         first_call_cmd = mock_run.call_args_list[0][0][0]
-        assert first_call_cmd == ["tmux", "kill-session", "-t", "bare-my-session-7"]
+        assert first_call_cmd == ["tmux", "kill-session", "-t", "bare-my-session-win-7"]
 
         # Check attach target
         mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "bare-my-session-7"
+            "tmux", "tmux", "attach-session", "-t", "bare-my-session-win-7"
         )
 
 

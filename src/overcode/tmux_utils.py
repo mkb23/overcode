@@ -14,7 +14,7 @@ from typing import Optional
 
 def send_text_to_tmux_window(
     tmux_session: str,
-    window: int,
+    window: str,
     text: str,
     send_enter: bool = True,
     startup_delay: float = 0.0,
@@ -26,7 +26,7 @@ def send_text_to_tmux_window(
 
     Args:
         tmux_session: Name of the tmux session
-        window: Window index within the session
+        window: Window name within the session
         text: Text to send
         send_enter: Whether to press Enter after sending text (default: True)
         startup_delay: Seconds to wait before sending (default: 0)
@@ -45,7 +45,7 @@ def send_text_to_tmux_window(
     # to avoid escaping issues and line length limits
     lines = text.split('\n')
     batch_size = 10
-    target = f"{tmux_session}:{window}"
+    target = f"{tmux_session}:={window}"
 
     for i in range(0, len(lines), batch_size):
         batch = lines[i:i + batch_size]
@@ -92,14 +92,14 @@ def send_text_to_tmux_window(
 
 def get_tmux_pane_content(
     tmux_session: str,
-    window: int,
+    window: str,
     lines: int = 50,
 ) -> Optional[str]:
     """Capture content from a tmux pane.
 
     Args:
         tmux_session: Name of the tmux session
-        window: Window index within the session
+        window: Window name within the session
         lines: Number of lines to capture (default: 50)
 
     Returns:
@@ -113,7 +113,7 @@ def get_tmux_pane_content(
         result = subprocess.run(
             tmux_cmd + [
                 "capture-pane",
-                "-t", f"{tmux_session}:{window}",
+                "-t", f"{tmux_session}:={window}",
                 "-p",  # Print to stdout
                 "-S", f"-{lines}",  # Capture last N lines
             ],

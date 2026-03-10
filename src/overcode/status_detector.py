@@ -87,7 +87,7 @@ class PollingStatusDetector:
             _re.compile(p, _re.IGNORECASE) for p in self.patterns.error_patterns
         ]
 
-    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
+    def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane.
 
         Captures more content than requested and filters out trailing blank lines

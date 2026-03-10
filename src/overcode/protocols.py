@@ -17,12 +17,12 @@ if TYPE_CHECKING:
 class TmuxInterface(Protocol):
     """Interface for tmux operations"""
 
-    def capture_pane(self, session: str, window: int, lines: int = 100) -> Optional[str]:
+    def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
         """Capture content from a tmux pane.
 
         Args:
             session: tmux session name
-            window: window number
+            window: window name
             lines: number of lines to capture from scrollback
 
         Returns:
@@ -30,12 +30,12 @@ class TmuxInterface(Protocol):
         """
         ...
 
-    def send_keys(self, session: str, window: int, keys: str, enter: bool = True) -> bool:
+    def send_keys(self, session: str, window: str, keys: str, enter: bool = True) -> bool:
         """Send keys to a tmux pane.
 
         Args:
             session: tmux session name
-            window: window number
+            window: window name
             keys: keys/text to send
             enter: whether to send Enter after keys
 
@@ -53,15 +53,15 @@ class TmuxInterface(Protocol):
         ...
 
     def new_window(self, session: str, name: str, command: Optional[List[str]] = None,
-                   cwd: Optional[str] = None) -> Optional[int]:
+                   cwd: Optional[str] = None) -> Optional[str]:
         """Create a new window in a session.
 
         Returns:
-            Window number if successful, None otherwise
+            Window name if successful, None otherwise
         """
         ...
 
-    def kill_window(self, session: str, window: int) -> bool:
+    def kill_window(self, session: str, window: str) -> bool:
         """Kill a tmux window."""
         ...
 
@@ -77,22 +77,22 @@ class TmuxInterface(Protocol):
         """
         ...
 
-    def attach(self, session: str, window: Optional[int] = None, bare: bool = False) -> None:
+    def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         """Attach to a tmux session (replaces current process).
 
         Args:
             session: tmux session name
-            window: optional window index to target
+            window: optional window name to target
             bare: if True, strip tmux chrome (no status bar, no prefix, mouse passthrough)
         """
         ...
 
-    def select_window(self, session: str, window: int) -> bool:
+    def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session.
 
         Args:
             session: tmux session name
-            window: window number to select
+            window: window name to select
 
         Returns:
             True if successful, False otherwise
@@ -120,7 +120,7 @@ class StatusDetectorProtocol(Protocol):
         """
         ...
 
-    def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
+    def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane."""
         ...
 

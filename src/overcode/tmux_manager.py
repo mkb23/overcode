@@ -54,19 +54,19 @@ class TmuxManager:
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
-    def _get_window(self, window_index: int) -> Optional[libtmux.Window]:
-        """Get a window by index."""
+    def _get_window(self, window_name: str) -> Optional[libtmux.Window]:
+        """Get a window by name."""
         sess = self._get_session()
         if sess is None:
             return None
         try:
-            return sess.windows.get(window_index=str(window_index))
+            return sess.windows.get(window_name=window_name)
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
-    def _get_pane(self, window_index: int) -> Optional[libtmux.Pane]:
+    def _get_pane(self, window_name: str) -> Optional[libtmux.Pane]:
         """Get the first pane of a window."""
-        win = self._get_window(window_index)
+        win = self._get_window(window_name)
         if win is None or not win.panes:
             return None
         return win.panes[0]
@@ -95,7 +95,7 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
-    def create_window(self, window_name: str, start_directory: Optional[str] = None) -> Optional[int]:
+    def create_window(self, window_name: str, start_directory: Optional[str] = None) -> Optional[str]:
         """Create a new window in the tmux session"""
         if not self.ensure_session():
             return None
@@ -113,21 +113,21 @@ class TmuxManager:
                 kwargs['start_directory'] = start_directory
 
             window = sess.new_window(**kwargs)
-            return int(window.window_index)
+            return window.window_name
         except (LibTmuxException, ValueError):
             return None
 
-    def send_keys(self, window_index: int, keys: str, enter: bool = True) -> bool:
+    def send_keys(self, window_name: str, keys: str, enter: bool = True) -> bool:
         """Send keys to a tmux window.
 
         For Claude Code: text and Enter must be sent as SEPARATE commands
         with a small delay, otherwise Claude Code doesn't process the Enter.
         """
         if self._tmux:
-            return self._tmux.send_keys(self.session_name, window_index, keys, enter)
+            return self._tmux.send_keys(self.session_name, window_name, keys, enter)
 
         try:
-            pane = self._get_pane(window_index)
+            pane = self._get_pane(window_name)
             if pane is None:
                 return False
 
@@ -170,11 +170,11 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
-    def attach_session(self, window: Optional[int] = None, bare: bool = False):
+    def attach_session(self, window: Optional[str] = None, bare: bool = False):
         """Attach to the tmux session (blocking).
 
         Args:
-            window: optional window index to target
+            window: optional window name to target
             bare: if True, create a linked session with tmux chrome stripped,
                   isolated from other clients attached to the main session
         """
@@ -187,7 +187,7 @@ class TmuxManager:
             target = f"{self.session_name}:={window}" if window is not None else self.session_name
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
-    def _attach_bare(self, window: int):
+    def _attach_bare(self, window: str):
         """Create a linked session with stripped chrome and attach to it.
 
         Uses a grouped session (new-session -t) so options are isolated
@@ -264,13 +264,13 @@ class TmuxManager:
         except LibTmuxException:
             return []
 
-    def kill_window(self, window_index: int) -> bool:
+    def kill_window(self, window_name: str) -> bool:
         """Kill a specific window"""
         if self._tmux:
-            return self._tmux.kill_window(self.session_name, window_index)
+            return self._tmux.kill_window(self.session_name, window_name)
 
         try:
-            win = self._get_window(window_index)
+            win = self._get_window(window_name)
             if win is None:
                 return False
             win.kill()
@@ -292,14 +292,14 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
-    def window_exists(self, window_index: int) -> bool:
+    def window_exists(self, window_name: str) -> bool:
         """Check if a specific window exists"""
         if not self.session_exists():
             return False
 
         if self._tmux:
             windows = self._tmux.list_windows(self.session_name)
-            return any(w.get('index') == window_index for w in windows)
+            return any(w.get('name') == window_name for w in windows)
 
         try:
             sess = self._get_session()
@@ -307,7 +307,7 @@ class TmuxManager:
                 return False
 
             for win in sess.windows:
-                if int(win.window_index) == window_index:
+                if win.window_name == window_name:
                     return True
             return False
         except LibTmuxException:

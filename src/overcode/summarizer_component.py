@@ -248,11 +248,11 @@ class SummarizerComponent:
         except Exception as e:
             logger.warning(f"Context summary error for {session.name}: {e}")
 
-    def _capture_pane(self, window: int) -> Optional[str]:
+    def _capture_pane(self, window: str) -> Optional[str]:
         """Capture pane content for summarization.
 
         Args:
-            window: tmux window index
+            window: tmux window name
 
         Returns:
             Pane content string or None on error

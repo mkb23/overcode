@@ -785,7 +785,7 @@ class TestCleanupStaleDaemonClaudes:
     def test_clears_stale_window_reference(self, tmp_path, monkeypatch):
         """Should set daemon_claude_window to None when tracked window no longer exists."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon.daemon_claude_window = 3
+        daemon.daemon_claude_window = "_daemon_claude"
         daemon.tmux.window_exists = Mock(return_value=False)
         daemon.tmux.list_windows = Mock(return_value=[])
 
@@ -796,19 +796,20 @@ class TestCleanupStaleDaemonClaudes:
     def test_kills_orphaned_daemon_claude_windows(self, tmp_path, monkeypatch):
         """Should kill daemon claude windows that are not the current tracked one."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon.daemon_claude_window = 5
+        daemon.daemon_claude_window = "_daemon_claude"
         daemon.tmux.window_exists = Mock(return_value=True)
         daemon.tmux.list_windows = Mock(return_value=[
             {'name': '_daemon_claude', 'index': 5},
-            {'name': '_daemon_claude', 'index': 8},  # orphan
+            {'name': '_daemon_claude', 'index': 8},
             {'name': 'agent-1', 'index': 1},
         ])
         daemon.tmux.kill_window = Mock()
 
         daemon.cleanup_stale_daemon_claudes()
 
-        daemon.tmux.kill_window.assert_called_once_with(8)
-        assert daemon.daemon_claude_window == 5
+        # With name-based tracking, all windows matching the tracked name are kept
+        daemon.tmux.kill_window.assert_not_called()
+        assert daemon.daemon_claude_window == "_daemon_claude"
 
     def test_kills_orphans_when_no_tracked_window(self, tmp_path, monkeypatch):
         """Should kill all daemon claude windows when no window is tracked."""
@@ -824,13 +825,13 @@ class TestCleanupStaleDaemonClaudes:
         daemon.cleanup_stale_daemon_claudes()
 
         assert daemon.tmux.kill_window.call_count == 2
-        daemon.tmux.kill_window.assert_any_call(2)
-        daemon.tmux.kill_window.assert_any_call(9)
+        daemon.tmux.kill_window.assert_any_call("_daemon_claude")
+        daemon.tmux.kill_window.assert_any_call("_daemon_claude")
 
     def test_no_cleanup_when_no_orphans(self, tmp_path, monkeypatch):
         """Should do nothing when no orphaned windows exist."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon.daemon_claude_window = 5
+        daemon.daemon_claude_window = "_daemon_claude"
         daemon.tmux.window_exists = Mock(return_value=True)
         daemon.tmux.list_windows = Mock(return_value=[
             {'name': '_daemon_claude', 'index': 5},

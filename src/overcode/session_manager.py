@@ -70,7 +70,7 @@ class Session:
     id: str
     name: str
     tmux_session: str
-    tmux_window: int
+    tmux_window: str
     command: List[str]
     start_directory: Optional[str]
     start_time: str
@@ -180,6 +180,10 @@ class Session:
         # Get valid field names and filter unknown keys
         valid_fields = {f.name for f in fields(cls)}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
+
+        # Backward compat: convert int tmux_window to str
+        if 'tmux_window' in filtered and isinstance(filtered['tmux_window'], int):
+            filtered['tmux_window'] = str(filtered['tmux_window'])
 
         try:
             return cls(**filtered)
@@ -449,26 +453,28 @@ class SessionManager:
             return True
         return False
 
-    def create_session(self, name: str, tmux_session: str, tmux_window: int,
+    def create_session(self, name: str, tmux_session: str, tmux_window: str,
                       command: List[str], start_directory: Optional[str] = None,
                       standing_instructions: str = "",
                       permissiveness_mode: str = "normal",
                       allowed_tools: Optional[str] = None,
                       extra_claude_args: Optional[List[str]] = None,
                       agent_teams: bool = False,
-                      claude_agent: Optional[str] = None) -> Session:
+                      claude_agent: Optional[str] = None,
+                      session_id: Optional[str] = None) -> Session:
         """Create and register a new session.
 
         Args:
             name: Session name
             tmux_session: Name of the tmux session
-            tmux_window: Tmux window index
+            tmux_window: Tmux window name
             command: Command used to start the session
             start_directory: Working directory for the session
             standing_instructions: Initial standing instructions (e.g., from config)
             permissiveness_mode: Permission mode (normal, permissive, bypass)
             allowed_tools: Comma-separated tool list for --allowedTools
             extra_claude_args: Extra Claude CLI flags via --claude-arg
+            session_id: Optional pre-generated session ID (used when ID must be known before window creation)
         """
         if self._skip_git_detection:
             repo_name, branch = None, None
@@ -476,7 +482,7 @@ class SessionManager:
             repo_name, branch = self._detect_git_context(start_directory)
 
         session = Session(
-            id=str(uuid.uuid4()),
+            id=session_id or str(uuid.uuid4()),
             name=name,
             tmux_session=tmux_session,
             tmux_window=tmux_window,

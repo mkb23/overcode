@@ -1256,8 +1256,8 @@ class TestDaemonPersistsTerminatedStatus:
                 daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
-    def test_persists_terminated_when_detected(self, tmp_path, monkeypatch):
-        """When detect_status returns terminated, daemon should persist to sessions.json."""
+    def test_persists_terminated_when_window_gone(self, tmp_path, monkeypatch):
+        """When window is gone (empty pane_content), daemon should persist terminated."""
         from overcode.monitor_daemon import STATUS_TERMINATED
 
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -1267,9 +1267,12 @@ class TestDaemonPersistsTerminatedStatus:
         mock_session.status = "active"  # Not yet marked terminated
 
         effective_status = STATUS_TERMINATED
+        pane_content = ""  # Empty = window gone
 
         # Simulate the persistence logic from the daemon loop
-        if effective_status == STATUS_TERMINATED and mock_session.status != "terminated":
+        if (effective_status == STATUS_TERMINATED
+                and mock_session.status != "terminated"
+                and not pane_content):
             daemon.session_manager.update_session_status(mock_session.id, "terminated")
 
         daemon.session_manager.update_session_status.assert_called_once_with("sess-1", "terminated")
@@ -1285,8 +1288,35 @@ class TestDaemonPersistsTerminatedStatus:
         mock_session.status = "terminated"  # Already marked
 
         effective_status = STATUS_TERMINATED
+        pane_content = ""
 
-        if effective_status == STATUS_TERMINATED and mock_session.status != "terminated":
+        if (effective_status == STATUS_TERMINATED
+                and mock_session.status != "terminated"
+                and not pane_content):
+            daemon.session_manager.update_session_status(mock_session.id, "terminated")
+
+        daemon.session_manager.update_session_status.assert_not_called()
+
+    def test_does_not_persist_terminated_when_window_exists(self, tmp_path, monkeypatch):
+        """When shell prompt detected but window exists, don't persist terminated.
+
+        This prevents a race condition during agent revival where the daemon
+        sees a shell prompt before claude starts up.
+        """
+        from overcode.monitor_daemon import STATUS_TERMINATED
+
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+
+        mock_session = Mock()
+        mock_session.id = "sess-1"
+        mock_session.status = "running"
+
+        effective_status = STATUS_TERMINATED
+        pane_content = "user@host ~ %"  # Shell prompt = window exists
+
+        if (effective_status == STATUS_TERMINATED
+                and mock_session.status != "terminated"
+                and not pane_content):
             daemon.session_manager.update_session_status(mock_session.id, "terminated")
 
         daemon.session_manager.update_session_status.assert_not_called()
@@ -1560,7 +1590,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
-        session.tmux_window = 1
+        session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True
@@ -1578,7 +1608,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
-        session.tmux_window = 1
+        session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True
@@ -1612,7 +1642,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
         session = MagicMock()
         session.status = "terminated"
-        session.tmux_window = 1
+        session.tmux_window = "orphan"
 
         mock_tmux = MagicMock()
         mock_tmux.session_exists.return_value = True

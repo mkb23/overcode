@@ -27,7 +27,7 @@ from . import __version__
 from .session_manager import SessionManager, Session
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
@@ -862,7 +862,8 @@ class SupervisorTUI(
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.status == "terminated":
-                        return ("terminated", "(tmux window no longer exists)", "")
+                        # Re-check to detect revival (window is uncontested)
+                        return self.detector.detect_status(session)
                     if session.status == "done":
                         # Still capture pane content so preview shows output
                         content = self.detector.get_pane_content(session.tmux_window) or ""
@@ -2257,12 +2258,17 @@ class SupervisorTUI(
         Otherwise starts a fresh claude instance.
         """
         import os
+        import uuid as _uuid
         session = focused.session
         session_name = session.name
 
+        # Generate new window name with unique suffix
+        new_session_id = str(_uuid.uuid4())
+        window_label = f"{session_name}-{new_session_id[:4]}"
+
         # Create new tmux window
-        window_index = tmux.create_window(session_name, session.start_directory)
-        if window_index is None:
+        window_name = tmux.create_window(window_label, session.start_directory)
+        if window_name is None:
             self.notify(f"Failed to create tmux window for '{session_name}'", severity="error")
             return
 
@@ -2292,7 +2298,7 @@ class SupervisorTUI(
             cmd_parts.extend(["--agent", session.claude_agent])
 
         # Environment prefix
-        env_prefix = f"OVERCODE_SESSION_NAME={session_name} OVERCODE_TMUX_SESSION={self.tmux_session}"
+        env_prefix = f"OVERCODE_SESSION_NAME={session_name} OVERCODE_SESSION_ID={session.id} OVERCODE_TMUX_SESSION={self.tmux_session}"
 
         # Parent env vars
         if session.parent_session_id:
@@ -2307,15 +2313,15 @@ class SupervisorTUI(
         cmd_str = f"{env_prefix} {' '.join(cmd_parts)}"
 
         # Send command to new window
-        if not tmux.send_keys(window_index, cmd_str, enter=True):
-            tmux.kill_window(window_index)
+        if not tmux.send_keys(window_name, cmd_str, enter=True):
+            tmux.kill_window(window_name)
             self.notify(f"Failed to revive agent: {session_name}", severity="error")
             return
 
         # Update session state
         self.session_manager.update_session(
             session.id,
-            tmux_window=window_index,
+            tmux_window=window_name,
             status="running",
         )
         self.session_manager.update_stats(

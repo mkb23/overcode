@@ -70,7 +70,7 @@ class CommandBar(Static):
     """Inline command bar for sending instructions to agents.
 
     Supports single-line (Input) and multi-line (TextArea) modes.
-    Toggle with Ctrl+E. Send with Enter (single) or Ctrl+Enter (multi).
+    Toggle with Ctrl+E. Send with Enter (single) or Ctrl+S / Ctrl+Enter (multi).
     Use Ctrl+O to set as standing order instead of sending.
 
     Modes:
@@ -242,7 +242,7 @@ class CommandBar(Static):
         elif event.key == "escape":
             self.action_clear_and_unfocus()
             event.stop()
-        elif event.key == "ctrl+enter" and self.expanded:
+        elif event.key in ("ctrl+enter", "ctrl+s") and self.expanded:
             self.action_send_multiline()
             event.stop()
 

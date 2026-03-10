@@ -21,13 +21,13 @@ from .settings import get_session_dir
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
 
 
-def _capture_pane(tmux_session: str, window_index: int, lines: int = DEFAULT_CAPTURE_LINES) -> Optional[str]:
+def _capture_pane(tmux_session: str, window_name: str, lines: int = DEFAULT_CAPTURE_LINES) -> Optional[str]:
     """Capture recent pane output via tmux."""
     try:
         result = subprocess.run(
             [
                 "tmux", "capture-pane",
-                "-t", f"{tmux_session}:{window_index}",
+                "-t", f"{tmux_session}:={window_name}",
                 "-p",
                 "-S", f"-{lines}",
             ],
@@ -143,7 +143,7 @@ def follow_agent(
         print(f"Error: Agent '{name}' not found", file=sys.stderr)
         return 1
 
-    window_index = session.tmux_window
+    window_name = session.tmux_window
 
     # Read oversight policy from session
     oversight_policy = getattr(session, 'oversight_policy', 'wait') or 'wait'
@@ -162,7 +162,7 @@ def follow_agent(
     try:
         while not interrupted:
             # Capture pane content
-            raw = _capture_pane(tmux_session, window_index)
+            raw = _capture_pane(tmux_session, window_name)
             if raw is None:
                 if _check_session_terminated(sessions, name):
                     print(f"\n[follow] Agent '{name}' terminated", file=sys.stderr)
@@ -176,7 +176,7 @@ def follow_agent(
             if _check_hook_stop(tmux_session, name):
                 # Wait one extra cycle to capture final output
                 time.sleep(poll_interval)
-                raw = _capture_pane(tmux_session, window_index)
+                raw = _capture_pane(tmux_session, window_name)
                 if raw:
                     for line in raw.rstrip().split('\n'):
                         cleaned = strip_ansi(line).strip()
@@ -226,7 +226,7 @@ def follow_agent(
 
                 # Enter report-polling sub-loop
                 return _poll_for_report(
-                    name, tmux_session, sessions, window_index,
+                    name, tmux_session, sessions, window_name,
                     oversight_policy, oversight_timeout_seconds,
                     poll_interval, recent_lines,
                 )
@@ -253,7 +253,7 @@ def _poll_for_report(
     name: str,
     tmux_session: str,
     sessions: SessionManager,
-    window_index: int,
+    window_name: str,
     oversight_policy: str,
     oversight_timeout_seconds: float,
     poll_interval: float,
@@ -307,7 +307,7 @@ def _poll_for_report(
             return 1
 
         # Continue streaming pane output while waiting
-        raw = _capture_pane(tmux_session, window_index)
+        raw = _capture_pane(tmux_session, window_name)
         if raw:
             _emit_new_lines(raw, recent_lines)
 
