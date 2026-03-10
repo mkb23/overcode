@@ -30,6 +30,15 @@ from .tui_helpers import format_duration
 if TYPE_CHECKING:
     from .interfaces import TmuxInterface
 
+# Pre-compiled regex patterns for hot-path methods (avoid re-compiling per call)
+import re as _re
+
+_SHELL_PROMPT_PATTERNS = [
+    _re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
+    _re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%
+    _re.compile(r'^[~\/].*[%$]\s*$'),         # /path/to/dir $ or ~/dir %
+]
+
 
 class PollingStatusDetector:
     """Detects the current status of a Claude session via tmux pane scraping."""
@@ -70,6 +79,14 @@ class PollingStatusDetector:
         self._previous_content: dict[int, str] = {}  # window -> content hash
         self._content_changed: dict[int, bool] = {}  # window -> changed flag
 
+        # Pre-compile approval and error patterns (called in hot path)
+        self._compiled_approval_patterns = [
+            _re.compile(p, _re.IGNORECASE) for p in self.patterns.approval_patterns
+        ]
+        self._compiled_error_patterns = [
+            _re.compile(p, _re.IGNORECASE) for p in self.patterns.error_patterns
+        ]
+
     def get_pane_content(self, window: int, num_lines: int = 0) -> Optional[str]:
         """Get the last N meaningful lines from a tmux pane.
 
@@ -89,9 +106,15 @@ class PollingStatusDetector:
         meaningful_lines = lines[-effective_lines:] if len(lines) > effective_lines else lines
         return '\n'.join(meaningful_lines)
 
-    def detect_status(self, session) -> Tuple[str, str, str]:
+    def detect_status(self, session, num_lines: int = 0) -> Tuple[str, str, str]:
         """
         Detect session status and current activity.
+
+        Args:
+            session: Session to detect status for.
+            num_lines: Lines to capture. 0 (default) uses self.capture_lines.
+                Use STATUS_CAPTURE_LINES for non-focused agents to reduce
+                tmux subprocess overhead.
 
         Returns:
             Tuple of (status, current_activity, pane_content)
@@ -99,7 +122,7 @@ class PollingStatusDetector:
             - current_activity: single line description of what's happening
             - pane_content: the raw pane content (to avoid duplicate tmux calls)
         """
-        content = self.get_pane_content(session.tmux_window)
+        content = self.get_pane_content(session.tmux_window, num_lines=num_lines)
 
         if content is None:
             return self.STATUS_TERMINATED, "Window no longer exists", ""
@@ -393,27 +416,14 @@ class PollingStatusDetector:
 
         Returns True if this looks like a shell prompt, not Claude Code.
         """
-        import re
-
         if not lines:
             return False
 
         # Get last non-empty line
         last_line = lines[-1].strip()
 
-        # Common shell prompt patterns:
-        # - user@host path $
-        # - user@host path %
-        # - [user@host path]$
-        # - path $
-        shell_prompt_patterns = [
-            r'\w+@\w+.*[%$]\s*$',  # user@hostname ... $ or %
-            r'\[.*\][%$#]\s*$',    # [prompt]$ or [prompt]%
-            r'^[~\/].*[%$]\s*$',   # /path/to/dir $ or ~/dir %
-        ]
-
-        for pattern in shell_prompt_patterns:
-            if re.search(pattern, last_line):
+        for pattern in _SHELL_PROMPT_PATTERNS:
+            if pattern.search(last_line):
                 # Verify Claude Code's active prompt isn't showing nearby.
                 # Only check for '? for shortcuts' — it appears exclusively in
                 # Claude's live input prompt and never in scrollback after exit.
@@ -430,7 +440,7 @@ class PollingStatusDetector:
     def _matches_approval_patterns(self, text: str) -> bool:
         """Check if text matches approval waiting patterns (#22).
 
-        Uses regex patterns for more flexible matching.
+        Uses pre-compiled regex patterns for more flexible matching.
 
         Args:
             text: Text to check (should be lowercased)
@@ -438,17 +448,16 @@ class PollingStatusDetector:
         Returns:
             True if approval pattern is found
         """
-        import re
-        for pattern in self.patterns.approval_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
+        for pattern in self._compiled_approval_patterns:
+            if pattern.search(text):
                 return True
         return False
 
     def _find_error_line(self, lines: list) -> str | None:
         """Find a line matching a structural error pattern (#216).
 
-        Checks each line individually against the error patterns, which match
-        specific Claude Code error output formats (not broad keywords).
+        Checks each line individually against the pre-compiled error patterns,
+        which match specific Claude Code error output formats (not broad keywords).
 
         Args:
             lines: Recent content lines to check (should be last 3)
@@ -456,10 +465,9 @@ class PollingStatusDetector:
         Returns:
             The matching error line, or None if no match
         """
-        import re
         for line in reversed(lines):
-            for pattern in self.patterns.error_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
+            for pattern in self._compiled_error_patterns:
+                if pattern.search(line):
                     return line
         return None
 

@@ -13,6 +13,7 @@ from typing import Tuple
 # =============================================================================
 
 DEFAULT_CAPTURE_LINES = 500  # Base capture depth for display-oriented pane captures
+STATUS_CAPTURE_LINES = 100   # Reduced capture for status detection only (non-focused agents)
 
 
 # =============================================================================

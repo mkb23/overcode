@@ -297,6 +297,9 @@ def is_status_bar_line(line: str, patterns: StatusPatterns = None) -> bool:
     return any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes)
 
 
+_COMMAND_MENU_RE = re.compile(r"^\s*/[\w-]+\s{2,}\S")
+
+
 def is_command_menu_line(line: str, patterns: StatusPatterns = None) -> bool:
     """Check if a line is part of a slash command menu.
 
@@ -310,8 +313,10 @@ def is_command_menu_line(line: str, patterns: StatusPatterns = None) -> bool:
     Returns:
         True if line is a command menu entry
     """
-    import re
     patterns = patterns or DEFAULT_PATTERNS
+    # Use pre-compiled regex for the default pattern, fall back to re.match for custom
+    if patterns.command_menu_pattern == DEFAULT_PATTERNS.command_menu_pattern:
+        return bool(_COMMAND_MENU_RE.match(line))
     return bool(re.match(patterns.command_menu_pattern, line))
 
 
@@ -329,7 +334,7 @@ def count_command_menu_lines(lines: List[str], patterns: StatusPatterns = None) 
     return sum(1 for line in lines if is_command_menu_line(line, patterns))
 
 
-def _find_status_bar_line(content: str, patterns: StatusPatterns = None) -> str | None:
+def _find_status_bar_line(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> str | None:
     """Find and return the LAST status bar line from pane content.
 
     Uses the last match because old status bar lines can persist in scrollback.
@@ -338,24 +343,26 @@ def _find_status_bar_line(content: str, patterns: StatusPatterns = None) -> str 
     Args:
         content: Raw pane content (can include ANSI codes)
         patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+        clean_content: Pre-stripped content (avoids redundant strip_ansi calls)
 
     Returns:
         The ANSI-stripped, whitespace-stripped status bar line, or None if not found
     """
     patterns = patterns or DEFAULT_PATTERNS
 
-    # Must strip ANSI codes first since pane content is captured with escape_sequences=True
+    # Use pre-stripped content if available, otherwise strip per-line
     # Search from bottom up — old status bar lines persist in scrollback,
     # but the current one is always at the bottom of the pane.
-    for line in reversed(content.split('\n')):
-        stripped = strip_ansi(line).strip()
+    text = clean_content if clean_content is not None else content
+    for line in reversed(text.split('\n')):
+        stripped = line.strip() if clean_content is not None else strip_ansi(line).strip()
         if any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes):
             return stripped
 
     return None
 
 
-def extract_background_bash_count(content: str, patterns: StatusPatterns = None) -> int:
+def extract_background_bash_count(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> int:
     """Extract the number of background bash tasks from pane content.
 
     Claude Code shows background task counts in the status bar:
@@ -366,11 +373,12 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None)
     Args:
         content: Raw pane content (can include ANSI codes)
         patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+        clean_content: Pre-stripped content (avoids redundant strip_ansi calls)
 
     Returns:
         Number of active background bash tasks (0 if none detected)
     """
-    stripped = _find_status_bar_line(content, patterns)
+    stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
         return 0
 
@@ -387,7 +395,7 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None)
     return 0
 
 
-def extract_live_subagent_count(content: str, patterns: StatusPatterns = None) -> int:
+def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> int:
     """Extract the number of currently running subagents from pane content.
 
     Claude Code shows live subagent counts in the status bar:
@@ -397,11 +405,12 @@ def extract_live_subagent_count(content: str, patterns: StatusPatterns = None) -
     Args:
         content: Raw pane content (can include ANSI codes)
         patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+        clean_content: Pre-stripped content (avoids redundant strip_ansi calls)
 
     Returns:
         Number of active subagents (0 if none detected)
     """
-    stripped = _find_status_bar_line(content, patterns)
+    stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
         return 0
 
@@ -478,7 +487,7 @@ def extract_sleep_duration(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def extract_pr_number(content: str) -> int | None:
+def extract_pr_number(content: str, *, clean_content: str = None) -> int | None:
     """Extract the most recent PR number from pane content.
 
     Scans for GitHub PR URLs (github.com/.../pull/123) which appear when
@@ -488,11 +497,12 @@ def extract_pr_number(content: str) -> int | None:
 
     Args:
         content: Raw pane content (may include ANSI codes)
+        clean_content: Pre-stripped content (avoids redundant strip_ansi calls)
 
     Returns:
         PR number as int, or None if no PR reference found
     """
-    cleaned = strip_ansi(content)
+    cleaned = clean_content if clean_content is not None else strip_ansi(content)
     # GitHub PR URLs: https://github.com/owner/repo/pull/123
     matches = re.findall(r'github\.com/[^/]+/[^/]+/pull/(\d+)', cleaned)
     if matches:
@@ -533,14 +543,18 @@ def extract_from_pane(content: str) -> PaneExtraction:
     Returns a PaneExtraction dataclass. Results should be stored as widget
     instance variables, never written to session objects.
 
+    Strips ANSI once and passes the clean version to all sub-extractors,
+    avoiding redundant regex strip operations.
+
     Args:
         content: Raw pane content (may include ANSI codes)
 
     Returns:
         PaneExtraction with all extracted values
     """
+    clean = strip_ansi(content)
     return PaneExtraction(
-        background_bash_count=extract_background_bash_count(content),
-        live_subagent_count=extract_live_subagent_count(content),
-        pr_number=extract_pr_number(content),
+        background_bash_count=extract_background_bash_count(content, clean_content=clean),
+        live_subagent_count=extract_live_subagent_count(content, clean_content=clean),
+        pr_number=extract_pr_number(content, clean_content=clean),
     )

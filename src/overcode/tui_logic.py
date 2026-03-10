@@ -447,6 +447,31 @@ class TreeNodeMeta:
     is_last: bool
 
 
+def compute_child_counts(sessions: List[T], parent_id_fn=None) -> dict:
+    """Compute child counts only — lightweight alternative to compute_tree_metadata.
+
+    Use when tree display prefixes/depths aren't needed (e.g., non-tree sort modes).
+
+    Args:
+        sessions: List of session objects
+        parent_id_fn: Function to get parent_session_id from a session.
+
+    Returns:
+        dict mapping session_id -> child_count (int)
+    """
+    if parent_id_fn is None:
+        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+
+    child_counts: dict = {}
+    for s in sessions:
+        child_counts.setdefault(s.id, 0)
+        pid = parent_id_fn(s)
+        if pid is not None:
+            child_counts[pid] = child_counts.get(pid, 0) + 1
+
+    return child_counts
+
+
 def compute_tree_metadata(sessions: List[T], parent_id_fn=None) -> dict:
     """Compute tree depth, prefix, and child count for each session.
 
