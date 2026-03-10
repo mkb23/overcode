@@ -11,8 +11,10 @@ daemons try to start simultaneously.
 import fcntl
 import os
 import signal
+import subprocess
+import threading
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 def is_process_running(pid_file: Path) -> bool:
@@ -162,6 +164,66 @@ def acquire_daemon_lock(pid_file: Path) -> Tuple[bool, Optional[int]]:
 # Module-level variable to hold the lock file descriptor.
 # This prevents garbage collection from closing the fd and releasing the lock.
 _held_lock_fd: Optional[int] = None
+
+
+def is_daemon_lock_held(pid_file: Path) -> bool:
+    """Check if a daemon lock is currently held (i.e., daemon is actively running).
+
+    Probes the fcntl lock file that the daemon holds for its entire lifetime.
+    More reliable than pgrep: immune to zombie processes, PID reuse, and
+    substring false matches.
+
+    Args:
+        pid_file: Path to the daemon's PID file (lock file is .lock suffix)
+
+    Returns:
+        True if the lock is held (daemon is running), False otherwise.
+    """
+    lock_file = pid_file.with_suffix('.lock')
+    if not lock_file.exists():
+        return False
+    try:
+        fd = os.open(str(lock_file), os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # We got the lock — no daemon holds it
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        except OSError:
+            # Lock is held by another process = daemon is running
+            return True
+        finally:
+            os.close(fd)
+    except OSError:
+        return False
+
+
+def spawn_daemon(args: List[str]) -> Optional[int]:
+    """Spawn a daemon process without leaving zombies.
+
+    Uses start_new_session=True so the child survives parent exit,
+    and a background reaper thread to prevent zombie accumulation.
+
+    Args:
+        args: Command arguments (e.g., [sys.executable, "-m", "overcode.monitor_daemon", ...])
+
+    Returns:
+        The daemon's PID, or None if spawn failed.
+    """
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        # Reaper thread prevents zombie when daemon exits while parent is alive
+        threading.Thread(
+            target=proc.wait, daemon=True, name=f"reap-{proc.pid}"
+        ).start()
+        return proc.pid
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def count_daemon_processes(pattern: str = "monitor_daemon", session: str = None) -> int:

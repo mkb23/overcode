@@ -78,12 +78,29 @@ def create_daemon_helpers(
             os.kill(pid, signal.SIGTERM)
             # Wait for process to actually terminate before removing PID file
             start = time.time()
+            terminated = False
             while time.time() - start < 5.0:
                 try:
                     os.kill(pid, 0)
                     time.sleep(0.1)
                 except (OSError, ProcessLookupError):
+                    terminated = True
                     break
+
+            if not terminated:
+                # Still alive after timeout — force kill
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    time.sleep(0.1)
+                except (OSError, ProcessLookupError):
+                    pass
+
+            # Reap zombie if we're the parent process
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                pass  # Not our child, or already reaped
+
             remove_pid_file(pid_path)
             return True
         except (OSError, ProcessLookupError):
