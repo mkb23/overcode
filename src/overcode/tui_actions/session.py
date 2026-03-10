@@ -68,6 +68,47 @@ class SessionActionsMixin:
         self._pending_confirmations[action_key] = (session_name, now)
         self.notify(message, severity="warning", timeout=int(timeout))
 
+    def action_fork_focused(self) -> None:
+        """Fork the focused agent's context into a new child agent.
+
+        Uses Claude's --resume --fork-session to create a new agent with
+        the source agent's full conversation history. The forked agent is
+        registered as a child of the source.
+        """
+        from ..tui_widgets import SessionSummary, CommandBar
+
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+
+        if self._is_remote(session):
+            self.notify("Cannot fork remote agents", severity="warning")
+            return
+
+        if session.status in ("terminated", "done"):
+            self.notify("Cannot fork a terminated agent", severity="warning")
+            return
+
+        if not session.active_claude_session_id:
+            self.notify("No Claude session ID detected yet — try again shortly", severity="warning")
+            return
+
+        try:
+            command_bar = self.query_one("#command-bar", CommandBar)
+            command_bar.add_class("visible")
+            command_bar.fork_source_session = session
+            command_bar.set_mode("fork_name")
+            # Pre-fill with unique fork name
+            input_widget = command_bar.query_one("#cmd-input", Input)
+            default_name = command_bar._get_unique_agent_name(f"{session.name}-fork")
+            input_widget.value = default_name
+            command_bar.focus_input()
+        except NoMatches:
+            self.notify("Command bar not found", severity="error")
+
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)."""
         from ..tui_widgets import SessionSummary

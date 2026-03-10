@@ -212,6 +212,68 @@ def launch(
         rprint("\nTo view: [bold]overcode attach[/bold]")
 
 
+@app.command()
+def fork(
+    source: Annotated[str, typer.Argument(help="Name of agent to fork from")],
+    name: Annotated[
+        Optional[str], typer.Option("--name", "-n", help="Name for the forked agent (default: <source>-fork)")
+    ] = None,
+    prompt: Annotated[
+        Optional[str], typer.Option("--prompt", "-p", help="Initial prompt to send to the fork")
+    ] = None,
+    session: SessionOption = "agents",
+):
+    """Fork an agent, creating a child with the source's conversation context.
+
+    Uses Claude's --resume --fork-session to branch the conversation history
+    into a new independent agent. The forked agent inherits the source's
+    directory, permissions, agent persona, and CLI flags.
+
+    Examples:
+        overcode fork my-agent                          # Fork as my-agent-fork
+        overcode fork my-agent -n side-analysis         # Fork with custom name
+        overcode fork my-agent -p "analyze test failures"  # Fork with initial prompt
+    """
+    from ..session_manager import SessionManager
+
+    sm = SessionManager()
+    source_session = sm.get_session_by_name(source)
+    if not source_session:
+        rprint(f"[red]Error: Agent '{source}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    if not source_session.active_claude_session_id:
+        rprint(f"[red]Error: Agent '{source}' has no active Claude session ID yet[/red]")
+        rprint("[dim]The monitor daemon detects session IDs periodically — try again shortly[/dim]")
+        raise typer.Exit(code=1)
+
+    if source_session.status in ("terminated", "done"):
+        rprint(f"[red]Error: Cannot fork a {source_session.status} agent[/red]")
+        raise typer.Exit(code=1)
+
+    # Default fork name
+    fork_name = name if name else f"{source}-fork"
+
+    launcher = ClaudeLauncher(session)
+    result = launcher.launch_fork(
+        name=fork_name,
+        source_session=source_session,
+        initial_prompt=prompt,
+    )
+
+    if result:
+        rprint(f"\n[green]✓[/green] Forked '[bold]{source}[/bold]' → '[bold]{fork_name}[/bold]'")
+        rprint(f"  Directory: {result.start_directory}")
+        if result.claude_agent:
+            rprint(f"  Agent: {result.claude_agent}")
+        if prompt:
+            rprint("  Initial prompt sent")
+        rprint(f"\nTo view: [bold]overcode attach {fork_name}[/bold]")
+    else:
+        rprint(f"[red]Error: Failed to fork '{source}'[/red]")
+        raise typer.Exit(code=1)
+
+
 @app.command("list")
 def list_agents(
     name: Annotated[

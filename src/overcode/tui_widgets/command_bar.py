@@ -42,6 +42,8 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[Remote Agent: Name] ", "Enter agent name..."
     elif mode == "new_remote_agent_perms":
         return "[Remote Agent: Permissions] ", "Type 'bypass' or 'skip', or Enter for normal..."
+    elif mode == "fork_name":
+        return "[Fork: Name] ", "Enter name for forked agent (or Enter to accept default)..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
         return prefix, "Enter standing orders (or empty to clear)..."
@@ -94,6 +96,7 @@ class CommandBar(Static):
     new_agent_claude_agent: Optional[str] = None  # Store selected Claude agent between steps
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
     new_remote_sister: Optional[str] = None  # Store selected sister name for remote agent flow (#310)
+    fork_source_session: Optional[object] = None  # Store source session for fork flow (#347)
 
     class SendRequested(Message):
         """Message sent when user wants to send text to a session."""
@@ -163,6 +166,13 @@ class CommandBar(Static):
             self.session_name = session_name
             self.budget_usd = budget_usd
             self.session_id = session_id
+
+    class ForkRequested(Message):
+        """Message sent when user wants to fork an agent (#347)."""
+        def __init__(self, source_session, fork_name: str):
+            super().__init__()
+            self.source_session = source_session
+            self.fork_name = fork_name
 
     class ClearRequested(Message):
         """Message sent when user clears the command bar."""
@@ -263,6 +273,17 @@ class CommandBar(Static):
                 return
             elif self.mode == "new_remote_agent_perms":
                 self._handle_remote_agent_perms(text)
+                event.input.value = ""
+                self.action_clear_and_unfocus()
+                return
+            elif self.mode == "fork_name":
+                # Fork agent: name entered, create the fork (#347)
+                fork_name = text if text else event.input.value.strip()
+                if not fork_name:
+                    self.app.notify("Fork name required", severity="error")
+                    return
+                self.post_message(self.ForkRequested(self.fork_source_session, fork_name))
+                self.fork_source_session = None
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -620,6 +641,7 @@ class CommandBar(Static):
         self.new_agent_teams = False
         self.new_agent_claude_agent = None
         self.new_remote_sister = None  # Reset remote agent state (#310)
+        self.fork_source_session = None  # Reset fork state (#347)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()
         # Let parent handle unfocus

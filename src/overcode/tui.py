@@ -187,8 +187,10 @@ class SupervisorTUI(
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
-        # Time context toggle - per-agent time awareness hook
-        ("F", "toggle_time_context", "Time context"),
+        # Fork agent - create child with source's conversation context (#347)
+        ("F", "fork_focused", "Fork agent"),
+        # Time context toggle - per-agent time awareness hook (moved from F)
+        ("ctrl+t", "toggle_time_context", "Time context"),
         # Hook-based status detection toggle (#5)
         ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)
@@ -2057,6 +2059,37 @@ class SupervisorTUI(
             self.refresh_sessions()
         except Exception as e:
             self.notify(f"Failed to create agent: {e}", severity="error")
+
+    def on_command_bar_fork_requested(self, message: CommandBar.ForkRequested) -> None:
+        """Handle fork agent request (#347)."""
+        source_session = message.source_session
+        fork_name = message.fork_name
+
+        # Validate name
+        if not fork_name or len(fork_name) > 50:
+            self.notify("Invalid fork name", severity="error")
+            return
+        if ' ' in fork_name:
+            self.notify("Fork name cannot contain spaces", severity="error")
+            return
+
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+
+        try:
+            result = launcher.launch_fork(
+                name=fork_name,
+                source_session=source_session,
+            )
+            if result:
+                self.notify(f"Forked '{source_session.name}' → '{fork_name}'", severity="information")
+                self.refresh_sessions()
+            else:
+                self.notify(f"Failed to fork '{source_session.name}'", severity="error")
+        except Exception as e:
+            self.notify(f"Failed to fork: {e}", severity="error")
 
     def on_command_bar_new_remote_agent_requested(self, message: CommandBar.NewRemoteAgentRequested) -> None:
         """Handle remote agent launch request (#310)."""

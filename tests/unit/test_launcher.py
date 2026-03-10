@@ -1315,6 +1315,134 @@ class TestBudgetAtLaunch:
         assert reloaded.cost_budget_usd == 0.0
 
 
+class TestLaunchFork:
+    """Test launch_fork for forking agent context (#347)"""
+
+    def _make_launcher_and_source(self, tmp_path):
+        """Helper: create a launcher and a source session with an active claude session ID."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        # Launch source agent
+        source = launcher.launch(name="source-agent", start_directory="/tmp/project")
+        # Simulate monitor daemon detecting the active claude session ID
+        session_manager.set_active_claude_session_id(source.id, "claude-session-abc123")
+        source = session_manager.get_session(source.id)  # reload
+
+        return launcher, source, mock_tmux
+
+    def test_fork_creates_child_session(self, tmp_path):
+        """Fork creates a new session that is a child of the source."""
+        launcher, source, _ = self._make_launcher_and_source(tmp_path)
+
+        forked = launcher.launch_fork(name="my-fork", source_session=source)
+
+        assert forked is not None
+        assert forked.name == "my-fork"
+        assert forked.parent_session_id == source.id
+        assert forked.start_directory == source.start_directory
+
+    def test_fork_uses_resume_and_fork_session(self, tmp_path):
+        """Fork command includes --resume <id> --fork-session."""
+        launcher, source, mock_tmux = self._make_launcher_and_source(tmp_path)
+
+        launcher.launch_fork(name="my-fork", source_session=source)
+
+        # Check sent commands include --resume and --fork-session
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        fork_cmd = [c for c in sent_commands if "--fork-session" in c]
+        assert len(fork_cmd) == 1
+        assert "--resume" in fork_cmd[0]
+        assert "claude-session-abc123" in fork_cmd[0]
+
+    def test_fork_inherits_permissions(self, tmp_path):
+        """Fork inherits the source's permission mode."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        source = launcher.launch(name="source", dangerously_skip_permissions=True)
+        session_manager.set_active_claude_session_id(source.id, "sess-123")
+        source = session_manager.get_session(source.id)
+
+        forked = launcher.launch_fork(name="fork-bypass", source_session=source)
+        assert forked is not None
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
+        assert "--dangerously-skip-permissions" in fork_cmd
+
+    def test_fork_requires_active_session_id(self, tmp_path):
+        """Fork fails if source has no active_claude_session_id."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        source = launcher.launch(name="source")
+        # Don't set active_claude_session_id
+
+        forked = launcher.launch_fork(name="fork-fail", source_session=source)
+        assert forked is None
+
+    def test_fork_inherits_standing_instructions(self, tmp_path):
+        """Fork inherits the source's standing instructions."""
+        launcher, source, _ = self._make_launcher_and_source(tmp_path)
+
+        # Set standing instructions on source
+        launcher.sessions.update_session(source.id, standing_instructions="Always test first")
+        source = launcher.sessions.get_session(source.id)
+
+        forked = launcher.launch_fork(name="fork-orders", source_session=source)
+        assert forked is not None
+
+        reloaded = launcher.sessions.get_session(forked.id)
+        assert reloaded.standing_instructions == "Always test first"
+
+    def test_fork_respects_depth_limit(self, tmp_path):
+        """Fork respects MAX_HIERARCHY_DEPTH."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        # Create a chain up to depth limit
+        parent = launcher.launch(name="root")
+        session_manager.set_active_claude_session_id(parent.id, "sess-root")
+
+        for i in range(launcher.MAX_HIERARCHY_DEPTH - 1):
+            child = launcher.launch(name=f"child-{i}", parent_name="root" if i == 0 else f"child-{i-1}")
+            session_manager.set_active_claude_session_id(child.id, f"sess-{i}")
+
+        # Try to fork the deepest child — should fail
+        deepest = session_manager.get_session_by_name(f"child-{launcher.MAX_HIERARCHY_DEPTH - 2}")
+        deepest = session_manager.get_session(deepest.id)  # reload with active_claude_session_id
+        forked = launcher.launch_fork(name="too-deep", source_session=deepest)
+        assert forked is None
+
+    def test_fork_with_initial_prompt(self, tmp_path):
+        """Fork can send an initial prompt."""
+        launcher, source, _ = self._make_launcher_and_source(tmp_path)
+
+        with patch.object(launcher, "_send_prompt_to_window") as mock_send:
+            forked = launcher.launch_fork(
+                name="prompted-fork",
+                source_session=source,
+                initial_prompt="Analyze the test failures",
+            )
+
+        assert forked is not None
+        mock_send.assert_called_once_with(forked.tmux_window, "Analyze the test failures")
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

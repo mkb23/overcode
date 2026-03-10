@@ -315,6 +315,152 @@ class ClaudeLauncher:
             startup_delay=startup_delay,
         )
 
+    def launch_fork(
+        self,
+        name: str,
+        source_session: Session,
+        initial_prompt: Optional[str] = None,
+    ) -> Optional[Session]:
+        """Launch a forked agent from an existing session's context.
+
+        Uses `claude --resume <session-id> --fork-session` to create a new
+        Claude session that starts with the source agent's full conversation
+        history but gets its own independent session ID.
+
+        The forked agent inherits the source's directory, permissions, agent
+        persona, allowed tools, extra CLI args, and standing instructions.
+        It is registered as a child of the source in the hierarchy.
+
+        Args:
+            name: Name for the forked agent
+            source_session: The session to fork from (must have active_claude_session_id)
+            initial_prompt: Optional prompt to send after the fork starts
+
+        Returns:
+            Session object if successful, None otherwise
+        """
+        # Validate
+        try:
+            validate_session_name(name)
+        except InvalidSessionNameError as e:
+            print(f"Cannot fork: {e}")
+            return None
+
+        try:
+            require_tmux()
+            require_claude()
+        except (TmuxNotFoundError, ClaudeNotFoundError) as e:
+            print(f"Cannot fork: {e}")
+            return None
+
+        if not source_session.active_claude_session_id:
+            print(f"Cannot fork: source agent '{source_session.name}' has no active Claude session ID")
+            return None
+
+        # Enforce depth limit
+        source_depth = self.sessions.compute_depth(source_session)
+        if source_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
+            print(f"Cannot fork: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
+            return None
+
+        # Check for name collision
+        existing = self.sessions.get_session_by_name(name)
+        if existing:
+            if self.tmux.window_exists(existing.tmux_window):
+                print(f"Session '{name}' already exists in window {existing.tmux_window}")
+                return existing
+            else:
+                self.sessions.delete_session(existing.id)
+
+        # Ensure tmux session exists
+        if not self.tmux.ensure_session():
+            print(f"Failed to create tmux session '{self.tmux.session_name}'")
+            return None
+
+        # Create tmux window in source's directory
+        session_id = str(uuid.uuid4())
+        window_name = f"{name}-{session_id[:4]}"
+        window_name = self.tmux.create_window(window_name, source_session.start_directory)
+        if window_name is None:
+            print(f"Failed to create tmux window '{name}'")
+            return None
+
+        # Build command: claude --resume <id> --fork-session
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        if claude_command == "claude":
+            claude_cmd = ["claude", "--resume", source_session.active_claude_session_id, "--fork-session"]
+        else:
+            claude_cmd = [claude_command, "--resume", source_session.active_claude_session_id, "--fork-session"]
+
+        # Inherit permission flags
+        if source_session.permissiveness_mode == "bypass":
+            claude_cmd.append("--dangerously-skip-permissions")
+        elif source_session.permissiveness_mode == "permissive":
+            claude_cmd.extend(["--permission-mode", "dontAsk"])
+
+        # Inherit agent persona
+        if source_session.claude_agent:
+            claude_cmd.extend(["--agent", source_session.claude_agent])
+
+        # Inherit CLI flags
+        if source_session.allowed_tools:
+            claude_cmd.extend(["--allowedTools", source_session.allowed_tools])
+        if source_session.extra_claude_args:
+            for arg in source_session.extra_claude_args:
+                claude_cmd.extend(shlex.split(arg))
+
+        # Environment prefix
+        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
+        env_prefix += f" OVERCODE_PARENT_SESSION_ID={source_session.id} OVERCODE_PARENT_NAME={source_session.name}"
+
+        # Inherit agent teams
+        if source_session.agent_teams:
+            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+
+        # Build and send command
+        mock_scenario = os.environ.get("MOCK_SCENARIO")
+        if mock_scenario:
+            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
+        else:
+            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
+
+        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
+            print(f"Failed to send command to window {window_name}")
+            self.tmux.kill_window(window_name)
+            return None
+
+        # Determine permission mode
+        perm_mode = source_session.permissiveness_mode or "normal"
+
+        # Register session
+        resolved_directory = str(Path(source_session.start_directory).resolve()) if source_session.start_directory else None
+        session = self.sessions.create_session(
+            name=name,
+            tmux_session=self.tmux.session_name,
+            tmux_window=window_name,
+            command=claude_cmd,
+            start_directory=resolved_directory,
+            standing_instructions=source_session.standing_instructions,
+            permissiveness_mode=perm_mode,
+            allowed_tools=source_session.allowed_tools,
+            extra_claude_args=source_session.extra_claude_args,
+            agent_teams=source_session.agent_teams,
+            claude_agent=source_session.claude_agent,
+            session_id=session_id,
+        )
+
+        # Set as child of source
+        self.sessions.update_session(session.id, parent_session_id=source_session.id)
+        session.parent_session_id = source_session.id
+
+        print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
+
+        # Send initial prompt if provided
+        if initial_prompt:
+            self._send_prompt_to_window(window_name, initial_prompt)
+
+        return session
+
     def attach(self, name: str = None, bare: bool = False):
         """Attach to the tmux session, optionally targeting a specific agent.
 
