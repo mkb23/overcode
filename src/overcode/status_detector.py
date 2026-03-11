@@ -401,24 +401,40 @@ class PollingStatusDetector:
             return request
         return "approval required"
 
+    def _scan_from_bottom(self, lines: list, predicate, max_lines: int = 20) -> Optional[str]:
+        """Scan lines from bottom looking for first line matching predicate.
+
+        Args:
+            lines: Lines to scan
+            predicate: Callable(line) -> bool, receives raw (stripped) lines
+            max_lines: Maximum number of lines to scan from bottom
+
+        Returns:
+            The matching line (raw), or None if no match
+        """
+        for line in reversed(lines[-max_lines:]):
+            if predicate(line):
+                return line
+        return None
+
     def _extract_question(self, lines: list) -> str:
         """Extract a question from recent output"""
-        for line in reversed(lines):
-            if '?' in line:
-                return self._clean_line(line)
+        match = self._scan_from_bottom(lines, lambda line: '?' in line)
+        if match:
+            return self._clean_line(match)
         return self._clean_line(lines[-1])
 
     def _extract_last_activity(self, lines: list) -> str:
         """Extract the most recent activity description"""
-        # Look for lines that look like activity descriptions
-        # Skip status bar lines (they contain UI chrome, not actual activity)
-        for line in reversed(lines):
-            # Skip status bar lines
+        def is_activity(line: str) -> bool:
             if is_status_bar_line(line, self.patterns):
-                continue
+                return False
             cleaned = clean_line(line, self.patterns)
-            if len(cleaned) > 10 and not cleaned.startswith('›'):
-                return cleaned
+            return len(cleaned) > 10 and not cleaned.startswith('›')
+
+        match = self._scan_from_bottom(lines, is_activity)
+        if match:
+            return clean_line(match, self.patterns)
         return "Idle"
 
     def _clean_line(self, line: str) -> str:
