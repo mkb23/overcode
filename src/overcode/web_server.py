@@ -45,9 +45,24 @@ class OvercodeHandler(BaseHTTPRequestHandler):
     # Set by run_server before starting
     tmux_session: str = "agents"
 
+    _GET_ROUTES = {
+        "/": "_serve_analytics_dashboard",
+        "/index.html": "_serve_analytics_dashboard",
+        "/static/chart.min.js": "_serve_chartjs",
+        "/dashboard": "_serve_dashboard",
+        "/api/status": "_serve_api_status",
+        "/api/analytics/sessions": "_serve_analytics_sessions",
+        "/api/analytics/timeline": "_serve_analytics_timeline",
+        "/api/analytics/stats": "_serve_analytics_stats",
+        "/api/analytics/daily": "_serve_analytics_daily",
+        "/api/analytics/presets": "_serve_analytics_presets",
+        "/api/timeline": "_serve_timeline",
+        "/api/timeline/raw": "_serve_timeline_raw",
+        "/health": "_serve_health",
+    }
+
     def do_GET(self) -> None:
         """Handle GET requests."""
-        # API key authentication (when configured)
         api_key = get_web_api_key()
         if api_key:
             request_key = self.headers.get("X-API-Key", "")
@@ -59,48 +74,22 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
-        # Parse time range from query params (for analytics APIs)
-        start = self._parse_datetime(query.get("start", [None])[0])
-        end = self._parse_datetime(query.get("end", [None])[0])
+        handler_name = self._GET_ROUTES.get(path)
+        if handler_name:
+            getattr(self, handler_name)(query)
+            return
 
-        # Analytics routes
-        if path == "/" or path == "/index.html":
-            self._serve_analytics_dashboard()
-        elif path == "/static/chart.min.js":
-            self._serve_chartjs()
-        elif path == "/api/analytics/sessions":
-            self._serve_json(get_analytics_sessions(start, end))
-        elif path == "/api/analytics/timeline":
-            self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
-        elif path == "/api/analytics/stats":
-            self._serve_json(get_analytics_stats(self.tmux_session, start, end))
-        elif path == "/api/analytics/daily":
-            self._serve_json(get_analytics_daily(start, end))
-        elif path == "/api/analytics/presets":
-            self._serve_json(get_time_presets())
-        # Live dashboard routes
-        elif path == "/dashboard":
-            self._serve_dashboard()
-        elif path == "/api/status":
-            self._serve_json(get_status_data(self.tmux_session))
-        elif path.startswith("/api/agents/") and path.endswith("/status"):
+        # Dynamic route: /api/agents/{name}/status
+        if path.startswith("/api/agents/") and path.endswith("/status"):
             name = path.split("/")[3]
             agent_data = get_single_agent_status(self.tmux_session, name)
             if agent_data is not None:
                 self._serve_json(agent_data)
             else:
                 self.send_error(404, f"Agent '{name}' not found")
-        elif path == "/api/timeline":
-            hours = float(query.get("hours", [3.0])[0])
-            slots = int(query.get("slots", [60])[0])
-            self._serve_json(get_timeline_data(self.tmux_session, hours=hours, slots=slots))
-        elif path == "/api/timeline/raw":
-            hours = float(query.get("hours", [3.0])[0])
-            self._serve_json(get_raw_timeline_data(self.tmux_session, hours=hours))
-        elif path == "/health":
-            self._serve_json(get_health_data())
-        else:
-            self.send_error(404, "Not Found")
+            return
+
+        self.send_error(404, "Not Found")
 
     def _parse_datetime(self, value: Optional[str]) -> Optional[datetime]:
         """Parse ISO datetime string from query param."""
@@ -111,48 +100,76 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return None
 
-    def _serve_dashboard(self) -> None:
+    def _parse_time_range(self, query) -> Tuple[Optional[datetime], Optional[datetime]]:
+        """Parse start/end datetime from query params."""
+        return (
+            self._parse_datetime(query.get("start", [None])[0]),
+            self._parse_datetime(query.get("end", [None])[0]),
+        )
+
+    # -----------------------------------------------------------------
+    # GET route handlers
+    # -----------------------------------------------------------------
+
+    def _serve_content(self, content: str, content_type: str = "text/html; charset=utf-8", cache_control: str = "no-cache") -> None:
+        """Serve string content with given content type and cache headers."""
+        try:
+            content_bytes = content.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content_bytes)))
+            self.send_header("Cache-Control", cache_control)
+            self.end_headers()
+            self.wfile.write(content_bytes)
+        except Exception as e:
+            self.send_error(500, f"Internal error: {e}")
+
+    def _serve_dashboard(self, query=None) -> None:
         """Serve the live monitoring dashboard HTML page."""
-        try:
-            html = get_dashboard_html()
-            html_bytes = html.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html_bytes)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(html_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
+        self._serve_content(get_dashboard_html())
 
-    def _serve_analytics_dashboard(self) -> None:
+    def _serve_analytics_dashboard(self, query=None) -> None:
         """Serve the analytics dashboard HTML page."""
-        try:
-            html = get_analytics_html()
-            html_bytes = html.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html_bytes)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(html_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
+        self._serve_content(get_analytics_html())
 
-    def _serve_chartjs(self) -> None:
+    def _serve_chartjs(self, query=None) -> None:
         """Serve the embedded Chart.js library."""
-        try:
-            from .web_chartjs import CHARTJS_JS
-            js_bytes = CHARTJS_JS.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/javascript")
-            self.send_header("Content-Length", str(len(js_bytes)))
-            # Cache for 1 year - it's a versioned static asset
-            self.send_header("Cache-Control", "public, max-age=31536000")
-            self.end_headers()
-            self.wfile.write(js_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
+        from .web_chartjs import CHARTJS_JS
+        self._serve_content(CHARTJS_JS, "application/javascript", "public, max-age=31536000")
+
+    def _serve_api_status(self, query) -> None:
+        self._serve_json(get_status_data(self.tmux_session))
+
+    def _serve_analytics_sessions(self, query) -> None:
+        start, end = self._parse_time_range(query)
+        self._serve_json(get_analytics_sessions(start, end))
+
+    def _serve_analytics_timeline(self, query) -> None:
+        start, end = self._parse_time_range(query)
+        self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
+
+    def _serve_analytics_stats(self, query) -> None:
+        start, end = self._parse_time_range(query)
+        self._serve_json(get_analytics_stats(self.tmux_session, start, end))
+
+    def _serve_analytics_daily(self, query) -> None:
+        start, end = self._parse_time_range(query)
+        self._serve_json(get_analytics_daily(start, end))
+
+    def _serve_analytics_presets(self, query) -> None:
+        self._serve_json(get_time_presets())
+
+    def _serve_timeline(self, query) -> None:
+        hours = float(query.get("hours", [3.0])[0])
+        slots = int(query.get("slots", [60])[0])
+        self._serve_json(get_timeline_data(self.tmux_session, hours=hours, slots=slots))
+
+    def _serve_timeline_raw(self, query) -> None:
+        hours = float(query.get("hours", [3.0])[0])
+        self._serve_json(get_raw_timeline_data(self.tmux_session, hours=hours))
+
+    def _serve_health(self, query) -> None:
+        self._serve_json(get_health_data())
 
     def _serve_json(self, data) -> None:
         """Serve JSON data."""
@@ -519,8 +536,11 @@ def _log_to_file(session: str, message: str) -> None:
         with open(log_path, "a") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{timestamp}] [start_web_server] {message}\n")
-    except OSError:
-        sys.stderr.write(f"[web] Failed to write log: {message}\n")
+    except (OSError, TypeError, AttributeError):
+        try:
+            sys.stderr.write(f"[web] Failed to write log: {message}\n")
+        except Exception:
+            pass
 
 
 def start_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:

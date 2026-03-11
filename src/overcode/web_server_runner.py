@@ -30,8 +30,8 @@ def log(session: str, message: str) -> None:
         with open(log_path, "a") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{timestamp}] {message}\n")
-    except OSError:
-        pass  # Can't log to file, silently fail
+    except Exception:
+        pass  # Best-effort logging must never crash the server
 
 
 def main():
