@@ -29,19 +29,11 @@ class DaemonActionsMixin:
     def action_toggle_daemon(self) -> None:
         """Toggle daemon panel visibility (like timeline)."""
         from ..tui_widgets import DaemonPanel
-        try:
-            daemon_panel = self.query_one("#daemon-panel", DaemonPanel)
-            daemon_panel.display = not daemon_panel.display
-            if daemon_panel.display:
-                # Force immediate refresh when becoming visible
-                daemon_panel._refresh_logs()
-            # Save preference
-            self._prefs.daemon_panel_visible = daemon_panel.display
-            self._save_prefs()
-            state = "shown" if daemon_panel.display else "hidden"
-            self.notify(f"Daemon panel {state}", severity="information")
-        except NoMatches:
-            pass
+        from .view import _toggle_widget
+        _toggle_widget(
+            self, "daemon-panel", DaemonPanel, "daemon_panel_visible", "Daemon panel",
+            on_show=lambda w: w._refresh_logs(),
+        )
 
     def action_supervisor_start(self) -> None:
         """Start the Supervisor Daemon (requires double-press confirmation)."""
