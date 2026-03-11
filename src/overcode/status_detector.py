@@ -68,6 +68,8 @@ class PollingStatusDetector:
         # Track previous content per session for change detection
         self._previous_content: dict[int, str] = {}  # window -> content hash
         self._content_changed: dict[int, bool] = {}  # window -> changed flag
+        # Diagnostic: which phase produced the last status per session
+        self._last_detect_phase: dict[str, str] = {}  # session_id -> phase name
 
         # Pre-compile approval and error patterns (called in hot path)
         self._compiled_approval_patterns = [
@@ -168,47 +170,57 @@ class PollingStatusDetector:
         # Phase 5: Content changing = active work (#214, #216)
         if content_changed:
             activity = self._extract_last_activity(last_lines)
+            self._last_detect_phase[session.id] = "P5:content_changed"
             return STATUS_RUNNING, f"Active: {activity}", content
 
         # Phase 6: Error output (#216) — only when content NOT changing
         result = self._detect_error(content_lines, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P6:error"
             return result
 
         # Phase 7: Approval waiting (#22)
         result = self._detect_approval(lines, last_few, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P7:approval"
             return result
 
         # Phase 8: Command menu
         result = self._detect_command_menu(last_lines, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P8:menu"
             return result
 
         # Phase 9: Active work indicators
         result = self._detect_active_work(last_lines, last_few, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P9:active_ind"
             return result
 
         # Phase 10: Tool execution (case-sensitive)
         result = self._detect_tool_execution(last_lines, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P10:tool_exec"
             return result
 
         # Phase 11: Thinking
         if any("thinking" in line.lower() for line in last_lines):
+            self._last_detect_phase[session.id] = "P11:thinking"
             return STATUS_RUNNING, "Thinking...", content
 
         # Phase 12: User prompt / stalled input
         result = self._detect_user_prompt(last_lines, content)
         if result is not None:
+            self._last_detect_phase[session.id] = "P12:prompt"
             return result
 
         # Phase 13: Waiting patterns
         if matches_any(last_few, self.patterns.waiting_patterns):
+            self._last_detect_phase[session.id] = "P13:waiting"
             return STATUS_WAITING_USER, self._extract_question(last_lines), content
 
         # Phase 14: Default based on standing instructions
+        self._last_detect_phase[session.id] = "P14:default"
         return self._detect_default(session, last_lines, content)
 
     def _detect_terminated(self, session, num_lines: int) -> Optional[Tuple[str, str, str]]:

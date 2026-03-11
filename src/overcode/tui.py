@@ -943,9 +943,10 @@ class SupervisorTUI(
                     summary.context or "",
                 )
 
-            # Build diagnostics: content_changed flags from polling detector
+            # Build diagnostics: content_changed flags and detect phases from polling detector
             polling = getattr(self.detector, 'polling', self.detector)
             content_changed_flags = dict(getattr(polling, '_content_changed', {}))
+            detect_phases = dict(getattr(polling, '_last_detect_phase', {}))
 
             # Update UI on main thread
             self.call_from_thread(
@@ -953,6 +954,7 @@ class SupervisorTUI(
                 ai_summaries, subtree_costs,
                 _diag_raw=raw_statuses, _diag_sources=status_sources,
                 _diag_focused_id=focused_id, _diag_content_changed=content_changed_flags,
+                _diag_phases=detect_phases,
             )
         finally:
             self._status_update_in_progress = False
@@ -1126,7 +1128,8 @@ class SupervisorTUI(
     def _apply_status_results(self, status_results: dict, fresh_sessions: dict,
                               ai_summaries: dict = None, subtree_costs: dict = None,
                               _diag_raw: dict = None, _diag_sources: dict = None,
-                              _diag_focused_id: str = None, _diag_content_changed: dict = None) -> None:
+                              _diag_focused_id: str = None, _diag_content_changed: dict = None,
+                              _diag_phases: dict = None) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""
         self._mark_event("apply_status_start")
         prefs_changed = False
@@ -1232,11 +1235,12 @@ class SupervisorTUI(
                 if _diag_raw is not None and old_status != status:
                     raw = _diag_raw.get(session_id, "?")
                     source = (_diag_sources or {}).get(session_id, "?")
+                    phase = (_diag_phases or {}).get(session_id, "?")
                     is_focused = session_id == _diag_focused_id
                     cc = (_diag_content_changed or {}).get(session_id, False)
                     self._log_status_change(
                         widget.session.name, old_status, status,
-                        source=f"{source}(raw={raw})", focused=is_focused,
+                        source=f"{source}(raw={raw}|{phase})", focused=is_focused,
                         content_changed=cc,
                     )
 
