@@ -4,8 +4,12 @@ API data handlers for web server.
 Reuses existing helpers from tui_helpers.py and reads from Monitor Daemon state.
 """
 
+import logging
+import subprocess
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from .monitor_daemon_state import (
     get_monitor_daemon_state,
@@ -69,10 +73,10 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
                     content = tmux.capture_pane(tmux_session, s.tmux_window, lines=100)
                     if content:
                         pane_contents[s.tmux_window] = content
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except (subprocess.SubprocessError, OSError) as e:
+                    logger.debug("Failed to capture pane for %s: %s", s.name, e)
+        except (ImportError, OSError) as e:
+            logger.debug("Failed to initialize tmux for pane capture: %s", e)
 
     result = {
         "timestamp": now.isoformat(),
@@ -125,8 +129,8 @@ def get_single_agent_status(tmux_session: str, agent_name: str) -> Optional[Dict
         content = tmux.capture_pane(tmux_session, target.tmux_window, lines=100)
         if content:
             pane_content = content
-    except Exception:
-        pass
+    except (subprocess.SubprocessError, ImportError, OSError) as e:
+        logger.debug("Failed to capture pane for %s: %s", agent_name, e)
 
     return _build_agent_info(target, now, pane_content)
 

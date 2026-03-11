@@ -166,7 +166,7 @@ class SummarizerClient:
         except TimeoutError:
             logger.warning("Summarizer API timeout")
             return None
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.warning(f"Summarizer API error: {e}")
             return None
 

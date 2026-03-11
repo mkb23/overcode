@@ -13,10 +13,13 @@ Hook registrations (all use the same command):
 """
 
 import json
+import logging
 import os
 import sys
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # All hooks that overcode installs
@@ -90,7 +93,8 @@ def handle_hook_event() -> None:
         if not stdin_data.strip():
             return
         data = json.loads(stdin_data)
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        logger.debug("Failed to parse hook stdin: %s", e)
         return
 
     event = data.get("hook_event_name")
