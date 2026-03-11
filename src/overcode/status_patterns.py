@@ -17,6 +17,30 @@ from typing import List, Optional
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
+# Shell prompt patterns — shared between PollingStatusDetector and HookStatusDetector
+# These detect when Claude Code has exited and the user is back at a shell prompt.
+SHELL_PROMPT_PATTERNS = [
+    re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
+    re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%
+    re.compile(r'^[~\/].*[%$]\s*$'),         # /path/to/dir $ or ~/dir %
+]
+
+
+def is_shell_prompt(line: str, patterns=None) -> bool:
+    """Check if a line matches a shell prompt pattern.
+
+    Args:
+        line: Line to check (should be stripped of whitespace)
+        patterns: Optional list of compiled regex patterns (defaults to SHELL_PROMPT_PATTERNS)
+
+    Returns:
+        True if the line looks like a shell prompt
+    """
+    for pattern in (patterns or SHELL_PROMPT_PATTERNS):
+        if pattern.search(line):
+            return True
+    return False
+
 
 def strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences from text.

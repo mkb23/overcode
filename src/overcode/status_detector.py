@@ -23,6 +23,7 @@ from .status_patterns import (
     strip_ansi,
     is_sleep_command,
     extract_sleep_duration,
+    is_shell_prompt as _is_shell_prompt_line,
     StatusPatterns,
 )
 from .tui_helpers import format_duration
@@ -32,12 +33,6 @@ if TYPE_CHECKING:
 
 # Pre-compiled regex patterns for hot-path methods (avoid re-compiling per call)
 import re as _re
-
-_SHELL_PROMPT_PATTERNS = [
-    _re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
-    _re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%
-    _re.compile(r'^[~\/].*[%$]\s*$'),         # /path/to/dir $ or ~/dir %
-]
 
 
 class PollingStatusDetector:
@@ -155,16 +150,16 @@ class PollingStatusDetector:
         last_lines = [l.strip() for l in lines[-10:] if l.strip()]
 
         if not last_lines:
-            return self.STATUS_WAITING_USER, "No output", content
+            return STATUS_WAITING_USER, "No output", content
 
         # Phase 2: Spawn failure (before shell prompt — error appears first)
         spawn_error = self._detect_spawn_failure(lines)
         if spawn_error:
-            return self.STATUS_WAITING_USER, spawn_error, content
+            return STATUS_WAITING_USER, spawn_error, content
 
         # Phase 3: Shell prompt (Claude exited)
         if self._is_shell_prompt(last_lines):
-            return self.STATUS_TERMINATED, "Claude exited - shell prompt", content
+            return STATUS_TERMINATED, "Claude exited - shell prompt", content
 
         # Prepare filtered lines for remaining phases
         content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
@@ -178,7 +173,7 @@ class PollingStatusDetector:
         # Phase 5: Content changing = active work (#214, #216)
         if content_changed:
             activity = self._extract_last_activity(last_lines)
-            return self.STATUS_RUNNING, f"Active: {activity}", content
+            return STATUS_RUNNING, f"Active: {activity}", content
 
         # Phase 6: Error output (#216) — only when content NOT changing
         result = self._detect_error(content_lines, content)
@@ -207,7 +202,7 @@ class PollingStatusDetector:
 
         # Phase 11: Thinking
         if any("thinking" in line.lower() for line in last_lines):
-            return self.STATUS_RUNNING, "Thinking...", content
+            return STATUS_RUNNING, "Thinking...", content
 
         # Phase 12: User prompt / stalled input
         result = self._detect_user_prompt(last_lines, content)
@@ -216,7 +211,7 @@ class PollingStatusDetector:
 
         # Phase 13: Waiting patterns
         if matches_any(last_few, self.patterns.waiting_patterns):
-            return self.STATUS_WAITING_USER, self._extract_question(last_lines), content
+            return STATUS_WAITING_USER, self._extract_question(last_lines), content
 
         # Phase 14: Default based on standing instructions
         return self._detect_default(session, last_lines, content)
@@ -226,9 +221,9 @@ class PollingStatusDetector:
         content = self.get_pane_content(session.tmux_window, num_lines=num_lines)
 
         if content is None:
-            return self.STATUS_TERMINATED, "Window no longer exists", ""
+            return STATUS_TERMINATED, "Window no longer exists", ""
         if not content:
-            return self.STATUS_WAITING_USER, "Empty pane", ""
+            return STATUS_WAITING_USER, "Empty pane", ""
 
         # Store for use by detect_status after this check
         self._last_content = content
@@ -257,7 +252,7 @@ class PollingStatusDetector:
         """
         if matches_any(last_few, self.patterns.permission_patterns):
             request_text = self._extract_permission_request(last_lines)
-            return self.STATUS_WAITING_USER, f"Permission: {request_text}", content
+            return STATUS_WAITING_USER, f"Permission: {request_text}", content
         return None
 
     def _detect_error(self, content_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
@@ -271,7 +266,7 @@ class PollingStatusDetector:
             error_msg = clean_line(error_line, self.patterns)
             if len(error_msg) > 80:
                 error_msg = error_msg[:77] + "..."
-            return self.STATUS_ERROR, f"Error: {error_msg}", content
+            return STATUS_ERROR, f"Error: {error_msg}", content
         return None
 
     def _detect_approval(self, lines: list, last_few: str, content: str) -> Optional[Tuple[str, str, str]]:
@@ -283,14 +278,14 @@ class PollingStatusDetector:
         """
         has_claude_output = any(line.strip().startswith('⏺') for line in lines)
         if has_claude_output and self._matches_approval_patterns(last_few):
-            return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
+            return STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
         return None
 
     def _detect_command_menu(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
         """Check for command menu display (slash command autocomplete)."""
         menu_lines = count_command_menu_lines(last_lines, self.patterns)
         if menu_lines >= 3 and menu_lines >= len(last_lines) * 0.4:
-            return self.STATUS_WAITING_USER, "Command menu - waiting for input", content
+            return STATUS_WAITING_USER, "Command menu - waiting for input", content
         return None
 
     def _detect_active_work(self, last_lines: list, last_few: str, content: str) -> Optional[Tuple[str, str, str]]:
@@ -300,8 +295,8 @@ class PollingStatusDetector:
                 last_lines, self.patterns.active_indicators, reverse=True
             )
             if matching_line:
-                return self.STATUS_RUNNING, clean_line(matching_line, self.patterns), content
-            return self.STATUS_RUNNING, "Processing...", content
+                return STATUS_RUNNING, clean_line(matching_line, self.patterns), content
+            return STATUS_RUNNING, "Processing...", content
         return None
 
     def _detect_tool_execution(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
@@ -315,7 +310,7 @@ class PollingStatusDetector:
                 dur = extract_sleep_duration(matching_line)
                 activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
                 return STATUS_BUSY_SLEEPING, activity, content
-            return self.STATUS_RUNNING, clean_line(matching_line, self.patterns), content
+            return STATUS_RUNNING, clean_line(matching_line, self.patterns), content
         return None
 
     def _detect_user_prompt(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
@@ -329,10 +324,10 @@ class PollingStatusDetector:
         for line in last_lines[-4:]:
             stripped = line.strip()
             if stripped in self.patterns.prompt_chars:
-                return self.STATUS_WAITING_USER, "Waiting for user input", content
+                return STATUS_WAITING_USER, "Waiting for user input", content
             if any(stripped.startswith(c) for c in self.patterns.prompt_chars):
                 if '↵' in stripped and 'send' in stripped.lower():
-                    return self.STATUS_WAITING_USER, "Waiting for user input", content
+                    return STATUS_WAITING_USER, "Waiting for user input", content
 
         # Check for user input with no Claude response (stalled)
         # Note: ⏺ is Claude's output indicator, ⏵⏵ in status bar is just UI chrome
@@ -356,14 +351,14 @@ class PollingStatusDetector:
                 found_claude_response = True
 
         if found_user_input and not found_claude_response:
-            return self.STATUS_WAITING_USER, "Stalled - no response to user input", content
+            return STATUS_WAITING_USER, "Stalled - no response to user input", content
 
         return None
 
     def _detect_default(self, session, last_lines: list, content: str) -> Tuple[str, str, str]:
         """Default detection: waiting or running based on standing instructions."""
         if not session.standing_instructions:
-            return self.STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
+            return STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
 
         # Has standing instructions — assume running, but check for sleep first (#289)
         for line in last_lines:
@@ -371,7 +366,7 @@ class PollingStatusDetector:
                 dur = extract_sleep_duration(line)
                 activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
                 return STATUS_BUSY_SLEEPING, activity, content
-        return self.STATUS_RUNNING, self._extract_last_activity(last_lines), content
+        return STATUS_RUNNING, self._extract_last_activity(last_lines), content
 
     def _extract_permission_request(self, lines: list) -> str:
         """Extract the permission request text from lines before the prompt"""
@@ -505,21 +500,17 @@ class PollingStatusDetector:
         if not lines:
             return False
 
-        # Get last non-empty line
         last_line = lines[-1].strip()
 
-        for pattern in _SHELL_PROMPT_PATTERNS:
-            if pattern.search(last_line):
-                # Verify Claude Code's active prompt isn't showing nearby.
-                # Only check for '? for shortcuts' — it appears exclusively in
-                # Claude's live input prompt and never in scrollback after exit.
-                # Previous indicators (⏺, ⏵, ⎿, ›) persist in pane scrollback
-                # after exit and caused false negatives.
-                recent_text = ' '.join(lines[-3:])
-                has_claude_ui = '? for shortcuts' in recent_text
-
-                if not has_claude_ui:
-                    return True
+        if _is_shell_prompt_line(last_line):
+            # Verify Claude Code's active prompt isn't showing nearby.
+            # Only check for '? for shortcuts' — it appears exclusively in
+            # Claude's live input prompt and never in scrollback after exit.
+            # Previous indicators (⏺, ⏵, ⎿, ›) persist in pane scrollback
+            # after exit and caused false negatives.
+            recent_text = ' '.join(lines[-3:])
+            if '? for shortcuts' not in recent_text:
+                return True
 
         return False
 

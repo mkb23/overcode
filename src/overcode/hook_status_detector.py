@@ -26,7 +26,12 @@ from .status_constants import (
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
 )
-from .status_patterns import is_sleep_command, extract_sleep_duration, strip_ansi
+from .status_patterns import (
+    is_sleep_command,
+    extract_sleep_duration,
+    strip_ansi,
+    is_shell_prompt,
+)
 from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
@@ -213,9 +218,6 @@ class HookStatusDetector:
         is always present right after exit and is irrelevant once we know
         SessionEnd fired.
         """
-        import re
-        from .status_patterns import strip_ansi
-
         pane_content = self.get_pane_content(session.tmux_window) or ""
         clean = strip_ansi(pane_content)
         lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
@@ -225,16 +227,8 @@ class HookStatusDetector:
 
         last_line = lines[-1]
 
-        # Shell prompt patterns (same as PollingStatusDetector._is_shell_prompt)
-        shell_prompt_patterns = [
-            r'\w+@\w+.*[%$]\s*$',
-            r'\[.*\][%$#]\s*$',
-            r'^[~\/].*[%$]\s*$',
-        ]
-
-        for pattern in shell_prompt_patterns:
-            if re.search(pattern, last_line):
-                return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
+        if is_shell_prompt(last_line):
+            return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
 
         # No shell prompt → likely /clear, fall back to full polling
         return self._get_polling_fallback().detect_status(session)
