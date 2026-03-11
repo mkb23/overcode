@@ -30,6 +30,7 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
+from .claude_pid import discover_session_id_via_pid, is_session_id_owned_by_others
 from .history_reader import get_session_stats, get_current_session_id_for_directory
 from .monitor_daemon_state import (
     MonitorDaemonState,
@@ -589,20 +590,44 @@ class MonitorDaemon:
     def sync_session_id(self, session) -> None:
         """Detect and bind the current Claude session ID (fast path, #116).
 
-        Reads only the tail of history.jsonl so it's cheap enough to run
-        every 10 seconds. This ensures active_claude_session_id updates
+        Uses PID-based discovery to prevent cross-contamination when multiple
+        agents share the same working directory. The discovery chain:
+
+        1. tmux pane → Claude PID → --resume <sessionId> (precise, covers
+           post-/clear and resumed sessions)
+        2. Fallback: history.jsonl directory lookup with exclusive ownership
+           guard (for fresh starts without --resume)
+
+        Runs every 10 seconds. Ensures active_claude_session_id updates
         promptly after /clear.
         """
         if not session.start_directory:
             return
+
+        # Strategy 1: PID-based discovery (precise, no cross-contamination)
+        pid_session_id = discover_session_id_via_pid(
+            self.tmux_session, session.tmux_window
+        )
+        if pid_session_id:
+            self.session_manager.add_claude_session_id(session.id, pid_session_id)
+            self.session_manager.set_active_claude_session_id(session.id, pid_session_id)
+            return
+
+        # Strategy 2: history.jsonl fallback with ownership guard
         try:
             session_start = datetime.fromisoformat(session.start_time)
             current_id = get_current_session_id_for_directory(
                 session.start_directory, session_start
             )
             if current_id:
-                self.session_manager.add_claude_session_id(session.id, current_id)
-                self.session_manager.set_active_claude_session_id(session.id, current_id)
+                # Guard: don't steal a sessionId already owned by another agent
+                all_sessions = [
+                    s for s in self.session_manager.list_sessions()
+                    if s.tmux_session == self.tmux_session
+                ]
+                if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
+                    self.session_manager.add_claude_session_id(session.id, current_id)
+                    self.session_manager.set_active_claude_session_id(session.id, current_id)
         except (ValueError, TypeError):
             pass
 
