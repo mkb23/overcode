@@ -36,6 +36,86 @@ from .web_api import (
 )
 
 
+# Route table: path -> method name on OvercodeHandler
+_GET_ROUTES = {
+    "/": "_serve_analytics_dashboard",
+    "/index.html": "_serve_analytics_dashboard",
+    "/static/chart.min.js": "_serve_chartjs",
+    "/dashboard": "_serve_dashboard",
+    "/api/status": "_serve_api_status",
+    "/api/analytics/sessions": "_serve_analytics_sessions",
+    "/api/analytics/timeline": "_serve_analytics_timeline",
+    "/api/analytics/stats": "_serve_analytics_stats",
+    "/api/analytics/daily": "_serve_analytics_daily",
+    "/api/analytics/presets": "_serve_analytics_presets",
+    "/api/timeline": "_serve_timeline",
+    "/api/timeline/raw": "_serve_timeline_raw",
+    "/health": "_serve_health",
+}
+
+# Control API route tables (POST/PUT/DELETE).
+# Fixed routes: (method, path) -> handler(api, ts, body)
+_FIXED_CONTROL_ROUTES = {
+    ("POST", "/api/agents/launch"): lambda api, ts, body: api.launch_agent(
+        ts, directory=body.get("directory", "."), name=body.get("name", ""),
+        prompt=body.get("prompt"), permissions=body.get("permissions", "normal"),
+    ),
+    ("POST", "/api/agents/transport"): lambda api, ts, body: api.transport_all(ts),
+    ("POST", "/api/agents/cleanup"): lambda api, ts, body: api.cleanup_agents(
+        ts, include_done=body.get("include_done", False),
+    ),
+    ("POST", "/api/daemon/monitor/restart"): lambda api, ts, body: api.restart_monitor(ts),
+    ("POST", "/api/daemon/supervisor/start"): lambda api, ts, body: api.start_supervisor(ts),
+    ("POST", "/api/daemon/supervisor/stop"): lambda api, ts, body: api.stop_supervisor(ts),
+    ("POST", "/api/daemon/summarizer/toggle"): lambda api, ts, body: api.toggle_summarizer(ts),
+}
+
+# Agent routes: (method, action_suffix) -> handler(api, ts, name, body)
+_AGENT_CONTROL_ROUTES = {
+    # POST agent routes
+    ("POST", "send"): lambda api, ts, name, body: api.send_to_agent(
+        ts, name, text=body.get("text", ""), enter=body.get("enter", True),
+    ),
+    ("POST", "keys"): lambda api, ts, name, body: api.send_key_to_agent(
+        ts, name, key=body.get("key", ""),
+    ),
+    ("POST", "kill"): lambda api, ts, name, body: api.kill_agent(
+        ts, name, cascade=body.get("cascade", True),
+    ),
+    ("POST", "restart"): lambda api, ts, name, body: api.restart_agent(ts, name),
+    ("POST", "sleep"): lambda api, ts, name, body: api.set_sleep(
+        ts, name, asleep=body.get("asleep", True),
+    ),
+    ("POST", "heartbeat/pause"): lambda api, ts, name, body: api.pause_heartbeat(ts, name),
+    ("POST", "heartbeat/resume"): lambda api, ts, name, body: api.resume_heartbeat(ts, name),
+    # PUT agent routes
+    ("PUT", "standing-orders"): lambda api, ts, name, body: api.set_standing_orders(
+        ts, name, text=body.get("text"), preset=body.get("preset"),
+    ),
+    ("PUT", "budget"): lambda api, ts, name, body: api.set_budget(
+        ts, name, usd=float(body.get("usd", 0)),
+    ),
+    ("PUT", "value"): lambda api, ts, name, body: api.set_value(
+        ts, name, value=int(body.get("value", 1000)),
+    ),
+    ("PUT", "annotation"): lambda api, ts, name, body: api.set_annotation(
+        ts, name, text=body.get("text", ""),
+    ),
+    ("PUT", "heartbeat"): lambda api, ts, name, body: api.configure_heartbeat(
+        ts, name, enabled=body.get("enabled", True),
+        frequency=body.get("frequency"), instruction=body.get("instruction"),
+    ),
+    ("PUT", "time-context"): lambda api, ts, name, body: api.set_time_context(
+        ts, name, enabled=body.get("enabled", True),
+    ),
+    ("PUT", "hook-detection"): lambda api, ts, name, body: api.set_hook_detection(
+        ts, name, enabled=body.get("enabled", True),
+    ),
+    # DELETE agent routes
+    ("DELETE", "standing-orders"): lambda api, ts, name, body: api.clear_standing_orders(ts, name),
+}
+
+
 class OvercodeHandler(BaseHTTPRequestHandler):
     """HTTP request handler for overcode dashboard.
 
@@ -44,22 +124,6 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
     # Set by run_server before starting
     tmux_session: str = "agents"
-
-    _GET_ROUTES = {
-        "/": "_serve_analytics_dashboard",
-        "/index.html": "_serve_analytics_dashboard",
-        "/static/chart.min.js": "_serve_chartjs",
-        "/dashboard": "_serve_dashboard",
-        "/api/status": "_serve_api_status",
-        "/api/analytics/sessions": "_serve_analytics_sessions",
-        "/api/analytics/timeline": "_serve_analytics_timeline",
-        "/api/analytics/stats": "_serve_analytics_stats",
-        "/api/analytics/daily": "_serve_analytics_daily",
-        "/api/analytics/presets": "_serve_analytics_presets",
-        "/api/timeline": "_serve_timeline",
-        "/api/timeline/raw": "_serve_timeline_raw",
-        "/health": "_serve_health",
-    }
 
     def do_GET(self) -> None:
         """Handle GET requests."""
@@ -74,7 +138,7 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
-        handler_name = self._GET_ROUTES.get(path)
+        handler_name = _GET_ROUTES.get(path)
         if handler_name:
             getattr(self, handler_name)(query)
             return
@@ -264,117 +328,20 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
         ts = self.tmux_session
 
-        # --- POST routes ---
-        if method == "POST":
-            # Agent interaction
-            if path.startswith("/api/agents/") and path.endswith("/send"):
-                name = path.split("/")[3]
-                return api.send_to_agent(
-                    ts, name,
-                    text=body.get("text", ""),
-                    enter=body.get("enter", True),
-                )
+        # Try fixed routes first
+        fixed_handler = _FIXED_CONTROL_ROUTES.get((method, path))
+        if fixed_handler:
+            return fixed_handler(api, ts, body)
 
-            if path.startswith("/api/agents/") and path.endswith("/keys"):
-                name = path.split("/")[3]
-                return api.send_key_to_agent(ts, name, key=body.get("key", ""))
-
-            if path.startswith("/api/agents/") and path.endswith("/kill"):
-                name = path.split("/")[3]
-                return api.kill_agent(ts, name, cascade=body.get("cascade", True))
-
-            if path.startswith("/api/agents/") and path.endswith("/restart"):
-                name = path.split("/")[3]
-                return api.restart_agent(ts, name)
-
-            if path == "/api/agents/launch":
-                return api.launch_agent(
-                    ts,
-                    directory=body.get("directory", "."),
-                    name=body.get("name", ""),
-                    prompt=body.get("prompt"),
-                    permissions=body.get("permissions", "normal"),
-                )
-
-            if path.startswith("/api/agents/") and path.endswith("/sleep"):
-                name = path.split("/")[3]
-                return api.set_sleep(ts, name, asleep=body.get("asleep", True))
-
-            # Heartbeat control
-            if path.startswith("/api/agents/") and path.endswith("/heartbeat/pause"):
-                name = path.split("/")[3]
-                return api.pause_heartbeat(ts, name)
-
-            if path.startswith("/api/agents/") and path.endswith("/heartbeat/resume"):
-                name = path.split("/")[3]
-                return api.resume_heartbeat(ts, name)
-
-            # Bulk operations
-            if path == "/api/agents/transport":
-                return api.transport_all(ts)
-
-            if path == "/api/agents/cleanup":
-                return api.cleanup_agents(
-                    ts, include_done=body.get("include_done", False)
-                )
-
-            # System control
-            if path == "/api/daemon/monitor/restart":
-                return api.restart_monitor(ts)
-
-            if path == "/api/daemon/supervisor/start":
-                return api.start_supervisor(ts)
-
-            if path == "/api/daemon/supervisor/stop":
-                return api.stop_supervisor(ts)
-
-            if path == "/api/daemon/summarizer/toggle":
-                return api.toggle_summarizer(ts)
-
-        # --- PUT routes ---
-        elif method == "PUT":
-            if path.startswith("/api/agents/") and path.endswith("/standing-orders"):
-                name = path.split("/")[3]
-                return api.set_standing_orders(
-                    ts, name,
-                    text=body.get("text"),
-                    preset=body.get("preset"),
-                )
-
-            if path.startswith("/api/agents/") and path.endswith("/budget"):
-                name = path.split("/")[3]
-                return api.set_budget(ts, name, usd=float(body.get("usd", 0)))
-
-            if path.startswith("/api/agents/") and path.endswith("/value"):
-                name = path.split("/")[3]
-                return api.set_value(ts, name, value=int(body.get("value", 1000)))
-
-            if path.startswith("/api/agents/") and path.endswith("/annotation"):
-                name = path.split("/")[3]
-                return api.set_annotation(ts, name, text=body.get("text", ""))
-
-            if path.startswith("/api/agents/") and path.endswith("/heartbeat"):
-                name = path.split("/")[3]
-                return api.configure_heartbeat(
-                    ts, name,
-                    enabled=body.get("enabled", True),
-                    frequency=body.get("frequency"),
-                    instruction=body.get("instruction"),
-                )
-
-            if path.startswith("/api/agents/") and path.endswith("/time-context"):
-                name = path.split("/")[3]
-                return api.set_time_context(ts, name, enabled=body.get("enabled", True))
-
-            if path.startswith("/api/agents/") and path.endswith("/hook-detection"):
-                name = path.split("/")[3]
-                return api.set_hook_detection(ts, name, enabled=body.get("enabled", True))
-
-        # --- DELETE routes ---
-        elif method == "DELETE":
-            if path.startswith("/api/agents/") and path.endswith("/standing-orders"):
-                name = path.split("/")[3]
-                return api.clear_standing_orders(ts, name)
+        # Try agent routes: /api/agents/{name}/{action...}
+        if path.startswith("/api/agents/"):
+            parts = path.split("/")
+            if len(parts) >= 5:
+                name = parts[3]
+                action = "/".join(parts[4:])
+                agent_handler = _AGENT_CONTROL_ROUTES.get((method, action))
+                if agent_handler:
+                    return agent_handler(api, ts, name, body)
 
         raise ControlError(f"Unknown {method} endpoint: {path}", status=404)
 
