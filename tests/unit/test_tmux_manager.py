@@ -703,7 +703,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_session.windows.get.return_value = mock_window
         return manager, mock_pane
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_normal_text_with_enter(self, mock_sleep):
         """send_keys sends text then Enter separately with delay."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -717,7 +717,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.assert_any_call("", enter=True)
         assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_normal_text_without_enter(self, mock_sleep):
         """send_keys sends text only when enter=False."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -730,7 +730,7 @@ class TestTmuxManagerLibtmuxKeys:
         # No Enter call
         assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_empty_text_with_enter(self, mock_sleep):
         """send_keys with empty text and enter=True sends only Enter."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -743,7 +743,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.assert_called_once_with("", enter=True)
         assert _our_sleep_calls(mock_sleep) == []
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_empty_text_without_enter(self, mock_sleep):
         """send_keys with empty text and enter=False does nothing."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -755,7 +755,7 @@ class TestTmuxManagerLibtmuxKeys:
         mock_pane.send_keys.assert_not_called()
         assert _our_sleep_calls(mock_sleep) == []
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_bang_command_splits_exclamation(self, mock_sleep):
         """send_keys with ! prefix sends ! first then the rest (#139)."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -773,7 +773,7 @@ class TestTmuxManagerLibtmuxKeys:
         # Two sleeps: 0.15 after !, 0.1 after rest
         assert _our_sleep_calls(mock_sleep) == [call(0.15), call(0.1)]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_bang_only_not_split(self, mock_sleep):
         """send_keys with just '!' does NOT split (len == 1)."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -788,7 +788,7 @@ class TestTmuxManagerLibtmuxKeys:
         assert calls[1] == call("", enter=True)
         assert _our_sleep_calls(mock_sleep) == [call(0.1)]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_bang_command_without_enter(self, mock_sleep):
         """send_keys with ! prefix and enter=False sends ! then rest, no Enter."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -812,7 +812,7 @@ class TestTmuxManagerLibtmuxKeys:
 
         assert result is False
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_returns_false_on_exception(self, mock_sleep):
         """send_keys returns False when pane.send_keys raises LibTmuxException."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -823,7 +823,7 @@ class TestTmuxManagerLibtmuxKeys:
 
         assert result is False
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_sleep_order_for_normal_text(self, mock_sleep):
         """Verify sleep happens between text send and Enter send."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -841,7 +841,7 @@ class TestTmuxManagerLibtmuxKeys:
             ("send", ("",), {"enter": True}),
         ]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_sleep_order_for_bang_command(self, mock_sleep):
         """Verify sleep timing for ! commands: 0.15 after !, 0.1 after rest."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -862,7 +862,7 @@ class TestTmuxManagerLibtmuxKeys:
         ]
 
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_slash_command_splits_and_delays(self, mock_sleep):
         """send_keys with / prefix sends / first with longer delay (#307)."""
         manager, mock_pane = self._make_manager_with_pane()
@@ -881,7 +881,7 @@ class TestTmuxManagerLibtmuxKeys:
             ("send", ("",), {"enter": True}),
         ]
 
-    @patch("overcode.tmux_manager.time.sleep")
+    @patch("overcode.tmux_utils.time.sleep")
     def test_send_keys_slash_only_not_split(self, mock_sleep):
         """send_keys with just '/' does NOT split (len == 1)."""
         manager, mock_pane = self._make_manager_with_pane()
