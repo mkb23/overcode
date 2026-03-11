@@ -28,7 +28,7 @@ from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
 from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
-from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, TUIPreferences  # Activity signaling to daemon
+from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
     is_monitor_daemon_running,
@@ -345,6 +345,10 @@ class SupervisorTUI(
         self._heartbeat_log: list = []  # buffered (iso_timestamp, delta_ms, event) tuples
         self._heartbeat_csv_path = get_event_loop_timing_path(tmux_session)
 
+        # Status change diagnostic log — tracks every per-agent status transition
+        self._status_change_log: list = []
+        self._status_change_csv_path = get_status_changes_path(tmux_session)
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
@@ -445,6 +449,7 @@ class SupervisorTUI(
         self._heartbeat_last = time.monotonic()
         self.set_interval(0.1, self._record_heartbeat)
         self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
+        self.set_timer(5.0, lambda: self.set_interval(5, self._flush_status_changes))
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -783,6 +788,10 @@ class SupervisorTUI(
         widget = self._get_focused_widget()
         if widget is None:
             return
+        self._log_status_change(
+            widget.session.name, widget.detected_status, widget.detected_status,
+            source="focus_switch", focused=True,
+        )
         widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
@@ -866,10 +875,12 @@ class SupervisorTUI(
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
                 results = list(executor.map(fetch_status, sessions))
 
-            # Package results with session IDs
+            # Package results with session IDs and track raw statuses for diagnostics
             status_results = {}
+            raw_statuses = {}  # session_id -> raw status before enrichment
             for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
+                raw_statuses[session_id] = status_result[0]
 
             # Enrich non-focused agents with daemon state (#291)
             # The focused agent keeps its detect_status result for preview pane
@@ -877,8 +888,12 @@ class SupervisorTUI(
             # directly when available and fresh (< 5s old), which includes
             # heartbeat, oversight, and other enrichments already applied by
             # the daemon.
-            focused_widget = self._get_focused_widget()
-            focused_id = focused_widget.session.id if focused_widget else None
+            # IMPORTANT: reuse focused_session_id from capture phase (line 850)
+            # to avoid a race where focus changes between capture and enrichment,
+            # causing an agent to be captured with reduced lines but treated as
+            # focused (no daemon override) for enrichment.
+            focused_id = focused_session_id
+            status_sources = {sid: "detect" for sid in status_results}  # diagnostics
             daemon_state = get_monitor_daemon_state(self.tmux_session)
             if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
                 daemon_by_id = {s.session_id: s for s in daemon_state.sessions}
@@ -891,11 +906,14 @@ class SupervisorTUI(
                             status, activity, content = status_results[session_id]
                             if ds.running_from_heartbeat and status == STATUS_RUNNING:
                                 status = STATUS_RUNNING_HEARTBEAT
+                                status_sources[session_id] = "detect+heartbeat"
                             elif ds.waiting_for_heartbeat and status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
                                 status = STATUS_WAITING_HEARTBEAT
+                                status_sources[session_id] = "detect+wait_hb"
                             elif ds.current_status == STATUS_WAITING_OVERSIGHT:
                                 status = STATUS_WAITING_OVERSIGHT
                                 activity = "Waiting for oversight report"
+                                status_sources[session_id] = "detect+oversight"
                             status_results[session_id] = (status, activity, content)
                     else:
                         # Non-focused: use daemon's status directly
@@ -903,6 +921,7 @@ class SupervisorTUI(
                         if ds:
                             _, _, content = status_results[session_id]
                             status_results[session_id] = (ds.current_status, ds.current_activity, content)
+                            status_sources[session_id] = "daemon"
 
             # Extract subtree costs from daemon state (local agents)
             subtree_costs = {}
@@ -924,8 +943,17 @@ class SupervisorTUI(
                     summary.context or "",
                 )
 
+            # Build diagnostics: content_changed flags from polling detector
+            polling = getattr(self.detector, 'polling', self.detector)
+            content_changed_flags = dict(getattr(polling, '_content_changed', {}))
+
             # Update UI on main thread
-            self.call_from_thread(self._apply_status_results, status_results, fresh_sessions, ai_summaries, subtree_costs)
+            self.call_from_thread(
+                self._apply_status_results, status_results, fresh_sessions,
+                ai_summaries, subtree_costs,
+                _diag_raw=raw_statuses, _diag_sources=status_sources,
+                _diag_focused_id=focused_id, _diag_content_changed=content_changed_flags,
+            )
         finally:
             self._status_update_in_progress = False
 
@@ -1096,7 +1124,9 @@ class SupervisorTUI(
     # ── End sister integration ────────────────────────────────────────
 
     def _apply_status_results(self, status_results: dict, fresh_sessions: dict,
-                              ai_summaries: dict = None, subtree_costs: dict = None) -> None:
+                              ai_summaries: dict = None, subtree_costs: dict = None,
+                              _diag_raw: dict = None, _diag_sources: dict = None,
+                              _diag_focused_id: str = None, _diag_content_changed: dict = None) -> None:
         """Apply fast-path status results to widgets (runs on main thread)."""
         self._mark_event("apply_status_start")
         prefs_changed = False
@@ -1196,6 +1226,19 @@ class SupervisorTUI(
                 elif not stall.is_unvisited_stalled and session_id in self._bell_dismiss_timers:
                     # Bell cleared by other means — cancel pending timer
                     self._bell_dismiss_timers.pop(session_id, None)
+
+                # Diagnostic: log every color-changing status transition
+                old_status = widget.detected_status
+                if _diag_raw is not None and old_status != status:
+                    raw = _diag_raw.get(session_id, "?")
+                    source = (_diag_sources or {}).get(session_id, "?")
+                    is_focused = session_id == _diag_focused_id
+                    cc = (_diag_content_changed or {}).get(session_id, False)
+                    self._log_status_change(
+                        widget.session.name, old_status, status,
+                        source=f"{source}(raw={raw})", focused=is_focused,
+                        content_changed=cc,
+                    )
 
                 # Pass None for claude_stats/git_diff — those come from the slow path
                 widget.apply_status_no_refresh(status, activity, content, None, None)
@@ -2605,6 +2648,32 @@ class SupervisorTUI(
         except OSError:
             pass  # Best effort
 
+    def _log_status_change(self, agent_name: str, old_status: str, new_status: str,
+                           source: str, focused: bool, content_changed: bool = False) -> None:
+        """Record a status change event for diagnostics."""
+        iso_ts = datetime.now().isoformat(timespec="milliseconds")
+        self._status_change_log.append(
+            (iso_ts, agent_name, old_status, new_status, source, "Y" if focused else "N", "Y" if content_changed else "N")
+        )
+
+    def _flush_status_changes(self) -> None:
+        """Write buffered status change data to CSV."""
+        if not self._status_change_log:
+            return
+        buf = self._status_change_log
+        self._status_change_log = []
+        try:
+            path = self._status_change_csv_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_header = not path.exists()
+            with open(path, "a") as f:
+                if write_header:
+                    f.write("timestamp,agent,old_status,new_status,source,focused,content_changed\n")
+                for row in buf:
+                    f.write(",".join(row) + "\n")
+        except OSError:
+            pass
+
     # ── End heartbeat probe ──────────────────────────────────────────
 
     def on_unmount(self) -> None:
@@ -2613,8 +2682,9 @@ class SupervisorTUI(
         # Stop the summarizer (release API client resources)
         self._summarizer.stop()
 
-        # Flush remaining heartbeat data
+        # Flush remaining diagnostic data
         self._flush_heartbeat()
+        self._flush_status_changes()
 
         # Ensure mouse tracking is disabled
         sys.stdout.write('\033[?1000l')  # Disable mouse tracking
