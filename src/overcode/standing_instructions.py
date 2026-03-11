@@ -136,13 +136,17 @@ DEFAULT_PRESETS: Dict[str, InstructionPreset] = {
 }
 
 
+def _ensure_presets_dir() -> None:
+    """Ensure the presets directory exists."""
+    PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
 def _ensure_presets_file() -> None:
     """Create presets.json with defaults if it doesn't exist."""
     if PRESETS_PATH.exists():
         return
 
-    # Ensure directory exists
-    PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_presets_dir()
 
     # Write default presets
     presets_data = {
@@ -187,7 +191,7 @@ def save_presets(presets: Dict[str, InstructionPreset]) -> None:
     Args:
         presets: Dict mapping preset names to InstructionPreset objects
     """
-    PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_presets_dir()
 
     presets_data = {
         name: asdict(preset)
