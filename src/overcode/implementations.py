@@ -232,32 +232,8 @@ class RealTmux:
 
     def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
-        import subprocess
-        from .tmux_utils import tmux_window_target
-
-        bare_session = f"bare-{session}-{window}"
-
-        subprocess.run(
-            ["tmux", "kill-session", "-t", bare_session],
-            capture_output=True,
-        )
-
-        result = subprocess.run(
-            ["tmux", "new-session", "-d", "-s", bare_session, "-t", session],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            return
-
-        for cmd in [
-            ["tmux", "set", "-t", bare_session, "status", "off"],
-            ["tmux", "set", "-t", bare_session, "mouse", "off"],
-            ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
-            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
-        ]:
-            subprocess.run(cmd, capture_output=True)
-
-        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
+        from .tmux_utils import attach_bare
+        attach_bare(session, window)
 
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""

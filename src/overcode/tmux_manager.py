@@ -167,46 +167,9 @@ class TmuxManager:
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def _attach_bare(self, window: str):
-        """Create a linked session with stripped chrome and attach to it.
-
-        Uses a grouped session (new-session -t) so options are isolated
-        from the main session. Sets destroy-unattached so the linked
-        session is cleaned up when the terminal closes.
-        """
-        import subprocess
-        from .tmux_utils import tmux_window_target
-
-        bare_session = f"bare-{self.session_name}-{window}"
-
-        # Kill any stale bare session with the same name
-        subprocess.run(
-            ["tmux", "kill-session", "-t", bare_session],
-            capture_output=True,
-        )
-
-        # Create linked session sharing the same window group
-        result = subprocess.run(
-            ["tmux", "new-session", "-d", "-s", bare_session, "-t", self.session_name],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            print(f"Failed to create bare session: {result.stderr.decode().strip()}")
-            return
-
-        # Configure the linked session (isolated from main session)
-        # Note: destroy-unattached must be deferred via a hook, because setting
-        # it on a detached session causes tmux to destroy it immediately.
-        for cmd in [
-            ["tmux", "set", "-t", bare_session, "status", "off"],
-            ["tmux", "set", "-t", bare_session, "mouse", "off"],
-            ["tmux", "set-hook", "-t", bare_session, "client-attached",
-             "set destroy-unattached on"],
-            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
-        ]:
-            subprocess.run(cmd, capture_output=True)
-
-        # Attach (replaces process)
-        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
+        """Create a linked session with stripped chrome and attach to it."""
+        from .tmux_utils import attach_bare
+        attach_bare(self.session_name, window, socket_path=self.socket)
 
     def list_windows(self) -> List[Dict[str, Any]]:
         """List all windows in the session.
