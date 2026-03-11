@@ -56,6 +56,7 @@ def setup_logging(
 
     # Console handler
     if console:
+        use_rich = False
         if rich_console:
             try:
                 from rich.logging import RichHandler
@@ -66,19 +67,16 @@ def setup_logging(
                     markup=True,
                     rich_tracebacks=True,
                 )
-                console_handler.setLevel(level)
-                root_logger.addHandler(console_handler)
+                use_rich = True
             except ImportError:
-                # Fall back to standard console handler
-                console_handler = logging.StreamHandler(sys.stderr)
-                console_handler.setLevel(level)
-                console_handler.setFormatter(logging.Formatter(fmt, date_fmt))
-                root_logger.addHandler(console_handler)
-        else:
+                pass
+
+        if not use_rich:
             console_handler = logging.StreamHandler(sys.stderr)
-            console_handler.setLevel(level)
             console_handler.setFormatter(logging.Formatter(fmt, date_fmt))
-            root_logger.addHandler(console_handler)
+
+        console_handler.setLevel(level)
+        root_logger.addHandler(console_handler)
 
     # File handler
     if log_file:
