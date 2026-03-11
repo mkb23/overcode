@@ -168,7 +168,14 @@ class PollingStatusDetector:
             return result
 
         # Phase 5: Content changing = active work (#214, #216)
+        # But if a user prompt is visible, the agent is waiting — content
+        # changes from TUI refreshes or status-bar updates shouldn't override
+        # prompt detection.
         if content_changed:
+            prompt_result = self._detect_user_prompt(last_lines, content)
+            if prompt_result is not None:
+                self._last_detect_phase[session.id] = "P5+P12:prompt_override"
+                return prompt_result
             activity = self._extract_last_activity(last_lines)
             self._last_detect_phase[session.id] = "P5:content_changed"
             return STATUS_RUNNING, f"Active: {activity}", content
