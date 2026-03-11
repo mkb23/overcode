@@ -446,13 +446,28 @@ def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *
     return 0
 
 
+def strip_ansi_clean(line: str) -> str:
+    """Strip ANSI codes and whitespace from a line.
+
+    This is the minimal line-cleaning operation used throughout the codebase.
+    For display-ready cleaning (prefix removal, truncation), use clean_line().
+
+    Args:
+        line: Line potentially containing ANSI escape sequences
+
+    Returns:
+        Line with ANSI codes and surrounding whitespace removed
+    """
+    return strip_ansi(line).strip()
+
+
 def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80) -> str:
     """Clean a line for display.
 
-    Removes prefixes, strips whitespace, and truncates.
+    Strips ANSI codes, removes prefixes, strips whitespace, and truncates.
 
     Args:
-        line: Line to clean
+        line: Line to clean (may contain ANSI codes)
         patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
         max_length: Maximum length before truncation
 
@@ -460,7 +475,7 @@ def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80)
         Cleaned line
     """
     patterns = patterns or DEFAULT_PATTERNS
-    cleaned = line.strip()
+    cleaned = strip_ansi_clean(line)
 
     # Remove common prefixes
     for prefix in patterns.line_prefixes:
