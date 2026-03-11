@@ -449,7 +449,8 @@ class SupervisorTUI(
         self._heartbeat_last = time.monotonic()
         self.set_interval(0.1, self._record_heartbeat)
         self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
-        self.set_timer(5.0, lambda: self.set_interval(5, self._flush_status_changes))
+        if self._prefs.status_change_logging:
+            self.set_timer(5.0, lambda: self.set_interval(5, self._flush_status_changes))
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -788,10 +789,11 @@ class SupervisorTUI(
         widget = self._get_focused_widget()
         if widget is None:
             return
-        self._log_status_change(
-            widget.session.name, widget.detected_status, widget.detected_status,
-            source="focus_switch", focused=True,
-        )
+        if self._prefs.status_change_logging:
+            self._log_status_change(
+                widget.session.name, widget.detected_status, widget.detected_status,
+                source="focus_switch", focused=True,
+            )
         widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
@@ -875,12 +877,14 @@ class SupervisorTUI(
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
                 results = list(executor.map(fetch_status, sessions))
 
-            # Package results with session IDs and track raw statuses for diagnostics
+            # Package results with session IDs
             status_results = {}
-            raw_statuses = {}  # session_id -> raw status before enrichment
+            raw_statuses = {}
+            _diag = self._prefs.status_change_logging
             for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
-                raw_statuses[session_id] = status_result[0]
+                if _diag:
+                    raw_statuses[session_id] = status_result[0]
 
             # Enrich non-focused agents with daemon state (#291)
             # The focused agent keeps its detect_status result for preview pane
@@ -893,7 +897,7 @@ class SupervisorTUI(
             # causing an agent to be captured with reduced lines but treated as
             # focused (no daemon override) for enrichment.
             focused_id = focused_session_id
-            status_sources = {sid: "detect" for sid in status_results}  # diagnostics
+            status_sources = {sid: "detect" for sid in status_results} if _diag else {}
             daemon_state = get_monitor_daemon_state(self.tmux_session)
             if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
                 daemon_by_id = {s.session_id: s for s in daemon_state.sessions}
@@ -943,18 +947,21 @@ class SupervisorTUI(
                     summary.context or "",
                 )
 
-            # Build diagnostics: content_changed flags and detect phases from polling detector
-            polling = getattr(self.detector, 'polling', self.detector)
-            content_changed_flags = dict(getattr(polling, '_content_changed', {}))
-            detect_phases = dict(getattr(polling, '_last_detect_phase', {}))
+            # Build diagnostics (only when status_change_logging is on)
+            diag_kwargs = {}
+            if _diag:
+                polling = getattr(self.detector, 'polling', self.detector)
+                diag_kwargs = dict(
+                    _diag_raw=raw_statuses, _diag_sources=status_sources,
+                    _diag_focused_id=focused_id,
+                    _diag_content_changed=dict(getattr(polling, '_content_changed', {})),
+                    _diag_phases=dict(getattr(polling, '_last_detect_phase', {})),
+                )
 
             # Update UI on main thread
             self.call_from_thread(
                 self._apply_status_results, status_results, fresh_sessions,
-                ai_summaries, subtree_costs,
-                _diag_raw=raw_statuses, _diag_sources=status_sources,
-                _diag_focused_id=focused_id, _diag_content_changed=content_changed_flags,
-                _diag_phases=detect_phases,
+                ai_summaries, subtree_costs, **diag_kwargs,
             )
         finally:
             self._status_update_in_progress = False
@@ -1231,18 +1238,19 @@ class SupervisorTUI(
                     self._bell_dismiss_timers.pop(session_id, None)
 
                 # Diagnostic: log every color-changing status transition
-                old_status = widget.detected_status
-                if _diag_raw is not None and old_status != status:
-                    raw = _diag_raw.get(session_id, "?")
-                    source = (_diag_sources or {}).get(session_id, "?")
-                    phase = (_diag_phases or {}).get(session_id, "?")
-                    is_focused = session_id == _diag_focused_id
-                    cc = (_diag_content_changed or {}).get(session_id, False)
-                    self._log_status_change(
-                        widget.session.name, old_status, status,
-                        source=f"{source}(raw={raw}|{phase})", focused=is_focused,
-                        content_changed=cc,
-                    )
+                if self._prefs.status_change_logging:
+                    old_status = widget.detected_status
+                    if _diag_raw is not None and old_status != status:
+                        raw = _diag_raw.get(session_id, "?")
+                        source = (_diag_sources or {}).get(session_id, "?")
+                        phase = (_diag_phases or {}).get(session_id, "?")
+                        is_focused = session_id == _diag_focused_id
+                        cc = (_diag_content_changed or {}).get(session_id, False)
+                        self._log_status_change(
+                            widget.session.name, old_status, status,
+                            source=f"{source}(raw={raw}|{phase})", focused=is_focused,
+                            content_changed=cc,
+                        )
 
                 # Pass None for claude_stats/git_diff — those come from the slow path
                 widget.apply_status_no_refresh(status, activity, content, None, None)
@@ -2688,7 +2696,8 @@ class SupervisorTUI(
 
         # Flush remaining diagnostic data
         self._flush_heartbeat()
-        self._flush_status_changes()
+        if self._prefs.status_change_logging:
+            self._flush_status_changes()
 
         # Ensure mouse tracking is disabled
         sys.stdout.write('\033[?1000l')  # Disable mouse tracking
