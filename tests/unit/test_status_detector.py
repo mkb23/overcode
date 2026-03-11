@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import StatusDetector
 from overcode.interfaces import MockTmux
-from overcode.status_constants import STATUS_BUSY_SLEEPING
+from overcode.status_constants import STATUS_BUSY_SLEEPING, STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL, STATUS_TERMINATED, STATUS_ERROR
 from tests.fixtures import (
     create_mock_session,
     create_mock_tmux_with_content,
@@ -58,7 +58,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Waiting for user input" in activity
 
     def test_detects_permission_prompt(self):
@@ -69,7 +69,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Permission:" in activity
 
     def test_detects_running_with_spinner(self):
@@ -80,7 +80,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
 
     def test_detects_running_with_tool_execution(self):
         """Tool execution indicators mean Claude is working"""
@@ -90,7 +90,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
         assert "Reading" in activity
 
     def test_detects_thinking(self):
@@ -101,7 +101,7 @@ class TestStatusDetectorBasics:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
 
 
 class TestStatusDetectorStalledDetection:
@@ -115,7 +115,7 @@ class TestStatusDetectorStalledDetection:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Stalled" in activity or "no response" in activity.lower()
 
 
@@ -138,7 +138,7 @@ class TestStatusDetectorContentChange:
         mock_tmux.sessions["agents"][1] = "Different content now"
         status2, activity2, _ = detector.detect_status(session)
 
-        assert status2 == StatusDetector.STATUS_RUNNING
+        assert status2 == STATUS_RUNNING
         assert "Active:" in activity2
 
     def test_no_running_when_content_unchanged(self):
@@ -164,7 +164,7 @@ No spinners or tools running
         status, _, _ = detector.detect_status(session)
 
         # Should be waiting_user since no standing instructions
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
     def test_status_bar_changes_dont_trigger_running(self):
         """Status bar updates (token counts, time) should not trigger 'running' detection.
@@ -204,7 +204,7 @@ More text here
 
         # Should NOT be running - only the status bar changed
         # Should be waiting_user due to the empty prompt
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Active:" not in activity
 
 
@@ -230,7 +230,7 @@ class TestStatusDetectorNoInstructions:
         detector.detect_status(session)
         status, _, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
     def test_returns_running_when_idle_with_orders(self):
         """Sessions WITH standing instructions get green status when idle"""
@@ -254,7 +254,7 @@ class TestStatusDetectorNoInstructions:
         detector.detect_status(session)
         status, _, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
 
 
 class TestApprovalDetection:
@@ -279,7 +279,7 @@ class TestApprovalDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Idle plan-mode session should be waiting_user, got {status}: {activity}"
         )
 
@@ -293,7 +293,7 @@ class TestApprovalDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_APPROVAL, (
+        assert status == STATUS_WAITING_APPROVAL, (
             f"Genuine plan approval should be waiting_approval, got {status}: {activity}"
         )
 
@@ -322,7 +322,7 @@ class TestStatusDetectorAutocomplete:
         status, activity, _ = detector.detect_status(session)
 
         # Should be waiting_user - agent is idle with autocomplete showing
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Autocomplete suggestion should be waiting_user, got {status}. "
             f"Activity: {activity}"
         )
@@ -343,7 +343,7 @@ class TestStatusDetectorEdgeCases:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Empty pane" in activity
 
     def test_handles_missing_pane(self):
@@ -357,7 +357,7 @@ class TestStatusDetectorEdgeCases:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_TERMINATED
+        assert status == STATUS_TERMINATED
         assert "Window no longer exists" in activity
 
     def test_handles_whitespace_only_content(self):
@@ -368,7 +368,7 @@ class TestStatusDetectorEdgeCases:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
     def test_ignores_ui_chrome_status_bar(self):
         """UI chrome like '⏵⏵ bypass permissions on' should not trigger permission detection.
@@ -395,7 +395,7 @@ class TestStatusDetectorEdgeCases:
         status, activity, _ = detector.detect_status(session)
 
         # Should be waiting_user (empty prompt), NOT permission prompt
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Permission:" not in activity
 
 
@@ -466,7 +466,7 @@ class TestStatusDetectorNewPermissionFormat:
         # Second call - content unchanged
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
@@ -484,7 +484,7 @@ class TestStatusDetectorNewPermissionFormat:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
@@ -502,7 +502,7 @@ class TestStatusDetectorNewPermissionFormat:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Expected waiting_user but got {status}. "
             f"Activity was: {activity}"
         )
@@ -550,7 +550,7 @@ class TestStatusDetectorSpawnFailure:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Spawn failure should be waiting_user, got {status}"
         )
         assert "spawn failed" in activity.lower(), (
@@ -570,7 +570,7 @@ class TestStatusDetectorSpawnFailure:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Spawn failure should be waiting_user, got {status}"
         )
         assert "spawn failed" in activity.lower(), (
@@ -587,7 +587,7 @@ class TestStatusDetectorSpawnFailure:
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Spawn failure should be waiting_user, got {status}"
         )
         assert "spawn failed" in activity.lower(), (
@@ -677,7 +677,7 @@ class TestBusySleepingDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING, (
+        assert status == STATUS_RUNNING, (
             f"Regular bash should be running, got {status}: {activity}"
         )
 
@@ -707,7 +707,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"API overloaded error should be STATUS_ERROR, got {status}: {activity}"
         )
         assert "API Error" in activity
@@ -721,7 +721,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"Timeout error should be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -734,7 +734,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"Final error should be STATUS_ERROR, got {status}: {activity}"
         )
         assert "API Error" in activity
@@ -748,7 +748,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"Connection error should be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -761,7 +761,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"ECONNRESET should be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -774,7 +774,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"Rate limit banner should be STATUS_ERROR, got {status}: {activity}"
         )
         assert "hit your limit" in activity.lower()
@@ -788,7 +788,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_ERROR, (
+        assert status == STATUS_ERROR, (
             f"Auth error should be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -802,7 +802,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status != StatusDetector.STATUS_ERROR, (
+        assert status != STATUS_ERROR, (
             f"Narrative error text should NOT be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -820,7 +820,7 @@ class TestErrorDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status != StatusDetector.STATUS_ERROR, (
+        assert status != STATUS_ERROR, (
             f"Discussion of error patterns should NOT be STATUS_ERROR, got {status}: {activity}"
         )
 
@@ -848,7 +848,7 @@ mike@shirka overcode-main %
 
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_TERMINATED, (
+        assert status == STATUS_TERMINATED, (
             f"Shell prompt after exit should be TERMINATED, got {status}: {activity}"
         )
 
@@ -868,6 +868,6 @@ mike@shirka overcode-main %
         mock_tmux.sessions["agents"][1] = different_content
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING, (
+        assert status == STATUS_RUNNING, (
             f"Content changing should return RUNNING even with error text, got {status}: {activity}"
         )
