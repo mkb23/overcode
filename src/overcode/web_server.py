@@ -519,8 +519,8 @@ def _log_to_file(session: str, message: str) -> None:
         with open(log_path, "a") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{timestamp}] [start_web_server] {message}\n")
-    except Exception:
-        pass
+    except OSError:
+        sys.stderr.write(f"[web] Failed to write log: {message}\n")
 
 
 def start_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:
@@ -605,7 +605,7 @@ def stop_web_server(session: str) -> Tuple[bool, str]:
         try:
             pid_path.unlink(missing_ok=True)
             port_path.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         return False, "Not running"
 
@@ -614,7 +614,7 @@ def stop_web_server(session: str) -> Tuple[bool, str]:
     # Clean up port file
     try:
         port_path.unlink(missing_ok=True)
-    except Exception:
+    except OSError:
         pass
 
     if stopped:
