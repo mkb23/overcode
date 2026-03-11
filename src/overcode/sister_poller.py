@@ -34,14 +34,15 @@ class SisterState:
     total_cost: float = 0.0
 
 
-def _reset_sister_state(sister: SisterState, error: str) -> None:
-    """Reset a sister's state on error."""
+def _reset_sister_state(sister: SisterState, error: str) -> List[Session]:
+    """Reset a sister's state on error, keeping stale sessions visible."""
     sister.reachable = False
     sister.last_error = error
-    sister.sessions = []
+    # Keep last-known sessions so agents remain visible (stale)
+    # but zero out live counters since we can't verify them.
     sister.green_agents = 0
-    sister.total_agents = 0
-    sister.total_cost = 0.0
+    sister.total_agents = len(sister.sessions)
+    return list(sister.sessions)
 
 
 class SisterPoller:
@@ -161,8 +162,7 @@ class SisterPoller:
             with urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except (URLError, socket.timeout, json.JSONDecodeError, OSError) as e:
-            _reset_sister_state(sister, str(e))
-            return []
+            return _reset_sister_state(sister, str(e))
 
         sister.reachable = True
         sister.last_fetch = datetime.now().isoformat()

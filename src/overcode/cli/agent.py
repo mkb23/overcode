@@ -921,6 +921,9 @@ def show(
     stats_only: Annotated[
         bool, typer.Option("--stats-only", "-s", help="Show only stats, no pane output")
     ] = False,
+    color: Annotated[
+        bool, typer.Option("--color", "-c", help="Preserve ANSI colors in pane output")
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Show agent details and recent output."""
@@ -1027,12 +1030,23 @@ def show(
     # Pane output section (skip if --stats-only or --lines 0)
     if not stats_only and lines > 0:
         if pane_content_raw:
-            clean_content = strip_ansi(pane_content_raw)
-            content_lines = clean_content.rstrip().split('\n')
-            display_lines = content_lines[-lines:]
-            print(f"=== {name} (last {lines} lines) ===")
-            print('\n'.join(display_lines))
-            print(f"=== end {name} ===")
+            if color:
+                from rich.console import Console
+                from rich.text import Text
+                console = Console()
+                raw_lines = pane_content_raw.rstrip().split('\n')
+                display_lines = raw_lines[-lines:]
+                console.print(f"=== {name} (last {lines} lines) ===")
+                for line in display_lines:
+                    console.print(Text.from_ansi(line))
+                console.print(f"=== end {name} ===")
+            else:
+                clean_content = strip_ansi(pane_content_raw)
+                content_lines = clean_content.rstrip().split('\n')
+                display_lines = content_lines[-lines:]
+                print(f"=== {name} (last {lines} lines) ===")
+                print('\n'.join(display_lines))
+                print(f"=== end {name} ===")
         else:
             # Fallback for terminated sessions
             output = launcher.get_session_output(name, lines=lines)

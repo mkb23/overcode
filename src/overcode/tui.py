@@ -1796,6 +1796,8 @@ class SupervisorTUI(
 
         # Remote agent — dispatch through sister controller
         if session and getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             result = self._sister_controller.send_instruction(
                 session.source_url, session.source_api_key,
                 session.name, text=message.text,
@@ -1838,6 +1840,8 @@ class SupervisorTUI(
             return
 
         if getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             if message.text:
                 result = self._sister_controller.set_standing_orders(
                     session.source_url, session.source_api_key,
@@ -1870,6 +1874,8 @@ class SupervisorTUI(
             return
 
         if getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             result = self._sister_controller.set_value(
                 session.source_url, session.source_api_key,
                 session.name, value=message.value,
@@ -1893,6 +1899,8 @@ class SupervisorTUI(
             return
 
         if getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             result = self._sister_controller.set_budget(
                 session.source_url, session.source_api_key,
                 session.name, usd=message.budget_usd,
@@ -1922,6 +1930,8 @@ class SupervisorTUI(
             return
 
         if getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             result = self._sister_controller.set_annotation(
                 session.source_url, session.source_api_key,
                 session.name, text=message.annotation,
@@ -1949,6 +1959,8 @@ class SupervisorTUI(
             return
 
         if getattr(session, 'is_remote', False):
+            if self._guard_remote(session):
+                return
             result = self._sister_controller.configure_heartbeat(
                 session.source_url, session.source_api_key,
                 session.name,
@@ -2103,6 +2115,12 @@ class SupervisorTUI(
         if not sister_config:
             self.notify(f"Sister '{sister_name}' not found", severity="error")
             return
+
+        # Check sister is reachable before launching
+        for state in self._sister_poller.get_sister_states():
+            if state.name == sister_name and not state.reachable:
+                self.notify(f"Sister '{sister_name}' is unreachable", severity="warning")
+                return
 
         result = self._sister_controller.launch_agent(
             sister_url=sister_config["url"],

@@ -349,6 +349,12 @@ class DaemonStatusBar(Static):
                         f"{sister.name}({sister.green_agents}/{sister.total_agents})",
                         style="green",
                     )
+                elif sister.sessions:
+                    # Stale: unreachable but still showing last-known agents
+                    content.append(
+                        f"{sister.name}({sister.total_agents}⏸)",
+                        style="yellow",
+                    )
                 else:
                     content.append(f"{sister.name}(--)", style="dim red")
 
