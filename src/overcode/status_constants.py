@@ -73,25 +73,41 @@ PRESENCE_IDLE = 2       # Was PRESENCE_INACTIVE
 PRESENCE_ACTIVE = 3
 PRESENCE_TUI_ACTIVE = 4
 
-
-# =============================================================================
-# Status to Emoji Mappings
-# =============================================================================
-
-STATUS_EMOJIS = {
-    STATUS_RUNNING: "🟢",
-    STATUS_WAITING_USER: "🔴",
-    STATUS_TERMINATED: "⚫",  # Black circle - Claude exited
-    STATUS_ASLEEP: "💤",  # Sleeping/snoozed - human marked as paused
-    STATUS_RUNNING_HEARTBEAT: "💚",  # Green heart for heartbeat-triggered (#171)
-    STATUS_WAITING_APPROVAL: "🟠",  # Orange for approval waiting (#22)
-    STATUS_WAITING_HEARTBEAT: "💛",  # Yellow heart - waiting but heartbeat will auto-resume
-    STATUS_ERROR: "🟣",  # Purple for errors (#22)
-    STATUS_HEARTBEAT_START: "💚",  # Heartbeat commencement marker (timeline only)
-    STATUS_DONE: "☑️",  # Child agent completed delegated work (#244)
-    STATUS_WAITING_OVERSIGHT: "👁️",  # Waiting for oversight report
-    STATUS_BUSY_SLEEPING: "🟡",  # Running but sleeping (#289)
+PRESENCE_STATE_NAMES = {
+    PRESENCE_ASLEEP: "asleep",
+    PRESENCE_LOCKED: "locked",
+    PRESENCE_IDLE: "idle",
+    PRESENCE_ACTIVE: "active",
+    PRESENCE_TUI_ACTIVE: "tui_active",
 }
+
+
+# =============================================================================
+# Status to Symbol+Color (single source of truth for emoji + color)
+# =============================================================================
+
+STATUS_SYMBOLS = {
+    STATUS_RUNNING: ("🟢", "green"),
+    STATUS_WAITING_USER: ("🔴", "red"),
+    STATUS_TERMINATED: ("⚫", "dim"),
+    STATUS_ASLEEP: ("💤", "dim"),  # Sleeping/snoozed
+    STATUS_RUNNING_HEARTBEAT: ("💚", "green"),  # Heartbeat-triggered (#171)
+    STATUS_WAITING_APPROVAL: ("🟠", "orange1"),  # Approval waiting (#22)
+    STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
+    STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
+    STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
+    STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
+    STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
+    STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289)
+}
+
+
+# =============================================================================
+# Derived Emoji and Color Mappings
+# =============================================================================
+
+STATUS_EMOJIS = {k: v[0] for k, v in STATUS_SYMBOLS.items()}
+STATUS_COLORS = {k: v[1] for k, v in STATUS_SYMBOLS.items()}
 
 
 # ASCII fallbacks for all emoji used in the TUI (#315)
@@ -170,55 +186,28 @@ def emoji_or_ascii(char: str, emoji_free: bool) -> str:
     return char
 
 
+# Permissiveness mode → emoji mapping (shared by TUI, CLI, and web API)
+PERMISSIVENESS_EMOJIS = {
+    "bypass": "🔥",
+    "permissive": "🏃",
+    "normal": "👮",
+}
+
+
+def get_permissiveness_emoji(mode: str, emoji_free: bool = False) -> str:
+    """Get the emoji for a permissiveness mode."""
+    return emoji_or_ascii(PERMISSIVENESS_EMOJIS.get(mode, "👮"), emoji_free)
+
+
 def get_status_emoji(status: str, emoji_free: bool = False) -> str:
     """Get emoji for an agent status."""
     e = STATUS_EMOJIS.get(status, "⚪")
     return emoji_or_ascii(e, emoji_free)
 
 
-# =============================================================================
-# Status to Color Mappings (for Rich/Textual styling)
-# =============================================================================
-
-STATUS_COLORS = {
-    STATUS_RUNNING: "green",
-    STATUS_WAITING_USER: "red",
-    STATUS_TERMINATED: "dim",  # Grey for terminated
-    STATUS_ASLEEP: "dim",  # Grey for sleeping
-    STATUS_RUNNING_HEARTBEAT: "green",  # Green for heartbeat-triggered (#171)
-    STATUS_WAITING_APPROVAL: "orange1",  # Orange for approval waiting (#22)
-    STATUS_WAITING_HEARTBEAT: "yellow",  # Yellow - waiting but heartbeat will auto-resume
-    STATUS_ERROR: "magenta",  # Purple for errors (#22)
-    STATUS_HEARTBEAT_START: "green",  # Heartbeat commencement (timeline only)
-    STATUS_DONE: "dim",  # Done child agent (#244)
-    STATUS_WAITING_OVERSIGHT: "yellow",  # Waiting for oversight report
-    STATUS_BUSY_SLEEPING: "yellow",  # Running but sleeping (#289)
-}
-
-
 def get_status_color(status: str) -> str:
     """Get color name for an agent status."""
     return STATUS_COLORS.get(status, "dim")
-
-
-# =============================================================================
-# Status to Symbol+Color (combined for display)
-# =============================================================================
-
-STATUS_SYMBOLS = {
-    STATUS_RUNNING: ("🟢", "green"),
-    STATUS_WAITING_USER: ("🔴", "red"),
-    STATUS_TERMINATED: ("⚫", "dim"),
-    STATUS_ASLEEP: ("💤", "dim"),  # Sleeping/snoozed
-    STATUS_RUNNING_HEARTBEAT: ("💚", "green"),  # Heartbeat-triggered (#171)
-    STATUS_WAITING_APPROVAL: ("🟠", "orange1"),  # Approval waiting (#22)
-    STATUS_WAITING_HEARTBEAT: ("💛", "yellow"),  # Waiting but heartbeat will auto-resume
-    STATUS_ERROR: ("🟣", "magenta"),  # Error state (#22)
-    STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
-    STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
-    STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
-    STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289)
-}
 
 
 def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
@@ -309,36 +298,45 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
 # =============================================================================
 
 
+GREEN_STATUSES = frozenset({STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START})
+WAITING_STATUSES = frozenset({STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT})
+USER_BLOCKED_STATUSES = frozenset({STATUS_WAITING_USER})
+ASLEEP_STATUSES = frozenset({STATUS_ASLEEP})
+BUSY_SLEEPING_STATUSES = frozenset({STATUS_BUSY_SLEEPING})
+DONE_STATUSES = frozenset({STATUS_DONE})
+WAITING_OVERSIGHT_STATUSES = frozenset({STATUS_WAITING_OVERSIGHT})
+
+
 def is_green_status(status: str) -> bool:
     """Check if a status is considered 'green' (actively working)."""
-    return status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START)
+    return status in GREEN_STATUSES
 
 
 def is_waiting_status(status: str) -> bool:
     """Check if a status is a waiting state."""
-    return status in (STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT)
+    return status in WAITING_STATUSES
 
 
 def is_user_blocked(status: str) -> bool:
     """Check if status indicates user intervention is required."""
-    return status == STATUS_WAITING_USER
+    return status in USER_BLOCKED_STATUSES
 
 
 def is_asleep(status: str) -> bool:
     """Check if status indicates agent is asleep (paused by human)."""
-    return status == STATUS_ASLEEP
+    return status in ASLEEP_STATUSES
 
 
 def is_busy_sleeping(status: str) -> bool:
     """Check if status indicates agent is sleeping via a bash sleep command (#289)."""
-    return status == STATUS_BUSY_SLEEPING
+    return status in BUSY_SLEEPING_STATUSES
 
 
 def is_done(status: str) -> bool:
     """Check if status indicates child agent completed its work (#244)."""
-    return status == STATUS_DONE
+    return status in DONE_STATUSES
 
 
 def is_waiting_oversight(status: str) -> bool:
     """Check if status indicates child is waiting for oversight report."""
-    return status == STATUS_WAITING_OVERSIGHT
+    return status in WAITING_OVERSIGHT_STATUSES

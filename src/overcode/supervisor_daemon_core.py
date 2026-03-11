@@ -143,44 +143,6 @@ def calculate_daemon_claude_run_seconds(
         return previous_total
 
 
-def should_launch_daemon_claude(
-    non_green_sessions: List[dict],
-    daemon_claude_running: bool,
-) -> tuple:
-    """Determine if daemon claude should be launched.
-
-    Pure function - no side effects, fully testable.
-
-    Args:
-        non_green_sessions: List of non-green session dicts
-        daemon_claude_running: Whether daemon claude is already running
-
-    Returns:
-        Tuple of (should_launch: bool, reason: str)
-    """
-    if not non_green_sessions:
-        return False, "no_sessions"
-
-    if daemon_claude_running:
-        return False, "already_running"
-
-    # Check if all are waiting for user with no instructions
-    all_waiting_user = all(
-        s.get("current_status") == "waiting_user"
-        for s in non_green_sessions
-    )
-    any_has_instructions = any(
-        s.get("standing_instructions")
-        for s in non_green_sessions
-    )
-
-    if all_waiting_user and not any_has_instructions:
-        return False, "waiting_user_no_instructions"
-
-    reason = "with_instructions" if any_has_instructions else "non_user_blocked"
-    return True, reason
-
-
 @dataclass
 class SupervisorAction:
     """Result of supervisor decision tree."""

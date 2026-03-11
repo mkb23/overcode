@@ -12,6 +12,7 @@ Configuration hierarchy:
 TODO: Make INTERVAL_FAST/SLOW/IDLE configurable via config.yaml
 """
 
+import dataclasses
 import os
 
 # =============================================================================
@@ -370,8 +371,13 @@ def ensure_session_dir(session: str) -> Path:
 # =============================================================================
 
 def get_default_standing_instructions() -> str:
-    """Get default standing instructions from config."""
-    return get_user_config().default_standing_instructions
+    """Get default standing instructions from config.
+
+    Delegates to config.get_default_standing_instructions() — kept here
+    for backwards compatibility with existing imports.
+    """
+    from .config import get_default_standing_instructions as _get
+    return _get()
 
 
 def get_default_tmux_session() -> str:
@@ -411,6 +417,11 @@ def get_tui_preferences_path(session: str) -> Path:
 @dataclass
 class TUIPreferences:
     """TUI preferences that persist between launches."""
+
+    # Fields excluded from persistence — always use dataclass default (#319)
+    _SKIP_PERSIST = frozenset({"show_done"})
+    # Load defaults that differ from dataclass defaults (migration compat)
+    _LOAD_DEFAULTS = {"view_mode": "tree", "baseline_minutes": 0}
 
     summary_detail: str = "full"  # low, med, full
     detail_lines: int = 5  # 5, 10, 20, 50
@@ -454,34 +465,28 @@ class TUIPreferences:
                 if not isinstance(data, dict):
                     return cls()
 
-                # Migration: map "custom" detail level to "full"
-                summary_detail = data.get("summary_detail", "low")
-                if summary_detail == "custom":
-                    summary_detail = "full"
+                kwargs = {}
+                for fld in dataclasses.fields(cls):
+                    if fld.name in cls._SKIP_PERSIST:
+                        continue
+                    # Use migration default if specified, else dataclass default
+                    if fld.name in cls._LOAD_DEFAULTS:
+                        default = cls._LOAD_DEFAULTS[fld.name]
+                    elif fld.default is not dataclasses.MISSING:
+                        default = fld.default
+                    else:
+                        default = fld.default_factory()
+                    value = data.get(fld.name, default)
+                    # Convert JSON lists back to sets
+                    if fld.default_factory is set:
+                        value = set(value) if value else set()
+                    kwargs[fld.name] = value
 
-                return cls(
-                    summary_detail=summary_detail,
-                    detail_lines=data.get("detail_lines", 5),
-                    timeline_visible=data.get("timeline_visible", True),
-                    daemon_panel_visible=data.get("daemon_panel_visible", False),
-                    view_mode=data.get("view_mode", "tree"),
-                    tmux_sync=data.get("tmux_sync", False),
-                    show_terminated=data.get("show_terminated", False),
-                    hide_asleep=data.get("hide_asleep", False),
-                    show_done=False,  # Never persist — always start hidden (#319)
-                    sort_mode=data.get("sort_mode", "alphabetical"),
-                    summary_content_mode=data.get("summary_content_mode", "ai_short"),
-                    baseline_minutes=data.get("baseline_minutes", 0),
-                    monochrome=data.get("monochrome", False),
-                    emoji_free=data.get("emoji_free", False),
-                    show_cost=data.get("show_cost", False),
-                    visited_stalled_agents=set(data.get("visited_stalled_agents", [])),
-                    column_config=data.get("column_config", {}),
-                    show_column_headers=data.get("show_column_headers", False),
-                    timeline_hours=data.get("timeline_hours", 3.0),
-                    notifications=data.get("notifications", "off"),
-                    disabled_sisters=set(data.get("disabled_sisters", [])),
-                )
+                # Migration: map "custom" detail level to "full"
+                if kwargs.get("summary_detail") == "custom":
+                    kwargs["summary_detail"] = "full"
+
+                return cls(**kwargs)
         except (json.JSONDecodeError, IOError):
             return cls()
 
@@ -492,29 +497,15 @@ class TUIPreferences:
 
         try:
             prefs_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {}
+            for fld in dataclasses.fields(self):
+                if fld.name in self._SKIP_PERSIST:
+                    continue
+                value = getattr(self, fld.name)
+                if isinstance(value, set):
+                    value = sorted(value)
+                data[fld.name] = value
             with open(prefs_path, 'w') as f:
-                json.dump({
-                    "summary_detail": self.summary_detail,
-                    "detail_lines": self.detail_lines,
-                    "timeline_visible": self.timeline_visible,
-                    "daemon_panel_visible": self.daemon_panel_visible,
-                    "view_mode": self.view_mode,
-                    "tmux_sync": self.tmux_sync,
-                    "show_terminated": self.show_terminated,
-                    "hide_asleep": self.hide_asleep,
-                    # show_done intentionally not persisted (#319)
-                    "sort_mode": self.sort_mode,
-                    "summary_content_mode": self.summary_content_mode,
-                    "baseline_minutes": self.baseline_minutes,
-                    "monochrome": self.monochrome,
-                    "emoji_free": self.emoji_free,
-                    "show_cost": self.show_cost,
-                    "visited_stalled_agents": list(self.visited_stalled_agents),
-                    "column_config": self.column_config,
-                    "show_column_headers": self.show_column_headers,
-                    "timeline_hours": self.timeline_hours,
-                    "notifications": self.notifications,
-                    "disabled_sisters": sorted(self.disabled_sisters),
-                }, f, indent=2)
+                json.dump(data, f, indent=2)
         except (IOError, OSError):
             pass  # Best effort

@@ -17,6 +17,30 @@ from typing import List, Optional
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
+# Shell prompt patterns — shared between PollingStatusDetector and HookStatusDetector
+# These detect when Claude Code has exited and the user is back at a shell prompt.
+SHELL_PROMPT_PATTERNS = [
+    re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
+    re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%
+    re.compile(r'^[~\/].*[%$]\s*$'),         # /path/to/dir $ or ~/dir %
+]
+
+
+def is_shell_prompt(line: str, patterns=None) -> bool:
+    """Check if a line matches a shell prompt pattern.
+
+    Args:
+        line: Line to check (should be stripped of whitespace)
+        patterns: Optional list of compiled regex patterns (defaults to SHELL_PROMPT_PATTERNS)
+
+    Returns:
+        True if the line looks like a shell prompt
+    """
+    for pattern in (patterns or SHELL_PROMPT_PATTERNS):
+        if pattern.search(line):
+            return True
+    return False
+
 
 def strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences from text.
@@ -422,13 +446,28 @@ def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *
     return 0
 
 
+def strip_ansi_clean(line: str) -> str:
+    """Strip ANSI codes and whitespace from a line.
+
+    This is the minimal line-cleaning operation used throughout the codebase.
+    For display-ready cleaning (prefix removal, truncation), use clean_line().
+
+    Args:
+        line: Line potentially containing ANSI escape sequences
+
+    Returns:
+        Line with ANSI codes and surrounding whitespace removed
+    """
+    return strip_ansi(line).strip()
+
+
 def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80) -> str:
     """Clean a line for display.
 
-    Removes prefixes, strips whitespace, and truncates.
+    Strips ANSI codes, removes prefixes, strips whitespace, and truncates.
 
     Args:
-        line: Line to clean
+        line: Line to clean (may contain ANSI codes)
         patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
         max_length: Maximum length before truncation
 
@@ -436,7 +475,7 @@ def clean_line(line: str, patterns: StatusPatterns = None, max_length: int = 80)
         Cleaned line
     """
     patterns = patterns or DEFAULT_PATTERNS
-    cleaned = line.strip()
+    cleaned = strip_ansi_clean(line)
 
     # Remove common prefixes
     for prefix in patterns.line_prefixes:

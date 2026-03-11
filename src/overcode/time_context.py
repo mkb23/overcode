@@ -50,8 +50,9 @@ def format_presence(presence_state: Optional[int]) -> str:
     Returns:
         One of: 'asleep', 'locked', 'idle', 'active', 'tui_active', 'unknown'
     """
-    mapping = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
-    return mapping.get(presence_state, "unknown")
+    from .status_constants import PRESENCE_STATE_NAMES
+
+    return PRESENCE_STATE_NAMES.get(presence_state, "unknown")
 
 
 def format_office_hours(now: datetime, start: int, end: int) -> str:

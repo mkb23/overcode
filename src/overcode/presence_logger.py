@@ -184,13 +184,9 @@ def classify_state(locked: bool,
 
 def state_to_name(state: int) -> str:
     """Convert state number to human-readable name."""
-    return {
-        0: "asleep",
-        1: "locked",
-        2: "idle",
-        3: "active",
-        4: "tui_active",
-    }.get(state, "unknown")
+    from .status_constants import PRESENCE_STATE_NAMES
+
+    return PRESENCE_STATE_NAMES.get(state, "unknown")
 
 
 # ---- main logger class ------------------------------------------------------

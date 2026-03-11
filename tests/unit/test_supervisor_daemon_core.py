@@ -10,7 +10,6 @@ from overcode.supervisor_daemon_core import (
     build_daemon_claude_context,
     filter_non_green_sessions,
     calculate_daemon_claude_run_seconds,
-    should_launch_daemon_claude,
     parse_intervention_log_line,
     check_daemon_output_completion,
     check_daemon_tool_activity,
@@ -223,74 +222,6 @@ class TestCalculateDaemonClaudeRunSeconds:
             previous_total=0.0,
         )
         assert result == 60.0
-
-
-class TestShouldLaunchDaemonClaude:
-    """Tests for should_launch_daemon_claude()."""
-
-    def test_no_sessions_returns_false(self):
-        """Should not launch when no sessions need attention."""
-        should_launch, reason = should_launch_daemon_claude([], False)
-
-        assert should_launch is False
-        assert reason == "no_sessions"
-
-    def test_already_running_returns_false(self):
-        """Should not launch when daemon claude already running."""
-        sessions = [{"name": "agent-1", "current_status": "waiting_user"}]
-
-        should_launch, reason = should_launch_daemon_claude(sessions, True)
-
-        assert should_launch is False
-        assert reason == "already_running"
-
-    def test_all_waiting_user_no_instructions(self):
-        """Should not launch when all waiting for user with no instructions."""
-        sessions = [
-            {"name": "agent-1", "current_status": "waiting_user", "standing_instructions": None},
-            {"name": "agent-2", "current_status": "waiting_user", "standing_instructions": ""},
-        ]
-
-        should_launch, reason = should_launch_daemon_claude(sessions, False)
-
-        assert should_launch is False
-        assert reason == "waiting_user_no_instructions"
-
-    def test_launches_with_instructions(self):
-        """Should launch when sessions have standing instructions."""
-        sessions = [
-            {"name": "agent-1", "current_status": "waiting_user",
-             "standing_instructions": "Auto-approve tests"},
-        ]
-
-        should_launch, reason = should_launch_daemon_claude(sessions, False)
-
-        assert should_launch is True
-        assert reason == "with_instructions"
-
-    def test_launches_for_non_user_blocked(self):
-        """Should launch for non-waiting_user states without instructions."""
-        sessions = [
-            {"name": "agent-1", "current_status": "error", "standing_instructions": None},
-        ]
-
-        should_launch, reason = should_launch_daemon_claude(sessions, False)
-
-        assert should_launch is True
-        assert reason == "non_user_blocked"
-
-    def test_mixed_statuses_with_instructions(self):
-        """Should launch when any session has instructions."""
-        sessions = [
-            {"name": "agent-1", "current_status": "waiting_user", "standing_instructions": None},
-            {"name": "agent-2", "current_status": "waiting_user",
-             "standing_instructions": "Auto-approve"},
-        ]
-
-        should_launch, reason = should_launch_daemon_claude(sessions, False)
-
-        assert should_launch is True
-        assert reason == "with_instructions"
 
 
 class TestParseInterventionLogLine:

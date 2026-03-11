@@ -256,19 +256,12 @@ class SessionSummary(Static, can_focus=True):
         median_work = self.claude_stats.median_work_time if self.claude_stats else 0.0
 
         # Status styling
-        from ..status_constants import emoji_or_ascii
+        from ..status_constants import get_permissiveness_emoji
         ef = self.emoji_free
         bg = " on #0d2137"
         status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
         status_color = f"bold {base_color}{bg}"
-
-        # Permissiveness mode emoji
-        if s.permissiveness_mode == "bypass":
-            perm_emoji = emoji_or_ascii("🔥", ef)
-        elif s.permissiveness_mode == "permissive":
-            perm_emoji = emoji_or_ascii("🏃", ef)
-        else:
-            perm_emoji = emoji_or_ascii("👮", ef)
+        perm_emoji = get_permissiveness_emoji(s.permissiveness_mode, ef)
 
         # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":

@@ -13,25 +13,27 @@ if TYPE_CHECKING:
     from ..tui_widgets import DaemonPanel
 
 
+def _log_to_daemon_panel(tui, message: str) -> None:
+    """Log a message to the daemon panel if it exists."""
+    from ..tui_widgets import DaemonPanel
+    try:
+        panel = tui.query_one("#daemon-panel", DaemonPanel)
+        panel.log_lines.append(message)
+    except NoMatches:
+        pass
+
+
 class DaemonActionsMixin:
     """Mixin providing daemon control actions for SupervisorTUI."""
 
     def action_toggle_daemon(self) -> None:
         """Toggle daemon panel visibility (like timeline)."""
         from ..tui_widgets import DaemonPanel
-        try:
-            daemon_panel = self.query_one("#daemon-panel", DaemonPanel)
-            daemon_panel.display = not daemon_panel.display
-            if daemon_panel.display:
-                # Force immediate refresh when becoming visible
-                daemon_panel._refresh_logs()
-            # Save preference
-            self._prefs.daemon_panel_visible = daemon_panel.display
-            self._save_prefs()
-            state = "shown" if daemon_panel.display else "hidden"
-            self.notify(f"Daemon panel {state}", severity="information")
-        except NoMatches:
-            pass
+        from .view import _toggle_widget
+        _toggle_widget(
+            self, "daemon-panel", DaemonPanel, "daemon_panel_visible", "Daemon panel",
+            on_show=lambda w: w._refresh_logs(),
+        )
 
     def action_supervisor_start(self) -> None:
         """Start the Supervisor Daemon (requires double-press confirmation)."""
@@ -45,7 +47,6 @@ class DaemonActionsMixin:
         """Actually start the Supervisor Daemon."""
         from ..monitor_daemon import is_monitor_daemon_running
         from ..supervisor_daemon import is_supervisor_daemon_running
-        from ..tui_widgets import DaemonPanel
         import time
 
         # Ensure Monitor Daemon is running first (Supervisor depends on it)
@@ -57,11 +58,7 @@ class DaemonActionsMixin:
             self.notify("Supervisor Daemon already running", severity="warning")
             return
 
-        try:
-            panel = self.query_one("#daemon-panel", DaemonPanel)
-            panel.log_lines.append(">>> Starting Supervisor Daemon...")
-        except NoMatches:
-            pass
+        _log_to_daemon_panel(self, ">>> Starting Supervisor Daemon...")
 
         from ..pid_utils import spawn_daemon
         pid = spawn_daemon([
@@ -85,7 +82,6 @@ class DaemonActionsMixin:
     def _do_supervisor_stop(self) -> None:
         """Actually stop the Supervisor Daemon."""
         from ..supervisor_daemon import is_supervisor_daemon_running, stop_supervisor_daemon
-        from ..tui_widgets import DaemonPanel
 
         if not is_supervisor_daemon_running(self.tmux_session):
             self.notify("Supervisor Daemon not running", severity="warning")
@@ -93,11 +89,7 @@ class DaemonActionsMixin:
 
         if stop_supervisor_daemon(self.tmux_session):
             self.notify("Stopped Supervisor Daemon", severity="information")
-            try:
-                panel = self.query_one("#daemon-panel", DaemonPanel)
-                panel.log_lines.append(">>> Supervisor Daemon stopped")
-            except NoMatches:
-                pass
+            _log_to_daemon_panel(self, ">>> Supervisor Daemon stopped")
         else:
             self.notify("Failed to stop Supervisor Daemon", severity="error")
 
@@ -147,13 +139,8 @@ class DaemonActionsMixin:
     def action_monitor_restart(self) -> None:
         """Restart the Monitor Daemon (handles metrics/state tracking)."""
         from ..monitor_daemon import is_monitor_daemon_running, stop_monitor_daemon
-        from ..tui_widgets import DaemonPanel
 
-        try:
-            panel = self.query_one("#daemon-panel", DaemonPanel)
-            panel.log_lines.append(">>> Restarting Monitor Daemon...")
-        except NoMatches:
-            pass
+        _log_to_daemon_panel(self, ">>> Restarting Monitor Daemon...")
 
         # Stop if running
         if is_monitor_daemon_running(self.tmux_session):
@@ -168,7 +155,6 @@ class DaemonActionsMixin:
     def _start_monitor_daemon(self) -> None:
         """Start the monitor daemon (called by action_monitor_restart)."""
         from ..pid_utils import spawn_daemon
-        from ..tui_widgets import DaemonPanel
 
         pid = spawn_daemon([
             sys.executable, "-m", "overcode.monitor_daemon",
@@ -176,11 +162,7 @@ class DaemonActionsMixin:
         ])
         if pid:
             self.notify("Monitor Daemon restarted", severity="information")
-            try:
-                panel = self.query_one("#daemon-panel", DaemonPanel)
-                panel.log_lines.append(">>> Monitor Daemon restarted")
-            except NoMatches:
-                pass
+            _log_to_daemon_panel(self, ">>> Monitor Daemon restarted")
             self.set_timer(1.0, self.update_daemon_status)
         else:
             self.notify("Failed to restart Monitor Daemon", severity="error")
@@ -188,24 +170,15 @@ class DaemonActionsMixin:
     def action_toggle_web_server(self) -> None:
         """Toggle the web analytics dashboard server on/off."""
         from ..web_server import toggle_web_server, get_web_server_url
-        from ..tui_widgets import DaemonPanel
 
         is_running, msg = toggle_web_server(self.tmux_session)
 
         if is_running:
             url = get_web_server_url(self.tmux_session)
             self.notify(f"Web server: {url}", severity="information")
-            try:
-                panel = self.query_one("#daemon-panel", DaemonPanel)
-                panel.log_lines.append(f">>> Web server started: {url}")
-            except NoMatches:
-                pass
+            _log_to_daemon_panel(self, f">>> Web server started: {url}")
         else:
             self.notify(f"Web server: {msg}", severity="information")
-            try:
-                panel = self.query_one("#daemon-panel", DaemonPanel)
-                panel.log_lines.append(f">>> Web server: {msg}")
-            except NoMatches:
-                pass
+            _log_to_daemon_panel(self, f">>> Web server: {msg}")
 
         self.update_daemon_status()

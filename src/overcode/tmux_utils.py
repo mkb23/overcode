@@ -5,11 +5,108 @@ This module provides shared tmux functions used by multiple components
 (launcher, monitor daemon) to avoid code duplication.
 """
 
+import logging
 import os
 import subprocess
 import tempfile
 import time
-from typing import Optional
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def _build_tmux_cmd() -> List[str]:
+    """Build base tmux command, respecting OVERCODE_TMUX_SOCKET env var."""
+    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
+    return ["tmux", "-L", socket] if socket else ["tmux"]
+
+
+def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
+    """Send keys to a tmux pane with special-case handling for ! and / prefixes.
+
+    For Claude Code: text and Enter must be sent as SEPARATE commands
+    with a small delay, otherwise Claude Code doesn't process the Enter.
+
+    Args:
+        pane: A libtmux Pane object
+        keys: Text to send
+        enter: Whether to press Enter after sending text
+    """
+    if keys:
+        # Special handling for ! commands (#139)
+        # Claude Code requires ! to be sent separately to trigger mode switch
+        # to bash mode before receiving the rest of the command
+        if keys.startswith('!') and len(keys) > 1:
+            # Send ! first
+            pane.send_keys('!', enter=False)
+            # Wait for mode switch to process
+            time.sleep(0.15)
+            # Send the rest (without the !)
+            rest = keys[1:]
+            if rest:
+                pane.send_keys(rest, enter=False)
+                time.sleep(0.1)
+        elif keys.startswith('/') and len(keys) > 1:
+            # Special handling for slash commands (#307)
+            # Claude Code shows a command menu when / is typed;
+            # send / separately so the menu has time to appear
+            # before the rest of the command and Enter arrive.
+            pane.send_keys('/', enter=False)
+            time.sleep(0.3)
+            rest = keys[1:]
+            if rest:
+                pane.send_keys(rest, enter=False)
+                time.sleep(0.15)
+        else:
+            pane.send_keys(keys, enter=False)
+            # Small delay for Claude Code to process text
+            time.sleep(0.1)
+
+    if enter:
+        pane.send_keys('', enter=True)
+
+
+def attach_bare(session_name: str, window_name: str, socket_path: str = None) -> None:
+    """Attach to a tmux window in bare mode (no chrome).
+
+    Creates a linked session sharing the same window group, strips the
+    status bar and mouse, and selects the target window before attaching.
+    Uses a client-attached hook to defer destroy-unattached (setting it
+    on a detached session would kill it immediately).
+    """
+    bare_session = f"bare-{session_name}-{window_name}"
+
+    tmux_cmd = ["tmux"]
+    if socket_path:
+        tmux_cmd = ["tmux", "-L", socket_path]
+
+    # Kill any stale bare session with the same name
+    subprocess.run(
+        tmux_cmd + ["kill-session", "-t", bare_session],
+        capture_output=True,
+    )
+
+    # Create linked session sharing the same window group
+    result = subprocess.run(
+        tmux_cmd + ["new-session", "-d", "-s", bare_session, "-t", session_name],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return
+
+    # Configure the linked session (isolated from main session)
+    target = tmux_window_target(bare_session, window_name)
+    for cmd in [
+        tmux_cmd + ["set", "-t", bare_session, "status", "off"],
+        tmux_cmd + ["set", "-t", bare_session, "mouse", "off"],
+        tmux_cmd + ["set-hook", "-t", bare_session, "client-attached",
+         "set destroy-unattached on"],
+        tmux_cmd + ["select-window", "-t", target],
+    ]:
+        subprocess.run(cmd, capture_output=True)
+
+    # Attach (replaces process)
+    os.execlp(tmux_cmd[0], *tmux_cmd, "attach-session", "-t", bare_session)
 
 
 def tmux_window_target(session: str, window) -> str:
@@ -49,9 +146,7 @@ def send_text_to_tmux_window(
     if startup_delay > 0:
         time.sleep(startup_delay)
 
-    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
-    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
-    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+    tmux_cmd = _build_tmux_cmd()
 
     # For large prompts, use tmux load-buffer/paste-buffer
     # to avoid escaping issues and line length limits
@@ -77,7 +172,7 @@ def send_text_to_tmux_window(
                 'paste-buffer', '-t', target
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
-            print(f"Failed to send text batch to tmux: {e}")
+            logger.warning("Failed to send text batch to tmux: %s", e)
             return False
         finally:
             if temp_path:
@@ -96,7 +191,7 @@ def send_text_to_tmux_window(
                 '', 'Enter'
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
-            print(f"Failed to send Enter to tmux: {e}")
+            logger.warning("Failed to send Enter to tmux: %s", e)
             return False
 
     return True
@@ -117,9 +212,7 @@ def get_tmux_pane_content(
     Returns:
         Captured content as string, or None on error
     """
-    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
-    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
-    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+    tmux_cmd = _build_tmux_cmd()
 
     try:
         result = subprocess.run(

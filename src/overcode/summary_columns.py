@@ -10,11 +10,12 @@ Plain-text rendering for CLI: each column can optionally provide a
 ``label`` and ``render_plain`` function for use by ``overcode show``.
 """
 
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
-from .status_constants import ALL_STATUSES
+from .status_constants import ALL_STATUSES, get_permissiveness_emoji
 from .status_patterns import extract_sleep_duration
 from .tui_helpers import (
     format_cost,
@@ -249,7 +250,6 @@ def _make_simple_render_plain(
 def render_status_symbol(ctx: ColumnContext) -> ColumnOutput:
     # Most status emojis are 2 cells wide; some (☑️) are 1 cell.
     # Pad narrow symbols with an extra space so columns stay aligned.
-    import unicodedata
     symbol = ctx.status_symbol
     cell_width = sum(
         2 if unicodedata.east_asian_width(c) in ('W', 'F') else (0 if c == '\ufe0f' else 1)
@@ -352,15 +352,11 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
     """Context window usage (📚XX%). Always visible."""
-    if ctx.claude_stats is not None:
-        if ctx.claude_stats.current_context_tokens > 0:
-            max_context = ctx.claude_stats.max_context_tokens
-            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
-        else:
-            return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
-    else:
-        return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+    if ctx.claude_stats is not None and ctx.claude_stats.current_context_tokens > 0:
+        max_context = ctx.claude_stats.max_context_tokens
+        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
+        return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+    return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
 def render_cost(ctx: ColumnContext) -> ColumnOutput:
@@ -569,28 +565,32 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
         return [(f" {hg} --:--", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
+def _compute_next_heartbeat(session) -> Optional[str]:
+    """Compute next heartbeat time as HH:MM string, or None."""
+    if session.last_heartbeat_time:
+        try:
+            last_hb = datetime.fromisoformat(session.last_heartbeat_time)
+            next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
+            return next_due.strftime("%H:%M")
+        except (ValueError, TypeError):
+            pass
+    if session.start_time:
+        try:
+            start = datetime.fromisoformat(session.start_time)
+            next_due = start + timedelta(seconds=session.heartbeat_frequency_seconds)
+            return next_due.strftime("%H:%M")
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
 def render_heartbeat(ctx: ColumnContext) -> ColumnOutput:
     s = ctx.session
     hb = ctx.e("💓")
     if s.heartbeat_enabled and not s.heartbeat_paused:
         freq_str = format_duration(s.heartbeat_frequency_seconds)
         segments = [(f" {hb}{freq_str:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
-        # Next heartbeat time in 24hr format
-        next_time_str = None
-        if s.last_heartbeat_time:
-            try:
-                last_hb = datetime.fromisoformat(s.last_heartbeat_time)
-                next_due = last_hb + timedelta(seconds=s.heartbeat_frequency_seconds)
-                next_time_str = next_due.strftime("%H:%M")
-            except (ValueError, TypeError):
-                pass
-        if next_time_str is None and s.start_time:
-            try:
-                start = datetime.fromisoformat(s.start_time)
-                next_due = start + timedelta(seconds=s.heartbeat_frequency_seconds)
-                next_time_str = next_due.strftime("%H:%M")
-            except (ValueError, TypeError):
-                pass
+        next_time_str = _compute_next_heartbeat(s)
         if next_time_str:
             segments.append((f" @{next_time_str}", ctx.mono(f"bold cyan{ctx.bg}", "bold")))
         else:
@@ -728,8 +728,10 @@ render_branch_plain = _make_simple_render_plain("branch")
 
 
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
-    perm_map = {"bypass": "🔥 bypass", "permissive": "🏃 permissive", "normal": "👮 normal"}
-    mode = perm_map.get(ctx.session.permissiveness_mode, ctx.session.permissiveness_mode)
+    from .status_constants import PERMISSIVENESS_EMOJIS
+    perm = ctx.session.permissiveness_mode
+    emoji = PERMISSIVENESS_EMOJIS.get(perm, "👮")
+    mode = f"{emoji} {perm}"
     tc = "🕐 enabled" if ctx.session.time_context_enabled else "disabled"
     return f"{mode}  Time ctx: {tc}"
 
@@ -748,21 +750,7 @@ def render_heartbeat_plain(ctx: ColumnContext) -> Optional[str]:
     freq_str = format_duration(s.heartbeat_frequency_seconds)
     if s.heartbeat_paused:
         return f"💓 {freq_str} (paused)"
-    next_time_str = None
-    if s.last_heartbeat_time:
-        try:
-            last_hb = datetime.fromisoformat(s.last_heartbeat_time)
-            next_due = last_hb + timedelta(seconds=s.heartbeat_frequency_seconds)
-            next_time_str = next_due.strftime("%H:%M")
-        except (ValueError, TypeError):
-            pass
-    if next_time_str is None and s.start_time:
-        try:
-            start = datetime.fromisoformat(s.start_time)
-            next_due = start + timedelta(seconds=s.heartbeat_frequency_seconds)
-            next_time_str = next_due.strftime("%H:%M")
-        except (ValueError, TypeError):
-            pass
+    next_time_str = _compute_next_heartbeat(s)
     time_part = f" @{next_time_str}" if next_time_str else ""
     return f"💓 {freq_str}{time_part}"
 
@@ -923,21 +911,13 @@ def build_cli_context(
     subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
-    from .status_constants import emoji_or_ascii
     status_symbol, _ = get_status_symbol(status, emoji_free=emoji_free)
     uptime = calculate_uptime(session.start_time) if session.start_time else "-"
     green_time, non_green_time, sleep_time = get_current_state_times(
         stats, is_asleep=session.is_asleep
     )
     median_work = claude_stats.median_work_time if claude_stats else 0.0
-
-    # Permissiveness mode emoji
-    if session.permissiveness_mode == "bypass":
-        perm_emoji = emoji_or_ascii("🔥", emoji_free)
-    elif session.permissiveness_mode == "permissive":
-        perm_emoji = emoji_or_ascii("🏃", emoji_free)
-    else:
-        perm_emoji = emoji_or_ascii("👮", emoji_free)
+    perm_emoji = get_permissiveness_emoji(session.permissiveness_mode, emoji_free)
 
     # Parse state_since for time-in-state
     status_changed_at = None

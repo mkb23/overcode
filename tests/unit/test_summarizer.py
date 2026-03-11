@@ -6,7 +6,9 @@ Tests the two-prompt summarizer system that generates:
 - Context summaries: wider goal (~60 chars)
 """
 
+import json
 import os
+import subprocess
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
@@ -390,7 +392,7 @@ class TestSummarizerComponentMethods:
     def test_capture_pane_returns_none_on_error(self):
         """Should return None when capture fails."""
         mock_tmux = Mock()
-        mock_tmux.capture_pane.side_effect = Exception("tmux error")
+        mock_tmux.capture_pane.side_effect = subprocess.SubprocessError("tmux error")
 
         component = SummarizerComponent(
             tmux_session="test",
@@ -546,9 +548,9 @@ class TestSummarizerClientMethods:
         assert result is None
 
     @patch('overcode.summarizer_client.urllib.request.urlopen')
-    def test_summarize_handles_generic_exception(self, mock_urlopen):
-        """summarize should handle generic exceptions."""
-        mock_urlopen.side_effect = Exception("Unknown error")
+    def test_summarize_handles_json_decode_error(self, mock_urlopen):
+        """summarize should handle JSON decode errors."""
+        mock_urlopen.side_effect = json.JSONDecodeError("bad json", "", 0)
 
         client = SummarizerClient.__new__(SummarizerClient)
         client.api_url = "http://test"

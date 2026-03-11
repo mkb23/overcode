@@ -54,6 +54,14 @@ class ClaudeConfigEditor:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(settings, indent=2) + "\n")
 
+    def _modify_settings(self, mutator_fn):
+        """Load settings, deepcopy, apply mutator_fn, save. Returns mutator's result."""
+        settings = self.load()
+        settings = copy.deepcopy(settings)
+        result = mutator_fn(settings)
+        self.save(settings)
+        return result
+
     def has_hook(self, event: str, command: str) -> bool:
         """Check if a command hook exists for the given event."""
         settings = self.load()
@@ -68,25 +76,20 @@ class ClaudeConfigEditor:
 
         Returns True if the hook was added, False if it already exists.
         """
-        settings = self.load()
-        # Check existing
-        for entry in settings.get("hooks", {}).get(event, []):
-            for hook in entry.get("hooks", []):
-                if hook.get("command") == command:
-                    return False
+        if self.has_hook(event, command):
+            return False
 
-        updated = copy.deepcopy(settings)
-        if "hooks" not in updated:
-            updated["hooks"] = {}
-        if event not in updated["hooks"]:
-            updated["hooks"][event] = []
+        def _add(settings):
+            if "hooks" not in settings:
+                settings["hooks"] = {}
+            if event not in settings["hooks"]:
+                settings["hooks"][event] = []
+            settings["hooks"][event].append({
+                "matcher": matcher,
+                "hooks": [{"type": "command", "command": command}],
+            })
 
-        updated["hooks"][event].append({
-            "matcher": matcher,
-            "hooks": [{"type": "command", "command": command}],
-        })
-
-        self.save(updated)
+        self._modify_settings(_add)
         return True
 
     def remove_hook(self, event: str, command: str) -> bool:
@@ -112,18 +115,14 @@ class ClaudeConfigEditor:
         if index_to_remove is None:
             return False
 
-        updated = copy.deepcopy(settings)
-        del updated["hooks"][event][index_to_remove]
+        def _remove(settings):
+            del settings["hooks"][event][index_to_remove]
+            if not settings["hooks"][event]:
+                del settings["hooks"][event]
+            if not settings["hooks"]:
+                del settings["hooks"]
 
-        # Clean up empty event array
-        if not updated["hooks"][event]:
-            del updated["hooks"][event]
-
-        # Clean up empty hooks dict
-        if not updated["hooks"]:
-            del updated["hooks"]
-
-        self.save(updated)
+        self._modify_settings(_remove)
         return True
 
     def list_hooks_matching(self, command_prefix: str) -> list[tuple[str, str]]:
@@ -147,13 +146,14 @@ class ClaudeConfigEditor:
         if tool_pattern in allow_list:
             return False
 
-        updated = copy.deepcopy(settings)
-        if "permissions" not in updated:
-            updated["permissions"] = {}
-        if "allow" not in updated["permissions"]:
-            updated["permissions"]["allow"] = []
-        updated["permissions"]["allow"].append(tool_pattern)
-        self.save(updated)
+        def _add(settings):
+            if "permissions" not in settings:
+                settings["permissions"] = {}
+            if "allow" not in settings["permissions"]:
+                settings["permissions"]["allow"] = []
+            settings["permissions"]["allow"].append(tool_pattern)
+
+        self._modify_settings(_add)
         return True
 
     def remove_permission(self, tool_pattern: str) -> bool:
@@ -163,18 +163,14 @@ class ClaudeConfigEditor:
         if tool_pattern not in allow_list:
             return False
 
-        updated = copy.deepcopy(settings)
-        updated["permissions"]["allow"].remove(tool_pattern)
+        def _remove(settings):
+            settings["permissions"]["allow"].remove(tool_pattern)
+            if not settings["permissions"]["allow"]:
+                del settings["permissions"]["allow"]
+            if not settings["permissions"]:
+                del settings["permissions"]
 
-        # Clean up empty allow list
-        if not updated["permissions"]["allow"]:
-            del updated["permissions"]["allow"]
-
-        # Clean up empty permissions dict
-        if not updated["permissions"]:
-            del updated["permissions"]
-
-        self.save(updated)
+        self._modify_settings(_remove)
         return True
 
     def list_permissions_matching(self, prefix: str) -> list[str]:

@@ -5,6 +5,7 @@ Displays a scrollable fullscreen view of an agent's terminal output
 with up to 500 lines of scrollback history.
 """
 
+import logging
 from typing import List, Optional
 
 from textual.binding import Binding
@@ -15,6 +16,8 @@ from textual import events
 from rich.text import Text
 from rich.panel import Panel
 from rich import box
+
+logger = logging.getLogger(__name__)
 
 
 class FullscreenPreview(ScrollableContainer, can_focus=True):
@@ -86,8 +89,8 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         try:
             content_widget = self.query_one("#fullscreen-content", Static)
             content_widget.update(self._build_content())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to update fullscreen content: %s", e)
         self.add_class("visible")
         self.scroll_end(animate=False)
         self.focus()
@@ -110,8 +113,8 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
         if not restored and self._previous_focus is not None:
             try:
                 self._previous_focus.focus()
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to restore focus: %s", e)
         self._previous_focus = None
         self._previous_focus_session_id = None
 

@@ -17,6 +17,26 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 
+def _read_pid_file(pid_file: Path) -> Optional[int]:
+    """Read a PID file and validate the process is alive.
+
+    Args:
+        pid_file: Path to the PID file
+
+    Returns:
+        The PID if file exists and process is alive, None otherwise.
+    """
+    if not pid_file.exists():
+        return None
+
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, OSError, ProcessLookupError):
+        return None
+
+
 def is_process_running(pid_file: Path) -> bool:
     """Check if a process is running based on its PID file.
 
@@ -26,17 +46,7 @@ def is_process_running(pid_file: Path) -> bool:
     Returns:
         True if PID file exists and process is alive, False otherwise.
     """
-    if not pid_file.exists():
-        return False
-
-    try:
-        pid = int(pid_file.read_text().strip())
-        # Check if process exists by sending signal 0
-        os.kill(pid, 0)
-        return True
-    except (ValueError, OSError, ProcessLookupError):
-        # PID file invalid or process not running
-        return False
+    return _read_pid_file(pid_file) is not None
 
 
 def get_process_pid(pid_file: Path) -> Optional[int]:
@@ -48,15 +58,7 @@ def get_process_pid(pid_file: Path) -> Optional[int]:
     Returns:
         The PID if process is running, None otherwise.
     """
-    if not pid_file.exists():
-        return None
-
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)  # Check if alive
-        return pid
-    except (ValueError, OSError, ProcessLookupError):
-        return None
+    return _read_pid_file(pid_file)
 
 
 def write_pid_file(pid_file: Path, pid: Optional[int] = None) -> None:

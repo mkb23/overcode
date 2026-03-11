@@ -416,69 +416,49 @@ class TestOvercodeHandlerRouteDispatching:
 
         handler._serve_dashboard.assert_called_once()
 
-    def test_api_status_calls_serve_json(self):
-        """GET /api/status should call _serve_json with get_status_data result."""
+    def test_api_status_dispatches_to_handler(self):
+        """GET /api/status should dispatch to _serve_api_status."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/status"
         handler.tmux_session = "test-session"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_status_data') as mock_get_status:
-            mock_get_status.return_value = {"status": "ok"}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_api_status.assert_called_once()
 
-            mock_get_status.assert_called_once_with("test-session")
-            handler._serve_json.assert_called_once_with({"status": "ok"})
-
-    def test_api_timeline_calls_serve_json_with_defaults(self):
-        """GET /api/timeline should call _serve_json with get_timeline_data."""
+    def test_api_timeline_dispatches_to_handler(self):
+        """GET /api/timeline should dispatch to _serve_timeline."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/timeline"
         handler.tmux_session = "test-session"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
-            mock_get_timeline.return_value = {"timeline": "data"}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_timeline.assert_called_once()
 
-            mock_get_timeline.assert_called_once_with("test-session", hours=3.0, slots=60)
-            handler._serve_json.assert_called_once_with({"timeline": "data"})
-
-    def test_api_timeline_passes_query_params(self):
-        """GET /api/timeline?hours=6&slots=30 should pass parsed params."""
+    def test_api_timeline_raw_dispatches_to_handler(self):
+        """GET /api/timeline/raw should dispatch to _serve_timeline_raw."""
         handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/timeline?hours=6&slots=30"
+        handler.path = "/api/timeline/raw"
         handler.tmux_session = "test-session"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_timeline_data') as mock_get_timeline:
-            mock_get_timeline.return_value = {"timeline": "data"}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_timeline_raw.assert_called_once()
 
-            mock_get_timeline.assert_called_once_with("test-session", hours=6.0, slots=30)
-
-    def test_health_calls_serve_json(self):
-        """GET /health should call _serve_json with get_health_data result."""
+    def test_health_dispatches_to_handler(self):
+        """GET /health should dispatch to _serve_health."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/health"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_health_data') as mock_health:
-            mock_health.return_value = {"status": "ok"}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
-
-            mock_health.assert_called_once()
-            handler._serve_json.assert_called_once_with({"status": "ok"})
+        handler._serve_health.assert_called_once()
 
     def test_unknown_route_returns_404(self):
         """GET /unknown should call send_error(404)."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/nonexistent"
-        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
 
@@ -488,104 +468,66 @@ class TestOvercodeHandlerRouteDispatching:
         """GET /static/chart.min.js should call _serve_chartjs."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/static/chart.min.js"
-        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
 
         handler._serve_chartjs.assert_called_once()
 
-    def test_sessions_route_calls_get_analytics_sessions(self):
-        """GET /api/analytics/sessions should call get_analytics_sessions."""
+    def test_sessions_route_dispatches_to_handler(self):
+        """GET /api/analytics/sessions should dispatch to _serve_analytics_sessions."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/sessions"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
-            mock_fn.return_value = {"sessions": []}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_analytics_sessions.assert_called_once()
 
-            mock_fn.assert_called_once_with(None, None)
-            handler._serve_json.assert_called_once_with({"sessions": []})
-
-    def test_analytics_timeline_route_calls_get_analytics_timeline(self):
-        """GET /api/analytics/timeline should call get_analytics_timeline."""
+    def test_analytics_timeline_route_dispatches_to_handler(self):
+        """GET /api/analytics/timeline should dispatch to _serve_analytics_timeline."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/timeline"
         handler.tmux_session = "test-session"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_analytics_timeline') as mock_fn:
-            mock_fn.return_value = {"agents": {}}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_analytics_timeline.assert_called_once()
 
-            mock_fn.assert_called_once_with("test-session", None, None)
-            handler._serve_json.assert_called_once()
-
-    def test_stats_route_calls_get_analytics_stats(self):
-        """GET /api/analytics/stats should call get_analytics_stats."""
+    def test_stats_route_dispatches_to_handler(self):
+        """GET /api/analytics/stats should dispatch to _serve_analytics_stats."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/stats"
         handler.tmux_session = "test-session"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_analytics_stats') as mock_fn:
-            mock_fn.return_value = {"stats": {}}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_analytics_stats.assert_called_once()
 
-            mock_fn.assert_called_once_with("test-session", None, None)
-            handler._serve_json.assert_called_once()
-
-    def test_daily_route_calls_get_analytics_daily(self):
-        """GET /api/analytics/daily should call get_analytics_daily."""
+    def test_daily_route_dispatches_to_handler(self):
+        """GET /api/analytics/daily should dispatch to _serve_analytics_daily."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/daily"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_analytics_daily') as mock_fn:
-            mock_fn.return_value = {"days": []}
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
+        handler._serve_analytics_daily.assert_called_once()
 
-            mock_fn.assert_called_once_with(None, None)
-            handler._serve_json.assert_called_once()
-
-    def test_presets_route_calls_get_time_presets(self):
-        """GET /api/analytics/presets should call get_time_presets."""
+    def test_presets_route_dispatches_to_handler(self):
+        """GET /api/analytics/presets should dispatch to _serve_analytics_presets."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/presets"
-        handler._parse_datetime = MagicMock(return_value=None)
 
-        with patch('overcode.web_server.get_time_presets') as mock_fn:
-            mock_fn.return_value = [{"label": "24h"}]
+        OvercodeHandler.do_GET(handler)
 
-            OvercodeHandler.do_GET(handler)
-
-            mock_fn.assert_called_once()
-            handler._serve_json.assert_called_once_with([{"label": "24h"}])
+        handler._serve_analytics_presets.assert_called_once()
 
     def test_sessions_route_with_time_params(self):
-        """GET /api/analytics/sessions with start/end should parse datetime params."""
-        from datetime import datetime
-
+        """GET /api/analytics/sessions with start/end passes query to handler."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/api/analytics/sessions?start=2024-01-01T00:00:00&end=2024-01-31T23:59:59"
 
-        start_dt = datetime(2024, 1, 1)
-        end_dt = datetime(2024, 1, 31, 23, 59, 59)
-        handler._parse_datetime = MagicMock(side_effect=lambda v: {
-            "2024-01-01T00:00:00": start_dt,
-            "2024-01-31T23:59:59": end_dt,
-        }.get(v))
+        OvercodeHandler.do_GET(handler)
 
-        with patch('overcode.web_server.get_analytics_sessions') as mock_fn:
-            mock_fn.return_value = {"sessions": []}
-
-            OvercodeHandler.do_GET(handler)
-
-            mock_fn.assert_called_once_with(start_dt, end_dt)
+        handler._serve_analytics_sessions.assert_called_once()
 
 
 class TestLogToFile:
@@ -763,15 +705,14 @@ class TestServeJson:
         assert content_length_calls[0][0][1] == str(len(written))
 
 
-class TestServeDashboard:
-    """Tests for _serve_dashboard — live monitoring HTML page."""
+class TestServeContent:
+    """Tests for _serve_content — shared content serving helper."""
 
     def test_serves_html_with_correct_headers(self):
-        """Should serve HTML with correct content type."""
+        """Should serve HTML content with correct headers."""
         handler = _make_handler()
 
-        with patch('overcode.web_server.get_dashboard_html', return_value="<html>dashboard</html>"):
-            OvercodeHandler._serve_dashboard(handler)
+        OvercodeHandler._serve_content(handler, "<html>test</html>")
 
         handler.send_response.assert_called_once_with(200)
         handler.send_header.assert_any_call("Content-Type", "text/html; charset=utf-8")
@@ -779,68 +720,67 @@ class TestServeDashboard:
         handler.end_headers.assert_called_once()
         handler.wfile.write.assert_called_once()
 
-    def test_handles_template_error_with_500(self):
-        """Should send 500 if template generation fails."""
+    def test_serves_javascript_with_cache(self):
+        """Should serve JS content with custom content type and cache."""
         handler = _make_handler()
 
-        with patch('overcode.web_server.get_dashboard_html', side_effect=RuntimeError("template error")):
-            OvercodeHandler._serve_dashboard(handler)
+        OvercodeHandler._serve_content(
+            handler, "var x;", "application/javascript", "public, max-age=31536000"
+        )
+
+        handler.send_header.assert_any_call("Content-Type", "application/javascript")
+        handler.send_header.assert_any_call("Cache-Control", "public, max-age=31536000")
+
+    def test_handles_error_with_500(self):
+        """Should send 500 on encoding/writing error."""
+        handler = _make_handler()
+        handler.send_response.side_effect = Exception("write failed")
+
+        OvercodeHandler._serve_content(handler, "<html>test</html>")
 
         handler.send_error.assert_called_once()
         assert handler.send_error.call_args[0][0] == 500
+
+
+class TestServeDashboard:
+    """Tests for _serve_dashboard — live monitoring HTML page."""
+
+    def test_calls_serve_content_with_html(self):
+        """Should call _serve_content with dashboard HTML."""
+        handler = _make_handler()
+
+        with patch('overcode.web_server.get_dashboard_html', return_value="<html>dashboard</html>"):
+            OvercodeHandler._serve_dashboard(handler)
+
+        handler._serve_content.assert_called_once_with("<html>dashboard</html>")
 
 
 class TestServeAnalyticsDashboard:
     """Tests for _serve_analytics_dashboard."""
 
-    def test_serves_analytics_html(self):
-        """Should serve analytics HTML."""
+    def test_calls_serve_content_with_html(self):
+        """Should call _serve_content with analytics HTML."""
         handler = _make_handler()
 
         with patch('overcode.web_server.get_analytics_html', return_value="<html>analytics</html>"):
             OvercodeHandler._serve_analytics_dashboard(handler)
 
-        handler.send_response.assert_called_once_with(200)
-        handler.send_header.assert_any_call("Content-Type", "text/html; charset=utf-8")
-        handler.wfile.write.assert_called_once()
-
-    def test_handles_error_with_500(self):
-        """Should send 500 on error."""
-        handler = _make_handler()
-
-        with patch('overcode.web_server.get_analytics_html', side_effect=RuntimeError("fail")):
-            OvercodeHandler._serve_analytics_dashboard(handler)
-
-        handler.send_error.assert_called_once()
-        assert handler.send_error.call_args[0][0] == 500
+        handler._serve_content.assert_called_once_with("<html>analytics</html>")
 
 
 class TestServeChartjs:
     """Tests for _serve_chartjs — embedded Chart.js library."""
 
-    def test_serves_javascript_with_cache_headers(self):
-        """Should serve JS with long cache and correct content type."""
+    def test_calls_serve_content_with_js(self):
+        """Should call _serve_content with JS content and correct params."""
         handler = _make_handler()
 
         with patch.dict('sys.modules', {'overcode.web_chartjs': MagicMock(CHARTJS_JS="var Chart = {};")}):
             OvercodeHandler._serve_chartjs(handler)
 
-        handler.send_response.assert_called_once_with(200)
-        handler.send_header.assert_any_call("Content-Type", "application/javascript")
-        handler.send_header.assert_any_call("Cache-Control", "public, max-age=31536000")
-        handler.end_headers.assert_called_once()
-
-    def test_handles_import_error_with_500(self):
-        """Should send 500 if chart.js module not available."""
-        handler = _make_handler()
-        # Force the import to fail by patching the internal import
-        with patch.object(OvercodeHandler, '_serve_chartjs', wraps=lambda self: None):
-            pass  # Can't easily test internal import failures
-        # Instead, test the exception path directly
-        handler2 = _make_handler()
-        handler2.send_response.side_effect = Exception("import failed")
-        OvercodeHandler._serve_chartjs(handler2)
-        handler2.send_error.assert_called_once()
+        handler._serve_content.assert_called_once_with(
+            "var Chart = {};", "application/javascript", "public, max-age=31536000"
+        )
 
 
 class TestDoOptions:
@@ -1044,28 +984,24 @@ class TestDoGETWithApiKeyAuth:
         handler = _make_handler()
         handler.path = "/health"
         handler.headers = {"X-API-Key": "my-secret"}
-        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_web_api_key', return_value="my-secret"):
-            with patch('overcode.web_server.get_health_data', return_value={"ok": True}):
-                OvercodeHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
         handler.send_error.assert_not_called()
-        handler._serve_json.assert_called_once()
+        handler._serve_health.assert_called_once()
 
     def test_allows_request_when_no_api_key_configured(self):
         """GET should proceed when no API key is configured."""
         handler = _make_handler()
         handler.path = "/health"
         handler.headers = {}
-        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_web_api_key', return_value=None):
-            with patch('overcode.web_server.get_health_data', return_value={"ok": True}):
-                OvercodeHandler.do_GET(handler)
+            OvercodeHandler.do_GET(handler)
 
         handler.send_error.assert_not_called()
-        handler._serve_json.assert_called_once()
+        handler._serve_health.assert_called_once()
 
 
 class TestAgentStatusRoute:

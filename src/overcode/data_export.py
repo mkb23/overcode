@@ -149,29 +149,22 @@ def _session_to_record(session, is_archived: bool) -> Dict[str, Any]:
     }
 
 
-def _build_sessions_table(records):
-    """Build a PyArrow table from session records."""
+def _build_table(records, empty_schema):
+    """Build a PyArrow table from records, with empty_schema as fallback.
+
+    Args:
+        records: List of dicts with uniform keys
+        empty_schema: PyArrow schema to use when records is empty
+
+    Returns:
+        PyArrow Table
+    """
     import pyarrow as pa
 
     if not records:
-        # Return empty table with schema
-        schema = pa.schema([
-            ("id", pa.string()),
-            ("name", pa.string()),
-            ("start_time", pa.string()),
-            ("end_time", pa.string()),
-            ("is_archived", pa.bool_()),
-            ("interaction_count", pa.int64()),
-            ("total_tokens", pa.int64()),
-            ("estimated_cost_usd", pa.float64()),
-            ("green_time_seconds", pa.float64()),
-            ("non_green_time_seconds", pa.float64()),
-        ])
-        # Create empty arrays for each column
-        empty_arrays = {field.name: pa.array([], type=field.type) for field in schema}
-        return pa.table(empty_arrays, schema=schema)
+        empty_arrays = {field.name: pa.array([], type=field.type) for field in empty_schema}
+        return pa.table(empty_arrays, schema=empty_schema)
 
-    # Build arrays from records
     arrays = {}
     for key in records[0].keys():
         values = [r.get(key) for r in records]
@@ -180,12 +173,54 @@ def _build_sessions_table(records):
     return pa.table(arrays)
 
 
+# Empty schemas for each table type
+_SESSIONS_EMPTY_SCHEMA = None
+_TIMELINE_EMPTY_SCHEMA = None
+_PRESENCE_EMPTY_SCHEMA = None
+
+
+def _get_sessions_schema():
+    import pyarrow as pa
+    return pa.schema([
+        ("id", pa.string()),
+        ("name", pa.string()),
+        ("start_time", pa.string()),
+        ("end_time", pa.string()),
+        ("is_archived", pa.bool_()),
+        ("interaction_count", pa.int64()),
+        ("total_tokens", pa.int64()),
+        ("estimated_cost_usd", pa.float64()),
+        ("green_time_seconds", pa.float64()),
+        ("non_green_time_seconds", pa.float64()),
+    ])
+
+
+def _get_timeline_schema():
+    import pyarrow as pa
+    return pa.schema([
+        ("timestamp", pa.string()),
+        ("agent", pa.string()),
+        ("status", pa.string()),
+    ])
+
+
+def _get_presence_schema():
+    import pyarrow as pa
+    return pa.schema([
+        ("timestamp", pa.string()),
+        ("state", pa.int64()),
+        ("state_name", pa.string()),
+    ])
+
+
+def _build_sessions_table(records):
+    """Build a PyArrow table from session records."""
+    return _build_table(records, _get_sessions_schema())
+
+
 def _build_timeline_records():
     """Build timeline records from agent status history."""
     records = []
-
-    # Read last 24 hours of timeline data
-    # Returns List[Tuple[datetime, agent, status, activity]]
     history = read_agent_status_history(hours=24.0)
 
     for ts, agent_name, status, activity in history:
@@ -200,30 +235,12 @@ def _build_timeline_records():
 
 def _build_timeline_table(records):
     """Build a PyArrow table from timeline records."""
-    import pyarrow as pa
-
-    if not records:
-        schema = pa.schema([
-            ("timestamp", pa.string()),
-            ("agent", pa.string()),
-            ("status", pa.string()),
-        ])
-        empty_arrays = {field.name: pa.array([], type=field.type) for field in schema}
-        return pa.table(empty_arrays, schema=schema)
-
-    arrays = {}
-    for key in records[0].keys():
-        values = [r.get(key) for r in records]
-        arrays[key] = values
-
-    return pa.table(arrays)
+    return _build_table(records, _get_timeline_schema())
 
 
 def _build_presence_records():
     """Build presence records from presence log."""
     records = []
-
-    # Read last 24 hours of presence data
     history = read_presence_history(hours=24.0)
 
     for ts, state in history:
@@ -238,20 +255,4 @@ def _build_presence_records():
 
 def _build_presence_table(records):
     """Build a PyArrow table from presence records."""
-    import pyarrow as pa
-
-    if not records:
-        schema = pa.schema([
-            ("timestamp", pa.string()),
-            ("state", pa.int64()),
-            ("state_name", pa.string()),
-        ])
-        empty_arrays = {field.name: pa.array([], type=field.type) for field in schema}
-        return pa.table(empty_arrays, schema=schema)
-
-    arrays = {}
-    for key in records[0].keys():
-        values = [r.get(key) for r in records]
-        arrays[key] = values
-
-    return pa.table(arrays)
+    return _build_table(records, _get_presence_schema())

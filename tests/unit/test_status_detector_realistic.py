@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.status_detector import StatusDetector
+from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session
 from tests.fixtures_realistic import (
@@ -65,7 +66,7 @@ class TestRealisticAutocomplete:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Autocomplete idle should be waiting_user, got {status}"
         )
         assert "Stalled" not in activity, "Should not be marked as stalled"
@@ -78,7 +79,7 @@ class TestRealisticAutocomplete:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
 
 class TestRealisticEmptyPrompt:
@@ -92,7 +93,7 @@ class TestRealisticEmptyPrompt:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Waiting for user input" in activity
 
     def test_fresh_session_is_waiting_user(self):
@@ -103,7 +104,7 @@ class TestRealisticEmptyPrompt:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
 
 class TestRealisticCommandMenu:
@@ -126,7 +127,7 @@ class TestRealisticCommandMenu:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER, (
+        assert status == STATUS_WAITING_USER, (
             f"Command menu should be waiting_user, got {status} with activity: {activity}"
         )
 
@@ -145,7 +146,7 @@ class TestRealisticPermissionPrompts:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         # Should mention permission in activity
         assert "Permission" in activity or "proceed" in activity.lower()
 
@@ -160,7 +161,7 @@ class TestRealisticPermissionPrompts:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
 
 class TestRealisticActiveWork:
@@ -177,7 +178,7 @@ class TestRealisticActiveWork:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
         # Activity should mention what's happening (case-insensitive check)
         activity_lower = activity.lower()
         assert "reading" in activity_lower or "esc to interrupt" in activity_lower
@@ -193,7 +194,7 @@ class TestRealisticActiveWork:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
 
     def test_web_search_running_is_running(self):
         """Active web search should be RUNNING."""
@@ -206,7 +207,7 @@ class TestRealisticActiveWork:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
 
 
 class TestRealisticStalledDetection:
@@ -220,7 +221,7 @@ class TestRealisticStalledDetection:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         assert "Stalled" in activity
 
 
@@ -243,7 +244,7 @@ class TestRealisticNoInstructions:
         # Without standing instructions, idle state is NO_INSTRUCTIONS
         # But note: empty prompt detection takes priority, so this will be WAITING_USER
         # This is actually correct - empty prompt = waiting for user
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
     def test_idle_with_standing_instructions_after_completion(self):
         """Idle agent WITH standing instructions but at empty prompt should be WAITING_USER.
@@ -261,7 +262,7 @@ class TestRealisticNoInstructions:
         status, activity, _ = detector.detect_status(session)
 
         # Empty prompt = waiting for user, regardless of standing instructions
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
 
 class TestRealisticUiChromeFiltering:
@@ -280,7 +281,7 @@ class TestRealisticUiChromeFiltering:
         status, activity, _ = detector.detect_status(session)
 
         # Should be waiting_user (empty prompt), NOT a permission prompt
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
         # Activity should NOT mention permission
         assert "Permission:" not in activity
 
@@ -305,7 +306,7 @@ class TestRealisticContentChangeDetection:
         status, activity, _ = detector.detect_status(session)
 
         # Content changed = actively working
-        assert status == StatusDetector.STATUS_RUNNING
+        assert status == STATUS_RUNNING
         assert "Active:" in activity
 
 
@@ -320,7 +321,7 @@ class TestRealisticWelcomeBannerHandling:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
     def test_welcome_banner_does_not_trigger_active_indicators(self):
         """Welcome banner text should not falsely trigger active indicators.
@@ -338,7 +339,7 @@ class TestRealisticWelcomeBannerHandling:
         status, activity, _ = detector.detect_status(session)
 
         # Should be waiting_user due to empty prompt, not running due to 'Added' in banner
-        assert status == StatusDetector.STATUS_WAITING_USER
+        assert status == STATUS_WAITING_USER
 
 
 class TestRealisticTerminated:
@@ -360,7 +361,7 @@ class TestRealisticTerminated:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_TERMINATED, (
+        assert status == STATUS_TERMINATED, (
             f"Shell prompt should be TERMINATED, got {status}"
         )
         assert "Claude exited" in activity or "shell" in activity.lower()
@@ -373,7 +374,7 @@ class TestRealisticTerminated:
         detector.detect_status(session)
         status, activity, _ = detector.detect_status(session)
 
-        assert status == StatusDetector.STATUS_TERMINATED
+        assert status == STATUS_TERMINATED
 
 
 # =============================================================================

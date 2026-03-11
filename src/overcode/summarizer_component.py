@@ -9,6 +9,7 @@ This ensures zero API costs when the TUI is closed (no one would see the summari
 """
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Optional, TYPE_CHECKING
@@ -271,7 +272,7 @@ class SummarizerComponent:
             meaningful_lines = lines[-self.config.lines:] if len(lines) > self.config.lines else lines
             return '\n'.join(meaningful_lines)
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             logger.warning(f"Failed to capture pane {window}: {e}")
             return None
 

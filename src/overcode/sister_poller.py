@@ -9,7 +9,7 @@ objects that can be merged into the local TUI's session list.
 import json
 import socket
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -32,6 +32,17 @@ class SisterState:
     green_agents: int = 0
     total_agents: int = 0
     total_cost: float = 0.0
+
+
+def _reset_sister_state(sister: SisterState, error: str) -> List[Session]:
+    """Reset a sister's state on error, keeping stale sessions visible."""
+    sister.reachable = False
+    sister.last_error = error
+    # Keep last-known sessions so agents remain visible (stale)
+    # but zero out live counters since we can't verify them.
+    sister.green_agents = 0
+    sister.total_agents = len(sister.sessions)
+    return list(sister.sessions)
 
 
 class SisterPoller:
@@ -151,13 +162,7 @@ class SisterPoller:
             with urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except (URLError, socket.timeout, json.JSONDecodeError, OSError) as e:
-            sister.reachable = False
-            sister.last_error = str(e)
-            # Keep last-known sessions so agents remain visible (stale)
-            # but zero out live counters since we can't verify them.
-            sister.green_agents = 0
-            sister.total_agents = len(sister.sessions)
-            return list(sister.sessions)
+            return _reset_sister_state(sister, str(e))
 
         sister.reachable = True
         sister.last_fetch = datetime.now().isoformat()
@@ -219,7 +224,7 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
     if time_in_state_raw > 0:
         state_since = (
             datetime.now()
-            - __import__("datetime").timedelta(seconds=time_in_state_raw)
+            - timedelta(seconds=time_in_state_raw)
         ).isoformat()
         stats.state_since = state_since
 

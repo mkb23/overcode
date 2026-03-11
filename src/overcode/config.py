@@ -39,13 +39,30 @@ def load_config() -> dict:
         return {}
 
 
+def _get_config_value(key_path: str, default=None):
+    """Load config and traverse a dot-separated key path.
+
+    Example: _get_config_value("web.api_key") loads config["web"]["api_key"].
+    Returns default if any key is missing or intermediate value isn't a dict.
+    """
+    config = load_config()
+    keys = key_path.split(".")
+    value = config
+    for key in keys:
+        if not isinstance(value, dict):
+            return default
+        value = value.get(key)
+        if value is None:
+            return default
+    return value
+
+
 def get_default_standing_instructions() -> str:
     """Get default standing instructions from config.
 
     Returns empty string if not configured.
     """
-    config = load_config()
-    return config.get("default_standing_instructions", "")
+    return _get_config_value("default_standing_instructions", "")
 
 
 def get_relay_config() -> Optional[dict]:
@@ -60,14 +77,11 @@ def get_relay_config() -> Optional[dict]:
           api_key: your-secret-key
           interval: 30  # seconds between pushes (optional, default 30)
     """
-    config = load_config()
-    relay = config.get("relay", {})
-
-    if not relay.get("enabled", False):
+    if not _get_config_value("relay.enabled", False):
         return None
 
-    url = relay.get("url")
-    api_key = relay.get("api_key")
+    url = _get_config_value("relay.url")
+    api_key = _get_config_value("relay.api_key")
 
     if not url or not api_key:
         return None
@@ -75,7 +89,7 @@ def get_relay_config() -> Optional[dict]:
     return {
         "url": url,
         "api_key": api_key,
-        "interval": relay.get("interval", 30),
+        "interval": _get_config_value("relay.interval", 30),
     }
 
 
@@ -105,13 +119,10 @@ def get_summarizer_config() -> dict:
     default_model = "gpt-4o-mini"
     default_api_key_var = "OPENAI_API_KEY"
 
-    config = load_config()
-    summarizer = config.get("summarizer", {})
-
     # Config file takes precedence, env vars are fallback
-    api_url = summarizer.get("api_url") or os.environ.get("OVERCODE_SUMMARIZER_API_URL") or default_api_url
-    model = summarizer.get("model") or os.environ.get("OVERCODE_SUMMARIZER_MODEL") or default_model
-    api_key_var = summarizer.get("api_key_var") or os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR") or default_api_key_var
+    api_url = _get_config_value("summarizer.api_url") or os.environ.get("OVERCODE_SUMMARIZER_API_URL") or default_api_url
+    model = _get_config_value("summarizer.model") or os.environ.get("OVERCODE_SUMMARIZER_MODEL") or default_model
+    api_key_var = _get_config_value("summarizer.api_key_var") or os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR") or default_api_key_var
 
     # Resolve the actual API key from the configured env var
     api_key = os.environ.get(api_key_var)
@@ -134,14 +145,8 @@ def get_timeline_config() -> dict:
     Returns:
         Dict with timeline settings (hours)
     """
-    default_hours = 3.0
-
-    config = load_config()
-    timeline = config.get("timeline", {})
-    hours = timeline.get("hours", default_hours)
-
     return {
-        "hours": hours,
+        "hours": _get_config_value("timeline.hours", 3.0),
     }
 
 
@@ -164,9 +169,7 @@ def get_web_time_presets() -> list:
               start: "22:00"
               end: "02:00"
     """
-    config = load_config()
-    web_config = config.get("web", {})
-    presets = web_config.get("time_presets", None)
+    presets = _get_config_value("web.time_presets")
 
     if presets and isinstance(presets, list):
         # Validate and normalize presets
@@ -207,13 +210,10 @@ def get_time_context_config() -> dict:
         Dict with office_start (int), office_end (int),
         heartbeat_interval_minutes (Optional[int])
     """
-    config = load_config()
-    tc = config.get("time_context", {})
-
     return {
-        "office_start": tc.get("office_start", 9),
-        "office_end": tc.get("office_end", 17),
-        "heartbeat_interval_minutes": tc.get("heartbeat_interval_minutes"),
+        "office_start": _get_config_value("time_context.office_start", 9),
+        "office_end": _get_config_value("time_context.office_end", 17),
+        "heartbeat_interval_minutes": _get_config_value("time_context.heartbeat_interval_minutes"),
     }
 
 
@@ -226,8 +226,7 @@ def get_hostname() -> str:
     Returns:
         Configured hostname or socket.gethostname()
     """
-    config = load_config()
-    return config.get("hostname") or socket.gethostname()
+    return _get_config_value("hostname") or socket.gethostname()
 
 
 def get_web_api_key() -> Optional[str]:
@@ -242,9 +241,7 @@ def get_web_api_key() -> Optional[str]:
     Returns:
         API key string or None if not configured
     """
-    config = load_config()
-    web = config.get("web", {})
-    return web.get("api_key") or None
+    return _get_config_value("web.api_key") or None
 
 
 def get_web_allow_control() -> bool:
@@ -259,9 +256,7 @@ def get_web_allow_control() -> bool:
     Returns:
         True if remote control is enabled, False otherwise
     """
-    config = load_config()
-    web = config.get("web", {})
-    return bool(web.get("allow_control", False))
+    return bool(_get_config_value("web.allow_control", False))
 
 
 def get_new_agent_defaults() -> dict:
@@ -275,8 +270,7 @@ def get_new_agent_defaults() -> dict:
     Returns:
         Dict with bypass_permissions (bool) and agent_teams (bool).
     """
-    config = load_config()
-    defaults = config.get("new_agent_defaults", {})
+    defaults = _get_config_value("new_agent_defaults", {})
     return {
         "bypass_permissions": bool(defaults.get("bypass_permissions", False)),
         "agent_teams": bool(defaults.get("agent_teams", False)),
@@ -308,8 +302,7 @@ def get_sisters_config() -> List[dict]:
     Returns:
         List of dicts with name, url, and optional api_key. Empty list if unconfigured.
     """
-    config = load_config()
-    sisters = config.get("sisters", [])
+    sisters = _get_config_value("sisters", [])
     if not isinstance(sisters, list):
         return []
 

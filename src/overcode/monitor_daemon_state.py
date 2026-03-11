@@ -12,6 +12,7 @@ The Monitor Daemon is the single source of truth for:
 """
 
 import json
+import logging
 import os
 import tempfile
 import dataclasses
@@ -25,6 +26,8 @@ from .settings import (
     DAEMON,
     get_monitor_daemon_state_path,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -238,8 +241,8 @@ class MonitorDaemonState:
         except BaseException:
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug("Failed to clean up temp file %s: %s", tmp_path, e)
             raise
 
     @classmethod

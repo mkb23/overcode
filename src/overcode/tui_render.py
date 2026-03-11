@@ -302,8 +302,8 @@ def render_session_summary_line(
     status_color = f"bold {base_color}{bg}"
 
     # Permissiveness emoji
-    perm_emojis = {"bypass": "🔥", "permissive": "🏃"}
-    perm_emoji = perm_emojis.get(permissiveness_mode, "👮")
+    from .status_constants import PERMISSIVENESS_EMOJIS
+    perm_emoji = PERMISSIVENESS_EMOJIS.get(permissiveness_mode, "👮")
 
     content = Text()
 

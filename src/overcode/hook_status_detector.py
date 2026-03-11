@@ -26,7 +26,12 @@ from .status_constants import (
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
 )
-from .status_patterns import is_sleep_command, extract_sleep_duration, strip_ansi
+from .status_patterns import (
+    is_sleep_command,
+    extract_sleep_duration,
+    strip_ansi,
+    is_shell_prompt,
+)
 from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
@@ -186,8 +191,10 @@ class HookStatusDetector:
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
 
         # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
+        sleep_dur = None
         if status == STATUS_RUNNING:
-            if self._is_sleep_in_pane(pane_content, hook_state):
+            sleep_dur = self._find_sleep_duration(pane_content, hook_state)
+            if sleep_dur is not None:
                 status = STATUS_BUSY_SLEEPING
 
         # Build activity description
@@ -195,8 +202,7 @@ class HookStatusDetector:
 
         # Enrich activity for busy_sleeping with parsed duration (#289)
         if status == STATUS_BUSY_SLEEPING:
-            dur = self._extract_sleep_duration_from_context(pane_content, hook_state)
-            activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
+            activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
 
         return status, activity, pane_content
 
@@ -213,9 +219,6 @@ class HookStatusDetector:
         is always present right after exit and is irrelevant once we know
         SessionEnd fired.
         """
-        import re
-        from .status_patterns import strip_ansi
-
         pane_content = self.get_pane_content(session.tmux_window) or ""
         clean = strip_ansi(pane_content)
         lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
@@ -225,64 +228,38 @@ class HookStatusDetector:
 
         last_line = lines[-1]
 
-        # Shell prompt patterns (same as PollingStatusDetector._is_shell_prompt)
-        shell_prompt_patterns = [
-            r'\w+@\w+.*[%$]\s*$',
-            r'\[.*\][%$#]\s*$',
-            r'^[~\/].*[%$]\s*$',
-        ]
-
-        for pattern in shell_prompt_patterns:
-            if re.search(pattern, last_line):
-                return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
+        if is_shell_prompt(last_line):
+            return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
 
         # No shell prompt → likely /clear, fall back to full polling
         return self._get_polling_fallback().detect_status(session)
 
-    def _is_sleep_in_pane(self, pane_content: str, hook_state: dict) -> bool:
-        """Check if the agent is executing a sleep command (#289).
+    def _find_sleep_duration(self, pane_content: str, hook_state: dict) -> int | None:
+        """Find sleep duration from pane content or hook state (#289).
 
         Checks two signals:
-        1. Pane content shows a sleep command (e.g., "Running Bash("sleep 30")")
-        2. Hook state has tool_input with a sleep command (from PostToolUse)
-
-        Args:
-            pane_content: Raw tmux pane content
-            hook_state: Parsed hook state dict
+        1. Pane content for sleep commands (e.g., "Running Bash("sleep 30")")
+        2. Hook state tool_input for sleep commands (from PostToolUse)
 
         Returns:
-            True if agent appears to be sleeping
+            Sleep duration in seconds, or None if not sleeping.
+            A return value of 0 means sleeping but duration unknown.
         """
         # Check pane content for sleep patterns
-        clean = strip_ansi(pane_content)
-        for line in clean.strip().split('\n')[-10:]:
-            if is_sleep_command(line):
-                return True
-
-        # Check tool_input from hook state (PostToolUse includes tool_input)
-        tool_input = hook_state.get("tool_input")
-        if isinstance(tool_input, dict):
-            command = tool_input.get("command", "")
-            if is_sleep_command(command):
-                return True
-
-        return False
-
-    def _extract_sleep_duration_from_context(self, pane_content: str, hook_state: dict) -> int | None:
-        """Extract sleep duration from pane content or hook state (#289)."""
-        # Try pane content first
         clean = strip_ansi(pane_content)
         for line in clean.strip().split('\n')[-10:]:
             dur = extract_sleep_duration(line)
             if dur is not None:
                 return dur
-        # Try tool_input from hook state
+
+        # Check tool_input from hook state (PostToolUse includes tool_input)
         tool_input = hook_state.get("tool_input")
         if isinstance(tool_input, dict):
             command = tool_input.get("command", "")
             dur = extract_sleep_duration(command)
             if dur is not None:
                 return dur
+
         return None
 
     def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:

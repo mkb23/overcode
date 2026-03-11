@@ -18,6 +18,13 @@ if TYPE_CHECKING:
     from ..session_manager import Session
 
 
+def _get_focused_session(tui) -> "SessionSummary | None":
+    """Return the focused widget if it's a SessionSummary, else None."""
+    from ..tui_widgets import SessionSummary
+    focused = tui.focused
+    return focused if isinstance(focused, SessionSummary) else None
+
+
 class SessionActionsMixin:
     """Mixin providing session/agent actions for SupervisorTUI."""
 
@@ -89,10 +96,10 @@ class SessionActionsMixin:
         the source agent's full conversation history. The forked agent is
         registered as a child of the source.
         """
-        from ..tui_widgets import SessionSummary, CommandBar
+        from ..tui_widgets import CommandBar
 
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -125,11 +132,10 @@ class SessionActionsMixin:
 
     def action_toggle_focused(self) -> None:
         """Toggle expansion of focused session (only in tree mode)."""
-        from ..tui_widgets import SessionSummary
         if self.view_mode == "list_preview":
             return  # Don't toggle in list mode
-        focused = self.focused
-        if isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if focused:
             focused.expanded = not focused.expanded
 
     def action_toggle_sleep(self) -> None:
@@ -141,10 +147,9 @@ class SessionActionsMixin:
 
         Note: Cannot put a running agent to sleep (#158).
         """
-        from ..tui_widgets import SessionSummary
         from ..status_constants import is_green_status
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -202,11 +207,10 @@ class SessionActionsMixin:
         Pauses an active heartbeat (keeps config) or resumes a paused one.
         Press P again to toggle back.
         """
-        from ..tui_widgets import SessionSummary
         from ..settings import signal_activity
 
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -267,9 +271,8 @@ class SessionActionsMixin:
         presence) injected into every prompt via the UserPromptSubmit hook.
         Press T again to disable.
         """
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -310,9 +313,8 @@ class SessionActionsMixin:
         instead of tmux pane scraping. Falls back to polling when no hook
         state is available.
         """
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -353,9 +355,8 @@ class SessionActionsMixin:
         Context-sensitive: if the agent is terminated/done, cleans it up
         (archives and removes from display). Otherwise kills it.
         """
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -405,9 +406,8 @@ class SessionActionsMixin:
         Sends Ctrl-C to kill the current Claude process, then restarts it
         with the same configuration (directory, permissions).
         """
-        from ..tui_widgets import SessionSummary
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 
@@ -447,10 +447,8 @@ class SessionActionsMixin:
         1. Runs git checkout main && git pull via Claude's bash command
         2. Sends /clear to reset the conversation context
         """
-        from ..tui_widgets import SessionSummary
-
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
+        focused = _get_focused_session(self)
+        if not focused:
             self.notify("No agent focused", severity="warning")
             return
 

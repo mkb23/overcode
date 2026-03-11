@@ -145,41 +145,8 @@ class RealTmux:
             if pane is None:
                 return False
 
-            # For Claude Code: text and Enter must be sent as SEPARATE commands
-            # with a small delay, otherwise Claude Code doesn't process the Enter.
-            if keys:
-                # Special handling for ! commands (#139)
-                # Claude Code requires ! to be sent separately to trigger mode switch
-                # to bash mode before receiving the rest of the command
-                if keys.startswith('!') and len(keys) > 1:
-                    # Send ! first
-                    pane.send_keys('!', enter=False)
-                    # Wait for mode switch to process
-                    time.sleep(0.15)
-                    # Send the rest (without the !)
-                    rest = keys[1:]
-                    if rest:
-                        pane.send_keys(rest, enter=False)
-                        time.sleep(0.1)
-                elif keys.startswith('/') and len(keys) > 1:
-                    # Special handling for slash commands (#307)
-                    # Claude Code shows a command menu when / is typed;
-                    # send / separately so the menu has time to appear
-                    # before the rest of the command and Enter arrive.
-                    pane.send_keys('/', enter=False)
-                    time.sleep(0.3)
-                    rest = keys[1:]
-                    if rest:
-                        pane.send_keys(rest, enter=False)
-                        time.sleep(0.15)
-                else:
-                    pane.send_keys(keys, enter=False)
-                    # Small delay for Claude Code to process text
-                    time.sleep(0.1)
-
-            if enter:
-                pane.send_keys('', enter=True)
-
+            from .tmux_utils import send_keys_to_pane
+            send_keys_to_pane(pane, keys, enter=enter)
             return True
         except LibTmuxException:
             return False
@@ -265,32 +232,8 @@ class RealTmux:
 
     def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
-        import subprocess
-        from .tmux_utils import tmux_window_target
-
-        bare_session = f"bare-{session}-{window}"
-
-        subprocess.run(
-            ["tmux", "kill-session", "-t", bare_session],
-            capture_output=True,
-        )
-
-        result = subprocess.run(
-            ["tmux", "new-session", "-d", "-s", bare_session, "-t", session],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            return
-
-        for cmd in [
-            ["tmux", "set", "-t", bare_session, "status", "off"],
-            ["tmux", "set", "-t", bare_session, "mouse", "off"],
-            ["tmux", "set", "-t", bare_session, "destroy-unattached", "on"],
-            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
-        ]:
-            subprocess.run(cmd, capture_output=True)
-
-        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
+        from .tmux_utils import attach_bare
+        attach_bare(session, window)
 
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""

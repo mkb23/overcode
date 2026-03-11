@@ -11,6 +11,14 @@ import sys
 import time
 
 
+def _run_notification_cmd(cmd: list[str]) -> None:
+    """Fire-and-forget a notification command, silently ignoring errors."""
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
 class MacNotifier:
     """Coalescing macOS notifier for agent attention bells.
 
@@ -113,10 +121,7 @@ class MacNotifier:
                 return
             # sound-only: we still call terminal-notifier for the sound,
             # but use a minimal notification that auto-dismisses
-        try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
-            pass
+        _run_notification_cmd(cmd)
 
     def _send_osascript(
         self, message: str, subtitle: str | None,
@@ -127,19 +132,7 @@ class MacNotifier:
             script = f'display notification "{display_text}" with title "Overcode"'
             if want_sound:
                 script += ' sound name "Hero"'
-            try:
-                subprocess.Popen(
-                    ["osascript", "-e", script],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-            except OSError:
-                pass
+            _run_notification_cmd(["osascript", "-e", script])
         elif want_sound:
             # Sound-only via afplay (no banner)
-            try:
-                subprocess.Popen(
-                    ["afplay", "/System/Library/Sounds/Hero.aiff"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-            except OSError:
-                pass
+            _run_notification_cmd(["afplay", "/System/Library/Sounds/Hero.aiff"])

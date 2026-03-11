@@ -5,7 +5,6 @@ Uses libtmux for reliable tmux interaction.
 """
 
 import os
-import time
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 import libtmux
@@ -143,41 +142,8 @@ class TmuxManager:
             if pane is None:
                 return False
 
-            # Send text first (if any)
-            if keys:
-                # Special handling for ! commands (#139)
-                # Claude Code requires ! to be sent separately to trigger mode switch
-                # to bash mode before receiving the rest of the command
-                if keys.startswith('!') and len(keys) > 1:
-                    # Send ! first
-                    pane.send_keys('!', enter=False)
-                    # Wait for mode switch to process
-                    time.sleep(0.15)
-                    # Send the rest (without the !)
-                    rest = keys[1:]
-                    if rest:
-                        pane.send_keys(rest, enter=False)
-                        time.sleep(0.1)
-                elif keys.startswith('/') and len(keys) > 1:
-                    # Special handling for slash commands (#307)
-                    # Claude Code shows a command menu when / is typed;
-                    # send / separately so the menu has time to appear
-                    # before the rest of the command and Enter arrive.
-                    pane.send_keys('/', enter=False)
-                    time.sleep(0.3)
-                    rest = keys[1:]
-                    if rest:
-                        pane.send_keys(rest, enter=False)
-                        time.sleep(0.15)
-                else:
-                    pane.send_keys(keys, enter=False)
-                    # Small delay for Claude Code to process text
-                    time.sleep(0.1)
-
-            # Send Enter separately
-            if enter:
-                pane.send_keys('', enter=True)
-
+            from .tmux_utils import send_keys_to_pane
+            send_keys_to_pane(pane, keys, enter=enter)
             return True
         except LibTmuxException:
             return False
@@ -201,46 +167,9 @@ class TmuxManager:
             os.execlp("tmux", "tmux", "attach-session", "-t", target)
 
     def _attach_bare(self, window: str):
-        """Create a linked session with stripped chrome and attach to it.
-
-        Uses a grouped session (new-session -t) so options are isolated
-        from the main session. Sets destroy-unattached so the linked
-        session is cleaned up when the terminal closes.
-        """
-        import subprocess
-        from .tmux_utils import tmux_window_target
-
-        bare_session = f"bare-{self.session_name}-{window}"
-
-        # Kill any stale bare session with the same name
-        subprocess.run(
-            ["tmux", "kill-session", "-t", bare_session],
-            capture_output=True,
-        )
-
-        # Create linked session sharing the same window group
-        result = subprocess.run(
-            ["tmux", "new-session", "-d", "-s", bare_session, "-t", self.session_name],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            print(f"Failed to create bare session: {result.stderr.decode().strip()}")
-            return
-
-        # Configure the linked session (isolated from main session)
-        # Note: destroy-unattached must be deferred via a hook, because setting
-        # it on a detached session causes tmux to destroy it immediately.
-        for cmd in [
-            ["tmux", "set", "-t", bare_session, "status", "off"],
-            ["tmux", "set", "-t", bare_session, "mouse", "off"],
-            ["tmux", "set-hook", "-t", bare_session, "client-attached",
-             "set destroy-unattached on"],
-            ["tmux", "select-window", "-t", tmux_window_target(bare_session, window)],
-        ]:
-            subprocess.run(cmd, capture_output=True)
-
-        # Attach (replaces process)
-        os.execlp("tmux", "tmux", "attach-session", "-t", bare_session)
+        """Create a linked session with stripped chrome and attach to it."""
+        from .tmux_utils import attach_bare
+        attach_bare(self.session_name, window, socket_path=self.socket)
 
     def list_windows(self) -> List[Dict[str, Any]]:
         """List all windows in the session.
@@ -309,11 +238,9 @@ class TmuxManager:
     def window_exists(self, window_name: str) -> bool:
         """Check if a specific window exists.
 
-        Falls back to index-based lookup for legacy digit-string values.
+        Falls back to index-based lookup for legacy digit-string values
+        (handled by _get_window).
         """
-        if not self.session_exists():
-            return False
-
         if self._tmux:
             windows = self._tmux.list_windows(self.session_name)
             if any(w.get('name') == window_name for w in windows):
@@ -323,19 +250,4 @@ class TmuxManager:
                 return any(str(w.get('index')) == window_name for w in windows)
             return False
 
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return False
-
-            for win in sess.windows:
-                if win.window_name == window_name:
-                    return True
-            # Fallback: legacy digit-string index
-            if window_name.isdigit():
-                for win in sess.windows:
-                    if win.window_index == window_name:
-                        return True
-            return False
-        except LibTmuxException:
-            return False
+        return self._get_window(window_name) is not None

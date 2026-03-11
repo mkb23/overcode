@@ -12,6 +12,143 @@ from ..launcher import ClaudeLauncher
 from ._shared import app, SessionOption, _parse_duration
 
 
+def _parse_oversight_policy(on_stuck: Optional[str], oversight_timeout: Optional[str]) -> tuple[str, float]:
+    """Parse oversight policy args into (policy, timeout_seconds)."""
+    policy = "wait"
+    timeout_seconds = 0.0
+    if oversight_timeout:
+        policy = "timeout"
+        try:
+            timeout_seconds = _parse_duration(oversight_timeout)
+        except ValueError:
+            rprint(f"[red]Error: Invalid duration '{oversight_timeout}'[/red]")
+            raise typer.Exit(code=1)
+    elif on_stuck:
+        if on_stuck == "wait":
+            policy = "wait"
+        elif on_stuck == "fail":
+            policy = "fail"
+        elif on_stuck.startswith("timeout:"):
+            policy = "timeout"
+            try:
+                timeout_seconds = _parse_duration(on_stuck[len("timeout:"):])
+            except ValueError:
+                rprint(f"[red]Error: Invalid duration in '--on-stuck {on_stuck}'[/red]")
+                raise typer.Exit(code=1)
+        else:
+            rprint(f"[red]Error: Invalid --on-stuck value '{on_stuck}'. Use: wait, fail, timeout:DURATION[/red]")
+            raise typer.Exit(code=1)
+    return policy, timeout_seconds
+
+
+def _store_oversight_policy(result, policy: str, timeout_seconds: float) -> None:
+    """Store oversight policy on session if non-default."""
+    if policy != "wait" or timeout_seconds > 0:
+        from ..session_manager import SessionManager
+        sm = SessionManager()
+        sm.update_session(
+            result.id,
+            oversight_policy=policy,
+            oversight_timeout_seconds=timeout_seconds,
+        )
+        rprint(f"  Oversight: {policy}" + (f" ({timeout_seconds:.0f}s)" if timeout_seconds > 0 else ""))
+
+
+def _check_skill_staleness() -> None:
+    """Warn if installed skills are modified (#290)."""
+    from ..bundled_skills import any_skills_stale
+    if any_skills_stale():
+        rprint("[yellow]Warning:[/yellow] Installed skills are modified. Run [bold]overcode skills install[/bold] to update.")
+
+
+def _gather_session_stats(sess, pane_content_raw: str) -> dict:
+    """Gather claude_stats, git_diff, bg_bash_count, live_sub_count for a session."""
+    from ..history_reader import get_session_stats
+    from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
+    from ..tui_helpers import get_git_diff_stats
+
+    bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
+    live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
+
+    claude_stats = None
+    try:
+        claude_stats = get_session_stats(sess)
+        if claude_stats:
+            live_sub_count = max(live_sub_count, claude_stats.live_subagent_count)
+    except Exception:
+        pass
+
+    git_diff = None
+    try:
+        if sess.start_directory:
+            git_diff = get_git_diff_stats(sess.start_directory)
+    except Exception:
+        pass
+
+    return {
+        "claude_stats": claude_stats,
+        "git_diff": git_diff,
+        "bg_bash_count": bg_bash_count,
+        "live_sub_count": live_sub_count,
+    }
+
+
+def _compute_cross_session_flags(sessions, daemon_state, use_daemon: bool) -> dict:
+    """Compute display flags across all sessions."""
+    any_has_oversight_timeout = False
+    any_has_pr = False
+    subtree_costs = {}
+
+    if use_daemon:
+        any_has_oversight_timeout = any(
+            ds.oversight_timeout_seconds > 0
+            for ds in daemon_state.sessions
+        )
+        for ds in daemon_state.sessions:
+            if ds.subtree_cost_usd > 0:
+                subtree_costs[ds.session_id] = ds.subtree_cost_usd
+
+    # Also extract from remote sessions via forwarded daemon_state
+    for s in sessions:
+        rds = getattr(s, 'remote_daemon_state', None)
+        if rds and rds.get('subtree_cost_usd', 0) > 0:
+            subtree_costs[s.id] = rds['subtree_cost_usd']
+
+    if not use_daemon:
+        any_has_oversight_timeout = any(
+            getattr(s, 'oversight_timeout_seconds', 0) > 0
+            for s in sessions
+        )
+
+    any_has_subtree_cost = bool(subtree_costs)
+    any_has_pr = any(
+        getattr(s, 'pr_number', None) is not None
+        for s in sessions
+    )
+
+    return {
+        "any_has_oversight_timeout": any_has_oversight_timeout,
+        "any_has_pr": any_has_pr,
+        "subtree_costs": subtree_costs,
+        "any_has_subtree_cost": any_has_subtree_cost,
+    }
+
+
+def _get_sessions_to_cleanup(launcher, done: bool) -> tuple[int, int]:
+    """Returns (terminated_count, done_count) after performing cleanup."""
+    terminated_count = launcher.cleanup_terminated_sessions()
+
+    done_count = 0
+    if done:
+        all_sessions = launcher.sessions.list_sessions()
+        done_sessions = [s for s in all_sessions if s.status == "done"]
+        for sess in done_sessions:
+            launcher._kill_single_session(sess)
+            done_count += 1
+
+    return terminated_count, done_count
+
+
 @app.command()
 def launch(
     name: Annotated[str, typer.Option("--name", "-n", help="Name for the agent")],
@@ -127,30 +264,7 @@ def launch(
         return
 
     # Parse oversight policy
-    oversight_policy = "wait"
-    oversight_timeout_seconds = 0.0
-    if oversight_timeout:
-        oversight_policy = "timeout"
-        try:
-            oversight_timeout_seconds = _parse_duration(oversight_timeout)
-        except ValueError:
-            rprint(f"[red]Error: Invalid duration '{oversight_timeout}'[/red]")
-            raise typer.Exit(code=1)
-    elif on_stuck:
-        if on_stuck == "wait":
-            oversight_policy = "wait"
-        elif on_stuck == "fail":
-            oversight_policy = "fail"
-        elif on_stuck.startswith("timeout:"):
-            oversight_policy = "timeout"
-            try:
-                oversight_timeout_seconds = _parse_duration(on_stuck[len("timeout:"):])
-            except ValueError:
-                rprint(f"[red]Error: Invalid duration in '--on-stuck {on_stuck}'[/red]")
-                raise typer.Exit(code=1)
-        else:
-            rprint(f"[red]Error: Invalid --on-stuck value '{on_stuck}'. Use: wait, fail, timeout:DURATION[/red]")
-            raise typer.Exit(code=1)
+    oversight_policy, oversight_timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
 
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
@@ -188,21 +302,8 @@ def launch(
         if budget is not None and budget > 0:
             rprint(f"  Budget: ${budget:.2f}")
 
-        # Store oversight policy on session
-        if oversight_policy != "wait" or oversight_timeout_seconds > 0:
-            from ..session_manager import SessionManager
-            sm = SessionManager()
-            sm.update_session(
-                result.id,
-                oversight_policy=oversight_policy,
-                oversight_timeout_seconds=oversight_timeout_seconds,
-            )
-            rprint(f"  Oversight: {oversight_policy}" + (f" ({oversight_timeout_seconds:.0f}s)" if oversight_timeout_seconds > 0 else ""))
-
-        # Skill staleness check (#290)
-        from ..bundled_skills import any_skills_stale
-        if any_skills_stale():
-            rprint("[yellow]Warning:[/yellow] Installed skills are modified. Run [bold]overcode skills install[/bold] to update.")
+        _store_oversight_policy(result, oversight_policy, oversight_timeout_seconds)
+        _check_skill_staleness()
 
         if follow:
             from ..follow_mode import follow_agent
@@ -380,32 +481,11 @@ def list_agents(
     use_daemon = daemon_state is not None and not daemon_state.is_stale()
 
     # Compute cross-session flags from daemon state
-    any_has_oversight_timeout = False
-    any_has_pr = False
-    subtree_costs = {}
-    if use_daemon:
-        any_has_oversight_timeout = any(
-            ds.oversight_timeout_seconds > 0
-            for ds in daemon_state.sessions
-        )
-        for ds in daemon_state.sessions:
-            if ds.subtree_cost_usd > 0:
-                subtree_costs[ds.session_id] = ds.subtree_cost_usd
-    # Also extract from remote sessions via forwarded daemon_state
-    for s in sessions:
-        rds = getattr(s, 'remote_daemon_state', None)
-        if rds and rds.get('subtree_cost_usd', 0) > 0:
-            subtree_costs[s.id] = rds['subtree_cost_usd']
-    if not use_daemon:
-        any_has_oversight_timeout = any(
-            getattr(s, 'oversight_timeout_seconds', 0) > 0
-            for s in sessions
-        )
-    any_has_subtree_cost = bool(subtree_costs)
-    any_has_pr = any(
-        getattr(s, 'pr_number', None) is not None
-        for s in sessions
-    )
+    cross_flags = _compute_cross_session_flags(sessions, daemon_state, use_daemon)
+    any_has_oversight_timeout = cross_flags["any_has_oversight_timeout"]
+    any_has_pr = cross_flags["any_has_pr"]
+    subtree_costs = cross_flags["subtree_costs"]
+    any_has_subtree_cost = cross_flags["any_has_subtree_cost"]
 
     # Only create detector as fallback when daemon isn't running
     detector = None
@@ -679,16 +759,7 @@ def cleanup(
     Use --untracked to kill tmux windows that exist but aren't tracked by any agent.
     """
     launcher = ClaudeLauncher(session)
-    count = launcher.cleanup_terminated_sessions()
-
-    # Also clean up done agents if requested (#244)
-    done_count = 0
-    if done:
-        all_sessions = launcher.sessions.list_sessions()
-        done_sessions = [s for s in all_sessions if s.status == "done"]
-        for sess in done_sessions:
-            launcher._kill_single_session(sess)
-            done_count += 1
+    count, done_count = _get_sessions_to_cleanup(launcher, done)
 
     # Kill untracked tmux windows (#344)
     if untracked:
@@ -856,9 +927,7 @@ def show(
     session: SessionOption = "agents",
 ):
     """Show agent details and recent output."""
-    from ..history_reader import get_session_stats
-    from ..status_patterns import extract_background_bash_count, extract_live_subagent_count, strip_ansi
-    from ..tui_helpers import get_git_diff_stats
+    from ..status_patterns import strip_ansi
     from ..summary_columns import build_cli_context, render_cli_stats
     from ..monitor_daemon_state import get_monitor_daemon_state
 
@@ -905,23 +974,11 @@ def show(
 
     if not no_stats:
         # Gather all stats
-        bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
-        live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
-
-        claude_stats = None
-        try:
-            claude_stats = get_session_stats(sess)
-            if claude_stats:
-                live_sub_count = max(live_sub_count, claude_stats.live_subagent_count)
-        except Exception:
-            pass
-
-        git_diff = None
-        try:
-            if sess.start_directory:
-                git_diff = get_git_diff_stats(sess.start_directory)
-        except Exception:
-            pass
+        stats_data = _gather_session_stats(sess, pane_content_raw)
+        claude_stats = stats_data["claude_stats"]
+        git_diff = stats_data["git_diff"]
+        bg_bash_count = stats_data["bg_bash_count"]
+        live_sub_count = stats_data["live_sub_count"]
 
         # AI summaries from daemon state
         ai_short = ""

@@ -31,7 +31,7 @@ def log(session: str, message: str) -> None:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{timestamp}] {message}\n")
     except Exception:
-        pass  # Can't log, silently fail
+        pass  # Best-effort logging must never crash the server
 
 
 def main():

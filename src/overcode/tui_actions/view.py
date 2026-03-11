@@ -14,21 +14,37 @@ if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay, FullscreenPreview
 
 
+def _toggle_widget(tui, widget_id: str, widget_class, pref_attr: str, label: str, on_show=None) -> None:
+    """Toggle a widget's display visibility, save preference, and notify.
+
+    Args:
+        tui: The SupervisorTUI instance
+        widget_id: CSS selector ID (e.g. "timeline")
+        widget_class: The widget class for query_one type check
+        pref_attr: Attribute name on tui._prefs to persist the state
+        label: Human-readable label for the notification (e.g. "Timeline")
+        on_show: Optional callback(widget) called when widget becomes visible
+    """
+    try:
+        widget = tui.query_one(f"#{widget_id}", widget_class)
+        widget.display = not widget.display
+        setattr(tui._prefs, pref_attr, widget.display)
+        tui._save_prefs()
+        if widget.display and on_show:
+            on_show(widget)
+        state = "shown" if widget.display else "hidden"
+        tui.notify(f"{label} {state}", severity="information")
+    except NoMatches:
+        pass
+
+
 class ViewActionsMixin:
     """Mixin providing view/display actions for SupervisorTUI."""
 
     def action_toggle_timeline(self) -> None:
         """Toggle timeline visibility."""
         from ..tui_widgets import StatusTimeline
-        try:
-            timeline = self.query_one("#timeline", StatusTimeline)
-            timeline.display = not timeline.display
-            self._prefs.timeline_visible = timeline.display
-            self._save_prefs()
-            state = "shown" if timeline.display else "hidden"
-            self.notify(f"Timeline {state}", severity="information")
-        except NoMatches:
-            pass
+        _toggle_widget(self, "timeline", StatusTimeline, "timeline_visible", "Timeline")
 
     def action_toggle_help(self) -> None:
         """Toggle help overlay visibility."""

@@ -416,7 +416,7 @@ class TestRealTmux:
     def test_send_keys_success(self):
         """Should send keys to pane."""
         with patch('overcode.implementations.libtmux.Server') as mock_server_class:
-            with patch('overcode.implementations.time.sleep'):
+            with patch('overcode.tmux_utils.time.sleep'):
                 mock_pane = MagicMock()
                 mock_window = MagicMock()
                 mock_window.panes = [mock_pane]
@@ -438,7 +438,7 @@ class TestRealTmux:
     def test_send_keys_no_enter(self):
         """Should send keys without enter."""
         with patch('overcode.implementations.libtmux.Server') as mock_server_class:
-            with patch('overcode.implementations.time.sleep'):
+            with patch('overcode.tmux_utils.time.sleep'):
                 mock_pane = MagicMock()
                 mock_window = MagicMock()
                 mock_window.panes = [mock_pane]
