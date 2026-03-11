@@ -61,7 +61,12 @@ class StatusDetectorDispatcher:
         from .status_detector import PollingStatusDetector
         from .hook_status_detector import HookStatusDetector
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
-        self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+        # Share the polling detector as the hook detector's fallback so that
+        # content-hash state and phase tracking are consistent (#350 flicker fix).
+        self.hooks = hook_detector or HookStatusDetector(
+            tmux_session, tmux=tmux, patterns=patterns,
+            polling_fallback=self.polling,
+        )
 
     @property
     def capture_lines(self) -> int:

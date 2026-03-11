@@ -232,8 +232,13 @@ class TestStatusDetectorNoInstructions:
 
         assert status == STATUS_WAITING_USER
 
-    def test_returns_running_when_idle_with_orders(self):
-        """Sessions WITH standing instructions get green status when idle"""
+    def test_returns_waiting_when_idle_with_orders(self):
+        """Sessions WITH standing instructions get waiting_user when idle.
+
+        P14:default no longer assumes running for standing-instruction agents —
+        if no detection phase found active-work evidence, the agent isn't
+        running.  P5 (content change) covers actually-active agents.
+        """
         content = """
 ⏺ Task completed successfully!
 
@@ -254,7 +259,7 @@ class TestStatusDetectorNoInstructions:
         detector.detect_status(session)
         status, _, _ = detector.detect_status(session)
 
-        assert status == STATUS_RUNNING
+        assert status == STATUS_WAITING_USER
 
 
 class TestApprovalDetection:

@@ -368,17 +368,21 @@ class PollingStatusDetector:
         return None
 
     def _detect_default(self, session, last_lines: list, content: str) -> Tuple[str, str, str]:
-        """Default detection: waiting or running based on standing instructions."""
-        if not session.standing_instructions:
-            return STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
+        """Default detection when no other phase matched.
 
-        # Has standing instructions — assume running, but check for sleep first (#289)
+        If none of the preceding phases (content change, error, approval,
+        active indicators, tool execution, thinking, prompt, waiting patterns)
+        identified the agent's state, we have no positive evidence of work.
+        Return waiting_user regardless of standing instructions — P5 (content
+        change) already covers the case where standing-order agents are active.
+        """
+        # Check for sleep commands before returning waiting (#289)
         for line in last_lines:
             if is_sleep_command(line):
                 dur = extract_sleep_duration(line)
                 activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
                 return STATUS_BUSY_SLEEPING, activity, content
-        return STATUS_RUNNING, self._extract_last_activity(last_lines), content
+        return STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
 
     def _extract_permission_request(self, lines: list) -> str:
         """Extract the permission request text from lines before the prompt"""

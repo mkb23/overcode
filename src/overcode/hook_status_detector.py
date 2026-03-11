@@ -80,6 +80,7 @@ class HookStatusDetector:
         patterns: "StatusPatterns" = None,
         state_dir: Optional[Path] = None,
         stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD,
+        polling_fallback=None,
     ):
         self.tmux_session = tmux_session
         self.capture_lines = DEFAULT_CAPTURE_LINES
@@ -97,11 +98,12 @@ class HookStatusDetector:
             else:
                 self._state_dir = Path.home() / ".overcode" / "sessions" / tmux_session
 
-        # Lazy-created polling fallback (avoids import cycle at module level)
-        self._polling_fallback = None
+        # Shared or lazy-created polling fallback.  When the dispatcher injects
+        # its polling detector, hash state and phase tracking are shared.
+        self._polling_fallback = polling_fallback
 
     def _get_polling_fallback(self):
-        """Lazily create a PollingStatusDetector for fallback."""
+        """Return (or lazily create) the polling fallback detector."""
         if self._polling_fallback is None:
             from .status_detector import PollingStatusDetector
             self._polling_fallback = PollingStatusDetector(
@@ -163,9 +165,13 @@ class HookStatusDetector:
         """
         hook_state = self._read_hook_state(session.name)
 
+        # Record phase on the shared polling detector for diagnostics
+        polling = self._get_polling_fallback()
+
         if hook_state is None:
             # No hook state or stale → full polling fallback
-            return self._get_polling_fallback().detect_status(session, num_lines=num_lines)
+            # Phase tracking is set by the polling detector itself.
+            return polling.detect_status(session, num_lines=num_lines)
 
         # Hook state is fresh → use it for status
         event = hook_state.get("event", "")
@@ -179,6 +185,7 @@ class HookStatusDetector:
             # We can't use the full polling _is_shell_prompt() here because it
             # rejects shell prompts when Claude's ⏺ output is in the last 5 lines,
             # which is always the case right after exit.
+            polling._last_detect_phase[session.id] = f"hook:SessionEnd"
             return self._detect_session_end_status(session)
 
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
@@ -203,6 +210,9 @@ class HookStatusDetector:
         # Enrich activity for busy_sleeping with parsed duration (#289)
         if status == STATUS_BUSY_SLEEPING:
             activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
+
+        # Record hook phase for diagnostics
+        polling._last_detect_phase[session.id] = f"hook:{event}"
 
         return status, activity, pane_content
 
