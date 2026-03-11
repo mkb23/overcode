@@ -5,6 +5,7 @@ Shows focused agent's terminal output in list+preview mode.
 Uses ScrollableContainer for native mouse wheel / trackpad scrolling.
 """
 
+import re
 from typing import List, TYPE_CHECKING
 
 from textual.containers import ScrollableContainer
@@ -13,6 +14,25 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from .session_summary import SessionSummary
+
+# Rich's Text.from_ansi() only handles SGR sequences (\x1b[...m).
+# Non-SGR CSI sequences like \x1b[K (erase line), \x1b[?25l (hide cursor),
+# and OSC sequences cause mis-parsing that can leak background colors across
+# lines.  Strip everything except SGR before handing to Rich.
+_NON_SGR_CSI = re.compile(r'\x1b\[[0-9;?]*[a-lA-Ln-zA-Z]')  # CSI not ending in 'm'
+_OSC_SEQ = re.compile(r'\x1b\].*?(?:\x07|\x1b\\)')           # OSC sequences
+_OTHER_ESC = re.compile(r'\x1b[^[\]][^\x1b]*')                # other escapes e.g. \x1b(B
+
+
+def _sanitize_ansi(line: str) -> str:
+    """Keep only SGR sequences (\x1b[...m) and append a reset."""
+    line = _OSC_SEQ.sub('', line)
+    line = _NON_SGR_CSI.sub('', line)
+    line = _OTHER_ESC.sub('', line)
+    # Ensure any open style is closed at end of line
+    if '\x1b[' in line:
+        line += '\x1b[0m'
+    return line
 
 
 class PreviewPane(ScrollableContainer):
@@ -56,7 +76,7 @@ class PreviewPane(ScrollableContainer):
                     parsed = Text.from_ansi(line)
                     content.append(parsed.plain)
                 else:
-                    content.append(Text.from_ansi(line))
+                    content.append(Text.from_ansi(_sanitize_ansi(line)))
                 content.append("\n")
 
         return content
