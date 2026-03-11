@@ -2,24 +2,26 @@
 
 **Date:** 2026-03-11
 **Scope:** All `.py` files in `src/overcode/`, `src/overcode/cli/`, `src/overcode/tui_actions/`, `src/overcode/tui_widgets/`
-**Issues found:** 213 (186 active, 27 deferred)
+**Issues found:** 213 (77 active, 106 completed, 27 deferred, 3 informational)
 
 ## Summary by Category
 
-### Active — Pure Refactoring & Behaviour-Tightening (186 issues)
+### Active — Pure Refactoring & Behaviour-Tightening (77 issues)
 
 | Category | Count |
 |----------|-------|
-| DRY / Duplicated Logic | 45 |
-| Extract-When-Complex (inline blocks → named functions) | 24 |
-| Silent Exception Swallowing | 27 |
-| Separation of Concerns | 20 |
-| Long Functions / God Methods | 18 |
-| Testability / Dependency Injection | 15 |
-| Conditional Mapping Smell | 12 |
-| Query with Side Effects | 8 |
-| Business Logic in UI | 10 |
+| DRY / Duplicated Logic | 28 |
+| Extract-When-Complex (inline blocks → named functions) | 14 |
+| Silent Exception Swallowing | 1 |
+| Separation of Concerns | 12 |
+| Long Functions / God Methods | 6 |
+| Testability / Dependency Injection | 6 |
+| Conditional Mapping Smell | 3 |
 | Miscellaneous / Dead Code | 7 |
+
+### Completed — Fixed in Refactoring PR (106 issues)
+
+Fixed across 12 batches addressing duration centralization, exception handling, TUI action extraction, pid/tmux utilities, status constants, web layer, config/settings, CLI decomposition, launcher/session_manager, detectors, and miscellaneous cleanup.
 
 ### Deferred — Algorithmic / Behavioural Changes (27 issues)
 
@@ -34,56 +36,30 @@
 
 ---
 
-## Top 10 Priorities
+## Top 10 Priorities (Updated)
 
-1. **`_parse_duration` duplicated 4 times** — `_shared.py`, `monitoring.py`, `command_bar.py`, `web_control_api.py` (issues #1-4)
-2. **`launch()` and `launch_fork()` share ~150 lines** — `launcher.py` (issue #30)
-3. **`send_keys` logic duplicated verbatim** between `implementations.py` and `tmux_manager.py` (issue #8)
-4. **`detect_status` is ~180 lines** doing 6+ distinct detection phases — `status_detector.py` (issue #118)
-5. **Presence state-to-name mapping in 3+ files** — `presence_logger.py`, `time_context.py`, `web_api.py` (issues #10-12)
-6. **`render` method in `daemon_status_bar.py` is ~230 lines** — single method building entire bar (issue #156)
-7. **`STATUS_SYMBOLS` triplicates** data from `STATUS_EMOJIS` + `STATUS_COLORS` — `status_constants.py` (issue #115)
-8. **20+ bare `except Exception: pass`** scattered across web_server, web_api, summarizer, TUI modals (issues #58-80)
-9. **`_update_short_summary` / `_update_context_summary` near-identical** — `summarizer_component.py` (issue #14)
-10. **Modal pattern duplication** — 5 modals share identical show/hide/focus/key-handling logic (issue #178)
+1. **`tui.py` decomposition** — Very large file (~1800+ lines) mixing composition, rendering, data, timers (issue #121)
+2. **`render` method in `daemon_status_bar.py` is ~230 lines** — single method building entire bar (issue #156)
+3. **Modal pattern duplication** — 5 modals share identical show/hide/focus/key-handling logic (issue #178)
+4. **`_update_short_summary` / `_update_context_summary` near-identical** — `summarizer_component.py` (issue #14)
+5. **`web_control_api.py` restart/handover/DI** — (issues #5-7, #74)
+6. **`monitor_daemon.py` decomposition** — Very large file (~52KB) (issues #52-53)
+7. **Handover instruction string duplication** — `session.py` and `web_control_api.py` (issue #147)
+8. **CLI hooks/perms/skills install/uninstall duplication** — (issues #108-114)
+9. **`history_reader.py` refactoring** — JSONL parsing, separation of concerns, testability (issues #44-46)
+10. **`command_bar.py` state machine** — 90-line if/elif chain (issue #154)
 
 ---
 
 ## Active Issues by File
 
-### `src/overcode/cli/_shared.py`
-
-**1.** `_shared.py:40-70` — `_parse_duration` is the canonical copy but has no tests and is duplicated in 3 other places. Should be the single source of truth with explicit re-exports. **[DRY]**
-
-### `src/overcode/cli/monitoring.py`
-
-**2.** `monitoring.py:158-178` — Inline duration parsing that duplicates `_parse_duration` from `_shared.py`. **[DRY]**
-
-### `src/overcode/tui_widgets/command_bar.py`
-
-**3.** `command_bar.py` — Contains its own `_parse_duration` implementation (3rd copy). Should import from `_shared.py`. **[DRY]**
-
 ### `src/overcode/web_control_api.py`
-
-**4.** `web_control_api.py:347-357` — `_parse_frequency` is the 4th duration parser. Different name but same logic. **[DRY]**
 
 **5.** `web_control_api.py:109-147` — `restart_agent` rebuilds the claude command inline. This command-building logic also exists in `launcher.py`. **[DRY]**
 
 **6.** `web_control_api.py` — `transport_all` contains a ~20-line handover instruction string literal that is duplicated from `tui_actions/session.py`. **[DRY]**
 
 **7.** `web_control_api.py` — Multiple functions create `SessionManager()` inline rather than accepting it as a parameter. Prevents testing without real file I/O. **[Testability]**
-
-### `src/overcode/implementations.py`
-
-**8.** `implementations.py:142-185` — `RealTmux.send_keys` is a verbatim copy of `TmuxManager.send_keys` from `tmux_manager.py:132-183`. Both have identical `!`-prefix and `/`-prefix special handling with same sleep delays. **[DRY]**
-
-**9.** `implementations.py:266-293` — `RealTmux._attach_bare` is a near-copy of `TmuxManager._attach_bare` from `tmux_manager.py:203-243`. Differs only in lacking the `set-hook` approach for `destroy-unattached`. **[DRY]**
-
-### `src/overcode/presence_logger.py`
-
-**10.** `presence_logger.py:185-193` — `state_to_name` maps `{0: "asleep", 1: "locked", ...}`. Same mapping exists in `time_context.py` and `web_api.py`. **[DRY]**
-
-**12.** `presence_logger.py` — `format_presence` at L200+ duplicates presence state name formatting from `time_context.py`. **[DRY]**
 
 ### `src/overcode/time_context.py`
 
@@ -93,77 +69,19 @@
 
 **14.** `summarizer_component.py:199-249` — `_update_short_summary` and `_update_context_summary` are near-identical methods. They differ only in: mode string ("short" vs "context"), max_tokens (50 vs 75), which fields to update, and which timestamp dict to record. Should be a single `_update_summary(mode, max_tokens, ...)` method. **[DRY]**
 
-**15.** `summarizer_component.py:274` — `except Exception as e:` in `_capture_pane` catches all exceptions including `KeyboardInterrupt`. Should catch specific exceptions from tmux capture. **[Silent Exception]**
-
 ### `src/overcode/summarizer_client.py`
-
-**16.** `summarizer_client.py:169` — Bare `except Exception` in `summarize()`. No logging of what failed; silently returns None. **[Silent Exception]**
 
 **17.** `summarizer_client.py:131` — Prompt templates use `{status}` placeholder. Verify that the `.format()` call actually passes `status` — potential silent KeyError if not. **[Miscellaneous]**
 
-### `src/overcode/tmux_utils.py`
-
-**18.** `tmux_utils.py:53-54` + `tmux_utils.py:121-122` — Both `send_text_to_tmux_window` and `get_tmux_pane_content` independently construct `tmux_cmd` from `OVERCODE_TMUX_SOCKET` env var. Extract to a `_build_tmux_cmd()` helper. **[DRY]**
-
-**19.** `tmux_utils.py:79-80` — `except subprocess.SubprocessError as e: print(...)` — uses print instead of logging. Caller has no way to know what failed. **[Silent Exception]**
-
-**20.** `tmux_utils.py:98-99` — Same print-based error reporting for Enter key failure. **[Silent Exception]**
-
 ### `src/overcode/tmux_manager.py`
 
-**21.** `tmux_manager.py:132-183` — `send_keys` has complex special-case handling for `!` and `/` commands with timing delays. This is also duplicated in `implementations.py`. Both should delegate to a shared function. **[DRY]**
-
-**22.** `tmux_manager.py:309-341` — `window_exists` reimplements the same fallback logic as `_get_window` (name lookup → digit index fallback). Should just call `_get_window` and check if result is None. **[DRY]**
-
-**23.** `tmux_manager.py:203-243` — `_attach_bare` is ~40 lines of subprocess calls that could be extracted into a standalone tmux bare-attach utility. **[Extract-When-Complex]**
-
-### `src/overcode/pid_utils.py`
-
-**24.** `pid_utils.py` — `is_process_running` and `get_process_pid` share identical PID file read + `os.kill(pid, 0)` logic. The core "read PID file and check if process alive" should be a single helper. **[DRY]**
-
-**25.** `pid_utils.py:266-308` — `stop_process` duplicates the SIGTERM→wait→SIGKILL escalation pattern from `daemon_utils.create_daemon_helpers`. **[DRY]**
-
-### `src/overcode/daemon_utils.py`
-
-**26.** `daemon_utils.py` — `create_daemon_helpers` returns closures that capture `pid_file_path`. The stop closure's SIGTERM→SIGKILL logic is duplicated by `pid_utils.stop_process`. **[DRY]**
+**23.** `tmux_manager.py:203-243` — `_attach_bare` is ~40 lines of subprocess calls that could be extracted into a standalone tmux bare-attach utility. _(Partially addressed via batch 12 — `attach_bare` extracted to tmux_utils, but some standalone logic may remain.)_ **[Extract-When-Complex]**
 
 ### `src/overcode/status_constants.py`
 
-**27.** `status_constants.py` — `STATUS_SYMBOLS` is a dict mapping status→(emoji, color). But `STATUS_EMOJIS` and `STATUS_COLORS` are separate dicts mapping status→emoji and status→color respectively. This is triple-mapping the same data. Should be a single `StatusInfo` namedtuple or dataclass. **[DRY]**
-
-**28.** `status_constants.py` — Many trivial predicate functions like `is_green_status`, `is_waiting_status`, `is_not_running_status` each check membership in a hardcoded set. These should be frozen sets as module-level constants with a single `status in GREEN_STATUSES` pattern. **[Extract-When-Complex]**
-
 **29.** `status_constants.py` — `emoji_or_ascii` function and `EMOJI_ASCII` dict are intermingled with status constants. These are display-layer concerns that belong in a rendering module. **[Separation of Concerns]**
 
-### `src/overcode/launcher.py`
-
-**30.** `launcher.py` — `launch()` and `launch_fork()` share ~150 lines of nearly copy-pasted logic for session creation, tmux window setup, prompt sending, and metadata writing. Extract shared logic into a `_prepare_and_launch()` helper. **[DRY]**
-
-**31.** `launcher.py` — Claude command construction (building the `claude` CLI argument list) is done inline in `launch()`. Same logic is partially reimplemented in `web_control_api.py:restart_agent`. Extract to a `build_claude_command()` function. **[DRY]**
-
-**32.** `launcher.py` — The session metadata dict construction (name, tmux_window, parent, start_time, etc.) is a large inline block. Extract to `_build_session_metadata()`. **[Extract-When-Complex]**
-
-### `src/overcode/session_manager.py`
-
-**34.** `session_manager.py` — File locking with `fcntl.flock` is done inline in multiple methods (`_load`, `_save`, `update_session`, etc.). Extract a context manager like `with self._locked_state():`. **[Extract-When-Complex]**
-
-**35.** `session_manager.py` — `Session` dataclass has many optional fields with default None. The `to_dict`/`from_dict` methods could use `dataclasses.asdict` instead of manual dict construction (like `MonitorDaemonState` does). **[Extract-When-Complex]**
-
-### `src/overcode/status_detector.py`
-
-**36.** `status_detector.py:47-51` — Re-exports status constants as class attributes for backward compatibility. This is a layering violation; consumers should import from `status_constants` directly. **[Separation of Concerns]**
-
-**37.** `status_detector.py` — `detect_status` is ~180 lines with 6+ distinct detection phases (shell prompt check, permission request, question detection, sleep detection, error detection, running detection). Each phase should be its own method. **[Long Function]**
-
-**38.** `status_detector.py` — `_extract_permission_request`, `_extract_question`, `_extract_last_activity` follow similar "scan lines from bottom, match patterns, return first match" structure. Could share a `_scan_lines_for_pattern(lines, patterns)` helper. **[DRY]**
-
-### `src/overcode/hook_status_detector.py`
-
-**39.** `hook_status_detector.py:229-233` — Shell prompt detection patterns duplicate those from `PollingStatusDetector._is_shell_prompt` in `status_detector.py`. **[DRY]**
-
-**40.** `hook_status_detector.py:242-286` — `_is_sleep_in_pane` and `_extract_sleep_duration_from_context` share similar pane content scanning patterns. **[DRY]**
-
-**41.** `hook_status_detector.py:203-240` — `_detect_session_end_status` is ~37 lines doing multiple distinct things (check pane content, detect shell prompt, detect error, determine final status). **[Extract-When-Complex]**
+**117.** `status_constants.py` — `DEFAULT_CAPTURE_LINES` is a magic number used by both status detection and summarization. Document why 50 is the right value. **[Miscellaneous]**
 
 ### `src/overcode/status_patterns.py`
 
@@ -177,57 +95,13 @@
 
 **46.** `history_reader.py` — Multiple free functions delegate to `_default_history` singleton. This global singleton pattern makes testing harder. **[Testability]**
 
-### `src/overcode/config.py`
-
-**48.** `config.py` — Many getter functions follow identical pattern: `load_config()` → get nested key → return default. This could be a single `get_config_value(key_path, default)` function. **[DRY]**
-
-### `src/overcode/settings.py`
-
-**49.** `settings.py:443-486` — `TUIPreferences.load` is ~45 lines of manual dict-to-dataclass mapping. Could use `from_dict` pattern or `dataclasses.fields`-based auto-mapping (like `SessionDaemonState.from_dict`). **[Extract-When-Complex]**
-
-**50.** `settings.py:488-520` — `TUIPreferences.save` mirrors the manual mapping in reverse. **[DRY]**
-
-**51.** `settings.py` — `get_default_standing_instructions` exists in both `settings.py` and `config.py`. **[DRY]**
-
 ### `src/overcode/monitor_daemon.py`
 
 **52.** `monitor_daemon.py` — Very large file (~52KB). The main daemon loop, session update logic, and metric computation should be split into separate modules. **[Long Function]**
 
 **53.** `monitor_daemon.py` — Pane capture and ANSI stripping is done inline in the daemon loop. This is the same capture logic used by `summarizer_component._capture_pane` and `status_detector`. **[DRY]**
 
-### `src/overcode/monitor_daemon_core.py`
-
-**54.** `monitor_daemon_core.py` — Well-structured pure logic. No significant issues.
-
-### `src/overcode/monitor_daemon_state.py`
-
-**55.** `monitor_daemon_state.py:238-243` — `except BaseException: try: os.unlink(tmp_path) except OSError: pass; raise` — The outer `except BaseException` is correct (for atomic write cleanup), but the inner `except OSError: pass` silently swallows unlink failures. At minimum, log it. **[Silent Exception]**
-
-### `src/overcode/supervisor_daemon.py`
-
-**56.** `supervisor_daemon.py:211-263` — `is_daemon_claude_done` and `_has_daemon_claude_started` share identical tmux capture-pane subprocess logic. Extract a shared `_capture_daemon_pane()` method. **[DRY]**
-
-**57.** `supervisor_daemon.py:357-427` — `count_interventions_from_log` has complex inline log parsing (~70 lines). Should be extracted into a standalone function with tests. **[Extract-When-Complex]**
-
-### `src/overcode/supervisor_daemon_core.py`
-
-**58.** `supervisor_daemon_core.py` — `should_launch_daemon_claude` appears unused (replaced by `determine_supervisor_action`). Dead code. **[Miscellaneous]**
-
-### `src/overcode/web_server.py`
-
-**59.** `web_server.py:114-140` — `_serve_dashboard` and `_serve_analytics_dashboard` are nearly identical (load template, set headers, write response). **[DRY]**
-
-**60.** `web_server.py` — `_serve_chartjs` follows the same serve-static-content pattern as the dashboard methods. All three should share a `_serve_template(name, content_type)` helper. **[DRY]**
-
-**61.** `web_server.py` — `do_GET` is a long if/elif URL routing chain. Should use a route table dict. **[Conditional Mapping]**
-
-**63.** `web_server.py:522-523` — `_log_to_file` has bare `except Exception: pass`. Log write failures are silently lost. **[Silent Exception]**
-
-**64.** `web_server.py:608-609` — `stop_web_server` has bare `except Exception: pass` around PID file cleanup. **[Silent Exception]**
-
 ### `src/overcode/web_server_runner.py`
-
-**65.** `web_server_runner.py:33-34` — `except Exception: pass` in `log()` function. If logging fails, there's no fallback. **[Silent Exception]**
 
 **66.** `web_server_runner.py:88-89` — `sys.stdout = open(os.devnull, 'w')` — Redirects stdout/stderr to devnull but never closes the file handles. Minor resource leak. **[Miscellaneous]**
 
@@ -235,97 +109,29 @@
 
 ### `src/overcode/web_api.py`
 
-**68.** `web_api.py:72-75` — Nested `except Exception: pass` in `get_status_data`. Silently swallows errors during pane capture for individual sessions. **[Silent Exception]**
-
-**69.** `web_api.py:120-129` — `get_single_agent_status` repeats the pane capture pattern from `get_status_data`. **[DRY]**
-
-**70.** `web_api.py` — `_build_agent_info` is ~100 lines building a dict inline. Should be split into sub-functions for status info, time info, cost info, etc. **[Long Function]**
-
 **71.** `web_api.py` — `_calculate_presence_efficiency` is ~110 lines with a complex sampling loop. The sampling algorithm should be extracted and tested independently. **[Long Function]**
 
 **72.** `web_api.py` — `get_analytics_sessions` creates `SessionManager()` inline (not injected). **[Testability]**
 
-**73.** `web_api.py:167` + `web_api.py:555` — State name mapping `{0: "asleep", 1: "locked", ...}` duplicated within the same file. **[DRY]**
-
-### `src/overcode/web_control_api.py`
+### `src/overcode/web_control_api.py` (continued)
 
 **74.** `web_control_api.py` — Many functions create `SessionManager()` inline rather than using dependency injection. **[Testability]**
-
-### `src/overcode/data_export.py`
-
-**75.** `data_export.py` — `_build_sessions_table`, `_build_timeline_table`, `_build_presence_table` share identical empty-data-check and array-building patterns. **[DRY]**
-
-**76.** `data_export.py` — `_session_to_record` duplicates field mapping from `web_api.py:_session_to_analytics_record`. **[DRY]**
-
-### `src/overcode/follow_mode.py`
-
-**77.** `follow_mode.py:126-250` — `follow_agent` is ~125 lines. Should extract the status-check loop, report-polling, and output-streaming into separate functions. **[Long Function]**
-
-**78.** `follow_mode.py` — `_poll_for_report` duplicates report checking and status updating from `follow_agent`. **[DRY]**
-
-**79.** `follow_mode.py` — `_emit_new_lines` has complex deduplication logic that should be a standalone tested function. **[Extract-When-Complex]**
-
-### `src/overcode/sister_poller.py`
-
-**80.** `sister_poller.py:192-267` — `_agent_to_session` is a 75-line function building Session objects with manual field mapping. Should use a dict→Session factory. **[Long Function]**
-
-**81.** `sister_poller.py:222` — Uses `__import__("datetime")` inline instead of a normal import. **[Miscellaneous]**
-
-**82.** `sister_poller.py:154-160` — `_poll_sister` error handling resets 5 fields individually. Should use a `_reset_sister_state()` method. **[Extract-When-Complex]**
 
 ### `src/overcode/sister_controller.py`
 
 **83.** `sister_controller.py` — Every method passes `(sister_url, api_key, agent_name)` as separate arguments. Should use a bound `SisterClient(url, api_key)` pattern where agent_name is per-call. **[Extract-When-Complex]**
 
-### `src/overcode/notifier.py`
-
-**84.** `notifier.py` — `_send_terminal_notifier` and `_send_osascript` have similar subprocess-call-with-error-handling structure. Could share a `_run_notification_cmd(cmd)` helper. **[DRY]**
-
 ### `src/overcode/usage_monitor.py`
 
 **85.** `usage_monitor.py` — `_get_access_token` has two separate try/except blocks for keychain vs file. Could be a try-chain or loop over providers. **[Extract-When-Complex]**
-
-**86.** `usage_monitor.py` — `_fetch_usage` catches a broad exception tuple. Should catch specific HTTP/JSON errors. **[Silent Exception]**
-
-### `src/overcode/logging_config.py`
-
-**87.** `logging_config.py:58-81` — Console handler setup has duplicated `StreamHandler` creation in both the rich and non-rich branches, and again in the fallback. **[DRY]**
-
-### `src/overcode/daemon_logging.py`
-
-**88.** `daemon_logging.py` — `SupervisorDaemonLogger.daemon_claude_output` has inline log coloring logic that mixes logging with presentation. **[Separation of Concerns]**
-
-### `src/overcode/claude_config.py`
-
-**89.** `claude_config.py:57-63` — `has_hook` loads settings, iterates hooks. Then `add_hook` at L71-76 does the same iteration to check existence before adding. The duplication could be avoided by having `add_hook` call `has_hook`. **[DRY]**
-
-**90.** `claude_config.py` — `add_permission` at L143-157 and `remove_permission` at L159-178 both load settings, deepcopy, modify, save. This load-deepcopy-modify-save pattern is repeated in `add_hook`, `remove_hook`, `add_permission`, `remove_permission`. Should be a `_modify_settings(mutator_fn)` helper. **[DRY]**
-
-### `src/overcode/hook_handler.py`
-
-**91.** `hook_handler.py:88-94` — `except (json.JSONDecodeError, IOError): return` silently swallows malformed hook input. Should at minimum log to stderr for debugging hook issues. **[Silent Exception]**
-
-### `src/overcode/standing_instructions.py`
-
-**92.** `standing_instructions.py` — `load_presets` and `save_presets` both call `ensure directory exists`. Minor duplication. **[DRY]**
 
 ### `src/overcode/bundled_skills.py`
 
 **93.** `bundled_skills.py` — Skill content is large string literals inline. For maintainability, these could be loaded from `.md` files at build time or at least stored as separate variables. **[Separation of Concerns]**
 
-### `src/overcode/dependency_check.py`
-
-**94.** `dependency_check.py:27-47` + `dependency_check.py:50-73` — `check_tmux` and `check_claude` are nearly identical (find executable, run version command, parse output). Should be `_check_executable(name, version_flag, parser)`. **[DRY]**
-
-**95.** `dependency_check.py:76-91` + `dependency_check.py:94-109` — `require_tmux` and `require_claude` are near-identical wrappers. Could be `_require_executable(name, error_class, install_hint)`. **[DRY]**
-
 ---
 
 ### `src/overcode/cli/agent.py`
-
-**96.** `agent.py` — `launch_cmd` function is ~100 lines. The argument validation, session metadata construction, and actual launch call should be separated. **[Long Function]**
-
-**97.** `agent.py` — `kill_cmd` inline block (~15 lines) for cascade kill logic should be its own function. **[Extract-When-Complex]**
 
 **98.** `agent.py` — `list_cmd` has inline session filtering and formatting (~30 lines). The filter logic is business logic embedded in CLI. **[Separation of Concerns]**
 
@@ -342,12 +148,6 @@
 **104.** `agent.py` — `report_cmd` has bare `except Exception` at the end. **[Silent Exception]**
 
 **105.** `agent.py` — `cleanup_cmd` has inline filter for done/terminated sessions. **[Extract-When-Complex]**
-
-### `src/overcode/cli/daemon.py`
-
-**106.** `daemon.py` — `monitor_cmd` and `supervisor_cmd` share nearly identical structure (check running, start/stop, print status). Could share a `_daemon_control(daemon_type, ...)` helper. **[DRY]**
-
-**107.** `daemon.py` — Both commands import `spawn_daemon` and `is_*_running` inline. The start/stop/status pattern is repeated. **[DRY]**
 
 ### `src/overcode/cli/hooks.py`
 
@@ -377,24 +177,6 @@
 
 ---
 
-### `src/overcode/status_constants.py` (continued)
-
-**115.** `status_constants.py` — `STATUS_SYMBOLS`, `STATUS_EMOJIS`, and `STATUS_COLORS` are three parallel dicts mapping the same keys. Merge into a single source. **[DRY]**
-
-**116.** `status_constants.py` — Predicate functions (`is_green_status`, `is_waiting_status`, etc.) could be replaced by exported frozensets (`GREEN_STATUSES = frozenset({...})`). The functions add indirection without value. **[Extract-When-Complex]**
-
-**117.** `status_constants.py` — `DEFAULT_CAPTURE_LINES` is a magic number used by both status detection and summarization. Document why 50 is the right value. **[Miscellaneous]**
-
-### `src/overcode/status_detector.py` (continued)
-
-**118.** `status_detector.py` — `detect_status` is a single ~180-line method. Should be decomposed into `_detect_terminated`, `_detect_permission_request`, `_detect_question`, `_detect_sleep`, `_detect_error`, `_detect_running`. **[Long Function]**
-
-**119.** `status_detector.py` — `_is_shell_prompt` has hardcoded prompt patterns. These overlap with patterns in `hook_status_detector.py` and `status_patterns.py`. **[DRY]**
-
-**120.** `status_detector.py` — ANSI stripping is done inline with `strip_ansi(line).strip()`. The `strip_ansi` import is used in many files; the pattern is correct per MEMORY.md but the stripping-then-checking could be a single `clean_line(line)` utility. **[Extract-When-Complex]**
-
----
-
 ### `src/overcode/tui.py`
 
 **121.** `tui.py` — Very large file (~1800+ lines). The TUI app class mixes composition, rendering, data loading, and timer management. Should be further decomposed into action mixins or helper modules. **[Long Function]**
@@ -419,29 +201,7 @@
 
 ---
 
-### `src/overcode/tui_actions/daemon.py`
-
-**138.** `daemon.py:61-64` — `except NoMatches: pass` — Silently swallows the case where daemon panel doesn't exist. Should at minimum log. **[Silent Exception]**
-
-**139.** `daemon.py:96-100` — Same `except NoMatches: pass` pattern repeated. **[Silent Exception]**
-
-**140.** `daemon.py:153-156` — Same `except NoMatches: pass` pattern. **[Silent Exception]**
-
-**141.** `daemon.py:179-183` — Same pattern again. Four occurrences of the same try/except/pass block. Extract a `_log_to_daemon_panel(message)` helper that handles the NoMatches case. **[DRY]**
-
-**142.** `daemon.py:199-202` — Same pattern, 5th occurrence. **[DRY]**
-
-**143.** `daemon.py:205-208` — Same pattern, 6th occurrence. **[DRY]**
-
-### `src/overcode/tui_actions/view.py`
-
-**144.** `view.py` — Multiple toggle actions follow identical pattern: query widget, toggle display property, save prefs, notify. Should have a `_toggle_widget(widget_id, widget_class, pref_key)` helper. **[DRY]**
-
-**145.** `view.py` — Repetitive `try: query_one(...) except NoMatches: pass` pattern. **[DRY]**
-
 ### `src/overcode/tui_actions/session.py`
-
-**146.** `session.py` — Repetitive focused-widget-check pattern: `focused = self.focused; if not isinstance(focused, SessionSummary): return`. This guard appears in nearly every action. Extract a `_get_focused_session()` helper. **[DRY]**
 
 **147.** `session.py` — Handover instruction string literal (~20 lines) is duplicated in `web_control_api.py`. **[DRY]**
 
@@ -455,75 +215,23 @@
 
 **151.** `input.py` — `action_send_instruction` and `action_send_standing_order` are nearly identical methods for sending text to an agent, differing only in the prompt prefix. **[DRY]**
 
-**152.** `input.py` — `action_send_enter`, `action_send_escape`, `action_send_number` all follow the same pattern: get focused session, call `tmux.send_keys`. Should share a `_send_to_focused(keys)` helper. **[DRY]**
-
-### `src/overcode/tui_actions/navigation.py`
-
-**153.** `navigation.py` — Clean implementation. No significant issues.
-
 ---
 
 ### `src/overcode/tui_widgets/command_bar.py`
 
 **154.** `command_bar.py` — Contains a ~90-line if/elif state machine for handling different command modes. Should use a state pattern or dispatch dict. **[Conditional Mapping]**
 
-**155.** `command_bar.py` — Contains its own `_parse_duration` (3rd copy). **[DRY]** (same as #3)
-
 ### `src/overcode/tui_widgets/daemon_status_bar.py`
 
 **156.** `daemon_status_bar.py` — `render` method is ~230 lines building the entire status bar. Should be split into `_render_daemon_status()`, `_render_session_summary()`, `_render_presence_status()`, etc. **[Long Function]**
-
-### `src/overcode/tui_widgets/session_summary.py`
-
-_(No active issues — all moved to deferred)_
-
-### `src/overcode/tui_widgets/preview_pane.py`
-
-**161.** `preview_pane.py:76` — `except Exception: pass` silently swallows all errors during content update. **[Silent Exception]**
-
-### `src/overcode/tui_widgets/status_timeline.py`
-
-_(No active issues — #162 moved to deferred)_
 
 ### `src/overcode/tui_widgets/daemon_panel.py`
 
 **163.** `daemon_panel.py` — `render()` builds Rich Text inline with repeated style patterns. Could use a template or structured builder. **[Extract-When-Complex]**
 
-### `src/overcode/tui_widgets/fullscreen_preview.py`
-
-**164.** `fullscreen_preview.py:89` — `except Exception: pass` silently swallows errors in content widget update. **[Silent Exception]**
-
-**165.** `fullscreen_preview.py:113` — `except Exception: pass` in `hide()` when restoring previous focus. **[Silent Exception]**
-
 ### `src/overcode/tui_widgets/help_overlay.py`
 
 **166.** `help_overlay.py` — Keybinding data is hardcoded as inline strings. If keybindings change, this help text must be manually updated. Consider generating from the actual binding definitions. **[Separation of Concerns]**
-
-### `src/overcode/tui_widgets/new_agent_defaults_modal.py`
-
-**167.** `new_agent_defaults_modal.py:104` — `except Exception: pass` in `_hide()` when restoring focus. **[Silent Exception]**
-
-**168.** `new_agent_defaults_modal.py:123-124` + `new_agent_defaults_modal.py:128-131` — Two more `except Exception: pass` blocks in `show()`. **[Silent Exception]**
-
-### `src/overcode/tui_widgets/agent_select_modal.py`
-
-**169.** `agent_select_modal.py:88-89` — `except Exception: pass` in `_hide()`. **[Silent Exception]**
-
-**170.** `agent_select_modal.py:118-119` + `agent_select_modal.py:123-125` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**
-
-### `src/overcode/tui_widgets/summary_config_modal.py`
-
-**171.** `summary_config_modal.py:178` — `except Exception: pass` in `_update_live_summaries`. This swallows errors during live preview updates. **[Silent Exception]**
-
-**172.** `summary_config_modal.py:252-253` — `except Exception: pass` in `_hide()`. **[Silent Exception]**
-
-**173.** `summary_config_modal.py:283-284` + `summary_config_modal.py:290-291` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**
-
-### `src/overcode/tui_widgets/sister_selection_modal.py`
-
-**176.** `sister_selection_modal.py:116-117` — `except Exception: pass` in `_hide()`. **[Silent Exception]**
-
-**177.** `sister_selection_modal.py:145-146` + `sister_selection_modal.py:151-153` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**
 
 ---
 
@@ -539,19 +247,7 @@ _(No active issues — #162 moved to deferred)_
 
 ### `src/overcode/summary_columns.py`
 
-**181.** `summary_columns.py:252-258` — `render_status_symbol` does `import unicodedata` at function scope on every call. Should be a module-level import. **[Extract-When-Complex]**
-
-**182.** `summary_columns.py:528-569` — `render_oversight_countdown` has inline time formatting with repeated if/elif for seconds/minutes/hours. This is the same pattern as `format_duration` from `tui_helpers.py`. **[DRY]**
-
-**183.** `summary_columns.py:572-606` — `render_heartbeat` is ~35 lines computing next heartbeat time. The next-heartbeat-time computation should be a standalone function. **[Extract-When-Complex]**
-
-**184.** `summary_columns.py:744-767` — `render_heartbeat_plain` duplicates the next-heartbeat-time computation from `render_heartbeat`. **[DRY]**
-
-**186.** `summary_columns.py:353-363` — `render_context_usage` has duplicated fallback return for two different "no data" cases (lines 361 and 363 are identical). **[DRY]**
-
 **187.** `summary_columns.py:913-1003` — `build_cli_context` is ~90 lines of argument mapping into `ColumnContext`. The function has 22 parameters. Should use a builder pattern or kwargs. **[Long Function]**
-
-**188.** `summary_columns.py:934-940` — Permissiveness mode emoji mapping (`bypass→🔥, permissive→🏃, normal→👮`) is duplicated from `tui_render.py` and `cli/monitoring.py`. **[DRY]**
 
 ---
 
@@ -572,8 +268,6 @@ _(No active issues — #162 moved to deferred)_
 ---
 
 ### Cross-file duplication (consolidated)
-
-**193.** Presence state mapping `{0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}` appears in `presence_logger.py`, `time_context.py`, `web_api.py` (twice), and `tui_render.py`. Should be a single `PRESENCE_STATE_NAMES` dict in `status_constants.py`. **[DRY]**
 
 **194.** Pane capture pattern (get tmux pane content, strip ANSI, filter blank lines) appears in `status_detector.py`, `hook_status_detector.py`, `summarizer_component.py`, `monitor_daemon.py`, and `web_api.py`. Should be a single `capture_clean_pane(session, window, lines)` function. **[DRY]**
 
@@ -597,8 +291,6 @@ _(No active issues — #162 moved to deferred)_
 
 **202.** `tui_actions/session.py` — `action_handover_all` builds a complete handover prompt inline with status data fetching + string formatting. The prompt construction is business logic. **[Separation of Concerns]**
 
-**203.** `web_control_api.py` — `do_POST` has a long if/elif chain for URL routing (similar to `web_server.py:do_GET`). Both should use a route table. **[Conditional Mapping]**
-
 **205.** `summary_columns.py:56` — `_tool_emojis` does `from .status_constants import emoji_or_ascii` at function scope. Module-level import would be cleaner. **[Miscellaneous]**
 
 **206.** `tui_widgets/command_bar.py` — The `_STATES` or state transitions are implicit in if/elif chains. An enum + transition table would be more maintainable. **[Conditional Mapping]**
@@ -618,6 +310,154 @@ _(No active issues — #162 moved to deferred)_
 - Issues are numbered sequentially across all files. Numbers are stable — deferred issues retain their original numbers.
 - Line numbers are approximate and may shift with code changes.
 - Category tags: **[DRY]** = Don't Repeat Yourself, **[Silent Exception]** = bare except or overly broad catch, **[Extract-When-Complex]** = inline block that should be a named function, **[Long Function]** = function >40 lines doing multiple things, **[Separation of Concerns]** = mixing layers, **[Testability]** = hard to test due to inline dependencies, **[Conditional Mapping]** = if/elif chain mapping between representations, **[Miscellaneous]** = dead code, unclear types, resource leaks, etc.
+
+---
+
+## Completed Issues
+
+The following 104 issues were addressed in the refactoring PR, organized by batch.
+
+### Batch 1 — Duration + Presence
+
+- ~~**1.** `_shared.py:40-70` — `_parse_duration` is the canonical copy but has no tests and is duplicated in 3 other places. **[DRY]**~~ → Centralized to `src/overcode/duration.py`
+- ~~**2.** `monitoring.py:158-178` — Inline duration parsing that duplicates `_parse_duration` from `_shared.py`. **[DRY]**~~ → Centralized to `src/overcode/duration.py`
+- ~~**3.** `command_bar.py` — Contains its own `_parse_duration` implementation (3rd copy). **[DRY]**~~ → Centralized to `src/overcode/duration.py`
+- ~~**4.** `web_control_api.py:347-357` — `_parse_frequency` is the 4th duration parser. **[DRY]**~~ → Centralized to `src/overcode/duration.py`
+- ~~**10.** `presence_logger.py:185-193` — `state_to_name` maps duplicated in multiple files. **[DRY]**~~ → Centralized to `status_constants.PRESENCE_STATE_NAMES`
+- ~~**12.** `presence_logger.py` — `format_presence` duplicates presence state name formatting. **[DRY]**~~ → Centralized to `status_constants.PRESENCE_STATE_NAMES`
+- ~~**73.** `web_api.py:167` + `web_api.py:555` — State name mapping duplicated within the same file. **[DRY]**~~ → Centralized to `status_constants.PRESENCE_STATE_NAMES`
+- ~~**193.** Presence state mapping appears in 5 files. **[DRY]**~~ → Centralized to `status_constants.PRESENCE_STATE_NAMES`
+
+### Batch 2 — Exception Handling
+
+- ~~**15.** `summarizer_component.py:274` — `except Exception as e:` catches all exceptions in `_capture_pane`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**16.** `summarizer_client.py:169` — Bare `except Exception` in `summarize()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**55.** `monitor_daemon_state.py:238-243` — Inner `except OSError: pass` silently swallows unlink failures. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**63.** `web_server.py:522-523` — `_log_to_file` has bare `except Exception: pass`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**64.** `web_server.py:608-609` — `stop_web_server` has bare `except Exception: pass`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**65.** `web_server_runner.py:33-34` — `except Exception: pass` in `log()` function. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**68.** `web_api.py:72-75` — Nested `except Exception: pass` in `get_status_data`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**86.** `usage_monitor.py` — `_fetch_usage` catches a broad exception tuple. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**91.** `hook_handler.py:88-94` — `except (json.JSONDecodeError, IOError): return` silently swallows malformed hook input. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**161.** `preview_pane.py:76` — `except Exception: pass` silently swallows all errors. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**164.** `fullscreen_preview.py:89` — `except Exception: pass` in content widget update. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**165.** `fullscreen_preview.py:113` — `except Exception: pass` in `hide()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**167.** `new_agent_defaults_modal.py:104` — `except Exception: pass` in `_hide()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**168.** `new_agent_defaults_modal.py:123-131` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**169.** `agent_select_modal.py:88-89` — `except Exception: pass` in `_hide()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**170.** `agent_select_modal.py:118-125` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**171.** `summary_config_modal.py:178` — `except Exception: pass` in `_update_live_summaries`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**172.** `summary_config_modal.py:252-253` — `except Exception: pass` in `_hide()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**173.** `summary_config_modal.py:283-291` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**176.** `sister_selection_modal.py:116-117` — `except Exception: pass` in `_hide()`. **[Silent Exception]**~~ → Tightened exception handling
+- ~~**177.** `sister_selection_modal.py:145-153` — Two more `except Exception: pass` in `show()`. **[Silent Exception]**~~ → Tightened exception handling
+
+### Batch 3 — TUI Actions DRY
+
+- ~~**138.** `daemon.py:61-64` — `except NoMatches: pass` silently swallows missing daemon panel. **[Silent Exception]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**139.** `daemon.py:96-100` — Same `except NoMatches: pass` pattern repeated. **[Silent Exception]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**140.** `daemon.py:153-156` — Same `except NoMatches: pass` pattern. **[Silent Exception]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**141.** `daemon.py:179-183` — Same pattern again (4th occurrence). **[DRY]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**142.** `daemon.py:199-202` — Same pattern (5th occurrence). **[DRY]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**143.** `daemon.py:205-208` — Same pattern (6th occurrence). **[DRY]**~~ → Extracted `_log_to_daemon_panel`
+- ~~**144.** `view.py` — Multiple toggle actions follow identical pattern. **[DRY]**~~ → Extracted `_toggle_widget`
+- ~~**145.** `view.py` — Repetitive `try: query_one(...) except NoMatches: pass` pattern. **[DRY]**~~ → Extracted `_toggle_widget`
+- ~~**146.** `session.py` — Repetitive focused-widget-check pattern. **[DRY]**~~ → Extracted `_get_focused_session`
+- ~~**152.** `input.py` — `action_send_enter`, `action_send_escape`, `action_send_number` all follow the same pattern. **[DRY]**~~ → Extracted `_send_keys_to_focused`
+
+### Batch 4 — PID/Dependency/Tmux Utilities
+
+- ~~**24.** `pid_utils.py` — `is_process_running` and `get_process_pid` share identical PID file read + `os.kill` logic. **[DRY]**~~ → Extracted `_read_pid_file` helper
+- ~~**25.** `pid_utils.py:266-308` — `stop_process` duplicates SIGTERM→SIGKILL escalation from `daemon_utils`. **[DRY]**~~ → Unified via pid_utils delegation
+- ~~**26.** `daemon_utils.py` — Stop closure's SIGTERM→SIGKILL logic duplicated by `pid_utils.stop_process`. **[DRY]**~~ → Unified via pid_utils delegation
+- ~~**94.** `dependency_check.py:27-73` — `check_tmux` and `check_claude` are nearly identical. **[DRY]**~~ → Extracted `_check_executable`
+- ~~**95.** `dependency_check.py:76-109` — `require_tmux` and `require_claude` are near-identical wrappers. **[DRY]**~~ → Extracted `_require_executable`
+- ~~**18.** `tmux_utils.py:53-54` + `tmux_utils.py:121-122` — Both functions construct `tmux_cmd` independently. **[DRY]**~~ → Extracted `_build_tmux_cmd`
+- ~~**19.** `tmux_utils.py:79-80` — `except subprocess.SubprocessError: print(...)` uses print instead of logging. **[Silent Exception]**~~ → Replaced with logging
+- ~~**20.** `tmux_utils.py:98-99` — Same print-based error reporting. **[Silent Exception]**~~ → Replaced with logging
+
+### Batch 5 — Status Constants
+
+- ~~**27.** `status_constants.py` — `STATUS_SYMBOLS` triplicate data from `STATUS_EMOJIS` + `STATUS_COLORS`. **[DRY]**~~ → Consolidated `STATUS_SYMBOLS` as single source
+- ~~**115.** `status_constants.py` — Three parallel dicts mapping the same keys. **[DRY]**~~ → Consolidated `STATUS_SYMBOLS` as single source
+- ~~**28.** `status_constants.py` — Predicate functions should be frozensets. **[Extract-When-Complex]**~~ → Replaced with frozensets
+- ~~**116.** `status_constants.py` — Predicate functions add indirection without value. **[Extract-When-Complex]**~~ → Replaced with frozensets
+- ~~**36.** `status_detector.py:47-51` — Re-exports status constants as class attributes for backward compatibility. **[Separation of Concerns]**~~ → Removed backward-compat re-exports
+
+### Batch 6 — Web Layer
+
+- ~~**59.** `web_server.py:114-140` — `_serve_dashboard` and `_serve_analytics_dashboard` are nearly identical. **[DRY]**~~ → Extracted `_serve_content` + route tables
+- ~~**60.** `web_server.py` — `_serve_chartjs` follows the same serve-static-content pattern. **[DRY]**~~ → Extracted `_serve_content` + route tables
+- ~~**61.** `web_server.py` — `do_GET` is a long if/elif URL routing chain. **[Conditional Mapping]**~~ → Route table
+- ~~**69.** `web_api.py:120-129` — `get_single_agent_status` repeats pane capture pattern. **[DRY]**~~ → Extracted `_capture_agent_pane`
+- ~~**70.** `web_api.py` — `_build_agent_info` is ~100 lines building a dict inline. **[Long Function]**~~ → Decomposed `_build_agent_info`
+- ~~**75.** `data_export.py` — `_build_sessions_table`, `_build_timeline_table`, `_build_presence_table` share identical patterns. **[DRY]**~~ → Extracted `_build_table`
+- ~~**76.** `data_export.py` — `_session_to_record` duplicates field mapping. **[DRY]**~~ → Extracted `_build_table`
+- ~~**203.** `web_control_api.py` — `do_POST` has a long if/elif chain for URL routing. **[Conditional Mapping]**~~ → Route table
+
+### Batch 7 — Config/Settings
+
+- ~~**89.** `claude_config.py:57-63` — `has_hook` and `add_hook` duplicate iteration. **[DRY]**~~ → Extracted `_modify_settings`
+- ~~**90.** `claude_config.py` — Load-deepcopy-modify-save pattern repeated 4 times. **[DRY]**~~ → Extracted `_modify_settings`
+- ~~**48.** `config.py` — Many getters follow identical `load_config()` → get nested key → return default pattern. **[DRY]**~~ → Extracted `_get_config_value`
+- ~~**49.** `settings.py:443-486` — `TUIPreferences.load` is ~45 lines of manual dict-to-dataclass mapping. **[Extract-When-Complex]**~~ → Auto-mapped fields
+- ~~**50.** `settings.py:488-520` — `TUIPreferences.save` mirrors the manual mapping in reverse. **[DRY]**~~ → Auto-mapped fields
+- ~~**51.** `settings.py` — `get_default_standing_instructions` exists in both `settings.py` and `config.py`. **[DRY]**~~ → Deduplicated
+- ~~**87.** `logging_config.py:58-81` — Duplicated `StreamHandler` creation in both branches. **[DRY]**~~ → Deduplicated StreamHandler creation
+
+### Batch 8 — CLI
+
+- ~~**96.** `agent.py` — `launch_cmd` is ~100 lines mixing validation, metadata, and launch. **[Long Function]**~~ → Extracted oversight policy parsing, post-launch operations, cleanup logic
+- ~~**97.** `agent.py` — `kill_cmd` inline cascade kill logic. **[Extract-When-Complex]**~~ → Extracted
+- ~~**106.** `daemon.py` — `monitor_cmd` and `supervisor_cmd` share nearly identical structure. **[DRY]**~~ → Extracted `_daemon_control` pattern
+- ~~**107.** `daemon.py` — Both commands share repeated start/stop/status pattern. **[DRY]**~~ → Extracted `_daemon_control` pattern
+
+### Batch 9 — Launcher/Session Manager
+
+- ~~**30.** `launcher.py` — `launch()` and `launch_fork()` share ~150 lines of copy-pasted logic. **[DRY]**~~ → Extracted `_prepare_and_launch`
+- ~~**31.** `launcher.py` — Claude command construction done inline. **[DRY]**~~ → Extracted `_build_claude_command`
+- ~~**32.** `launcher.py` — Session metadata dict construction is a large inline block. **[Extract-When-Complex]**~~ → Extracted
+- ~~**34.** `session_manager.py` — File locking with `fcntl.flock` done inline in multiple methods. **[Extract-When-Complex]**~~ → Extracted `_locked_state` context manager
+- ~~**35.** `session_manager.py` — `to_dict`/`from_dict` could use `dataclasses.asdict`. **[Extract-When-Complex]**~~ → Simplified
+
+### Batch 10 — Detectors
+
+- ~~**37.** `status_detector.py` — `detect_status` is ~180 lines with 6+ detection phases. **[Long Function]**~~ → Decomposed into phase methods
+- ~~**118.** `status_detector.py` — Same as #37. **[Long Function]**~~ → Decomposed into phase methods
+- ~~**38.** `status_detector.py` — Multiple methods follow similar "scan lines from bottom" structure. **[DRY]**~~ → Extracted `_scan_from_bottom`
+- ~~**119.** `status_detector.py` — `_is_shell_prompt` has hardcoded patterns overlapping with other files. **[DRY]**~~ → Deduplicated shell prompt patterns
+- ~~**120.** `status_detector.py` — ANSI strip + check could be a single `clean_line` utility. **[Extract-When-Complex]**~~ → Extracted `clean_line`
+- ~~**39.** `hook_status_detector.py:229-233` — Shell prompt detection patterns duplicate from `status_detector.py`. **[DRY]**~~ → Deduplicated shell prompt patterns
+- ~~**40.** `hook_status_detector.py:242-286` — `_is_sleep_in_pane` and `_extract_sleep_duration_from_context` share similar scanning. **[DRY]**~~ → Consolidated sleep detection
+- ~~**41.** `hook_status_detector.py:203-240` — `_detect_session_end_status` does multiple distinct things. **[Extract-When-Complex]**~~ → Consolidated sleep detection
+
+### Batch 11 — Miscellaneous
+
+- ~~**56.** `supervisor_daemon.py:211-263` — Shared tmux capture-pane subprocess logic. **[DRY]**~~ → Extracted shared tmux capture
+- ~~**57.** `supervisor_daemon.py:357-427` — Complex inline log parsing (~70 lines). **[Extract-When-Complex]**~~ → Extracted standalone intervention counter
+- ~~**58.** `supervisor_daemon_core.py` — `should_launch_daemon_claude` appears unused. **[Miscellaneous]**~~ → Removed dead code
+- ~~**84.** `notifier.py` — Similar subprocess-call structure in two notification methods. **[DRY]**~~ → Extracted `_run_notification_cmd`
+- ~~**80.** `sister_poller.py:192-267` — `_agent_to_session` is 75 lines with manual field mapping. **[Long Function]**~~ → Cleaned up
+- ~~**81.** `sister_poller.py:222` — Uses `__import__("datetime")` inline. **[Miscellaneous]**~~ → Normal import
+- ~~**82.** `sister_poller.py:154-160` — Error handling resets 5 fields individually. **[Extract-When-Complex]**~~ → Extracted `_reset_sister_state`
+- ~~**77.** `follow_mode.py:126-250` — `follow_agent` is ~125 lines. **[Long Function]**~~ → Extracted helpers
+- ~~**78.** `follow_mode.py` — `_poll_for_report` duplicates report checking. **[DRY]**~~ → Extracted helpers
+- ~~**79.** `follow_mode.py` — `_emit_new_lines` has complex deduplication logic. **[Extract-When-Complex]**~~ → Extracted helpers
+- ~~**92.** `standing_instructions.py` — `load_presets` and `save_presets` both call `ensure directory exists`. **[DRY]**~~ → Extracted `_ensure_presets_dir`
+- ~~**88.** `daemon_logging.py` — Inline log coloring logic mixes logging with presentation. **[Separation of Concerns]**~~ → Extracted `_line_style`
+- ~~**181.** `summary_columns.py:252-258` — `import unicodedata` at function scope on every call. **[Extract-When-Complex]**~~ → Module-level import
+- ~~**182.** `summary_columns.py:528-569` — Inline time formatting with repeated if/elif. **[DRY]**~~ → Deduplicated
+- ~~**183.** `summary_columns.py:572-606` — Next heartbeat time computation should be standalone. **[Extract-When-Complex]**~~ → Deduplicated heartbeat
+- ~~**184.** `summary_columns.py:744-767` — `render_heartbeat_plain` duplicates computation. **[DRY]**~~ → Deduplicated heartbeat
+- ~~**186.** `summary_columns.py:353-363` — Duplicated fallback return for "no data" cases. **[DRY]**~~ → Deduplicated context
+- ~~**188.** `summary_columns.py:934-940` — Permissiveness mode emoji mapping duplicated. **[DRY]**~~ → Deduplicated permissiveness emoji
+
+### Batch 12 — Tmux Dedup
+
+- ~~**8.** `implementations.py:142-185` — `RealTmux.send_keys` is a verbatim copy of `TmuxManager.send_keys`. **[DRY]**~~ → Extracted `send_keys_to_pane` into tmux_utils
+- ~~**21.** `tmux_manager.py:132-183` — `send_keys` duplicated in `implementations.py`. **[DRY]**~~ → Extracted `send_keys_to_pane` into tmux_utils
+- ~~**9.** `implementations.py:266-293` — `RealTmux._attach_bare` is a near-copy of `TmuxManager._attach_bare`. **[DRY]**~~ → Extracted `attach_bare` into tmux_utils
+- ~~**22.** `tmux_manager.py:309-341` — `window_exists` reimplements `_get_window` fallback logic. **[DRY]**~~ → Simplified to delegate to `_get_window`
 
 ---
 ---
