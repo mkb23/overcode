@@ -69,6 +69,132 @@ class ClaudeLauncher:
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
 
+    def _build_claude_command(
+        self,
+        *,
+        skip_permissions: bool = False,
+        dangerously_skip_permissions: bool = False,
+        permissiveness_mode: Optional[str] = None,
+        claude_agent: Optional[str] = None,
+        allowed_tools: Optional[str] = None,
+        extra_claude_args: Optional[List[str]] = None,
+        resume_session_id: Optional[str] = None,
+        fork: bool = False,
+    ) -> List[str]:
+        """Construct the claude CLI argument list.
+
+        For new launches, pass skip_permissions/dangerously_skip_permissions.
+        For forks, pass permissiveness_mode (inherited from source) and
+        resume_session_id with fork=True.
+        """
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+
+        if resume_session_id:
+            cmd = (
+                ["claude", "--resume", resume_session_id]
+                if claude_command == "claude"
+                else [claude_command, "--resume", resume_session_id]
+            )
+            if fork:
+                cmd.append("--fork-session")
+        else:
+            cmd = [claude_command, "code"] if claude_command == "claude" else [claude_command]
+
+        # Permission flags — from explicit args or inherited mode
+        if dangerously_skip_permissions or permissiveness_mode == "bypass":
+            cmd.append("--dangerously-skip-permissions")
+        elif skip_permissions or permissiveness_mode == "permissive":
+            cmd.extend(["--permission-mode", "dontAsk"])
+
+        if claude_agent:
+            cmd.extend(["--agent", claude_agent])
+        if allowed_tools:
+            cmd.extend(["--allowedTools", allowed_tools])
+        if extra_claude_args:
+            for arg in extra_claude_args:
+                cmd.extend(shlex.split(arg))
+
+        return cmd
+
+    def _build_session_metadata(
+        self,
+        *,
+        name: str,
+        tmux_window: str,
+        command: List[str],
+        start_directory: Optional[str],
+        session_id: str,
+        standing_instructions: str = "",
+        permissiveness_mode: str = "normal",
+        allowed_tools: Optional[str] = None,
+        extra_claude_args: Optional[List[str]] = None,
+        agent_teams: bool = False,
+        claude_agent: Optional[str] = None,
+    ) -> dict:
+        """Build the kwargs dict for SessionManager.create_session.
+
+        Resolves start_directory to an absolute path (#312).
+        """
+        resolved_directory = str(Path(start_directory).resolve()) if start_directory else None
+        return dict(
+            name=name,
+            tmux_session=self.tmux.session_name,
+            tmux_window=tmux_window,
+            command=command,
+            start_directory=resolved_directory,
+            standing_instructions=standing_instructions,
+            permissiveness_mode=permissiveness_mode,
+            allowed_tools=allowed_tools,
+            extra_claude_args=extra_claude_args,
+            agent_teams=agent_teams,
+            claude_agent=claude_agent,
+            session_id=session_id,
+        )
+
+    def _prepare_and_launch(
+        self,
+        *,
+        name: str,
+        session_id: str,
+        window_name: str,
+        claude_cmd: List[str],
+        metadata: dict,
+        parent_session: Optional[Session] = None,
+    ) -> Optional[Session]:
+        """Send command to tmux window, create session, and set parent.
+
+        Builds the environment prefix, constructs the full command string,
+        sends it to the tmux window, and registers the session.
+
+        Returns the Session on success, None on failure (kills window on error).
+        """
+        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
+
+        if parent_session:
+            env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent_session.id} OVERCODE_PARENT_NAME={parent_session.name}"
+
+        if metadata.get('agent_teams'):
+            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+
+        mock_scenario = os.environ.get("MOCK_SCENARIO")
+        if mock_scenario:
+            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
+        else:
+            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
+
+        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
+            print(f"Failed to send command to window {window_name}")
+            self.tmux.kill_window(window_name)
+            return None
+
+        session = self.sessions.create_session(**metadata)
+
+        if parent_session:
+            self.sessions.update_session(session.id, parent_session_id=parent_session.id)
+            session.parent_session_id = parent_session.id
+
+        return session
+
     def launch(
         self,
         name: str,
@@ -161,51 +287,15 @@ class ClaudeLauncher:
             print(f"Failed to create tmux window '{name}'")
             return None
 
-        # Build the claude command - always interactive
-        # Support CLAUDE_COMMAND env var for testing with mock
-        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-        claude_cmd = [claude_command, "code"] if claude_command == "claude" else [claude_command]
-        if dangerously_skip_permissions:
-            claude_cmd.append("--dangerously-skip-permissions")
-        elif skip_permissions:
-            claude_cmd.extend(["--permission-mode", "dontAsk"])
+        # Build command and metadata, then launch
+        claude_cmd = self._build_claude_command(
+            skip_permissions=skip_permissions,
+            dangerously_skip_permissions=dangerously_skip_permissions,
+            claude_agent=claude_agent,
+            allowed_tools=allowed_tools,
+            extra_claude_args=extra_claude_args,
+        )
 
-        # Claude agent persona
-        if claude_agent:
-            claude_cmd.extend(["--agent", claude_agent])
-
-        # Claude CLI flag passthrough (#290)
-        if allowed_tools:
-            claude_cmd.extend(["--allowedTools", allowed_tools])
-        if extra_claude_args:
-            for arg in extra_claude_args:
-                claude_cmd.extend(shlex.split(arg))
-
-        # Prepend overcode env vars so the agent knows its identity
-        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
-
-        # Add parent env vars for hierarchy (#244)
-        if parent_session:
-            env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent_session.id} OVERCODE_PARENT_NAME={parent_session.name}"
-
-        # Enable Claude Code agent teams if requested
-        if agent_teams:
-            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
-
-        # If MOCK_SCENARIO is set, prepend it to the command for testing
-        mock_scenario = os.environ.get("MOCK_SCENARIO")
-        if mock_scenario:
-            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
-        else:
-            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
-
-        # Send command to window to start interactive Claude
-        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
-            print(f"Failed to send command to window {window_name}")
-            self.tmux.kill_window(window_name)
-            return None
-
-        # Determine permissiveness mode based on flags
         if dangerously_skip_permissions:
             perm_mode = "bypass"
         elif skip_permissions:
@@ -213,29 +303,23 @@ class ClaudeLauncher:
         else:
             perm_mode = "normal"
 
-        # Register session with default standing instructions from config
         default_instructions = get_default_standing_instructions()
-        # Resolve to absolute path so daemon/CLI don't disagree on CWD (#312)
-        resolved_directory = str(Path(start_directory).resolve()) if start_directory else None
-        session = self.sessions.create_session(
-            name=name,
-            tmux_session=self.tmux.session_name,
-            tmux_window=window_name,
-            command=claude_cmd,
-            start_directory=resolved_directory,
+        metadata = self._build_session_metadata(
+            name=name, tmux_window=window_name, command=claude_cmd,
+            start_directory=start_directory, session_id=session_id,
             standing_instructions=default_instructions,
-            permissiveness_mode=perm_mode,
-            allowed_tools=allowed_tools,
-            extra_claude_args=extra_claude_args,
-            agent_teams=agent_teams,
+            permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
+            extra_claude_args=extra_claude_args, agent_teams=agent_teams,
             claude_agent=claude_agent,
-            session_id=session_id,
         )
 
-        # Set parent if launching as child agent (#244)
-        if parent_session:
-            self.sessions.update_session(session.id, parent_session_id=parent_session.id)
-            session.parent_session_id = parent_session.id
+        session = self._prepare_and_launch(
+            name=name, session_id=session_id, window_name=window_name,
+            claude_cmd=claude_cmd, metadata=metadata,
+            parent_session=parent_session,
+        )
+        if session is None:
+            return None
 
         # Apply budget at launch time
         if budget_usd is not None and budget_usd > 0:
@@ -385,73 +469,34 @@ class ClaudeLauncher:
             print(f"Failed to create tmux window '{name}'")
             return None
 
-        # Build command: claude --resume <id> --fork-session
-        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-        if claude_command == "claude":
-            claude_cmd = ["claude", "--resume", source_session.active_claude_session_id, "--fork-session"]
-        else:
-            claude_cmd = [claude_command, "--resume", source_session.active_claude_session_id, "--fork-session"]
-
-        # Inherit permission flags
-        if source_session.permissiveness_mode == "bypass":
-            claude_cmd.append("--dangerously-skip-permissions")
-        elif source_session.permissiveness_mode == "permissive":
-            claude_cmd.extend(["--permission-mode", "dontAsk"])
-
-        # Inherit agent persona
-        if source_session.claude_agent:
-            claude_cmd.extend(["--agent", source_session.claude_agent])
-
-        # Inherit CLI flags
-        if source_session.allowed_tools:
-            claude_cmd.extend(["--allowedTools", source_session.allowed_tools])
-        if source_session.extra_claude_args:
-            for arg in source_session.extra_claude_args:
-                claude_cmd.extend(shlex.split(arg))
-
-        # Environment prefix
-        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
-        env_prefix += f" OVERCODE_PARENT_SESSION_ID={source_session.id} OVERCODE_PARENT_NAME={source_session.name}"
-
-        # Inherit agent teams
-        if source_session.agent_teams:
-            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
-
-        # Build and send command
-        mock_scenario = os.environ.get("MOCK_SCENARIO")
-        if mock_scenario:
-            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
-        else:
-            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
-
-        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
-            print(f"Failed to send command to window {window_name}")
-            self.tmux.kill_window(window_name)
-            return None
-
-        # Determine permission mode
-        perm_mode = source_session.permissiveness_mode or "normal"
-
-        # Register session
-        resolved_directory = str(Path(source_session.start_directory).resolve()) if source_session.start_directory else None
-        session = self.sessions.create_session(
-            name=name,
-            tmux_session=self.tmux.session_name,
-            tmux_window=window_name,
-            command=claude_cmd,
-            start_directory=resolved_directory,
-            standing_instructions=source_session.standing_instructions,
-            permissiveness_mode=perm_mode,
+        # Build command and metadata, then launch
+        claude_cmd = self._build_claude_command(
+            permissiveness_mode=source_session.permissiveness_mode,
+            claude_agent=source_session.claude_agent,
             allowed_tools=source_session.allowed_tools,
             extra_claude_args=source_session.extra_claude_args,
-            agent_teams=source_session.agent_teams,
-            claude_agent=source_session.claude_agent,
-            session_id=session_id,
+            resume_session_id=source_session.active_claude_session_id,
+            fork=True,
         )
 
-        # Set as child of source
-        self.sessions.update_session(session.id, parent_session_id=source_session.id)
-        session.parent_session_id = source_session.id
+        perm_mode = source_session.permissiveness_mode or "normal"
+
+        metadata = self._build_session_metadata(
+            name=name, tmux_window=window_name, command=claude_cmd,
+            start_directory=source_session.start_directory, session_id=session_id,
+            standing_instructions=source_session.standing_instructions,
+            permissiveness_mode=perm_mode, allowed_tools=source_session.allowed_tools,
+            extra_claude_args=source_session.extra_claude_args,
+            agent_teams=source_session.agent_teams, claude_agent=source_session.claude_agent,
+        )
+
+        session = self._prepare_and_launch(
+            name=name, session_id=session_id, window_name=window_name,
+            claude_cmd=claude_cmd, metadata=metadata,
+            parent_session=source_session,
+        )
+        if session is None:
+            return None
 
         print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
 
