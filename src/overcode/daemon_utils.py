@@ -5,9 +5,6 @@ Provides factory functions for creating daemon PID management helpers,
 avoiding code duplication between monitor_daemon and supervisor_daemon.
 """
 
-import os
-import signal
-import time
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -15,6 +12,7 @@ from .pid_utils import (
     get_process_pid,
     is_process_running,
     remove_pid_file,
+    stop_process,
 )
 from .settings import DAEMON
 
@@ -68,43 +66,6 @@ def create_daemon_helpers(
         """
         if session is None:
             session = DAEMON.default_tmux_session
-        pid_path = get_pid_path(session)
-        pid = get_process_pid(pid_path)
-        if pid is None:
-            remove_pid_file(pid_path)
-            return False
-
-        try:
-            os.kill(pid, signal.SIGTERM)
-            # Wait for process to actually terminate before removing PID file
-            start = time.time()
-            terminated = False
-            while time.time() - start < 5.0:
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.1)
-                except (OSError, ProcessLookupError):
-                    terminated = True
-                    break
-
-            if not terminated:
-                # Still alive after timeout — force kill
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                    time.sleep(0.1)
-                except (OSError, ProcessLookupError):
-                    pass
-
-            # Reap zombie if we're the parent process
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                pass  # Not our child, or already reaped
-
-            remove_pid_file(pid_path)
-            return True
-        except (OSError, ProcessLookupError):
-            remove_pid_file(pid_path)
-            return False
+        return stop_process(get_pid_path(session))
 
     return is_running, get_pid, stop
