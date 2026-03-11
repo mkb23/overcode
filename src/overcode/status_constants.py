@@ -186,6 +186,19 @@ def emoji_or_ascii(char: str, emoji_free: bool) -> str:
     return char
 
 
+# Permissiveness mode → emoji mapping (shared by TUI, CLI, and web API)
+PERMISSIVENESS_EMOJIS = {
+    "bypass": "🔥",
+    "permissive": "🏃",
+    "normal": "👮",
+}
+
+
+def get_permissiveness_emoji(mode: str, emoji_free: bool = False) -> str:
+    """Get the emoji for a permissiveness mode."""
+    return emoji_or_ascii(PERMISSIVENESS_EMOJIS.get(mode, "👮"), emoji_free)
+
+
 def get_status_emoji(status: str, emoji_free: bool = False) -> str:
     """Get emoji for an agent status."""
     e = STATUS_EMOJIS.get(status, "⚪")

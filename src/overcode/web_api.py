@@ -233,11 +233,8 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         git_diff = get_git_diff_stats(s.start_directory)
 
     # Permission mode emoji (matching TUI)
-    perm_emoji = "👮"  # normal
-    if s.permissiveness_mode == "bypass":
-        perm_emoji = "🔥"
-    elif s.permissiveness_mode == "permissive":
-        perm_emoji = "🏃"
+    from .status_constants import PERMISSIVENESS_EMOJIS
+    perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
 
     return {
         "name": s.name,
