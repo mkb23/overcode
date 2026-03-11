@@ -5,12 +5,15 @@ Keyboard-navigable checkbox list to toggle bypass_permissions and agent_teams.
 Persists to ~/.overcode/config.yaml via config helpers.
 """
 
+import logging
 from typing import Optional, Any
 
 from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
+
+logger = logging.getLogger(__name__)
 
 
 # (label, dict key)
@@ -101,8 +104,8 @@ class NewAgentDefaultsModal(Static, can_focus=True):
         if self._previous_focus is not None:
             try:
                 self._previous_focus.focus()
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to restore focus: %s", e)
         self._previous_focus = None
 
     def _apply(self) -> None:
@@ -120,12 +123,12 @@ class NewAgentDefaultsModal(Static, can_focus=True):
         if app_ref:
             try:
                 self._previous_focus = app_ref.focused
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to save focus: %s", e)
         self.selected_index = 0
         self.refresh()
         self.add_class("visible")
         try:
             self.focus()
-        except Exception:
-            pass
+        except (AttributeError, Exception) as e:
+            logger.debug("Failed to focus modal: %s", e)

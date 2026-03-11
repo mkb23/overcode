@@ -6,12 +6,15 @@ Edits per-level column overrides (low/med/high).
 Updates live summary lines as you toggle groups/columns.
 """
 
+import logging
 from typing import Dict, List, Optional, Any, Tuple
 
 from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
+
+logger = logging.getLogger(__name__)
 
 from ..summary_groups import SUMMARY_GROUPS, SUMMARY_GROUPS_BY_ID
 from ..summary_columns import SUMMARY_COLUMNS, SummaryColumn, resolve_column_visible
@@ -175,8 +178,8 @@ class SummaryConfigModal(Static, can_focus=True):
                 self._app_ref._recompute_cell_column_widths()
                 for widget in self._app_ref.query(SessionSummary):
                     widget.refresh()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to update live summaries: %s", e)
 
     def on_key(self, event: events.Key) -> None:
         """Handle keyboard navigation."""
@@ -249,8 +252,8 @@ class SummaryConfigModal(Static, can_focus=True):
         if self._previous_focus is not None:
             try:
                 self._previous_focus.focus()
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to restore focus: %s", e)
         self._previous_focus = None
 
     def _apply_config(self) -> None:
@@ -280,13 +283,13 @@ class SummaryConfigModal(Static, can_focus=True):
         if app_ref:
             try:
                 self._previous_focus = app_ref.focused
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to save focus: %s", e)
         self.cursor_pos = 0
         self._rebuild_flat_rows()
         self.refresh()
         self.add_class("visible")
         try:
             self.focus()
-        except Exception:
-            pass
+        except (AttributeError, Exception) as e:
+            logger.debug("Failed to focus modal: %s", e)

@@ -5,11 +5,14 @@ Shows focused agent's terminal output in list+preview mode.
 Uses ScrollableContainer for native mouse wheel / trackpad scrolling.
 """
 
+import logging
 from typing import List, TYPE_CHECKING
 
 from textual.containers import ScrollableContainer
 from textual.widgets import Static
 from rich.text import Text
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .session_summary import SessionSummary
@@ -73,8 +76,8 @@ class PreviewPane(ScrollableContainer):
         try:
             content_widget = self.query_one("#preview-content", Static)
             content_widget.update(self._build_content())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to update preview content: %s", e)
 
         if was_auto:
             # Follow new content at bottom

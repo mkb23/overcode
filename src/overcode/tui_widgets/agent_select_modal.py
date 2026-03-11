@@ -4,12 +4,15 @@ Agent selection modal for TUI.
 Keyboard-navigable list to pick a Claude agent persona before launching.
 """
 
+import logging
 from typing import List, Optional, Any
 
 from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
+
+logger = logging.getLogger(__name__)
 
 
 class AgentSelectModal(Static, can_focus=True):
@@ -85,8 +88,8 @@ class AgentSelectModal(Static, can_focus=True):
         if self._previous_focus is not None:
             try:
                 self._previous_focus.focus()
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to restore focus: %s", e)
         self._previous_focus = None
 
     def _select(self) -> None:
@@ -115,12 +118,12 @@ class AgentSelectModal(Static, can_focus=True):
         if app_ref:
             try:
                 self._previous_focus = app_ref.focused
-            except Exception:
-                pass
+            except (AttributeError, Exception) as e:
+                logger.debug("Failed to save focus: %s", e)
         self.selected_index = 0
         self.refresh()
         self.add_class("visible")
         try:
             self.focus()
-        except Exception:
-            pass
+        except (AttributeError, Exception) as e:
+            logger.debug("Failed to focus modal: %s", e)
