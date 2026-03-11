@@ -136,6 +136,87 @@ class SupervisorStats:
             return cls()
 
 
+_ACTION_PHRASES = [
+    "approved",
+    "rejected",
+    "sent ",
+    "provided",
+    "unblocked",
+]
+
+_NO_ACTION_PHRASES = [
+    "no intervention needed",
+    "no action needed",
+]
+
+_TIMESTAMP_FORMATS = [
+    "%a %d %b %Y %H:%M:%S %Z",
+    "%a  %d %b %Y %H:%M:%S %Z",
+]
+
+
+def count_interventions_from_log(
+    log_path: Path,
+    session_names: List[str],
+    since: datetime,
+) -> Dict[str, int]:
+    """Count interventions per session from supervisor log since a given time.
+
+    Args:
+        log_path: Path to the supervisor log file
+        session_names: List of session names to check for
+        since: Only count entries after this timestamp
+
+    Returns:
+        Dict mapping session name to intervention count
+    """
+    if not log_path.exists():
+        return {}
+
+    counts: Dict[str, int] = {}
+    session_set = set(session_names)
+
+    try:
+        with open(log_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    if ": " not in line:
+                        continue
+                    timestamp_part = line.split(": ")[0]
+                    entry_time = None
+                    for fmt in _TIMESTAMP_FORMATS:
+                        try:
+                            entry_time = datetime.strptime(timestamp_part.strip(), fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if entry_time is None:
+                        continue
+                except (ValueError, IndexError):
+                    continue
+
+                if entry_time < since:
+                    continue
+
+                for name in session_set:
+                    if f"{name} - " in line:
+                        line_lower = line.lower()
+                        if any(phrase in line_lower for phrase in _NO_ACTION_PHRASES):
+                            break
+                        if any(phrase in line_lower for phrase in _ACTION_PHRASES):
+                            counts[name] = counts.get(name, 0) + 1
+                        break
+
+    except IOError:
+        pass
+
+    return counts
+
+
 class SupervisorDaemon:
     """Background daemon that orchestrates daemon claude for non-green sessions.
 
@@ -198,6 +279,31 @@ class SupervisorDaemon:
             return False
         return self.tmux.window_exists(self.daemon_claude_window)
 
+    def _capture_daemon_pane(self, lines: int = 30) -> Optional[str]:
+        """Capture recent output from the daemon claude tmux pane.
+
+        Args:
+            lines: Number of lines to capture from the bottom
+
+        Returns:
+            Captured pane content, or None if pane not found (returncode != 0).
+            Raises subprocess.SubprocessError on transient errors (timeout, etc.).
+        """
+        result = subprocess.run(
+            [
+                "tmux", "capture-pane",
+                "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
+                "-p",
+                "-S", f"-{lines}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
     def is_daemon_claude_done(self) -> bool:
         """Check if daemon claude has finished its task.
 
@@ -209,29 +315,15 @@ class SupervisorDaemon:
             return True
 
         try:
-            result = subprocess.run(
-                [
-                    "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
-                    "-p",
-                    "-S", "-30",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode != 0:
-                return True
-
-            content = result.stdout
-            patterns = get_patterns()
-            return check_daemon_output_completion(content, patterns.daemon_active_indicators)
-
-        except subprocess.TimeoutExpired:
-            return False
+            content = self._capture_daemon_pane()
         except subprocess.SubprocessError:
             return False
+
+        if content is None:
+            return True
+
+        patterns = get_patterns()
+        return check_daemon_output_completion(content, patterns.daemon_active_indicators)
 
     def _has_daemon_claude_started(self) -> bool:
         """Check if daemon claude has started working."""
@@ -239,27 +331,15 @@ class SupervisorDaemon:
             return False
 
         try:
-            result = subprocess.run(
-                [
-                    "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
-                    "-p",
-                    "-S", "-30",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode != 0:
-                return False
-
-            content = result.stdout
-            patterns = get_patterns()
-            return check_daemon_tool_activity(content, patterns.daemon_tool_indicators)
-
+            content = self._capture_daemon_pane()
         except subprocess.SubprocessError:
             return False
+
+        if content is None:
+            return False
+
+        patterns = get_patterns()
+        return check_daemon_tool_activity(content, patterns.daemon_tool_indicators)
 
     def wait_for_daemon_claude(
         self,
@@ -330,25 +410,14 @@ class SupervisorDaemon:
             return
 
         try:
-            result = subprocess.run(
-                [
-                    "tmux", "capture-pane",
-                    "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
-                    "-p",
-                    "-S", "-50",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode == 0:
-                lines = [line for line in result.stdout.split('\n') if line.strip()]
-                if lines:
-                    self.log.daemon_claude_output(lines)
-
+            content = self._capture_daemon_pane(lines=50)
         except subprocess.SubprocessError:
-            pass
+            return
+
+        if content is not None:
+            lines = [line for line in content.split('\n') if line.strip()]
+            if lines:
+                self.log.daemon_claude_output(lines)
 
     # =========================================================================
     # Intervention Tracking
@@ -366,65 +435,11 @@ class SupervisorDaemon:
         if not self.daemon_claude_launch_time:
             return {}
 
-        log_path = self.log_path
-        if not log_path.exists():
-            return {}
-
-        counts: Dict[str, int] = {}
-        session_set = set(session_names)
-
-        action_phrases = [
-            "approved",
-            "rejected",
-            "sent ",
-            "provided",
-            "unblocked",
-        ]
-
-        no_action_phrases = [
-            "no intervention needed",
-            "no action needed",
-        ]
-
-        try:
-            with open(log_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        if ": " not in line:
-                            continue
-                        timestamp_part = line.split(": ")[0]
-                        entry_time = None
-                        for fmt in ["%a %d %b %Y %H:%M:%S %Z", "%a  %d %b %Y %H:%M:%S %Z"]:
-                            try:
-                                entry_time = datetime.strptime(timestamp_part.strip(), fmt)
-                                break
-                            except ValueError:
-                                continue
-                        if entry_time is None:
-                            continue
-                    except (ValueError, IndexError):
-                        continue
-
-                    if entry_time < self.daemon_claude_launch_time:
-                        continue
-
-                    for name in session_set:
-                        if f"{name} - " in line:
-                            line_lower = line.lower()
-                            if any(phrase in line_lower for phrase in no_action_phrases):
-                                break
-                            if any(phrase in line_lower for phrase in action_phrases):
-                                counts[name] = counts.get(name, 0) + 1
-                            break
-
-        except IOError:
-            pass
-
-        return counts
+        return count_interventions_from_log(
+            log_path=self.log_path,
+            session_names=session_names,
+            since=self.daemon_claude_launch_time,
+        )
 
     def update_intervention_counts(self, session_names: List[str]) -> None:
         """Update steers_count for sessions based on supervisor log interventions."""
