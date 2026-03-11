@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional
-from dataclasses import dataclass, asdict, field, fields
+from dataclasses import MISSING, dataclass, asdict, field, fields
 import uuid
 import time
 
@@ -156,30 +156,34 @@ class Session:
     remote_daemon_state: Optional[dict] = None  # Raw daemon state dict from sister API (for generic forwarding)
 
     def to_dict(self) -> dict:
-        data = asdict(self)
-        # Convert stats to dict
-        data['stats'] = self.stats.to_dict()
-        return data
+        # asdict() recursively converts nested dataclasses (stats)
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> Optional['Session']:
         """Create Session from dict, handling unknown/invalid fields gracefully.
 
         Returns None if required fields are missing or data is corrupt.
+        Uses dataclasses.fields() to auto-detect required fields and valid keys.
         """
-        # Required fields that must be present
-        required = {'id', 'name', 'tmux_session', 'tmux_window', 'command', 'start_directory', 'start_time'}
+        cls_fields = fields(cls)
+
+        # Required = fields with no default and no default_factory
+        required = {
+            f.name for f in cls_fields
+            if f.default is MISSING and f.default_factory is MISSING  # type: ignore[comparison-overlap]
+        }
         if not all(k in data for k in required):
             return None
 
-        # Handle stats separately
+        # Handle stats separately (nested dataclass needs manual conversion)
         if 'stats' in data and isinstance(data['stats'], dict):
             data['stats'] = SessionStats.from_dict(data['stats'])
         elif 'stats' not in data:
             data['stats'] = SessionStats()
 
-        # Get valid field names and filter unknown keys
-        valid_fields = {f.name for f in fields(cls)}
+        # Filter to only known fields
+        valid_fields = {f.name for f in cls_fields}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
 
         # Backward compat: convert int tmux_window to str
