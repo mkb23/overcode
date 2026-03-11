@@ -277,36 +277,45 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
 # =============================================================================
 
 
+GREEN_STATUSES = frozenset({STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START})
+WAITING_STATUSES = frozenset({STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT})
+USER_BLOCKED_STATUSES = frozenset({STATUS_WAITING_USER})
+ASLEEP_STATUSES = frozenset({STATUS_ASLEEP})
+BUSY_SLEEPING_STATUSES = frozenset({STATUS_BUSY_SLEEPING})
+DONE_STATUSES = frozenset({STATUS_DONE})
+WAITING_OVERSIGHT_STATUSES = frozenset({STATUS_WAITING_OVERSIGHT})
+
+
 def is_green_status(status: str) -> bool:
     """Check if a status is considered 'green' (actively working)."""
-    return status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START)
+    return status in GREEN_STATUSES
 
 
 def is_waiting_status(status: str) -> bool:
     """Check if a status is a waiting state."""
-    return status in (STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT)
+    return status in WAITING_STATUSES
 
 
 def is_user_blocked(status: str) -> bool:
     """Check if status indicates user intervention is required."""
-    return status == STATUS_WAITING_USER
+    return status in USER_BLOCKED_STATUSES
 
 
 def is_asleep(status: str) -> bool:
     """Check if status indicates agent is asleep (paused by human)."""
-    return status == STATUS_ASLEEP
+    return status in ASLEEP_STATUSES
 
 
 def is_busy_sleeping(status: str) -> bool:
     """Check if status indicates agent is sleeping via a bash sleep command (#289)."""
-    return status == STATUS_BUSY_SLEEPING
+    return status in BUSY_SLEEPING_STATUSES
 
 
 def is_done(status: str) -> bool:
     """Check if status indicates child agent completed its work (#244)."""
-    return status == STATUS_DONE
+    return status in DONE_STATUSES
 
 
 def is_waiting_oversight(status: str) -> bool:
     """Check if status indicates child is waiting for oversight report."""
-    return status == STATUS_WAITING_OVERSIGHT
+    return status in WAITING_OVERSIGHT_STATUSES
