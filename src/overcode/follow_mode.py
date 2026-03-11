@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .session_manager import SessionManager
@@ -89,6 +89,38 @@ def _check_session_terminated(sessions: SessionManager, agent_name: str) -> bool
     return session.status == "terminated"
 
 
+def _find_dedup_start(new_lines: list[str], recent_lines: deque) -> int:
+    """Find the index in new_lines where new (non-duplicate) content begins.
+
+    Uses a sliding-window match against recent_lines to find the overlap point.
+
+    Args:
+        new_lines: Cleaned lines from latest pane capture
+        recent_lines: Recent lines already emitted
+
+    Returns:
+        Index into new_lines where output should start
+    """
+    if not recent_lines:
+        return 0
+
+    last_known = recent_lines[-1]
+    for i in range(len(new_lines) - 1, -1, -1):
+        if new_lines[i] == last_known:
+            match = True
+            check_count = min(3, len(recent_lines), i + 1)
+            for j in range(1, check_count):
+                if i - j >= 0 and len(recent_lines) > j:
+                    rl_idx = len(recent_lines) - 1 - j
+                    if recent_lines[rl_idx] != new_lines[i - j]:
+                        match = False
+                        break
+            if match:
+                return i + 1
+
+    return 0
+
+
 def _emit_new_lines(raw: str, recent_lines: deque) -> None:
     """Process pane output and emit new lines to stdout."""
     new_lines = []
@@ -96,24 +128,7 @@ def _emit_new_lines(raw: str, recent_lines: deque) -> None:
         cleaned = strip_ansi(line).strip()
         new_lines.append(cleaned)
 
-    # Find overlap with recent output for deduplication
-    output_start = 0
-    if recent_lines:
-        last_known = recent_lines[-1] if recent_lines else None
-        if last_known is not None:
-            for i in range(len(new_lines) - 1, -1, -1):
-                if new_lines[i] == last_known:
-                    match = True
-                    check_count = min(3, len(recent_lines), i + 1)
-                    for j in range(1, check_count):
-                        if i - j >= 0 and len(recent_lines) > j:
-                            rl_idx = len(recent_lines) - 1 - j
-                            if recent_lines[rl_idx] != new_lines[i - j]:
-                                match = False
-                                break
-                    if match:
-                        output_start = i + 1
-                        break
+    output_start = _find_dedup_start(new_lines, recent_lines)
 
     # Emit new lines
     if output_start < len(new_lines):
@@ -121,6 +136,32 @@ def _emit_new_lines(raw: str, recent_lines: deque) -> None:
             if line:
                 print(line)
             recent_lines.append(line)
+
+
+def _stream_final_output(tmux_session: str, window_name: str, poll_interval: float, recent_lines: deque) -> None:
+    """Capture and emit any final output after a Stop event."""
+    time.sleep(poll_interval)
+    raw = _capture_pane(tmux_session, window_name)
+    if raw:
+        _emit_new_lines(raw, recent_lines)
+
+
+def _handle_report(report: dict, name: str, sessions: SessionManager) -> int:
+    """Process a report and return the appropriate exit code."""
+    session = sessions.get_session_by_name(name)
+    if session:
+        sessions.update_session_status(session.id, "done")
+
+    if report["status"] == "success":
+        print(f"\n[follow] Agent '{name}' reported success", file=sys.stderr)
+        return 0
+    else:
+        reason = report.get("reason", "")
+        msg = f"\n[follow] Agent '{name}' reported failure"
+        if reason:
+            msg += f": {reason}"
+        print(msg, file=sys.stderr)
+        return 1
 
 
 def follow_agent(
@@ -175,31 +216,12 @@ def follow_agent(
 
             # Check for Stop event via hook state
             if _check_hook_stop(tmux_session, name):
-                # Wait one extra cycle to capture final output
-                time.sleep(poll_interval)
-                raw = _capture_pane(tmux_session, window_name)
-                if raw:
-                    for line in raw.rstrip().split('\n'):
-                        cleaned = strip_ansi(line).strip()
-                        if cleaned and cleaned not in recent_lines:
-                            print(cleaned)
+                _stream_final_output(tmux_session, window_name, poll_interval, recent_lines)
 
                 # Check if report already filed before Stop
                 report = _check_report(tmux_session, name)
                 if report:
-                    session = sessions.get_session_by_name(name)
-                    if session:
-                        sessions.update_session_status(session.id, "done")
-                    if report["status"] == "success":
-                        print(f"\n[follow] Agent '{name}' reported success", file=sys.stderr)
-                        return 0
-                    else:
-                        reason = report.get("reason", "")
-                        msg = f"\n[follow] Agent '{name}' reported failure"
-                        if reason:
-                            msg += f": {reason}"
-                        print(msg, file=sys.stderr)
-                        return 1
+                    return _handle_report(report, name, sessions)
 
                 # --on-stuck fail: exit immediately without waiting for report
                 if oversight_policy == "fail":
@@ -212,13 +234,13 @@ def follow_agent(
                 # Mark as waiting_oversight and set deadline
                 session = sessions.get_session_by_name(name)
                 if session:
-                    now = datetime.now()
-                    update_kwargs = {"status": STATUS_WAITING_OVERSIGHT}
                     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
-                        from datetime import timedelta
-                        deadline = now + timedelta(seconds=oversight_timeout_seconds)
-                        update_kwargs["oversight_deadline"] = deadline.isoformat()
-                        sessions.update_session(session.id, **update_kwargs)
+                        deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
+                        sessions.update_session(
+                            session.id,
+                            status=STATUS_WAITING_OVERSIGHT,
+                            oversight_deadline=deadline.isoformat(),
+                        )
                         sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
                     else:
                         sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
@@ -267,27 +289,13 @@ def _poll_for_report(
     """
     deadline = None
     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
-        from datetime import timedelta
         deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
 
     while True:
         # Check for report
         report = _check_report(tmux_session, name)
         if report:
-            session = sessions.get_session_by_name(name)
-            if session:
-                sessions.update_session_status(session.id, "done")
-
-            if report["status"] == "success":
-                print(f"\n[follow] Agent '{name}' reported success", file=sys.stderr)
-                return 0
-            else:
-                reason = report.get("reason", "")
-                msg = f"\n[follow] Agent '{name}' reported failure"
-                if reason:
-                    msg += f": {reason}"
-                print(msg, file=sys.stderr)
-                return 1
+            return _handle_report(report, name, sessions)
 
         # Check timeout
         if deadline and datetime.now() >= deadline:
