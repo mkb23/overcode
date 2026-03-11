@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional
 from dataclasses import dataclass, asdict, field, fields
 import uuid
@@ -341,6 +342,60 @@ class SessionManager:
                     continue
                 raise StateWriteError(f"Failed to save state file after {max_retries} attempts: {e}")
 
+    @contextmanager
+    def _locked_state(self):
+        """Load state under file lock, yield it, save on exit.
+
+        Holds an exclusive lock for the entire read-modify-write cycle,
+        preventing TOCTOU race conditions. The yielded dict is written
+        back to the state file when the context manager exits normally.
+        """
+        if not HAS_FCNTL:
+            # No locking on Windows - fall back to read/modify/write
+            state = self._load_state()
+            yield state
+            self._save_state(state)
+            return
+
+        max_retries = 5
+        retry_delay = 0.1
+        f = None
+
+        for attempt in range(max_retries):
+            try:
+                # Use 'a+' to create file if missing, then seek to start
+                f = open(self.state_file, 'a+')
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                f.seek(0)
+                content = f.read()
+                state = json.loads(content) if content.strip() else {}
+                break
+            except (IOError, OSError, json.JSONDecodeError) as e:
+                if f is not None:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                    f.close()
+                    f = None
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                raise StateWriteError(f"Failed to load state after {max_retries} attempts: {e}")
+
+        try:
+            yield state
+            f.seek(0)
+            f.truncate()
+            json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        except (IOError, OSError) as e:
+            raise StateWriteError(f"Failed to save state: {e}")
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            f.close()
+
     def _atomic_update(self, update_fn: Callable[[Dict[str, dict]], Dict[str, dict]]) -> None:
         """Atomically read, modify, and write state with exclusive lock held throughout.
 
@@ -350,39 +405,8 @@ class SessionManager:
         Args:
             update_fn: Function that takes the current state dict and returns the updated state.
         """
-        max_retries = 5
-        retry_delay = 0.1
-
-        for attempt in range(max_retries):
-            try:
-                if HAS_FCNTL:
-                    # Use 'a+' to create file if missing, then seek to start
-                    # This avoids TOCTOU race where file is created outside lock
-                    with open(self.state_file, 'a+') as f:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                        try:
-                            f.seek(0)
-                            content = f.read()
-                            state = json.loads(content) if content.strip() else {}
-                            state = update_fn(state)
-                            f.seek(0)
-                            f.truncate()
-                            json.dump(state, f, indent=2)
-                            f.flush()
-                            os.fsync(f.fileno())
-                        finally:
-                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                else:
-                    # No locking on Windows - fall back to read/modify/write
-                    state = self._load_state()
-                    state = update_fn(state)
-                    self._save_state(state)
-                return
-            except (IOError, OSError, json.JSONDecodeError) as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise StateWriteError(f"Failed to update state file after {max_retries} attempts: {e}")
+        with self._locked_state() as state:
+            update_fn(state)
 
     def _detect_git_context(self, directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         """Detect git repo and branch from directory"""
@@ -499,9 +523,8 @@ class SessionManager:
             claude_agent=claude_agent,
         )
 
-        state = self._load_state()
-        state[session.id] = session.to_dict()
-        self._save_state(state)
+        with self._locked_state() as state:
+            state[session.id] = session.to_dict()
 
         return session
 
@@ -529,11 +552,9 @@ class SessionManager:
 
     def update_session_status(self, session_id: str, status: str):
         """Update session status"""
-        def do_update(state: Dict[str, dict]) -> Dict[str, dict]:
+        with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['status'] = status
-            return state
-        self._atomic_update(do_update)
 
     def delete_session(self, session_id: str, archive: bool = True):
         """Delete a session, optionally archiving it first.
@@ -542,23 +563,17 @@ class SessionManager:
             session_id: The session ID to delete
             archive: If True (default), archive the session before removing
         """
-        # Capture session data for archiving before the atomic update
         archived_data = None
 
-        def do_delete(state: Dict[str, dict]) -> Dict[str, dict]:
-            nonlocal archived_data
+        with self._locked_state() as state:
             if session_id in state:
                 if archive:
-                    # Capture data for archiving
                     archived_data = state[session_id].copy()
                     archived_data['end_time'] = datetime.now().isoformat()
                     archived_data['status'] = 'archived'
                 del state[session_id]
-            return state
 
-        self._atomic_update(do_delete)
-
-        # Archive after the atomic update (separate file, separate lock)
+        # Archive after the lock is released (separate file, separate lock)
         if archived_data is not None:
             self._archive_session(archived_data)
 
@@ -643,21 +658,17 @@ class SessionManager:
 
     def update_session(self, session_id: str, **kwargs):
         """Update session fields"""
-        def do_update(state: Dict[str, dict]) -> Dict[str, dict]:
+        with self._locked_state() as state:
             if session_id in state:
                 state[session_id].update(kwargs)
-            return state
-        self._atomic_update(do_update)
 
     def update_stats(self, session_id: str, **stats_kwargs):
         """Update session statistics"""
-        def do_update(state: Dict[str, dict]) -> Dict[str, dict]:
+        with self._locked_state() as state:
             if session_id in state:
                 if 'stats' not in state[session_id]:
                     state[session_id]['stats'] = SessionStats().to_dict()
                 state[session_id]['stats'].update(stats_kwargs)
-            return state
-        self._atomic_update(do_update)
 
     def set_standing_instructions(
         self,
@@ -727,15 +738,12 @@ class SessionManager:
         if not session or claude_session_id in session.claude_session_ids:
             return False
 
-        def do_update(state):
+        with self._locked_state() as state:
             if session_id in state:
                 ids = state[session_id].get('claude_session_ids', [])
                 if claude_session_id not in ids:
                     ids.append(claude_session_id)
                     state[session_id]['claude_session_ids'] = ids
-            return state
-
-        self._atomic_update(do_update)
         return True
 
     def set_active_claude_session_id(self, session_id: str, claude_session_id: str):
@@ -749,12 +757,9 @@ class SessionManager:
         if not session:
             return
 
-        def do_update(state):
+        with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['active_claude_session_id'] = claude_session_id
-            return state
-
-        self._atomic_update(do_update)
 
     # =========================================================================
     # Agent Hierarchy (#244)
@@ -833,16 +838,15 @@ class SessionManager:
         # Atomic transfer
         success = False
 
-        def do_transfer(state):
-            nonlocal success
+        with self._locked_state() as state:
             if from_id not in state or to_id not in state:
-                return state
+                return False
 
             source_budget = state[from_id].get('cost_budget_usd', 0.0)
 
             # 0.0 = unlimited: always succeeds but just sets target's budget
             if source_budget > 0 and source_budget < amount:
-                return state  # Insufficient funds
+                return False  # Insufficient funds
 
             # Deduct from source (skip if unlimited)
             if source_budget > 0:
@@ -853,7 +857,5 @@ class SessionManager:
             state[to_id]['cost_budget_usd'] = target_budget + amount
 
             success = True
-            return state
 
-        self._atomic_update(do_transfer)
         return success
