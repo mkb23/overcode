@@ -2,12 +2,51 @@
 Daemon commands: monitor-daemon and supervisor-daemon subcommands.
 """
 
-from typing import Annotated
+from typing import Annotated, Callable
 
 import typer
 from rich import print as rprint
 
 from ._shared import monitor_daemon_app, supervisor_daemon_app, SessionOption
+
+
+def _daemon_control_start(
+    daemon_name: str,
+    session: str,
+    interval: int,
+    is_running_fn: Callable[[str], bool],
+    get_pid_fn: Callable[[str], int],
+    create_daemon_fn: Callable,
+) -> None:
+    """Shared start logic for daemon commands."""
+    if is_running_fn(session):
+        pid = get_pid_fn(session)
+        rprint(f"[yellow]{daemon_name} already running[/yellow] (PID {pid}) for session '{session}'")
+        raise typer.Exit(1)
+
+    rprint(f"[dim]Starting {daemon_name} for session '{session}' with interval {interval}s...[/dim]")
+    daemon = create_daemon_fn(session)
+    daemon.run(interval)
+
+
+def _daemon_control_stop(
+    daemon_name: str,
+    session: str,
+    is_running_fn: Callable[[str], bool],
+    get_pid_fn: Callable[[str], int],
+    stop_fn: Callable[[str], bool],
+) -> None:
+    """Shared stop logic for daemon commands."""
+    if not is_running_fn(session):
+        rprint(f"[dim]{daemon_name} is not running for session '{session}'[/dim]")
+        return
+
+    pid = get_pid_fn(session)
+    if stop_fn(session):
+        rprint(f"[green]✓[/green] {daemon_name} stopped (was PID {pid}) for session '{session}'")
+    else:
+        rprint(f"[red]Failed to stop {daemon_name}[/red]")
+        raise typer.Exit(1)
 
 
 # =============================================================================
@@ -39,14 +78,10 @@ def monitor_daemon_start(
     """
     from ..monitor_daemon import MonitorDaemon, is_monitor_daemon_running, get_monitor_daemon_pid
 
-    if is_monitor_daemon_running(session):
-        pid = get_monitor_daemon_pid(session)
-        rprint(f"[yellow]Monitor Daemon already running[/yellow] (PID {pid}) for session '{session}'")
-        raise typer.Exit(1)
-
-    rprint(f"[dim]Starting Monitor Daemon for session '{session}' with interval {interval}s...[/dim]")
-    daemon = MonitorDaemon(session)
-    daemon.run(interval)
+    _daemon_control_start(
+        "Monitor Daemon", session, interval,
+        is_monitor_daemon_running, get_monitor_daemon_pid, MonitorDaemon,
+    )
 
 
 @monitor_daemon_app.command("stop")
@@ -54,16 +89,10 @@ def monitor_daemon_stop(session: SessionOption = "agents"):
     """Stop the running Monitor Daemon."""
     from ..monitor_daemon import stop_monitor_daemon, is_monitor_daemon_running, get_monitor_daemon_pid
 
-    if not is_monitor_daemon_running(session):
-        rprint(f"[dim]Monitor Daemon is not running for session '{session}'[/dim]")
-        return
-
-    pid = get_monitor_daemon_pid(session)
-    if stop_monitor_daemon(session):
-        rprint(f"[green]✓[/green] Monitor Daemon stopped (was PID {pid}) for session '{session}'")
-    else:
-        rprint("[red]Failed to stop Monitor Daemon[/red]")
-        raise typer.Exit(1)
+    _daemon_control_stop(
+        "Monitor Daemon", session,
+        is_monitor_daemon_running, get_monitor_daemon_pid, stop_monitor_daemon,
+    )
 
 
 @monitor_daemon_app.command("status")
@@ -153,14 +182,10 @@ def supervisor_daemon_start(
     """
     from ..supervisor_daemon import SupervisorDaemon, is_supervisor_daemon_running, get_supervisor_daemon_pid
 
-    if is_supervisor_daemon_running(session):
-        pid = get_supervisor_daemon_pid(session)
-        rprint(f"[yellow]Supervisor Daemon already running[/yellow] (PID {pid}) for session '{session}'")
-        raise typer.Exit(1)
-
-    rprint(f"[dim]Starting Supervisor Daemon for session '{session}' with interval {interval}s...[/dim]")
-    daemon = SupervisorDaemon(session)
-    daemon.run(interval)
+    _daemon_control_start(
+        "Supervisor Daemon", session, interval,
+        is_supervisor_daemon_running, get_supervisor_daemon_pid, SupervisorDaemon,
+    )
 
 
 @supervisor_daemon_app.command("stop")
@@ -168,16 +193,10 @@ def supervisor_daemon_stop(session: SessionOption = "agents"):
     """Stop the running Supervisor Daemon."""
     from ..supervisor_daemon import stop_supervisor_daemon, is_supervisor_daemon_running, get_supervisor_daemon_pid
 
-    if not is_supervisor_daemon_running(session):
-        rprint(f"[dim]Supervisor Daemon is not running for session '{session}'[/dim]")
-        return
-
-    pid = get_supervisor_daemon_pid(session)
-    if stop_supervisor_daemon(session):
-        rprint(f"[green]✓[/green] Supervisor Daemon stopped (was PID {pid}) for session '{session}'")
-    else:
-        rprint("[red]Failed to stop Supervisor Daemon[/red]")
-        raise typer.Exit(1)
+    _daemon_control_stop(
+        "Supervisor Daemon", session,
+        is_supervisor_daemon_running, get_supervisor_daemon_pid, stop_supervisor_daemon,
+    )
 
 
 @supervisor_daemon_app.command("status")
