@@ -38,12 +38,13 @@ import re as _re
 class PollingStatusDetector:
     """Detects the current status of a Claude session via tmux pane scraping."""
 
-    # Re-export status constants for backwards compatibility
-    STATUS_RUNNING = STATUS_RUNNING
-    STATUS_WAITING_USER = STATUS_WAITING_USER
-    STATUS_TERMINATED = STATUS_TERMINATED
-    STATUS_WAITING_APPROVAL = STATUS_WAITING_APPROVAL
-    STATUS_ERROR = STATUS_ERROR
+    # Re-export status constants as class attributes for external access
+    # (e.g., StatusDetector.STATUS_WAITING_USER in tests and consumers)
+    STATUS_RUNNING: str = STATUS_RUNNING
+    STATUS_WAITING_USER: str = STATUS_WAITING_USER
+    STATUS_TERMINATED: str = STATUS_TERMINATED
+    STATUS_WAITING_APPROVAL: str = STATUS_WAITING_APPROVAL
+    STATUS_ERROR: str = STATUS_ERROR
 
     def __init__(
         self,
