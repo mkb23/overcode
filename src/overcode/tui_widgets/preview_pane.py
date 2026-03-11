@@ -15,23 +15,22 @@ from rich.text import Text
 if TYPE_CHECKING:
     from .session_summary import SessionSummary
 
-# Rich's Text.from_ansi() only handles SGR sequences (\x1b[...m).
-# Non-SGR CSI sequences like \x1b[K (erase line), \x1b[?25l (hide cursor),
-# and OSC sequences cause mis-parsing that can leak background colors across
-# lines.  Strip everything except SGR before handing to Rich.
-_NON_SGR_CSI = re.compile(r'\x1b\[[0-9;?]*[a-lA-Ln-zA-Z]')  # CSI not ending in 'm'
-_OSC_SEQ = re.compile(r'\x1b\].*?(?:\x07|\x1b\\)')           # OSC sequences
-_OTHER_ESC = re.compile(r'\x1b[^[\]][^\x1b]*')                # other escapes e.g. \x1b(B
+# Clean ANSI for Rich's Text.from_ansi():
+# 1. Strip non-SGR CSI sequences (\x1b[K, \x1b[?25l, etc.) — Rich only handles SGR.
+# 2. Strip background color SGR codes — unreset backgrounds leak to fill the
+#    full widget width when Textual pads the line.
+_NON_SGR_CSI = re.compile(r'\x1b\[[0-9;?]*[a-lA-Ln-zA-Z]')   # CSI not ending in 'm'
+_OSC_SEQ = re.compile(r'\x1b\].*?(?:\x07|\x1b\\)')            # OSC sequences
+_OTHER_ESC = re.compile(r'\x1b[^[\]][^\x1b]*')                 # other escapes e.g. \x1b(B
+_BG_COLOR = re.compile(r'\x1b\[(?:4[0-9]|10[0-7]|48;[0-9;]+)m')  # background SGR codes
 
 
 def _sanitize_ansi(line: str) -> str:
-    """Keep only SGR sequences (\x1b[...m) and append a reset."""
+    """Strip non-SGR escapes and background colors for safe Rich rendering."""
     line = _OSC_SEQ.sub('', line)
     line = _NON_SGR_CSI.sub('', line)
     line = _OTHER_ESC.sub('', line)
-    # Ensure any open style is closed at end of line
-    if '\x1b[' in line:
-        line += '\x1b[0m'
+    line = _BG_COLOR.sub('', line)
     return line
 
 
