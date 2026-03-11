@@ -25,6 +25,20 @@ class SessionActionsMixin:
         """Return True if session is a remote (sister) agent."""
         return getattr(session, 'is_remote', False) is True
 
+    def _sister_reachable(self, session) -> bool:
+        """Check if the sister hosting this remote session is currently reachable."""
+        for state in self._sister_poller.get_sister_states():
+            if state.url == session.source_url:
+                return state.reachable
+        return False
+
+    def _guard_remote(self, session) -> bool:
+        """Block remote actions when the sister is unreachable. Returns True if blocked."""
+        if self._is_remote(session) and not self._sister_reachable(session):
+            self.notify(f"Sister '{session.source_host}' is unreachable", severity="warning")
+            return True
+        return False
+
     def _remote_notify(self, result, success_msg: str) -> None:
         """Show notification based on a SisterController result."""
         if result.ok:
@@ -137,6 +151,8 @@ class SessionActionsMixin:
         session = focused.session
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             new_asleep_state = not session.is_asleep
             result = self._sister_controller.set_sleep(
                 session.source_url, session.source_api_key,
@@ -197,6 +213,8 @@ class SessionActionsMixin:
         session = focused.session
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             if session.heartbeat_paused:
                 result = self._sister_controller.resume_heartbeat(
                     session.source_url, session.source_api_key, session.name,
@@ -258,6 +276,8 @@ class SessionActionsMixin:
         session = focused.session
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             new_state = not session.time_context_enabled
             result = self._sister_controller.set_time_context(
                 session.source_url, session.source_api_key,
@@ -299,6 +319,8 @@ class SessionActionsMixin:
         session = focused.session
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             new_state = not session.hook_status_detection
             result = self._sister_controller.set_hook_detection(
                 session.source_url, session.source_api_key,
@@ -341,6 +363,8 @@ class SessionActionsMixin:
         session_name = session.name
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             self._confirm_double_press(
                 "kill",
                 f"Press x again to kill remote agent '{session_name}'",
@@ -391,6 +415,8 @@ class SessionActionsMixin:
         session_name = session.name
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             self._confirm_double_press(
                 "restart",
                 f"Press R again to restart remote agent '{session_name}'",
@@ -431,6 +457,8 @@ class SessionActionsMixin:
         session = focused.session
 
         if self._is_remote(session):
+            if self._guard_remote(session):
+                return
             # Sync requires multi-step tmux interaction — send as instruction
             self._confirm_double_press(
                 "sync",
@@ -671,6 +699,8 @@ class SessionActionsMixin:
         success_count = 0
         for session in sessions:
             if self._is_remote(session):
+                if not self._sister_reachable(session):
+                    continue
                 # Send via sister controller for remote agents
                 result = self._sister_controller.send_instruction(
                     session.source_url, session.source_api_key,

@@ -6,6 +6,7 @@ from typing import Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
+    STATUS_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_BUSY_SLEEPING,
     STATUS_WAITING_USER,
@@ -140,7 +141,12 @@ class PollingStatusDetector:
         # from dynamic status bar elements (token counts, elapsed time) that update when idle
         session_id = session.id
         content_for_hash = self._filter_status_bar_for_hash(clean_content)
-        content_hash = hash(content_for_hash)
+        # Normalize to a fixed tail length so the hash is stable regardless of
+        # capture depth.  Focused agents capture the full pane while non-focused
+        # agents capture only STATUS_CAPTURE_LINES; without normalization the
+        # hash changes on every focus switch, producing a false "running" flash.
+        hash_lines = content_for_hash.split('\n')[-STATUS_CAPTURE_LINES:]
+        content_hash = hash('\n'.join(hash_lines))
         content_changed = False
         if session_id in self._previous_content:
             content_changed = self._previous_content[session_id] != content_hash

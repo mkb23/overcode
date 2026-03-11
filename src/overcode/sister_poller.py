@@ -153,11 +153,11 @@ class SisterPoller:
         except (URLError, socket.timeout, json.JSONDecodeError, OSError) as e:
             sister.reachable = False
             sister.last_error = str(e)
-            sister.sessions = []
+            # Keep last-known sessions so agents remain visible (stale)
+            # but zero out live counters since we can't verify them.
             sister.green_agents = 0
-            sister.total_agents = 0
-            sister.total_cost = 0.0
-            return []
+            sister.total_agents = len(sister.sessions)
+            return list(sister.sessions)
 
         sister.reachable = True
         sister.last_fetch = datetime.now().isoformat()

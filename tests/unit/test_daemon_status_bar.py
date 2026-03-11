@@ -608,11 +608,25 @@ class TestDaemonStatusBarRenderSisters:
         sister = MagicMock()
         sister.name = "remote-2"
         sister.reachable = False
+        sister.sessions = []  # No stale sessions
         widget = _make_bare_status_bar(_sister_states=[sister])
         result = widget.render()
         plain = result.plain
         assert "Sisters:" in plain
         assert "remote-2(--)" in plain
+
+    def test_sister_stale(self):
+        """Unreachable sister with last-known sessions shows amber/stale indicator."""
+        sister = MagicMock()
+        sister.name = "remote-3"
+        sister.reachable = False
+        sister.sessions = [MagicMock()]  # Has stale sessions
+        sister.total_agents = 2
+        widget = _make_bare_status_bar(_sister_states=[sister])
+        result = widget.render()
+        plain = result.plain
+        assert "Sisters:" in plain
+        assert "remote-3(2\u23f8)" in plain
 
     def test_no_sisters_not_shown(self):
         widget = _make_bare_status_bar(_sister_states=[])

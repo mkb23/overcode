@@ -30,6 +30,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -60,6 +65,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -92,6 +102,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -122,6 +137,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -165,6 +185,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_sleep.return_value = mock_result
 
@@ -198,6 +223,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_sleep.return_value = mock_result
 
@@ -230,6 +260,11 @@ class TestToggleSleep:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_sleep(mock_tui)
 
@@ -334,6 +369,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
@@ -357,6 +397,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
@@ -385,6 +430,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
@@ -418,6 +468,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
@@ -448,6 +503,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
@@ -477,6 +537,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.pause_heartbeat.return_value = mock_result
 
@@ -509,6 +574,11 @@ class TestToggleHeartbeatPause:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.resume_heartbeat.return_value = mock_result
 
@@ -541,6 +611,11 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -568,6 +643,11 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_time_context(mock_tui)
 
@@ -610,6 +690,11 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_time_context.return_value = mock_result
 
@@ -645,6 +730,11 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_time_context.return_value = mock_result
 
@@ -678,6 +768,11 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_time_context.return_value = mock_result
 
@@ -721,6 +816,11 @@ class TestToggleHookDetection:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
@@ -749,6 +849,11 @@ class TestToggleHookDetection:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
@@ -781,6 +886,11 @@ class TestToggleHookDetection:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_hook_detection.return_value = mock_result
 
@@ -816,6 +926,11 @@ class TestToggleHookDetection:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_hook_detection.return_value = mock_result
 
@@ -849,6 +964,11 @@ class TestToggleHookDetection:
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
         mock_tui._sister_controller.set_hook_detection.return_value = mock_result
 
@@ -989,6 +1109,11 @@ class TestExecuteTransportAll:
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._sister_controller.send_instruction.return_value = mock_result
 
         SessionActionsMixin._execute_transport_all(mock_tui, [local_session, remote_session])
@@ -1028,6 +1153,11 @@ class TestExecuteTransportAll:
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin._execute_transport_all(mock_tui, [session1, session2])
 
@@ -1054,6 +1184,11 @@ class TestExecuteTransportAll:
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
         SessionActionsMixin._execute_transport_all(mock_tui, [session1, session2])
 
@@ -1078,6 +1213,11 @@ class TestExecuteTransportAll:
 
         mock_tui = MagicMock()
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._sister_controller.send_instruction.return_value = mock_result
 
         SessionActionsMixin._execute_transport_all(mock_tui, [remote_session])
@@ -1100,6 +1240,11 @@ class TestKillFocused:
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -1292,6 +1437,11 @@ class TestRestartFocused:
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -1406,6 +1556,11 @@ class TestSyncToMainAndClear:
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         return mock_tui
 
     def test_first_press_sets_pending(self):
@@ -1495,6 +1650,11 @@ class TestTransportAll:
         mock_tui._pending_confirmations = {}
         mock_tui._confirm_double_press = SessionActionsMixin._confirm_double_press.__get__(mock_tui)
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         return mock_tui
 
     def test_first_press_sets_pending_with_active_sessions(self):
@@ -1636,6 +1796,11 @@ class TestFocusCommandBar:
         mock_tui._get_focused_widget.return_value = focused_widget
         mock_tui._open_command_bar = SessionActionsMixin._open_command_bar.__get__(mock_tui)
         mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
+        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
+        # Default: all sisters reachable (tests needing stale sisters override this)
+        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
+        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         if sessions is not None:
             mock_tui.sessions = sessions
         return mock_tui
