@@ -99,6 +99,17 @@ class SupervisorDaemonLogger(BaseDaemonLogger):
         super().__init__(log_file)
         self._seen_daemon_claude_lines: set = set()
 
+    @staticmethod
+    def _line_style(line: str) -> str:
+        """Determine the Rich style tag for a daemon claude output line."""
+        if line.startswith('✓') or 'success' in line.lower():
+            return "success"
+        elif line.startswith('✗') or 'error' in line.lower() or 'fail' in line.lower():
+            return "error"
+        elif line.startswith('>') or line.startswith('$'):
+            return "highlight"
+        return "daemon_claude"
+
     def daemon_claude_output(self, lines: List[str]):
         """Log daemon claude output, showing only new lines."""
         new_lines = []
@@ -119,14 +130,8 @@ class SupervisorDaemonLogger(BaseDaemonLogger):
         if new_lines:
             for line in new_lines:
                 self._write_to_file(f"[DAEMON_CLAUDE] {line}", "INFO")
-                if line.startswith('✓') or 'success' in line.lower():
-                    self.console.print(f"  [success]│[/success] {line}")
-                elif line.startswith('✗') or 'error' in line.lower() or 'fail' in line.lower():
-                    self.console.print(f"  [error]│[/error] {line}")
-                elif line.startswith('>') or line.startswith('$'):
-                    self.console.print(f"  [highlight]│[/highlight] {line}")
-                else:
-                    self.console.print(f"  [daemon_claude]│[/daemon_claude] {line}")
+                style = self._line_style(line)
+                self.console.print(f"  [{style}]│[/{style}] {line}")
 
     def status_summary(self, total: int, green: int, non_green: int, loop: int):
         """Print a status summary line."""
