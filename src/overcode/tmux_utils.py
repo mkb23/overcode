@@ -5,11 +5,20 @@ This module provides shared tmux functions used by multiple components
 (launcher, monitor daemon) to avoid code duplication.
 """
 
+import logging
 import os
 import subprocess
 import tempfile
 import time
-from typing import Optional
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def _build_tmux_cmd() -> List[str]:
+    """Build base tmux command, respecting OVERCODE_TMUX_SOCKET env var."""
+    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
+    return ["tmux", "-L", socket] if socket else ["tmux"]
 
 
 def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
@@ -137,9 +146,7 @@ def send_text_to_tmux_window(
     if startup_delay > 0:
         time.sleep(startup_delay)
 
-    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
-    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
-    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+    tmux_cmd = _build_tmux_cmd()
 
     # For large prompts, use tmux load-buffer/paste-buffer
     # to avoid escaping issues and line length limits
@@ -165,7 +172,7 @@ def send_text_to_tmux_window(
                 'paste-buffer', '-t', target
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
-            print(f"Failed to send text batch to tmux: {e}")
+            logger.warning("Failed to send text batch to tmux: %s", e)
             return False
         finally:
             if temp_path:
@@ -184,7 +191,7 @@ def send_text_to_tmux_window(
                 '', 'Enter'
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
-            print(f"Failed to send Enter to tmux: {e}")
+            logger.warning("Failed to send Enter to tmux: %s", e)
             return False
 
     return True
@@ -205,9 +212,7 @@ def get_tmux_pane_content(
     Returns:
         Captured content as string, or None on error
     """
-    # Support OVERCODE_TMUX_SOCKET env var for testing with isolated sockets
-    socket = os.environ.get("OVERCODE_TMUX_SOCKET")
-    tmux_cmd = ["tmux", "-L", socket] if socket else ["tmux"]
+    tmux_cmd = _build_tmux_cmd()
 
     try:
         result = subprocess.run(
