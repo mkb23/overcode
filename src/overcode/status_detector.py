@@ -110,6 +110,22 @@ class PollingStatusDetector:
         """
         Detect session status and current activity.
 
+        Runs detection phases in priority order, returning on first match:
+        1. Terminated (window gone, empty pane)
+        2. Spawn failure
+        3. Shell prompt (Claude exited)
+        4. Permission request
+        5. Content changing (active work)
+        6. Error output
+        7. Approval waiting
+        8. Command menu
+        9. Active work indicators
+        10. Tool execution
+        11. Thinking
+        12. User prompt / stalled input
+        13. Waiting patterns
+        14. Default (waiting or running based on standing instructions)
+
         Args:
             session: Session to detect status for.
             num_lines: Lines to capture. 0 (default) uses self.capture_lines.
@@ -122,6 +138,91 @@ class PollingStatusDetector:
             - current_activity: single line description of what's happening
             - pane_content: the raw pane content (to avoid duplicate tmux calls)
         """
+        # Phase 1: Check if window exists
+        result = self._detect_terminated(session, num_lines)
+        if result is not None:
+            return result
+
+        content = self._last_content  # set by _detect_terminated
+
+        # Strip ANSI escape sequences for pattern matching
+        clean_content = strip_ansi(content)
+
+        # Content change detection
+        content_changed = self._update_content_hash(session.id, clean_content)
+
+        lines = clean_content.strip().split('\n')
+        last_lines = [l.strip() for l in lines[-10:] if l.strip()]
+
+        if not last_lines:
+            return self.STATUS_WAITING_USER, "No output", content
+
+        # Phase 2: Spawn failure (before shell prompt — error appears first)
+        spawn_error = self._detect_spawn_failure(lines)
+        if spawn_error:
+            return self.STATUS_WAITING_USER, spawn_error, content
+
+        # Phase 3: Shell prompt (Claude exited)
+        if self._is_shell_prompt(last_lines):
+            return self.STATUS_TERMINATED, "Claude exited - shell prompt", content
+
+        # Prepare filtered lines for remaining phases
+        content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
+        last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
+
+        # Phase 4: Permission request (HIGHEST priority among active checks)
+        result = self._detect_permission_request(last_lines, last_few, content)
+        if result is not None:
+            return result
+
+        # Phase 5: Content changing = active work (#214, #216)
+        if content_changed:
+            activity = self._extract_last_activity(last_lines)
+            return self.STATUS_RUNNING, f"Active: {activity}", content
+
+        # Phase 6: Error output (#216) — only when content NOT changing
+        result = self._detect_error(content_lines, content)
+        if result is not None:
+            return result
+
+        # Phase 7: Approval waiting (#22)
+        result = self._detect_approval(lines, last_few, content)
+        if result is not None:
+            return result
+
+        # Phase 8: Command menu
+        result = self._detect_command_menu(last_lines, content)
+        if result is not None:
+            return result
+
+        # Phase 9: Active work indicators
+        result = self._detect_active_work(last_lines, last_few, content)
+        if result is not None:
+            return result
+
+        # Phase 10: Tool execution (case-sensitive)
+        result = self._detect_tool_execution(last_lines, content)
+        if result is not None:
+            return result
+
+        # Phase 11: Thinking
+        if any("thinking" in line.lower() for line in last_lines):
+            return self.STATUS_RUNNING, "Thinking...", content
+
+        # Phase 12: User prompt / stalled input
+        result = self._detect_user_prompt(last_lines, content)
+        if result is not None:
+            return result
+
+        # Phase 13: Waiting patterns
+        if matches_any(last_few, self.patterns.waiting_patterns):
+            return self.STATUS_WAITING_USER, self._extract_question(last_lines), content
+
+        # Phase 14: Default based on standing instructions
+        return self._detect_default(session, last_lines, content)
+
+    def _detect_terminated(self, session, num_lines: int) -> Optional[Tuple[str, str, str]]:
+        """Check if tmux window is gone or empty."""
         content = self.get_pane_content(session.tmux_window, num_lines=num_lines)
 
         if content is None:
@@ -129,16 +230,16 @@ class PollingStatusDetector:
         if not content:
             return self.STATUS_WAITING_USER, "Empty pane", ""
 
-        # Strip ANSI escape sequences for pattern matching
-        # The raw content (with colors) is returned for display, but pattern
-        # matching needs plain text since escape codes break string matching
-        clean_content = strip_ansi(content)
+        # Store for use by detect_status after this check
+        self._last_content = content
+        return None
 
-        # Content change detection - if content is changing, Claude is actively working
-        # Key by session.id, not window index, to avoid stale hashes when windows are recycled
-        # IMPORTANT: Filter out status bar lines before hashing to avoid false positives
-        # from dynamic status bar elements (token counts, elapsed time) that update when idle
-        session_id = session.id
+    def _update_content_hash(self, session_id, clean_content: str) -> bool:
+        """Update content hash and return whether content changed.
+
+        Filters out status bar lines before hashing to avoid false positives
+        from dynamic elements (token counts, elapsed time) that update when idle.
+        """
         content_for_hash = self._filter_status_bar_for_hash(clean_content)
         content_hash = hash(content_for_hash)
         content_changed = False
@@ -146,80 +247,54 @@ class PollingStatusDetector:
             content_changed = self._previous_content[session_id] != content_hash
         self._previous_content[session_id] = content_hash
         self._content_changed[session_id] = content_changed
+        return content_changed
 
-        lines = clean_content.strip().split('\n')
-        # Get more lines for better context (menu prompts can be 5+ lines)
-        last_lines = [l.strip() for l in lines[-10:] if l.strip()]
+    def _detect_permission_request(self, last_lines: list, last_few: str, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for permission/confirmation prompts (HIGHEST priority).
 
-        if not last_lines:
-            return self.STATUS_WAITING_USER, "No output", content
-
-        # Check for spawn failure FIRST (command not found, etc.)
-        # This should be detected before shell prompt check because the error
-        # message appears before the shell prompt returns
-        spawn_error = self._detect_spawn_failure(lines)
-        if spawn_error:
-            return self.STATUS_WAITING_USER, spawn_error, content
-
-        # Check for shell prompt (Claude Code has terminated)
-        # Shell prompts typically end with $ or % and have username@hostname pattern
-        # Also check for absence of Claude Code UI elements
-        if self._is_shell_prompt(last_lines):
-            return self.STATUS_TERMINATED, "Claude exited - shell prompt", content
-
-        # Filter out UI chrome lines before pattern matching
-        content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
-
-        # Join more lines for pattern matching (menus have multiple lines)
-        last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
-
-        # Check for permission/confirmation prompts (HIGHEST priority)
-        # This MUST come before active indicator checks because permission dialogs
-        # can contain tool names like "Web Search commands in" that would falsely
-        # match active indicators.
+        Must come before active indicator checks because permission dialogs
+        can contain tool names that would falsely match active indicators.
+        """
         if matches_any(last_few, self.patterns.permission_patterns):
             request_text = self._extract_permission_request(last_lines)
             return self.STATUS_WAITING_USER, f"Permission: {request_text}", content
+        return None
 
-        # Content change detection - if pane content is actively changing, Claude is working
-        # This is the most reliable indicator as it catches streaming output.
-        # Checked BEFORE error patterns and approval patterns so that active work
-        # is never misclassified (#214, #216).
-        if content_changed:
-            activity = self._extract_last_activity(last_lines)
-            return self.STATUS_RUNNING, f"Active: {activity}", content
+    def _detect_error(self, content_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for API/system errors (#216).
 
-        # Check for API/system errors (#216)
-        # Only reached when content is NOT changing (Claude has stalled).
-        # Matches structural error formats per-line against the last 3 content lines,
-        # NOT broad keywords across joined text. This prevents false positives from
-        # Claude's response text that merely discusses errors.
+        Only reached when content is NOT changing (Claude has stalled).
+        Matches structural error formats per-line against the last 3 content lines.
+        """
         error_line = self._find_error_line(content_lines[-3:] if content_lines else [])
         if error_line:
             error_msg = clean_line(error_line, self.patterns)
             if len(error_msg) > 80:
                 error_msg = error_msg[:77] + "..."
             return self.STATUS_ERROR, f"Error: {error_msg}", content
+        return None
 
-        # Check for approval waiting state (#22)
-        # Only reached when content is NOT changing, so plan mode correctly shows
-        # orange only when Claude has stopped and is waiting for plan approval (#214).
-        # Guard: require Claude output (⏺) in content — without it, "plan mode"
-        # is just UI chrome from the startup banner, not a plan awaiting approval.
+    def _detect_approval(self, lines: list, last_few: str, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for approval waiting state (#22).
+
+        Only reached when content is NOT changing, so plan mode correctly shows
+        orange only when Claude has stopped and is waiting for approval (#214).
+        Guard: require Claude output (⏺) in content.
+        """
         has_claude_output = any(line.strip().startswith('⏺') for line in lines)
         if has_claude_output and self._matches_approval_patterns(last_few):
             return self.STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
+        return None
 
-        # Check for command menu display (slash command autocomplete)
-        # When user types a slash command, Claude shows a menu of available commands.
-        # This means Claude is waiting for the user to complete/select a command.
-        # We check if most of the last lines are menu entries.
+    def _detect_command_menu(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for command menu display (slash command autocomplete)."""
         menu_lines = count_command_menu_lines(last_lines, self.patterns)
         if menu_lines >= 3 and menu_lines >= len(last_lines) * 0.4:
             return self.STATUS_WAITING_USER, "Command menu - waiting for input", content
+        return None
 
-        # Check for ACTIVE WORK indicators BEFORE checking for prompt
-        # These indicate Claude is busy even if the prompt is visible
+    def _detect_active_work(self, last_lines: list, last_few: str, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for active work indicators (busy even if prompt is visible)."""
         if matches_any(last_few, self.patterns.active_indicators):
             matching_line = find_matching_line(
                 last_lines, self.patterns.active_indicators, reverse=True
@@ -227,8 +302,10 @@ class PollingStatusDetector:
             if matching_line:
                 return self.STATUS_RUNNING, clean_line(matching_line, self.patterns), content
             return self.STATUS_RUNNING, "Processing...", content
+        return None
 
-        # Check for tool execution indicators (case-sensitive)
+    def _detect_tool_execution(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for tool execution indicators (case-sensitive)."""
         matching_line = find_matching_line(
             last_lines, self.patterns.execution_indicators, case_sensitive=True, reverse=True
         )
@@ -239,63 +316,56 @@ class PollingStatusDetector:
                 activity = f"Sleeping {format_duration(dur)}" if dur else "Sleeping"
                 return STATUS_BUSY_SLEEPING, activity, content
             return self.STATUS_RUNNING, clean_line(matching_line, self.patterns), content
+        return None
 
-        # Check for thinking/planning
-        if any("thinking" in line.lower() for line in last_lines):
-            return self.STATUS_RUNNING, "Thinking...", content
+    def _detect_user_prompt(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
+        """Check for Claude's prompt (user input) and stalled input.
 
-        # NOW check for Claude's prompt (user input prompt) - means waiting for user
-        # Only check after ruling out active work indicators above
-        # We need to distinguish:
-        #   - Empty prompt `>` or `› ` = waiting for user input
-        #   - User input `> some text` with no Claude response = stalled
+        Distinguishes:
+        - Empty prompt `>` or `› ` = waiting for user input
+        - User input `> some text` with no Claude response = stalled
+        """
+        # Check for empty prompt or autocomplete suggestion
         for line in last_lines[-4:]:
             stripped = line.strip()
-            # Empty prompt ready for input
             if stripped in self.patterns.prompt_chars:
                 return self.STATUS_WAITING_USER, "Waiting for user input", content
-            # Autocomplete suggestion showing (prompt with suggested content + send indicator)
-            # This means Claude is idle and waiting for user input
             if any(stripped.startswith(c) for c in self.patterns.prompt_chars):
                 if '↵' in stripped and 'send' in stripped.lower():
                     return self.STATUS_WAITING_USER, "Waiting for user input", content
 
-        # Check if there's user input that Claude hasn't responded to (stalled)
-        # Look for `> text` followed by no Claude response (no ⏺ line after it)
+        # Check for user input with no Claude response (stalled)
         # Note: ⏺ is Claude's output indicator, ⏵⏵ in status bar is just UI chrome
         # Note: Claude Code uses \xa0 (non-breaking space) after prompt, not regular space
         found_user_input = False
         found_claude_response = False
         for line in last_lines:
             stripped = line.strip()
-            # Skip autocomplete suggestion lines - they end with "↵ send" indicator
-            # These are not actual user input, just UI showing suggested completions
+            # Skip autocomplete suggestion lines
             if '↵' in stripped and 'send' in stripped.lower():
                 continue
-            # Check for prompt with either regular space or non-breaking space (\xa0)
             is_user_input = (
                 stripped.startswith('> ') or stripped.startswith('>\xa0') or
                 stripped.startswith('› ') or stripped.startswith('›\xa0') or
                 stripped.startswith('❯ ') or stripped.startswith('❯\xa0')
             )
-            if is_user_input and len(stripped) > 2:  # Has actual content after prompt
+            if is_user_input and len(stripped) > 2:
                 found_user_input = True
-                found_claude_response = False  # Reset - look for response after this
-            elif stripped.startswith('⏺'):  # Claude's response indicator (not ⏵⏵ status bar)
+                found_claude_response = False
+            elif stripped.startswith('⏺'):
                 found_claude_response = True
 
         if found_user_input and not found_claude_response:
             return self.STATUS_WAITING_USER, "Stalled - no response to user input", content
 
-        # Check for common waiting patterns
-        if matches_any(last_few, self.patterns.waiting_patterns):
-            return self.STATUS_WAITING_USER, self._extract_question(last_lines), content
+        return None
 
-        # Default: if no standing instructions, it's waiting for user
+    def _detect_default(self, session, last_lines: list, content: str) -> Tuple[str, str, str]:
+        """Default detection: waiting or running based on standing instructions."""
         if not session.standing_instructions:
             return self.STATUS_WAITING_USER, self._extract_last_activity(last_lines), content
 
-        # Otherwise, assume running — but check for sleep first (#289)
+        # Has standing instructions — assume running, but check for sleep first (#289)
         for line in last_lines:
             if is_sleep_command(line):
                 dur = extract_sleep_duration(line)
