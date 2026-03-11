@@ -131,11 +131,9 @@ class PollingStatusDetector:
             - pane_content: the raw pane content (to avoid duplicate tmux calls)
         """
         # Phase 1: Check if window exists
-        result = self._detect_terminated(session, num_lines)
-        if result is not None:
-            return result
-
-        content = self._last_content  # set by _detect_terminated
+        terminated, content = self._detect_terminated(session, num_lines)
+        if terminated is not None:
+            return terminated
 
         # Strip ANSI escape sequences for pattern matching
         clean_content = strip_ansi(content)
@@ -230,18 +228,21 @@ class PollingStatusDetector:
         self._last_detect_phase[session.id] = "P14:default"
         return self._detect_default(session, last_lines, content)
 
-    def _detect_terminated(self, session, num_lines: int) -> Optional[Tuple[str, str, str]]:
-        """Check if tmux window is gone or empty."""
+    def _detect_terminated(self, session, num_lines: int):
+        """Check if tmux window is gone or empty.
+
+        Returns:
+            (status_tuple, None) on terminal condition, or
+            (None, content) when the window has content for further analysis.
+        """
         content = self.get_pane_content(session.tmux_window, num_lines=num_lines)
 
         if content is None:
-            return STATUS_TERMINATED, "Window no longer exists", ""
+            return (STATUS_TERMINATED, "Window no longer exists", ""), None
         if not content:
-            return STATUS_WAITING_USER, "Empty pane", ""
+            return (STATUS_WAITING_USER, "Empty pane", ""), None
 
-        # Store for use by detect_status after this check
-        self._last_content = content
-        return None
+        return None, content
 
     def _update_content_hash(self, session_id, clean_content: str) -> bool:
         """Update content hash and return whether content changed.
