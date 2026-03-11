@@ -168,11 +168,12 @@ def _build_presence_info(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     if not state or not state.presence_available:
         return {"available": False}
 
-    state_names = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
+    from .status_constants import PRESENCE_STATE_NAMES
+
     return {
         "available": True,
         "state": state.presence_state,
-        "state_name": state_names.get(state.presence_state, "unknown"),
+        "state_name": PRESENCE_STATE_NAMES.get(state.presence_state, "unknown"),
         "idle_seconds": state.presence_idle_seconds or 0,
     }
 
@@ -556,7 +557,7 @@ def get_analytics_timeline(
     # Get presence history
     presence_history = read_presence_history(hours=hours)
     presence_events = []
-    state_names = {0: "asleep", 1: "locked", 2: "idle", 3: "active", 4: "tui_active"}
+    from .status_constants import PRESENCE_STATE_NAMES
     presence_colors = {0: "#1a1a2e", 1: "#ef4444", 2: "#f97316", 3: "#eab308", 4: "#22c55e"}
 
     for ts, state in presence_history:
@@ -565,7 +566,7 @@ def get_analytics_timeline(
         presence_events.append({
             "timestamp": ts.isoformat(),
             "state": state,
-            "state_name": state_names.get(state, "unknown"),
+            "state_name": PRESENCE_STATE_NAMES.get(state, "unknown"),
             "color": presence_colors.get(state, "#6b7280"),
         })
 

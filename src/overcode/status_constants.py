@@ -73,6 +73,14 @@ PRESENCE_IDLE = 2       # Was PRESENCE_INACTIVE
 PRESENCE_ACTIVE = 3
 PRESENCE_TUI_ACTIVE = 4
 
+PRESENCE_STATE_NAMES = {
+    PRESENCE_ASLEEP: "asleep",
+    PRESENCE_LOCKED: "locked",
+    PRESENCE_IDLE: "idle",
+    PRESENCE_ACTIVE: "active",
+    PRESENCE_TUI_ACTIVE: "tui_active",
+}
+
 
 # =============================================================================
 # Status to Symbol+Color (single source of truth for emoji + color)
