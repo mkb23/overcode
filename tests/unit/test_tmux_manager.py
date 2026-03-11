@@ -639,8 +639,7 @@ class TestTmuxManagerLibtmuxWindows:
         """window_exists returns True when window name is found."""
         manager, mock_session = self._make_manager_with_session()
         mock_win = MagicMock()
-        mock_win.window_name = "my-window"
-        mock_session.windows = [mock_win]
+        mock_session.windows.get.return_value = mock_win
 
         result = manager.window_exists("my-window")
 
@@ -649,9 +648,7 @@ class TestTmuxManagerLibtmuxWindows:
     def test_window_exists_false(self):
         """window_exists returns False when window name is not found."""
         manager, mock_session = self._make_manager_with_session()
-        mock_win = MagicMock()
-        mock_win.window_name = "other-window"
-        mock_session.windows = [mock_win]
+        mock_session.windows.get.side_effect = ObjectDoesNotExist()
 
         result = manager.window_exists("nonexistent")
 
@@ -661,7 +658,7 @@ class TestTmuxManagerLibtmuxWindows:
         """window_exists returns False when session doesn't exist."""
         manager = TmuxManager("agents")
         manager._server = MagicMock()
-        manager._server.has_session.return_value = False
+        manager._server.sessions.get.side_effect = ObjectDoesNotExist()
 
         result = manager.window_exists("my-window")
 
@@ -671,7 +668,6 @@ class TestTmuxManagerLibtmuxWindows:
         """window_exists returns False when LibTmuxException is raised."""
         manager = TmuxManager("agents")
         manager._server = MagicMock()
-        manager._server.has_session.return_value = True
         manager._server.sessions.get.side_effect = LibTmuxException()
 
         result = manager.window_exists("my-window")

@@ -238,11 +238,9 @@ class TmuxManager:
     def window_exists(self, window_name: str) -> bool:
         """Check if a specific window exists.
 
-        Falls back to index-based lookup for legacy digit-string values.
+        Falls back to index-based lookup for legacy digit-string values
+        (handled by _get_window).
         """
-        if not self.session_exists():
-            return False
-
         if self._tmux:
             windows = self._tmux.list_windows(self.session_name)
             if any(w.get('name') == window_name for w in windows):
@@ -252,19 +250,4 @@ class TmuxManager:
                 return any(str(w.get('index')) == window_name for w in windows)
             return False
 
-        try:
-            sess = self._get_session()
-            if sess is None:
-                return False
-
-            for win in sess.windows:
-                if win.window_name == window_name:
-                    return True
-            # Fallback: legacy digit-string index
-            if window_name.isdigit():
-                for win in sess.windows:
-                    if win.window_index == window_name:
-                        return True
-            return False
-        except LibTmuxException:
-            return False
+        return self._get_window(window_name) is not None
