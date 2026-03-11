@@ -11,6 +11,56 @@ if TYPE_CHECKING:
     from ..tui_widgets import SessionSummary
 
 
+def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | None = None, auto_wake: bool = True) -> bool:
+    """Send keys to the focused agent via tmux.
+
+    Handles the common pattern: get focused session, check remote,
+    optionally auto-wake, create launcher, send, notify.
+
+    Args:
+        tui: The SupervisorTUI instance
+        keys: The key(s) to send
+        enter: Whether to send Enter after the keys
+        label: Display label for notifications (defaults to keys)
+        auto_wake: Whether to auto-wake sleeping agents
+
+    Returns:
+        True if keys were sent successfully, False otherwise.
+        Returns False (with notification) if no agent is focused.
+    """
+    from ..tui_widgets import SessionSummary
+    from ..launcher import ClaudeLauncher
+
+    focused = tui.focused
+    if not isinstance(focused, SessionSummary):
+        tui.notify("No agent focused", severity="warning")
+        return False
+
+    session = focused.session
+    if getattr(session, 'is_remote', False) is True:
+        tui._send_remote_key(session, keys)
+        return True
+
+    session_name = session.name
+    display = label or f"'{keys}'"
+
+    if auto_wake:
+        tui._auto_wake_if_sleeping(session, focused)
+
+    launcher = ClaudeLauncher(
+        tmux_session=tui.tmux_session,
+        session_manager=tui.session_manager
+    )
+
+    send_kwargs = {"enter": True} if enter else {}
+    if launcher.send_to_session_by_id(session.id, keys, **send_kwargs):
+        tui.notify(f"Sent {display} to {session_name}", severity="information")
+        return True
+    else:
+        tui.notify(f"Failed to send {display} to {session_name}", severity="error")
+        return False
+
+
 class InputActionsMixin:
     """Mixin providing input/send actions for SupervisorTUI."""
 
@@ -64,58 +114,11 @@ class InputActionsMixin:
 
     def action_send_enter_to_focused(self) -> None:
         """Send Enter keypress to the focused agent (for approvals)."""
-        from ..tui_widgets import SessionSummary
-        from ..launcher import ClaudeLauncher
-
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
-            self.notify("No agent focused", severity="warning")
-            return
-
-        session = focused.session
-        if getattr(session, 'is_remote', False) is True:
-            self._send_remote_key(session, "enter")
-            return
-        session_name = session.name
-
-        # Auto-wake sleeping agent (#168)
-        self._auto_wake_if_sleeping(session, focused)
-
-        launcher = ClaudeLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
-
-        # Send "enter" which the launcher handles as just pressing Enter
-        if launcher.send_to_session_by_id(session.id, "enter"):
-            self.notify(f"Sent Enter to {session_name}", severity="information")
-        else:
-            self.notify(f"Failed to send Enter to {session_name}", severity="error")
+        _send_keys_to_focused(self, "enter", label="Enter")
 
     def action_send_escape_to_focused(self) -> None:
         """Send Escape keypress to the focused agent (for interrupting)."""
-        from ..tui_widgets import SessionSummary
-        from ..launcher import ClaudeLauncher
-
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
-            self.notify("No agent focused", severity="warning")
-            return
-
-        session = focused.session
-        if getattr(session, 'is_remote', False) is True:
-            self._send_remote_key(session, "escape")
-            return
-        session_name = session.name
-        launcher = ClaudeLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
-
-        if launcher.send_to_session_by_id(session.id, "escape"):
-            self.notify(f"Sent Escape to {session_name}", severity="information")
-        else:
-            self.notify(f"Failed to send Escape to {session_name}", severity="error")
+        _send_keys_to_focused(self, "escape", label="Escape", auto_wake=False)
 
     def _is_freetext_option(self, pane_content: str, key: str) -> bool:
         """Check if a numbered menu option is a free-text instruction option.
@@ -162,39 +165,18 @@ class InputActionsMixin:
             key: The key to send
         """
         from ..tui_widgets import SessionSummary
-        from ..launcher import ClaudeLauncher
 
+        # Check freetext before sending (need access to focused widget)
         focused = self.focused
-        if not isinstance(focused, SessionSummary):
-            self.notify("No agent focused", severity="warning")
-            return
-
-        session = focused.session
-        if getattr(session, 'is_remote', False) is True:
-            self._send_remote_key(session, key)
-            return
-        session_name = session.name
-
-        # Auto-wake sleeping agent (#168)
-        self._auto_wake_if_sleeping(session, focused)
-
-        launcher = ClaudeLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
-
-        # Check if this option is a free-text instruction option before sending
-        pane_content = self.detector.get_pane_content(focused.session.tmux_window) or ""
-        is_freetext = self._is_freetext_option(pane_content, key)
-
-        # Send the key followed by Enter (to select the numbered option)
-        if launcher.send_to_session_by_id(session.id, key, enter=True):
-            self.notify(f"Sent '{key}' to {session_name}", severity="information")
-            # Open command bar if this was a free-text instruction option (#72)
-            if is_freetext:
-                self.action_focus_command_bar()
+        if isinstance(focused, SessionSummary):
+            pane_content = self.detector.get_pane_content(focused.session.tmux_window) or ""
+            is_freetext = self._is_freetext_option(pane_content, key)
         else:
-            self.notify(f"Failed to send '{key}' to {session_name}", severity="error")
+            is_freetext = False
+
+        if _send_keys_to_focused(self, key, enter=True) and is_freetext:
+            # Open command bar if this was a free-text instruction option (#72)
+            self.action_focus_command_bar()
 
     def action_send_1_to_focused(self) -> None:
         """Send '1' to focused agent."""
