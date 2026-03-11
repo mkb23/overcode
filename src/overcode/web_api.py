@@ -50,6 +50,21 @@ def get_web_color(status_color: str) -> str:
     return WEB_COLORS.get(status_color, "#6b7280")
 
 
+def _capture_agent_pane(tmux_session: str, window_id: int) -> str:
+    """Capture pane content for a single agent window.
+
+    Returns the captured text, or empty string on failure.
+    """
+    try:
+        from .implementations import RealTmux
+        tmux = RealTmux()
+        content = tmux.capture_pane(tmux_session, window_id, lines=100)
+        return content or ""
+    except (subprocess.SubprocessError, ImportError, OSError) as e:
+        logger.debug("Failed to capture pane for window %s: %s", window_id, e)
+        return ""
+
+
 def get_status_data(tmux_session: str) -> Dict[str, Any]:
     """Get current status data for all agents.
 
@@ -65,18 +80,10 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     # Capture pane content for each agent (for sister preview sync)
     pane_contents: Dict[int, str] = {}
     if state and state.sessions:
-        try:
-            from .implementations import RealTmux
-            tmux = RealTmux()
-            for s in state.sessions:
-                try:
-                    content = tmux.capture_pane(tmux_session, s.tmux_window, lines=100)
-                    if content:
-                        pane_contents[s.tmux_window] = content
-                except (subprocess.SubprocessError, OSError) as e:
-                    logger.debug("Failed to capture pane for %s: %s", s.name, e)
-        except (ImportError, OSError) as e:
-            logger.debug("Failed to initialize tmux for pane capture: %s", e)
+        for s in state.sessions:
+            content = _capture_agent_pane(tmux_session, s.tmux_window)
+            if content:
+                pane_contents[s.tmux_window] = content
 
     result = {
         "timestamp": now.isoformat(),
@@ -121,17 +128,7 @@ def get_single_agent_status(tmux_session: str, agent_name: str) -> Optional[Dict
     if target is None:
         return None
 
-    # Capture pane content for just this one agent
-    pane_content = ""
-    try:
-        from .implementations import RealTmux
-        tmux = RealTmux()
-        content = tmux.capture_pane(tmux_session, target.tmux_window, lines=100)
-        if content:
-            pane_content = content
-    except (subprocess.SubprocessError, ImportError, OSError) as e:
-        logger.debug("Failed to capture pane for %s: %s", agent_name, e)
-
+    pane_content = _capture_agent_pane(tmux_session, target.tmux_window)
     return _build_agent_info(target, now, pane_content)
 
 
@@ -196,9 +193,48 @@ def _build_summary(state: Optional[MonitorDaemonState]) -> Dict[str, Any]:
     }
 
 
-def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = "") -> Dict[str, Any]:
-    """Build agent info dict from SessionDaemonState."""
-    # Calculate time in current state
+def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
+    """Build status and identity fields for an agent."""
+    status_color = get_status_color(s.current_status)
+    from .status_constants import PERMISSIVENESS_EMOJIS
+    perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
+
+    git_diff = get_git_diff_stats(s.start_directory) if s.start_directory else None
+
+    return {
+        "name": s.name,
+        "status": s.current_status,
+        "status_emoji": get_status_emoji(s.current_status),
+        "status_color": status_color,
+        "status_color_hex": get_web_color(status_color),
+        "activity": s.current_activity[:100] if s.current_activity else "",
+        "repo": s.repo_name or "",
+        "branch": s.branch or "",
+        "permissiveness_mode": s.permissiveness_mode,
+        "perm_emoji": perm_emoji,
+        "standing_orders": bool(s.standing_instructions),
+        "standing_orders_complete": s.standing_orders_complete,
+        "git_diff_files": git_diff[0] if git_diff else 0,
+        "git_diff_insertions": git_diff[1] if git_diff else 0,
+        "git_diff_deletions": git_diff[2] if git_diff else 0,
+        "activity_summary": s.activity_summary or "",
+        "activity_summary_context": s.activity_summary_context or "",
+        "activity_summary_updated": s.activity_summary_updated,
+        "heartbeat_enabled": s.heartbeat_enabled,
+        "heartbeat_frequency_seconds": s.heartbeat_frequency_seconds,
+        "heartbeat_paused": s.heartbeat_paused,
+        "last_heartbeat_time": s.last_heartbeat_time,
+        "is_asleep": s.is_asleep,
+        "sleep_time_raw": s.sleep_time_seconds,
+        "time_context_enabled": s.time_context_enabled,
+        "human_annotation": getattr(s, "human_annotation", ""),
+        "start_time": s.start_time or "",
+        "parent_name": s.parent_name or "",
+    }
+
+
+def _build_time_info(s: SessionDaemonState, now: datetime) -> Dict[str, Any]:
+    """Build time-tracking fields for an agent."""
     time_in_state = 0.0
     if s.status_since:
         try:
@@ -207,7 +243,6 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         except ValueError:
             pass
 
-    # Calculate current green/non-green time including elapsed
     green_time = s.green_time_seconds
     non_green_time = s.non_green_time_seconds
 
@@ -219,37 +254,27 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
     total_time = green_time + non_green_time
     percent_active = (green_time / total_time * 100) if total_time > 0 else 0
 
-    # Calculate human interactions (total - robot)
-    human_interactions = max(0, s.interaction_count - s.steers_count)
-
-    status_color = get_status_color(s.current_status)
-
-    # Calculate uptime from start_time
     uptime = calculate_uptime(s.start_time, now) if s.start_time else "-"
 
-    # Get git diff stats if start_directory available
-    git_diff = None
-    if s.start_directory:
-        git_diff = get_git_diff_stats(s.start_directory)
-
-    # Permission mode emoji (matching TUI)
-    from .status_constants import PERMISSIVENESS_EMOJIS
-    perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
-
     return {
-        "name": s.name,
-        "status": s.current_status,
-        "status_emoji": get_status_emoji(s.current_status),
-        "status_color": status_color,
-        "status_color_hex": get_web_color(status_color),
-        "activity": s.current_activity[:100] if s.current_activity else "",
-        "repo": s.repo_name or "",
-        "branch": s.branch or "",
         "green_time": format_duration(green_time),
         "green_time_raw": green_time,
         "non_green_time": format_duration(non_green_time),
         "non_green_time_raw": non_green_time,
         "percent_active": round(percent_active),
+        "time_in_state": format_duration(time_in_state),
+        "time_in_state_raw": time_in_state,
+        "median_work_time": format_duration(s.median_work_time) if s.median_work_time > 0 else "-",
+        "median_work_time_raw": s.median_work_time,
+        "uptime": uptime,
+    }
+
+
+def _build_cost_info(s: SessionDaemonState) -> Dict[str, Any]:
+    """Build cost and interaction fields for an agent."""
+    human_interactions = max(0, s.interaction_count - s.steers_count)
+
+    return {
         "human_interactions": human_interactions,
         "robot_steers": s.steers_count,
         "tokens": format_tokens(s.input_tokens + s.output_tokens),
@@ -257,47 +282,20 @@ def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = 
         "cost_usd": round(s.estimated_cost_usd, 2),
         "cost_budget_usd": s.cost_budget_usd,
         "budget_exceeded": s.budget_exceeded,
-        "standing_orders": bool(s.standing_instructions),
-        "standing_orders_complete": s.standing_orders_complete,
-        "time_in_state": format_duration(time_in_state),
-        "time_in_state_raw": time_in_state,
-        "median_work_time": format_duration(s.median_work_time) if s.median_work_time > 0 else "-",
-        "median_work_time_raw": s.median_work_time,
-        # New fields for TUI parity
-        "uptime": uptime,
-        "permissiveness_mode": s.permissiveness_mode,
-        "perm_emoji": perm_emoji,
-        "git_diff_files": git_diff[0] if git_diff else 0,
-        "git_diff_insertions": git_diff[1] if git_diff else 0,
-        "git_diff_deletions": git_diff[2] if git_diff else 0,
-        # Activity summary (if summarizer enabled)
-        "activity_summary": s.activity_summary or "",
-        "activity_summary_context": s.activity_summary_context or "",
-        "activity_summary_updated": s.activity_summary_updated,
-        # Heartbeat state
-        "heartbeat_enabled": s.heartbeat_enabled,
-        "heartbeat_frequency_seconds": s.heartbeat_frequency_seconds,
-        "heartbeat_paused": s.heartbeat_paused,
-        "last_heartbeat_time": s.last_heartbeat_time,
-        # Sleep state
-        "is_asleep": s.is_asleep,
-        "sleep_time_raw": s.sleep_time_seconds,
-        # Per-agent toggles
-        "time_context_enabled": s.time_context_enabled,
-        # Agent metadata
-        "human_annotation": getattr(s, "human_annotation", ""),
-        "start_time": s.start_time or "",
-        # Pane content for sister preview sync
-        "pane_content": pane_content,
-        # Agent hierarchy (#244) - for sister tree view
-        "parent_name": s.parent_name or "",
-        # Subtree cost (self + all descendants)
         "subtree_cost_usd": s.subtree_cost_usd,
-        # Raw daemon state — sisters can forward any field without manual mapping.
-        # When adding new fields to SessionDaemonState, they automatically appear
-        # here. The sister poller reads from this dict as a fallback.
-        "daemon_state": s.to_dict(),
     }
+
+
+def _build_agent_info(s: SessionDaemonState, now: datetime, pane_content: str = "") -> Dict[str, Any]:
+    """Build agent info dict from SessionDaemonState."""
+    info: Dict[str, Any] = {}
+    info.update(_build_status_info(s))
+    info.update(_build_time_info(s, now))
+    info.update(_build_cost_info(s))
+    info["pane_content"] = pane_content
+    # Raw daemon state — sisters can forward any field without manual mapping.
+    info["daemon_state"] = s.to_dict()
+    return info
 
 
 def get_timeline_data(tmux_session: str, hours: float = 3.0, slots: int = 60) -> Dict[str, Any]:
