@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
-from .claude_pid import discover_session_id_via_pid, is_session_id_owned_by_others
+from .claude_pid import is_session_id_owned_by_others
 from .history_reader import get_session_stats, get_current_session_id_for_directory
 from .monitor_daemon_state import (
     MonitorDaemonState,
@@ -591,31 +591,19 @@ class MonitorDaemon:
         """Detect and bind the current Claude session ID (#116, #373).
 
         For newly launched agents, the launcher prescribes --session-id at
-        launch and immediately binds it — so this method mainly handles
-        post-/clear detection (Claude restarts with --resume <newId>).
+        launch and immediately binds it. This method handles post-/clear
+        detection: after /clear, Claude restarts with a new sessionId that
+        appears in history.jsonl.
 
-        Discovery strategies (in priority order):
-        1. PID-based: tmux pane → Claude PID → --resume <sessionId>
-           (precise, covers post-/clear and resumed sessions)
-        2. History fallback: history.jsonl directory lookup with exclusive
-           ownership guard (legacy agents launched before --session-id)
+        Uses an ownership guard to prevent cross-contamination when multiple
+        agents share the same working directory — a sessionId already owned
+        by another agent is never stolen.
 
         Runs every 10 seconds.
         """
         if not session.start_directory:
             return
 
-        # Strategy 1: PID-based discovery (precise, no cross-contamination)
-        pid_session_id = discover_session_id_via_pid(
-            self.tmux_session, session.tmux_window
-        )
-        if pid_session_id:
-            self.session_manager.add_claude_session_id(session.id, pid_session_id)
-            self.session_manager.set_active_claude_session_id(session.id, pid_session_id)
-            return
-
-        # Strategy 2: history.jsonl fallback with ownership guard
-        # Covers legacy agents launched before --session-id was added.
         try:
             session_start = datetime.fromisoformat(session.start_time)
             current_id = get_current_session_id_for_directory(
