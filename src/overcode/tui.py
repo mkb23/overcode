@@ -2029,7 +2029,12 @@ class SupervisorTUI(
                     self.notify(f"Heartbeat enabled: every {freq_str} (remote)", severity="information")
                 else:
                     self.notify("Heartbeat disabled (remote)", severity="information")
-                self._refresh_remote_session(session)
+                self._optimistic_update_remote(
+                    session.id,
+                    heartbeat_enabled=message.enabled,
+                    heartbeat_frequency_seconds=message.frequency,
+                    heartbeat_instruction=message.instruction,
+                )
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
             return
