@@ -80,10 +80,12 @@ class ClaudeLauncher:
         extra_claude_args: Optional[List[str]] = None,
         resume_session_id: Optional[str] = None,
         fork: bool = False,
+        claude_session_id: Optional[str] = None,
     ) -> List[str]:
         """Construct the claude CLI argument list.
 
-        For new launches, pass skip_permissions/dangerously_skip_permissions.
+        For new launches, pass skip_permissions/dangerously_skip_permissions
+        and claude_session_id to prescribe the Claude session ID upfront.
         For forks, pass permissiveness_mode (inherited from source) and
         resume_session_id with fork=True.
         """
@@ -99,6 +101,11 @@ class ClaudeLauncher:
                 cmd.append("--fork-session")
         else:
             cmd = [claude_command, "code"] if claude_command == "claude" else [claude_command]
+
+        # Prescribe session ID so we know which session file belongs to
+        # this agent without needing PID-based discovery (#373).
+        if claude_session_id and not resume_session_id:
+            cmd.extend(["--session-id", claude_session_id])
 
         # Permission flags — from explicit args or inherited mode
         if dangerously_skip_permissions or permissiveness_mode == "bypass":
@@ -287,6 +294,10 @@ class ClaudeLauncher:
             print(f"Failed to create tmux window '{name}'")
             return None
 
+        # Generate a Claude session ID upfront so we know exactly which
+        # session file belongs to this agent — no discovery needed (#373).
+        claude_session_id = str(uuid.uuid4())
+
         # Build command and metadata, then launch
         claude_cmd = self._build_claude_command(
             skip_permissions=skip_permissions,
@@ -294,6 +305,7 @@ class ClaudeLauncher:
             claude_agent=claude_agent,
             allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args,
+            claude_session_id=claude_session_id,
         )
 
         if dangerously_skip_permissions:
@@ -320,6 +332,11 @@ class ClaudeLauncher:
         )
         if session is None:
             return None
+
+        # Bind the prescribed Claude session ID immediately (#373).
+        # No need for PID-based discovery on first sync.
+        self.sessions.add_claude_session_id(session.id, claude_session_id)
+        self.sessions.set_active_claude_session_id(session.id, claude_session_id)
 
         # Apply budget at launch time
         if budget_usd is not None and budget_usd > 0:
