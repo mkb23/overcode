@@ -1444,6 +1444,86 @@ class TestLaunchFork:
 
 
 # =============================================================================
+# Session ID prescribing tests (#373)
+# =============================================================================
+
+class TestSessionIdPrescribing:
+    """Test that launch prescribes --session-id and binds it immediately."""
+
+    def test_launch_passes_session_id_flag(self, tmp_path):
+        """Launch command includes --session-id <uuid>."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="test-agent")
+        assert session is not None
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("--session-id" in cmd for cmd in sent_commands)
+
+    def test_launch_binds_claude_session_id_immediately(self, tmp_path):
+        """Claude session ID is in claude_session_ids right after launch."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="test-agent")
+        assert session is not None
+
+        reloaded = session_manager.get_session(session.id)
+        assert len(reloaded.claude_session_ids) == 1
+        assert reloaded.active_claude_session_id == reloaded.claude_session_ids[0]
+
+    def test_two_agents_same_dir_get_different_session_ids(self, tmp_path):
+        """Two agents in the same directory get distinct Claude session IDs."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        s1 = launcher.launch(name="agent-a", start_directory="/shared/dir")
+        s2 = launcher.launch(name="agent-b", start_directory="/shared/dir")
+        assert s1 is not None and s2 is not None
+
+        r1 = session_manager.get_session(s1.id)
+        r2 = session_manager.get_session(s2.id)
+        assert r1.claude_session_ids[0] != r2.claude_session_ids[0]
+
+    def test_session_id_is_valid_uuid(self, tmp_path):
+        """Prescribed session ID is a valid UUID."""
+        import uuid as uuid_mod
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        session = launcher.launch(name="test-agent")
+        reloaded = session_manager.get_session(session.id)
+        # Should not raise
+        uuid_mod.UUID(reloaded.claude_session_ids[0])
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

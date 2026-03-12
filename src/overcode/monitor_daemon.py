@@ -588,18 +588,19 @@ class MonitorDaemon:
         self.last_state_times[session_id] = now
 
     def sync_session_id(self, session) -> None:
-        """Detect and bind the current Claude session ID (fast path, #116).
+        """Detect and bind the current Claude session ID (#116, #373).
 
-        Uses PID-based discovery to prevent cross-contamination when multiple
-        agents share the same working directory. The discovery chain:
+        For newly launched agents, the launcher prescribes --session-id at
+        launch and immediately binds it — so this method mainly handles
+        post-/clear detection (Claude restarts with --resume <newId>).
 
-        1. tmux pane → Claude PID → --resume <sessionId> (precise, covers
-           post-/clear and resumed sessions)
-        2. Fallback: history.jsonl directory lookup with exclusive ownership
-           guard (for fresh starts without --resume)
+        Discovery strategies (in priority order):
+        1. PID-based: tmux pane → Claude PID → --resume <sessionId>
+           (precise, covers post-/clear and resumed sessions)
+        2. History fallback: history.jsonl directory lookup with exclusive
+           ownership guard (legacy agents launched before --session-id)
 
-        Runs every 10 seconds. Ensures active_claude_session_id updates
-        promptly after /clear.
+        Runs every 10 seconds.
         """
         if not session.start_directory:
             return
@@ -614,6 +615,7 @@ class MonitorDaemon:
             return
 
         # Strategy 2: history.jsonl fallback with ownership guard
+        # Covers legacy agents launched before --session-id was added.
         try:
             session_start = datetime.fromisoformat(session.start_time)
             current_id = get_current_session_id_for_directory(
