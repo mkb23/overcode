@@ -1865,6 +1865,7 @@ class SupervisorTUI(
                 session.name, text=message.text,
             )
             if result.ok:
+                self._record_instruction(message.text, message.session_name)
                 self.notify(f"Sent to remote agent {message.session_name}")
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
@@ -2601,7 +2602,17 @@ class SupervisorTUI(
 
         session = focused.session
         if getattr(session, 'is_remote', False):
-            self.notify("Use command bar to send to remote agents", severity="warning")
+            if self._guard_remote(session):
+                return
+            result = self._sister_controller.send_instruction(
+                session.source_url, session.source_api_key,
+                session.name, text=message.text,
+            )
+            if result.ok:
+                self._record_instruction(message.text, session.name)
+                self.notify(f"Reinjected to remote agent {session.name}")
+            else:
+                self.notify(f"Remote error: {result.error}", severity="error")
             return
 
         launcher = ClaudeLauncher(
