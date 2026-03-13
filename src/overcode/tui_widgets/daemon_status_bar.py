@@ -286,7 +286,7 @@ class DaemonStatusBar(Static):
                 total_cost += sum(s.total_cost for s in reachable_sisters)
                 if total_cost > 0:
                     from ..tui_helpers import format_joules, usd_to_joules
-                    content.append(f" {format_joules(usd_to_joules(total_cost))}", style="orange1")
+                    content.append(f" ⚡{format_joules(usd_to_joules(total_cost))}", style="orange1")
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
                 for sister in reachable_sisters:

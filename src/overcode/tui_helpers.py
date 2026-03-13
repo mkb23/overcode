@@ -134,26 +134,28 @@ def usd_to_joules(cost_usd: float) -> float:
 
 
 def format_joules(joules: float) -> str:
-    """Format energy in joules to human readable with stable width.
+    """Format energy in joules to human readable with stable 5-char width.
 
-    Uses SI prefixes: J, kJ, MJ, GJ, TJ.
+    Returns a fixed 5-character string like "5.1MJ", " 51MJ", "514MJ", "2.6GJ".
+    Caller adds the ⚡ prefix.
 
     Args:
         joules: Energy in joules
 
     Returns:
-        Formatted string like "⚡514kJ", "⚡5.1MJ", "⚡51GJ"
+        Formatted 5-char string with SI prefix and J suffix
     """
-    if joules >= 1e12:
-        return f"⚡{joules / 1e12:.1f}TJ"
-    elif joules >= 1e9:
-        return f"⚡{joules / 1e9:.1f}GJ"
-    elif joules >= 1e6:
-        return f"⚡{joules / 1e6:.1f}MJ"
-    elif joules >= 1e3:
-        return f"⚡{joules / 1e3:.1f}kJ"
-    else:
-        return f"⚡{joules:.0f}J"
+    for threshold, unit in [(1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k")]:
+        if joules >= threshold:
+            v = joules / threshold
+            if v >= 100:
+                s = f"{v:.0f}{unit}J"
+            elif v >= 10:
+                s = f"{v:.0f}{unit}J"
+            else:
+                s = f"{v:.1f}{unit}J"
+            return f"{s:>5}"
+    return f"{joules:.0f}J".rjust(5)
 
 
 def format_budget(cost_usd: float, budget_usd: float) -> str:

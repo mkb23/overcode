@@ -392,9 +392,9 @@ def render_joules(ctx: ColumnContext) -> ColumnOutput:
         cost = s.stats.estimated_cost_usd
         joules = usd_to_joules(cost)
         style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
-        return [(f" {format_joules(joules):>7}", style)]
+        return [(f" ⚡{format_joules(joules)}", style)]
     else:
-        return [("       -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+        return [("      -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
 def render_budget(ctx: ColumnContext) -> ColumnOutput:
@@ -410,7 +410,7 @@ def render_subtree_cost(ctx: ColumnContext) -> ColumnOutput:
     if ctx.subtree_cost_usd > 0:
         if ctx.show_cost == "joules":
             joules = usd_to_joules(ctx.subtree_cost_usd)
-            return [(f" Σ{format_joules(joules):>7}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+            return [(f" Σ{format_joules(joules)}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
         return [(f" Σ{format_cost(ctx.subtree_cost_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
     return None
 

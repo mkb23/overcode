@@ -198,7 +198,7 @@ def render_spin_stats(
     elif show_cost == "joules":
         total_cost = sum(s.estimated_cost_usd for s in sessions)
         if total_cost > 0:
-            content.append(f" {format_joules(usd_to_joules(total_cost))}", style="orange1")
+            content.append(f" ⚡{format_joules(usd_to_joules(total_cost))}", style="orange1")
     else:
         total_tokens = sum(s.input_tokens + s.output_tokens for s in sessions)
         if total_tokens > 0:
@@ -373,7 +373,7 @@ def render_session_summary_line(
         if show_cost == "cost":
             content.append(f" {format_cost(estimated_cost_usd):>7}", style=f"bold orange1{bg}")
         elif show_cost == "joules":
-            content.append(f" {format_joules(usd_to_joules(estimated_cost_usd)):>8}", style=f"bold orange1{bg}")
+            content.append(f" ⚡{format_joules(usd_to_joules(estimated_cost_usd))}", style=f"bold orange1{bg}")
         else:
             content.append(f" Σ{format_tokens(total_tokens):>6}", style=f"bold orange1{bg}")
         if current_context_tokens and current_context_tokens > 0:
