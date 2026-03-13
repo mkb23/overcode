@@ -38,7 +38,7 @@ def _make_bare_status_bar(**extra_attrs):
     widget.monitor_state = None
     widget._session_manager = None
     widget._asleep_session_ids = set()
-    widget.show_cost = False
+    widget.show_cost = "tokens"
     widget._usage_snapshot = None
     widget._supervisor_running = False
     widget._summarizer_available = False
@@ -377,7 +377,7 @@ class TestDaemonStatusBarRenderSpinStats:
         state = _make_monitor_state(sessions=[s1])
         widget = _make_bare_status_bar(
             monitor_state=state,
-            show_cost=True,
+            show_cost="cost",
         )
         result = widget.render()
         plain = result.plain
@@ -391,7 +391,7 @@ class TestDaemonStatusBarRenderSpinStats:
         state = _make_monitor_state(sessions=[s1])
         widget = _make_bare_status_bar(
             monitor_state=state,
-            show_cost=False,
+            show_cost="tokens",
         )
         result = widget.render()
         plain = result.plain
@@ -722,7 +722,7 @@ class TestDaemonStatusBarSpinWithSisters:
         widget = _make_bare_status_bar(
             monitor_state=state,
             _sister_states=[sister],
-            show_cost=True,
+            show_cost="cost",
         )
         result = widget.render()
         plain = result.plain
@@ -743,7 +743,7 @@ class TestDaemonStatusBarSpinWithSisters:
         widget = _make_bare_status_bar(
             monitor_state=state,
             _sister_states=[sister],
-            show_cost=False,
+            show_cost="tokens",
         )
         result = widget.render()
         plain = result.plain

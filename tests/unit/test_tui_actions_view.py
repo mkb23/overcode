@@ -1188,39 +1188,59 @@ class TestToggleCostDisplay:
         mock_status_bar = MagicMock()
 
         mock_tui = MagicMock()
-        mock_tui.show_cost = False
+        mock_tui.show_cost = "tokens"
+        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
+        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
         mock_tui._prefs = MagicMock()
         mock_tui.query.return_value = [widget1, widget2]
         mock_tui.query_one.return_value = mock_status_bar
 
         ViewActionsMixin.action_toggle_cost_display(mock_tui)
 
-        assert mock_tui.show_cost is True
-        assert mock_tui._prefs.show_cost is True
+        assert mock_tui.show_cost == "cost"
+        assert mock_tui._prefs.show_cost == "cost"
         mock_tui._save_prefs.assert_called_once()
-        assert widget1.show_cost is True
+        assert widget1.show_cost == "cost"
         widget1.refresh.assert_called_once()
-        assert widget2.show_cost is True
+        assert widget2.show_cost == "cost"
         widget2.refresh.assert_called_once()
-        assert mock_status_bar.show_cost is True
+        assert mock_status_bar.show_cost == "cost"
         mock_status_bar.refresh.assert_called_once()
         assert "cost/budget" in mock_tui.notify.call_args[0][0]
 
-    def test_disables_cost_display(self):
-        """Should disable cost display and show token counts message."""
+    def test_cycles_to_joules(self):
+        """Should cycle from cost to joules display."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.show_cost = True
+        mock_tui.show_cost = "cost"
+        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
+        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
         mock_tui._prefs = MagicMock()
         mock_tui.query.return_value = []
         mock_tui.query_one.return_value = MagicMock()
 
         ViewActionsMixin.action_toggle_cost_display(mock_tui)
 
-        assert mock_tui.show_cost is False
-        assert mock_tui._prefs.show_cost is False
-        assert "token counts" in mock_tui.notify.call_args[0][0]
+        assert mock_tui.show_cost == "joules"
+        assert "joules" in mock_tui.notify.call_args[0][0].lower()
+
+    def test_cycles_back_to_tokens(self):
+        """Should cycle from joules back to token counts."""
+        from overcode.tui_actions.view import ViewActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui.show_cost = "joules"
+        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
+        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
+        mock_tui._prefs = MagicMock()
+        mock_tui.query.return_value = []
+        mock_tui.query_one.return_value = MagicMock()
+
+        ViewActionsMixin.action_toggle_cost_display(mock_tui)
+
+        assert mock_tui.show_cost == "tokens"
+        assert "token counts" in mock_tui.notify.call_args[0][0].lower()
 
     def test_handles_no_status_bar(self):
         """Should not raise if DaemonStatusBar is not found."""
@@ -1228,14 +1248,16 @@ class TestToggleCostDisplay:
         from textual.css.query import NoMatches
 
         mock_tui = MagicMock()
-        mock_tui.show_cost = False
+        mock_tui.show_cost = "tokens"
+        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
+        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
         mock_tui._prefs = MagicMock()
         mock_tui.query.return_value = []
         mock_tui.query_one.side_effect = NoMatches()
 
         ViewActionsMixin.action_toggle_cost_display(mock_tui)
 
-        assert mock_tui.show_cost is True
+        assert mock_tui.show_cost == "cost"
         mock_tui._save_prefs.assert_called_once()
         mock_tui.notify.assert_called_once()
 

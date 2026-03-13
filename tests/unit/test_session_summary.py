@@ -94,7 +94,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.any_has_pr = False
     widget.is_unvisited_stalled = False
     widget.monochrome = False
-    widget.show_cost = False
+    widget.show_cost = "tokens"
     widget.any_has_budget = False
     widget._status_changed_at = None
     widget._last_known_status = "running"

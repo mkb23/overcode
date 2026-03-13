@@ -122,6 +122,40 @@ def format_cost(cost_usd: float) -> str:
         return f"${cost_usd:.2f}"
 
 
+# Conversion: $0.07/kWh typical US datacenter electricity price.
+# 1 kWh = 3,600,000 J  →  $1 ≈ 51.43 MJ
+USD_PER_KWH = 0.07
+USD_TO_JOULES = (1.0 / USD_PER_KWH) * 3_600_000  # ~51,428,571 J per USD
+
+
+def usd_to_joules(cost_usd: float) -> float:
+    """Convert USD cost to estimated energy in joules."""
+    return cost_usd * USD_TO_JOULES
+
+
+def format_joules(joules: float) -> str:
+    """Format energy in joules to human readable with stable width.
+
+    Uses SI prefixes: J, kJ, MJ, GJ, TJ.
+
+    Args:
+        joules: Energy in joules
+
+    Returns:
+        Formatted string like "⚡514kJ", "⚡5.1MJ", "⚡51GJ"
+    """
+    if joules >= 1e12:
+        return f"⚡{joules / 1e12:.1f}TJ"
+    elif joules >= 1e9:
+        return f"⚡{joules / 1e9:.1f}GJ"
+    elif joules >= 1e6:
+        return f"⚡{joules / 1e6:.1f}MJ"
+    elif joules >= 1e3:
+        return f"⚡{joules / 1e3:.1f}kJ"
+    else:
+        return f"⚡{joules:.0f}J"
+
+
 def format_budget(cost_usd: float, budget_usd: float) -> str:
     """Format cost with budget context (#173).
 

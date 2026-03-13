@@ -182,8 +182,8 @@ class SupervisorTUI(
         ("M", "toggle_monochrome", "Monochrome"),
         # Emoji-free mode for terminals without emoji fonts (#315)
         ("E", "toggle_emoji_free", "Emoji-free"),
-        # Toggle between token count and dollar cost display
-        ("dollar_sign", "toggle_cost_display", "Show $"),
+        # Cycle between token count, dollar cost, and joules display
+        ("dollar_sign", "toggle_cost_display", "Cycle $/⚡"),
         # Transport/handover - prepare all sessions for handoff (double-press)
         ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
@@ -230,7 +230,7 @@ class SupervisorTUI(
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
-    show_cost: reactive[bool] = reactive(False)  # Show $ cost instead of token counts
+    show_cost: reactive[str] = reactive("tokens")  # "tokens", "cost", "joules" — cycle with $
 
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
         super().__init__()

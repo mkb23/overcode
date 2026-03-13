@@ -446,17 +446,27 @@ class ViewActionsMixin:
             severity="information"
         )
 
-    def action_toggle_cost_display(self) -> None:
-        """Toggle between showing token counts and dollar costs.
+    # Cost display modes: tokens → cost → joules
+    _COST_DISPLAY_MODES = ["tokens", "cost", "joules"]
+    _COST_DISPLAY_LABELS = {
+        "tokens": "Showing token counts",
+        "cost": "Showing cost/budget",
+        "joules": "Showing energy (joules)",
+    }
 
-        When enabled:
-        - Shows estimated cost in USD instead of token counts
-        - Format: $X.XX for small amounts, $X.XK/$X.XM for large
-        - Uses Sonnet 3.5 pricing model
+    def action_toggle_cost_display(self) -> None:
+        """Cycle between token counts, dollar costs, and energy (joules).
+
+        Modes:
+        - tokens: Show Σ123K token counts
+        - cost: Show $X.XX estimated cost in USD
+        - joules: Show ⚡51MJ estimated energy consumption
         """
         from ..tui_widgets import SessionSummary, DaemonStatusBar
 
-        self.show_cost = not self.show_cost
+        modes = self._COST_DISPLAY_MODES
+        current_idx = modes.index(self.show_cost) if self.show_cost in modes else 0
+        self.show_cost = modes[(current_idx + 1) % len(modes)]
 
         # Save preference
         self._prefs.show_cost = self.show_cost
@@ -476,7 +486,7 @@ class ViewActionsMixin:
             pass
 
         self.notify(
-            "Showing cost/budget" if self.show_cost else "Showing token counts",
+            self._COST_DISPLAY_LABELS.get(self.show_cost, "Showing token counts"),
             severity="information"
         )
 

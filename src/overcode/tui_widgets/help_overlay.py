@@ -45,7 +45,7 @@ class HelpOverlay(Static):
         row("v", "Cycle detail lines  (5 → 10 → 20 → 50)")
         row("S", "Cycle sort  (alpha → status → value → tree)")
         row("C", "Column config modal", "U", "Sister visibility")
-        row("$", "Toggle cost/$")
+        row("$", "Cycle tokens/$/⚡")
         row("t", "Toggle timeline", "d", "Toggle daemon panel")
         row("g", "Show killed agents", "Z", "Hide sleeping agents")
         row("D", "Show done agents", "X", "Collapse/expand children")

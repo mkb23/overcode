@@ -386,6 +386,9 @@ def list_agents(
     cost: Annotated[
         bool, typer.Option("--cost", help="Show $ cost instead of token counts")
     ] = False,
+    joules: Annotated[
+        bool, typer.Option("--joules", help="Show energy in joules instead of token counts")
+    ] = False,
     sisters: Annotated[
         bool, typer.Option("--sisters", help="Include sister (remote) agents")
     ] = False,
@@ -586,7 +589,7 @@ def list_agents(
             any_has_subtree_cost=any_has_subtree_cost,
         )
         ctx.status_color = f"bold {status_color}"
-        ctx.show_cost = cost
+        ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")
         ctx.is_list_mode = True
 
         # Handle tree indentation (#244) using compute_tree_metadata

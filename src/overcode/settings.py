@@ -442,7 +442,7 @@ class TUIPreferences:
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: bool = False  # ASCII fallbacks for terminals without emoji (#315)
-    show_cost: bool = False  # Show $ cost instead of token counts
+    show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
     timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
     # Session IDs of stalled agents that have been visited by the user
@@ -492,6 +492,13 @@ class TUIPreferences:
                 # Migration: map "custom" detail level to "full"
                 if kwargs.get("summary_detail") == "custom":
                     kwargs["summary_detail"] = "full"
+
+                # Migration: show_cost bool → str ("tokens"/"cost"/"joules")
+                sc = kwargs.get("show_cost")
+                if sc is True:
+                    kwargs["show_cost"] = "cost"
+                elif sc is False:
+                    kwargs["show_cost"] = "tokens"
 
                 return cls(**kwargs)
         except (json.JSONDecodeError, IOError):

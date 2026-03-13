@@ -44,7 +44,7 @@ class DaemonStatusBar(Static):
         self.monitor_state: Optional[MonitorDaemonState] = None
         self._session_manager = session_manager
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
-        self.show_cost: bool = False  # Show $ cost instead of token counts
+        self.show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
         self._usage_snapshot = None  # UsageSnapshot from UsageMonitor
         # Cached I/O results (populated by fetch_volatile_state, read by render)
         self._supervisor_running: bool = False
@@ -275,12 +275,18 @@ class DaemonStatusBar(Static):
                 # Instantaneous: show current running count as the mean
                 content.append(f" μ{green_now}", style="cyan")
 
-            # Total tokens/cost across all sessions (include sleeping agents - they used tokens too)
-            if self.show_cost:
+            # Total tokens/cost/joules across all sessions (include sleeping agents - they used tokens too)
+            if self.show_cost == "cost":
                 total_cost = sum(s.estimated_cost_usd for s in local_sessions)
                 total_cost += sum(s.total_cost for s in reachable_sisters)
                 if total_cost > 0:
                     content.append(f" {format_cost(total_cost)}", style="orange1")
+            elif self.show_cost == "joules":
+                total_cost = sum(s.estimated_cost_usd for s in local_sessions)
+                total_cost += sum(s.total_cost for s in reachable_sisters)
+                if total_cost > 0:
+                    from ..tui_helpers import format_joules, usd_to_joules
+                    content.append(f" {format_joules(usd_to_joules(total_cost))}", style="orange1")
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
                 for sister in reachable_sisters:

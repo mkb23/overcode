@@ -149,7 +149,7 @@ def _make_ctx(**overrides) -> ColumnContext:
         monochrome=False,
         emoji_free=False,
         summary_detail="full",
-        show_cost=False,
+        show_cost="tokens",
         any_has_budget=False,
         expand_icon="▼",
         is_list_mode=False,
@@ -493,7 +493,7 @@ class TestRenderTokenCount:
 
     def test_hidden_when_show_cost(self):
         stats = _make_claude_stats()
-        ctx = _make_ctx(claude_stats=stats, show_cost=True)
+        ctx = _make_ctx(claude_stats=stats, show_cost="cost")
         assert render_token_count(ctx) is None
 
 
@@ -519,7 +519,7 @@ class TestRenderContextUsage:
     def test_visible_when_show_cost(self):
         """Context usage is always visible regardless of show_cost."""
         stats = _make_claude_stats(current_context_tokens=50000)
-        ctx = _make_ctx(claude_stats=stats, show_cost=True)
+        ctx = _make_ctx(claude_stats=stats, show_cost="cost")
         result = render_context_usage(ctx)
         assert result is not None
         assert "📚" in result[0][0]
@@ -528,19 +528,19 @@ class TestRenderContextUsage:
 class TestRenderCost:
     def test_hidden_when_not_show_cost(self):
         stats = _make_claude_stats()
-        ctx = _make_ctx(claude_stats=stats, show_cost=False)
+        ctx = _make_ctx(claude_stats=stats, show_cost="tokens")
         assert render_cost(ctx) is None
 
     def test_shows_cost(self):
         stats = _make_claude_stats()
         session = _make_session()
         session.stats.estimated_cost_usd = 12.5
-        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session)
+        ctx = _make_ctx(claude_stats=stats, show_cost="cost", session=session)
         result = render_cost(ctx)
         assert "$" in result[0][0]
 
     def test_no_stats_shows_placeholder(self):
-        ctx = _make_ctx(claude_stats=None, show_cost=True)
+        ctx = _make_ctx(claude_stats=None, show_cost="cost")
         result = render_cost(ctx)
         assert result is not None
         assert "-" in result[0][0]
@@ -550,7 +550,7 @@ class TestRenderCost:
         stats = _make_claude_stats()
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 6.0
-        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session,
+        ctx = _make_ctx(claude_stats=stats, show_cost="cost", session=session,
                         any_has_budget=True, monochrome=False)
         result = render_cost(ctx)
         assert "red" in result[0][1]
@@ -560,7 +560,7 @@ class TestRenderCost:
         stats = _make_claude_stats()
         session = _make_session(cost_budget_usd=5.0)
         session.stats.estimated_cost_usd = 4.5  # 90%
-        ctx = _make_ctx(claude_stats=stats, show_cost=True, session=session,
+        ctx = _make_ctx(claude_stats=stats, show_cost="cost", session=session,
                         any_has_budget=True, monochrome=False)
         result = render_cost(ctx)
         assert "yellow" in result[0][1]
@@ -569,7 +569,7 @@ class TestRenderCost:
 class TestRenderBudget:
     def test_shows_budget_value(self):
         session = _make_session(cost_budget_usd=5.0)
-        ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
+        ctx = _make_ctx(show_cost="cost", any_has_budget=True, session=session)
         result = render_budget(ctx)
         assert "/" in result[0][0]
         assert "$" in result[0][0]
@@ -577,7 +577,7 @@ class TestRenderBudget:
     def test_returns_none_when_session_has_no_budget(self):
         """Framework placeholder handles alignment when render returns None."""
         session = _make_session(cost_budget_usd=0.0)
-        ctx = _make_ctx(show_cost=True, any_has_budget=True, session=session)
+        ctx = _make_ctx(show_cost="cost", any_has_budget=True, session=session)
         result = render_budget(ctx)
         assert result is None
 
@@ -585,14 +585,14 @@ class TestRenderBudget:
         """The budget column's visible callback gates on show_cost and any_has_budget."""
         budget_col = next(c for c in SUMMARY_COLUMNS if c.id == "budget")
         assert budget_col.visible is not None
-        # Not visible when show_cost=False
-        ctx_no_cost = _make_ctx(show_cost=False, any_has_budget=True)
+        # Not visible when show_cost="tokens"
+        ctx_no_cost = _make_ctx(show_cost="tokens", any_has_budget=True)
         assert budget_col.visible(ctx_no_cost) is False
         # Not visible when no budgets
-        ctx_no_budget = _make_ctx(show_cost=True, any_has_budget=False)
+        ctx_no_budget = _make_ctx(show_cost="cost", any_has_budget=False)
         assert budget_col.visible(ctx_no_budget) is False
         # Visible when both conditions met
-        ctx_visible = _make_ctx(show_cost=True, any_has_budget=True)
+        ctx_visible = _make_ctx(show_cost="cost", any_has_budget=True)
         assert budget_col.visible(ctx_visible) is True
 
 
@@ -1238,14 +1238,14 @@ class TestRenderPrNumber:
 
 class TestRenderSubtreeCost:
     def test_shows_subtree_cost(self):
-        ctx = _make_ctx(subtree_cost_usd=5.50, any_has_subtree_cost=True, show_cost=True)
+        ctx = _make_ctx(subtree_cost_usd=5.50, any_has_subtree_cost=True, show_cost="cost")
         result = render_subtree_cost(ctx)
         assert result is not None
         assert "Σ" in result[0][0]
         assert "$" in result[0][0]
 
     def test_returns_none_when_zero(self):
-        ctx = _make_ctx(subtree_cost_usd=0.0, any_has_subtree_cost=True, show_cost=True)
+        ctx = _make_ctx(subtree_cost_usd=0.0, any_has_subtree_cost=True, show_cost="cost")
         result = render_subtree_cost(ctx)
         assert result is None
 
@@ -1253,14 +1253,14 @@ class TestRenderSubtreeCost:
         """The subtree_cost column's visible callback gates on show_cost and any_has_subtree_cost."""
         col = next(c for c in SUMMARY_COLUMNS if c.id == "subtree_cost")
         assert col.visible is not None
-        # Not visible when show_cost=False
-        ctx = _make_ctx(show_cost=False, any_has_subtree_cost=True)
+        # Not visible when show_cost="tokens"
+        ctx = _make_ctx(show_cost="tokens", any_has_subtree_cost=True)
         assert col.visible(ctx) is False
         # Not visible when no subtree costs
-        ctx = _make_ctx(show_cost=True, any_has_subtree_cost=False)
+        ctx = _make_ctx(show_cost="cost", any_has_subtree_cost=False)
         assert col.visible(ctx) is False
         # Visible when both conditions met
-        ctx = _make_ctx(show_cost=True, any_has_subtree_cost=True)
+        ctx = _make_ctx(show_cost="cost", any_has_subtree_cost=True)
         assert col.visible(ctx) is True
 
 
