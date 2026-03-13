@@ -229,6 +229,32 @@ def get_hostname() -> str:
     return _get_config_value("hostname") or socket.gethostname()
 
 
+def get_web_port() -> int:
+    """Get configured web server port.
+
+    Config format in ~/.overcode/config.yaml:
+        web:
+          port: 8081
+
+    Returns:
+        Configured port or 8080 (default)
+    """
+    return int(_get_config_value("web.port", 8080))
+
+
+def get_web_host() -> str:
+    """Get configured web server bind host.
+
+    Config format in ~/.overcode/config.yaml:
+        web:
+          host: "0.0.0.0"
+
+    Returns:
+        Configured host or "127.0.0.1" (default)
+    """
+    return _get_config_value("web.host", "127.0.0.1")
+
+
 def get_web_api_key() -> Optional[str]:
     """Get API key for web server authentication.
 

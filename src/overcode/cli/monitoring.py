@@ -328,11 +328,11 @@ def supervisor(
 @app.command()
 def web(
     host: Annotated[
-        str, typer.Option("--host", "-h", help="Host to bind to")
-    ] = "127.0.0.1",
+        Optional[str], typer.Option("--host", "-h", help="Host to bind to (default from config or 127.0.0.1)")
+    ] = None,
     port: Annotated[
-        int, typer.Option("--port", "-p", help="Port to listen on")
-    ] = 8080,
+        Optional[int], typer.Option("--port", "-p", help="Port to listen on (default from config or 8080)")
+    ] = None,
     stop: Annotated[
         bool, typer.Option("--stop", help="Stop the running web server")
     ] = False,
@@ -348,17 +348,24 @@ def web(
     and the /api/status endpoint used by sister instances.
 
     Examples:
-        overcode web                          # Start on localhost:8080
-        overcode web --port 3000              # Custom port
+        overcode web                          # Start (uses web.port/web.host from config, or 8080/127.0.0.1)
+        overcode web --port 3000              # Custom port (overrides config)
         overcode web --host 0.0.0.0           # LAN access (needs api_key)
         overcode web --stop                   # Stop the server
     """
+    from ..config import get_web_port, get_web_host
     from ..web_server import (
         start_web_server,
         stop_web_server,
         is_web_server_running,
         get_web_server_url,
     )
+
+    # Resolve defaults from config
+    if port is None:
+        port = get_web_port()
+    if host is None:
+        host = get_web_host()
 
     if stop:
         success, msg = stop_web_server(session)

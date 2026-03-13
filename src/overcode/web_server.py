@@ -510,7 +510,7 @@ def _log_to_file(session: str, message: str) -> None:
             pass
 
 
-def start_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:
+def start_web_server(session: str, port: int | None = None, host: str | None = None) -> Tuple[bool, str]:
     """Start the analytics web server for a session.
 
     Args:
@@ -521,6 +521,12 @@ def start_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") ->
     Returns:
         Tuple of (success, message)
     """
+    from .config import get_web_port, get_web_host
+    if port is None:
+        port = get_web_port()
+    if host is None:
+        host = get_web_host()
+
     _log_to_file(session, f"start_web_server called with port={port}")
 
     if is_web_server_running(session):
@@ -610,7 +616,7 @@ def stop_web_server(session: str) -> Tuple[bool, str]:
         return False, "Failed to stop"
 
 
-def toggle_web_server(session: str, port: int = 8080, host: str = "127.0.0.1") -> Tuple[bool, str]:
+def toggle_web_server(session: str, port: int | None = None, host: str | None = None) -> Tuple[bool, str]:
     """Toggle the web server on/off for a session.
 
     Args:

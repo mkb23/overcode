@@ -30,8 +30,12 @@ CONFIG_TEMPLATE = """\
 #   api_key: your-secret-key
 #   interval: 30  # seconds between pushes
 
-# Web dashboard time presets
+# Web server and dashboard settings
 # web:
+#   port: 8080            # Default port for 'overcode web'
+#   host: "127.0.0.1"     # Default bind host (use "0.0.0.0" for LAN/sister access)
+#   api_key: "secret"     # Required when host is not localhost
+#   allow_control: false   # Enable remote control API
 #   time_presets:
 #     - name: "Morning"
 #       start: "09:00"
