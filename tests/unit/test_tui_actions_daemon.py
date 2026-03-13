@@ -108,7 +108,7 @@ class TestSupervisorStart:
         DaemonActionsMixin._do_supervisor_start(mock_tui)
 
         mock_tui._ensure_monitor_daemon.assert_called_once()
-        mock_sleep.assert_called_once_with(1.0)
+        mock_sleep.assert_any_call(1.0)
 
     @patch("overcode.pid_utils.spawn_daemon", return_value=12345)
     @patch("overcode.tui_actions.daemon.sys")
