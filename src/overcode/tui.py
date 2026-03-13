@@ -2578,13 +2578,10 @@ class SupervisorTUI(
     def action_open_instruction_history(self) -> None:
         """Open the instruction history modal (#376)."""
         if not self._instruction_history:
-            self.notify("No instructions sent yet", severity="warning")
+            self.notify("No instructions sent yet — send one with 'i' first", severity="warning")
             return
-        try:
-            modal = self.query_one("#instruction-history-modal", InstructionHistoryModal)
-            modal.show(self._instruction_history, self)
-        except NoMatches:
-            pass
+        modal = self.query_one("#instruction-history-modal", InstructionHistoryModal)
+        modal.show(self._instruction_history, self)
 
     def on_instruction_history_modal_reinject_requested(
         self, message: InstructionHistoryModal.ReinjectRequested
