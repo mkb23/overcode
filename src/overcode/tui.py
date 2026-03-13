@@ -235,10 +235,11 @@ class SupervisorTUI(
     emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
     show_cost: reactive[bool] = reactive(False)  # Show $ cost instead of token counts
 
-    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
+    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
         super().__init__()
         self.tmux_session = tmux_session
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
+        self.terminal_enabled = terminal  # Enable embedded terminal pane (--terminal flag)
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session)
@@ -366,7 +367,8 @@ class SupervisorTUI(
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
-        yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
+        if self.terminal_enabled:
+            yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
@@ -2852,7 +2854,7 @@ class SupervisorTUI(
         sys.stdout.flush()
 
 
-def run_tui(tmux_session: str = "agents", diagnostics: bool = False):
+def run_tui(tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
     """Run the TUI supervisor"""
     import os
     import sys
@@ -2865,7 +2867,7 @@ def run_tui(tmux_session: str = "agents", diagnostics: bool = False):
     # Force terminal size detection
     os.environ.setdefault('TERM', 'xterm-256color')
 
-    app = SupervisorTUI(tmux_session, diagnostics=diagnostics)
+    app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal)
     # Use driver=None to auto-detect, and size will be detected from terminal
     app.run()
 

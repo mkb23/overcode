@@ -158,6 +158,10 @@ class ViewActionsMixin:
 
     def action_toggle_terminal_pane(self) -> None:
         """Toggle embedded terminal pane (replaces preview pane with live tmux)."""
+        if not getattr(self, 'terminal_enabled', False):
+            self.notify("Terminal pane requires --terminal flag", severity="warning")
+            return
+
         from ..tui_widgets.terminal_pane import TerminalPane
         from ..tui_widgets.preview_pane import PreviewPane
 
