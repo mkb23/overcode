@@ -105,10 +105,6 @@ class SessionActionsMixin:
 
         session = focused.session
 
-        if self._is_remote(session):
-            self.notify("Cannot fork remote agents", severity="warning")
-            return
-
         if session.status in ("terminated", "done"):
             self.notify("Cannot fork a terminated agent", severity="warning")
             return

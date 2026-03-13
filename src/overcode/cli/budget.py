@@ -37,6 +37,16 @@ def budget_set(
         rprint("[red]Error: Budget cannot be negative[/red]")
         raise typer.Exit(code=1)
 
+    # If agent has a parent with a budget, require transfer instead (#364)
+    if agent.parent_session_id:
+        parent = manager.get_session(agent.parent_session_id)
+        if parent and parent.cost_budget_usd > 0:
+            rprint(
+                f"[red]Error: Cannot set budget directly — parent '{parent.name}' has a budget (${parent.cost_budget_usd:.2f})[/red]\n"
+                f"Use [bold]overcode budget transfer {parent.name} {name} <amount>[/bold] instead."
+            )
+            raise typer.Exit(code=1)
+
     manager.set_cost_budget(agent.id, amount)
     if amount > 0:
         rprint(f"[green]✓ Set {name} budget to ${amount:.2f}[/green]")

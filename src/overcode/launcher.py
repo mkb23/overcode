@@ -100,7 +100,7 @@ class ClaudeLauncher:
             if fork:
                 cmd.append("--fork-session")
         else:
-            cmd = [claude_command, "code"] if claude_command == "claude" else [claude_command]
+            cmd = [claude_command]
 
         # Prescribe session ID so we know which session file belongs to
         # this agent without needing PID-based discovery (#373).

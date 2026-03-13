@@ -1034,6 +1034,7 @@ class TestBudgetSetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
+            mock_agent.parent_session_id = None
             mock_sm.get_session_by_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
@@ -1047,6 +1048,7 @@ class TestBudgetSetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
+            mock_agent.parent_session_id = None
             mock_sm.get_session_by_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
@@ -1071,6 +1073,7 @@ class TestBudgetSetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
+            mock_agent.parent_session_id = None
             mock_sm.get_session_by_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 

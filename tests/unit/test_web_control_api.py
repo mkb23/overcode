@@ -52,6 +52,7 @@ def _mock_session(**kwargs):
         heartbeat_enabled=False,
         heartbeat_paused=False,
         permissiveness_mode="normal",
+        parent_session_id=None,
         stats=MagicMock(current_state="running"),
     )
     defaults.update(kwargs)
@@ -200,7 +201,8 @@ class TestRestartAgent:
         assert tmux.send_keys.call_args_list[0][1] == {"enter": False}
         # Second call: restart command
         restart_call = tmux.send_keys.call_args_list[1]
-        assert "claude code" in restart_call[0][1]
+        assert "claude" in restart_call[0][1]
+        assert "claude code" not in restart_call[0][1]
 
     @patch("time.sleep")
     @patch(TMUX_PATH)

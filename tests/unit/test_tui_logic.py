@@ -45,6 +45,7 @@ def make_session(name: str, session_id: str = None, is_asleep: bool = False):
     session.name = name
     session.id = session_id or name
     session.is_asleep = is_asleep
+    session.parent_session_id = None
     return session
 
 

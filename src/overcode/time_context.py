@@ -179,6 +179,7 @@ def build_time_context_line(
     office: str,
     uptime: Optional[str] = None,
     heartbeat: Optional[str] = None,
+    agent_name: Optional[str] = None,
 ) -> str:
     """Assemble the final time context line.
 
@@ -190,15 +191,19 @@ def build_time_context_line(
         office: Formatted office hours string
         uptime: Formatted uptime string, or None to omit
         heartbeat: Formatted heartbeat string, or None to omit
+        agent_name: Agent's overcode name, or None to omit
 
     Returns:
-        Single-line string like 'Clock: 14:32 PST | User: active | Office: yes | Uptime: 1h23m'
+        Single-line string like 'Agent: my-agent | Clock: 14:32 PST | User: active | Office: yes'
     """
-    parts = [
+    parts = []
+    if agent_name is not None:
+        parts.append(f"Agent: {agent_name}")
+    parts.extend([
         f"Clock: {clock}",
         f"User: {presence}",
         f"Office: {office}",
-    ]
+    ])
     if uptime is not None:
         parts.append(f"Uptime: {uptime}")
     if heartbeat is not None:
@@ -311,6 +316,6 @@ def generate_time_context(
     last_heartbeat = read_heartbeat_timestamp(tmux_session, session_name)
     heartbeat = format_heartbeat(interval, last_heartbeat, now)
 
-    line = build_time_context_line(clock, presence, office, uptime, heartbeat)
+    line = build_time_context_line(clock, presence, office, uptime, heartbeat, agent_name=session_name)
     line += "\nPrefix each response with [HH:MM] using the Clock value above."
     return line

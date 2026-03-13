@@ -94,49 +94,97 @@ def sort_sessions_alphabetical(sessions: List[T]) -> List[T]:
     return sorted(sessions, key=lambda s: (*_remote_sort_key(s), s.name.lower()))
 
 
-def sort_sessions_by_status(sessions: List[S]) -> List[S]:
-    """Sort sessions by status priority, then alphabetically.
+def sort_sessions_by_status(sessions: List[S], parent_id_fn=None) -> List[S]:
+    """Sort sessions by status priority, keeping siblings grouped under parents.
+
+    Roots are sorted by status, then children are sorted by status under
+    their parent. This prevents siblings from being scattered across the list.
 
     Priority order: waiting_user, waiting_approval, error,
     running_heartbeat, waiting_heartbeat, running, terminated, asleep.
 
     Args:
         sessions: List of session objects with stats.current_state
+        parent_id_fn: Function to get parent_session_id from a session.
 
     Returns:
         New sorted list (does not mutate input)
     """
-    return sorted(
+    return _tree_aware_sort(
         sessions,
         key=lambda s: (
-            *_remote_sort_key(s),
             STATUS_ORDER_BY_ATTENTION.get(s.stats.current_state or "running", 4),
             s.name.lower()
-        )
+        ),
+        parent_id_fn=parent_id_fn,
     )
 
 
-def sort_sessions_by_value(sessions: List[S]) -> List[S]:
-    """Sort sessions by value (priority) descending, then alphabetically.
+def sort_sessions_by_value(sessions: List[S], parent_id_fn=None) -> List[S]:
+    """Sort sessions by value (priority) descending, keeping siblings grouped.
 
-    Non-green agents (needing attention) sort first, then by agent_value
-    descending within each group.
+    Roots are sorted by value, then children are sorted by value under
+    their parent. This prevents siblings from being scattered across the list.
 
     Args:
         sessions: List of session objects with stats.current_state and agent_value
+        parent_id_fn: Function to get parent_session_id from a session.
 
     Returns:
         New sorted list (does not mutate input)
     """
-    return sorted(
+    return _tree_aware_sort(
         sessions,
         key=lambda s: (
-            *_remote_sort_key(s),
             STATUS_ORDER_BY_VALUE.get(s.stats.current_state or "running", 1),
             -s.agent_value,
             s.name.lower()
-        )
+        ),
+        parent_id_fn=parent_id_fn,
     )
+
+
+def _tree_aware_sort(sessions, key, parent_id_fn=None):
+    """Sort sessions preserving tree hierarchy: roots sorted by key, children sorted under parent.
+
+    Args:
+        sessions: List of session objects
+        key: Sort key function for ordering within each level
+        parent_id_fn: Function to get parent_session_id from a session.
+
+    Returns:
+        New sorted list
+    """
+    if parent_id_fn is None:
+        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+
+    # Build parent_id -> children map
+    children_map: dict = {}
+    roots = []
+    for s in sessions:
+        pid = parent_id_fn(s)
+        if pid is None:
+            roots.append(s)
+        else:
+            children_map.setdefault(pid, []).append(s)
+
+    # Sort roots: local first, then remote by host, then by the provided key
+    roots.sort(key=lambda s: (*_remote_sort_key(s), *key(s)))
+    for kids in children_map.values():
+        kids.sort(key=key)
+
+    # DFS from roots
+    result = []
+
+    def dfs(session):
+        result.append(session)
+        for child in children_map.get(session.id, []):
+            dfs(child)
+
+    for root in roots:
+        dfs(root)
+
+    return result
 
 
 def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:

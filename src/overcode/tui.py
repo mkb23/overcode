@@ -2145,6 +2145,24 @@ class SupervisorTUI(
             self.notify("Fork name cannot contain spaces", severity="error")
             return
 
+        # Remote agents: fork via sister controller (#368)
+        if getattr(source_session, 'is_remote', False):
+            try:
+                result = self._sister_controller.fork_agent(
+                    source_session.source_url,
+                    source_session.source_api_key,
+                    source_session.name,
+                    fork_name,
+                )
+                if result.ok:
+                    self.notify(f"Forked remote '{source_session.name}' → '{fork_name}'", severity="information")
+                    self.refresh_sessions()
+                else:
+                    self.notify(f"Remote fork failed: {result.error}", severity="error")
+            except Exception as e:
+                self.notify(f"Failed to fork remote agent: {e}", severity="error")
+            return
+
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
@@ -2309,10 +2327,7 @@ class SupervisorTUI(
 
         # Build the claude command based on permissiveness mode
         claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-        if claude_command == "claude":
-            cmd_parts = ["claude", "code"]
-        else:
-            cmd_parts = [claude_command]
+        cmd_parts = [claude_command]
 
         if session.permissiveness_mode == "bypass":
             cmd_parts.append("--dangerously-skip-permissions")
@@ -2374,10 +2389,7 @@ class SupervisorTUI(
                 cmd_parts = [claude_command, "--resume", session.active_claude_session_id]
         else:
             # Fresh start
-            if claude_command == "claude":
-                cmd_parts = ["claude", "code"]
-            else:
-                cmd_parts = [claude_command]
+            cmd_parts = [claude_command]
 
         # Permission flags
         if session.permissiveness_mode == "bypass":

@@ -88,10 +88,12 @@ class TestLauncherBasics:
 
         launcher.launch(name="test-agent")
 
-        # Check that claude code was sent
+        # Check that claude was sent (without superfluous "code" subcommand)
         assert len(mock_tmux.sent_keys) >= 1
         sent_commands = [k[2] for k in mock_tmux.sent_keys]
-        assert any("claude code" in cmd for cmd in sent_commands)
+        assert any("claude" in cmd for cmd in sent_commands)
+        # Ensure "code" subcommand is NOT present
+        assert not any("claude code" in cmd for cmd in sent_commands)
 
     def test_launch_with_skip_permissions(self, tmp_path):
         """Launch with skip_permissions uses dontAsk mode"""

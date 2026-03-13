@@ -112,6 +112,16 @@ class SisterController:
              "prompt": prompt, "permissions": permissions},
         )
 
+    def fork_agent(
+        self, sister_url: str, api_key: str, agent_name: str,
+        fork_name: str, prompt: Optional[str] = None,
+    ) -> ControlResult:
+        return self._request(
+            "POST", sister_url, api_key,
+            f"/api/agents/{agent_name}/fork",
+            {"name": fork_name, "prompt": prompt},
+        )
+
     # --- Agent Configuration ---
 
     def set_standing_orders(

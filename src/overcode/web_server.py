@@ -83,6 +83,9 @@ _AGENT_CONTROL_ROUTES = {
         ts, name, cascade=body.get("cascade", True),
     ),
     ("POST", "restart"): lambda api, ts, name, body: api.restart_agent(ts, name),
+    ("POST", "fork"): lambda api, ts, name, body: api.fork_agent(
+        ts, name, fork_name=body.get("name", ""), prompt=body.get("prompt"),
+    ),
     ("POST", "sleep"): lambda api, ts, name, body: api.set_sleep(
         ts, name, asleep=body.get("asleep", True),
     ),

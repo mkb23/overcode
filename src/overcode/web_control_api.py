@@ -117,10 +117,7 @@ def restart_agent(tmux_session: str, name: str) -> dict:
 
     # Build the claude command based on permissiveness mode
     claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-    if claude_command == "claude":
-        cmd_parts = ["claude", "code"]
-    else:
-        cmd_parts = [claude_command]
+    cmd_parts = [claude_command]
 
     if session.permissiveness_mode == "bypass":
         cmd_parts.append("--dangerously-skip-permissions")
@@ -184,6 +181,30 @@ def launch_agent(
     raise ControlError("Failed to launch agent", status=500)
 
 
+def fork_agent(
+    tmux_session: str, name: str, fork_name: str, prompt: Optional[str] = None
+) -> dict:
+    """Fork an agent into a new child with the same conversation context."""
+    from .launcher import ClaudeLauncher
+    from .session_manager import SessionManager
+
+    sm = SessionManager()
+    source = _get_session_or_error(sm, name)
+
+    if source.status in ("terminated", "done"):
+        raise ControlError("Cannot fork a terminated agent", status=409)
+    if not source.active_claude_session_id:
+        raise ControlError(
+            f"Agent '{name}' has no active Claude session ID yet", status=409
+        )
+
+    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    session = launcher.launch_fork(fork_name, source, initial_prompt=prompt)
+    if session:
+        return {"ok": True, "session_id": session.id}
+    raise ControlError("Failed to fork agent", status=500)
+
+
 # ---------------------------------------------------------------------------
 # Agent Configuration
 # ---------------------------------------------------------------------------
@@ -231,6 +252,15 @@ def set_budget(tmux_session: str, name: str, usd: float) -> dict:
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
+
+    # If agent has a parent with a budget, require transfer instead (#364)
+    if session.parent_session_id:
+        parent = sm.get_session(session.parent_session_id)
+        if parent and parent.cost_budget_usd > 0:
+            raise ControlError(
+                f"Cannot set budget directly — parent '{parent.name}' has a budget. Use budget transfer instead."
+            )
+
     sm.set_cost_budget(session.id, usd)
     return {"ok": True}
 
