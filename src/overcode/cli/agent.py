@@ -398,6 +398,9 @@ def list_agents(
     full: Annotated[
         bool, typer.Option("--full", help="Full detail (default)")
     ] = False,
+    sort: Annotated[
+        str, typer.Option("--sort", "-s", help="Sort mode: alphabetical, by_status, by_value, by_tree")
+    ] = "by_tree",
     session: SessionOption = "agents",
 ):
     """List running agents with status.
@@ -414,7 +417,7 @@ def list_agents(
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import build_cli_context, render_summary_cells, align_summary_rows
-    from ..tui_logic import compute_tree_metadata, sort_sessions_by_tree
+    from ..tui_logic import compute_tree_metadata, sort_sessions
     from rich.console import Console
 
     # Resolve detail level (mutually exclusive flags, default full)
@@ -462,8 +465,8 @@ def list_agents(
         rprint("[dim]No running agents[/dim]")
         return
 
-    # Sort in tree order and compute tree metadata for depth/prefix
-    sessions = sort_sessions_by_tree(sessions)
+    # Sort using the same logic as the TUI
+    sessions = sort_sessions(sessions, sort)
     tree_meta = compute_tree_metadata(sessions)
 
     # Pre-compute: any agent with budget, column alignment widths

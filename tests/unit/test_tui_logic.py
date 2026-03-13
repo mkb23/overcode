@@ -806,59 +806,55 @@ def make_local_session(name: str, current_state: str = "running"):
 
 
 class TestRemoteAwareSorting:
-    """Test that remote sessions sort after local ones."""
+    """Test that local and remote sessions sort intermixed by name."""
 
-    def test_local_before_remote_alphabetical(self):
+    def test_alphabetical_intermixes_local_and_remote(self):
         sessions = [
             make_remote_session("alpha", "remote-host"),
             make_local_session("zeta"),
         ]
         result = sort_sessions_alphabetical(sessions)
-        assert result[0].name == "zeta"  # Local first
-        assert result[1].name == "alpha"  # Remote second
+        assert result[0].name == "alpha"  # Alphabetical, not local-first
+        assert result[1].name == "zeta"
 
-    def test_remote_grouped_by_host(self):
+    def test_remote_sorted_by_name_not_host(self):
         sessions = [
             make_remote_session("c", "host-b"),
             make_remote_session("a", "host-a"),
             make_remote_session("b", "host-b"),
-            make_local_session("local1"),
+            make_local_session("bb"),
         ]
         result = sort_sessions_alphabetical(sessions)
-        assert result[0].name == "local1"
-        assert result[1].name == "a"  # host-a
-        assert result[2].name == "b"  # host-b
-        assert result[3].name == "c"  # host-b
+        assert [s.name for s in result] == ["a", "b", "bb", "c"]
 
-    def test_local_before_remote_by_status(self):
+    def test_status_sort_intermixes_local_and_remote(self):
         sessions = [
             make_remote_session("remote-waiting", "host", "waiting_user"),
             make_local_session("local-running", "running"),
         ]
         result = sort_sessions_by_status(sessions)
-        assert result[0].name == "local-running"  # Local first despite lower priority
+        assert result[0].name == "remote-waiting"  # waiting_user has higher priority
 
-    def test_local_before_remote_by_value(self):
+    def test_value_sort_intermixes_local_and_remote(self):
         remote = make_remote_session("remote", "host")
         remote.agent_value = 9999  # Very high value
         local = make_local_session("local")
         local.agent_value = 1  # Very low value
 
         result = sort_sessions_by_value([remote, local])
-        assert result[0].name == "local"  # Local always first
+        assert result[0].name == "remote"  # Higher value first
 
-    def test_local_before_remote_tree(self):
+    def test_tree_sort_intermixes_local_and_remote(self):
         sessions = [
-            make_remote_session("remote", "host"),
-            make_local_session("local"),
+            make_remote_session("alpha-remote", "host"),
+            make_local_session("zeta-local"),
         ]
-        # Remote has no parent, so it's a root
         for s in sessions:
             s.parent_session_id = None
 
         result = sort_sessions_by_tree(sessions)
-        assert result[0].name == "local"
-        assert result[1].name == "remote"
+        assert result[0].name == "alpha-remote"  # Alphabetical
+        assert result[1].name == "zeta-local"
 
     def test_remote_tree_hierarchy(self):
         """Remote agents with parent-child relationships should nest in tree view."""
@@ -881,7 +877,7 @@ class TestRemoteAwareSorting:
         result = sort_sessions_by_tree(sessions)
 
         assert [s.name for s in result] == [
-            "local-root",           # Local root first
+            "local-root",           # 'l' before 'r' alphabetically
             "remote-parent",        # Remote root
             "remote-child-a",       # Remote child (alpha order)
             "remote-child-b",       # Remote child (alpha order)

@@ -173,8 +173,8 @@ def _tree_aware_sort(sessions, key, parent_id_fn=None):
         else:
             children_map.setdefault(pid, []).append(s)
 
-    # Sort roots: local first, then remote by host, then by the provided key
-    roots.sort(key=lambda s: (*_remote_sort_key(s), *key(s)))
+    # Sort roots by the provided key (local and remote intermixed)
+    roots.sort(key=key)
     for kids in children_map.values():
         kids.sort(key=key)
 
@@ -216,8 +216,8 @@ def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
         else:
             children_map.setdefault(pid, []).append(s)
 
-    # Sort each group: local first, then remote by host, then alphabetically
-    roots.sort(key=lambda s: (*_remote_sort_key(s), s.name.lower()))
+    # Sort roots alphabetically (local and remote intermixed)
+    roots.sort(key=lambda s: s.name.lower())
     for kids in children_map.values():
         kids.sort(key=lambda s: s.name.lower())
 
