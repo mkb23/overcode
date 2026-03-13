@@ -856,7 +856,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
                   label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
     SummaryColumn(id="joules", group="llm_usage", detail_levels=ALL, render=render_joules,
-                  header="⚡", name="Energy (Joules)"),
+                  header="ENRG", name="Energy (Joules)"),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget,
                   visible=lambda ctx: ctx.show_cost == "cost" and ctx.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget"),
