@@ -64,7 +64,7 @@ class HelpOverlay(Static):
         row("H", "Heartbeat config", "K", "Hook status detection")
         row("F", "Fork agent (branch ctx)", "^T", "Toggle time context")
         row("T", "Handover all (2x) → draft PR")
-        row("G", "New agent defaults")
+        row("G", "New agent defaults", "I", "Instruction history")
         t.append("\n")
 
         section("DAEMON CONTROL")

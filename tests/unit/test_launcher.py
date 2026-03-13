@@ -353,6 +353,54 @@ class TestLauncherSendToSession:
 
         assert result is False
 
+    def test_send_multiline_uses_buffer(self, tmp_path):
+        """Multi-line text uses load-buffer/paste-buffer instead of send-keys (#376)"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        launcher.launch(name="test-agent")
+        initial_keys = len(mock_tmux.sent_keys)
+
+        with patch("overcode.launcher.send_text_to_tmux_window", return_value=True) as mock_send:
+            result = launcher.send_to_session("test-agent", "line1\nline2\nline3")
+
+        assert result is True
+        # Should use send_text_to_tmux_window, NOT send_keys
+        mock_send.assert_called_once()
+        call_args = mock_send.call_args
+        assert call_args[0][2] == "line1\nline2\nline3"
+        assert call_args[1]["send_enter"] is True
+        # send_keys should NOT have been called for the multi-line text
+        assert len(mock_tmux.sent_keys) == initial_keys
+
+    def test_send_single_line_uses_send_keys(self, tmp_path):
+        """Single-line text still uses send_keys path"""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+
+        launcher.launch(name="test-agent")
+        initial_keys = len(mock_tmux.sent_keys)
+
+        result = launcher.send_to_session("test-agent", "single line text")
+
+        assert result is True
+        # Should use send_keys for single-line text
+        assert len(mock_tmux.sent_keys) > initial_keys
+
 
 class TestLauncherCleanup:
     """Test stale session cleanup"""

@@ -293,3 +293,21 @@ SisterSelectionModal {
 SisterSelectionModal.visible {
     display: block;
 }
+
+/* Instruction History Modal (#376) */
+InstructionHistoryModal {
+    display: none;
+    layer: above;
+    offset: 27 20;
+    width: auto;
+    height: auto;
+    max-height: 60%;
+    overflow-y: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+InstructionHistoryModal.visible {
+    display: block;
+}

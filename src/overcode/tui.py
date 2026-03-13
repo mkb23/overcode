@@ -70,6 +70,7 @@ from .tui_widgets import (
     NewAgentDefaultsModal,
     AgentSelectModal,
     SisterSelectionModal,
+    InstructionHistoryModal,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -203,6 +204,8 @@ class SupervisorTUI(
         ("G", "open_new_agent_defaults", "Agent defaults"),
         # Sister selection modal (#323)
         ("U", "open_sister_selection", "Sisters"),
+        # Instruction history modal (#376)
+        ("I", "open_instruction_history", "Instruction history"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -288,6 +291,8 @@ class SupervisorTUI(
         # Track attention jump state (for 'b' key cycling)
         self._attention_jump_index = 0
         self._attention_jump_list: list = []  # Cached list of sessions needing attention
+        # Instruction history for reinject modal (#376)
+        self._instruction_history: list = []
         # Pending double-press confirmations: action_key -> (session_name | None, timestamp)
         self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
         # Tmux interface for sync operations
@@ -367,6 +372,8 @@ class SupervisorTUI(
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
+        # Modal for instruction history (#376)
+        yield InstructionHistoryModal(id="instruction-history-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -1882,6 +1889,7 @@ class SupervisorTUI(
         )
         success = launcher.send_to_session_by_id(session.id, message.text) if session else False
         if success:
+            self._record_instruction(message.text, message.session_name)
             self._invalidate_sessions_cache()  # Refresh to show updated stats
             self.notify(f"Sent to {message.session_name}")
         else:
@@ -2556,6 +2564,64 @@ class SupervisorTUI(
 
     def on_sister_selection_modal_cancelled(self, message: SisterSelectionModal.Cancelled) -> None:
         """Handle sister selection modal cancellation (#323)."""
+        pass
+
+    # -- Instruction history (#376) ------------------------------------------
+
+    def _record_instruction(self, text: str, agent_name: str) -> None:
+        """Record an instruction in the history ring buffer."""
+        from .tui_widgets.instruction_history_modal import HistoryEntry, MAX_HISTORY
+
+        self._instruction_history.insert(0, HistoryEntry(text=text, agent_name=agent_name))
+        self._instruction_history = self._instruction_history[:MAX_HISTORY]
+
+    def action_open_instruction_history(self) -> None:
+        """Open the instruction history modal (#376)."""
+        if not self._instruction_history:
+            self.notify("No instructions sent yet", severity="warning")
+            return
+        try:
+            modal = self.query_one("#instruction-history-modal", InstructionHistoryModal)
+            modal.show(self._instruction_history, self)
+        except NoMatches:
+            pass
+
+    def on_instruction_history_modal_reinject_requested(
+        self, message: InstructionHistoryModal.ReinjectRequested
+    ) -> None:
+        """Handle reinject request from instruction history modal (#376)."""
+        focused = self.focused
+        if not isinstance(focused, SessionSummary):
+            # No agent focused — pre-fill the command bar so user can pick a target
+            self.action_focus_command_bar()
+            try:
+                command_bar = self.query_one("#command-bar", CommandBar)
+                input_widget = command_bar.query_one("#cmd-input")
+                input_widget.value = message.text
+            except NoMatches:
+                pass
+            return
+
+        session = focused.session
+        if getattr(session, 'is_remote', False):
+            self.notify("Use command bar to send to remote agents", severity="warning")
+            return
+
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager
+        )
+        if launcher.send_to_session_by_id(session.id, message.text):
+            self._record_instruction(message.text, session.name)
+            self._invalidate_sessions_cache()
+            self.notify(f"Reinjected to {session.name}")
+        else:
+            self.notify(f"Failed to send to {session.name}", severity="error")
+
+    def on_instruction_history_modal_cancelled(
+        self, message: InstructionHistoryModal.Cancelled
+    ) -> None:
+        """Handle instruction history modal dismissal (#376)."""
         pass
 
     # Throttle TUI heartbeat writes to once per 5 seconds

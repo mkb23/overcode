@@ -765,8 +765,16 @@ class ClaudeLauncher:
             else:
                 # Send special key without Enter
                 success = self.tmux.send_keys(session.tmux_window, key, enter=False)
+        elif '\n' in text:
+            # Multi-line text: use load-buffer/paste-buffer so newlines are
+            # pasted as a single block instead of being interpreted as Enter
+            # keypresses by tmux send-keys (#376)
+            success = send_text_to_tmux_window(
+                self.tmux.session_name, session.tmux_window, text,
+                send_enter=enter,
+            )
         else:
-            # Regular text
+            # Single-line regular text
             success = self.tmux.send_keys(session.tmux_window, text, enter=enter)
 
         # Update last activity on success (steers_count is tracked via supervisor log parsing)
