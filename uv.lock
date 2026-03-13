@@ -296,6 +296,7 @@ version = "0.2.7"
 source = { editable = "." }
 dependencies = [
     { name = "libtmux" },
+    { name = "pyte" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "textual" },
@@ -330,6 +331,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'export'", specifier = ">=14.0.0" },
     { name = "pyobjc-framework-applicationservices", marker = "extra == 'presence'", specifier = ">=10.0" },
     { name = "pyobjc-framework-quartz", marker = "extra == 'presence'", specifier = ">=10.0" },
+    { name = "pyte", specifier = ">=0.8.0" },
     { name = "pyte", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
