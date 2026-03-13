@@ -82,16 +82,21 @@ def _remote_sort_key(s) -> tuple:
     return (1 if is_remote else 0, host.lower())
 
 
-def sort_sessions_alphabetical(sessions: List[T]) -> List[T]:
-    """Sort sessions alphabetically by name (case-insensitive).
+def sort_sessions_alphabetical(sessions: List[T], parent_id_fn=None) -> List[T]:
+    """Sort sessions alphabetically by name, keeping siblings grouped under parents.
 
     Args:
         sessions: List of session objects with a name attribute
+        parent_id_fn: Function to get parent_session_id from a session.
 
     Returns:
         New sorted list (does not mutate input)
     """
-    return sorted(sessions, key=lambda s: (*_remote_sort_key(s), s.name.lower()))
+    return _tree_aware_sort(
+        sessions,
+        key=lambda s: (s.name.lower(),),
+        parent_id_fn=parent_id_fn,
+    )
 
 
 def sort_sessions_by_status(sessions: List[S], parent_id_fn=None) -> List[S]:
