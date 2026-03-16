@@ -185,7 +185,7 @@ class TerminalPane(Widget):
             # Child process — create grouped session, disable status bar, attach
             script = (
                 f"tmux new-session -d -s {self._group_name} -t {self.tmux_session} && "
-                f"tmux set-option -s -t {self._group_name} status off && "
+                f"tmux set-option -t {self._group_name} status off && "
                 f"tmux attach-session -t '{win_target}'"
             )
             os.execlp("sh", "sh", "-c", script)
