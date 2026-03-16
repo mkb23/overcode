@@ -822,7 +822,14 @@ class SupervisorTUI(
             terminal_active = terminal.has_class("visible")
         except NoMatches:
             pass
-        if not terminal_active:
+        if terminal_active:
+            # Manually update .selected class since we're not moving DOM focus
+            for w in self.query(SessionSummary):
+                if w is widget:
+                    w.add_class("selected")
+                else:
+                    w.remove_class("selected")
+        else:
             widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
