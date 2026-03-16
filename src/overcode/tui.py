@@ -61,6 +61,7 @@ from .tui_widgets import (
     FullscreenPreview,
     HelpOverlay,
     PreviewPane,
+    TerminalPane,
     DaemonPanel,
     DaemonStatusBar,
     StatusTimeline,
@@ -206,6 +207,8 @@ class SupervisorTUI(
         ("U", "open_sister_selection", "Sisters"),
         # Instruction history modal (#376)
         ("I", "open_instruction_history", "Instruction history"),
+        # Embedded terminal toggle (prototype)
+        ("ctrl+e", "toggle_terminal_pane", "Terminal"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -232,10 +235,11 @@ class SupervisorTUI(
     emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
     show_cost: reactive[str] = reactive("tokens")  # "tokens", "cost", "joules" — cycle with $
 
-    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False):
+    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
         super().__init__()
         self.tmux_session = tmux_session
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
+        self.terminal_enabled = terminal  # Enable embedded terminal pane (--terminal flag)
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session)
@@ -363,6 +367,8 @@ class SupervisorTUI(
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
+        if self.terminal_enabled:
+            yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
@@ -778,6 +784,13 @@ class SupervisorTUI(
                 return False
         except NoMatches:
             pass
+        # Don't steal focus from terminal pane
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible"):
+                return False
+        except NoMatches:
+            pass
         # Only recover if focus is not on a session or input widget
         if self.focused is None:
             return True
@@ -804,6 +817,7 @@ class SupervisorTUI(
         widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
+            self._update_terminal_pane()
         self._sync_tmux_window(widget)
 
     def update_focused_status(self) -> None:
@@ -1730,15 +1744,21 @@ class SupervisorTUI(
             preview = self.query_one("#preview-pane", PreviewPane)
             container = self.query_one("#sessions-container", ScrollableContainer)
             if view_mode == "list_preview":
-                # Collapse all sessions, show preview pane
+                # Collapse all sessions, show preview/terminal pane
                 container.add_class("list-mode")
                 for widget in self.query(SessionSummary):
                     widget.add_class("list-mode")
                     widget.expanded = False  # Force collapsed
-                preview.add_class("visible")
+                # Only show preview if terminal pane isn't active
+                try:
+                    terminal = self.query_one("#terminal-pane", TerminalPane)
+                    if not terminal.has_class("visible"):
+                        preview.add_class("visible")
+                except NoMatches:
+                    preview.add_class("visible")
                 self._update_preview()
             else:
-                # Restore tree mode, hide preview
+                # Restore tree mode, hide preview and terminal
                 container.remove_class("list-mode")
                 for widget in self.query(SessionSummary):
                     widget.remove_class("list-mode")
@@ -1746,6 +1766,12 @@ class SupervisorTUI(
                     saved = self.expanded_states.get(widget.session.id, True)
                     widget.expanded = saved
                 preview.remove_class("visible")
+                try:
+                    terminal = self.query_one("#terminal-pane", TerminalPane)
+                    terminal.remove_class("visible")
+                    terminal.detach()
+                except NoMatches:
+                    pass
         except NoMatches:
             pass
 
@@ -1816,6 +1842,18 @@ class SupervisorTUI(
             widgets = self._get_widgets_in_session_order()
             if 0 <= self.focused_session_index < len(widgets):
                 preview.update_from_widget(widgets[self.focused_session_index])
+        except NoMatches:
+            pass
+
+    def _update_terminal_pane(self) -> None:
+        """Update terminal pane to show the focused session's tmux window."""
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if not terminal.has_class("visible"):
+                return
+            widgets = self._get_widgets_in_session_order()
+            if 0 <= self.focused_session_index < len(widgets):
+                terminal.update_from_widget(widgets[self.focused_session_index])
         except NoMatches:
             pass
 
@@ -2632,6 +2670,17 @@ class SupervisorTUI(
         """Handle instruction history modal dismissal (#376)."""
         pass
 
+    def on_terminal_pane_passthrough_changed(self, message: TerminalPane.PassthroughChanged) -> None:
+        """Handle terminal pane passthrough mode changes."""
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if message.active:
+                terminal.add_class("passthrough")
+            else:
+                terminal.remove_class("passthrough")
+        except NoMatches:
+            pass
+
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0
 
@@ -2644,6 +2693,15 @@ class SupervisorTUI(
         if now - self._last_heartbeat_write >= 5.0:
             self._last_heartbeat_write = now
             write_tui_heartbeat(self.tmux_session)
+
+        # When terminal pane is in passthrough mode, suppress all TUI keybindings
+        # except Ctrl+] (which the TerminalPane handles to exit passthrough)
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible") and terminal.passthrough:
+                return
+        except NoMatches:
+            pass
 
         # Auto-recover if focus was lost or landed on a non-interactive widget
         # (e.g., clicking the terminal window focuses the preview pane)
@@ -2679,6 +2737,16 @@ class SupervisorTUI(
         When help overlay is visible, only allow help toggle and quit.
         Other actions are blocked - pressing those keys just closes help.
         """
+        # Block actions when terminal pane is in passthrough mode
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            if terminal.has_class("visible") and terminal.passthrough:
+                if action == "quit":
+                    return True
+                return False
+        except Exception:
+            pass
+
         # Block actions when fullscreen preview is visible
         try:
             from .tui_widgets import FullscreenPreview
@@ -2797,7 +2865,7 @@ class SupervisorTUI(
         sys.stdout.flush()
 
 
-def run_tui(tmux_session: str = "agents", diagnostics: bool = False):
+def run_tui(tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
     """Run the TUI supervisor"""
     import os
     import sys
@@ -2810,7 +2878,7 @@ def run_tui(tmux_session: str = "agents", diagnostics: bool = False):
     # Force terminal size detection
     os.environ.setdefault('TERM', 'xterm-256color')
 
-    app = SupervisorTUI(tmux_session, diagnostics=diagnostics)
+    app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal)
     # Use driver=None to auto-detect, and size will be detected from terminal
     app.run()
 

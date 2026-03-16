@@ -270,6 +270,9 @@ def monitor(
     diagnostics: Annotated[
         bool, typer.Option("--diagnostics", help="Diagnostic mode: disable all auto-refresh timers")
     ] = False,
+    terminal: Annotated[
+        bool, typer.Option("--terminal", help="Enable embedded terminal pane (Ctrl+E to toggle)")
+    ] = False,
 ):
     """Launch the standalone TUI monitor."""
     if restart:
@@ -296,7 +299,7 @@ def monitor(
 
     from ..tui import run_tui
 
-    run_tui(session, diagnostics=diagnostics)
+    run_tui(session, diagnostics=diagnostics, terminal=terminal)
 
 
 @app.command()

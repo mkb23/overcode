@@ -18,11 +18,13 @@ from .new_agent_defaults_modal import NewAgentDefaultsModal
 from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .instruction_history_modal import InstructionHistoryModal
+from .terminal_pane import TerminalPane
 
 __all__ = [
     "FullscreenPreview",
     "HelpOverlay",
     "PreviewPane",
+    "TerminalPane",
     "DaemonPanel",
     "DaemonStatusBar",
     "StatusTimeline",
