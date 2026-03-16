@@ -240,6 +240,7 @@ class SupervisorTUI(
         self.tmux_session = tmux_session
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self.terminal_enabled = terminal  # Enable embedded terminal pane (--terminal flag)
+        self.compact = False  # Compact mode: tree-only, no expand/preview (set by overcode tmux)
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session)
@@ -301,6 +302,8 @@ class SupervisorTUI(
         self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
         # Tmux interface for sync operations
         self._tmux = RealTmux()
+        # Optional: target a linked session for sync (set by `overcode split`)
+        self.tmux_sync_target: str | None = None
         # Initialize tmux_sync from preferences
         self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
@@ -1720,6 +1723,9 @@ class SupervisorTUI(
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
 
+        When tmux_sync_target is set (e.g. by `overcode split`), syncs to
+        that linked session. Otherwise syncs to the agents session directly.
+
         Args:
             widget: The session widget to sync to. If None, uses self.focused.
         """
@@ -1731,7 +1737,8 @@ class SupervisorTUI(
             if isinstance(target, SessionSummary):
                 window_index = target.session.tmux_window
                 if window_index is not None:
-                    self._tmux.select_window(self.tmux_session, window_index)
+                    sync_session = self.tmux_sync_target or self.tmux_session
+                    self._tmux.select_window(sync_session, window_index)
         except Exception:
             pass  # Silent fail - don't disrupt navigation
 
@@ -2731,12 +2738,27 @@ class SupervisorTUI(
         except Exception:
             pass
 
+    # Actions incompatible with compact mode (overcode tmux)
+    _COMPACT_BLOCKED_ACTIONS = frozenset({
+        "toggle_view_mode",    # m — no list+preview mode
+        "toggle_focused",      # space — no expanding sessions
+        "toggle_expand_all",   # e — no expanding sessions
+        "expand_preview",      # f — no fullscreen preview
+        "cycle_detail",        # v — no detail level cycling
+        "toggle_terminal_pane",  # ctrl+e — no embedded terminal
+        "toggle_timeline",     # t — no timeline
+    })
+
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Check if an action should be allowed (#175).
 
         When help overlay is visible, only allow help toggle and quit.
         Other actions are blocked - pressing those keys just closes help.
         """
+        # Block incompatible actions in compact mode (overcode tmux)
+        if self.compact and action in self._COMPACT_BLOCKED_ACTIONS:
+            return False
+
         # Block actions when terminal pane is in passthrough mode
         try:
             terminal = self.query_one("#terminal-pane", TerminalPane)
@@ -2865,8 +2887,18 @@ class SupervisorTUI(
         sys.stdout.flush()
 
 
-def run_tui(tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
-    """Run the TUI supervisor"""
+def run_tui(
+    tmux_session: str = "agents",
+    diagnostics: bool = False,
+    terminal: bool = False,
+    sync_target: str | None = None,
+):
+    """Run the TUI supervisor.
+
+    Args:
+        sync_target: If set, auto-enable tmux_sync and target this session
+            for window switching (used by `overcode split`).
+    """
     import os
     import sys
 
@@ -2879,6 +2911,22 @@ def run_tui(tmux_session: str = "agents", diagnostics: bool = False, terminal: b
     os.environ.setdefault('TERM', 'xterm-256color')
 
     app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal)
+
+    # If a sync target is provided (e.g. from `overcode tmux`), enable compact mode:
+    # auto-sync, no sisters, tree-only, no expand/preview/timeline
+    if sync_target:
+        app.tmux_sync_target = sync_target
+        app.tmux_sync = True
+        app.compact = True
+        app.has_sisters = False
+        app._remote_sessions = []
+        # Force tree mode (no preview pane — the real terminal is below)
+        app.view_mode = "tree"
+        # Collapse all sessions
+        app.expanded_states.clear()
+        # Hide timeline (real estate is precious in the top pane)
+        app._prefs.timeline_visible = False
+
     # Use driver=None to auto-detect, and size will be detected from terminal
     app.run()
 
