@@ -227,18 +227,11 @@ SessionSummary.list-mode {
 #terminal-pane {
     display: none;
     height: 1fr;
-    border-top: solid $primary;
-    padding: 0 1;
     background: $surface;
 }
 
 #terminal-pane.visible {
     display: block;
-}
-
-/* Passthrough mode visual cue */
-#terminal-pane.passthrough {
-    border-top: solid green;
 }
 
 /* Focused indicator in list mode */
