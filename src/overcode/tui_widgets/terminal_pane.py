@@ -97,6 +97,7 @@ class TerminalPane(Widget):
         self._reader_task: Optional[asyncio.Task] = None
         self._current_window: Optional[str] = None
         self._session_name: str = ""
+        self._group_name: Optional[str] = None  # Grouped tmux session name
         self._cols: int = 80
         self._rows: int = 24
         self._refresh_timer = None
@@ -117,9 +118,13 @@ class TerminalPane(Widget):
             self._refresh_timer.stop()
 
     def on_resize(self, event: events.Resize) -> None:
-        """Update PTY and pyte screen dimensions on resize."""
+        """Update PTY and pyte screen dimensions on resize.
+
+        Textual's event.size is the content area (after border/padding).
+        We subtract 1 row for our mode indicator line at the top.
+        """
         new_cols = event.size.width
-        new_rows = event.size.height - 1  # Reserve 1 line for mode indicator
+        new_rows = event.size.height - 1  # 1 row for mode indicator
         if new_cols < 1 or new_rows < 1:
             return
         if new_cols == self._cols and new_rows == self._rows:
@@ -160,21 +165,30 @@ class TerminalPane(Widget):
             self._session_name = name
 
     def _spawn_pty(self, window: str) -> None:
-        """Fork a PTY running tmux attach to the given window."""
-        if window.isdigit():
-            target = f"{self.tmux_session}:{window}"
-        else:
-            target = f"{self.tmux_session}:={window}"
+        """Fork a PTY running tmux attach to the given window.
 
+        Creates a grouped tmux session (shares windows but has independent
+        client size) with the status bar disabled, so the embedded view
+        doesn't fight over dimensions with the real tmux session.
+        """
         # Create pyte screen + stream
         self._screen = pyte.Screen(self._cols, self._rows)
         self._stream = pyte.Stream(self._screen)
 
-        # Fork PTY
+        # Generate group name before fork so parent can clean it up
+        import random
+        self._group_name = f"_oc_term_{random.randint(1000, 9999)}"
+        win_target = f"{self._group_name}:={window}" if not window.isdigit() else f"{self._group_name}:{window}"
+
         pid, fd = pty.fork()
         if pid == 0:
-            # Child process — exec tmux attach
-            os.execlp("tmux", "tmux", "attach-session", "-t", target)
+            # Child process — create grouped session, disable status bar, attach
+            script = (
+                f"tmux new-session -d -s {self._group_name} -t {self.tmux_session} && "
+                f"tmux set-option -s -t {self._group_name} status off && "
+                f"tmux attach-session -t '{win_target}'"
+            )
+            os.execlp("sh", "sh", "-c", script)
             os._exit(1)
 
         self._master_fd = fd
@@ -230,7 +244,7 @@ class TerminalPane(Widget):
             self.refresh()
 
     def _kill_pty(self) -> None:
-        """Kill the PTY child process and clean up."""
+        """Kill the PTY child process and clean up grouped tmux session."""
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
         self._reader_task = None
@@ -249,6 +263,18 @@ class TerminalPane(Widget):
             except (OSError, ChildProcessError):
                 pass
             self._child_pid = None
+
+        # Clean up the grouped tmux session
+        if self._group_name is not None:
+            try:
+                import subprocess
+                subprocess.run(
+                    ["tmux", "kill-session", "-t", self._group_name],
+                    capture_output=True, timeout=2,
+                )
+            except Exception:
+                pass
+            self._group_name = None
 
         self._screen = None
         self._stream = None
