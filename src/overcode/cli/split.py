@@ -6,7 +6,7 @@ Creates (or re-attaches to) a tmux window with two panes:
   - Bottom pane: linked tmux session showing the focused agent's terminal
 
 The TUI's tmux_sync feature drives window switching in the bottom pane.
-Ctrl+] toggles focus between the nav (top) and terminal (bottom) panes.
+Tab toggles focus between the nav (top) and terminal (bottom) panes.
 
 Idempotent: running `overcode tmux` again will switch to the existing
 split window rather than creating a duplicate.
@@ -100,20 +100,22 @@ def _setup_linked_session(agents_session: str) -> str:
 
 
 def _setup_keybindings() -> None:
-    """Set up Ctrl+] to toggle between top and bottom panes.
+    """Set up Tab to toggle between top and bottom panes.
 
     Uses -n (root table) binding scoped to the split window via
-    if-shell checking the current window name.
+    if-shell checking the current window name. Outside the split
+    window, Tab passes through normally.
     """
-    # Ctrl+] toggles focus between panes, but only in our split window.
-    # We use if-shell to check window name so it doesn't steal Ctrl+]
+    # Tab toggles focus between panes, but only in our split window.
+    # We use if-shell -F to check window name so it doesn't steal Tab
     # globally — only when you're in the overcode-tmux window.
+    # Note: -F must be a separate argument from the format string.
     _tmux(
-        "bind-key", "-n", "C-]",
-        "if-shell",
-        f"-F '#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}'",
+        "bind-key", "-n", "Tab",
+        "if-shell", "-F",
+        f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
-        "",  # no-op if not in our window
+        "send-keys Tab",  # pass Tab through in other windows
     )
 
 
@@ -125,6 +127,34 @@ def _get_first_agent_window(agents_session: str) -> str | None:
     if result.returncode != 0 or not result.stdout.strip():
         return None
     return result.stdout.strip().splitlines()[0]
+
+
+def _is_split_window_healthy(window_id: str) -> bool:
+    """Check that the split window has 2 panes with the expected processes.
+
+    Returns False if the monitor pane died (leaving a bare shell) or
+    the window lost a pane entirely.
+    """
+    result = _tmux(
+        "list-panes", "-t", window_id,
+        "-F", "#{pane_current_command}",
+    )
+    if result.returncode != 0:
+        return False
+    panes = result.stdout.strip().splitlines()
+    if len(panes) != 2:
+        return False
+    # Top pane should be running python/overcode, not a bare shell
+    top_cmd = panes[0].strip()
+    shell_names = {"zsh", "bash", "sh", "fish"}
+    if top_cmd in shell_names:
+        return False
+    return True
+
+
+def _kill_split_window(window_id: str) -> None:
+    """Kill a stale split window so it can be recreated."""
+    _tmux("kill-window", "-t", window_id)
 
 
 def _find_existing_split_window(tmux_session: str) -> str | None:
@@ -178,7 +208,7 @@ def tmux_layout(
     color, full scrollback.
 
     Navigation: use j/k in the top pane to browse agents. The bottom pane
-    follows automatically. Press Ctrl+] to toggle focus between panes.
+    follows automatically. Press Tab to toggle focus between panes.
     When the bottom pane has focus, all keys go directly to the agent's
     terminal.
     """
@@ -205,25 +235,71 @@ def tmux_layout(
 
     # --- Check if split window already exists ---
 
-    if in_tmux:
-        # Look for existing split window in the current session
-        current_session = _tmux_output(
-            "display-message", "-p", "#{session_name}",
-        )
-        existing = _find_existing_split_window(current_session)
-        if existing:
-            # Just switch to it
-            _tmux("select-window", "-t", existing)
+    # --- The split layout always lives in a dedicated "overcode" session ---
+    # This is critical: if the split window were inside the "agents" session,
+    # the monitor's tmux sync (which switches windows on the linked session)
+    # would also navigate the outer window away from the split view.
+    oc_session = "overcode"
+
+    # Check if the split window already exists in the overcode session
+    existing = _find_existing_split_window(oc_session)
+    if existing:
+        if _is_split_window_healthy(existing):
+            if in_tmux:
+                # Check if a real (non-tiny) client is already on overcode.
+                # If so, no switch needed — the user is already there or
+                # another terminal has it open.  Switching blindly can
+                # accidentally move the bottom pane's nested client from
+                # oc-view-agents to overcode, creating a recursive display
+                # that collapses the window.
+                oc_clients = _tmux_output(
+                    "list-clients", "-t", oc_session,
+                    "-F", "#{client_height}",
+                )
+                has_real_client = any(
+                    int(h) > 10
+                    for h in oc_clients.splitlines()
+                    if h.strip().isdigit()
+                )
+                if not has_real_client:
+                    # No real client on overcode yet — switch the caller's
+                    client_tty = _tmux_output(
+                        "display-message", "-p", "#{client_tty}",
+                    )
+                    if client_tty:
+                        _tmux("switch-client", "-c", client_tty,
+                              "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}")
+                    else:
+                        # Can't determine client — tell user how to get there
+                        rprint(f"[green]Split layout is running.[/green] Switch to it with:")
+                        rprint(f"  tmux switch-client -t {oc_session}")
+                        return
+            else:
+                rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window...[/green]")
+                time.sleep(0.2)
+                os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
             rprint(f"[green]Switched to existing {SPLIT_WINDOW_NAME} window[/green]")
             return
-    else:
-        # Not in tmux — check if split window exists anywhere
-        existing = _find_existing_split_window_any_session()
-        if existing:
-            sess_name, win_id = existing
-            rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window...[/green]")
-            time.sleep(0.2)
-            os.execlp("tmux", "tmux", "attach-session", "-t", f"{sess_name}")
+        else:
+            # Monitor died — kill stale window and recreate.
+            # Switch the client back to agents first, because killing
+            # the only window in the overcode session destroys it and
+            # would detach the client.
+            rprint(f"[yellow]Stale {SPLIT_WINDOW_NAME} window detected, recreating...[/yellow]")
+            if in_tmux:
+                client_tty = _tmux_output("display-message", "-p", "#{client_tty}")
+                if client_tty:
+                    _tmux("switch-client", "-c", client_tty, "-t", session)
+                else:
+                    _tmux("switch-client", "-t", session)
+            _kill_split_window(existing)
+            # Also kill the overcode + linked sessions so they're cleanly recreated
+            _tmux("kill-session", "-t", oc_session)
+            _tmux("kill-session", "-t", linked)
+            # Re-setup linked session (was killed above)
+            linked = _setup_linked_session(session)
+            if first_window:
+                _tmux("select-window", "-t", f"{linked}:={first_window}")
 
     # --- Create the split layout ---
 
@@ -235,47 +311,92 @@ def tmux_layout(
     # because tmux refuses to attach from inside an existing session.
     attach_cmd = f"unset TMUX; tmux attach-session -t {linked}"
 
-    if in_tmux:
-        # We're already in a tmux session — create a new window for the split
-        result = _tmux(
-            "new-window", "-n", SPLIT_WINDOW_NAME, "-P", "-F", "#{pane_id}",
-            monitor_cmd,
-        )
-        if result.returncode != 0:
-            rprint(f"[red]Failed to create split window: {result.stderr}[/red]")
-            raise typer.Exit(1)
-        top_pane_id = result.stdout.strip()
+    # Kill stale overcode session if it exists but has no split window
+    if _tmux_check("has-session", "-t", oc_session):
+        existing = _find_existing_split_window(oc_session)
+        if not existing:
+            _tmux("kill-session", "-t", oc_session)
 
-        # Split horizontally (top/bottom), bottom pane gets (100-ratio)%
+    need_new_session = not _tmux_check("has-session", "-t", oc_session)
+
+    if in_tmux:
+        # --- Inside tmux ---
+        # Get the actual client dimensions so we create the session at
+        # the right size. Creating detached at a wrong size and then
+        # switch-client causes pane collapse.
+        size_str = _tmux_output("display-message", "-p", "#{client_width}x#{client_height}")
+        try:
+            w, h = size_str.split("x")
+            client_width, client_height = int(w), int(h)
+        except (ValueError, AttributeError):
+            client_width, client_height = 200, 50
+
+        if need_new_session:
+            result = _tmux(
+                "new-session", "-d", "-s", oc_session,
+                "-n", SPLIT_WINDOW_NAME,
+                "-x", str(client_width), "-y", str(client_height),
+                monitor_cmd,
+            )
+            if result.returncode != 0:
+                rprint(f"[red]Failed to create session: {result.stderr}[/red]")
+                raise typer.Exit(1)
+        else:
+            # Session exists but no split window — add one
+            result = _tmux(
+                "new-window", "-t", oc_session,
+                "-n", SPLIT_WINDOW_NAME, "-P", "-F", "#{pane_id}",
+                monitor_cmd,
+            )
+            if result.returncode != 0:
+                rprint(f"[red]Failed to create split window: {result.stderr}[/red]")
+                raise typer.Exit(1)
+
+        # No status bar — the Textual TUI has its own header.
+        # detach-on-destroy off: if the session dies, move the client
+        # to another session instead of detaching the user's terminal.
+        # window-size largest: the bottom pane's nested tmux creates a
+        # small client on this session; "largest" ensures the real
+        # terminal (the largest client) always determines window size.
+        _tmux("set", "-t", oc_session, "status", "off")
+        _tmux("set", "-t", oc_session, "detach-on-destroy", "off")
+        _tmux("set", "-t", oc_session, "window-size", "largest")
+
+        # Identify the current client explicitly so switch-client
+        # doesn't accidentally target the bottom pane's nested client.
+        client_tty = _tmux_output("display-message", "-p", "#{client_tty}")
+
+        # Switch the client BEFORE splitting. This ensures:
+        # 1. The window resizes to the real client terminal size
+        # 2. The split-window creates panes at the correct dimensions
+        if client_tty:
+            _tmux("switch-client", "-c", client_tty,
+                  "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}")
+        else:
+            _tmux("switch-client", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}")
+
+        # Split for bottom pane (client is now viewing this window at
+        # the correct size, so pane heights will be correct)
         result = _tmux(
-            "split-window", "-v", "-t", top_pane_id,
+            "split-window", "-v",
+            "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
             "-p", str(100 - ratio),
-            "-P", "-F", "#{pane_id}",
             attach_cmd,
         )
         if result.returncode != 0:
             rprint(f"[red]Failed to create bottom pane: {result.stderr}[/red]")
             raise typer.Exit(1)
 
-        # Focus the top pane (monitor) by default
-        _tmux("select-pane", "-t", top_pane_id)
+        # Focus top pane
+        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0")
 
-        rprint(f"[green]Split layout ready.[/green] Ctrl+] toggles panes.")
+        rprint(f"[green]Split layout ready.[/green] Tab toggles panes.")
 
     else:
-        # Not in tmux — create a new session with the split layout
-        new_session = "overcode"
-
-        # Kill stale session if it exists but has no split window
-        # (shouldn't normally happen, but be safe)
-        if _tmux_check("has-session", "-t", new_session):
-            existing = _find_existing_split_window(new_session)
-            if not existing:
-                _tmux("kill-session", "-t", new_session)
-
-        if not _tmux_check("has-session", "-t", new_session):
+        # --- Outside tmux: create detached, split, then attach ---
+        if need_new_session:
             result = _tmux(
-                "new-session", "-d", "-s", new_session,
+                "new-session", "-d", "-s", oc_session,
                 "-n", SPLIT_WINDOW_NAME,
                 "-x", "200", "-y", "50",
                 monitor_cmd,
@@ -283,19 +404,33 @@ def tmux_layout(
             if result.returncode != 0:
                 rprint(f"[red]Failed to create session: {result.stderr}[/red]")
                 raise typer.Exit(1)
-
-            # Split for bottom pane
-            _tmux(
-                "split-window", "-v",
-                "-t", f"{new_session}:{SPLIT_WINDOW_NAME}",
-                "-p", str(100 - ratio),
-                attach_cmd,
+        else:
+            result = _tmux(
+                "new-window", "-t", oc_session,
+                "-n", SPLIT_WINDOW_NAME, "-P", "-F", "#{pane_id}",
+                monitor_cmd,
             )
+            if result.returncode != 0:
+                rprint(f"[red]Failed to create split window: {result.stderr}[/red]")
+                raise typer.Exit(1)
 
-            # Focus top pane
-            _tmux("select-pane", "-t", f"{new_session}:{SPLIT_WINDOW_NAME}.0")
+        # No status bar — the Textual TUI has its own header
+        _tmux("set", "-t", oc_session, "status", "off")
+        _tmux("set", "-t", oc_session, "detach-on-destroy", "off")
+        _tmux("set", "-t", oc_session, "window-size", "largest")
+
+        # Split for bottom pane
+        _tmux(
+            "split-window", "-v",
+            "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
+            "-p", str(100 - ratio),
+            attach_cmd,
+        )
+
+        # Focus top pane
+        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0")
 
         # Attach to the session (replaces this process)
         rprint(f"[green]Attaching to split layout...[/green]")
         time.sleep(0.2)
-        os.execlp("tmux", "tmux", "attach-session", "-t", new_session)
+        os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)

@@ -448,7 +448,11 @@ class SupervisorTUI(
         self._update_footer()
 
         # Set view_mode from preferences (triggers watch_view_mode)
-        self.view_mode = self._prefs.view_mode
+        # In compact mode (tmux split), always force tree mode
+        if self.compact:
+            self.view_mode = "tree"
+        else:
+            self.view_mode = self._prefs.view_mode
 
         # Apply pre-loaded sessions synchronously so widgets exist immediately
         if self._preloaded_sessions is not None:
@@ -1515,7 +1519,9 @@ class SupervisorTUI(
             if session.id in sessions_added:
                 widget = SessionSummary(session, self.detector)
                 # Restore expanded state if we have it saved
-                if session.id in self.expanded_states:
+                if self.compact:
+                    widget.expanded = False  # Always collapsed in compact mode
+                elif session.id in self.expanded_states:
                     widget.expanded = self.expanded_states[session.id]
                 # Apply current detail level
                 widget.detail_lines = self.DETAIL_LEVELS[self.detail_level_index]
@@ -1744,6 +1750,8 @@ class SupervisorTUI(
 
     def watch_view_mode(self, view_mode: str) -> None:
         """React to view mode changes."""
+        if not self.is_running:
+            return  # App not composed yet — nothing to update
         # Update subtitle to show current mode
         self._update_subtitle()
 
@@ -2740,6 +2748,7 @@ class SupervisorTUI(
 
     # Actions incompatible with compact mode (overcode tmux)
     _COMPACT_BLOCKED_ACTIONS = frozenset({
+        "quit",                # q — use tmux to close the window instead
         "toggle_view_mode",    # m — no list+preview mode
         "toggle_focused",      # space — no expanding sessions
         "toggle_expand_all",   # e — no expanding sessions
@@ -2920,8 +2929,8 @@ def run_tui(
         app.compact = True
         app.has_sisters = False
         app._remote_sessions = []
-        # Force tree mode (no preview pane — the real terminal is below)
-        app.view_mode = "tree"
+        # view_mode defaults to "tree" already — don't re-set it here
+        # because the reactive watcher would fire before the app is composed.
         # Collapse all sessions
         app.expanded_states.clear()
         # Hide timeline (real estate is precious in the top pane)
