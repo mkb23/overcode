@@ -162,7 +162,7 @@ def _setup_keybindings(linked_session: str = "") -> None:
         _tmux(
             "bind-key", "-n", "WheelUpPane",
             "if-shell", "-F", _in_bottom,
-            f"copy-mode -t {linked_session} -e \\; "
+            f"copy-mode -t {linked_session} -e ; "
             f"send-keys -t {linked_session} -X -N 3 scroll-up",
             # Default behaviour for other contexts
             "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
