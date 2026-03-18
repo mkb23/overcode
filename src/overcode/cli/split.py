@@ -97,12 +97,17 @@ def _setup_linked_session(agents_session: str) -> str:
     # viewport, preventing re-wrapping jitter from wider stale sizes.
     _tmux("set", "-t", linked, "status", "off")
     _tmux("set", "-t", linked, "history-limit", "50000")
-    _tmux("set", "-t", linked, "window-size", "smallest")
 
-    # Force-resize all shared windows to match the nested client's
-    # viewport. Without this, windows can be stuck at a stale wider
-    # size from a previously-attached client, causing re-wrapping
-    # jitter on every update.
+    # Resize shared windows to match the nested client and keep them
+    # in sync when the terminal is resized. window-size smallest alone
+    # doesn't reliably trigger resizes for linked session window groups,
+    # so we use a client-resized hook to force it.
+    _tmux(
+        "set-hook", "-t", linked, "client-resized",
+        "run-shell 'for w in $(tmux list-windows -t " + linked +
+        " -F \"#{window_id}\"); do tmux resize-window -t $w -A 2>/dev/null; done'",
+    )
+    # Also resize now for any stale sizes
     result = _tmux("list-windows", "-t", linked, "-F", "#{window_id}")
     if result.returncode == 0:
         for win_id in result.stdout.strip().splitlines():
