@@ -372,6 +372,7 @@ class SupervisorTUI(
         yield PreviewPane(id="preview-pane")
         if self.terminal_enabled:
             yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
+        yield Static("  ↓ TERMINAL ACTIVE — Tab to return ↓  ", id="terminal-active-banner")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
@@ -605,6 +606,24 @@ class SupervisorTUI(
     def _save_prefs(self) -> None:
         """Save current TUI preferences to disk."""
         self._prefs.save(self.tmux_session)
+
+    def on_app_blur(self) -> None:
+        """Terminal lost focus — show banner in compact mode."""
+        if self.compact:
+            try:
+                banner = self.query_one("#terminal-active-banner")
+                banner.add_class("visible")
+            except NoMatches:
+                pass
+
+    def on_app_focus(self) -> None:
+        """Terminal gained focus — hide banner."""
+        if self.compact:
+            try:
+                banner = self.query_one("#terminal-active-banner")
+                banner.remove_class("visible")
+            except NoMatches:
+                pass
 
     def on_resize(self) -> None:
         """Handle terminal resize events"""
@@ -1546,6 +1565,9 @@ class SupervisorTUI(
                 if self.view_mode == "list_preview":
                     widget.add_class("list-mode")
                     widget.expanded = False  # Force collapsed in list mode
+                # Apply compact-mode class for prominent focus styling
+                if self.compact:
+                    widget.add_class("compact-mode")
                 # Mark terminated sessions with visual styling and status
                 if session.status == "terminated":
                     widget.add_class("terminated")

@@ -92,9 +92,8 @@ def _setup_linked_session(agents_session: str) -> str:
     if result.returncode != 0:
         raise typer.Exit(1)
 
-    # Strip chrome from linked session
+    # Strip chrome from linked session, keep mouse for scrollback
     _tmux("set", "-t", linked, "status", "off")
-    _tmux("set", "-t", linked, "mouse", "off")
 
     return linked
 
@@ -116,6 +115,15 @@ def _setup_keybindings() -> None:
         f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
         "send-keys Tab",  # pass Tab through in other windows
+    )
+    # R cycles the split ratio (25% → 33% → 50% → 25%), scoped to
+    # the split window and only when the top (monitor) pane is active.
+    _tmux(
+        "bind-key", "-n", "R",
+        "if-shell", "-F",
+        f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
+        f"run-shell '{_find_overcode_cmd()} tmux-resize'",
+        "send-keys R",  # pass R through in other windows
     )
 
 
@@ -193,12 +201,44 @@ def _find_existing_split_window_any_session() -> tuple[str, str] | None:
     return None
 
 
+RATIO_CYCLE = [25, 33, 50]  # Percentages to cycle through for top pane
+
+
+@app.command("tmux-resize", hidden=True)
+def tmux_resize():
+    """Cycle the split ratio (internal, called by R keybinding)."""
+    target = f"overcode:{SPLIT_WINDOW_NAME}"
+    # Get current top pane height and window height
+    info = _tmux_output(
+        "display-message", "-t", target,
+        "-p", "#{pane_height}:#{window_height}",
+    )
+    if not info or ":" not in info:
+        return
+    try:
+        pane_h, win_h = info.split(":")
+        current_pct = round(int(pane_h) / int(win_h) * 100)
+    except (ValueError, ZeroDivisionError):
+        return
+
+    # Find the next ratio in the cycle
+    next_ratio = RATIO_CYCLE[0]
+    for i, r in enumerate(RATIO_CYCLE):
+        if current_pct <= r + 3:  # within 3% tolerance
+            next_ratio = RATIO_CYCLE[(i + 1) % len(RATIO_CYCLE)]
+            break
+
+    # Apply the new ratio
+    new_height = max(int(int(info.split(":")[1]) * next_ratio / 100), 5)
+    _tmux("resize-pane", "-t", f"{target}.0", "-y", str(new_height))
+
+
 @app.command("tmux")
 def tmux_layout(
     session: SessionOption = "agents",
     ratio: Annotated[
         int, typer.Option("--ratio", "-r", help="Percentage of height for the monitor pane (top)")
-    ] = 40,
+    ] = 25,
 ):
     """Open the tmux split layout: monitor on top, agent terminal on bottom.
 
@@ -361,6 +401,8 @@ def tmux_layout(
         _tmux("set", "-t", oc_session, "status", "off")
         _tmux("set", "-t", oc_session, "detach-on-destroy", "off")
         _tmux("set", "-t", oc_session, "window-size", "largest")
+        # Enable focus events so the TUI can detect pane blur/focus
+        _tmux("set", "-g", "focus-events", "on")
 
         # Identify the current client explicitly so switch-client
         # doesn't accidentally target the bottom pane's nested client.

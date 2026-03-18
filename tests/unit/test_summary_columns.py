@@ -153,6 +153,7 @@ def _make_ctx(**overrides) -> ColumnContext:
         any_has_budget=False,
         expand_icon="▼",
         is_list_mode=False,
+        is_compact_mode=False,
         has_focus=False,
         is_unvisited_stalled=False,
         uptime="2.5h",
