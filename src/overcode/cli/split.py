@@ -135,6 +135,26 @@ def _setup_keybindings(linked_session: str = "") -> None:
     # Unbind R if previously bound (replaced by =/- in the TUI)
     _tmux("unbind-key", "-n", "R")
 
+    # --- Agent navigation from the bottom (terminal) pane ---
+    # Option+J / Option+K (Meta+j/k) cycle agents by sending j/k
+    # to the monitor pane, which navigates and syncs the terminal.
+    _in_bottom = (
+        f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
+        f"#{{!=:#{{pane_index}},0}}}}"
+    )
+    _tmux(
+        "bind-key", "-n", "M-j",
+        "if-shell", "-F", _in_bottom,
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 j",
+        "send-keys M-j",
+    )
+    _tmux(
+        "bind-key", "-n", "M-k",
+        "if-shell", "-F", _in_bottom,
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 k",
+        "send-keys M-k",
+    )
+
     # --- Scrollback for the nested tmux in the bottom pane ---
     # The bottom pane runs a nested tmux client. The outer tmux
     # intercepts the prefix key, so copy-mode can't be entered
