@@ -321,7 +321,11 @@ def tmux_layout(
                         rprint(f"  tmux switch-client -t {oc_session}")
                         return
             else:
-                rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window...[/green]")
+                # Respawn before attach — execlp replaces this process
+                _tmux("respawn-pane", "-k",
+                      "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0",
+                      monitor_cmd)
+                rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window (monitor restarted)...[/green]")
                 time.sleep(0.2)
                 os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
             # Always restart the monitor so code changes take effect
