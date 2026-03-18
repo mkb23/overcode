@@ -172,8 +172,8 @@ class SupervisorTUI(
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
         # Split resize (compact/tmux mode only)
-        ("equals_sign", "split_grow", "Split grow"),
-        ("minus", "split_shrink", "Split shrink"),
+        ("equals_sign", "split_shrink", "Split shrink"),
+        ("minus", "split_grow", "Split grow"),
         # Tmux sync - sync navigation to external tmux pane (demoted to shift)
         ("P", "toggle_tmux_sync", "Pane sync"),
         # Baseline time adjustment for mean spin calculation
