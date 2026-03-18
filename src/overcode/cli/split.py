@@ -260,8 +260,9 @@ def tmux_layout(
         rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
         raise typer.Exit(1)
 
-    # Always ensure keybindings are set up (idempotent)
+    # Always ensure keybindings and focus events are set up (idempotent)
     _setup_keybindings()
+    _tmux("set", "-g", "focus-events", "on")
 
     # Create (or find) the linked session for the bottom pane
     linked = _setup_linked_session(session)
@@ -406,8 +407,6 @@ def tmux_layout(
         _tmux("set", "-t", oc_session, "status", "off")
         _tmux("set", "-t", oc_session, "detach-on-destroy", "off")
         _tmux("set", "-t", oc_session, "window-size", "largest")
-        # Enable focus events so the TUI can detect pane blur/focus
-        _tmux("set", "-g", "focus-events", "on")
 
         # Identify the current client explicitly so switch-client
         # doesn't accidentally target the bottom pane's nested client.
