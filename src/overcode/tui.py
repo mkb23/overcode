@@ -172,7 +172,7 @@ class SupervisorTUI(
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
         # Split resize (compact/tmux mode only)
-        ("plus_sign", "split_grow", "Split grow"),
+        ("equals_sign", "split_grow", "Split grow"),
         ("minus", "split_shrink", "Split shrink"),
         # Tmux sync - sync navigation to external tmux pane (demoted to shift)
         ("P", "toggle_tmux_sync", "Pane sync"),
@@ -2819,6 +2819,19 @@ class SupervisorTUI(
              "-U" if delta > 0 else "-D", str(abs(delta))],
             capture_output=True,
         )
+        # Resize linked session windows to match the new bottom pane size
+        linked = self.tmux_sync_target
+        if linked:
+            result = subprocess.run(
+                ["tmux", "list-windows", "-t", linked, "-F", "#{window_id}"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                for win_id in result.stdout.strip().splitlines():
+                    subprocess.run(
+                        ["tmux", "resize-window", "-t", win_id, "-A"],
+                        capture_output=True,
+                    )
 
     def action_split_grow(self) -> None:
         """Grow the monitor pane (shrink terminal pane)."""
