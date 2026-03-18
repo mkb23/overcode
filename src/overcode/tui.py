@@ -391,9 +391,27 @@ class SupervisorTUI(
             id="help-text"
         )
 
+    @staticmethod
+    def _get_dev_version_suffix() -> str:
+        """Get git short hash if running from an editable install, else empty."""
+        try:
+            from pathlib import Path
+            import subprocess
+            # Check if this file is inside a git repo (editable install)
+            pkg_dir = Path(__file__).resolve().parent
+            result = subprocess.run(
+                ["git", "describe", "--always", "--dirty"],
+                capture_output=True, text=True, cwd=pkg_dir, timeout=2,
+            )
+            if result.returncode == 0:
+                return f" ({result.stdout.strip()})"
+        except Exception:
+            pass
+        return ""
+
     def on_mount(self) -> None:
         """Called when app starts"""
-        self.title = f"Overcode v{__version__}"
+        self.title = f"Overcode v{__version__}{self._get_dev_version_suffix()}"
         self._update_subtitle()
         self._update_capture_lines()
 
