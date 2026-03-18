@@ -2770,7 +2770,6 @@ class SupervisorTUI(
 
     # Actions incompatible with compact mode (overcode tmux)
     _COMPACT_BLOCKED_ACTIONS = frozenset({
-        "quit",                # q — use tmux to close the window instead
         "toggle_view_mode",    # m — no list+preview mode
         "toggle_focused",      # space — no expanding sessions
         "toggle_expand_all",   # e — no expanding sessions
@@ -2779,6 +2778,15 @@ class SupervisorTUI(
         "toggle_terminal_pane",  # ctrl+e — no embedded terminal
         "toggle_timeline",     # t — no timeline
     })
+
+    def action_quit(self) -> None:
+        """Quit the app, or detach tmux client in compact (split) mode."""
+        if self.compact:
+            # Detach the tmux client — returns user to their previous session
+            import subprocess
+            subprocess.run(["tmux", "detach-client"], capture_output=True)
+        else:
+            self.exit()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Check if an action should be allowed (#175).
