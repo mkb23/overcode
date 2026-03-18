@@ -92,9 +92,21 @@ def _setup_linked_session(agents_session: str) -> str:
     if result.returncode != 0:
         raise typer.Exit(1)
 
-    # Strip chrome from linked session, generous scrollback
+    # Strip chrome from linked session, generous scrollback.
+    # window-size smallest: shared windows size to the nested client's
+    # viewport, preventing re-wrapping jitter from wider stale sizes.
     _tmux("set", "-t", linked, "status", "off")
     _tmux("set", "-t", linked, "history-limit", "50000")
+    _tmux("set", "-t", linked, "window-size", "smallest")
+
+    # Force-resize all shared windows to match the nested client's
+    # viewport. Without this, windows can be stuck at a stale wider
+    # size from a previously-attached client, causing re-wrapping
+    # jitter on every update.
+    result = _tmux("list-windows", "-t", linked, "-F", "#{window_id}")
+    if result.returncode == 0:
+        for win_id in result.stdout.strip().splitlines():
+            _tmux("resize-window", "-t", win_id, "-A")
 
     return linked
 
