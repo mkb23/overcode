@@ -281,6 +281,11 @@ def tmux_layout(
     # would also navigate the outer window away from the split view.
     oc_session = "overcode"
 
+    # Build the monitor command early — needed for both fresh creation
+    # and respawning the top pane on relaunch.
+    overcode_cmd = _find_overcode_cmd()
+    monitor_cmd = f"{overcode_cmd} monitor --session {session} --sync-target {linked}"
+
     # Check if the split window already exists in the overcode session
     existing = _find_existing_split_window(oc_session)
     if existing:
@@ -318,7 +323,11 @@ def tmux_layout(
                 rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window...[/green]")
                 time.sleep(0.2)
                 os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
-            rprint(f"[green]Switched to existing {SPLIT_WINDOW_NAME} window[/green]")
+            # Always restart the monitor so code changes take effect
+            _tmux("respawn-pane", "-k",
+                  "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0",
+                  monitor_cmd)
+            rprint(f"[green]Switched to existing {SPLIT_WINDOW_NAME} window (monitor restarted)[/green]")
             return
         else:
             # Monitor died — kill stale window and recreate.
@@ -343,10 +352,6 @@ def tmux_layout(
 
     # --- Create the split layout ---
 
-    # Resolve the overcode binary from the same package installation,
-    # not whatever `overcode` resolves to on PATH (may be a different install).
-    overcode_cmd = _find_overcode_cmd()
-    monitor_cmd = f"{overcode_cmd} monitor --session {session} --sync-target {linked}"
     # The bottom pane runs a nested tmux attach. We must unset $TMUX
     # because tmux refuses to attach from inside an existing session.
     attach_cmd = f"unset TMUX; tmux attach-session -t {linked}"
