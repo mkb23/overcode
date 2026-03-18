@@ -867,7 +867,23 @@ class SupervisorTUI(
                 widget.session.name, widget.detected_status, widget.detected_status,
                 source="focus_switch", focused=True,
             )
-        widget.focus()
+        # When terminal pane is active, don't steal DOM focus from it —
+        # just update the logical selection and re-attach the terminal.
+        terminal_active = False
+        try:
+            terminal = self.query_one("#terminal-pane", TerminalPane)
+            terminal_active = terminal.has_class("visible")
+        except NoMatches:
+            pass
+        if terminal_active:
+            # Manually update .selected class since we're not moving DOM focus
+            for w in self.query(SessionSummary):
+                if w is widget:
+                    w.add_class("selected")
+                else:
+                    w.remove_class("selected")
+        else:
+            widget.focus()
         if self.view_mode == "list_preview":
             self._update_preview()
             self._update_terminal_pane()
