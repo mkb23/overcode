@@ -149,12 +149,12 @@ def _setup_keybindings(linked_session: str = "") -> None:
             f"send-keys -t {linked_session} NPage",
             "send-keys NPage",
         )
-        # Mouse scroll: pass through to the inner tmux in the bottom pane.
+        # Mouse scroll: redirect to inner tmux copy mode.
         # Without this, scrolling enters copy mode in the outer pane
         # which has no scrollback (just rendered inner tmux frames).
-        # Using send-keys -M forwards the raw mouse event to the pane
-        # process (the inner tmux client), which handles copy mode,
-        # scrolling, and exit natively.
+        #
+        # Strategy: enter copy mode in the inner session (no-op if
+        # already active), then send scroll-up/down commands to it.
         _in_bottom = (
             f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
             f"#{{!=:#{{pane_index}},0}}}}"
@@ -162,7 +162,8 @@ def _setup_keybindings(linked_session: str = "") -> None:
         _tmux(
             "bind-key", "-n", "WheelUpPane",
             "if-shell", "-F", _in_bottom,
-            "send-keys -M",
+            f"copy-mode -t {linked_session} -e \\; "
+            f"send-keys -t {linked_session} -X -N 3 scroll-up",
             # Default behaviour for other contexts
             "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
             "'send-keys -M' 'copy-mode -e'",
@@ -170,7 +171,7 @@ def _setup_keybindings(linked_session: str = "") -> None:
         _tmux(
             "bind-key", "-n", "WheelDownPane",
             "if-shell", "-F", _in_bottom,
-            "send-keys -M",
+            f"send-keys -t {linked_session} -X -N 3 scroll-down",
             "send-keys -M",
         )
 
