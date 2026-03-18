@@ -171,6 +171,9 @@ class SupervisorTUI(
         ("B", "edit_cost_budget", "Cost budget"),
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
+        # Split resize (compact/tmux mode only)
+        ("plus_sign", "split_grow", "Split grow"),
+        ("minus", "split_shrink", "Split shrink"),
         # Tmux sync - sync navigation to external tmux pane (demoted to shift)
         ("P", "toggle_tmux_sync", "Pane sync"),
         # Baseline time adjustment for mean spin calculation
@@ -2805,6 +2808,25 @@ class SupervisorTUI(
             subprocess.run(["tmux", "detach-client"], capture_output=True)
         else:
             self.exit()
+
+    def _resize_split(self, delta: int) -> None:
+        """Resize the tmux split pane by delta rows (compact mode only)."""
+        if not self.compact:
+            return
+        import subprocess
+        subprocess.run(
+            ["tmux", "resize-pane", "-t", "overcode:overcode-tmux.0",
+             "-U" if delta > 0 else "-D", str(abs(delta))],
+            capture_output=True,
+        )
+
+    def action_split_grow(self) -> None:
+        """Grow the monitor pane (shrink terminal pane)."""
+        self._resize_split(3)
+
+    def action_split_shrink(self) -> None:
+        """Shrink the monitor pane (grow terminal pane)."""
+        self._resize_split(-3)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Check if an action should be allowed (#175).
