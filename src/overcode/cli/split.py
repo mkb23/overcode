@@ -132,15 +132,8 @@ def _setup_keybindings(linked_session: str = "") -> None:
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
         "send-keys Tab",  # pass Tab through in other windows
     )
-    # R cycles the split ratio (25% → 33% → 50% → 25%), scoped to
-    # the split window and only when the top (monitor) pane is active.
-    _tmux(
-        "bind-key", "-n", "R",
-        "if-shell", "-F",
-        f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
-        f"run-shell '{_find_overcode_cmd()} tmux-resize'",
-        "send-keys R",  # pass R through in other windows
-    )
+    # Unbind R if previously bound (replaced by =/- in the TUI)
+    _tmux("unbind-key", "-n", "R")
 
     # --- Scrollback for the nested tmux in the bottom pane ---
     # The bottom pane runs a nested tmux client. The outer tmux
@@ -327,6 +320,9 @@ def tmux_layout(
         raise typer.Exit(1)
 
     _tmux("set", "-g", "focus-events", "on")
+    # Enable synchronized output (DEC mode 2026) — batches screen updates
+    # so the terminal renders them atomically, preventing mid-redraw tearing.
+    _tmux("set", "-as", "terminal-features", ",*:sync")
 
     # Create (or find) the linked session for the bottom pane
     linked = _setup_linked_session(session)
