@@ -11,6 +11,11 @@ Header {
     height: 1;
 }
 
+Header.monitor-active {
+    background: #1a4a1a;
+    color: #44dd44;
+}
+
 #daemon-status {
     height: 1;
     width: 100%;

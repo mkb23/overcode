@@ -629,20 +629,26 @@ class SupervisorTUI(
         self._prefs.save(self.tmux_session)
 
     def on_app_blur(self) -> None:
-        """Terminal lost focus — show banner in compact mode."""
+        """Terminal lost focus — show banner, remove header highlight."""
         if self.compact:
             try:
-                banner = self.query_one("#terminal-active-banner")
-                banner.add_class("visible")
+                self.query_one("#terminal-active-banner").add_class("visible")
+            except NoMatches:
+                pass
+            try:
+                self.query_one("Header").remove_class("monitor-active")
             except NoMatches:
                 pass
 
     def on_app_focus(self) -> None:
-        """Terminal gained focus — hide banner."""
+        """Terminal gained focus — hide banner, highlight header."""
         if self.compact:
             try:
-                banner = self.query_one("#terminal-active-banner")
-                banner.remove_class("visible")
+                self.query_one("#terminal-active-banner").remove_class("visible")
+            except NoMatches:
+                pass
+            try:
+                self.query_one("Header").add_class("monitor-active")
             except NoMatches:
                 pass
 
