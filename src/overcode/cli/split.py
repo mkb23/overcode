@@ -92,22 +92,21 @@ def _setup_linked_session(agents_session: str) -> str:
     if result.returncode != 0:
         raise typer.Exit(1)
 
-    # Strip chrome from linked session, keep mouse for scrollback
+    # Strip chrome from linked session, generous scrollback
     _tmux("set", "-t", linked, "status", "off")
+    _tmux("set", "-t", linked, "history-limit", "50000")
 
     return linked
 
 
-def _setup_keybindings() -> None:
-    """Set up Tab to toggle between top and bottom panes.
+def _setup_keybindings(linked_session: str = "") -> None:
+    """Set up split-window keybindings (Tab, PageUp/PageDown, R).
 
-    Uses -n (root table) binding scoped to the split window via
+    Uses -n (root table) bindings scoped to the split window via
     if-shell checking the current window name. Outside the split
-    window, Tab passes through normally.
+    window, keys pass through normally.
     """
     # Tab toggles focus between panes, but only in our split window.
-    # We use if-shell -F to check window name so it doesn't steal Tab
-    # globally — only when you're in the overcode-tmux window.
     # Note: -F must be a separate argument from the format string.
     _tmux(
         "bind-key", "-n", "Tab",
@@ -125,6 +124,31 @@ def _setup_keybindings() -> None:
         f"run-shell '{_find_overcode_cmd()} tmux-resize'",
         "send-keys R",  # pass R through in other windows
     )
+
+    # --- Scrollback for the nested tmux in the bottom pane ---
+    # The bottom pane runs a nested tmux client. The outer tmux
+    # intercepts the prefix key, so copy-mode can't be entered
+    # normally. These bindings use `copy-mode -t` to directly enter
+    # copy mode in the inner session via the tmux API.
+    if linked_session:
+        # PageUp: enter copy mode + scroll up, but only when in the
+        # bottom pane (pane_index != 0) of the split window.
+        # Top pane (Textual TUI) and other windows get normal PageUp.
+        _tmux(
+            "bind-key", "-n", "PPage",
+            "if-shell", "-F",
+            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},0}}}}",
+            f"copy-mode -t {linked_session} -u",
+            "send-keys PPage",
+        )
+        # PageDown in the inner session's copy mode
+        _tmux(
+            "bind-key", "-n", "NPage",
+            "if-shell", "-F",
+            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},0}}}}",
+            f"send-keys -t {linked_session} NPage",
+            "send-keys NPage",
+        )
 
 
 def _get_first_agent_window(agents_session: str) -> str | None:
@@ -260,12 +284,13 @@ def tmux_layout(
         rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
         raise typer.Exit(1)
 
-    # Always ensure keybindings and focus events are set up (idempotent)
-    _setup_keybindings()
     _tmux("set", "-g", "focus-events", "on")
 
     # Create (or find) the linked session for the bottom pane
     linked = _setup_linked_session(session)
+
+    # Always ensure keybindings are set up (idempotent, needs linked session name)
+    _setup_keybindings(linked_session=linked)
 
     # Select a window in the linked session (first agent, or whatever's current)
     first_window = _get_first_agent_window(session)
