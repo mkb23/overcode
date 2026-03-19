@@ -692,6 +692,8 @@ class SupervisorTUI(
         self._invalidate_sessions_cache()
         # Merge local + remote sessions (#245), filtering disabled sisters (#323)
         self.sessions = sessions + self._visible_remote_sessions()
+        # Resolve cross-machine parent relationships (#245)
+        self._resolve_remote_parents()
         # Apply sorting (#61)
         self._sort_sessions()
         # update_session_widgets handles focus preservation internally
@@ -714,6 +716,9 @@ class SupervisorTUI(
             self.update_daemon_status()
             # Select first agent immediately (no timer delay)
             self._select_first_agent()
+            # Kick off immediate status fetch for first agent so preview pane
+            # populates right away instead of staying blank until 250ms timer (#245)
+            self.update_all_statuses()
 
     def _recalc_column_widths(self, sessions) -> bool:
         """Recalculate max name/repo/branch widths and name-match flag.
@@ -766,6 +771,39 @@ class SupervisorTUI(
         self.column_widths = compute_column_widths(all_cells)
         # Update column headers if visible
         self._update_column_headers()
+
+    def _resolve_remote_parents(self) -> None:
+        """Resolve parent_session_id for remote children whose parents are local or on other sisters.
+
+        After merging local + remote sessions, remote children may have parent_name set
+        but parent_session_id unset (because the parent wasn't available when the sister
+        was polled). This function fixes cross-machine parent relationships by matching
+        parent_name to session names in the combined list.
+
+        Fixes flipping behavior where remote children appeared/disappeared from their
+        parent's subtree (#245).
+        """
+        # Build name -> session mapping for fast lookup
+        name_to_session = {s.name: s for s in self.sessions}
+
+        for session in self.sessions:
+            # Skip if already has parent_session_id set
+            if session.parent_session_id:
+                continue
+            # Only process remote sessions that don't have a parent yet
+            if not getattr(session, 'is_remote', False):
+                continue
+
+            # Extract parent_name from remote_daemon_state (contains parent_name from the sister)
+            parent_name = None
+            remote_daemon = getattr(session, 'remote_daemon_state', None)
+            if remote_daemon and isinstance(remote_daemon, dict):
+                parent_name = remote_daemon.get('parent_name')
+
+            # Try to resolve parent by name in the merged session list
+            if parent_name and parent_name in name_to_session:
+                parent_session = name_to_session[parent_name]
+                session.parent_session_id = parent_session.id
 
     def _sort_sessions(self) -> None:
         """Sort sessions based on current sort mode (#61)."""
@@ -1884,6 +1922,12 @@ class SupervisorTUI(
                     self._exit_sister_view()
 
                 window_index = session.tmux_window
+                # For remote agents without a tmux window, try to sync to parent's window
+                if (not window_index or window_index == "") and session.is_remote and session.parent_session_id:
+                    parent = self.session_manager.get_session(session.parent_session_id)
+                    if parent:
+                        window_index = parent.tmux_window
+
                 if window_index is not None and window_index != "":
                     sync_session = self.tmux_sync_target or self.tmux_session
                     self._tmux.select_window(sync_session, window_index)
