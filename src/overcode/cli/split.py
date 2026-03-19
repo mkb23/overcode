@@ -10,6 +10,19 @@ Tab toggles focus between the nav (top) and terminal (bottom) panes.
 
 Idempotent: running `overcode tmux` again will switch to the existing
 split window rather than creating a duplicate.
+
+Global tmux side effects
+~~~~~~~~~~~~~~~~~~~~~~~~
+This command installs keybindings in tmux's root key table and sets
+some global server options. All keybindings are scoped with if-shell
+checks so they only activate inside the ``overcode-tmux`` window and
+pass through normally elsewhere. However, custom user bindings for the
+same keys (Tab, PageUp/PageDown, WheelUp/WheelDown, M-j, M-k) in the
+root table will be overridden. Global options set: ``focus-events on``
+and ``terminal-features *:sync``.
+
+Use ``overcode tmux --uninstall`` to remove all overcode keybindings
+and restore tmux defaults.
 """
 
 import os
@@ -116,8 +129,29 @@ def _setup_linked_session(agents_session: str) -> str:
     return linked
 
 
+def _are_keybindings_installed() -> bool:
+    """Check if overcode keybindings are already installed."""
+    # Check for our Tab binding as a sentinel
+    result = _tmux("list-keys", "-T", "root")
+    if result.returncode != 0:
+        return False
+    return SPLIT_WINDOW_NAME in result.stdout
+
+
+def _remove_keybindings() -> None:
+    """Remove all overcode keybindings from tmux's root key table."""
+    for key in ["Tab", "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]:
+        _tmux("unbind-key", "-n", key)
+    # Restore tmux defaults for mouse scroll
+    _tmux(
+        "bind-key", "-n", "WheelUpPane",
+        "if-shell", "-F", "#{||:#{pane_in_mode},#{mouse_any_flag}}",
+        "send-keys -M", "copy-mode -e",
+    )
+
+
 def _setup_keybindings(linked_session: str = "") -> None:
-    """Set up split-window keybindings (Tab, PageUp/PageDown, R).
+    """Set up split-window keybindings (Tab, PageUp/PageDown, etc.).
 
     Uses -n (root table) bindings scoped to the split window via
     if-shell checking the current window name. Outside the split
@@ -318,6 +352,12 @@ def tmux_layout(
     ratio: Annotated[
         int, typer.Option("--ratio", "-r", help="Percentage of height for the monitor pane (top)")
     ] = 25,
+    uninstall: Annotated[
+        bool, typer.Option("--uninstall", help="Remove overcode tmux keybindings and exit")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip the first-run confirmation prompt")
+    ] = False,
 ):
     """Open the tmux split layout: monitor on top, agent terminal on bottom.
 
@@ -330,14 +370,50 @@ def tmux_layout(
     follows automatically. Press Tab to toggle focus between panes.
     When the bottom pane has focus, all keys go directly to the agent's
     terminal.
+
+    This command installs keybindings in tmux's global root key table.
+    All bindings are scoped to the overcode-tmux window and pass through
+    normally elsewhere, but they do override any custom user bindings for
+    the same keys. Use --uninstall to remove them.
     """
     from rich import print as rprint
+
+    # --- Uninstall mode ---
+    if uninstall:
+        if _are_keybindings_installed():
+            _remove_keybindings()
+            rprint("[green]Overcode tmux keybindings removed.[/green]")
+        else:
+            rprint("[dim]No overcode keybindings found.[/dim]")
+        return
 
     # Verify agents session exists
     if not _tmux_check("has-session", "-t", session):
         rprint(f"[red]No tmux session '{session}' found.[/red]")
         rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
         raise typer.Exit(1)
+
+    # --- First-run confirmation ---
+    if not yes and not _are_keybindings_installed():
+        rprint("\n[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
+        rprint("  [cyan]Tab[/cyan]          Toggle monitor/terminal pane focus")
+        rprint("  [cyan]Option+J/K[/cyan]   Cycle agents from terminal pane")
+        rprint("  [cyan]PageUp/Down[/cyan]  Scrollback in nested terminal")
+        rprint("  [cyan]WheelUp/Down[/cyan] Mouse scroll in nested terminal")
+        rprint("\n  All bindings are scoped to the [bold]overcode-tmux[/bold] window and")
+        rprint("  pass through normally elsewhere. Custom bindings for these")
+        rprint("  keys in the root table will be overridden.\n")
+        rprint("  Global options set: [dim]focus-events on, terminal-features *:sync[/dim]")
+        rprint("  Run [dim]overcode tmux --uninstall[/dim] to remove.\n")
+        try:
+            confirm = input("  Proceed? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            rprint("")
+            raise typer.Exit(0)
+        if confirm and confirm != "y":
+            rprint("[dim]Aborted.[/dim]")
+            raise typer.Exit(0)
+        rprint("")
 
     _tmux("set", "-g", "focus-events", "on")
     # Enable synchronized output (DEC mode 2026) — batches screen updates
