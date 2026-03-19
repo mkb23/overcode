@@ -26,6 +26,9 @@ def bash(
 
     agent_session_id = None
     agent_name = None
+    # Auto-detect calling agent from env if --agent not specified
+    if not agent:
+        agent = os.environ.get("OVERCODE_SESSION_NAME")
     if agent:
         sm = SessionManager()
         sess = sm.get_session_by_name(agent)

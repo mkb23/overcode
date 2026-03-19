@@ -2167,13 +2167,16 @@ class SupervisorTUI(
 
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
-            container = self.query_one("#sessions-container", ScrollableContainer)
+            sessions_container = self.query_one("#sessions-container", ScrollableContainer)
+            jobs_container = self.query_one("#jobs-container", ScrollableContainer)
             if preview_visible:
-                container.add_class("list-mode")
+                sessions_container.add_class("list-mode")
+                jobs_container.add_class("list-mode")
                 preview.add_class("visible")
                 self._update_preview()
             else:
-                container.remove_class("list-mode")
+                sessions_container.remove_class("list-mode")
+                jobs_container.remove_class("list-mode")
                 preview.remove_class("visible")
         except NoMatches:
             pass
@@ -2223,8 +2226,10 @@ class SupervisorTUI(
                 header.append(" " * 14, style="")
                 header.append("Command", style="bold dim")
                 header.append(" " * 73, style="")
-                header.append("Duration", style="bold dim")
-                header.append("   ", style="")
+                header.append("Start", style="bold dim")
+                header.append("  ", style="")
+                header.append("Time", style="bold dim")
+                header.append("    ", style="")
                 header.append("Status", style="bold dim")
                 header_widget.update(header)
                 return

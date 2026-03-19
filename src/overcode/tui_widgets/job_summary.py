@@ -13,6 +13,7 @@ from textual.message import Message
 from rich.text import Text
 
 from ..job_manager import Job
+from ..tui_helpers import format_duration
 
 
 class JobSummary(Static, can_focus=True):
@@ -64,19 +65,23 @@ class JobSummary(Static, can_focus=True):
         if self.monochrome:
             color = "white"
 
-        # Duration
+        # Start time (HH:MM)
+        start_str = ""
+        if job.start_time:
+            try:
+                start = datetime.fromisoformat(job.start_time)
+                start_str = start.strftime("%H:%M")
+            except ValueError:
+                pass
+
+        # Duration using shared formatter
         duration = ""
         if job.start_time:
             try:
                 start = datetime.fromisoformat(job.start_time)
                 end = datetime.fromisoformat(job.end_time) if job.end_time else datetime.now()
                 dur_sec = (end - start).total_seconds()
-                mins, secs = divmod(int(dur_sec), 60)
-                hours, mins = divmod(mins, 60)
-                if hours > 0:
-                    duration = f"{hours}h{mins:02d}m"
-                else:
-                    duration = f"{mins}m{secs:02d}s"
+                duration = format_duration(dur_sec)
             except ValueError:
                 pass
 
@@ -98,7 +103,8 @@ class JobSummary(Static, can_focus=True):
         text.append(icon, style=color)
         text.append(f" {job.name:<16} ", style="bold" if job.status == "running" else "")
         text.append(f"{cmd:<80} ", style="dim" if job.status != "running" else "")
-        text.append(f"{duration:>8} ", style="")
+        text.append(f"{start_str:>5} ", style="dim")
+        text.append(f"{duration:>6} ", style="")
         text.append(f"  {job.status}{exit_str}", style=color)
         if agent_str:
             text.append(agent_str, style="dim cyan")
