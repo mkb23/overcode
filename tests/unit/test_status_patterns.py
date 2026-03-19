@@ -12,6 +12,7 @@ from overcode.status_patterns import (
     get_patterns,
     matches_any,
     find_matching_line,
+    line_starts_with_any,
     is_prompt_line,
     is_status_bar_line,
     is_command_menu_line,
@@ -134,6 +135,103 @@ class TestFindMatchingLine:
         """Should handle empty lines list."""
         result = find_matching_line([], ["pattern"])
         assert result is None
+
+
+class TestLineStartsWithAny:
+    """Tests for line_starts_with_any function (#359)."""
+
+    def test_matches_line_starting_with_pattern(self):
+        """Should match when line starts with pattern."""
+        lines = ["Reading config.json...", "some other line"]
+        result = line_starts_with_any(lines, ["Reading"], case_sensitive=True)
+        assert result == "Reading config.json..."
+
+    def test_matches_after_bullet_prefix(self):
+        """Should match after stripping ⏺ prefix."""
+        lines = ["⏺ Running Bash('ls')"]
+        result = line_starts_with_any(lines, ["Running"], case_sensitive=True)
+        assert result == "⏺ Running Bash('ls')"
+
+    def test_matches_after_whitespace(self):
+        """Should match after stripping leading whitespace."""
+        lines = ["  Running Bash('sleep 60')"]
+        result = line_starts_with_any(lines, ["Running"], case_sensitive=True)
+        assert result == "  Running Bash('sleep 60')"
+
+    def test_rejects_mid_sentence_occurrence(self):
+        """Should NOT match 'Running' in the middle of a sentence (#359)."""
+        lines = ["I found that Running the tests revealed 5 failures"]
+        result = line_starts_with_any(lines, ["Running"], case_sensitive=True)
+        assert result is None
+
+    def test_rejects_mid_sentence_reading(self):
+        """Should NOT match 'Reading' mid-sentence."""
+        lines = ["After Reading through the code I found the bug"]
+        result = line_starts_with_any(lines, ["Reading"], case_sensitive=True)
+        assert result is None
+
+    def test_case_insensitive(self):
+        """Should support case-insensitive matching with tool prefix."""
+        lines = ["⏺ running Bash('ls')"]
+        result = line_starts_with_any(lines, ["Running"], case_sensitive=False)
+        assert result == "⏺ running Bash('ls')"
+
+    def test_case_sensitive_rejects_wrong_case(self):
+        """Should reject wrong case in case-sensitive mode."""
+        lines = ["⏺ running Bash('ls')"]
+        result = line_starts_with_any(lines, ["Running"], case_sensitive=True)
+        assert result is None
+
+    def test_reverse_search(self):
+        """Should find last match by default."""
+        lines = ["Reading file1.py", "other line", "Reading file2.py"]
+        result = line_starts_with_any(lines, ["Reading"], case_sensitive=True)
+        assert result == "Reading file2.py"
+
+    def test_forward_search(self):
+        """Should find first match when reverse=False."""
+        lines = ["Reading file1.py", "other line", "Reading file2.py"]
+        result = line_starts_with_any(lines, ["Reading"], case_sensitive=True, reverse=False)
+        assert result == "Reading file1.py"
+
+    def test_returns_none_when_no_match(self):
+        """Should return None when no line starts with any pattern."""
+        lines = ["no match here", "or here"]
+        result = line_starts_with_any(lines, ["Running", "Reading"])
+        assert result is None
+
+    def test_empty_lines(self):
+        """Should handle empty lines list."""
+        result = line_starts_with_any([], ["Running"])
+        assert result is None
+
+    def test_false_positive_scenario(self):
+        """Realistic false positive: agent idle but 'Running' in output (#359)."""
+        lines = [
+            "⏺ Here are the test results:",
+            "",
+            "  Running the full test suite showed all 42 tests passing.",
+            "  No regressions were found.",
+            "",
+            ">",
+        ]
+        # Should NOT match - "Running" is mid-prose, not a tool execution
+        result = line_starts_with_any(
+            lines, ["Running", "Reading", "Writing"], case_sensitive=True
+        )
+        assert result is None
+
+    def test_real_tool_execution(self):
+        """Real tool execution should still match."""
+        lines = [
+            "⏺ Let me check the file.",
+            "",
+            "  Reading config.json...",
+        ]
+        result = line_starts_with_any(
+            lines, ["Running", "Reading", "Writing"], case_sensitive=True
+        )
+        assert result == "  Reading config.json..."
 
 
 class TestIsPromptLine:

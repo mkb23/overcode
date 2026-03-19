@@ -18,6 +18,7 @@ from .status_patterns import (
     get_patterns,
     matches_any,
     find_matching_line,
+    line_starts_with_any,
     is_status_bar_line,
     count_command_menu_lines,
     clean_line,
@@ -320,8 +321,12 @@ class PollingStatusDetector:
         return None
 
     def _detect_tool_execution(self, last_lines: list, content: str) -> Optional[Tuple[str, str, str]]:
-        """Check for tool execution indicators (case-sensitive)."""
-        matching_line = find_matching_line(
+        """Check for tool execution indicators (case-sensitive).
+
+        Uses start-of-line matching to avoid false positives from mid-sentence
+        occurrences like 'Running the tests revealed...' (#359).
+        """
+        matching_line = line_starts_with_any(
             last_lines, self.patterns.execution_indicators, case_sensitive=True, reverse=True
         )
         if matching_line:

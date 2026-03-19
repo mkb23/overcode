@@ -291,6 +291,89 @@ def find_matching_line(
     return None
 
 
+def line_starts_with_any(
+    lines: List[str],
+    patterns: List[str],
+    case_sensitive: bool = False,
+    reverse: bool = True
+) -> str | None:
+    """Find the first line that starts with any pattern in a tool-execution context.
+
+    Like find_matching_line but designed to reduce false positives from
+    mid-sentence occurrences (#359). A line matches if:
+    - It has a ⏺ prefix followed by a pattern (definite tool output), OR
+    - It starts with a pattern AND the next word looks like a tool name
+      (contains parens, quotes, or is a known tool like Bash/Read/etc.)
+
+    This avoids matching prose like "Running the tests revealed..." while
+    still matching "Running Bash('ls')" or "⏺ Reading config.json...".
+
+    Args:
+        lines: Lines to search
+        patterns: Patterns to match
+        case_sensitive: Whether matching is case-sensitive
+        reverse: Search from end to beginning
+
+    Returns:
+        The matching line, or None if no match
+    """
+    # Prefixes that indicate definite Claude Code tool output
+    _tool_prefixes = ("⏺ ", "⏺  ")
+
+    search_lines = reversed(lines) if reverse else lines
+    for line in search_lines:
+        stripped = line.strip()
+
+        # Path 1: ⏺ prefix = definite tool output — just check pattern starts
+        has_tool_prefix = False
+        check_str = stripped
+        for prefix in _tool_prefixes:
+            if stripped.startswith(prefix):
+                check_str = stripped[len(prefix):]
+                has_tool_prefix = True
+                break
+
+        if not case_sensitive:
+            starts = any(check_str.lower().startswith(p.lower()) for p in patterns)
+        else:
+            starts = any(check_str.startswith(p) for p in patterns)
+
+        if not starts:
+            continue
+
+        if has_tool_prefix:
+            return line
+
+        # Path 2: No ⏺ prefix — require the line looks like tool execution.
+        # Real tool lines look like: "Running Bash(...)" or "Reading file.py..."
+        # Prose looks like: "Running the tests revealed..."
+        # Heuristic: after the verb, check for tool-like tokens (parens, quotes,
+        # file extensions, or known tool names).
+        if _looks_like_tool_execution(check_str):
+            return line
+
+    return None
+
+
+# Pattern for lines that look like actual tool execution rather than prose.
+# Matches: Verb followed by a tool name with parens, a quoted string, or a file path.
+_TOOL_EXECUTION_RE = re.compile(
+    r'^\w+\s+'           # The verb + space
+    r'(?:'
+    r'\w+\('             # ToolName( — e.g., Bash(, Read(
+    r'|"'                # Quoted argument
+    r"|'"                # Single-quoted argument
+    r'|\S+\.\w{1,10}'   # File path with extension — e.g., config.json
+    r'|\S+/'             # Path with slash — e.g., src/foo
+    r')'
+)
+
+
+def _looks_like_tool_execution(line: str) -> bool:
+    """Check if a line looks like tool execution rather than prose."""
+    return bool(_TOOL_EXECUTION_RE.match(line))
+
+
 def is_prompt_line(line: str, patterns: StatusPatterns = None) -> bool:
     """Check if a line is an empty prompt waiting for input.
 
