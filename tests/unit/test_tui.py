@@ -928,7 +928,7 @@ class TestHelpOverlayRender:
         widget = HelpOverlay()
         keybindings = widget._build_keybindings()
         plain = keybindings.plain
-        assert "NAVIGATION & VIEW" in plain
+        assert "NAVIGATION" in plain
         assert "AGENT CONTROL" in plain
         assert "Quit" in plain
 

@@ -53,7 +53,9 @@ class ViewActionsMixin:
             help_overlay = self.query_one("#help-overlay", HelpOverlay)
             if help_overlay.has_class("visible"):
                 help_overlay.remove_class("visible")
+                self._dialog_did_close()
             else:
+                self._dialog_will_open()
                 help_overlay.add_class("visible")
         except NoMatches:
             pass

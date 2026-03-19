@@ -808,6 +808,60 @@ class SupervisorTUI(
         """
         return bool(self.query(".modal.visible"))
 
+    def _any_dialog_visible(self) -> bool:
+        """Check if any dialog (modal or help overlay) is visible."""
+        if self._any_modal_visible():
+            return True
+        try:
+            from .tui_widgets import HelpOverlay
+            help_overlay = self.query_one("#help-overlay", HelpOverlay)
+            if help_overlay.has_class("visible"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _dialog_will_open(self) -> None:
+        """Zoom the tmux monitor pane when a dialog opens (compact mode only).
+
+        Uses tmux's pane zoom to temporarily hide the bottom (terminal)
+        pane, giving the TUI the full window for rendering dialogs.
+        """
+        if not self.compact:
+            return
+        import subprocess
+        target = "overcode:overcode-tmux.0"
+        # Don't zoom if already zoomed
+        info = subprocess.run(
+            ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+            capture_output=True, text=True,
+        )
+        if info.returncode == 0 and info.stdout.strip() == "1":
+            return
+        subprocess.run(
+            ["tmux", "resize-pane", "-t", target, "-Z"],
+            capture_output=True,
+        )
+
+    def _dialog_did_close(self) -> None:
+        """Unzoom the tmux monitor pane when all dialogs are closed (compact mode only)."""
+        if not self.compact:
+            return
+        # Don't unzoom if another dialog is still visible
+        if self._any_dialog_visible():
+            return
+        import subprocess
+        target = "overcode:overcode-tmux.0"
+        info = subprocess.run(
+            ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+            capture_output=True, text=True,
+        )
+        if info.returncode == 0 and info.stdout.strip() == "1":
+            subprocess.run(
+                ["tmux", "resize-pane", "-t", target, "-Z"],
+                capture_output=True,
+            )
+
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
 
@@ -2581,6 +2635,7 @@ class SupervisorTUI(
         try:
             modal = self.query_one("#summary-config-modal", SummaryConfigModal)
             overrides = self._prefs.column_config.get(current_level, {})
+            self._dialog_will_open()
             modal.show(current_level, overrides, self)
         except NoMatches:
             pass
@@ -2604,6 +2659,7 @@ class SupervisorTUI(
         self._recompute_cell_column_widths()
 
         self.notify(f"Column config saved for {level}", severity="information")
+        self._dialog_did_close()
 
     def on_summary_config_modal_cancelled(self, message: SummaryConfigModal.Cancelled) -> None:
         """Handle modal cancellation (#178)."""
@@ -2614,12 +2670,14 @@ class SupervisorTUI(
             widget.column_overrides = original_overrides
             widget.refresh()
         self._recompute_cell_column_widths()
+        self._dialog_did_close()
 
     def action_open_new_agent_defaults(self) -> None:
         """Open the new-agent defaults modal."""
         from .config import get_new_agent_defaults
         try:
             modal = self.query_one("#new-agent-defaults-modal", NewAgentDefaultsModal)
+            self._dialog_will_open()
             modal.show(get_new_agent_defaults(), self)
         except NoMatches:
             pass
@@ -2629,13 +2687,15 @@ class SupervisorTUI(
         from .config import save_new_agent_defaults
         save_new_agent_defaults(message.defaults)
         self.notify("Defaults saved", severity="information")
+        self._dialog_did_close()
 
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
-        pass
+        self._dialog_did_close()
 
     def on_agent_select_modal_agent_selected(self, message: AgentSelectModal.AgentSelected) -> None:
         """Handle agent selection from modal."""
+        self._dialog_did_close()
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
             cmd_bar.new_agent_claude_agent = message.agent_name
@@ -2646,6 +2706,7 @@ class SupervisorTUI(
 
     def on_agent_select_modal_agent_select_skipped(self, message: AgentSelectModal.AgentSelectSkipped) -> None:
         """Handle agent selection skipped (q/Esc)."""
+        self._dialog_did_close()
         try:
             cmd_bar = self.query_one("#command-bar", CommandBar)
             cmd_bar.new_agent_claude_agent = None
@@ -2665,6 +2726,7 @@ class SupervisorTUI(
             return
         try:
             modal = self.query_one("#sister-selection-modal", SisterSelectionModal)
+            self._dialog_will_open()
             modal.show(sisters, self._prefs.disabled_sisters, self)
         except NoMatches:
             pass
@@ -2680,10 +2742,11 @@ class SupervisorTUI(
             self.notify(f"{count} sister(s) hidden", severity="information")
         else:
             self.notify("All sisters visible", severity="information")
+        self._dialog_did_close()
 
     def on_sister_selection_modal_cancelled(self, message: SisterSelectionModal.Cancelled) -> None:
         """Handle sister selection modal cancellation (#323)."""
-        pass
+        self._dialog_did_close()
 
     # -- Instruction history (#376) ------------------------------------------
 
@@ -2700,6 +2763,7 @@ class SupervisorTUI(
             self.notify("No instructions sent yet — send one with 'i' first", severity="warning")
             return
         modal = self.query_one("#instruction-history-modal", InstructionHistoryModal)
+        self._dialog_will_open()
         modal.show(self._instruction_history, self)
 
     def on_instruction_history_modal_reinject_requested(
@@ -2716,11 +2780,13 @@ class SupervisorTUI(
                 input_widget.value = message.text
             except NoMatches:
                 pass
+            self._dialog_did_close()
             return
 
         session = focused.session
         if getattr(session, 'is_remote', False):
             if self._guard_remote(session):
+                self._dialog_did_close()
                 return
             result = self._sister_controller.send_instruction(
                 session.source_url, session.source_api_key,
@@ -2731,6 +2797,7 @@ class SupervisorTUI(
                 self.notify(f"Reinjected to remote agent {session.name}")
             else:
                 self.notify(f"Remote error: {result.error}", severity="error")
+            self._dialog_did_close()
             return
 
         launcher = ClaudeLauncher(
@@ -2743,12 +2810,13 @@ class SupervisorTUI(
             self.notify(f"Reinjected to {session.name}")
         else:
             self.notify(f"Failed to send to {session.name}", severity="error")
+        self._dialog_did_close()
 
     def on_instruction_history_modal_cancelled(
         self, message: InstructionHistoryModal.Cancelled
     ) -> None:
         """Handle instruction history modal dismissal (#376)."""
-        pass
+        self._dialog_did_close()
 
     def on_terminal_pane_passthrough_changed(self, message: TerminalPane.PassthroughChanged) -> None:
         """Handle terminal pane passthrough mode changes."""
@@ -2807,6 +2875,7 @@ class SupervisorTUI(
             help_overlay = self.query_one("#help-overlay", HelpOverlay)
             if help_overlay.has_class("visible") and event.key == "escape":
                 help_overlay.remove_class("visible")
+                self._dialog_did_close()
                 event.stop()
         except Exception:
             pass
@@ -2905,6 +2974,7 @@ class SupervisorTUI(
                     return True
                 # Block all other actions - close help instead
                 help_overlay.remove_class("visible")
+                self._dialog_did_close()
                 return False
         except Exception:
             pass

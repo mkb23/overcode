@@ -401,6 +401,8 @@ class CommandBar(Static):
             from .agent_select_modal import AgentSelectModal
             try:
                 modal = self.app.query_one("#agent-select-modal", AgentSelectModal)
+                if hasattr(self.app, '_dialog_will_open'):
+                    self.app._dialog_will_open()
                 modal.show(agents, self.app)
             except Exception:
                 # Modal not found — fall through to name step
