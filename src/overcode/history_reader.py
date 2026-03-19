@@ -99,6 +99,28 @@ class ClaudeSessionStats:
         return sorted_times[n // 2]
 
 
+def synthesize_remote_stats(session) -> "ClaudeSessionStats":
+    """Synthesize ClaudeSessionStats for a remote session from daemon_state.
+
+    Remote sessions carry a remote_daemon_state dict with all
+    SessionDaemonState fields. Extract what we need so that render
+    columns (cost, tokens, context %, model) display correctly.
+    """
+    rds = getattr(session, 'remote_daemon_state', None) or {}
+    stats = session.stats
+    mwt = getattr(session, 'remote_median_work_time', None) or rds.get('median_work_time', 0.0)
+    return ClaudeSessionStats(
+        interaction_count=stats.interaction_count,
+        input_tokens=rds.get('input_tokens', stats.total_tokens),
+        output_tokens=rds.get('output_tokens', 0),
+        cache_creation_tokens=rds.get('cache_creation_tokens', 0),
+        cache_read_tokens=rds.get('cache_read_tokens', 0),
+        work_times=[mwt] if mwt > 0 else [],
+        current_context_tokens=rds.get('current_context_tokens', 0),
+        model=rds.get('model'),
+    )
+
+
 @dataclass
 class HistoryEntry:
     """A single interaction from Claude Code history."""

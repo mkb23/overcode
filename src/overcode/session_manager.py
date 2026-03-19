@@ -38,6 +38,8 @@ class SessionStats:
     output_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
+    current_context_tokens: int = 0  # Current context window usage
+    model: Optional[str] = None  # Most recently seen model name
     last_stats_update: Optional[str] = None  # ISO timestamp of last stats sync
 
     # State tracking

@@ -62,6 +62,7 @@ class SessionDaemonState:
     cache_read_tokens: int = 0
     estimated_cost_usd: float = 0.0
     median_work_time: float = 0.0
+    current_context_tokens: int = 0  # Current context window usage
 
     # Session metadata
     repo_name: Optional[str] = None

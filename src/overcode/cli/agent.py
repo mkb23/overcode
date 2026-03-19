@@ -541,6 +541,9 @@ def list_agents(
             claude_stats = get_session_stats(sess)
         except Exception:
             pass
+        if claude_stats is None and getattr(sess, 'is_remote', False):
+            from ..history_reader import synthesize_remote_stats
+            claude_stats = synthesize_remote_stats(sess)
 
         git_diff = None
         if getattr(sess, 'is_remote', False):

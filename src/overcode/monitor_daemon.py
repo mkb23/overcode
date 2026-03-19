@@ -437,6 +437,7 @@ class MonitorDaemon:
             cache_creation_tokens=stats.cache_creation_tokens,
             cache_read_tokens=stats.cache_read_tokens,
             estimated_cost_usd=stats.estimated_cost_usd,
+            current_context_tokens=stats.current_context_tokens,
             median_work_time=self._calculate_median_work_time(stats.operation_times),
             repo_name=session.repo_name,
             branch=session.branch,
@@ -457,8 +458,8 @@ class MonitorDaemon:
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
-            # Model
-            model=session.model,
+            # Model — prefer detected model from history over CLI-configured model
+            model=stats.model or session.model,
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
@@ -665,6 +666,8 @@ class MonitorDaemon:
                 cache_creation_tokens=stats.cache_creation_tokens,
                 cache_read_tokens=stats.cache_read_tokens,
                 estimated_cost_usd=round(cost_estimate, 4),
+                current_context_tokens=stats.current_context_tokens,
+                model=stats.model,
                 last_stats_update=now.isoformat(),
             )
         except Exception as e:

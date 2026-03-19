@@ -29,7 +29,7 @@ from .job_launcher import JobLauncher
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile
+from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile, synthesize_remote_stats
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
@@ -1212,19 +1212,7 @@ class SupervisorTUI(
             def fetch_stats(session):
                 try:
                     if session.is_remote:
-                        # Synthesize ClaudeSessionStats from pre-populated SessionStats
-                        # so render columns (cost, tokens, interactions) display properly
-                        stats = session.stats
-                        mwt = session.remote_median_work_time
-                        synthetic = ClaudeSessionStats(
-                            interaction_count=stats.interaction_count,
-                            input_tokens=stats.total_tokens,
-                            output_tokens=0,
-                            cache_creation_tokens=0,
-                            cache_read_tokens=0,
-                            work_times=[mwt] if mwt > 0 else [],
-                        )
-                        return (synthetic, session.remote_git_diff)
+                        return (synthesize_remote_stats(session), session.remote_git_diff)
                     claude_stats = get_session_stats(session, history_file=history_file)
                     git_diff = None
                     if session.start_directory:
