@@ -2064,6 +2064,10 @@ class SupervisorTUI(
         except NoMatches:
             return
 
+        # Compute dynamic name column width (min 12, max 30)
+        name_width = max((len(j.name) for j in jobs), default=12)
+        name_width = max(12, min(name_width, 30))
+
         existing = {w.job.id: w for w in self.query(JobSummary)}
         current_ids = {j.id for j in jobs}
 
@@ -2075,11 +2079,14 @@ class SupervisorTUI(
         # Update existing or mount new
         for job in jobs:
             if job.id in existing:
-                existing[job.id].refresh_job(job)
+                w = existing[job.id]
+                w.name_width = name_width
+                w.refresh_job(job)
             else:
                 widget = JobSummary(job)
                 widget.monochrome = self.monochrome
                 widget.emoji_free = self.emoji_free
+                widget.name_width = name_width
                 container.mount(widget)
 
         # Capture pane content for focused job
@@ -2220,16 +2227,16 @@ class SupervisorTUI(
 
             if self.tui_mode == "jobs":
                 from rich.text import Text
+                # Compute name width from current jobs (same logic as _apply_jobs)
+                nw = max((len(j.name) for j in self.jobs), default=12)
+                nw = max(12, min(nw, 30))
                 header = Text()
                 header.append("  ", style="")
-                header.append("Name", style="bold dim")
-                header.append(" " * 14, style="")
-                header.append("Command", style="bold dim")
-                header.append(" " * 73, style="")
-                header.append("Start", style="bold dim")
+                header.append(f"{'Name':<{nw}} ", style="bold dim")
+                header.append(f"{'Command':<80} ", style="bold dim")
+                header.append(f"{'Started':>16} ", style="bold dim")
+                header.append(f"{'Time':>6} ", style="bold dim")
                 header.append("  ", style="")
-                header.append("Time", style="bold dim")
-                header.append("    ", style="")
                 header.append("Status", style="bold dim")
                 header_widget.update(header)
                 return

@@ -32,10 +32,12 @@ class JobSummary(Static, can_focus=True):
         self.job = job
         self.monochrome: bool = False
         self.emoji_free: bool = False
+        self.name_width: int = 20  # updated by _apply_jobs
 
     def render(self) -> Text:
         """Render the job summary line."""
         job = self.job
+        nw = self.name_width
 
         # Status icon
         if self.emoji_free:
@@ -57,7 +59,7 @@ class JobSummary(Static, can_focus=True):
         # Status color
         color_map = {
             "running": "green",
-            "completed": "green",
+            "completed": "dim green",
             "failed": "red",
             "killed": "yellow",
         }
@@ -65,12 +67,12 @@ class JobSummary(Static, can_focus=True):
         if self.monochrome:
             color = "white"
 
-        # Start time (HH:MM)
+        # Start time (ISO date + HH:MM)
         start_str = ""
         if job.start_time:
             try:
                 start = datetime.fromisoformat(job.start_time)
-                start_str = start.strftime("%H:%M")
+                start_str = start.strftime("%Y-%m-%d %H:%M")
             except ValueError:
                 pass
 
@@ -93,6 +95,11 @@ class JobSummary(Static, can_focus=True):
         # Agent link
         agent_str = f" ← {job.agent_name}" if job.agent_name else ""
 
+        # Truncate name if needed
+        name = job.name
+        if len(name) > nw:
+            name = name[:nw - 1] + "…"
+
         # Truncate command for display
         cmd = job.command
         max_cmd = 80
@@ -101,9 +108,9 @@ class JobSummary(Static, can_focus=True):
 
         text = Text()
         text.append(icon, style=color)
-        text.append(f" {job.name:<16} ", style="bold" if job.status == "running" else "")
+        text.append(f" {name:<{nw}} ", style="bold" if job.status == "running" else "")
         text.append(f"{cmd:<80} ", style="dim" if job.status != "running" else "")
-        text.append(f"{start_str:>5} ", style="dim")
+        text.append(f"{start_str:>16} ", style="dim")
         text.append(f"{duration:>6} ", style="")
         text.append(f"  {job.status}{exit_str}", style=color)
         if agent_str:

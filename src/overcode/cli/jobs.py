@@ -16,6 +16,7 @@ def bash(
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="Job name (auto-derived if omitted)")] = None,
     directory: Annotated[str, typer.Option("--directory", "-d", help="Working directory")] = ".",
     agent: Annotated[Optional[str], typer.Option("--agent", "-a", help="Link to an agent session by name")] = None,
+    follow: Annotated[bool, typer.Option("--follow", "-f", help="Attach to the job's tmux window after launch")] = True,
 ):
     """Launch a bash command as a tracked job."""
     import os
@@ -52,6 +53,9 @@ def bash(
     rprint(f"  Window: {job.tmux_session}:{job.tmux_window}")
     if agent_name:
         rprint(f"  Linked to agent: {agent_name}")
+
+    if follow:
+        launcher.attach(job.name)
 
 
 @jobs_app.command("list")
