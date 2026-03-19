@@ -96,7 +96,7 @@ class HelpOverlay(Static):
         )
         row(_toggle_label, "Toggle pane focus", "=/-", "Resize split")
         row("M-j", "Next agent (from term)", "M-k", "Prev agent (from term)")
-        row("PgUp", "Scrollback", "PgDn", "Scroll forward")
+        row("M-b", "Go to bell (from term)", "PgUp/Dn", "Scrollback")
 
         return t
 

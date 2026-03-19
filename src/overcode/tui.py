@@ -895,8 +895,10 @@ class SupervisorTUI(
         # Don't unzoom if another dialog is still visible
         if self._any_dialog_visible():
             return
-        # Don't unzoom if sister view is holding the zoom open
+        # Don't unzoom if sister view or jobs view is holding the zoom open
         if self._sister_zoom_active:
+            return
+        if self.tui_mode == "jobs":
             return
         import subprocess
         target = "overcode:overcode-tmux.0"
@@ -1981,6 +1983,10 @@ class SupervisorTUI(
                 jobs_container.add_class("visible")
                 jobs_container.display = True
                 self._refresh_jobs()
+                # In compact mode, zoom TUI and show preview (same as sister view)
+                if self.compact:
+                    self._dialog_will_open()
+                    self.preview_visible = True
                 # Focus first job widget if available
                 job_widgets = list(self.query(JobSummary))
                 if job_widgets:
@@ -1990,6 +1996,10 @@ class SupervisorTUI(
                 jobs_container.remove_class("visible")
                 jobs_container.display = False
                 sessions_container.display = True
+                # In compact mode, hide preview and unzoom (same as exiting sister view)
+                if self.compact:
+                    self.preview_visible = False
+                    self._dialog_did_close()
                 # Refocus agents
                 widget = self._get_focused_widget()
                 if widget:

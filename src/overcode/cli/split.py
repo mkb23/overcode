@@ -191,7 +191,7 @@ def _remove_keybindings() -> None:
     from ..config import get_tmux_toggle_key
 
     toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
-    keys = [toggle_key, "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]
+    keys = [toggle_key, "M-j", "M-k", "M-b", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]
     # Also unbind Tab if toggle_key changed away from it (stale binding)
     if toggle_key != "Tab":
         keys.append("Tab")
@@ -247,6 +247,13 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         "if-shell", "-F", _in_bottom,
         f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 k",
         "send-keys M-k",
+    )
+    # Option+B: navigate to bell (next agent needing attention)
+    _tmux(
+        "bind-key", "-n", "M-b",
+        "if-shell", "-F", _in_bottom,
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 b",
+        "send-keys M-b",
     )
 
     # --- Scrollback for the nested tmux in the bottom pane ---
