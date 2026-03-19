@@ -234,6 +234,22 @@ SessionSummary:focus.compact-mode {
     background: $accent;
 }
 
+/* Banner shown at bottom of compact TUI when bottom pane has focus */
+#terminal-active-banner {
+    display: none;
+    dock: bottom;
+    height: 3;
+    background: #1a4a1a;
+    color: #44dd44;
+    text-align: center;
+    text-style: bold;
+    border-top: solid #44dd44;
+}
+
+#terminal-active-banner.visible {
+    display: block;
+}
+
 /* Summary Config Modal - floats above content */
 SummaryConfigModal {
     display: none;

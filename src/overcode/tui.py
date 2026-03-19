@@ -370,6 +370,7 @@ class SupervisorTUI(
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield PreviewPane(id="preview-pane")
+        yield Static("  ↓ TERMINAL ACTIVE — Tab to return ↓  ", id="terminal-active-banner")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
@@ -623,16 +624,24 @@ class SupervisorTUI(
         self._prefs.save(self.tmux_session)
 
     def on_app_blur(self) -> None:
-        """Terminal lost focus — remove header highlight."""
+        """Terminal lost focus — show banner, remove header highlight."""
         if self.compact:
+            try:
+                self.query_one("#terminal-active-banner").add_class("visible")
+            except NoMatches:
+                pass
             try:
                 self.query_one("Header").remove_class("monitor-active")
             except NoMatches:
                 pass
 
     def on_app_focus(self) -> None:
-        """Terminal gained focus — highlight header."""
+        """Terminal gained focus — hide banner, highlight header."""
         if self.compact:
+            try:
+                self.query_one("#terminal-active-banner").remove_class("visible")
+            except NoMatches:
+                pass
             try:
                 self.query_one("Header").add_class("monitor-active")
             except NoMatches:
