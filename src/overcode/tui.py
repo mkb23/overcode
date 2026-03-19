@@ -360,6 +360,14 @@ class SupervisorTUI(
         self._status_change_log: list = []
         self._status_change_csv_path = get_status_changes_path(tmux_session)
 
+    def _terminal_active_banner_text(self) -> str:
+        """Build the TERMINAL ACTIVE banner with the configured toggle key."""
+        from .config import get_tmux_toggle_key
+        from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
+        key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+        label = next((l for l, k in TOGGLE_KEY_CHOICES if k == key), key)
+        return f"  ↓ TERMINAL ACTIVE — {label} to return ↓  "
+
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
@@ -370,7 +378,7 @@ class SupervisorTUI(
         yield ScrollableContainer(id="sessions-container")
         yield ScrollableContainer(id="jobs-container")
         yield PreviewPane(id="preview-pane")
-        yield Static("  ↓ TERMINAL ACTIVE — Tab to return ↓  ", id="terminal-active-banner")
+        yield Static(self._terminal_active_banner_text(), id="terminal-active-banner")
         yield CommandBar(id="command-bar")
         # Modal for column configuration (positioned programmatically)
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
