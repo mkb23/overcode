@@ -399,20 +399,15 @@ class TestRenderSleepCountdown:
 
 
 class TestRenderExpandIcon:
-    def test_shows_arrow_in_list_mode_with_focus(self):
-        ctx = _make_ctx(is_list_mode=True, has_focus=True)
+    def test_shows_arrow_with_focus(self):
+        ctx = _make_ctx(has_focus=True)
         result = render_expand_icon(ctx)
         assert result[0][0] == "→ "
 
-    def test_shows_space_in_list_mode_without_focus(self):
-        ctx = _make_ctx(is_list_mode=True, has_focus=False)
+    def test_shows_space_without_focus(self):
+        ctx = _make_ctx(has_focus=False)
         result = render_expand_icon(ctx)
         assert result[0][0] == "  "
-
-    def test_shows_expand_icon_in_tree_mode(self):
-        ctx = _make_ctx(is_list_mode=False, expand_icon="▼")
-        result = render_expand_icon(ctx)
-        assert result[0][0] == "▼ "
 
 
 class TestRenderAgentName:

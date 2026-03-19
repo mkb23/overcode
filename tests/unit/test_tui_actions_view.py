@@ -125,106 +125,6 @@ class TestManualRefresh:
         assert "Refreshed" in mock_tui.notify.call_args[0][0]
 
 
-class TestToggleExpandAll:
-    """Test action_toggle_expand_all method."""
-
-    def test_collapses_all_when_any_expanded(self):
-        """Should collapse all widgets when at least one is expanded."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        widget1 = MagicMock()
-        widget1.expanded = True
-        widget1.session.id = "s1"
-
-        widget2 = MagicMock()
-        widget2.expanded = False
-        widget2.session.id = "s2"
-
-        mock_tui = MagicMock()
-        mock_tui.query.return_value = [widget1, widget2]
-        mock_tui.expanded_states = {}
-
-        ViewActionsMixin.action_toggle_expand_all(mock_tui)
-
-        # When any are expanded, new_state = not True = False
-        assert widget1.expanded is False
-        assert widget2.expanded is False
-        assert mock_tui.expanded_states["s1"] is False
-        assert mock_tui.expanded_states["s2"] is False
-
-    def test_expands_all_when_none_expanded(self):
-        """Should expand all widgets when none are expanded."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        widget1 = MagicMock()
-        widget1.expanded = False
-        widget1.session.id = "s1"
-
-        widget2 = MagicMock()
-        widget2.expanded = False
-        widget2.session.id = "s2"
-
-        mock_tui = MagicMock()
-        mock_tui.query.return_value = [widget1, widget2]
-        mock_tui.expanded_states = {}
-
-        ViewActionsMixin.action_toggle_expand_all(mock_tui)
-
-        assert widget1.expanded is True
-        assert widget2.expanded is True
-
-    def test_noop_with_no_widgets(self):
-        """Should do nothing when there are no session widgets."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.query.return_value = []
-
-        # Should not raise
-        ViewActionsMixin.action_toggle_expand_all(mock_tui)
-
-
-class TestCycleDetail:
-    """Test action_cycle_detail method."""
-
-    def test_cycles_to_next_detail_level(self):
-        """Should cycle detail_level_index and update widgets."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        widget1 = MagicMock()
-        widget2 = MagicMock()
-
-        mock_tui = MagicMock()
-        mock_tui.detail_level_index = 0
-        mock_tui.DETAIL_LEVELS = [5, 10, 20, 50]
-        mock_tui.query.return_value = [widget1, widget2]
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_cycle_detail(mock_tui)
-
-        assert mock_tui.detail_level_index == 1
-        assert widget1.detail_lines == 10
-        assert widget2.detail_lines == 10
-        assert mock_tui._prefs.detail_lines == 10
-        mock_tui._save_prefs.assert_called_once()
-        assert "10 lines" in mock_tui.notify.call_args[0][0]
-
-    def test_wraps_around_at_end(self):
-        """Should wrap back to index 0 when at the last level."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.detail_level_index = 3  # Last index
-        mock_tui.DETAIL_LEVELS = [5, 10, 20, 50]
-        mock_tui.query.return_value = []
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_cycle_detail(mock_tui)
-
-        assert mock_tui.detail_level_index == 0
-        assert mock_tui._prefs.detail_lines == 5
-
-
 class TestCycleSummary:
     """Test action_cycle_summary method."""
 
@@ -326,35 +226,35 @@ class TestCycleSummaryContent:
         assert mock_tui.summary_content_mode == "ai_long"
 
 
-class TestToggleViewMode:
-    """Test action_toggle_view_mode method."""
+class TestTogglePreview:
+    """Test action_toggle_preview method."""
 
-    def test_switches_from_tree_to_list_preview(self):
-        """Should switch from tree to list_preview mode."""
+    def test_enables_preview(self):
+        """Should enable preview and save preference."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "tree"
+        mock_tui.preview_visible = False
         mock_tui._prefs = MagicMock()
 
-        ViewActionsMixin.action_toggle_view_mode(mock_tui)
+        ViewActionsMixin.action_toggle_preview(mock_tui)
 
-        assert mock_tui.view_mode == "list_preview"
-        assert mock_tui._prefs.view_mode == "list_preview"
+        assert mock_tui.preview_visible is True
+        assert mock_tui._prefs.preview_visible is True
         mock_tui._save_prefs.assert_called_once()
 
-    def test_switches_from_list_preview_to_tree(self):
-        """Should switch from list_preview to tree mode."""
+    def test_disables_preview(self):
+        """Should disable preview and save preference."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         mock_tui._prefs = MagicMock()
 
-        ViewActionsMixin.action_toggle_view_mode(mock_tui)
+        ViewActionsMixin.action_toggle_preview(mock_tui)
 
-        assert mock_tui.view_mode == "tree"
-        assert mock_tui._prefs.view_mode == "tree"
+        assert mock_tui.preview_visible is False
+        assert mock_tui._prefs.preview_visible is False
         mock_tui._save_prefs.assert_called_once()
 
 
@@ -1265,24 +1165,24 @@ class TestToggleCostDisplay:
 class TestExpandPreview:
     """Test action_expand_preview method."""
 
-    def test_warns_when_not_list_preview_mode(self):
-        """Should notify and return when not in list_preview mode."""
+    def test_warns_when_preview_not_visible(self):
+        """Should notify and return when preview pane is not visible."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "tree"
+        mock_tui.preview_visible = False
 
         ViewActionsMixin.action_expand_preview(mock_tui)
 
         mock_tui.notify.assert_called_once()
-        assert "list+preview mode" in mock_tui.notify.call_args[0][0]
+        assert "preview pane" in mock_tui.notify.call_args[0][0]
 
     def test_warns_when_no_agent_focused(self):
         """Should notify when focused widget is not a SessionSummary."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         # focused returns a non-SessionSummary object; isinstance check fails
         mock_tui.focused = MagicMock()
 
@@ -1307,7 +1207,7 @@ class TestExpandPreview:
         mock_focused.session = mock_session
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         mock_tui.focused = mock_focused
 
         ViewActionsMixin.action_expand_preview(mock_tui)
@@ -1328,7 +1228,7 @@ class TestExpandPreview:
         mock_focused.session = mock_session
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         mock_tui.focused = mock_focused
         mock_tui.detector.capture_lines = 200
         mock_tui.detector.polling.tmux.capture_pane.return_value = None
@@ -1353,7 +1253,7 @@ class TestExpandPreview:
         mock_fs_preview = MagicMock()
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         mock_tui.focused = mock_focused
         mock_tui.monochrome = False
         mock_tui.detector.capture_lines = 200
@@ -1381,7 +1281,7 @@ class TestExpandPreview:
         mock_focused.session = mock_session
 
         mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
+        mock_tui.preview_visible = True
         mock_tui.focused = mock_focused
         mock_tui.monochrome = True
         # Set detector.capture_lines higher than DEFAULT_CAPTURE_LINES
@@ -1482,22 +1382,6 @@ class TestCycleNotifications:
 
         # Unknown -> index 0 -> next = index 1 = "sound"
         assert mock_tui._notifier.mode == "sound"
-
-
-class TestToggleExpandAllListPreview:
-    """Test action_toggle_expand_all in list_preview mode."""
-
-    def test_noop_in_list_preview_mode(self):
-        """Should return immediately without querying widgets in list_preview mode."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.view_mode = "list_preview"
-
-        ViewActionsMixin.action_toggle_expand_all(mock_tui)
-
-        # query should never be called because we return early
-        mock_tui.query.assert_not_called()
 
 
 # =============================================================================

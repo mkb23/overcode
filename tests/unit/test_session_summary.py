@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch, PropertyMock
 from overcode.session_manager import Session, SessionStats
 from overcode.history_reader import ClaudeSessionStats
 from overcode.tui_widgets.session_summary import (
-    format_standing_instructions,
     SessionSummary,
 )
 
@@ -104,94 +103,6 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     for k, v in extra_attrs.items():
         setattr(widget, k, v)
     return widget
-
-
-# ===========================================================================
-# format_standing_instructions
-# ===========================================================================
-
-
-class TestFormatStandingInstructions:
-    """Tests for the format_standing_instructions pure function."""
-
-    def test_empty_string_returns_empty(self):
-        """Empty string input returns empty string."""
-        with patch("overcode.config.get_default_standing_instructions", return_value=""):
-            assert format_standing_instructions("") == ""
-
-    def test_none_returns_empty(self):
-        """None input returns empty string."""
-        with patch("overcode.config.get_default_standing_instructions", return_value=""):
-            assert format_standing_instructions(None) == ""
-
-    def test_default_instructions_returns_label(self):
-        """Instructions matching the configured default show '[DEFAULT]'."""
-        default_text = "Always run tests before committing"
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value=default_text,
-        ):
-            assert format_standing_instructions(default_text) == "[DEFAULT]"
-
-    def test_default_instructions_with_surrounding_whitespace(self):
-        """Whitespace-padded instructions still match the default."""
-        default_text = "Always run tests"
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value=default_text,
-        ):
-            assert format_standing_instructions("  Always run tests  ") == "[DEFAULT]"
-
-    def test_short_instructions_returned_as_is(self):
-        """Instructions within max_len are returned unchanged."""
-        text = "Fix the login bug"
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value="",
-        ):
-            assert format_standing_instructions(text) == text
-
-    def test_long_instructions_are_truncated(self):
-        """Instructions exceeding max_len are truncated with ellipsis."""
-        text = "A" * 100  # Longer than default max_len=95
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value="",
-        ):
-            result = format_standing_instructions(text)
-            assert result.endswith("...")
-            assert len(result) == 95
-
-    def test_custom_max_len(self):
-        """Custom max_len is respected."""
-        text = "A" * 50
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value="",
-        ):
-            result = format_standing_instructions(text, max_len=30)
-            assert result.endswith("...")
-            assert len(result) == 30
-
-    def test_exact_max_len_not_truncated(self):
-        """Instructions exactly at max_len are not truncated."""
-        text = "A" * 95
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value="",
-        ):
-            result = format_standing_instructions(text)
-            assert result == text
-            assert "..." not in result
-
-    def test_no_default_configured_does_not_match(self):
-        """When no default is configured, non-empty instructions are returned as-is."""
-        with patch(
-            "overcode.config.get_default_standing_instructions",
-            return_value="",
-        ):
-            result = format_standing_instructions("some instructions")
-            assert result == "some instructions"
 
 
 # ===========================================================================
@@ -361,16 +272,6 @@ class TestMessageClasses:
         """SessionSelected message stores session_id."""
         msg = SessionSummary.SessionSelected("abc-123")
         assert msg.session_id == "abc-123"
-
-    def test_expanded_changed_stores_id_and_state(self):
-        """ExpandedChanged message stores session_id and expanded flag."""
-        msg = SessionSummary.ExpandedChanged("abc-123", True)
-        assert msg.session_id == "abc-123"
-        assert msg.expanded is True
-
-        msg2 = SessionSummary.ExpandedChanged("xyz", False)
-        assert msg2.session_id == "xyz"
-        assert msg2.expanded is False
 
     def test_stalled_agent_visited_stores_id(self):
         """StalledAgentVisited message stores session_id."""

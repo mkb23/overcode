@@ -13,13 +13,10 @@ overcode supervisor   # Monitor with supervisor daemon
 
 ## Display Modes
 
-### Tree View (Default)
-Shows agents in a hierarchical list with expandable details. Press `space` to expand/collapse individual agents, or `e` to expand/collapse all.
+### Agent List
+Shows all agents as single-line summaries with live status, metrics, and a content area. Press `m` to toggle the preview pane, which shows the focused agent's terminal output below the list.
 
 When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children. The child count column (👶) shows direct children per agent.
-
-### List + Preview Mode
-Press `m` to toggle. Shows a compact agent list on the left with a live terminal preview on the right. The preview updates in real-time as the selected agent works.
 
 ## Keyboard Shortcuts
 
@@ -30,14 +27,12 @@ Press `m` to toggle. Shows a compact agent list on the left with a live terminal
 | `j` / `↓` | Move to next agent |
 | `k` / `↑` | Move to previous agent |
 | `b` | Jump to next agent needing attention |
-| `space` | Toggle expand/collapse focused agent |
-| `e` | Expand/collapse all agents |
 
 ### View Controls
 
 | Key | Action |
 |-----|--------|
-| `m` | Toggle tree / list+preview mode |
+| `m` | Toggle preview pane |
 | `t` | Toggle timeline display |
 | `d` | Toggle daemon log panel |
 | `g` | Show/hide terminated agents |
@@ -52,7 +47,6 @@ Press `m` to toggle. Shows a compact agent list on the left with a live terminal
 |-----|--------|
 | `s` | Cycle summary detail: low → med → full |
 | `l` | Cycle summary content: AI short → AI long → orders → annotation |
-| `v` | Cycle detail lines: 5 → 10 → 20 → 50 |
 | `S` | Cycle sort mode: alphabetical → status → value → tree |
 | `$` | Toggle cost display (tokens vs dollars) |
 | `M` | Toggle monochrome mode |

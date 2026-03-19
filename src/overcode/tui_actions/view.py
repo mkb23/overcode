@@ -68,37 +68,6 @@ class ViewActionsMixin:
         self.update_timeline()
         self.notify("Refreshed", severity="information", timeout=2)
 
-    def action_toggle_expand_all(self) -> None:
-        """Toggle expand/collapse all sessions (disabled in list+preview mode)."""
-        if self.view_mode == "list_preview":
-            return
-        from ..tui_widgets import SessionSummary
-        widgets = list(self.query(SessionSummary))
-        if not widgets:
-            return
-        # If any are expanded, collapse all; otherwise expand all
-        any_expanded = any(w.expanded for w in widgets)
-        new_state = not any_expanded
-        for widget in widgets:
-            widget.expanded = new_state
-            self.expanded_states[widget.session.id] = new_state
-
-    def action_cycle_detail(self) -> None:
-        """Cycle through detail levels (5, 10, 20, 50 lines)."""
-        from ..tui_widgets import SessionSummary
-        self.detail_level_index = (self.detail_level_index + 1) % len(self.DETAIL_LEVELS)
-        new_level = self.DETAIL_LEVELS[self.detail_level_index]
-
-        # Update all session widgets
-        for widget in self.query(SessionSummary):
-            widget.detail_lines = new_level
-
-        # Save preference
-        self._prefs.detail_lines = new_level
-        self._save_prefs()
-
-        self.notify(f"Detail: {new_level} lines", severity="information")
-
     def action_cycle_summary(self) -> None:
         """Cycle through summary detail levels (low, med, high, full)."""
         from ..tui_widgets import SessionSummary
@@ -147,16 +116,16 @@ class ViewActionsMixin:
         }
         self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
 
-    def action_toggle_view_mode(self) -> None:
-        """Toggle between tree and list+preview view modes."""
-        if self.view_mode == "tree":
-            self.view_mode = "list_preview"
-        else:
-            self.view_mode = "tree"
+    def action_toggle_preview(self) -> None:
+        """Toggle preview pane visibility."""
+        self.preview_visible = not self.preview_visible
 
         # Save preference
-        self._prefs.view_mode = self.view_mode
+        self._prefs.preview_visible = self.preview_visible
         self._save_prefs()
+
+        state = "shown" if self.preview_visible else "hidden"
+        self.notify(f"Preview {state}", severity="information")
 
     def action_toggle_tmux_sync(self) -> None:
         """Toggle tmux pane sync - syncs navigation to external tmux pane."""
@@ -496,9 +465,9 @@ class ViewActionsMixin:
         """Expand the preview pane into a fullscreen scrollable overlay (#190)."""
         from ..tui_widgets import FullscreenPreview, SessionSummary
 
-        # Only works in list_preview mode
-        if self.view_mode != "list_preview":
-            self.notify("Fullscreen preview requires list+preview mode (press m)", severity="information")
+        # Only works when preview pane is visible
+        if not self.preview_visible:
+            self.notify("Fullscreen preview requires preview pane (press m)", severity="information")
             return
 
         # Get the focused session widget

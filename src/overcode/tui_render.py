@@ -296,8 +296,8 @@ def render_session_summary_line(
     """
     bg = " on #0d2137"
 
-    # Expansion indicator
-    expand_icon = "▼" if expanded else "▶"
+    # Focus indicator
+    expand_icon = "→" if has_focus else " "
 
     # Calculate values
     uptime = calculate_uptime(start_time)
@@ -341,14 +341,11 @@ def render_session_summary_line(
     else:
         content.append("    - ", style=f"dim{bg}")
 
-    # Focus/expand indicator
-    if is_list_mode:
-        if has_focus:
-            content.append("→ ", style=status_color)
-        else:
-            content.append("  ", style=status_color)
+    # Focus indicator
+    if has_focus:
+        content.append("→ ", style=status_color)
     else:
-        content.append(f"{expand_icon} ", style=status_color)
+        content.append("  ", style=status_color)
 
     content.append(f"{display_name}", style=f"bold cyan{bg}")
 

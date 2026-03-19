@@ -404,13 +404,13 @@ class TestTUIPreferences:
         assert hasattr(prefs, 'summary_detail')
         assert prefs.summary_detail in ["low", "med", "full"]
 
-    def test_has_view_mode(self):
-        """TUIPreferences should have view_mode field."""
+    def test_has_preview_visible(self):
+        """TUIPreferences should have preview_visible field."""
         from overcode.settings import TUIPreferences
 
         prefs = TUIPreferences()
-        assert hasattr(prefs, 'view_mode')
-        assert prefs.view_mode in ["tree", "list_preview"]
+        assert hasattr(prefs, 'preview_visible')
+        assert prefs.preview_visible is False
 
     def test_load_returns_default_when_no_file(self, tmp_path):
         """TUIPreferences.load should return defaults when file doesn't exist."""
@@ -441,13 +441,13 @@ class TestTUIPreferences:
             ensure_session_dir("test-session")
 
             # Save preferences
-            original = TUIPreferences(show_terminated=True, view_mode="list_preview")
+            original = TUIPreferences(show_terminated=True, preview_visible=True)
             original.save("test-session")
 
             # Load and verify
             loaded = TUIPreferences.load("test-session")
             assert loaded.show_terminated is True
-            assert loaded.view_mode == "list_preview"
+            assert loaded.preview_visible is True
 
     def test_has_column_config(self):
         """TUIPreferences should have column_config field for per-level overrides."""

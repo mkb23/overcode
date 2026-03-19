@@ -64,14 +64,6 @@ SessionSummary {
     overflow: hidden;
 }
 
-SessionSummary.expanded {
-    height: auto;
-    min-height: 2;
-    max-height: 55;  /* Support up to 50 lines detail + header/instructions */
-    background: #1c1c1c;
-    border-bottom: solid #5588aa;
-}
-
 SessionSummary:hover {
     background: $boost;
 }
@@ -200,14 +192,7 @@ CommandBar.visible {
     padding-left: 1;
 }
 
-/* List mode - always collapsed */
-/* List mode: compact single-line, no borders/dividers */
-SessionSummary.list-mode {
-    height: 1;
-    border: none;
-    margin: 0;
-    padding: 0 1;
-}
+/* list-mode class kept for focus styling selector below */
 
 /* Preview pane - hidden by default, shown via .visible class */
 #preview-pane {

@@ -296,13 +296,10 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
-    if ctx.is_list_mode or ctx.is_compact_mode:
-        if ctx.has_focus:
-            return [("→ ", ctx.status_color)]
-        else:
-            return [("  ", ctx.status_color)]
+    if ctx.has_focus:
+        return [("→ ", ctx.status_color)]
     else:
-        return [(f"{ctx.expand_icon} ", ctx.status_color)]
+        return [("  ", ctx.status_color)]
 
 
 render_agent_name = _make_simple_render("display_name", colored_style="bold cyan")

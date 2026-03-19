@@ -1,7 +1,7 @@
 """
 Session summary widget for TUI.
 
-Displays expandable session summary with status, metrics, and pane content.
+Displays a single-line session summary with status, metrics, and content area.
 """
 
 from datetime import datetime, timedelta
@@ -21,38 +21,15 @@ from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
     get_status_symbol,
-    style_pane_line,
     get_git_diff_stats,
     get_summary_content_text,
 )
 from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
 
 
-def format_standing_instructions(instructions: str, max_len: int = 95) -> str:
-    """Format standing instructions for display.
-
-    Shows "[DEFAULT]" if instructions match the configured default,
-    otherwise shows the truncated instructions.
-    """
-    from ..config import get_default_standing_instructions
-
-    if not instructions:
-        return ""
-
-    default = get_default_standing_instructions()
-    if default and instructions.strip() == default.strip():
-        return "[DEFAULT]"
-
-    if len(instructions) > max_len:
-        return instructions[:max_len - 3] + "..."
-    return instructions
-
-
 class SessionSummary(Static, can_focus=True):
-    """Widget displaying expandable session summary"""
+    """Widget displaying single-line session summary"""
 
-    expanded: reactive[bool] = reactive(True)  # Start expanded
-    detail_lines: reactive[int] = reactive(5)  # Lines of output to show (5, 10, 20, 50)
     summary_detail: reactive[str] = reactive("low")  # low, med, full
     summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
 
@@ -106,21 +83,15 @@ class SessionSummary(Static, can_focus=True):
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
         self.child_count: int = 0  # Number of direct children — set by TUI
         self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
-        # Start with expanded class since expanded=True by default
-        self.add_class("expanded")
+        # Always single-line display
+        self.add_class("list-mode")
 
     def column_visible(self, col: SummaryColumn) -> bool:
         """Check if a column is visible at the current detail level with overrides."""
         return resolve_column_visible(col, self.summary_detail, self.column_overrides)
 
     def on_click(self) -> None:
-        """Toggle expanded state on click (disabled in list+preview mode)"""
-        if self.has_class("list-mode"):
-            return
-        self.expanded = not self.expanded
-        # Notify parent app to save state
-        self.post_message(self.ExpandedChanged(self.session.id, self.expanded))
-        # Mark as visited if this is an unvisited stalled agent
+        """Handle click — mark stalled agent as visited."""
         if self.is_unvisited_stalled:
             self.post_message(self.StalledAgentVisited(self.session.id))
 
@@ -137,33 +108,11 @@ class SessionSummary(Static, can_focus=True):
             super().__init__()
             self.session_id = session_id
 
-    class ExpandedChanged(events.Message):
-        """Message sent when expanded state changes"""
-        def __init__(self, session_id: str, expanded: bool):
-            super().__init__()
-            self.session_id = session_id
-            self.expanded = expanded
-
     class StalledAgentVisited(events.Message):
         """Message sent when user visits a stalled agent (focus or click)"""
         def __init__(self, session_id: str):
             super().__init__()
             self.session_id = session_id
-
-    def watch_expanded(self, expanded: bool) -> None:
-        """Called when expanded state changes"""
-        # Toggle CSS class for proper height
-        if expanded:
-            self.add_class("expanded")
-        else:
-            self.remove_class("expanded")
-        self.refresh(layout=True)
-        # Notify parent app to save state
-        self.post_message(self.ExpandedChanged(self.session.id, expanded))
-
-    def watch_detail_lines(self, detail_lines: int) -> None:
-        """Called when detail_lines changes - force layout refresh"""
-        self.refresh(layout=True)
 
     def update_status(self) -> None:
         """Update the detected status for this session.
@@ -305,8 +254,8 @@ class SessionSummary(Static, can_focus=True):
             summary_detail=self.summary_detail,
             show_cost=self.show_cost,
             any_has_budget=self.any_has_budget,
-            expand_icon="▼" if self.expanded else "▶",
-            is_list_mode="list-mode" in self.classes,
+            expand_icon="",
+            is_list_mode=True,
             is_compact_mode="compact-mode" in self.classes,
             has_focus=self.has_focus,
             is_unvisited_stalled=self.is_unvisited_stalled,
@@ -378,50 +327,8 @@ class SessionSummary(Static, can_focus=True):
         }
         content.append(text, style=style_map.get(style_cat, style_map["dim"]))
 
-    def _render_expanded_view(self, content: Text, ctx: ColumnContext) -> None:
-        """Render the expanded view: standing instructions + pane content lines."""
-        s = ctx.session
-
-        # Standing instructions
-        if s.standing_instructions:
-            content.append("\n")
-            content.append("  ")
-            display_instr = format_standing_instructions(s.standing_instructions)
-            if s.standing_orders_complete:
-                content.append("│ ", style=ctx.mono("bold green", "bold"))
-                content.append("✓ ", style=ctx.mono("bold green", "bold"))
-                content.append(display_instr, style=ctx.mono("green", ""))
-            elif s.standing_instructions_preset:
-                content.append("│ ", style=ctx.mono("cyan", "dim"))
-                content.append(f"{s.standing_instructions_preset}: ", style=ctx.mono("bold cyan", "bold"))
-                content.append(display_instr, style=ctx.mono("cyan", ""))
-            else:
-                content.append("│ ", style=ctx.mono("cyan", "dim"))
-                content.append("📋 ", style=ctx.mono("yellow", "bold"))
-                content.append(display_instr, style=ctx.mono("italic yellow", "italic"))
-
-        # Pane content lines
-        lines_to_show = self.detail_lines
-        if s.standing_instructions:
-            lines_to_show = max(1, lines_to_show - 1)
-        pane_lines = self.pane_content[-lines_to_show:] if self.pane_content else []
-
-        for line in pane_lines:
-            content.append("\n")
-            content.append("  ")
-            display_line = line[:100] + "..." if len(line) > 100 else line
-            prefix_style, content_style = style_pane_line(line)
-            content.append("│ ", style=prefix_style)
-            content.append(display_line, style=content_style)
-
-        if not pane_lines and not s.standing_instructions:
-            content.append("\n")
-            content.append("  ")
-            content.append("│ ", style=ctx.mono("cyan", "dim"))
-            content.append("(no output)", style=ctx.mono("dim italic", "dim"))
-
     def render(self) -> Text:
-        """Render session summary (compact or expanded)"""
+        """Render single-line session summary."""
         import shutil
         term_width = shutil.get_terminal_size().columns
         ctx = self._build_column_context()
@@ -439,18 +346,9 @@ class SessionSummary(Static, can_focus=True):
             for cell in cells:
                 content.append_text(cell)
 
-        if not self.expanded:
-            self._render_content_area(content, ctx, term_width)
-            # Pad to fill terminal width
-            current_len = len(content.plain)
-            if current_len < term_width:
-                content.append(" " * (term_width - current_len), style=ctx.mono(f"{ctx.bg}", ""))
-            return content
-
-        # Pad header line to full width before adding expanded content
+        self._render_content_area(content, ctx, term_width)
+        # Pad to fill terminal width
         current_len = len(content.plain)
         if current_len < term_width:
             content.append(" " * (term_width - current_len), style=ctx.mono(f"{ctx.bg}", ""))
-
-        self._render_expanded_view(content, ctx)
         return content

@@ -107,18 +107,15 @@ class SupervisorTUI(
         ("question_mark", "toggle_help", "Help"),
         ("d", "toggle_daemon", "Daemon panel"),
         ("t", "toggle_timeline", "Toggle timeline"),
-        ("v", "cycle_detail", "Cycle detail"),
         ("s", "cycle_summary", "Summary detail"),
-        ("e", "toggle_expand_all", "Expand/Collapse"),
         ("c", "sync_to_main_and_clear", "Sync main+clear"),
-        ("space", "toggle_focused", "Toggle"),
         # Navigation between agents
         ("j", "focus_next_session", "Next"),
         ("k", "focus_previous_session", "Prev"),
         ("down", "focus_next_session", "Next"),
         ("up", "focus_previous_session", "Prev"),
-        # View mode toggle
-        ("m", "toggle_view_mode", "Mode"),
+        # Preview pane toggle
+        ("m", "toggle_preview", "Preview"),
         # Fullscreen preview (expand preview pane)
         ("f", "expand_preview", "Fullscreen"),
         # Command bar (send instructions to agents)
@@ -216,8 +213,6 @@ class SupervisorTUI(
         ("J", "toggle_tui_mode", "Jobs"),
     ]
 
-    # Detail level cycles through 5, 10, 20, 50 lines
-    DETAIL_LEVELS = [5, 10, 20, 50]
     # Timeline scope presets in hours (#191)
     TIMELINE_PRESETS = [1, 3, 6, 12, 24]
     # Summary detail levels: low (minimal), med (timing), high (all metrics), full (everything)
@@ -229,7 +224,7 @@ class SupervisorTUI(
 
     sessions: reactive[List[Session]] = reactive(list)
     focused_session_index: reactive[int] = reactive(0, always_update=True)
-    view_mode: reactive[str] = reactive("tree")  # "tree" or "list_preview"
+    preview_visible: reactive[bool] = reactive(False)  # preview pane visibility
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
@@ -248,13 +243,11 @@ class SupervisorTUI(
         self.tmux_session = tmux_session
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
-        self.compact = False  # Compact mode: tree-only, no expand/preview (set by overcode tmux)
+        self.compact = False  # Compact mode: no preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session)
-        # Track expanded state per session ID to preserve across refreshes
-        self.expanded_states: dict[str, bool] = {}
         # Track collapsed parents in tree view (#244)
         self.collapsed_parents: set[str] = set()
         # Max repo/branch/name widths for alignment in full detail mode
@@ -266,13 +259,6 @@ class SupervisorTUI(
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
-
-        # Current detail level index (cycles through DETAIL_LEVELS)
-        # Initialize from saved preferences
-        try:
-            self.detail_level_index = self.DETAIL_LEVELS.index(self._prefs.detail_lines)
-        except ValueError:
-            self.detail_level_index = 0  # Default to 5 lines
 
         # Current summary detail level index (cycles through SUMMARY_LEVELS)
         # Initialize from saved preferences
@@ -478,12 +464,10 @@ class SupervisorTUI(
         # Update footer with current detail level
         self._update_footer()
 
-        # Set view_mode from preferences (triggers watch_view_mode)
-        # In compact mode (tmux split), always force tree mode
-        if self.compact:
-            self.view_mode = "tree"
-        else:
-            self.view_mode = self._prefs.view_mode
+        # Set preview visibility from preferences
+        # In compact mode (tmux split), preview is off (sister zoom enables it)
+        if not self.compact:
+            self.preview_visible = self._prefs.preview_visible
 
         # Apply pre-loaded sessions synchronously so widgets exist immediately
         if self._preloaded_sessions is not None:
@@ -881,7 +865,7 @@ class SupervisorTUI(
             )
 
     def _enter_sister_view(self) -> None:
-        """Zoom TUI pane and switch to list+preview for viewing a sister agent.
+        """Zoom TUI pane and show preview for viewing a sister agent.
 
         Called automatically when navigating to a remote agent in compact
         (tmux split) mode. The preview pane shows the sister's polled
@@ -892,20 +876,20 @@ class SupervisorTUI(
         self._sister_zoom_active = True
         # Zoom the TUI pane (same as dialog zoom)
         self._dialog_will_open()
-        # Switch to list_preview so the preview pane appears
-        self.view_mode = "list_preview"
+        # Show preview pane for sister content
+        self.preview_visible = True
 
     def _exit_sister_view(self) -> None:
         """Restore normal compact layout when navigating back to a local agent.
 
-        Reverses _enter_sister_view(): switches back to tree mode and
+        Reverses _enter_sister_view(): hides preview pane and
         unzooms the TUI pane to reveal the bottom terminal pane.
         """
         if not self._sister_zoom_active:
             return
         self._sister_zoom_active = False
-        # Switch back to tree mode (compact default)
-        self.view_mode = "tree"
+        # Hide preview pane (compact mode default)
+        self.preview_visible = False
         # Unzoom — but only if no dialog is holding the zoom open
         if not self._any_dialog_visible():
             import subprocess
@@ -976,7 +960,7 @@ class SupervisorTUI(
                 source="focus_switch", focused=True,
             )
         widget.focus()
-        if self.view_mode == "list_preview":
+        if self.preview_visible:
             self._update_preview()
         self._sync_tmux_window(widget)
 
@@ -1289,7 +1273,7 @@ class SupervisorTUI(
                 break
 
         # Refresh preview pane if in list_preview mode
-        if self.view_mode == "list_preview":
+        if self.preview_visible:
             self._update_preview()
 
     def _optimistic_update_remote(self, session_id: str, **fields) -> None:
@@ -1308,7 +1292,7 @@ class SupervisorTUI(
                 widget.session = replace(widget.session, **fields)
                 widget.refresh()
                 break
-        if self.view_mode == "list_preview":
+        if self.preview_visible:
             self._update_preview()
 
     # ── End sister integration ────────────────────────────────────────
@@ -1410,7 +1394,7 @@ class SupervisorTUI(
                     self._notified_stalls.add(session_id)
 
                 # Auto-dismiss bell after 5s if this agent is already being viewed
-                if stall.is_unvisited_stalled and self.view_mode == "list_preview":
+                if stall.is_unvisited_stalled and self.preview_visible:
                     focused = self._get_focused_widget()
                     if focused is not None and focused.session.id == session_id:
                         self._schedule_bell_dismiss(session_id)
@@ -1445,7 +1429,7 @@ class SupervisorTUI(
             self._save_prefs()
 
         # Update preview pane on the fast path (250ms) for responsive updates
-        if self.view_mode == "list_preview":
+        if self.preview_visible:
             self._update_preview()
 
         # Proactive focus recovery: if focus was lost or landed on a non-interactive
@@ -1671,13 +1655,6 @@ class SupervisorTUI(
         for session in display_sessions:
             if session.id in sessions_added:
                 widget = SessionSummary(session, self.detector)
-                # Restore expanded state if we have it saved
-                if self.compact:
-                    widget.expanded = False  # Always collapsed in compact mode
-                elif session.id in self.expanded_states:
-                    widget.expanded = self.expanded_states[session.id]
-                # Apply current detail level
-                widget.detail_lines = self.DETAIL_LEVELS[self.detail_level_index]
                 # Apply current summary detail level
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
@@ -1695,10 +1672,6 @@ class SupervisorTUI(
                 # Apply per-level column overrides
                 current_level = self.SUMMARY_LEVELS[self.summary_level_index]
                 widget.column_overrides = self._prefs.column_config.get(current_level, {})
-                # Apply list-mode class if in list_preview view
-                if self.view_mode == "list_preview":
-                    widget.add_class("list-mode")
-                    widget.expanded = False  # Force collapsed in list mode
                 # Apply compact-mode class for prominent focus styling
                 if self.compact:
                     widget.add_class("compact-mode")
@@ -1750,13 +1723,6 @@ class SupervisorTUI(
             self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
         finally:
             self._suppress_focus_watcher = False
-
-    def on_session_summary_expanded_changed(self, message: SessionSummary.ExpandedChanged) -> None:
-        """Handle expanded state changes from session widgets"""
-        # Don't save forced-collapsed state in list_preview mode
-        if self.view_mode == "list_preview":
-            return
-        self.expanded_states[message.session_id] = message.expanded
 
     def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
         """Handle when user visits a stalled agent - mark as visited"""
@@ -1972,7 +1938,7 @@ class SupervisorTUI(
             w.remove_class("selected")
         widget.add_class("selected")
         # Update preview pane
-        if self.view_mode == "list_preview":
+        if self.preview_visible:
             try:
                 preview = self.query_one("#preview-pane", PreviewPane)
                 preview.update_from_job_widget(widget)
@@ -2079,39 +2045,28 @@ class SupervisorTUI(
         if job.status == "running" and job.tmux_window:
             self._job_launcher.tmux.send_keys(job.tmux_window, "", enter=True)
 
-    def watch_view_mode(self, view_mode: str) -> None:
-        """React to view mode changes."""
+    def watch_preview_visible(self, preview_visible: bool) -> None:
+        """React to preview pane visibility changes."""
         if not self.is_running:
             return  # App not composed yet — nothing to update
-        # Update subtitle to show current mode
         self._update_subtitle()
 
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
             container = self.query_one("#sessions-container", ScrollableContainer)
-            if view_mode == "list_preview":
-                # Collapse all sessions, show preview pane
+            if preview_visible:
                 container.add_class("list-mode")
-                for widget in self.query(SessionSummary):
-                    widget.add_class("list-mode")
-                    widget.expanded = False  # Force collapsed
                 preview.add_class("visible")
                 self._update_preview()
             else:
-                # Restore tree mode, hide preview
                 container.remove_class("list-mode")
-                for widget in self.query(SessionSummary):
-                    widget.remove_class("list-mode")
-                    # Restore saved expanded state
-                    saved = self.expanded_states.get(widget.session.id, True)
-                    widget.expanded = saved
                 preview.remove_class("visible")
         except NoMatches:
             pass
 
     def _update_subtitle(self) -> None:
-        """Update the header subtitle to show session and view mode."""
-        mode_label = "Tree" if self.view_mode == "tree" else "List+Preview"
+        """Update the header subtitle to show session info."""
+        mode_label = "Preview" if self.preview_visible else "List"
         sync_label = " [Sync]" if self.tmux_sync else ""
         tui_mode_label = ""
         if self.tui_mode == "jobs":
@@ -2127,7 +2082,7 @@ class SupervisorTUI(
         if self.tui_mode == "jobs":
             return "J:Agents | h:Help | q:Quit | j/k:Nav | x:Kill | c:Clear done | enter:Send | g:Show done"
         level = self.SUMMARY_LEVELS[self.summary_level_index] if hasattr(self, 'summary_level_index') else "low"
-        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed | J:Jobs"
+        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | m:Preview | p:Pause | d:Daemon | t:Timeline | g:Killed | J:Jobs"
 
     def _update_footer(self) -> None:
         """Update the footer help-text with current detail level."""
@@ -2464,7 +2419,7 @@ class SupervisorTUI(
                     else:
                         self.focused_session_index = min(self.focused_session_index, len(widgets) - 1)
                         widgets[self.focused_session_index].focus()
-                    if self.view_mode == "list_preview":
+                    if self.preview_visible:
                         self._update_preview()
         except NoMatches:
             pass
@@ -2645,9 +2600,6 @@ class SupervisorTUI(
             # Update session cache
             if session_id in self._sessions_cache:
                 del self._sessions_cache[session_id]
-            if session_id in self.expanded_states:
-                del self.expanded_states[session_id]
-
             # If showing terminated sessions, refresh to add it back
             if self.show_terminated:
                 self.update_session_widgets()
@@ -2674,9 +2626,6 @@ class SupervisorTUI(
             del self._terminated_sessions[session_id]
         if session_id in self._sessions_cache:
             del self._sessions_cache[session_id]
-        if session_id in self.expanded_states:
-            del self.expanded_states[session_id]
-
         # Remove the widget
         focused.remove()
 
@@ -3060,11 +3009,8 @@ class SupervisorTUI(
 
     # Actions incompatible with compact mode (overcode tmux)
     _COMPACT_BLOCKED_ACTIONS = frozenset({
-        "toggle_view_mode",    # m — no list+preview mode
-        "toggle_focused",      # space — no expanding sessions
-        "toggle_expand_all",   # e — no expanding sessions
+        "toggle_preview",      # m — no preview pane toggle in compact
         "expand_preview",      # f — no fullscreen preview
-        "cycle_detail",        # v — no detail level cycling
     })
 
     def action_quit(self) -> None:
@@ -3270,10 +3216,7 @@ def run_tui(
         app.tmux_sync_target = sync_target
         app.tmux_sync = True
         app.compact = True
-        # view_mode defaults to "tree" already — don't re-set it here
-        # because the reactive watcher would fire before the app is composed.
-        # Collapse all sessions
-        app.expanded_states.clear()
+        # preview_visible defaults to False — correct for compact mode.
         # Hide timeline (real estate is precious in the top pane)
         app._prefs.timeline_visible = False
 

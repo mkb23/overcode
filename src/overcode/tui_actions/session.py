@@ -126,14 +126,6 @@ class SessionActionsMixin:
         except NoMatches:
             self.notify("Command bar not found", severity="error")
 
-    def action_toggle_focused(self) -> None:
-        """Toggle expansion of focused session (only in tree mode)."""
-        if self.view_mode == "list_preview":
-            return  # Don't toggle in list mode
-        focused = _get_focused_session(self)
-        if focused:
-            focused.expanded = not focused.expanded
-
     def action_toggle_sleep(self) -> None:
         """Toggle sleep mode for the focused agent.
 

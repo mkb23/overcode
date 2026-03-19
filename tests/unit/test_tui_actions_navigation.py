@@ -34,7 +34,7 @@ class TestFocusNextSession:
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget1, mock_widget2, mock_widget3]
         mock_tui.focused_session_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_focus_next_session(mock_tui)
 
@@ -50,7 +50,7 @@ class TestFocusNextSession:
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget1, mock_widget2]
         mock_tui.focused_session_index = 1  # At end
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_focus_next_session(mock_tui)
 
@@ -82,7 +82,7 @@ class TestFocusPreviousSession:
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget1, mock_widget2, mock_widget3]
         mock_tui.focused_session_index = 1
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_focus_previous_session(mock_tui)
 
@@ -98,7 +98,7 @@ class TestFocusPreviousSession:
         mock_tui = MagicMock()
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget1, mock_widget2]
         mock_tui.focused_session_index = 0  # At beginning
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_focus_previous_session(mock_tui)
 
@@ -157,7 +157,7 @@ class TestJumpToAttention:
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget_waiting, mock_widget_bell]
         mock_tui._attention_jump_list = []
         mock_tui._attention_jump_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
@@ -177,7 +177,7 @@ class TestJumpToAttention:
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget]
         mock_tui._attention_jump_list = []
         mock_tui._attention_jump_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
@@ -196,7 +196,7 @@ class TestJumpToAttention:
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget]
         mock_tui._attention_jump_list = []
         mock_tui._attention_jump_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
@@ -215,7 +215,7 @@ class TestJumpToAttention:
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget]
         mock_tui._attention_jump_list = []
         mock_tui._attention_jump_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 
@@ -239,7 +239,7 @@ class TestJumpToAttention:
         mock_tui._get_widgets_in_session_order.return_value = [mock_widget1, mock_widget2]
         mock_tui._attention_jump_list = [mock_widget1, mock_widget2]  # Already built
         mock_tui._attention_jump_index = 0
-        mock_tui.view_mode = "list"
+        mock_tui.preview_visible = False
 
         NavigationActionsMixin.action_jump_to_attention(mock_tui)
 

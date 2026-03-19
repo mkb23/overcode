@@ -313,14 +313,13 @@ class TestRenderSessionSummaryLine:
 
         plain = result.plain
         assert "test-agent" in plain
-        assert "▶" in plain  # collapsed indicator
 
-    def test_renders_expanded_indicator(self):
-        """Should show expanded indicator when expanded."""
+    def test_renders_focus_indicator(self):
+        """Should show focus arrow when has_focus is True."""
         result = render_session_summary_line(
             name="test-agent",
             detected_status="running",
-            expanded=True,
+            expanded=False,
             summary_detail="low",
             start_time=datetime.now().isoformat(),
             repo_name=None,
@@ -337,12 +336,12 @@ class TestRenderSessionSummaryLine:
             median_work_time=0,
             git_diff_stats=None,
             is_unvisited_stalled=False,
-            has_focus=False,
+            has_focus=True,
             is_list_mode=False,
         )
 
         plain = result.plain
-        assert "▼" in plain  # expanded indicator
+        assert "→" in plain  # focus indicator
 
     def test_renders_stalled_indicator(self):
         """Should show bell indicator for unvisited stalled agent."""

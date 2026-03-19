@@ -426,13 +426,12 @@ class TUIPreferences:
     # Fields excluded from persistence — always use dataclass default (#319)
     _SKIP_PERSIST = frozenset({"show_done"})
     # Load defaults that differ from dataclass defaults (migration compat)
-    _LOAD_DEFAULTS = {"view_mode": "tree", "baseline_minutes": 0}
+    _LOAD_DEFAULTS = {"baseline_minutes": 0}
 
     summary_detail: str = "full"  # low, med, full
-    detail_lines: int = 5  # 5, 10, 20, 50
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
-    view_mode: str = "list_preview"  # tree, list_preview
+    preview_visible: bool = False  # preview pane visibility
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display

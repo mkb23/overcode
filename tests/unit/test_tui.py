@@ -1078,18 +1078,16 @@ class TestSessionSummaryRender:
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
-        widget.expanded = True
         widget.pane_content = ["$ npm test", "✓ All tests passed"]
-        widget.detail_lines = 5
 
         result = widget.render()
         plain = result.plain
 
-        assert "npm test" in plain
-        assert "All tests passed" in plain
+        # Single-line summary — agent name should be present
+        assert "test-agent" in plain
 
     def test_render_with_standing_instructions(self):
-        """Render shows standing instructions indicator"""
+        """Render shows standing instructions in content area"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
         from overcode.status_detector import StatusDetector
@@ -1113,12 +1111,12 @@ class TestSessionSummaryRender:
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
-        widget.expanded = False
+        # Set content mode to orders so standing instructions appear in single-line summary
+        widget.summary_content_mode = "orders"
 
         result = widget.render()
         plain = result.plain
 
-        assert "📋" in plain
         assert "Keep working" in plain
 
 
@@ -1324,21 +1322,6 @@ class TestSupervisorTUIPilot:
             assert timeline.display == initial_display
 
     @pytest.mark.asyncio
-    async def test_detail_level_cycling(self):
-        """Pressing v cycles detail level"""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI(tmux_session="test-pilot")
-
-        async with app.run_test() as pilot:
-            await pilot.pause()  # let mount lifecycle complete
-            initial_index = app.detail_level_index
-
-            # Cycle through levels
-            await pilot.press("v")
-            # Index should change (wraps around)
-            assert app.detail_level_index != initial_index or initial_index == 3
-
     @pytest.mark.asyncio
     async def test_summary_detail_cycling(self):
         """Pressing s cycles summary detail level through low->med->high->full"""
@@ -1435,46 +1418,6 @@ class TestHelpOverlayPilot:
             assert help_overlay.has_class("visible")
 
 
-class TestFormatStandingInstructions:
-    """Test format_standing_instructions helper"""
-
-    def test_returns_empty_for_empty_input(self):
-        """Empty input returns empty string"""
-        from overcode.tui_widgets.session_summary import format_standing_instructions
-        assert format_standing_instructions("") == ""
-        assert format_standing_instructions(None) == ""
-
-    def test_returns_default_when_matching(self):
-        """Returns [DEFAULT] when instructions match configured default"""
-        from overcode.tui_widgets.session_summary import format_standing_instructions
-        from unittest.mock import patch
-
-        with patch('overcode.config.get_default_standing_instructions') as mock:
-            mock.return_value = "Approve file writes"
-            result = format_standing_instructions("Approve file writes")
-            assert result == "[DEFAULT]"
-
-    def test_returns_instructions_when_different(self):
-        """Returns actual instructions when different from default"""
-        from overcode.tui_widgets.session_summary import format_standing_instructions
-        from unittest.mock import patch
-
-        with patch('overcode.config.get_default_standing_instructions') as mock:
-            mock.return_value = "Approve file writes"
-            result = format_standing_instructions("Custom instructions here")
-            assert result == "Custom instructions here"
-
-    def test_truncates_long_instructions(self):
-        """Truncates instructions that exceed max_len"""
-        from overcode.tui_widgets.session_summary import format_standing_instructions
-        from unittest.mock import patch
-
-        with patch('overcode.config.get_default_standing_instructions') as mock:
-            mock.return_value = ""
-            long_text = "x" * 100
-            result = format_standing_instructions(long_text, max_len=50)
-            assert len(result) == 50
-            assert result.endswith("...")
 
 
 # =============================================================================
