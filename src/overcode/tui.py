@@ -244,6 +244,7 @@ class SupervisorTUI(
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self.terminal_enabled = terminal  # Enable embedded terminal pane (--terminal flag)
         self.compact = False  # Compact mode: tree-only, no expand/preview (set by overcode tmux)
+        self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session)
@@ -850,6 +851,9 @@ class SupervisorTUI(
         # Don't unzoom if another dialog is still visible
         if self._any_dialog_visible():
             return
+        # Don't unzoom if sister view is holding the zoom open
+        if self._sister_zoom_active:
+            return
         import subprocess
         target = "overcode:overcode-tmux.0"
         info = subprocess.run(
@@ -861,6 +865,46 @@ class SupervisorTUI(
                 ["tmux", "resize-pane", "-t", target, "-Z"],
                 capture_output=True,
             )
+
+    def _enter_sister_view(self) -> None:
+        """Zoom TUI pane and switch to list+preview for viewing a sister agent.
+
+        Called automatically when navigating to a remote agent in compact
+        (tmux split) mode. The preview pane shows the sister's polled
+        pane_content. The bottom terminal pane is hidden via tmux zoom.
+        """
+        if self._sister_zoom_active:
+            return
+        self._sister_zoom_active = True
+        # Zoom the TUI pane (same as dialog zoom)
+        self._dialog_will_open()
+        # Switch to list_preview so the preview pane appears
+        self.view_mode = "list_preview"
+
+    def _exit_sister_view(self) -> None:
+        """Restore normal compact layout when navigating back to a local agent.
+
+        Reverses _enter_sister_view(): switches back to tree mode and
+        unzooms the TUI pane to reveal the bottom terminal pane.
+        """
+        if not self._sister_zoom_active:
+            return
+        self._sister_zoom_active = False
+        # Switch back to tree mode (compact default)
+        self.view_mode = "tree"
+        # Unzoom — but only if no dialog is holding the zoom open
+        if not self._any_dialog_visible():
+            import subprocess
+            target = "overcode:overcode-tmux.0"
+            info = subprocess.run(
+                ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+                capture_output=True, text=True,
+            )
+            if info.returncode == 0 and info.stdout.strip() == "1":
+                subprocess.run(
+                    ["tmux", "resize-pane", "-t", target, "-Z"],
+                    capture_output=True,
+                )
 
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
@@ -1851,6 +1895,10 @@ class SupervisorTUI(
         When tmux_sync_target is set (e.g. by `overcode split`), syncs to
         that linked session. Otherwise syncs to the agents session directly.
 
+        In compact mode, selecting a remote/sister agent auto-zooms the TUI
+        pane and shows the preview pane with the sister's content. Selecting
+        a local agent restores the normal split layout.
+
         Args:
             widget: The session widget to sync to. If None, uses self.focused.
         """
@@ -1860,8 +1908,16 @@ class SupervisorTUI(
         try:
             target = widget if widget is not None else self.focused
             if isinstance(target, SessionSummary):
-                window_index = target.session.tmux_window
-                if window_index is not None:
+                session = target.session
+
+                # Sister zoom: auto-enter/exit sister view in compact mode
+                if self.compact and session.is_remote and not self._sister_zoom_active:
+                    self._enter_sister_view()
+                elif self.compact and not session.is_remote and self._sister_zoom_active:
+                    self._exit_sister_view()
+
+                window_index = session.tmux_window
+                if window_index is not None and window_index != "":
                     sync_session = self.tmux_sync_target or self.tmux_session
                     self._tmux.select_window(sync_session, window_index)
         except Exception:
@@ -3097,13 +3153,13 @@ def run_tui(
     app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal)
 
     # If a sync target is provided (e.g. from `overcode tmux`), enable compact mode:
-    # auto-sync, no sisters, tree-only, no expand/preview/timeline
+    # auto-sync, tree-only, no expand/preview/timeline
+    # Sisters ARE enabled — selecting a remote agent auto-zooms the TUI pane
+    # and shows the preview pane with polled sister content.
     if sync_target:
         app.tmux_sync_target = sync_target
         app.tmux_sync = True
         app.compact = True
-        app.has_sisters = False
-        app._remote_sessions = []
         # view_mode defaults to "tree" already — don't re-set it here
         # because the reactive watcher would fire before the app is composed.
         # Collapse all sessions
