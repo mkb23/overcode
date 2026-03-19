@@ -346,11 +346,15 @@ class SessionActionsMixin:
         focused.refresh()
 
     def action_kill_focused(self) -> None:
-        """Kill or clean up the currently focused agent (requires confirmation).
+        """Kill or clean up the currently focused agent/job (requires confirmation).
 
         Context-sensitive: if the agent is terminated/done, cleans it up
         (archives and removes from display). Otherwise kills it.
+        In jobs mode, kills the focused job.
         """
+        if getattr(self, 'tui_mode', 'agents') == 'jobs':
+            self._action_kill_focused_job()
+            return
         focused = _get_focused_session(self)
         if not focused:
             self.notify("No agent focused", severity="warning")
@@ -439,10 +443,15 @@ class SessionActionsMixin:
     def action_sync_to_main_and_clear(self) -> None:
         """Switch to main branch, pull, and clear agent context (requires confirmation).
 
+        In jobs mode, clears completed jobs instead.
+
         This action:
         1. Runs git checkout main && git pull via Claude's bash command
         2. Sends /clear to reset the conversation context
         """
+        if getattr(self, 'tui_mode', 'agents') == 'jobs':
+            self._action_clear_completed_jobs()
+            return
         focused = _get_focused_session(self)
         if not focused:
             self.notify("No agent focused", severity="warning")

@@ -82,6 +82,26 @@ overcode send my-agent escape    # Reject permission
 overcode send my-agent "yes"     # Send text response
 ```
 
+## Jobs (Long-Running Bash Commands)
+
+For long-running commands (10min+ \u2014 test suites, builds, deploys), use `overcode bash` to launch them as tracked jobs in a separate tmux session. This keeps the output visible and lets you monitor multiple concurrent jobs from the TUI.
+
+```bash
+# Launch a job
+overcode bash "pytest tests/ -x" --name unit-tests
+overcode bash "npm run build" -d ~/frontend
+overcode bash "make deploy-staging" --agent my-agent   # Link to an agent
+
+# Manage jobs
+overcode jobs list [--all]        # List running (or all) jobs
+overcode jobs kill <name>         # Kill a running job
+overcode jobs attach <name>       # Attach to job's tmux window
+overcode jobs clear               # Remove completed/failed/killed jobs
+
+# TUI: press J to toggle jobs view, j/k to navigate, x to kill, c to clear
+overcode monitor --jobs           # Start TUI directly in jobs view
+```
+
 ## Standing Instructions Presets
 
 `overcode instruct <name> <preset>` \u2014 available presets: `DO_NOTHING`, `STANDARD`, `PERMISSIVE`, `CAUTIOUS`, `RESEARCH`, `CODING`, `TESTING`, `REVIEW`, `DEPLOY`, `AUTONOMOUS`, `MINIMAL`.
@@ -193,6 +213,30 @@ Pass arbitrary Claude CLI flags with `--claude-arg` (repeatable):
 ```bash
 overcode launch -n fast --claude-arg "--model haiku" --claude-arg "--effort low" -p "Quick review"
 ```
+
+## Long-Running Shell Commands (Jobs)
+
+When a task involves a long-running shell command (10min+ \u2014 full test suites, builds, deploys, docker compose), use `overcode bash` instead of running it inline. This launches the command as a tracked job in a separate tmux session with its own window, so you can monitor it without blocking your agent session.
+
+```bash
+# Launch a test suite as a tracked job
+overcode bash "pytest tests/ -x --timeout=600" --name full-tests
+
+# Launch a build linked to the current agent
+overcode bash "npm run build" --name frontend-build --agent my-agent
+
+# Check on it later
+overcode jobs list
+overcode jobs attach full-tests    # Attach to see live output
+overcode jobs kill full-tests      # Kill if needed
+```
+
+**When to use `overcode bash` vs running inline:**
+- Inline (`Bash` tool): Quick commands (<2 min) where you need the result to continue
+- `overcode bash`: Long commands (10min+) \u2014 test suites, builds, deploys, docker operations
+- `overcode launch`: When you need a full Claude Code agent with AI reasoning
+
+Jobs are visible in the TUI jobs view (press `J`) and auto-clean after 24h (configurable via `jobs.retention_hours` in config).
 
 ## Rules
 

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .session_summary import SessionSummary
+    from .job_summary import JobSummary
 
 # Clean ANSI for Rich's Text.from_ansi():
 # 1. Strip non-SGR CSI sequences (\x1b[K, \x1b[?25l, etc.) — Rich only handles SGR.
@@ -103,6 +104,25 @@ class PreviewPane(ScrollableContainer):
             self.call_after_refresh(lambda: self.scroll_end(animate=False))
         else:
             # Restore user's scroll position after content replacement
+            self.call_after_refresh(lambda: self.scroll_to(y=saved_scroll, animate=False))
+
+    def update_from_job_widget(self, widget: "JobSummary") -> None:
+        """Update preview content from a JobSummary widget."""
+        self.session_name = widget.job.name
+        self.content_lines = list(widget.pane_content) if widget.pane_content else []
+
+        saved_scroll = self.scroll_offset.y
+        was_auto = self._auto_scroll
+
+        try:
+            content_widget = self.query_one("#preview-content", Static)
+            content_widget.update(self._build_content())
+        except Exception as e:
+            logger.debug("Failed to update preview content: %s", e)
+
+        if was_auto:
+            self.call_after_refresh(lambda: self.scroll_end(animate=False))
+        else:
             self.call_after_refresh(lambda: self.scroll_to(y=saved_scroll, animate=False))
 
     def on_mouse_scroll_up(self, event) -> None:

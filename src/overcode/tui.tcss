@@ -344,3 +344,45 @@ InstructionHistoryModal {
 InstructionHistoryModal.visible {
     display: block;
 }
+
+/* Jobs container — hidden by default, shown when tui_mode == "jobs" */
+#jobs-container {
+    display: none;
+    height: 1fr;
+    width: 100%;
+    overflow: auto auto;
+}
+
+#jobs-container.visible {
+    display: block;
+}
+
+/* In list+preview mode, jobs container is compact */
+#jobs-container.list-mode {
+    height: auto;
+    max-height: 30%;
+}
+
+JobSummary {
+    height: 1;
+    width: 100%;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+    background: $surface;
+    overflow: hidden;
+}
+
+JobSummary:hover {
+    background: $boost;
+}
+
+JobSummary:focus {
+    background: #2d4a5a;
+    text-style: bold;
+}
+
+JobSummary.selected {
+    background: #2d4a5a;
+    text-style: bold;
+}

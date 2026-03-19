@@ -113,7 +113,10 @@ class InputActionsMixin:
         return result.ok
 
     def action_send_enter_to_focused(self) -> None:
-        """Send Enter keypress to the focused agent (for approvals)."""
+        """Send Enter keypress to the focused agent/job."""
+        if getattr(self, 'tui_mode', 'agents') == 'jobs':
+            self._action_send_enter_to_focused_job()
+            return
         _send_keys_to_focused(self, "enter", label="Enter")
 
     def action_send_escape_to_focused(self) -> None:

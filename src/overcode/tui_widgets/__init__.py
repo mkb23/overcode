@@ -19,6 +19,7 @@ from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .instruction_history_modal import InstructionHistoryModal
 from .terminal_pane import TerminalPane
+from .job_summary import JobSummary
 
 __all__ = [
     "FullscreenPreview",
@@ -35,4 +36,5 @@ __all__ = [
     "AgentSelectModal",
     "SisterSelectionModal",
     "InstructionHistoryModal",
+    "JobSummary",
 ]

@@ -24,6 +24,8 @@ from textual import events, work
 
 from . import __version__
 from .session_manager import SessionManager, Session
+from .job_manager import Job, JobManager
+from .job_launcher import JobLauncher
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
@@ -66,6 +68,7 @@ from .tui_widgets import (
     DaemonStatusBar,
     StatusTimeline,
     SessionSummary,
+    JobSummary,
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
@@ -212,6 +215,8 @@ class SupervisorTUI(
         ("I", "open_instruction_history", "Instruction history"),
         # Embedded terminal toggle (prototype)
         ("ctrl+e", "toggle_terminal_pane", "Terminal"),
+        # Jobs mode toggle
+        ("J", "toggle_tui_mode", "Jobs"),
     ]
 
     # Detail level cycles through 5, 10, 20, 50 lines
@@ -237,12 +242,16 @@ class SupervisorTUI(
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
     show_cost: reactive[str] = reactive("tokens")  # "tokens", "cost", "joules" — cycle with $
+    tui_mode: reactive[str] = reactive("agents")  # "agents" | "jobs"
+    focused_job_index: reactive[int] = reactive(0, always_update=True)
+    jobs: reactive[List[Job]] = reactive(list)
 
-    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False):
+    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, terminal: bool = False, initial_jobs_mode: bool = False):
         super().__init__()
         self.tmux_session = tmux_session
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self.terminal_enabled = terminal  # Enable embedded terminal pane (--terminal flag)
+        self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
         self.compact = False  # Compact mode: tree-only, no expand/preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
@@ -342,6 +351,10 @@ class SupervisorTUI(
         )
         self._summaries: dict[str, AgentSummary] = {}
 
+        # Jobs mode — tracked bash jobs in a separate tmux session
+        self._job_manager = JobManager()
+        self._job_launcher = JobLauncher(job_manager=self._job_manager)
+
         # Sister integration (#245) - remote agent monitoring + control
         self._sister_poller = SisterPoller()
         self.has_sisters: bool = self._sister_poller.has_sisters
@@ -373,6 +386,7 @@ class SupervisorTUI(
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
+        yield ScrollableContainer(id="jobs-container")
         yield PreviewPane(id="preview-pane")
         if self.terminal_enabled:
             yield TerminalPane(tmux_session=self.tmux_session, id="terminal-pane")
@@ -523,6 +537,12 @@ class SupervisorTUI(
                 self._poll_sisters()  # Initial fetch
                 # Fast poll for the focused remote agent (1.5s)
                 self.set_interval(1.5, self._poll_focused_sister)
+            # Refresh jobs list every 5 seconds
+            self.set_interval(5, self._refresh_jobs)
+
+        # Apply initial jobs mode if requested (e.g. --jobs flag)
+        if self._initial_jobs_mode:
+            self.tui_mode = "jobs"
 
     def update_daemon_status(self) -> None:
         """Update daemon status bar (kicks off background worker)"""
@@ -1923,6 +1943,169 @@ class SupervisorTUI(
         except Exception:
             pass  # Silent fail - don't disrupt navigation
 
+    # =========================================================================
+    # Jobs Mode
+    # =========================================================================
+
+    def action_toggle_tui_mode(self) -> None:
+        """Toggle between agents and jobs view."""
+        self.tui_mode = "jobs" if self.tui_mode == "agents" else "agents"
+
+    def watch_tui_mode(self, mode: str) -> None:
+        """React to tui_mode changes — swap visible containers."""
+        if not self.is_running:
+            return
+        try:
+            sessions_container = self.query_one("#sessions-container", ScrollableContainer)
+            jobs_container = self.query_one("#jobs-container", ScrollableContainer)
+            if mode == "jobs":
+                sessions_container.display = False
+                jobs_container.add_class("visible")
+                jobs_container.display = True
+                self._refresh_jobs()
+                # Focus first job widget if available
+                job_widgets = list(self.query(JobSummary))
+                if job_widgets:
+                    self.focused_job_index = 0
+                    job_widgets[0].focus()
+            else:
+                jobs_container.remove_class("visible")
+                jobs_container.display = False
+                sessions_container.display = True
+                # Refocus agents
+                widget = self._get_focused_widget()
+                if widget:
+                    widget.focus()
+        except NoMatches:
+            pass
+        self._update_subtitle()
+        self._update_footer()
+
+    def watch_focused_job_index(self, new_index: int) -> None:
+        """Focus the job widget at the new index and update preview."""
+        if self.tui_mode != "jobs":
+            return
+        job_widgets = self._get_job_widgets()
+        if not job_widgets:
+            return
+        if not (0 <= new_index < len(job_widgets)):
+            new_index = max(0, min(new_index, len(job_widgets) - 1))
+            self.focused_job_index = new_index
+            return
+        widget = job_widgets[new_index]
+        widget.focus()
+        # Remove .selected from all, add to focused
+        for w in job_widgets:
+            w.remove_class("selected")
+        widget.add_class("selected")
+        # Update preview pane
+        if self.view_mode == "list_preview":
+            try:
+                preview = self.query_one("#preview-pane", PreviewPane)
+                preview.update_from_job_widget(widget)
+            except NoMatches:
+                pass
+
+    def _get_job_widgets(self) -> List[JobSummary]:
+        """Get job widgets in order."""
+        return list(self.query(JobSummary))
+
+    @work(thread=True, exclusive=True, group="refresh_jobs")
+    def _refresh_jobs(self) -> None:
+        """Refresh jobs list from state file."""
+        try:
+            show_completed = self.show_terminated  # Reuse the ghost toggle
+            jobs = self._job_launcher.list_jobs(include_completed=show_completed)
+            self.call_from_thread(self._apply_jobs, jobs)
+        except Exception:
+            pass
+
+    def _apply_jobs(self, jobs: List[Job]) -> None:
+        """Apply refreshed job list to TUI (main thread)."""
+        self.jobs = jobs
+        try:
+            container = self.query_one("#jobs-container", ScrollableContainer)
+        except NoMatches:
+            return
+
+        existing = {w.job.id: w for w in self.query(JobSummary)}
+        current_ids = {j.id for j in jobs}
+
+        # Remove widgets for deleted jobs
+        for job_id, widget in existing.items():
+            if job_id not in current_ids:
+                widget.remove()
+
+        # Update existing or mount new
+        for job in jobs:
+            if job.id in existing:
+                existing[job.id].refresh_job(job)
+            else:
+                widget = JobSummary(job)
+                widget.monochrome = self.monochrome
+                widget.emoji_free = self.emoji_free
+                container.mount(widget)
+
+        # Capture pane content for focused job
+        if self.tui_mode == "jobs":
+            self._update_focused_job_pane_content()
+
+    def _update_focused_job_pane_content(self) -> None:
+        """Capture tmux pane content for the focused job widget."""
+        job_widgets = self._get_job_widgets()
+        if not job_widgets:
+            return
+        idx = self.focused_job_index
+        if not (0 <= idx < len(job_widgets)):
+            return
+        widget = job_widgets[idx]
+        job = widget.job
+        if job.status == "running" and job.tmux_window:
+            try:
+                tmux = self._job_launcher.tmux
+                pane = tmux._get_pane(job.tmux_window)
+                if pane:
+                    lines = pane.capture_pane()
+                    widget.pane_content = lines if lines else []
+            except Exception:
+                pass
+
+    def _action_kill_focused_job(self) -> None:
+        """Kill the focused job."""
+        job_widgets = self._get_job_widgets()
+        if not job_widgets:
+            return
+        idx = self.focused_job_index
+        if not (0 <= idx < len(job_widgets)):
+            return
+        job = job_widgets[idx].job
+        if job.status != "running":
+            self.notify(f"Job '{job.name}' is not running", severity="warning")
+            return
+        if self._job_launcher.kill_job(job.name):
+            self.notify(f"Killed job '{job.name}'")
+            self._refresh_jobs()
+        else:
+            self.notify(f"Failed to kill job '{job.name}'", severity="error")
+
+    def _action_clear_completed_jobs(self) -> None:
+        """Clear all completed/failed/killed jobs."""
+        self._job_manager.clear_completed()
+        self.notify("Cleared completed jobs")
+        self._refresh_jobs()
+
+    def _action_send_enter_to_focused_job(self) -> None:
+        """Send Enter to the focused job's tmux window."""
+        job_widgets = self._get_job_widgets()
+        if not job_widgets:
+            return
+        idx = self.focused_job_index
+        if not (0 <= idx < len(job_widgets)):
+            return
+        job = job_widgets[idx].job
+        if job.status == "running" and job.tmux_window:
+            self._job_launcher.tmux.send_keys(job.tmux_window, "", enter=True)
+
     def watch_view_mode(self, view_mode: str) -> None:
         """React to view mode changes."""
         if not self.is_running:
@@ -1969,15 +2152,21 @@ class SupervisorTUI(
         """Update the header subtitle to show session and view mode."""
         mode_label = "Tree" if self.view_mode == "tree" else "List+Preview"
         sync_label = " [Sync]" if self.tmux_sync else ""
+        tui_mode_label = ""
+        if self.tui_mode == "jobs":
+            job_count = len(self.jobs)
+            tui_mode_label = f" [Jobs: {job_count}]"
         if self.diagnostics:
-            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label} [DIAGNOSTICS]"
+            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}{tui_mode_label} [DIAGNOSTICS]"
         else:
-            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}"
+            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}{tui_mode_label}"
 
     def _build_footer_text(self) -> str:
         """Build the footer help text string with current detail level."""
+        if self.tui_mode == "jobs":
+            return "J:Agents | h:Help | q:Quit | j/k:Nav | x:Kill | c:Clear done | enter:Send | g:Show done"
         level = self.SUMMARY_LEVELS[self.summary_level_index] if hasattr(self, 'summary_level_index') else "low"
-        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed"
+        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | space | m:Mode | p:Pause | d:Daemon | t:Timeline | g:Killed | J:Jobs"
 
     def _update_footer(self) -> None:
         """Update the footer help-text with current detail level."""
@@ -3132,6 +3321,7 @@ def run_tui(
     diagnostics: bool = False,
     terminal: bool = False,
     sync_target: str | None = None,
+    initial_jobs_mode: bool = False,
 ):
     """Run the TUI supervisor.
 
@@ -3150,7 +3340,7 @@ def run_tui(
     # Force terminal size detection
     os.environ.setdefault('TERM', 'xterm-256color')
 
-    app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal)
+    app = SupervisorTUI(tmux_session, diagnostics=diagnostics, terminal=terminal, initial_jobs_mode=initial_jobs_mode)
 
     # If a sync target is provided (e.g. from `overcode tmux`), enable compact mode:
     # auto-sync, tree-only, no expand/preview/timeline

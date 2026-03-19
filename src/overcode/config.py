@@ -314,6 +314,19 @@ def save_new_agent_defaults(defaults: dict) -> None:
     save_config(config)
 
 
+def get_jobs_retention_hours() -> float:
+    """Get job retention period in hours.
+
+    Config format in ~/.overcode/config.yaml:
+        jobs:
+          retention_hours: 24
+
+    Returns:
+        Retention hours (default 24)
+    """
+    return float(_get_config_value("jobs.retention_hours", 24))
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 
