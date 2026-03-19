@@ -380,11 +380,44 @@ def tmux_layout(
 
     # --- Uninstall mode ---
     if uninstall:
+        removed_anything = False
+
         if _are_keybindings_installed():
             _remove_keybindings()
-            rprint("[green]Overcode tmux keybindings removed.[/green]")
-        else:
-            rprint("[dim]No overcode keybindings found.[/dim]")
+            rprint("[green]Keybindings removed.[/green]")
+            removed_anything = True
+
+        # Kill the split window and overcode session
+        existing = _find_existing_split_window_any_session()
+        if existing:
+            sess, win_id = existing
+            _tmux("kill-window", "-t", win_id)
+            # If the session is now empty, kill it too
+            result = _tmux("list-windows", "-t", sess)
+            if result.returncode != 0 or not result.stdout.strip():
+                _tmux("kill-session", "-t", sess)
+                rprint(f"[green]Killed session '{sess}'.[/green]")
+            else:
+                rprint(f"[green]Killed split window in '{sess}'.[/green]")
+            removed_anything = True
+
+        # Kill any linked sessions (oc-view-*)
+        result = _tmux("list-sessions", "-F", "#{session_name}")
+        if result.returncode == 0:
+            for sess_name in result.stdout.strip().splitlines():
+                if sess_name.startswith(LINKED_SESSION_PREFIX + "-"):
+                    _tmux("kill-session", "-t", sess_name)
+                    rprint(f"[green]Killed linked session '{sess_name}'.[/green]")
+                    removed_anything = True
+
+        if not removed_anything:
+            rprint("[dim]No overcode tmux state found.[/dim]")
+
+        rprint("")
+        rprint("[dim]Note: global tmux options (focus-events on, terminal-features *:sync)")
+        rprint("are left in place as they are generally harmless. To remove them:[/dim]")
+        rprint("  tmux set -g focus-events off")
+        rprint("  tmux set -g terminal-features ''")
         return
 
     # Verify agents session exists
@@ -520,11 +553,21 @@ def tmux_layout(
     # because tmux refuses to attach from inside an existing session.
     attach_cmd = f"unset TMUX; tmux attach-session -t {linked}"
 
-    # Kill stale overcode session if it exists but has no split window
+    # If an "overcode" session exists but has no split window, it might be:
+    # (a) a stale session from a previous overcode run, or
+    # (b) a user's own session that happens to share the name.
+    # Only kill it if it has exactly one window (likely stale from us).
+    # If it has multiple windows, add our split window to it instead.
     if _tmux_check("has-session", "-t", oc_session):
         existing = _find_existing_split_window(oc_session)
         if not existing:
-            _tmux("kill-session", "-t", oc_session)
+            win_count = _tmux_output(
+                "list-windows", "-t", oc_session, "-F", "#{window_id}",
+            )
+            if win_count.count("\n") == 0 and win_count.strip():
+                # Single window — safe to assume it's a stale overcode session
+                _tmux("kill-session", "-t", oc_session)
+            # If multiple windows, leave it alone — we'll add our window to it
 
     need_new_session = not _tmux_check("has-session", "-t", oc_session)
 

@@ -959,6 +959,9 @@ class SupervisorTUI(
             return
         widget = self._get_focused_widget()
         if widget is None:
+            # No widgets — exit sister zoom if active (e.g. all sisters removed)
+            if self._sister_zoom_active:
+                self._exit_sister_view()
             return
         if self._prefs.status_change_logging:
             self._log_status_change(
