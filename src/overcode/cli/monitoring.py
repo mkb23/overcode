@@ -270,9 +270,6 @@ def monitor(
     diagnostics: Annotated[
         bool, typer.Option("--diagnostics", help="Diagnostic mode: disable all auto-refresh timers")
     ] = False,
-    terminal: Annotated[
-        bool, typer.Option("--terminal", help="Enable embedded terminal pane (Ctrl+E to toggle)")
-    ] = False,
     sync_target: Annotated[
         str, typer.Option("--sync-target", hidden=True, help="Linked tmux session for pane sync (set by `overcode split`)")
     ] = "",
@@ -302,7 +299,7 @@ def monitor(
 
     from ..tui import run_tui
 
-    run_tui(session, diagnostics=diagnostics, terminal=terminal, sync_target=sync_target or None)
+    run_tui(session, diagnostics=diagnostics, sync_target=sync_target or None)
 
 
 @app.command()
