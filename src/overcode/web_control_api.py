@@ -158,6 +158,7 @@ def launch_agent(
     perm_map = {
         "normal": (False, False),
         "permissive": (True, False),
+        "skip": (True, False),
         "bypass": (False, True),
     }
     if permissions not in perm_map:

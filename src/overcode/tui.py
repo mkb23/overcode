@@ -2440,13 +2440,17 @@ class SupervisorTUI(
                 self.notify(f"Sister '{sister_name}' is unreachable", severity="warning")
                 return
 
-        result = self._sister_controller.launch_agent(
-            sister_url=sister_config["url"],
-            api_key=sister_config.get("api_key", ""),
-            directory=directory or ".",
-            name=agent_name,
-            permissions=permissions,
-        )
+        try:
+            result = self._sister_controller.launch_agent(
+                sister_url=sister_config["url"],
+                api_key=sister_config.get("api_key", ""),
+                directory=directory or ".",
+                name=agent_name,
+                permissions=permissions,
+            )
+        except Exception as e:
+            self.notify(f"Remote launch failed: {e}", severity="error")
+            return
 
         if result.ok:
             self.notify(f"Remote agent '{agent_name}' launched on {sister_name}", severity="information")
