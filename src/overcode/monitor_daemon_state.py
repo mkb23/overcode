@@ -107,6 +107,9 @@ class SessionDaemonState:
     depth: int = 0  # Computed by daemon each cycle
     children_count: int = 0  # Computed by daemon each cycle
 
+    # Model
+    model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
+
     # Oversight system
     oversight_policy: str = "wait"
     oversight_timeout_seconds: float = 0.0

@@ -55,6 +55,7 @@ class SessionSummary(Static, can_focus=True):
         self.any_has_subtree_cost: bool = False  # True if any parent has subtree cost
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
+        self.any_has_model: bool = False  # True if any agent has a model set
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
@@ -286,6 +287,9 @@ class SessionSummary(Static, can_focus=True):
             # PR number (widget var, not session)
             pr_number=self.pr_number,
             any_has_pr=self.any_has_pr,
+            # Model
+            model=s.model or "",
+            any_has_model=self.any_has_model,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

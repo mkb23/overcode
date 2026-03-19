@@ -132,6 +132,7 @@ class Session:
     extra_claude_args: List[str] = field(default_factory=list)  # Extra CLI flags via --claude-arg
     agent_teams: bool = False  # Claude Code agent teams mode (#309)
     claude_agent: Optional[str] = None  # Claude agent persona (from .claude/agents/)
+    model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus", "haiku", or full name)
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
@@ -489,6 +490,7 @@ class SessionManager:
                       extra_claude_args: Optional[List[str]] = None,
                       agent_teams: bool = False,
                       claude_agent: Optional[str] = None,
+                      model: Optional[str] = None,
                       session_id: Optional[str] = None) -> Session:
         """Create and register a new session.
 
@@ -525,6 +527,7 @@ class SessionManager:
             extra_claude_args=extra_claude_args or [],
             agent_teams=agent_teams,
             claude_agent=claude_agent,
+            model=model,
         )
 
         with self._locked_state() as state:

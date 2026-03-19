@@ -255,6 +255,8 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         heartbeat_frequency_seconds=agent.get("heartbeat_frequency_seconds", 300),
         heartbeat_paused=agent.get("heartbeat_paused", False),
         last_heartbeat_time=agent.get("last_heartbeat_time"),
+        # Model
+        model=agent.get("model") or None,
         # Sister metadata
         is_remote=True,
         source_host=host_name,

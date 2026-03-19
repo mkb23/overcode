@@ -457,6 +457,8 @@ class MonitorDaemon:
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
+            # Model
+            model=session.model,
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
@@ -639,18 +641,19 @@ class MonitorDaemon:
                 stats.cache_read_tokens,
             )
 
-            # Estimate cost using configured pricing (defaults to Opus 4.5)
-            from .settings import get_user_config
-            pricing = get_user_config()
+            # Estimate cost using per-model pricing (falls back to global config)
+            from .settings import get_user_config, get_model_pricing
+            config = get_user_config()
+            mp = get_model_pricing(session.model, config)
             cost_estimate = calculate_cost_estimate(
                 stats.input_tokens,
                 stats.output_tokens,
                 stats.cache_creation_tokens,
                 stats.cache_read_tokens,
-                price_input=pricing.price_input,
-                price_output=pricing.price_output,
-                price_cache_write=pricing.price_cache_write,
-                price_cache_read=pricing.price_cache_read,
+                price_input=mp.input,
+                price_output=mp.output,
+                price_cache_write=mp.cache_write,
+                price_cache_read=mp.cache_read,
             )
 
             self.session_manager.update_stats(

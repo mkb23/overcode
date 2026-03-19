@@ -109,10 +109,10 @@ def calculate_cost_estimate(
     output_tokens: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
-    price_input: float = 5.0,
-    price_output: float = 25.0,
-    price_cache_write: float = 6.25,
-    price_cache_read: float = 0.50,
+    price_input: float = 3.0,
+    price_output: float = 15.0,
+    price_cache_write: float = 3.75,
+    price_cache_read: float = 0.30,
 ) -> float:
     """Calculate estimated cost from token counts.
 
@@ -123,10 +123,10 @@ def calculate_cost_estimate(
         output_tokens: Number of output tokens
         cache_creation_tokens: Number of cache creation tokens
         cache_read_tokens: Number of cache read tokens
-        price_input: Price per million input tokens (default: Opus 4.5)
-        price_output: Price per million output tokens (default: Opus 4.5)
-        price_cache_write: Price per million cache write tokens (default: Opus 4.5)
-        price_cache_read: Price per million cache read tokens (default: Opus 4.5)
+        price_input: Price per million input tokens (default: Sonnet)
+        price_output: Price per million output tokens (default: Sonnet)
+        price_cache_write: Price per million cache write tokens (default: Sonnet)
+        price_cache_read: Price per million cache read tokens (default: Sonnet)
 
     Returns:
         Estimated cost in USD

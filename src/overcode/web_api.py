@@ -230,6 +230,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "human_annotation": getattr(s, "human_annotation", ""),
         "start_time": s.start_time or "",
         "parent_name": s.parent_name or "",
+        "model": getattr(s, "model", "") or "",
     }
 
 

@@ -81,6 +81,7 @@ class ClaudeLauncher:
         resume_session_id: Optional[str] = None,
         fork: bool = False,
         claude_session_id: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> List[str]:
         """Construct the claude CLI argument list.
 
@@ -113,6 +114,8 @@ class ClaudeLauncher:
         elif skip_permissions or permissiveness_mode == "permissive":
             cmd.extend(["--permission-mode", "dontAsk"])
 
+        if model:
+            cmd.extend(["--model", model])
         if claude_agent:
             cmd.extend(["--agent", claude_agent])
         if allowed_tools:
@@ -137,6 +140,7 @@ class ClaudeLauncher:
         extra_claude_args: Optional[List[str]] = None,
         agent_teams: bool = False,
         claude_agent: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -155,6 +159,7 @@ class ClaudeLauncher:
             extra_claude_args=extra_claude_args,
             agent_teams=agent_teams,
             claude_agent=claude_agent,
+            model=model,
             session_id=session_id,
         )
 
@@ -215,6 +220,7 @@ class ClaudeLauncher:
         agent_teams: bool = False,
         budget_usd: Optional[float] = None,
         claude_agent: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -306,6 +312,7 @@ class ClaudeLauncher:
             allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args,
             claude_session_id=claude_session_id,
+            model=model,
         )
 
         if dangerously_skip_permissions:
@@ -322,7 +329,7 @@ class ClaudeLauncher:
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args, agent_teams=agent_teams,
-            claude_agent=claude_agent,
+            claude_agent=claude_agent, model=model,
         )
 
         session = self._prepare_and_launch(

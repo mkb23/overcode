@@ -192,6 +192,10 @@ def launch(
         Optional[str],
         typer.Option("--allowed-tools", help="Comma-separated tools for Claude (e.g. 'Bash,Read,Write,Edit')"),
     ] = None,
+    model: Annotated[
+        Optional[str],
+        typer.Option("--model", "-m", help="Claude model (e.g. sonnet, opus, haiku, or full name)"),
+    ] = None,
     claude_args: Annotated[
         Optional[List[str]],
         typer.Option("--claude-arg", help="Extra Claude CLI flag (repeatable, e.g. '--model haiku')"),
@@ -283,6 +287,7 @@ def launch(
         agent_teams=teams,
         budget_usd=budget,
         claude_agent=agent,
+        model=model,
     )
 
     if result:

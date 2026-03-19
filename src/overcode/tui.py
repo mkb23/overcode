@@ -1602,6 +1602,9 @@ class SupervisorTUI(
                 for w in self.query(SessionSummary)
             )
 
+        # Check if any agent has a model set
+        any_has_model = any(s.model for s in self.sessions if s.model)
+
         # Check if any agent is busy_sleeping (#289)
         any_is_sleeping = any(
             getattr(w, 'detected_status', '') == "busy_sleeping"
@@ -1662,6 +1665,7 @@ class SupervisorTUI(
                     widget.any_has_oversight_timeout = any_has_oversight_timeout
                     widget.any_is_sleeping = any_is_sleeping
                     widget.any_has_pr = any_has_pr
+                    widget.any_has_model = any_has_model
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
                     widget.any_has_subtree_cost = any_has_subtree_cost
@@ -1715,6 +1719,7 @@ class SupervisorTUI(
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
                 widget.any_is_sleeping = any_is_sleeping
                 widget.any_has_pr = any_has_pr
+                widget.any_has_model = any_has_model
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost

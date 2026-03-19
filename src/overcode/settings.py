@@ -206,17 +206,61 @@ TUI = TUISettings()
 # =============================================================================
 
 @dataclass
+class ModelPricing:
+    """Per-million-token pricing for a model."""
+    input: float
+    output: float
+    cache_write: float
+    cache_read: float
+
+
+# Built-in pricing for known Claude model families.
+# Keys are checked as prefixes against model names, so "opus" matches
+# "opus", "claude-opus-4-6", etc.  Order matters: longer prefixes first.
+MODEL_PRICING: dict[str, ModelPricing] = {
+    "opus":   ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
+    "sonnet": ModelPricing(input=3.0,  output=15.0, cache_write=3.75,  cache_read=0.30),
+    "haiku":  ModelPricing(input=0.80, output=4.0,  cache_write=1.0,   cache_read=0.08),
+}
+
+
+def get_model_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:
+    """Look up pricing for a model name, falling back to global config.
+
+    Matches against MODEL_PRICING keys as substrings of the model name
+    (e.g. "claude-sonnet-4-6" matches "sonnet").  User overrides in
+    config.yaml under ``model_pricing:`` take precedence over built-ins.
+    """
+    if model:
+        # Check user overrides first, then built-ins
+        all_pricing = {**MODEL_PRICING, **fallback.model_pricing}
+        model_lower = model.lower()
+        for key, pricing in all_pricing.items():
+            if key in model_lower:
+                return pricing
+    return ModelPricing(
+        input=fallback.price_input,
+        output=fallback.price_output,
+        cache_write=fallback.price_cache_write,
+        cache_read=fallback.price_cache_read,
+    )
+
+
+@dataclass
 class UserConfig:
     """User-configurable settings from config.yaml."""
 
     default_standing_instructions: str = ""
     tmux_session: str = "agents"
 
-    # Token pricing (per million tokens) - defaults to Opus 4.5
-    price_input: float = 5.0        # $/MTok for input tokens
-    price_output: float = 25.0      # $/MTok for output tokens
-    price_cache_write: float = 6.25  # $/MTok for cache creation
-    price_cache_read: float = 0.50   # $/MTok for cache reads
+    # Token pricing (per million tokens) - defaults to Sonnet
+    price_input: float = 3.0        # $/MTok for input tokens
+    price_output: float = 15.0      # $/MTok for output tokens
+    price_cache_write: float = 3.75  # $/MTok for cache creation
+    price_cache_read: float = 0.30   # $/MTok for cache reads
+
+    # Per-model pricing overrides (loaded from config.yaml model_pricing section)
+    model_pricing: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "UserConfig":
@@ -235,15 +279,29 @@ class UserConfig:
                 # Load pricing config (nested under 'pricing' key)
                 pricing = data.get("pricing", {})
 
+                # Parse per-model pricing overrides
+                model_pricing_raw = data.get("model_pricing", {})
+                model_pricing_parsed: dict[str, ModelPricing] = {}
+                if isinstance(model_pricing_raw, dict):
+                    for key, vals in model_pricing_raw.items():
+                        if isinstance(vals, dict):
+                            model_pricing_parsed[key] = ModelPricing(
+                                input=vals.get("input", 3.0),
+                                output=vals.get("output", 15.0),
+                                cache_write=vals.get("cache_write", 3.75),
+                                cache_read=vals.get("cache_read", 0.30),
+                            )
+
                 return cls(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
                     ),
                     tmux_session=data.get("tmux_session", "agents"),
-                    price_input=pricing.get("input", 5.0),
-                    price_output=pricing.get("output", 25.0),
-                    price_cache_write=pricing.get("cache_write", 6.25),
-                    price_cache_read=pricing.get("cache_read", 0.50),
+                    price_input=pricing.get("input", 3.0),
+                    price_output=pricing.get("output", 15.0),
+                    price_cache_write=pricing.get("cache_write", 3.75),
+                    price_cache_read=pricing.get("cache_read", 0.30),
+                    model_pricing=model_pricing_parsed,
                 )
         except (yaml.YAMLError, IOError):
             return cls()

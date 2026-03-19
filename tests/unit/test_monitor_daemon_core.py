@@ -259,38 +259,38 @@ class TestCalculateCostEstimate:
         assert cost == 0.0
 
     def test_input_tokens_only(self):
-        """Input tokens: $5/MTok (Opus 4.5 default)."""
+        """Input tokens: $3/MTok (Sonnet default)."""
         cost = calculate_cost_estimate(
             input_tokens=1_000_000,
             output_tokens=0,
         )
-        assert cost == 5.0
+        assert cost == 3.0
 
     def test_output_tokens_only(self):
-        """Output tokens: $25/MTok (Opus 4.5 default)."""
+        """Output tokens: $15/MTok (Sonnet default)."""
         cost = calculate_cost_estimate(
             input_tokens=0,
             output_tokens=1_000_000,
         )
-        assert cost == 25.0
+        assert cost == 15.0
 
     def test_cache_creation_tokens(self):
-        """Cache creation: $6.25/MTok (Opus 4.5 default)."""
+        """Cache creation: $3.75/MTok (Sonnet default)."""
         cost = calculate_cost_estimate(
             input_tokens=0,
             output_tokens=0,
             cache_creation_tokens=1_000_000,
         )
-        assert cost == 6.25
+        assert cost == 3.75
 
     def test_cache_read_tokens(self):
-        """Cache read: $0.50/MTok (Opus 4.5 default)."""
+        """Cache read: $0.30/MTok (Sonnet default)."""
         cost = calculate_cost_estimate(
             input_tokens=0,
             output_tokens=0,
             cache_read_tokens=1_000_000,
         )
-        assert cost == 0.50
+        assert cost == 0.30
 
     def test_custom_pricing(self):
         """Should use custom pricing when provided."""
@@ -303,23 +303,23 @@ class TestCalculateCostEstimate:
         assert cost == 18.0  # 3 + 15
 
     def test_mixed_tokens(self):
-        """Combined token types (Opus 4.5 pricing)."""
+        """Combined token types (Sonnet pricing)."""
         cost = calculate_cost_estimate(
-            input_tokens=500_000,   # $2.50
-            output_tokens=100_000,  # $2.50
-            cache_creation_tokens=200_000,  # $1.25
-            cache_read_tokens=1_000_000,    # $0.50
+            input_tokens=500_000,   # $1.50
+            output_tokens=100_000,  # $1.50
+            cache_creation_tokens=200_000,  # $0.75
+            cache_read_tokens=1_000_000,    # $0.30
         )
-        assert abs(cost - 6.75) < 0.001
+        assert abs(cost - 4.05) < 0.001
 
     def test_realistic_session(self):
-        """Realistic session with typical token counts (Opus 4.5 pricing)."""
+        """Realistic session with typical token counts (Sonnet pricing)."""
         cost = calculate_cost_estimate(
             input_tokens=50_000,
             output_tokens=10_000,
         )
-        # 50k * 5/M + 10k * 25/M = 0.25 + 0.25 = 0.50
-        assert abs(cost - 0.50) < 0.001
+        # 50k * 3/M + 10k * 15/M = 0.15 + 0.15 = 0.30
+        assert abs(cost - 0.30) < 0.001
 
 
 class TestCalculateTotalTokens:

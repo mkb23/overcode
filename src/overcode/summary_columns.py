@@ -153,6 +153,10 @@ class ColumnContext:
     pr_number: Optional[int] = None
     any_has_pr: bool = False
 
+    # Model
+    model: str = ""  # Claude model short name or full name
+    any_has_model: bool = False  # True if any agent has a model set
+
     # Sister integration (#245)
     source_host: str = ""
     is_remote: bool = False
@@ -348,6 +352,19 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
         return [(f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
     else:
         return [("       -", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
+
+
+def render_model(ctx: ColumnContext) -> ColumnOutput:
+    """Model name. Only visible when any agent has a model set."""
+    if not ctx.model:
+        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    # Show short alias (up to 6 chars) right-aligned
+    display = ctx.model[:6]
+    return [(f" {display:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+
+
+def render_model_plain(ctx: ColumnContext) -> Optional[str]:
+    return ctx.model or None
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
@@ -867,6 +884,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Context group — always visible, independent of $ toggle
     SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
                   header="CTX", name="Context Usage"),
+    SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
+                  label="Model", render_plain=render_model_plain,
+                  visible=lambda ctx: ctx.any_has_model,
+                  placeholder_width=6, header="MDL", name="Model"),
 
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
@@ -923,6 +944,7 @@ def build_cli_context(
     any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
+    any_has_model: bool = False,
     monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
@@ -994,6 +1016,8 @@ def build_cli_context(
         sleep_wake_estimate=sleep_wake_estimate,
         pr_number=pr_number,
         any_has_pr=any_has_pr,
+        model=getattr(session, 'model', '') or '',
+        any_has_model=any_has_model,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
         has_sisters=has_sisters,

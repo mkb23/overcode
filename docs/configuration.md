@@ -201,23 +201,29 @@ These persist across TUI restarts.
 
 ## Pricing Configuration
 
-Default pricing matches Claude Sonnet 3.5. Update for other models:
+Cost estimates are **model-aware** when you launch agents with `--model`. Built-in pricing is included for Claude Opus, Sonnet, and Haiku. Agents launched without `--model` use the global `pricing:` section as a fallback.
 
 ```yaml
-# Claude Opus
+# Global fallback pricing (used when no model is set) — defaults to Sonnet
 pricing:
-  input: 15.0
-  output: 75.0
-  cache_write: 18.75
-  cache_read: 1.50
-
-# GPT-4
-pricing:
-  input: 30.0
-  output: 60.0
-  cache_write: 0
-  cache_read: 0
+  input: 3.0
+  output: 15.0
+  cache_write: 3.75
+  cache_read: 0.30
 ```
+
+To override or add pricing for a specific model keyword:
+
+```yaml
+model_pricing:
+  my-custom-model:
+    input: 10.0
+    output: 50.0
+    cache_write: 12.5
+    cache_read: 1.0
+```
+
+Model names are matched as substrings, so `"sonnet"` matches `"claude-sonnet-4-6"`. User overrides in `model_pricing:` take precedence over the built-in table.
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
 

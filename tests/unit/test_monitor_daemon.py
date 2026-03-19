@@ -401,10 +401,12 @@ class TestSyncClaudeCodeStats:
         mock_config.price_output = 75.0
         mock_config.price_cache_write = 18.75
         mock_config.price_cache_read = 1.50
+        mock_config.model_pricing = {}
         monkeypatch.setattr(
             'overcode.settings.get_user_config',
             lambda: mock_config
         )
+        mock_session.model = None
 
         daemon.sync_claude_code_stats(mock_session)
 
