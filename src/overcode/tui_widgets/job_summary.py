@@ -92,8 +92,10 @@ class JobSummary(Static, can_focus=True):
         if job.exit_code is not None:
             exit_str = f" ({job.exit_code})"
 
-        # Agent link
-        agent_str = f" ← {job.agent_name}" if job.agent_name else ""
+        # Agent name (truncate to 16)
+        agent = job.agent_name or ""
+        if len(agent) > 16:
+            agent = agent[:15] + "…"
 
         # Truncate name if needed
         name = job.name
@@ -109,12 +111,11 @@ class JobSummary(Static, can_focus=True):
         text = Text()
         text.append(icon, style=color)
         text.append(f" {name:<{nw}} ", style="bold" if job.status == "running" else "")
+        text.append(f"{agent:<16} ", style="dim cyan")
         text.append(f"{cmd:<80} ", style="dim" if job.status != "running" else "")
         text.append(f"{start_str:>16} ", style="dim")
         text.append(f"{duration:>6} ", style="")
         text.append(f"  {job.status}{exit_str}", style=color)
-        if agent_str:
-            text.append(agent_str, style="dim cyan")
 
         return text
 

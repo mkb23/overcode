@@ -2192,14 +2192,11 @@ class SupervisorTUI(
         """Update the header subtitle to show session info."""
         mode_label = "Preview" if self.preview_visible else "List"
         sync_label = " [Sync]" if self.tmux_sync else ""
-        tui_mode_label = ""
-        if self.tui_mode == "jobs":
-            job_count = len(self.jobs)
-            tui_mode_label = f" [Jobs: {job_count}]"
+        session_label = "jobs" if self.tui_mode == "jobs" else self.tmux_session
         if self.diagnostics:
-            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}{tui_mode_label} [DIAGNOSTICS]"
+            self.sub_title = f"{session_label} [{mode_label}]{sync_label} [DIAGNOSTICS]"
         else:
-            self.sub_title = f"{self.tmux_session} [{mode_label}]{sync_label}{tui_mode_label}"
+            self.sub_title = f"{session_label} [{mode_label}]{sync_label}"
 
     def _build_footer_text(self) -> str:
         """Build the footer help text string with current detail level."""
@@ -2233,6 +2230,7 @@ class SupervisorTUI(
                 header = Text()
                 header.append("  ", style="")
                 header.append(f"{'Name':<{nw}} ", style="bold dim")
+                header.append(f"{'Agent':<16} ", style="bold dim")
                 header.append(f"{'Command':<80} ", style="bold dim")
                 header.append(f"{'Started':>16} ", style="bold dim")
                 header.append(f"{'Time':>6} ", style="bold dim")
