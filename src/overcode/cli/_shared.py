@@ -76,6 +76,14 @@ sister_app = typer.Typer(
 )
 app.add_typer(sister_app, name="sister")
 
+# Jobs subcommand group
+jobs_app = typer.Typer(
+    name="jobs",
+    help="Manage overcode jobs.",
+    no_args_is_help=True,
+)
+app.add_typer(jobs_app, name="jobs")
+
 # Config subcommand group
 config_app = typer.Typer(
     name="config",

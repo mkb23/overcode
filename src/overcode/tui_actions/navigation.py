@@ -14,14 +14,26 @@ class NavigationActionsMixin:
     """Mixin providing navigation actions for SupervisorTUI."""
 
     def action_focus_next_session(self) -> None:
-        """Focus the next session in the list."""
+        """Focus the next session/job in the list (mode-aware)."""
+        if getattr(self, 'tui_mode', 'agents') == 'jobs':
+            job_widgets = self._get_job_widgets()
+            if not job_widgets:
+                return
+            self.focused_job_index = (self.focused_job_index + 1) % len(job_widgets)
+            return
         widgets = self._get_widgets_in_session_order()
         if not widgets:
             return
         self.focused_session_index = (self.focused_session_index + 1) % len(widgets)
 
     def action_focus_previous_session(self) -> None:
-        """Focus the previous session in the list."""
+        """Focus the previous session/job in the list (mode-aware)."""
+        if getattr(self, 'tui_mode', 'agents') == 'jobs':
+            job_widgets = self._get_job_widgets()
+            if not job_widgets:
+                return
+            self.focused_job_index = (self.focused_job_index - 1) % len(job_widgets)
+            return
         widgets = self._get_widgets_in_session_order()
         if not widgets:
             return

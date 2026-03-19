@@ -273,6 +273,9 @@ def monitor(
     sync_target: Annotated[
         str, typer.Option("--sync-target", hidden=True, help="Linked tmux session for pane sync (set by `overcode split`)")
     ] = "",
+    jobs: Annotated[
+        bool, typer.Option("--jobs", help="Start in jobs view")
+    ] = False,
 ):
     """Launch the standalone TUI monitor."""
     if restart:
@@ -299,7 +302,7 @@ def monitor(
 
     from ..tui import run_tui
 
-    run_tui(session, diagnostics=diagnostics, sync_target=sync_target or None)
+    run_tui(session, diagnostics=diagnostics, sync_target=sync_target or None, initial_jobs_mode=jobs)
 
 
 @app.command()
