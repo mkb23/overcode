@@ -240,9 +240,41 @@ overcode instruct my-agent --clear
 
 ## Monitoring Commands
 
+### `overcode tmux`
+
+Open the tmux split layout: dashboard on top, agent terminal on bottom. This is the recommended way to use overcode.
+
+```bash
+overcode tmux [options]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--ratio` | `-r` | Percentage of height for the dashboard pane (default: 25) |
+| `--uninstall` | | Remove keybindings, kill split window and linked sessions |
+| `--yes` | `-y` | Skip the first-run confirmation prompt |
+| `--session` | | Tmux session name (default: `agents`) |
+
+Running `overcode tmux` again re-attaches to the existing layout (restarts the dashboard with latest code).
+
+**Split layout keybindings** (scoped to the split window only):
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Toggle focus between dashboard and terminal pane |
+| `Option+J/K` | Navigate agents from the terminal pane |
+| `PageUp/Down` | Enter scrollback in the terminal pane |
+| `WheelUp/Down` | Mouse scroll in the terminal pane |
+
+**Uninstall:**
+```bash
+overcode tmux --uninstall
+```
+Removes keybindings, kills the split window and linked sessions. Global tmux options (`focus-events`, `terminal-features`) are left in place (see output for manual removal commands).
+
 ### `overcode monitor`
 
-Launch the TUI dashboard (standalone, no supervisor).
+Launch the standalone TUI dashboard (no tmux split).
 
 ```bash
 overcode monitor [options]

@@ -2947,7 +2947,6 @@ class SupervisorTUI(
         "expand_preview",      # f — no fullscreen preview
         "cycle_detail",        # v — no detail level cycling
         "toggle_terminal_pane",  # ctrl+e — no embedded terminal
-        "toggle_timeline",     # t — no timeline
     })
 
     def action_quit(self) -> None:

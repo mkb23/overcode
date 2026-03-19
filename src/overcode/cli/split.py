@@ -28,11 +28,51 @@ and restore tmux defaults.
 import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from ._shared import app, SessionOption
+
+
+def _acquire_setup_lock() -> bool:
+    """Acquire an exclusive lock to prevent concurrent `overcode tmux` runs.
+
+    Uses a lockfile in ~/.overcode/. Returns True if lock acquired,
+    False if another instance is already setting up.
+    """
+    lock_dir = Path.home() / ".overcode"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "tmux-setup.lock"
+    try:
+        # O_CREAT | O_EXCL: atomic create-if-not-exists
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        # Check if the holding process is still alive (stale lock)
+        try:
+            pid = int(lock_path.read_text().strip())
+            os.kill(pid, 0)  # signal 0 = check if alive
+            return False  # Process is alive — genuine lock
+        except (ValueError, ProcessLookupError, PermissionError, OSError):
+            # Stale lock — remove and retry
+            lock_path.unlink(missing_ok=True)
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                return True
+            except FileExistsError:
+                return False  # Another process beat us
+
+
+def _release_setup_lock() -> None:
+    """Release the setup lock."""
+    lock_path = Path.home() / ".overcode" / "tmux-setup.lock"
+    lock_path.unlink(missing_ok=True)
 
 
 def _find_overcode_cmd() -> str:
@@ -166,9 +206,6 @@ def _setup_keybindings(linked_session: str = "") -> None:
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
         "send-keys Tab",  # pass Tab through in other windows
     )
-    # Unbind R if previously bound (replaced by =/- in the TUI)
-    _tmux("unbind-key", "-n", "R")
-
     # --- Agent navigation from the bottom (terminal) pane ---
     # Option+J / Option+K (Meta+j/k) cycle agents by sending j/k
     # to the monitor pane, which navigates and syncs the terminal.
@@ -448,6 +485,21 @@ def tmux_layout(
             raise typer.Exit(0)
         rprint("")
 
+    # Prevent concurrent `overcode tmux` invocations from racing
+    if not _acquire_setup_lock():
+        rprint("[yellow]Another `overcode tmux` is already setting up. Try again in a moment.[/yellow]")
+        raise typer.Exit(1)
+
+    try:
+        _tmux_layout_locked(session, ratio, rprint)
+    finally:
+        _release_setup_lock()
+
+
+def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
+    """Create or re-attach to the tmux split layout. Called under setup lock."""
+    in_tmux = os.environ.get("TMUX")
+
     _tmux("set", "-g", "focus-events", "on")
     # Enable synchronized output (DEC mode 2026) — batches screen updates
     # so the terminal renders them atomically, preventing mid-redraw tearing.
@@ -463,8 +515,6 @@ def tmux_layout(
     first_window = _get_first_agent_window(session)
     if first_window:
         _tmux("select-window", "-t", f"{linked}:={first_window}")
-
-    in_tmux = os.environ.get("TMUX")
 
     # --- Check if split window already exists ---
 
