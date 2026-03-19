@@ -75,7 +75,7 @@ class JobLauncher:
             f"echo '╰───────────────────────────────────' && "
             f"echo '' && "
             f"cd {escaped_dir} && "
-            f"'{escaped_cmd}'; "
+            f"eval '{escaped_cmd}'; "
             f"__oc_exit=$?; "
             f"echo ''; "
             f"echo '╭─── Job finished ───'; "
