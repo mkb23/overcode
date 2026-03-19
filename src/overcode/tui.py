@@ -2221,6 +2221,9 @@ class SupervisorTUI(
         in _reorder_session_widgets() and async focus changes can cause
         self.focused to diverge from the visually highlighted row.
         """
+        # Don't overwrite job preview with agent content
+        if self.tui_mode == "jobs":
+            return
         try:
             preview = self.query_one("#preview-pane", PreviewPane)
             widgets = self._get_widgets_in_session_order()
