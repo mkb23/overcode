@@ -6,6 +6,7 @@ Launches bash commands as tracked jobs in a dedicated "jobs" tmux session.
 
 import os
 import shlex
+import uuid as _uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -40,7 +41,8 @@ class JobLauncher:
         and persists the job to state.
         """
         directory = directory or os.getcwd()
-        auto_name = name or _slugify_command(command)
+        base_name = name or _slugify_command(command)
+        auto_name = f"{base_name}-{_uuid.uuid4().hex[:4]}"
 
         # Create job first to get the ID
         job = self.jobs.create_job(

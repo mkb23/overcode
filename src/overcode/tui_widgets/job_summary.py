@@ -90,14 +90,14 @@ class JobSummary(Static, can_focus=True):
 
         # Truncate command for display
         cmd = job.command
-        max_cmd = 35
+        max_cmd = 80
         if len(cmd) > max_cmd:
             cmd = cmd[:max_cmd - 1] + "…"
 
         text = Text()
         text.append(icon, style=color)
         text.append(f" {job.name:<16} ", style="bold" if job.status == "running" else "")
-        text.append(f"{cmd:<36} ", style="dim" if job.status != "running" else "")
+        text.append(f"{cmd:<80} ", style="dim" if job.status != "running" else "")
         text.append(f"{duration:>8} ", style="")
         text.append(f"  {job.status}{exit_str}", style=color)
         if agent_str:

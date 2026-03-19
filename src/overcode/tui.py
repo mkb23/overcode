@@ -525,6 +525,8 @@ class SupervisorTUI(
                 self.set_interval(1.5, self._poll_focused_sister)
             # Refresh jobs list every 5 seconds
             self.set_interval(5, self._refresh_jobs)
+            # Refresh focused job pane content every second
+            self.set_interval(1, self._poll_focused_job_pane)
 
         # Apply initial jobs mode if requested (e.g. --jobs flag)
         if self._initial_jobs_mode:
@@ -1971,6 +1973,11 @@ class SupervisorTUI(
         """Toggle between agents and jobs view."""
         self.tui_mode = "jobs" if self.tui_mode == "agents" else "agents"
 
+    def watch_show_terminated(self, show_terminated: bool) -> None:
+        """Immediately refresh jobs when ghost toggle changes."""
+        if self.is_running and self.tui_mode == "jobs":
+            self._refresh_jobs()
+
     def watch_tui_mode(self, mode: str) -> None:
         """React to tui_mode changes — swap visible containers."""
         if not self.is_running:
@@ -2008,6 +2015,7 @@ class SupervisorTUI(
             pass
         self._update_subtitle()
         self._update_footer()
+        self._update_column_headers()
 
     def watch_focused_job_index(self, new_index: int) -> None:
         """Focus the job widget at the new index and update preview."""
@@ -2097,6 +2105,23 @@ class SupervisorTUI(
                     widget.pane_content = lines if lines else []
             except Exception:
                 pass
+
+    def _poll_focused_job_pane(self) -> None:
+        """Poll focused job's tmux pane content (1s interval)."""
+        if self.tui_mode != "jobs":
+            return
+        self._update_focused_job_pane_content()
+        # Update preview pane
+        job_widgets = self._get_job_widgets()
+        idx = self.focused_job_index
+        if job_widgets and 0 <= idx < len(job_widgets):
+            widget = job_widgets[idx]
+            if self.preview_visible:
+                try:
+                    preview = self.query_one("#preview-pane", PreviewPane)
+                    preview.update_from_job_widget(widget)
+                except NoMatches:
+                    pass
 
     def _action_kill_focused_job(self) -> None:
         """Kill the focused job."""
@@ -2189,6 +2214,21 @@ class SupervisorTUI(
                 header_widget.display = False
                 return
             header_widget.display = True
+
+            if self.tui_mode == "jobs":
+                from rich.text import Text
+                header = Text()
+                header.append("  ", style="")
+                header.append("Name", style="bold dim")
+                header.append(" " * 14, style="")
+                header.append("Command", style="bold dim")
+                header.append(" " * 73, style="")
+                header.append("Duration", style="bold dim")
+                header.append("   ", style="")
+                header.append("Status", style="bold dim")
+                header_widget.update(header)
+                return
+
             from .summary_columns import render_header_cells, resolve_column_visible
             level = self.SUMMARY_LEVELS[self.summary_level_index]
             overrides = self._prefs.column_config.get(level, {})
