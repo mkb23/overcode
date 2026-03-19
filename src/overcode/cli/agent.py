@@ -474,7 +474,7 @@ def list_agents(
 
     # Pre-compute: any agent with budget, column alignment widths
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
-    max_name_len = max(len(s.name) for s in sessions)
+    max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
     max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
     max_branch_width = max((len(s.branch or "n/a") for s in sessions), default=5)
