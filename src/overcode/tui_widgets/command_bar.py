@@ -531,6 +531,9 @@ class CommandBar(Static):
         self.new_agent_dir = text if text else "."
         self.mode = "new_remote_agent_name"
         self._update_target_label()
+        # Clear input so directory value doesn't leak into name step (#355)
+        input_widget = self.query_one("#cmd-input", Input)
+        input_widget.value = ""
 
     def _handle_remote_agent_name(self, name: str) -> None:
         """Handle name input for remote agent creation."""

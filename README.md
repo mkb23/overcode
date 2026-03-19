@@ -9,21 +9,16 @@ Launch autonomous coding agents, monitor their progress in real-time, track cost
 Running multiple Claude Code agents is powerful, but managing them gets chaotic fast. Overcode solves this by giving you:
 
 - **Unified visibility** - See all agents at a glance: what they're working on, whether they need input, and how much they're costing you
+- **Native tmux integration** - A split layout with your dashboard on top and the focused agent's live terminal below—full speed, full color, full scrollback
 - **Smart orchestration** - An optional supervisor daemon can approve prompts and keep agents moving without constant attention
-- **Efficiency metrics** - Track "green time" (Claude actively working) vs idle time to understand where time goes
+- **Multi-machine monitoring** - Sister integration aggregates agents from multiple machines into one view
 - **Session persistence** - Agents run in tmux, surviving terminal disconnects. Pick up where you left off
 
-## Screenshots
+## Screenshot
 
-**Split-screen with tmux sync** - Monitor agents in the top pane while viewing live agent output below. Press `p` to enable pane sync, then navigate with `j/k` to switch the bottom pane to the selected agent's window.
+**Tmux split layout** — Monitor all agents in the top pane. The bottom pane shows the selected agent's live terminal. Navigate with `j/k` and the bottom pane follows. Press `Tab` to switch focus between panes.
 
-![Overcode split-screen with tmux sync](docs/images/overcode-split-screen.png)
-
-> **iTerm2 setup**: Use `Cmd+Shift+D` to split horizontally. Run `overcode monitor` in the top pane and `tmux attach -t agents` in the bottom pane.
-
-**Preview mode** - Press `m` to toggle List+Preview mode. Shows collapsed agent list with detailed terminal output preview for the selected agent.
-
-![Overcode preview mode](docs/images/overcode-preview-mode.png)
+![Overcode v0.3.0 tmux split layout](docs/screenshots/overcode-v0p3p0.jpg)
 
 ## Quick Start
 
@@ -33,15 +28,31 @@ Try it instantly with [uvx](https://docs.astral.sh/uv/):
 uvx overcode monitor
 ```
 
-This opens the dashboard. Press `n` to create your first agent—give it a name, point it at a project directory, and optionally provide an initial prompt. Create a few agents to see them work in parallel.
+This opens the standalone dashboard. Press `n` to create your first agent.
+
+For the full tmux-native experience (recommended):
+
+```bash
+pip install overcode
+overcode tmux
+```
+
+This creates a split layout: the overcode dashboard on top, the focused agent's live terminal on the bottom. Navigate agents with `j/k` — the bottom pane follows automatically. Press `Tab` to toggle focus between panes.
 
 **Requirements:** Python 3.12+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-
-For permanent installation: `pip install overcode`
 
 See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 
 ## Features
+
+### Tmux Split Layout (`overcode tmux`)
+The recommended way to use overcode. Creates a two-pane layout in tmux:
+- **Top pane**: Compact agent dashboard with live status
+- **Bottom pane**: The focused agent's native terminal — no emulation, real tmux
+- `j/k` navigates agents, bottom pane follows
+- `Tab` toggles focus between dashboard and terminal
+- `Option+J/K` navigates agents from the terminal pane
+- `PageUp/Down` and mouse scroll work in the bottom pane
 
 ### Real-time Dashboard
 The TUI displays all agents with live status updates, showing:
@@ -55,8 +66,9 @@ The TUI displays all agents with live status updates, showing:
 - **Launch agents** with custom prompts and permission settings
 - **Send instructions** directly from the dashboard
 - **Standing orders** - persistent instructions that guide agent behavior
+- **Agent hierarchy** - parent/child delegation with follow mode and reporting
+- **Cost budgets** - per-agent spending limits with automatic enforcement
 - **Sleep mode** - pause agents and exclude them from stats
-- **Priority sorting** - organize agents by importance
 
 ### Supervisor Daemon
 An optional Claude-powered orchestrator that:
@@ -65,26 +77,31 @@ An optional Claude-powered orchestrator that:
 - Follows per-agent standing orders
 - Tracks interventions and steering decisions
 
+### Sister Integration
+Aggregate agents from multiple machines into one dashboard:
+- Configure sister machines in `~/.overcode/config.yaml`
+- Remote agents appear alongside local ones
+- In tmux split mode, selecting a sister agent auto-zooms the dashboard with a preview pane
+
 ### Analytics & Export
 - **Web dashboard** - mobile-friendly monitoring from any device
 - **Historical analytics** - browse session history with charts
 - **Parquet export** - analyze data in Jupyter notebooks
-- **Presence tracking** - correlate activity with your availability (macOS)
+- **Presence tracking** - correlate activity with your availability
 
 ## TUI Controls
 
 | Key | Action |
 |-----|--------|
 | `j/k` or `↑/↓` | Navigate agents |
+| `Tab` | Toggle dashboard/terminal focus (tmux split) |
 | `Enter` | Approve/send Enter to agent |
 | `i` or `:` | Send instruction |
-| `m` | Toggle list+preview mode |
-| `t` | Toggle timeline |
-| `z` | Toggle sleep mode |
+| `n` | Create new agent |
 | `x` | Kill agent (double-press) |
 | `b` | Jump to next agent needing attention |
 | `h` or `?` | Show all shortcuts |
-| `q` | Quit |
+| `q` | Quit (or detach in tmux split) |
 
 See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
 

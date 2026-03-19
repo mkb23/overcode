@@ -89,7 +89,14 @@ class HelpOverlay(Static):
         t.append("\n")
 
         section("TMUX SPLIT  (overcode tmux)")
-        row("Tab", "Toggle pane focus", "=/-", "Resize split")
+        from ..config import get_tmux_toggle_key
+        from ..cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
+        _toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+        _toggle_label = next(
+            (label for label, k in TOGGLE_KEY_CHOICES if k == _toggle_key),
+            _toggle_key,
+        )
+        row(_toggle_label, "Toggle pane focus", "=/-", "Resize split")
         row("M-j", "Next agent (from term)", "M-k", "Prev agent (from term)")
         row("PgUp", "Scrollback", "PgDn", "Scroll forward")
 

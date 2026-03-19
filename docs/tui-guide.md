@@ -162,23 +162,35 @@ Press `d` to show the daemon log panel at the bottom. This displays:
 - Web server URL when running
 - Recent interventions and decisions
 
-## Split-Screen Setup
+## Tmux Split Layout
 
-For the best monitoring experience with live agent output:
+The recommended way to use overcode. Run `overcode tmux` to get a two-pane layout with the dashboard on top and the focused agent's live terminal on the bottom.
 
-### iTerm2 (Recommended)
-1. Open iTerm2
-2. `Cmd+Shift+D` to split horizontally
-3. In the top pane: `overcode monitor`
-4. In the bottom pane: `tmux attach -t agents`
-5. Press `p` in the monitor to enable pane sync
-6. Use `j/k` to navigate—the bottom pane follows your selection
+```bash
+overcode tmux
+```
 
-### Other Terminals
+### Split-Specific Controls
+
+| Key | Where | Action |
+|-----|-------|--------|
+| `Tab` | Anywhere | Toggle focus between dashboard and terminal |
+| `Option+J/K` | Terminal pane | Navigate agents without leaving the terminal |
+| `PageUp/Down` | Terminal pane | Enter scrollback mode |
+| `=` / `-` | Dashboard | Grow / shrink dashboard pane |
+| `q` | Dashboard | Detach (return to previous tmux session) |
+
+### Sister Agents in Split Mode
+
+When you navigate to a remote/sister agent, the dashboard automatically zooms to show a preview pane with the sister's terminal content (polled every 1.5 seconds). Navigate back to a local agent to restore the normal split layout.
+
+### Manual Split Setup (Alternative)
+
+If you prefer not to use `overcode tmux`, you can set up a split manually:
 1. Split your terminal horizontally
-2. Run `overcode monitor` in one pane
-3. Run `tmux attach -t agents` in the other
-4. Enable pane sync with `p`
+2. Run `overcode monitor` in the top pane
+3. Run `tmux attach -t agents` in the bottom pane
+4. Press `p` to enable pane sync
 
 ## Copy Mode
 

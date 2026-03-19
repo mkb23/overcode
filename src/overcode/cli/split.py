@@ -28,11 +28,51 @@ and restore tmux defaults.
 import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from ._shared import app, SessionOption
+
+
+def _acquire_setup_lock() -> bool:
+    """Acquire an exclusive lock to prevent concurrent `overcode tmux` runs.
+
+    Uses a lockfile in ~/.overcode/. Returns True if lock acquired,
+    False if another instance is already setting up.
+    """
+    lock_dir = Path.home() / ".overcode"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "tmux-setup.lock"
+    try:
+        # O_CREAT | O_EXCL: atomic create-if-not-exists
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        # Check if the holding process is still alive (stale lock)
+        try:
+            pid = int(lock_path.read_text().strip())
+            os.kill(pid, 0)  # signal 0 = check if alive
+            return False  # Process is alive — genuine lock
+        except (ValueError, ProcessLookupError, PermissionError, OSError):
+            # Stale lock — remove and retry
+            lock_path.unlink(missing_ok=True)
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                return True
+            except FileExistsError:
+                return False  # Another process beat us
+
+
+def _release_setup_lock() -> None:
+    """Release the setup lock."""
+    lock_path = Path.home() / ".overcode" / "tmux-setup.lock"
+    lock_path.unlink(missing_ok=True)
 
 
 def _find_overcode_cmd() -> str:
@@ -61,6 +101,14 @@ def _find_overcode_cmd() -> str:
 
 SPLIT_WINDOW_NAME = "overcode-tmux"
 LINKED_SESSION_PREFIX = "oc-view"
+
+# Choices for the pane-toggle key (displayed label → tmux key name)
+TOGGLE_KEY_CHOICES: list[tuple[str, str]] = [
+    ("Tab", "Tab"),
+    ("Ctrl+]", "C-]"),
+    ("Ctrl+Space", "C-Space"),
+]
+DEFAULT_TOGGLE_KEY = "Tab"
 
 
 def _linked_session_name(agents_session: str) -> str:
@@ -140,7 +188,14 @@ def _are_keybindings_installed() -> bool:
 
 def _remove_keybindings() -> None:
     """Remove all overcode keybindings from tmux's root key table."""
-    for key in ["Tab", "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]:
+    from ..config import get_tmux_toggle_key
+
+    toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+    keys = [toggle_key, "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]
+    # Also unbind Tab if toggle_key changed away from it (stale binding)
+    if toggle_key != "Tab":
+        keys.append("Tab")
+    for key in keys:
         _tmux("unbind-key", "-n", key)
     # Restore tmux defaults for mouse scroll
     _tmux(
@@ -150,25 +205,30 @@ def _remove_keybindings() -> None:
     )
 
 
-def _setup_keybindings(linked_session: str = "") -> None:
-    """Set up split-window keybindings (Tab, PageUp/PageDown, etc.).
+def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
+    """Set up split-window keybindings (toggle key, PageUp/PageDown, etc.).
 
     Uses -n (root table) bindings scoped to the split window via
     if-shell checking the current window name. Outside the split
     window, keys pass through normally.
+
+    Args:
+        linked_session: Name of the linked tmux session for scrollback bindings.
+        toggle_key: tmux key name for pane toggle (default from config or "Tab").
     """
-    # Tab toggles focus between panes, but only in our split window.
+    if not toggle_key:
+        from ..config import get_tmux_toggle_key
+        toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+
+    # Toggle key switches focus between panes, but only in our split window.
     # Note: -F must be a separate argument from the format string.
     _tmux(
-        "bind-key", "-n", "Tab",
+        "bind-key", "-n", toggle_key,
         "if-shell", "-F",
         f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
-        "send-keys Tab",  # pass Tab through in other windows
+        f"send-keys {toggle_key}",  # pass key through in other windows
     )
-    # Unbind R if previously bound (replaced by =/- in the TUI)
-    _tmux("unbind-key", "-n", "R")
-
     # --- Agent navigation from the bottom (terminal) pane ---
     # Option+J / Option+K (Meta+j/k) cycle agents by sending j/k
     # to the monitor pane, which navigates and syncs the terminal.
@@ -380,11 +440,44 @@ def tmux_layout(
 
     # --- Uninstall mode ---
     if uninstall:
+        removed_anything = False
+
         if _are_keybindings_installed():
             _remove_keybindings()
-            rprint("[green]Overcode tmux keybindings removed.[/green]")
-        else:
-            rprint("[dim]No overcode keybindings found.[/dim]")
+            rprint("[green]Keybindings removed.[/green]")
+            removed_anything = True
+
+        # Kill the split window and overcode session
+        existing = _find_existing_split_window_any_session()
+        if existing:
+            sess, win_id = existing
+            _tmux("kill-window", "-t", win_id)
+            # If the session is now empty, kill it too
+            result = _tmux("list-windows", "-t", sess)
+            if result.returncode != 0 or not result.stdout.strip():
+                _tmux("kill-session", "-t", sess)
+                rprint(f"[green]Killed session '{sess}'.[/green]")
+            else:
+                rprint(f"[green]Killed split window in '{sess}'.[/green]")
+            removed_anything = True
+
+        # Kill any linked sessions (oc-view-*)
+        result = _tmux("list-sessions", "-F", "#{session_name}")
+        if result.returncode == 0:
+            for sess_name in result.stdout.strip().splitlines():
+                if sess_name.startswith(LINKED_SESSION_PREFIX + "-"):
+                    _tmux("kill-session", "-t", sess_name)
+                    rprint(f"[green]Killed linked session '{sess_name}'.[/green]")
+                    removed_anything = True
+
+        if not removed_anything:
+            rprint("[dim]No overcode tmux state found.[/dim]")
+
+        rprint("")
+        rprint("[dim]Note: global tmux options (focus-events on, terminal-features *:sync)")
+        rprint("are left in place as they are generally harmless. To remove them:[/dim]")
+        rprint("  tmux set -g focus-events off")
+        rprint("  tmux set -g terminal-features ''")
         return
 
     # Verify agents session exists
@@ -393,10 +486,47 @@ def tmux_layout(
         rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
         raise typer.Exit(1)
 
-    # --- First-run confirmation ---
+    # --- Toggle key selection (runs if not yet configured) ---
+    from ..config import get_tmux_toggle_key, set_tmux_toggle_key
+
+    configured_key = get_tmux_toggle_key()
+
+    if not yes and not configured_key:
+        rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
+        for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
+            default_tag = " [dim](default)[/dim]" if _tmux_key == DEFAULT_TOGGLE_KEY else ""
+            rprint(f"  [cyan]{i}[/cyan]) {label}{default_tag}")
+        rprint("")
+        try:
+            choice = input("  Choice [1]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            rprint("")
+            raise typer.Exit(0)
+        if choice == "":
+            idx = 0
+        elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
+            idx = int(choice) - 1
+        else:
+            rprint("[dim]Invalid choice — using default (Tab).[/dim]")
+            idx = 0
+        chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
+        set_tmux_toggle_key(chosen_key)
+        rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
+        rprint(f"  [dim]Change later: set tmux.toggle_key in config.yaml[/dim]\n")
+    elif not configured_key:
+        # --yes passed but no key configured: save the default silently
+        set_tmux_toggle_key(DEFAULT_TOGGLE_KEY)
+
+    # --- First-run keybinding confirmation ---
     if not yes and not _are_keybindings_installed():
-        rprint("\n[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
-        rprint("  [cyan]Tab[/cyan]          Toggle monitor/terminal pane focus")
+        toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+        chosen_label = next(
+            (label for label, k in TOGGLE_KEY_CHOICES if k == toggle_key),
+            toggle_key,
+        )
+
+        rprint("[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
+        rprint(f"  [cyan]{chosen_label}[/cyan]{'  ' if len(chosen_label) < 8 else ' '}Toggle monitor/terminal pane focus")
         rprint("  [cyan]Option+J/K[/cyan]   Cycle agents from terminal pane")
         rprint("  [cyan]PageUp/Down[/cyan]  Scrollback in nested terminal")
         rprint("  [cyan]WheelUp/Down[/cyan] Mouse scroll in nested terminal")
@@ -415,6 +545,21 @@ def tmux_layout(
             raise typer.Exit(0)
         rprint("")
 
+    # Prevent concurrent `overcode tmux` invocations from racing
+    if not _acquire_setup_lock():
+        rprint("[yellow]Another `overcode tmux` is already setting up. Try again in a moment.[/yellow]")
+        raise typer.Exit(1)
+
+    try:
+        _tmux_layout_locked(session, ratio, rprint)
+    finally:
+        _release_setup_lock()
+
+
+def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
+    """Create or re-attach to the tmux split layout. Called under setup lock."""
+    in_tmux = os.environ.get("TMUX")
+
     _tmux("set", "-g", "focus-events", "on")
     # Enable synchronized output (DEC mode 2026) — batches screen updates
     # so the terminal renders them atomically, preventing mid-redraw tearing.
@@ -430,8 +575,6 @@ def tmux_layout(
     first_window = _get_first_agent_window(session)
     if first_window:
         _tmux("select-window", "-t", f"{linked}:={first_window}")
-
-    in_tmux = os.environ.get("TMUX")
 
     # --- Check if split window already exists ---
 
@@ -520,11 +663,21 @@ def tmux_layout(
     # because tmux refuses to attach from inside an existing session.
     attach_cmd = f"unset TMUX; tmux attach-session -t {linked}"
 
-    # Kill stale overcode session if it exists but has no split window
+    # If an "overcode" session exists but has no split window, it might be:
+    # (a) a stale session from a previous overcode run, or
+    # (b) a user's own session that happens to share the name.
+    # Only kill it if it has exactly one window (likely stale from us).
+    # If it has multiple windows, add our split window to it instead.
     if _tmux_check("has-session", "-t", oc_session):
         existing = _find_existing_split_window(oc_session)
         if not existing:
-            _tmux("kill-session", "-t", oc_session)
+            win_count = _tmux_output(
+                "list-windows", "-t", oc_session, "-F", "#{window_id}",
+            )
+            if win_count.count("\n") == 0 and win_count.strip():
+                # Single window — safe to assume it's a stale overcode session
+                _tmux("kill-session", "-t", oc_session)
+            # If multiple windows, leave it alone — we'll add our window to it
 
     need_new_session = not _tmux_check("has-session", "-t", oc_session)
 

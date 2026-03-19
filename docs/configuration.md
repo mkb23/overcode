@@ -65,6 +65,10 @@ web:
       start: "09:00"
       end: "17:00"
 
+# Tmux split layout settings
+tmux:
+  toggle_key: "Tab"  # Key to toggle pane focus: "Tab", "C-]", "C-Space"
+
 # Timeline display settings
 timeline:
   hours: 3.0  # Hours of history to show in timeline

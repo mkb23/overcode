@@ -228,24 +228,13 @@ SessionSummary.list-mode {
     height: auto;
 }
 
-/* Embedded terminal pane — hidden by default, shown via .visible class */
-#terminal-pane {
-    display: none;
-    height: 1fr;
-    background: $surface;
-}
-
-#terminal-pane.visible {
-    display: block;
-}
-
 /* Focused indicator in list mode and compact (tmux split) mode */
 SessionSummary:focus.list-mode,
 SessionSummary:focus.compact-mode {
     background: $accent;
 }
 
-/* Terminal-active banner shown at bottom of compact TUI when pane loses focus */
+/* Banner shown at bottom of compact TUI when bottom pane has focus */
 #terminal-active-banner {
     display: none;
     dock: bottom;
