@@ -246,6 +246,33 @@ class RealTmux:
         except LibTmuxException:
             return False
 
+    def resize_window(self, session: str, window: str, width: int, height: int) -> bool:
+        """Resize a tmux window to match terminal dimensions.
+
+        Used to fix window size mismatches when switching between sessions
+        after terminal resize (#245).
+
+        Args:
+            session: Session name
+            window: Window name/index
+            width: Target width in columns
+            height: Target height in rows
+
+        Returns:
+            True if resize succeeded, False otherwise
+        """
+        try:
+            # Use tmux resize-window command
+            # Format: session:window.pane
+            target = f"{session}:{window}"
+            result = self.run(
+                ["tmux", "resize-window", "-t", target, "-x", str(width), "-y", str(height)],
+                timeout=2
+            )
+            return result is not None and result.get("returncode") == 0
+        except Exception:
+            return False
+
 
 class RealFileSystem:
     """Production implementation of FileSystemInterface"""

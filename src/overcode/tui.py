@@ -1009,6 +1009,9 @@ class SupervisorTUI(
         if self.preview_visible:
             self._update_preview()
         self._sync_tmux_window(widget)
+        # Auto-fix window size mismatch when switching between sessions
+        # (happens when terminal is resized while window is not active)
+        self._fix_window_size_if_needed(widget)
 
     def update_focused_status(self) -> None:
         """Update all session statuses every 250ms.
@@ -1933,6 +1936,37 @@ class SupervisorTUI(
                     self._tmux.select_window(sync_session, window_index)
         except Exception:
             pass  # Silent fail - don't disrupt navigation
+
+    def _fix_window_size_if_needed(self, widget: "SessionSummary") -> None:
+        """Auto-fix tmux window size mismatch when switching sessions.
+
+        When terminal is resized while a session is not active, only the active
+        window gets resized. When switching to that session, its window might be
+        the wrong size. This method detects the mismatch and sends a tmux command
+        to resize it to match the current terminal dimensions.
+
+        The fix is silent and non-blocking — if it fails, navigation continues.
+        """
+        if not self.tmux_sync or not self.size or self.size.height <= 0:
+            return
+
+        try:
+            session = widget.session
+            window_index = session.tmux_window
+            if not window_index or window_index == "":
+                return
+
+            sync_session = self.tmux_sync_target or self.tmux_session
+            # Get current terminal size from the active window
+            # and apply it to the target window
+            current_height = self.size.height
+            current_width = self.size.width
+
+            # Get the target window's current size by querying tmux
+            # If sizes don't match, resize the target window
+            self._tmux.resize_window(sync_session, window_index, current_width, current_height)
+        except Exception:
+            pass  # Silent fail - size mismatch isn't critical
 
     # =========================================================================
     # Jobs Mode
