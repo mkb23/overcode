@@ -261,7 +261,7 @@ Running `overcode tmux` again re-attaches to the existing layout (restarts the d
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Toggle focus between dashboard and terminal pane |
+| Toggle key | Toggle focus between dashboard and terminal pane (default: `Tab`, configurable via `tmux.toggle_key` in config.yaml) |
 | `Option+J/K` | Navigate agents from the terminal pane |
 | `PageUp/Down` | Enter scrollback in the terminal pane |
 | `WheelUp/Down` | Mouse scroll in the terminal pane |

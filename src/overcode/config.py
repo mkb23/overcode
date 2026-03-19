@@ -285,6 +285,34 @@ def get_web_allow_control() -> bool:
     return bool(_get_config_value("web.allow_control", False))
 
 
+def get_tmux_toggle_key() -> str | None:
+    """Get configured tmux pane toggle key.
+
+    Config format in ~/.overcode/config.yaml:
+        tmux:
+          toggle_key: "Tab"  # or "C-]", "BTab", etc.
+
+    Returns:
+        Configured key name or None if not set.
+    """
+    return _get_config_value("tmux.toggle_key")
+
+
+def set_tmux_toggle_key(key: str) -> None:
+    """Save the tmux pane toggle key to config.
+
+    Args:
+        key: tmux key name (e.g. "Tab", "C-]").
+    """
+    config = load_config()
+    tmux_section = config.get("tmux", {})
+    if not isinstance(tmux_section, dict):
+        tmux_section = {}
+    tmux_section["toggle_key"] = key
+    config["tmux"] = tmux_section
+    save_config(config)
+
+
 def get_new_agent_defaults() -> dict:
     """Get new-agent default settings from config.
 

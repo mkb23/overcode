@@ -102,6 +102,14 @@ def _find_overcode_cmd() -> str:
 SPLIT_WINDOW_NAME = "overcode-tmux"
 LINKED_SESSION_PREFIX = "oc-view"
 
+# Choices for the pane-toggle key (displayed label → tmux key name)
+TOGGLE_KEY_CHOICES: list[tuple[str, str]] = [
+    ("Tab", "Tab"),
+    ("Ctrl+]", "C-]"),
+    ("Ctrl+Space", "C-Space"),
+]
+DEFAULT_TOGGLE_KEY = "Tab"
+
 
 def _linked_session_name(agents_session: str) -> str:
     """Name for the linked session used by the bottom pane."""
@@ -180,7 +188,14 @@ def _are_keybindings_installed() -> bool:
 
 def _remove_keybindings() -> None:
     """Remove all overcode keybindings from tmux's root key table."""
-    for key in ["Tab", "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]:
+    from ..config import get_tmux_toggle_key
+
+    toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+    keys = [toggle_key, "M-j", "M-k", "PPage", "NPage", "WheelUpPane", "WheelDownPane"]
+    # Also unbind Tab if toggle_key changed away from it (stale binding)
+    if toggle_key != "Tab":
+        keys.append("Tab")
+    for key in keys:
         _tmux("unbind-key", "-n", key)
     # Restore tmux defaults for mouse scroll
     _tmux(
@@ -190,21 +205,29 @@ def _remove_keybindings() -> None:
     )
 
 
-def _setup_keybindings(linked_session: str = "") -> None:
-    """Set up split-window keybindings (Tab, PageUp/PageDown, etc.).
+def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
+    """Set up split-window keybindings (toggle key, PageUp/PageDown, etc.).
 
     Uses -n (root table) bindings scoped to the split window via
     if-shell checking the current window name. Outside the split
     window, keys pass through normally.
+
+    Args:
+        linked_session: Name of the linked tmux session for scrollback bindings.
+        toggle_key: tmux key name for pane toggle (default from config or "Tab").
     """
-    # Tab toggles focus between panes, but only in our split window.
+    if not toggle_key:
+        from ..config import get_tmux_toggle_key
+        toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+
+    # Toggle key switches focus between panes, but only in our split window.
     # Note: -F must be a separate argument from the format string.
     _tmux(
-        "bind-key", "-n", "Tab",
+        "bind-key", "-n", toggle_key,
         "if-shell", "-F",
         f"#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}}",
         "select-pane -t :.+",  # cycle to next pane (toggles between 2)
-        "send-keys Tab",  # pass Tab through in other windows
+        f"send-keys {toggle_key}",  # pass key through in other windows
     )
     # --- Agent navigation from the bottom (terminal) pane ---
     # Option+J / Option+K (Meta+j/k) cycle agents by sending j/k
@@ -465,8 +488,43 @@ def tmux_layout(
 
     # --- First-run confirmation ---
     if not yes and not _are_keybindings_installed():
-        rprint("\n[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
-        rprint("  [cyan]Tab[/cyan]          Toggle monitor/terminal pane focus")
+        from ..config import get_tmux_toggle_key, set_tmux_toggle_key
+
+        configured_key = get_tmux_toggle_key()
+
+        # If no toggle key configured yet, let the user choose
+        if not configured_key:
+            rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
+            for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
+                default_tag = " [dim](default)[/dim]" if _tmux_key == DEFAULT_TOGGLE_KEY else ""
+                rprint(f"  [cyan]{i}[/cyan]) {label}{default_tag}")
+            rprint("")
+            try:
+                choice = input("  Choice [1]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                rprint("")
+                raise typer.Exit(0)
+            if choice == "":
+                idx = 0
+            elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
+                idx = int(choice) - 1
+            else:
+                rprint("[dim]Invalid choice — using default (Tab).[/dim]")
+                idx = 0
+            chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
+            set_tmux_toggle_key(chosen_key)
+            rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
+            rprint(f"  [dim]Change later: set tmux.toggle_key in config.yaml[/dim]\n")
+        else:
+            chosen_key = configured_key
+            # Find display label for the configured key
+            chosen_label = next(
+                (label for label, k in TOGGLE_KEY_CHOICES if k == chosen_key),
+                chosen_key,
+            )
+
+        rprint("[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
+        rprint(f"  [cyan]{chosen_label}[/cyan]{'  ' if len(chosen_label) < 8 else ' '}Toggle monitor/terminal pane focus")
         rprint("  [cyan]Option+J/K[/cyan]   Cycle agents from terminal pane")
         rprint("  [cyan]PageUp/Down[/cyan]  Scrollback in nested terminal")
         rprint("  [cyan]WheelUp/Down[/cyan] Mouse scroll in nested terminal")
