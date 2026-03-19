@@ -60,13 +60,47 @@ class ViewActionsMixin:
         except NoMatches:
             pass
 
-    def action_manual_refresh(self) -> None:
-        """Manually trigger a full refresh (useful in diagnostics mode)."""
-        self.refresh_sessions()
-        self.update_all_statuses()
-        self.update_daemon_status()
-        self.update_timeline()
-        self.notify("Refreshed", severity="information", timeout=2)
+    def action_resize_focused_window(self) -> None:
+        """Resize the focused agent's tmux window to match the bottom pane size.
+
+        Useful when nested tmux windows get the wrong size after terminal resizes.
+        Only works in compact (tmux split) mode.
+        """
+        if not self.compact:
+            self.notify("Resize only works in tmux split mode", severity="warning", timeout=2)
+            return
+        try:
+            import subprocess
+            from ..tui_widgets import SessionSummary
+
+            widgets = list(self.query(SessionSummary))
+            if not widgets or not (0 <= self.focused_session_index < len(widgets)):
+                return
+            widget = widgets[self.focused_session_index]
+            session = widget.session
+            window_index = session.tmux_window
+            if not window_index:
+                return
+
+            sync_session = self.tmux_sync_target or self.tmux_session
+
+            # Get the bottom pane's actual dimensions (pane 1 in the split)
+            result = subprocess.run(
+                ["tmux", "display-message", "-t", "overcode:overcode-tmux.1",
+                 "-p", "#{pane_width} #{pane_height}"],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return
+            parts = result.stdout.strip().split()
+            if len(parts) != 2:
+                return
+            pane_width, pane_height = int(parts[0]), int(parts[1])
+
+            self._tmux.resize_window(sync_session, window_index, pane_width, pane_height)
+            self.notify(f"Resized {session.name}", severity="information", timeout=2)
+        except Exception:
+            pass
 
     def action_cycle_summary(self) -> None:
         """Cycle through summary detail levels (low, med, high, full)."""

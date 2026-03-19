@@ -106,23 +106,20 @@ class TestToggleHelp:
         ViewActionsMixin.action_toggle_help(mock_tui)
 
 
-class TestManualRefresh:
-    """Test action_manual_refresh method."""
+class TestResizeFocusedWindow:
+    """Test action_resize_focused_window method."""
 
-    def test_calls_all_refresh_methods(self):
-        """Should call all four refresh methods and notify."""
+    def test_warns_when_not_compact(self):
+        """Should notify warning when not in compact mode."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
+        mock_tui.compact = False
 
-        ViewActionsMixin.action_manual_refresh(mock_tui)
+        ViewActionsMixin.action_resize_focused_window(mock_tui)
 
-        mock_tui.refresh_sessions.assert_called_once()
-        mock_tui.update_all_statuses.assert_called_once()
-        mock_tui.update_daemon_status.assert_called_once()
-        mock_tui.update_timeline.assert_called_once()
         mock_tui.notify.assert_called_once()
-        assert "Refreshed" in mock_tui.notify.call_args[0][0]
+        assert "tmux split mode" in mock_tui.notify.call_args[0][0]
 
 
 class TestCycleSummary:

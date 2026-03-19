@@ -129,7 +129,7 @@ class SupervisorTUI(
         ("a", "focus_human_annotation", "Annotation"),
         ("A", "toggle_summarizer", "AI summarizer"),
         # Manual refresh (useful in diagnostics mode)
-        ("r", "manual_refresh", "Refresh"),
+        ("r", "resize_focused_window", "Resize window"),
         # Agent management
         ("x", "kill_focused", "Kill/Clean up"),
         ("R", "restart_focused", "Restart agent"),
