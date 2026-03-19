@@ -307,6 +307,7 @@ class SessionSummary(Static, can_focus=True):
             any_has_budget=self.any_has_budget,
             expand_icon="▼" if self.expanded else "▶",
             is_list_mode="list-mode" in self.classes,
+            is_compact_mode="compact-mode" in self.classes,
             has_focus=self.has_focus,
             is_unvisited_stalled=self.is_unvisited_stalled,
             uptime=uptime,

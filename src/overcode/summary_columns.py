@@ -104,6 +104,7 @@ class ColumnContext:
     any_has_budget: bool  # True if any agent has a cost budget (#173)
     expand_icon: str
     is_list_mode: bool
+    is_compact_mode: bool
     has_focus: bool
     is_unvisited_stalled: bool
 
@@ -295,7 +296,7 @@ def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
-    if ctx.is_list_mode:
+    if ctx.is_list_mode or ctx.is_compact_mode:
         if ctx.has_focus:
             return [("→ ", ctx.status_color)]
         else:
@@ -970,6 +971,7 @@ def build_cli_context(
         any_has_budget=any_has_budget,
         expand_icon="",
         is_list_mode=False,
+        is_compact_mode=False,
         has_focus=False,
         is_unvisited_stalled=False,
         uptime=uptime,

@@ -11,6 +11,11 @@ Header {
     height: 1;
 }
 
+Header.monitor-active {
+    background: #1a4a1a;
+    color: #44dd44;
+}
+
 #daemon-status {
     height: 1;
     width: 100%;
@@ -234,9 +239,26 @@ SessionSummary.list-mode {
     display: block;
 }
 
-/* Focused indicator in list mode */
-SessionSummary:focus.list-mode {
+/* Focused indicator in list mode and compact (tmux split) mode */
+SessionSummary:focus.list-mode,
+SessionSummary:focus.compact-mode {
     background: $accent;
+}
+
+/* Terminal-active banner shown at bottom of compact TUI when pane loses focus */
+#terminal-active-banner {
+    display: none;
+    dock: bottom;
+    height: 3;
+    background: #1a4a1a;
+    color: #44dd44;
+    text-align: center;
+    text-style: bold;
+    border-top: solid #44dd44;
+}
+
+#terminal-active-banner.visible {
+    display: block;
 }
 
 /* Summary Config Modal - floats above content */
