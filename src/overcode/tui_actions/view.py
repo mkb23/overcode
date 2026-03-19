@@ -71,12 +71,10 @@ class ViewActionsMixin:
             return
         try:
             import subprocess
-            from ..tui_widgets import SessionSummary
 
-            widgets = list(self.query(SessionSummary))
-            if not widgets or not (0 <= self.focused_session_index < len(widgets)):
+            widget = self._get_focused_widget()
+            if not widget:
                 return
-            widget = widgets[self.focused_session_index]
             session = widget.session
             window_index = session.tmux_window
             if not window_index:
@@ -91,6 +89,7 @@ class ViewActionsMixin:
                 capture_output=True, text=True,
             )
             if result.returncode != 0 or not result.stdout.strip():
+                self.notify("Could not read pane size", severity="warning", timeout=2)
                 return
             parts = result.stdout.strip().split()
             if len(parts) != 2:
@@ -98,9 +97,9 @@ class ViewActionsMixin:
             pane_width, pane_height = int(parts[0]), int(parts[1])
 
             self._tmux.resize_window(sync_session, window_index, pane_width, pane_height)
-            self.notify(f"Resized {session.name}", severity="information", timeout=2)
-        except Exception:
-            pass
+            self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
+        except Exception as e:
+            self.notify(f"Resize failed: {e}", severity="error", timeout=3)
 
     def action_cycle_summary(self) -> None:
         """Cycle through summary detail levels (low, med, high, full)."""
