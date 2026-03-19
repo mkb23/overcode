@@ -76,8 +76,8 @@ class ViewActionsMixin:
             if not widget:
                 return
             session = widget.session
-            window_index = session.tmux_window
-            if not window_index:
+            window_name = session.tmux_window
+            if not window_name:
                 return
 
             sync_session = self.tmux_sync_target or self.tmux_session
@@ -96,8 +96,17 @@ class ViewActionsMixin:
                 return
             pane_width, pane_height = int(parts[0]), int(parts[1])
 
-            self._tmux.resize_window(sync_session, window_index, pane_width, pane_height)
-            self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
+            # Resize directly via subprocess (bypass _tmux abstraction)
+            target = f"{sync_session}:{window_name}"
+            result = subprocess.run(
+                ["tmux", "resize-window", "-t", target,
+                 "-x", str(pane_width), "-y", str(pane_height)],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                self.notify(f"Resize failed: {result.stderr.strip()}", severity="error", timeout=3)
+            else:
+                self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
         except Exception as e:
             self.notify(f"Resize failed: {e}", severity="error", timeout=3)
 
