@@ -486,42 +486,44 @@ def tmux_layout(
         rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
         raise typer.Exit(1)
 
-    # --- First-run confirmation ---
-    if not yes and not _are_keybindings_installed():
-        from ..config import get_tmux_toggle_key, set_tmux_toggle_key
+    # --- Toggle key selection (runs if not yet configured) ---
+    from ..config import get_tmux_toggle_key, set_tmux_toggle_key
 
-        configured_key = get_tmux_toggle_key()
+    configured_key = get_tmux_toggle_key()
 
-        # If no toggle key configured yet, let the user choose
-        if not configured_key:
-            rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
-            for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
-                default_tag = " [dim](default)[/dim]" if _tmux_key == DEFAULT_TOGGLE_KEY else ""
-                rprint(f"  [cyan]{i}[/cyan]) {label}{default_tag}")
+    if not yes and not configured_key:
+        rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
+        for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
+            default_tag = " [dim](default)[/dim]" if _tmux_key == DEFAULT_TOGGLE_KEY else ""
+            rprint(f"  [cyan]{i}[/cyan]) {label}{default_tag}")
+        rprint("")
+        try:
+            choice = input("  Choice [1]: ").strip()
+        except (EOFError, KeyboardInterrupt):
             rprint("")
-            try:
-                choice = input("  Choice [1]: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                rprint("")
-                raise typer.Exit(0)
-            if choice == "":
-                idx = 0
-            elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
-                idx = int(choice) - 1
-            else:
-                rprint("[dim]Invalid choice — using default (Tab).[/dim]")
-                idx = 0
-            chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
-            set_tmux_toggle_key(chosen_key)
-            rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
-            rprint(f"  [dim]Change later: set tmux.toggle_key in config.yaml[/dim]\n")
+            raise typer.Exit(0)
+        if choice == "":
+            idx = 0
+        elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
+            idx = int(choice) - 1
         else:
-            chosen_key = configured_key
-            # Find display label for the configured key
-            chosen_label = next(
-                (label for label, k in TOGGLE_KEY_CHOICES if k == chosen_key),
-                chosen_key,
-            )
+            rprint("[dim]Invalid choice — using default (Tab).[/dim]")
+            idx = 0
+        chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
+        set_tmux_toggle_key(chosen_key)
+        rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
+        rprint(f"  [dim]Change later: set tmux.toggle_key in config.yaml[/dim]\n")
+    elif not configured_key:
+        # --yes passed but no key configured: save the default silently
+        set_tmux_toggle_key(DEFAULT_TOGGLE_KEY)
+
+    # --- First-run keybinding confirmation ---
+    if not yes and not _are_keybindings_installed():
+        toggle_key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+        chosen_label = next(
+            (label for label, k in TOGGLE_KEY_CHOICES if k == toggle_key),
+            toggle_key,
+        )
 
         rprint("[bold]overcode tmux[/bold] will install keybindings in tmux's global root key table:\n")
         rprint(f"  [cyan]{chosen_label}[/cyan]{'  ' if len(chosen_label) < 8 else ' '}Toggle monitor/terminal pane focus")
