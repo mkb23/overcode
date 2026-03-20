@@ -75,6 +75,10 @@ class MockTmux:
     def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         pass  # No-op in tests
 
+    def get_pane_pid(self, session: str, window: str) -> Optional[int]:
+        """Return None in tests — no real pane PIDs."""
+        return None
+
     def select_window(self, session: str, window: str) -> bool:
         """Select a window - no-op in tests, just return True."""
         return session in self.sessions

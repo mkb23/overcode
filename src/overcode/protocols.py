@@ -87,6 +87,14 @@ class TmuxInterface(Protocol):
         """
         ...
 
+    def get_pane_pid(self, session: str, window: str) -> Optional[int]:
+        """Get the PID of the shell process in a window's first pane.
+
+        Returns:
+            PID as int, or None if window doesn't exist
+        """
+        ...
+
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session.
 

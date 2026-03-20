@@ -235,6 +235,22 @@ class TmuxManager:
         except LibTmuxException:
             return False
 
+    def get_pane_pid(self, window_name: str) -> Optional[int]:
+        """Get the PID of the shell process in a window's first pane.
+
+        Returns None if the window doesn't exist.
+        """
+        if self._tmux:
+            return self._tmux.get_pane_pid(self.session_name, window_name)
+
+        pane = self._get_pane(window_name)
+        if pane is None:
+            return None
+        try:
+            return int(pane.pane_pid)
+        except (ValueError, TypeError):
+            return None
+
     def window_exists(self, window_name: str) -> bool:
         """Check if a specific window exists.
 

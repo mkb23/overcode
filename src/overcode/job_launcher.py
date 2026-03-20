@@ -6,8 +6,10 @@ Launches bash commands as tracked jobs in a dedicated "jobs" tmux session.
 
 import os
 import shlex
+import subprocess
 import uuid as _uuid
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 from .job_manager import Job, JobManager, _slugify_command
@@ -66,9 +68,12 @@ class JobLauncher:
         self.jobs.update_job(job.id, tmux_window=result)
         job.tmux_window = result
 
-        # Build wrapper script that runs the command and reports completion
+        # Build wrapper script that runs the command and reports completion.
+        # The exit code is written to a file as a fallback — if the _complete
+        # call doesn't run, the process monitor can still read it.
         escaped_cmd = command.replace("'", "'\\''")
         escaped_dir = shlex.quote(directory)
+        exit_file = self._exit_code_path(job.id)
         wrapper = (
             f"echo '╭─── Job: {job.name}' && "
             f"echo '│ Command: {command}' && "
@@ -79,6 +84,7 @@ class JobLauncher:
             f"cd {escaped_dir} && "
             f"eval '{escaped_cmd}'; "
             f"__oc_exit=$?; "
+            f"echo $__oc_exit > {exit_file}; "
             f"echo ''; "
             f"echo '╭─── Job finished ───'; "
             f"echo \"│ Exit code: $__oc_exit\"; "
@@ -93,24 +99,49 @@ class JobLauncher:
         return job
 
     def list_jobs(self, include_completed: bool = False, detect_killed: bool = True) -> List[Job]:
-        """List jobs, cross-referencing tmux to detect killed jobs."""
+        """List jobs, cross-referencing tmux to detect killed/completed jobs.
+
+        Detection layers for running jobs:
+        1. Window gone + no _complete call → killed
+        2. Window alive but shell has no child processes → command finished,
+           read exit code from file and mark completed/failed
+        """
         jobs = self.jobs.list_jobs(include_completed=include_completed)
 
-        if detect_killed:
-            # Get list of actual tmux windows
-            windows = self.tmux.list_windows()
-            window_names = {w['name'] for w in windows}
+        if not detect_killed:
+            return jobs
 
-            for job in jobs:
-                if job.status == "running" and job.tmux_window not in window_names:
-                    # Window gone but no _complete called → killed
-                    self.jobs.update_job(
-                        job.id,
-                        status="killed",
-                        end_time=datetime.now().isoformat(),
-                    )
-                    job.status = "killed"
-                    job.end_time = datetime.now().isoformat()
+        # Get list of actual tmux windows
+        windows = self.tmux.list_windows()
+        window_names = {w['name'] for w in windows}
+
+        for job in jobs:
+            if job.status != "running":
+                continue
+
+            if job.tmux_window not in window_names:
+                # Window gone but no _complete called → killed
+                self.jobs.update_job(
+                    job.id,
+                    status="killed",
+                    end_time=datetime.now().isoformat(),
+                )
+                job.status = "killed"
+                job.end_time = datetime.now().isoformat()
+                continue
+
+            # Window still alive — check if the command has finished by
+            # looking for child processes of the pane's shell.
+            pane_pid = self.tmux.get_pane_pid(job.tmux_window)
+            if pane_pid is not None and not _has_child_processes(pane_pid):
+                exit_code = self._read_exit_code(job.id)
+                status = "completed" if exit_code == 0 else "failed"
+                now = datetime.now().isoformat()
+                self.jobs.mark_complete(job.id, exit_code)
+                job.status = status
+                job.exit_code = exit_code
+                job.end_time = now
+                self._cleanup_exit_code_file(job.id)
 
         return jobs
 
@@ -142,3 +173,39 @@ class JobLauncher:
             raise ValueError(f"Job '{name}' not found")
 
         self.tmux.attach_session(window=job.tmux_window, bare=bare)
+
+    @staticmethod
+    def _exit_code_path(job_id: str) -> Path:
+        """Path to the exit code file for a job."""
+        env_state_dir = os.environ.get("OVERCODE_STATE_DIR")
+        base = Path(env_state_dir) / "jobs" if env_state_dir else Path.home() / ".overcode" / "jobs"
+        return base / f"exit-{job_id}"
+
+    def _read_exit_code(self, job_id: str) -> int:
+        """Read exit code from file, defaulting to 0 if missing/unreadable."""
+        path = self._exit_code_path(job_id)
+        try:
+            return int(path.read_text().strip())
+        except (FileNotFoundError, ValueError, OSError):
+            return 0
+
+    def _cleanup_exit_code_file(self, job_id: str):
+        """Remove the exit code file after reading it."""
+        try:
+            self._exit_code_path(job_id).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _has_child_processes(pid: int) -> bool:
+    """Check if a process has any child processes."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        # If we can't check, assume still running
+        return True

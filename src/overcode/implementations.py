@@ -235,6 +235,16 @@ class RealTmux:
         from .tmux_utils import attach_bare
         attach_bare(session, window)
 
+    def get_pane_pid(self, session: str, window: str) -> Optional[int]:
+        """Get the PID of the shell process in a window's first pane."""
+        try:
+            pane = self._get_pane(session, window)
+            if pane is None:
+                return None
+            return int(pane.pane_pid)
+        except (LibTmuxException, ValueError, TypeError):
+            return None
+
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""
         try:
