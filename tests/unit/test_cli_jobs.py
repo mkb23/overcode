@@ -31,9 +31,10 @@ def _mock_job(**kwargs):
 class TestBashCommand:
     """Test the 'overcode bash' command."""
 
+    @patch("overcode.job_launcher.JobLauncher.attach")
     @patch("overcode.job_launcher.JobLauncher.launch")
     @patch("overcode.job_launcher.JobLauncher.__init__", return_value=None)
-    def test_bash_launches_job(self, mock_init, mock_launch):
+    def test_bash_launches_job(self, mock_init, mock_launch, mock_attach):
         mock_launch.return_value = _mock_job()
 
         result = runner.invoke(app, ["bash", "echo hi", "--name", "test-job"])

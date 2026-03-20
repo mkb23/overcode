@@ -145,5 +145,5 @@ class TestJobSummaryRender:
         widget = JobSummary(job)
         text = widget.render()
         plain = text.plain
-        # 1h01m
-        assert "1h01m" in plain
+        # 3700s = 1.0h
+        assert "1.0h" in plain

@@ -28,7 +28,7 @@ class TestJobLauncherLaunch:
 
         job = launcher.launch(command="pytest tests/", name="test-job", directory="/tmp")
 
-        assert job.name == "test-job"
+        assert job.name.startswith("test-job-")
         assert job.command == "pytest tests/"
         assert job.status == "running"
         mock_tmux.ensure_session.assert_called_once()
@@ -47,7 +47,7 @@ class TestJobLauncherLaunch:
 
         job = launcher.launch(command="npm run build")
 
-        assert job.name == "npm-run-build"
+        assert job.name.startswith("npm-run-build-")
 
     def test_launch_cleans_up_on_tmux_failure(self, tmp_path):
         """If tmux window creation fails, job is deleted."""
@@ -102,10 +102,12 @@ class TestJobLauncherListJobs:
         assert len(jobs) == 1
         assert jobs[0].status == "killed"
 
-    def test_list_preserves_running_jobs_with_windows(self, tmp_path):
-        """Running jobs with existing windows stay running."""
+    @patch("overcode.job_launcher._has_child_processes", return_value=True)
+    def test_list_preserves_running_jobs_with_windows(self, mock_has_children, tmp_path):
+        """Running jobs with existing windows and active children stay running."""
         mock_tmux = MagicMock()
         mock_tmux.list_windows.return_value = [{"name": "test-job", "index": 0}]
+        mock_tmux.get_pane_pid.return_value = 12345
 
         manager = JobManager(state_dir=tmp_path)
         manager.create_job(command="sleep 999", name="test-job", tmux_window="test-job")
