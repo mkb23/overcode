@@ -53,6 +53,7 @@ class TmuxManager:
         except (LibTmuxException, ObjectDoesNotExist):
             return None
 
+
     def _get_window(self, window_name: str) -> Optional[libtmux.Window]:
         """Get a window by name.
 

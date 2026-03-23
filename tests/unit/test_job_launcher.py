@@ -90,17 +90,51 @@ class TestJobLauncherListJobs:
     def test_list_detects_killed_jobs(self, tmp_path):
         """Jobs whose tmux windows are gone get marked as killed."""
         mock_tmux = MagicMock()
-        mock_tmux.list_windows.return_value = []  # No windows exist
+        # Return a non-empty window list (session is reachable) but without
+        # the job's window — this proves the window was genuinely killed
+        # rather than list_windows() failing (#396).
+        mock_tmux.list_windows.return_value = [{"name": "bash", "index": 0}]
 
         manager = JobManager(state_dir=tmp_path)
         # Create a job manually (simulating prior launch)
         job = manager.create_job(command="sleep 999", name="test-job", tmux_window="test-job")
+        # Backdate start_time past the 30s grace period (#396)
+        manager.update_job(job.id, start_time="2020-01-01T00:00:00")
 
         launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
         jobs = launcher.list_jobs(include_completed=True, detect_killed=True)
 
         assert len(jobs) == 1
         assert jobs[0].status == "killed"
+
+    def test_list_skips_kill_detection_when_windows_empty(self, tmp_path):
+        """Empty window list (query failure) should not mark jobs as killed (#396)."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = []  # Query failure / stale cache
+
+        manager = JobManager(state_dir=tmp_path)
+        manager.create_job(command="sleep 999", name="test-job", tmux_window="test-job")
+
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+        jobs = launcher.list_jobs(include_completed=True, detect_killed=True)
+
+        assert len(jobs) == 1
+        assert jobs[0].status == "running"  # Not falsely killed
+
+    def test_list_grace_period_protects_young_jobs(self, tmp_path):
+        """Jobs younger than 30s should not be marked as killed (#396)."""
+        mock_tmux = MagicMock()
+        mock_tmux.list_windows.return_value = [{"name": "bash", "index": 0}]
+
+        manager = JobManager(state_dir=tmp_path)
+        # Fresh job (just created, within grace period)
+        manager.create_job(command="sleep 999", name="test-job", tmux_window="test-job")
+
+        launcher = JobLauncher(tmux_manager=mock_tmux, job_manager=manager)
+        jobs = launcher.list_jobs(include_completed=True, detect_killed=True)
+
+        assert len(jobs) == 1
+        assert jobs[0].status == "running"  # Protected by grace period
 
     @patch("overcode.job_launcher._has_child_processes", return_value=True)
     def test_list_preserves_running_jobs_with_windows(self, mock_has_children, tmp_path):

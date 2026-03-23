@@ -111,23 +111,38 @@ class JobLauncher:
         if not detect_killed:
             return jobs
 
-        # Get list of actual tmux windows
+        # Get list of actual tmux windows.
+        # If the list is empty, it's likely a query failure (stale libtmux
+        # session cache or transient error) rather than all windows being
+        # gone — skip kill detection entirely to avoid false kills (#396).
         windows = self.tmux.list_windows()
+        if not windows:
+            return jobs
         window_names = {w['name'] for w in windows}
 
+        now = datetime.now()
         for job in jobs:
             if job.status != "running":
                 continue
 
             if job.tmux_window not in window_names:
+                # Grace period: don't mark as killed until the job has been
+                # "missing" for at least 30s, to avoid race conditions during
+                # window creation (#396).
+                try:
+                    age = (now - datetime.fromisoformat(job.start_time)).total_seconds()
+                except (ValueError, TypeError):
+                    age = 0
+                if age < 30:
+                    continue
                 # Window gone but no _complete called → killed
                 self.jobs.update_job(
                     job.id,
                     status="killed",
-                    end_time=datetime.now().isoformat(),
+                    end_time=now.isoformat(),
                 )
                 job.status = "killed"
-                job.end_time = datetime.now().isoformat()
+                job.end_time = now.isoformat()
                 continue
 
             # Window still alive — check if the command has finished by
