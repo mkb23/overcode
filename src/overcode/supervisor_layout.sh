@@ -33,18 +33,23 @@ fi
 # Create new session with the TUI
 tmux new-session -d -s "$CONTROLLER_SESSION" -n "controller"
 
+# Query pane-base-index (default 0, commonly set to 1)
+PANE_BASE=$(tmux show-options -gv pane-base-index 2>/dev/null || echo 0)
+PANE_BASE=${PANE_BASE:-0}
+PANE_BOTTOM=$((PANE_BASE + 1))
+
 # Split window horizontally (top 33%, bottom 66%)
 tmux split-window -v -l 66% -t "$CONTROLLER_SESSION:0"
 
 # Top pane: Run the TUI (without piping to preserve terminal control)
-tmux send-keys -t "$CONTROLLER_SESSION:0.0" "PYTHONUNBUFFERED=1 python -m overcode.tui $SESSION_NAME" C-m
+tmux send-keys -t "$CONTROLLER_SESSION:0.$PANE_BASE" "PYTHONUNBUFFERED=1 python -m overcode.tui $SESSION_NAME" C-m
 
 # Bottom pane: Launch Claude (no auto-prompt - let user interact naturally)
-tmux send-keys -t "$CONTROLLER_SESSION:0.1" "claude" C-m
+tmux send-keys -t "$CONTROLLER_SESSION:0.$PANE_BOTTOM" "claude" C-m
 
 # Set pane titles
-tmux select-pane -t "$CONTROLLER_SESSION:0.0" -T "Overcode Monitor"
-tmux select-pane -t "$CONTROLLER_SESSION:0.1" -T "Controller"
+tmux select-pane -t "$CONTROLLER_SESSION:0.$PANE_BASE" -T "Overcode Monitor"
+tmux select-pane -t "$CONTROLLER_SESSION:0.$PANE_BOTTOM" -T "Controller"
 
 # Attach to the session
 exec tmux attach-session -t "$CONTROLLER_SESSION"

@@ -84,7 +84,7 @@ class ViewActionsMixin:
 
             # Get the bottom pane's actual dimensions (pane 1 in the split)
             result = subprocess.run(
-                ["tmux", "display-message", "-t", "overcode:overcode-tmux.1",
+                ["tmux", "display-message", "-t", self._bottom_pane_target(),
                  "-p", "#{pane_width} #{pane_height}"],
                 capture_output=True, text=True,
             )

@@ -109,6 +109,28 @@ def attach_bare(session_name: str, window_name: str, socket_path: str = None) ->
     os.execlp(tmux_cmd[0], *tmux_cmd, "attach-session", "-t", bare_session)
 
 
+_pane_base_index: Optional[int] = None
+
+
+def get_pane_base_index() -> int:
+    """Return the tmux pane-base-index setting (default 0, commonly set to 1).
+
+    The result is cached for the lifetime of the process.
+    """
+    global _pane_base_index
+    if _pane_base_index is not None:
+        return _pane_base_index
+    try:
+        result = subprocess.run(
+            _build_tmux_cmd() + ["show-options", "-gv", "pane-base-index"],
+            capture_output=True, text=True, timeout=5,
+        )
+        _pane_base_index = int(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else 0
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        _pane_base_index = 0
+    return _pane_base_index
+
+
 def tmux_window_target(session: str, window) -> str:
     """Build tmux target string for a window.
 

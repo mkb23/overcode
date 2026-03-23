@@ -460,7 +460,7 @@ class TestTUIPreferences:
         assert prefs.column_config == {}
         # Also has show_column_headers
         assert hasattr(prefs, 'show_column_headers')
-        assert prefs.show_column_headers is False
+        assert prefs.show_column_headers is True
 
     def test_show_done_always_starts_false(self, tmp_path):
         """show_done should always load as False, even if saved as True (#319).

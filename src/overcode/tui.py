@@ -44,6 +44,7 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
+from .tmux_utils import get_pane_base_index
 from .tui_helpers import (
     format_duration,
     get_git_diff_stats,
@@ -868,6 +869,16 @@ class SupervisorTUI(
             pass
         return False
 
+    def _tui_pane_target(self) -> str:
+        """Return tmux target for the TUI (top) pane, respecting pane-base-index."""
+        base = get_pane_base_index()
+        return f"overcode:overcode-tmux.{base}"
+
+    def _bottom_pane_target(self) -> str:
+        """Return tmux target for the bottom (terminal) pane, respecting pane-base-index."""
+        base = get_pane_base_index()
+        return f"overcode:overcode-tmux.{base + 1}"
+
     def _dialog_will_open(self) -> None:
         """Zoom the tmux monitor pane when a dialog opens (compact mode only).
 
@@ -877,7 +888,7 @@ class SupervisorTUI(
         if not self.compact:
             return
         import subprocess
-        target = "overcode:overcode-tmux.0"
+        target = self._tui_pane_target()
         # Don't zoom if already zoomed
         info = subprocess.run(
             ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
@@ -903,7 +914,7 @@ class SupervisorTUI(
         if self.tui_mode == "jobs":
             return
         import subprocess
-        target = "overcode:overcode-tmux.0"
+        target = self._tui_pane_target()
         info = subprocess.run(
             ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
             capture_output=True, text=True,
@@ -943,7 +954,7 @@ class SupervisorTUI(
         # Unzoom — but only if no dialog is holding the zoom open
         if not self._any_dialog_visible():
             import subprocess
-            target = "overcode:overcode-tmux.0"
+            target = self._tui_pane_target()
             info = subprocess.run(
                 ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
                 capture_output=True, text=True,
@@ -3170,7 +3181,7 @@ class SupervisorTUI(
             return
         import subprocess
         subprocess.run(
-            ["tmux", "resize-pane", "-t", "overcode:overcode-tmux.0",
+            ["tmux", "resize-pane", "-t", self._tui_pane_target(),
              "-U" if delta > 0 else "-D", str(abs(delta))],
             capture_output=True,
         )

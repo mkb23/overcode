@@ -34,6 +34,7 @@ from typing import Annotated
 import typer
 
 from ._shared import app, SessionOption
+from ..tmux_utils import get_pane_base_index
 
 
 def _acquire_setup_lock() -> bool:
@@ -232,27 +233,28 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
     # --- Agent navigation from the bottom (terminal) pane ---
     # Option+J / Option+K (Meta+j/k) cycle agents by sending j/k
     # to the monitor pane, which navigates and syncs the terminal.
+    _base = get_pane_base_index()
     _in_bottom = (
         f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
-        f"#{{!=:#{{pane_index}},0}}}}"
+        f"#{{!=:#{{pane_index}},{_base}}}}}"
     )
     _tmux(
         "bind-key", "-n", "M-j",
         "if-shell", "-F", _in_bottom,
-        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 j",
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.{_base} j",
         "send-keys M-j",
     )
     _tmux(
         "bind-key", "-n", "M-k",
         "if-shell", "-F", _in_bottom,
-        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 k",
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.{_base} k",
         "send-keys M-k",
     )
     # Option+B: navigate to bell (next agent needing attention)
     _tmux(
         "bind-key", "-n", "M-b",
         "if-shell", "-F", _in_bottom,
-        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.0 b",
+        f"send-keys -t overcode:{SPLIT_WINDOW_NAME}.{_base} b",
         "send-keys M-b",
     )
 
@@ -263,12 +265,12 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
     # copy mode in the inner session via the tmux API.
     if linked_session:
         # PageUp: enter copy mode + scroll up, but only when in the
-        # bottom pane (pane_index != 0) of the split window.
+        # bottom pane (pane_index != base) of the split window.
         # Top pane (Textual TUI) and other windows get normal PageUp.
         _tmux(
             "bind-key", "-n", "PPage",
             "if-shell", "-F",
-            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},0}}}}",
+            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},{_base}}}}}",
             f"copy-mode -t {linked_session} -u",
             "send-keys PPage",
         )
@@ -276,7 +278,7 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         _tmux(
             "bind-key", "-n", "NPage",
             "if-shell", "-F",
-            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},0}}}}",
+            f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},{_base}}}}}",
             f"send-keys -t {linked_session} NPage",
             "send-keys NPage",
         )
@@ -288,7 +290,7 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         # already active), then send scroll-up/down commands to it.
         _in_bottom = (
             f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
-            f"#{{!=:#{{pane_index}},0}}}}"
+            f"#{{!=:#{{pane_index}},{_base}}}}}"
         )
         _tmux(
             "bind-key", "-n", "WheelUpPane",
@@ -410,7 +412,7 @@ def tmux_resize():
 
     # Apply the new ratio
     new_height = max(int(int(info.split(":")[1]) * next_ratio / 100), 5)
-    _tmux("resize-pane", "-t", f"{target}.0", "-y", str(new_height))
+    _tmux("resize-pane", "-t", f"{target}.{get_pane_base_index()}", "-y", str(new_height))
 
 
 @app.command("tmux")
@@ -632,14 +634,14 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
             else:
                 # Respawn before attach — execlp replaces this process
                 _tmux("respawn-pane", "-k",
-                      "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0",
+                      "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}",
                       monitor_cmd)
                 rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window (monitor restarted)...[/green]")
                 time.sleep(0.2)
                 os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
             # Always restart the monitor so code changes take effect
             _tmux("respawn-pane", "-k",
-                  "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0",
+                  "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}",
                   monitor_cmd)
             rprint(f"[green]Switched to existing {SPLIT_WINDOW_NAME} window (monitor restarted)[/green]")
             return
@@ -757,7 +759,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
             raise typer.Exit(1)
 
         # Focus top pane
-        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0")
+        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}")
 
         rprint(f"[green]Split layout ready.[/green] Tab toggles panes.")
 
@@ -797,7 +799,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
         )
 
         # Focus top pane
-        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.0")
+        _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}")
 
         # Attach to the session (replaces this process)
         rprint(f"[green]Attaching to split layout...[/green]")
