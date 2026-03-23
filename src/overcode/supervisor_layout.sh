@@ -34,7 +34,7 @@ fi
 tmux new-session -d -s "$CONTROLLER_SESSION" -n "controller"
 
 # Split window horizontally (top 33%, bottom 66%)
-tmux split-window -v -p 66 -t "$CONTROLLER_SESSION:0"
+tmux split-window -v -l 66% -t "$CONTROLLER_SESSION:0"
 
 # Top pane: Run the TUI (without piping to preserve terminal control)
 tmux send-keys -t "$CONTROLLER_SESSION:0.0" "PYTHONUNBUFFERED=1 python -m overcode.tui $SESSION_NAME" C-m

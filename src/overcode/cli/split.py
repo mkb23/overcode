@@ -668,7 +668,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
 
     # The bottom pane runs a nested tmux attach. We must unset $TMUX
     # because tmux refuses to attach from inside an existing session.
-    attach_cmd = f"unset TMUX; tmux attach-session -t {linked}"
+    attach_cmd = f"sh -c 'unset TMUX; exec tmux attach-session -t {linked}'"
 
     # If an "overcode" session exists but has no split window, it might be:
     # (a) a stale session from a previous overcode run, or
@@ -749,7 +749,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
         result = _tmux(
             "split-window", "-v",
             "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
-            "-p", str(100 - ratio),
+            "-l", f"{100 - ratio}%",
             attach_cmd,
         )
         if result.returncode != 0:
@@ -792,7 +792,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
         _tmux(
             "split-window", "-v",
             "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
-            "-p", str(100 - ratio),
+            "-l", f"{100 - ratio}%",
             attach_cmd,
         )
 

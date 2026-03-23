@@ -508,7 +508,7 @@ class TUIPreferences:
     # Only stores explicit user overrides. Missing = use default from detail_levels.
     column_config: dict = field(default_factory=dict)
     # Show abbreviated column headers above summary lines
-    show_column_headers: bool = False
+    show_column_headers: bool = True
     # Sister instances hidden from agent list (#323)
     disabled_sisters: Set[str] = field(default_factory=set)
     # Log every status change to diagnostics CSV (off by default)
