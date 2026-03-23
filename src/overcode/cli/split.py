@@ -180,11 +180,13 @@ def _setup_linked_session(agents_session: str) -> str:
 
 def _are_keybindings_installed() -> bool:
     """Check if overcode keybindings are already installed."""
-    # Check for our Tab binding as a sentinel
+    # Check for our M-j binding as a sentinel — look for the exact
+    # send-keys target rather than a substring match on the window name,
+    # to avoid false positives from unrelated bindings (#384).
     result = _tmux("list-keys", "-T", "root")
     if result.returncode != 0:
         return False
-    return SPLIT_WINDOW_NAME in result.stdout
+    return f"send-keys -t overcode:{SPLIT_WINDOW_NAME}." in result.stdout
 
 
 def _remove_keybindings() -> None:
@@ -603,20 +605,30 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
     if existing:
         if _is_split_window_healthy(existing):
             if in_tmux:
-                # Check if a real (non-tiny) client is already on overcode.
+                # Check if a real (non-nested) client is already on overcode.
                 # If so, no switch needed — the user is already there or
                 # another terminal has it open.  Switching blindly can
                 # accidentally move the bottom pane's nested client from
                 # oc-view-agents to overcode, creating a recursive display
                 # that collapses the window.
+                #
+                # Detect nested clients by comparing client TTYs against
+                # pane TTYs in the split window (#387). A nested tmux
+                # client's TTY matches one of the pane TTYs.
+                pane_ttys = set(
+                    _tmux_output(
+                        "list-panes", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
+                        "-F", "#{pane_tty}",
+                    ).splitlines()
+                )
                 oc_clients = _tmux_output(
                     "list-clients", "-t", oc_session,
-                    "-F", "#{client_height}",
+                    "-F", "#{client_tty}",
                 )
                 has_real_client = any(
-                    int(h) > 10
-                    for h in oc_clients.splitlines()
-                    if h.strip().isdigit()
+                    tty.strip() not in pane_ttys
+                    for tty in oc_clients.splitlines()
+                    if tty.strip()
                 )
                 if not has_real_client:
                     # No real client on overcode yet — switch the caller's
@@ -766,10 +778,16 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
     else:
         # --- Outside tmux: create detached, split, then attach ---
         if need_new_session:
+            # Use actual terminal size (fall back to 200x50 if unavailable)
+            try:
+                term_size = os.get_terminal_size()
+                term_x, term_y = str(term_size.columns), str(term_size.lines)
+            except OSError:
+                term_x, term_y = "200", "50"
             result = _tmux(
                 "new-session", "-d", "-s", oc_session,
                 "-n", SPLIT_WINDOW_NAME,
-                "-x", "200", "-y", "50",
+                "-x", term_x, "-y", term_y,
                 monitor_cmd,
             )
             if result.returncode != 0:

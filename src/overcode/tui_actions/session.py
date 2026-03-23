@@ -512,6 +512,10 @@ class SessionActionsMixin:
                 session.id,
                 current_task="Synced to main"
             )
+            # Clear PR number — agent is back on main, old PR is stale (#391)
+            self.session_manager.update_session(
+                session.id, pr_number=None, pr_branch=None
+            )
         else:
             self.notify(f"Failed to send /clear to '{session_name}'", severity="error")
 
