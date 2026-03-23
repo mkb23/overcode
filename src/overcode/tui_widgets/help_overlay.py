@@ -39,7 +39,7 @@ class HelpOverlay(Static):
 
         section("VIEW")
         row("m", "Toggle preview pane", "f", "Fullscreen preview")
-        row("r", "Refresh")
+        row("r", "Resize pane")
         t.append("\n")
 
         section("DISPLAY")

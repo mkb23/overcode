@@ -45,11 +45,14 @@ When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy wi
 
 | Key | Action |
 |-----|--------|
-| `s` | Cycle summary detail: low → med → full |
-| `l` | Cycle summary content: AI short → AI long → orders → annotation |
+| `s` | Cycle summary detail: low → med → high → full |
+| `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat |
 | `S` | Cycle sort mode: alphabetical → status → value → tree |
-| `$` | Toggle cost display (tokens vs dollars) |
+| `$` | Cycle cost display (tokens / dollars / joules) |
+| `C` | Open column configuration |
+| `L` | Toggle column headers |
 | `M` | Toggle monochrome mode |
+| `E` | Toggle emoji-free mode |
 
 ### Agent Control
 
@@ -57,16 +60,25 @@ When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy wi
 |-----|--------|
 | `i` / `:` | Open command bar to send instruction |
 | `o` | Set standing orders |
-| `I` | Edit human annotation |
+| `a` | Edit human annotation |
+| `I` | Browse instruction history |
 | `Enter` | Send Enter to agent (approve prompts) |
 | `1-5` | Send numbered option to agent |
 | `n` | Create new agent |
+| `N` | Create new remote agent (on sister) |
+| `F` | Fork agent (with conversation context) |
 | `R` | Restart agent (double-press to confirm) |
 | `x` | Kill agent (double-press to confirm) |
 | `z` | Toggle sleep mode |
 | `V` | Edit agent priority value |
-| `c` | Sync to main branch (double-press to confirm) |
-| `H` | Prepare all for handover (double-press to confirm) |
+| `B` | Edit cost budget |
+| `c` | Sync to main + clear (double-press to confirm) |
+| `T` | Handover all (double-press to confirm) |
+| `H` | Configure heartbeat |
+| `K` | Toggle hook-based status detection |
+| `Ctrl+T` | Toggle time context |
+| `G` | New agent defaults |
+| `U` | Sister visibility |
 
 ### Daemon Control
 
@@ -76,15 +88,17 @@ When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy wi
 | `]` | Stop supervisor daemon |
 | `\` | Restart monitor daemon |
 | `w` | Toggle web dashboard server |
-| `a` | Toggle AI summarizer |
+| `A` | Toggle AI summarizer |
 
 ### Utility
 
 | Key | Action |
 |-----|--------|
-| `p` | Toggle tmux pane sync |
+| `p` | Pause/resume heartbeat |
+| `P` | Toggle tmux pane sync |
 | `y` | Toggle copy mode (disable mouse for text selection) |
-| `r` | Force manual refresh |
+| `r` | Resize focused agent's tmux pane |
+| `J` | Toggle jobs mode |
 | `,` | Move timeline baseline back 15 minutes |
 | `.` | Move timeline baseline forward 15 minutes |
 | `0` | Reset timeline baseline to now |
@@ -128,8 +142,9 @@ Press `l` to cycle through what's shown in the summary line:
 2. **AI Long** (📖) - Detailed AI summary with broader context
 3. **Orders** (🎯) - Standing orders for this agent
 4. **Annotation** (✏️) - Human-written notes
+5. **Heartbeat** - Latest heartbeat data
 
-AI summaries require the summarizer to be enabled (press `a`) and configured with an API key.
+AI summaries require the summarizer to be enabled (press `A`) and configured with an API key.
 
 ## Timeline
 

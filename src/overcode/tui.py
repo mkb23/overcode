@@ -128,8 +128,8 @@ class SupervisorTUI(
         ("backslash", "monitor_restart", "Restart monitor"),
         ("a", "focus_human_annotation", "Annotation"),
         ("A", "toggle_summarizer", "AI summarizer"),
-        # Manual refresh (useful in diagnostics mode)
-        ("r", "resize_focused_window", "Resize window"),
+        # Resize focused agent's tmux window to match pane size
+        ("r", "resize_focused_window", "Resize pane"),
         # Agent management
         ("x", "kill_focused", "Kill/Clean up"),
         ("R", "restart_focused", "Restart agent"),
