@@ -170,11 +170,18 @@ class PollingStatusDetector:
         # But if a user prompt is visible, the agent is waiting — content
         # changes from TUI refreshes or status-bar updates shouldn't override
         # prompt detection.
+        #
+        # HOWEVER: Claude Code always renders the ❯ prompt as UI chrome, even
+        # while actively working (#393). When active indicators like
+        # "esc to interrupt" are present, the prompt is just decoration —
+        # trust the active indicators over the prompt char.
         if content_changed:
-            prompt_result = self._detect_user_prompt(last_lines, content)
-            if prompt_result is not None:
-                self._last_detect_phase[session.id] = "P5+P12:prompt_override"
-                return prompt_result
+            has_active_indicator = matches_any(last_few, self.patterns.active_indicators)
+            if not has_active_indicator:
+                prompt_result = self._detect_user_prompt(last_lines, content)
+                if prompt_result is not None:
+                    self._last_detect_phase[session.id] = "P5+P12:prompt_override"
+                    return prompt_result
             activity = self._extract_last_activity(last_lines)
             self._last_detect_phase[session.id] = "P5:content_changed"
             return STATUS_RUNNING, f"Active: {activity}", content
