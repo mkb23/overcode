@@ -351,7 +351,18 @@ class PollingStatusDetector:
         Distinguishes:
         - Empty prompt `>` or `› ` = waiting for user input
         - User input `> some text` with no Claude response = stalled
+
+        Claude Code always renders the ❯ prompt as UI chrome, even while
+        actively working (#393). When active indicators are present in the
+        last lines, the prompt is just decoration — skip prompt detection.
         """
+        # If active indicators are present, Claude is working — the prompt
+        # and user input lines are just UI chrome, not evidence of waiting.
+        content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
+        last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
+        if matches_any(last_few, self.patterns.active_indicators):
+            return None
+
         # Check for empty prompt or autocomplete suggestion
         for line in last_lines[-4:]:
             stripped = line.strip()
