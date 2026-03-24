@@ -172,16 +172,16 @@ class PollingStatusDetector:
         # prompt detection.
         #
         # HOWEVER: Claude Code always renders the ❯ prompt as UI chrome, even
-        # while actively working (#393). When Claude IS active, the status bar
-        # line (⏵⏵ ...) includes "esc to interrupt". When idle, it doesn't.
-        # We check the status bar specifically rather than general content,
-        # because historical output (✻ Twisting…, ⎿ Running…) persists in
-        # scrollback and would false-match active indicators.
+        # while actively working (#393). When Claude IS active, "esc to
+        # interrupt" appears at the bottom of the pane — either as a
+        # standalone line or appended to the ⏵⏵ permissions status bar.
+        # We check only the last 2 lines for this, because historical
+        # thinking output (✻ Twisting…, ⎿ Running…) persists in scrollback
+        # above the prompt and would false-match general active indicators.
         if content_changed:
             status_bar_active = any(
                 "esc to interrupt" in line.lower()
-                for line in last_lines
-                if is_status_bar_line(line, self.patterns)
+                for line in last_lines[-2:]
             )
             if not status_bar_active:
                 prompt_result = self._detect_user_prompt(last_lines, content)
@@ -362,15 +362,13 @@ class PollingStatusDetector:
         actively working (#393). When active indicators are present in the
         last lines, the prompt is just decoration — skip prompt detection.
         """
-        # If "esc to interrupt" is on the status bar, Claude is actively
-        # working — the prompt and user input lines are just UI chrome.
-        # Check the status bar specifically rather than general content,
-        # because historical thinking output (✻, Running…) persists in
-        # scrollback and would false-match active indicators (#393).
+        # If "esc to interrupt" appears at the bottom of the pane, Claude
+        # is actively working — the prompt and user input are just UI chrome.
+        # Only check the last 2 lines to avoid matching historical thinking
+        # output (✻, Running…) that persists in scrollback (#393).
         if any(
             "esc to interrupt" in line.lower()
-            for line in last_lines
-            if is_status_bar_line(line, self.patterns)
+            for line in last_lines[-2:]
         ):
             return None
 
