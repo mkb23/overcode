@@ -302,6 +302,7 @@ class MonitorDaemon:
         self.previous_states: Dict[str, str] = {}
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
+        self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
 
         # Stats sync throttling - None forces immediate sync on first loop
         self._last_stats_sync: Optional[datetime] = None
@@ -935,6 +936,9 @@ class MonitorDaemon:
                 # Detect status - dispatches per-session via dispatcher (#5)
                 status, activity, pane_content = self.detector.detect_status(session)
 
+                # Log hook events when they change (diagnostic visibility)
+                self._log_hook_event(session, status, activity)
+
                 # Extract PR number from pane content
                 if pane_content:
                     pr = extract_pr_number(pane_content)
@@ -1013,6 +1017,26 @@ class MonitorDaemon:
         self._compute_subtree_costs(session_states)
 
         return session_states, all_waiting_user
+
+    def _log_hook_event(self, session, status: str, activity: str) -> None:
+        """Log hook events to the daemon log when they change.
+
+        Reads the detector's _last_detect_phase diagnostic and logs
+        when a new hook event fires for an agent, showing the agent name,
+        hook event, and resulting status.
+        """
+        # Get the phase from whichever detector is active
+        detector = self.detector.hooks if self.detector.mode == "hooks" else self.detector.polling
+        phases = getattr(detector, '_last_detect_phase', {})
+        current_phase = phases.get(session.id, "")
+
+        prev_phase = self._last_hook_phases.get(session.id)
+        if current_phase and current_phase != prev_phase:
+            self._last_hook_phases[session.id] = current_phase
+            # Format: "agent-name  hook:PostToolUse → running (Using Read)"
+            self.log.info(
+                f"{session.name}  {current_phase} → {status} ({activity})"
+            )
 
     def _compute_subtree_costs(self, session_states):
         """Compute subtree cost (self + all descendants) for each parent agent."""

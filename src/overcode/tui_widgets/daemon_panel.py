@@ -25,7 +25,7 @@ from ..tui_helpers import (
 class DaemonPanel(Static):
     """Inline panel showing monitor daemon status and log tail."""
 
-    LOG_LINES_TO_SHOW = 8
+    LOG_LINES_TO_SHOW = 16
 
     def __init__(self, tmux_session: str = "agents", *args, **kwargs):
         super().__init__(*args, **kwargs)
