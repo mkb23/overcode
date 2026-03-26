@@ -199,7 +199,7 @@ class HookStatusDetector:
         # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
         sleep_dur = None
         if status == STATUS_RUNNING:
-            sleep_dur = self._find_sleep_duration(pane_content, hook_state)
+            sleep_dur = self._find_sleep_duration(hook_state)
             if sleep_dur is not None:
                 status = STATUS_BUSY_SLEEPING
 
@@ -238,34 +238,47 @@ class HookStatusDetector:
         # No shell prompt → likely /clear, agent is waiting for input
         return STATUS_WAITING_USER, "Waiting for user input", pane_content
 
-    def _find_sleep_duration(self, pane_content: str, hook_state: dict) -> int | None:
-        """Find sleep duration from pane content or hook state (#289)."""
-        # Check pane content for sleep patterns
-        clean = strip_ansi(pane_content)
-        for line in clean.strip().split('\n')[-10:]:
-            dur = extract_sleep_duration(line)
-            if dur is not None:
-                return dur
+    def _find_sleep_duration(self, hook_state: dict) -> int | None:
+        """Find sleep duration from hook state's tool_input (#289).
 
-        # Check tool_input from hook state (PostToolUse/PreToolUse include tool_input)
+        PreToolUse and PostToolUse include tool_input with the Bash command.
+        Parse the command directly — no pane scraping needed.
+        """
         tool_input = hook_state.get("tool_input")
         if isinstance(tool_input, dict):
             command = tool_input.get("command", "")
             dur = extract_sleep_duration(command)
             if dur is not None:
                 return dur
-
         return None
+
+    @staticmethod
+    def _parse_bash_activity(hook_state: dict) -> str | None:
+        """Parse a Bash tool_input command into a concise activity string.
+
+        Returns a human-readable summary of what the Bash command does,
+        or None if the command isn't parseable or isn't Bash.
+        """
+        if hook_state.get("tool_name") != "Bash":
+            return None
+        tool_input = hook_state.get("tool_input")
+        if not isinstance(tool_input, dict):
+            return None
+        command = tool_input.get("command", "")
+        if not command:
+            return None
+        # Truncate long commands
+        if len(command) > 80:
+            command = command[:77] + "..."
+        return f"Bash: {command}"
 
     def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""
-        if event == "PreToolUse":
-            tool_name = hook_state.get("tool_name", "")
-            if tool_name:
-                return f"Starting {tool_name}"
-            return "Starting tool"
-
-        if event == "PostToolUse":
+        if event in ("PreToolUse", "PostToolUse"):
+            # For Bash, show the actual command for better visibility
+            bash_activity = self._parse_bash_activity(hook_state)
+            if bash_activity:
+                return bash_activity
             tool_name = hook_state.get("tool_name", "")
             if tool_name:
                 return f"Using {tool_name}"

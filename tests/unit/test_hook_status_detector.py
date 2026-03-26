@@ -402,36 +402,26 @@ class TestStatusDetectorAttributes:
 class TestBusySleepingDetection:
     """Tests for busy_sleeping detection in hook-based detector (#289)."""
 
-    def test_sleep_in_pane_content(self, tmp_path):
-        """PostToolUse with sleep visible in pane → busy_sleeping."""
+    def test_sleep_in_tool_input_command(self, tmp_path):
+        """PostToolUse with tool_input containing sleep → busy_sleeping."""
         state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Bash")
-        pane_content = '⏺ Running Bash("sleep 60")\n'
-        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PostToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 60"},
+        }
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_BUSY_SLEEPING, (
-            f"Sleep in pane should be busy_sleeping, got {status}: {activity}"
-        )
-
-    def test_activity_includes_duration_from_pane(self, tmp_path):
-        """Activity string should include parsed duration like 'Sleeping 60s'."""
-        state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "PostToolUse", tool_name="Bash")
-        pane_content = '⏺ Running Bash("sleep 60")\n'
-        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
-
-        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
-        session = create_mock_session(tmux_window=1, name="test-agent")
-        status, activity, _ = detector.detect_status(session)
-
-        assert "Sleeping" in activity, f"Activity should start with 'Sleeping', got: {activity}"
-        assert "60s" in activity or "1.0m" in activity, (
-            f"Activity should include '60s' or '1.0m', got: {activity}"
-        )
+        assert status == STATUS_BUSY_SLEEPING
+        assert "Sleeping" in activity
+        assert "60s" in activity or "1.0m" in activity
 
     def test_activity_includes_duration_from_tool_input(self, tmp_path):
         """Activity from tool_input should also include parsed duration."""
@@ -491,17 +481,22 @@ class TestBusySleepingDetection:
             f"Non-sleep bash should be running, got {status}: {activity}"
         )
 
-    def test_user_prompt_submit_with_sleep_in_pane(self, tmp_path):
-        """UserPromptSubmit with sleep visible in pane → busy_sleeping."""
+    def test_pre_tool_use_with_sleep(self, tmp_path):
+        """PreToolUse with Bash sleep → busy_sleeping (detected before execution)."""
         state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit")
-        pane_content = 'Processing...\n⏺ Bash  sleep 120\n'
-        mock_tmux = create_mock_tmux_with_content("agents", 1, pane_content)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PreToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 120"},
+        }
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_BUSY_SLEEPING, (
-            f"UserPromptSubmit with sleep in pane should be busy_sleeping, got {status}: {activity}"
-        )
+        assert status == STATUS_BUSY_SLEEPING
+        assert "2.0m" in activity
