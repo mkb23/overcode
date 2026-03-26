@@ -105,7 +105,7 @@ class TestDaemonPanelRenderStopped:
         widget = _make_bare_daemon_panel(monitor_state=None)
         result = widget.render()
         plain = result.plain
-        assert "Supervisor Daemon:" in plain
+        assert "Monitor Daemon" in plain
         assert "stopped" in plain
 
     def test_render_stale_monitor_state(self):
@@ -145,7 +145,7 @@ class TestDaemonPanelRenderRunning:
         widget = _make_bare_daemon_panel(monitor_state=state)
         result = widget.render()
         plain = result.plain
-        assert "Supervisor Daemon:" in plain
+        assert "Monitor Daemon" in plain
         assert "#42" in plain
         assert "@10s" in plain
 
@@ -159,7 +159,7 @@ class TestDaemonPanelRenderRunning:
         widget = _make_bare_daemon_panel(monitor_state=state)
         result = widget.render()
         plain = result.plain
-        assert "sup:5" in plain
+        assert "steers:5" in plain
 
     def test_render_zero_supervisions_omitted(self):
         state = _make_monitor_state(
@@ -186,7 +186,7 @@ class TestDaemonPanelRenderLogs:
         widget = _make_bare_daemon_panel(log_lines=[])
         result = widget.render()
         plain = result.plain
-        assert "no logs yet" in plain
+        assert "no log output yet" in plain
 
     def test_shows_last_n_lines(self):
         lines = [f"line {i}" for i in range(20)]
@@ -204,9 +204,8 @@ class TestDaemonPanelRenderLogs:
         widget = _make_bare_daemon_panel(log_lines=[long_line])
         result = widget.render()
         plain = result.plain
-        # Line should be truncated to 120 chars (plus indent)
-        # The actual line in the render won't exceed 120 + 2 (for "  " prefix)
-        assert "A" * 121 not in plain
+        # Line should be truncated to 140 chars (plus indent)
+        assert "A" * 141 not in plain
 
     def test_log_lines_fewer_than_max(self):
         lines = ["line 1", "line 2"]
@@ -290,5 +289,7 @@ class TestDaemonPanelControlsHint:
         widget = _make_bare_daemon_panel()
         result = widget.render()
         plain = result.plain
-        assert ":sup" in plain
-        assert ":mon" in plain
+        assert "start" in plain
+        assert "stop" in plain
+        assert "restart" in plain
+        assert "mode" in plain
