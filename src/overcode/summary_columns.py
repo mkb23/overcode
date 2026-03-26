@@ -358,13 +358,16 @@ def render_model(ctx: ColumnContext) -> ColumnOutput:
     """Model name. Only visible when any agent has a model set."""
     if not ctx.model:
         return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
-    # Show short alias (up to 6 chars) right-aligned
-    display = ctx.model[:6]
+    from .history_reader import model_short_name
+    display = model_short_name(ctx.model)[:6]
     return [(f" {display:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
 
 
 def render_model_plain(ctx: ColumnContext) -> Optional[str]:
-    return ctx.model or None
+    if not ctx.model:
+        return None
+    from .history_reader import model_short_name
+    return model_short_name(ctx.model)
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
@@ -1016,7 +1019,7 @@ def build_cli_context(
         sleep_wake_estimate=sleep_wake_estimate,
         pr_number=pr_number,
         any_has_pr=any_has_pr,
-        model=getattr(session, 'model', '') or '',
+        model=getattr(session, 'model', '') or getattr(getattr(session, 'stats', None), 'model', '') or '',
         any_has_model=any_has_model,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),

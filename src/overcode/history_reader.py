@@ -33,8 +33,12 @@ CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 
 # Model name → context window size in tokens.
 # Default 200K for unknown models.  Update as new models ship.
+# Claude Code with 1M context reports the same model ID — we detect
+# the actual context size from token counts at runtime and update here
+# for the models known to support extended context.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
-    "claude-opus-4-6": 200_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
     "claude-sonnet-4-5-20250929": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
     "claude-3-5-sonnet-20241022": 200_000,
@@ -44,6 +48,32 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-3-haiku-20240307": 200_000,
 }
 DEFAULT_CONTEXT_WINDOW = 200_000
+
+# Model ID → human-readable short name for display
+MODEL_SHORT_NAMES: Dict[str, str] = {
+    "claude-opus-4-6": "Op4.6",
+    "claude-sonnet-4-6": "Sn4.6",
+    "claude-sonnet-4-5-20250929": "Sn4.5",
+    "claude-haiku-4-5-20251001": "Hk4.5",
+    "claude-3-5-sonnet-20241022": "Sn3.5",
+    "claude-3-5-haiku-20241022": "Hk3.5",
+    "claude-3-opus-20240229": "Op3",
+    "claude-3-sonnet-20240229": "Sn3",
+    "claude-3-haiku-20240307": "Hk3",
+}
+
+
+def model_short_name(model: Optional[str]) -> str:
+    """Return a short display name for a model ID.
+
+    Examples:
+        "claude-opus-4-6" → "Op4.6"
+        "claude-haiku-4-5-20251001" → "Hk4.5"
+        "unknown-model" → "unknown-model"
+    """
+    if not model:
+        return ""
+    return MODEL_SHORT_NAMES.get(model, model)
 
 
 def model_context_window(model: Optional[str]) -> int:

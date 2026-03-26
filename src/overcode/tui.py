@@ -1608,7 +1608,10 @@ class SupervisorTUI(
             )
 
         # Check if any agent has a model set
-        any_has_model = any(s.model for s in self.sessions if s.model)
+        any_has_model = any(
+            (s.model or getattr(s.stats, 'model', None))
+            for s in self.sessions
+        )
 
         # Check if any agent is busy_sleeping (#289)
         any_is_sleeping = any(

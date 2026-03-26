@@ -288,7 +288,7 @@ class SessionSummary(Static, can_focus=True):
             pr_number=self.pr_number,
             any_has_pr=self.any_has_pr,
             # Model
-            model=s.model or "",
+            model=s.model or getattr(s.stats, 'model', '') or "",
             any_has_model=self.any_has_model,
             # Sister integration (#245)
             source_host=s.source_host,
