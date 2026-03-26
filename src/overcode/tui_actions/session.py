@@ -236,7 +236,13 @@ class SessionActionsMixin:
             return
 
         # Update the session in the session manager
-        self.session_manager.update_session(session.id, heartbeat_paused=new_paused_state)
+        update_kwargs = {"heartbeat_paused": new_paused_state}
+        if not new_paused_state:
+            # Resuming: clear last_heartbeat_time so next heartbeat is
+            # computed from now, not from a stale timestamp (#392)
+            update_kwargs["last_heartbeat_time"] = None
+            session.last_heartbeat_time = None
+        self.session_manager.update_session(session.id, **update_kwargs)
 
         # Update the local session object
         session.heartbeat_paused = new_paused_state

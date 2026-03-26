@@ -413,9 +413,10 @@ class TestToggleHeartbeatPause:
         SessionActionsMixin.action_toggle_heartbeat_pause(mock_tui)
 
         mock_tui.session_manager.update_session.assert_called_once_with(
-            "session-123", heartbeat_paused=False
+            "session-123", heartbeat_paused=False, last_heartbeat_time=None
         )
         assert mock_session.heartbeat_paused is False
+        assert mock_session.last_heartbeat_time is None
         mock_signal.assert_called_once_with(mock_tui.tmux_session)
         mock_tui.notify.assert_called_once()
         assert "resumed" in mock_tui.notify.call_args[0][0]

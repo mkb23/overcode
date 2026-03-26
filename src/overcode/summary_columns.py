@@ -604,10 +604,14 @@ def render_oversight_countdown(ctx: ColumnContext) -> ColumnOutput:
 
 def _compute_next_heartbeat(session) -> Optional[str]:
     """Compute next heartbeat time as HH:MM string, or None."""
+    now = datetime.now()
     if session.last_heartbeat_time:
         try:
             last_hb = datetime.fromisoformat(session.last_heartbeat_time)
             next_due = last_hb + timedelta(seconds=session.heartbeat_frequency_seconds)
+            # If next due is in the past (stale timestamp), show "now"
+            if next_due < now:
+                return now.strftime("%H:%M")
             return next_due.strftime("%H:%M")
         except (ValueError, TypeError):
             pass
@@ -615,6 +619,8 @@ def _compute_next_heartbeat(session) -> Optional[str]:
         try:
             start = datetime.fromisoformat(session.start_time)
             next_due = start + timedelta(seconds=session.heartbeat_frequency_seconds)
+            if next_due < now:
+                return now.strftime("%H:%M")
             return next_due.strftime("%H:%M")
         except (ValueError, TypeError):
             pass
