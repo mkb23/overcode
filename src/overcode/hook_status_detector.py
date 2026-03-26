@@ -27,6 +27,7 @@ from .status_constants import (
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
+    STATUS_ERROR,
 )
 from .status_patterns import (
     is_sleep_command,
@@ -47,7 +48,9 @@ _HOOK_STATUS_MAP = {
     "UserPromptSubmit": STATUS_RUNNING,
     "PreToolUse": STATUS_RUNNING,
     "PostToolUse": STATUS_RUNNING,
+    "PostToolUseFailure": STATUS_RUNNING,  # Tool failed but agent is still working
     "Stop": STATUS_WAITING_USER,
+    "StopFailure": STATUS_ERROR,  # API error ended the turn (purple indicator)
     "PermissionRequest": STATUS_WAITING_USER,
     "SessionEnd": STATUS_TERMINATED,
 }
@@ -268,6 +271,12 @@ class HookStatusDetector:
                 return f"Using {tool_name}"
             return "Running tool"
 
+        if event == "PostToolUseFailure":
+            tool_name = hook_state.get("tool_name", "")
+            if tool_name:
+                return f"Tool failed: {tool_name}"
+            return "Tool failed"
+
         if event == "UserPromptSubmit":
             return "Processing prompt"
 
@@ -275,6 +284,9 @@ class HookStatusDetector:
             if session and session.parent_session_id is not None:
                 return "Waiting for oversight report"
             return "Waiting for user input"
+
+        if event == "StopFailure":
+            return "API error"
 
         if event == "PermissionRequest":
             return "Permission: approval required"

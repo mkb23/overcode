@@ -27,7 +27,9 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("UserPromptSubmit", "overcode hook-handler"),
     ("PreToolUse", "overcode hook-handler"),
     ("PostToolUse", "overcode hook-handler"),
+    ("PostToolUseFailure", "overcode hook-handler"),
     ("Stop", "overcode hook-handler"),
+    ("StopFailure", "overcode hook-handler"),
     ("PermissionRequest", "overcode hook-handler"),
     ("SessionEnd", "overcode hook-handler"),
 ]
