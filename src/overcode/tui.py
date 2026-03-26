@@ -548,7 +548,7 @@ class SupervisorTUI(
             return
 
         # All I/O happens here in the worker thread
-        self._usage_monitor.fetch()  # Internally throttled to 90s
+        self._usage_monitor.fetch()  # Internally throttled to 5min
         monitor_state = get_monitor_daemon_state(self.tmux_session)
         from .settings import get_monitor_daemon_pid_path
         daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))

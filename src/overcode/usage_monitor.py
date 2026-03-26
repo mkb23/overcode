@@ -34,13 +34,13 @@ class UsageSnapshot:
 class UsageMonitor:
     """Monitors Claude Code subscription usage via the Anthropic API.
 
-    Caches results and throttles fetches to a minimum interval (default 90s).
+    Caches results and throttles fetches to a minimum interval (default 5min).
     """
 
     def __init__(self):
         self._snapshot: Optional[UsageSnapshot] = None
         self._last_fetch_time: float = 0
-        self._min_interval: int = 90
+        self._min_interval: int = 300  # 5 minutes between API calls
 
     @property
     def snapshot(self) -> Optional[UsageSnapshot]:
