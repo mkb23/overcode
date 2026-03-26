@@ -491,11 +491,10 @@ def tmux_layout(
         rprint("  tmux set -g terminal-features ''")
         return
 
-    # Verify agents session exists
+    # Create agents session if it doesn't exist (#397)
     if not _tmux_check("has-session", "-t", session):
-        rprint(f"[red]No tmux session '{session}' found.[/red]")
-        rprint(f"[dim]Launch some agents first, or create it: tmux new-session -d -s {session}[/dim]")
-        raise typer.Exit(1)
+        rprint(f"[dim]Creating tmux session '{session}'...[/dim]")
+        _tmux("new-session", "-d", "-s", session)
 
     # --- Toggle key selection (runs if not yet configured) ---
     from ..config import get_tmux_toggle_key, set_tmux_toggle_key

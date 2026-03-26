@@ -509,6 +509,19 @@ class MonitorDaemon:
             ):
                 continue
 
+            # In hooks mode, double-check the hook state right before sending.
+            # The agent may have started working between the daemon's last
+            # detection and now (e.g., user typed something). Sending a
+            # heartbeat into a running session corrupts the prompt (#374).
+            if self.detector.mode == "hooks":
+                hook_detector = self.detector.hooks
+                hook_state = hook_detector._read_hook_state(session.name)
+                if hook_state:
+                    event = hook_state.get("event", "")
+                    if event in ("UserPromptSubmit", "PreToolUse", "PostToolUse"):
+                        self.log.info(f"[{session.name}] Heartbeat skipped (hook says {event})")
+                        continue
+
             # Send the heartbeat instruction
             if send_text_to_tmux_window(
                 session.tmux_session,

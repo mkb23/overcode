@@ -2703,21 +2703,37 @@ class SupervisorTUI(
             self.notify(f"Remote launch failed: {result.error}", severity="error")
 
     def _ensure_monitor_daemon(self) -> None:
-        """Start the Monitor Daemon if not running.
+        """Start or restart the Monitor Daemon as needed.
 
         Called automatically on TUI mount to ensure continuous monitoring.
-        The Monitor Daemon handles status tracking, time accumulation,
-        stats sync, and user presence detection.
+        Also auto-restarts if the running daemon is an old version (#386).
         """
-        # Check lock file first (authoritative: daemon holds flock for its lifetime)
-        from .settings import get_monitor_daemon_pid_path
-        if is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session)):
-            return  # Already running
+        from .settings import get_monitor_daemon_pid_path, DAEMON_VERSION
+        from .monitor_daemon import stop_monitor_daemon
 
-        # Fallback: PID file check (covers startup window before lock is acquired)
-        if is_monitor_daemon_running(self.tmux_session):
+        running = (
+            is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
+            or is_monitor_daemon_running(self.tmux_session)
+        )
+
+        if running:
+            # Check for version mismatch (#386)
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            if daemon_state and daemon_state.daemon_version != DAEMON_VERSION:
+                old_v = daemon_state.daemon_version
+                self.notify(
+                    f"Restarting daemon (v{old_v} → v{DAEMON_VERSION})",
+                    severity="information",
+                )
+                stop_monitor_daemon(self.tmux_session)
+                # Delay start to let the old process exit
+                self.set_timer(0.5, self._start_monitor_daemon_on_mount)
             return
 
+        self._start_monitor_daemon_on_mount()
+
+    def _start_monitor_daemon_on_mount(self) -> None:
+        """Start the monitor daemon (called from _ensure_monitor_daemon)."""
         pid = spawn_daemon([
             sys.executable, "-m", "overcode.monitor_daemon",
             "--session", self.tmux_session,
