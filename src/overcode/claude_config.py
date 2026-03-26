@@ -137,6 +137,23 @@ class ClaudeConfigEditor:
                         results.append((event, cmd))
         return results
 
+    # ----- Hook detection -----
+
+    @staticmethod
+    def are_overcode_hooks_installed() -> bool:
+        """Check if core overcode hooks are installed at user level.
+
+        Requires at least UserPromptSubmit, Stop, and PostToolUse hooks
+        to consider hooks mode viable.
+        """
+        editor = ClaudeConfigEditor.user_level()
+        try:
+            editor.load()
+        except (ValueError, FileNotFoundError):
+            return False
+        core_events = ("UserPromptSubmit", "Stop", "PostToolUse")
+        return all(editor.has_hook(event, "overcode hook-handler") for event in core_events)
+
     # ----- Permission management -----
 
     def add_permission(self, tool_pattern: str) -> bool:

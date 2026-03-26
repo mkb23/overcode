@@ -276,9 +276,12 @@ class MonitorDaemon:
 
         # Dependencies (allow injection for testing)
         self.session_manager = session_manager or SessionManager()
+        from .settings import resolve_detection_mode
+        detection_mode = resolve_detection_mode(tmux_session)
         self.detector = StatusDetectorDispatcher(
             tmux_session,
             polling_detector=status_detector,
+            mode=detection_mode,
         )
 
         # Presence tracking (graceful degradation)
@@ -869,6 +872,12 @@ class MonitorDaemon:
 
     def _tick(self, now: datetime) -> None:
         """Execute one monitoring loop iteration."""
+        # Re-read detection mode in case the TUI toggled it via K hotkey
+        from .settings import resolve_detection_mode
+        current_mode = resolve_detection_mode(self.tmux_session)
+        if self.detector.mode != current_mode:
+            self.detector.mode = current_mode
+            self.log.info(f"Detection mode changed to: {current_mode}")
         sessions = [s for s in self.session_manager.list_sessions()
                     if s.tmux_session == self.tmux_session]
         if not self._legacy_windows_migrated:

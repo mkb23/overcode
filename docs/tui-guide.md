@@ -75,7 +75,7 @@ When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy wi
 | `c` | Sync to main + clear (double-press to confirm) |
 | `T` | Handover all (double-press to confirm) |
 | `H` | Configure heartbeat |
-| `K` | Toggle hook-based status detection |
+| `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |
 | `G` | New agent defaults |
 | `U` | Sister visibility |

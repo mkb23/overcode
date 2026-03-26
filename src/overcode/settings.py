@@ -407,6 +407,38 @@ def get_web_server_port_path(session: str) -> Path:
     return get_session_dir(session) / "web_server.port"
 
 
+def get_detection_mode_path(session: str) -> Path:
+    """Get the detection mode file path for a specific session."""
+    return get_session_dir(session) / "detection_mode"
+
+
+def read_detection_mode(session: str) -> str:
+    """Read the global detection mode ('hooks' or 'polling').
+
+    Returns 'auto' if no explicit mode is set (auto-detect on startup).
+    """
+    try:
+        return get_detection_mode_path(session).read_text().strip()
+    except (FileNotFoundError, IOError):
+        return "auto"
+
+
+def write_detection_mode(session: str, mode: str) -> None:
+    """Write the global detection mode for daemon/TUI synchronisation."""
+    path = get_detection_mode_path(session)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(mode)
+
+
+def resolve_detection_mode(session: str) -> str:
+    """Resolve 'auto' to 'hooks' or 'polling' based on hook installation."""
+    mode = read_detection_mode(session)
+    if mode in ("hooks", "polling"):
+        return mode
+    from .claude_config import ClaudeConfigEditor
+    return "hooks" if ClaudeConfigEditor.are_overcode_hooks_installed() else "polling"
+
+
 def get_diagnostics_dir(session: str) -> Path:
     """Get the diagnostics directory for a specific session."""
     return get_session_dir(session) / "diagnostics"

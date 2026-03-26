@@ -1,9 +1,9 @@
 """
 Factory for creating status detector instances.
 
-Provides both a single-strategy factory (create_status_detector) and a
-dispatcher (StatusDetectorDispatcher) that holds both detector types and
-auto-dispatches per-session based on session.hook_status_detection (#5).
+Provides a dispatcher (StatusDetectorDispatcher) that holds both detector
+types and switches globally between hooks and polling mode. The mode is
+set once at startup and toggled via the K hotkey — no per-agent dispatch.
 """
 
 from typing import Optional, Tuple, TYPE_CHECKING
@@ -42,11 +42,11 @@ def create_status_detector(
 
 
 class StatusDetectorDispatcher:
-    """Holds both detector types and dispatches per-session.
+    """Holds both detector types and dispatches based on global mode.
 
-    Implements StatusDetectorProtocol so it can be used anywhere a single
-    detector is expected. The detect_status() method checks
-    session.hook_status_detection to pick the right strategy.
+    The mode ("hooks" or "polling") is set globally — all agents use the
+    same detection strategy. No per-agent dispatch or fallback between
+    the two systems.
     """
 
     def __init__(
@@ -56,17 +56,25 @@ class StatusDetectorDispatcher:
         patterns: Optional["StatusPatterns"] = None,
         polling_detector: Optional[StatusDetectorProtocol] = None,
         hook_detector: Optional[StatusDetectorProtocol] = None,
+        mode: str = "polling",
     ):
         self.tmux_session = tmux_session
         from .status_detector import PollingStatusDetector
         from .hook_status_detector import HookStatusDetector
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
-        # Share the polling detector as the hook detector's fallback so that
-        # content-hash state and phase tracking are consistent (#350 flicker fix).
-        self.hooks = hook_detector or HookStatusDetector(
-            tmux_session, tmux=tmux, patterns=patterns,
-            polling_fallback=self.polling,
-        )
+        self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+        self._mode = mode
+
+    @property
+    def mode(self) -> str:
+        """Current detection mode: 'hooks' or 'polling'."""
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: str) -> None:
+        if value not in ("hooks", "polling"):
+            raise ValueError(f"Invalid detection mode: {value!r}")
+        self._mode = value
 
     @property
     def capture_lines(self) -> int:
@@ -78,10 +86,12 @@ class StatusDetectorDispatcher:
         self.hooks.capture_lines = value
 
     def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
-        """Detect status using the appropriate detector for the session."""
-        detector = self.hooks if session.hook_status_detection else self.polling
+        """Detect status using the globally configured mode."""
+        detector = self.hooks if self._mode == "hooks" else self.polling
         return detector.detect_status(session, num_lines=num_lines)
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
-        """Get pane content (delegates to polling detector)."""
+        """Get pane content (delegates to active detector)."""
+        if self._mode == "hooks":
+            return self.hooks.get_pane_content(window, num_lines)
         return self.polling.get_pane_content(window, num_lines)

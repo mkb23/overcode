@@ -64,7 +64,7 @@ class HelpOverlay(Static):
         row("x", "Kill agent", "R", "Restart/revive agent")
         row("z", "Toggle sleep", "p", "Pause/resume heartbeat")
         row("V", "Edit agent value", "B", "Edit cost budget")
-        row("H", "Heartbeat config", "K", "Hook status detection")
+        row("H", "Heartbeat config", "K", "Detection mode")
         row("F", "Fork agent", "^T", "Toggle time context")
         row("T", "Handover all (2x)", "I", "Instruction history")
         row("G", "New agent defaults", "U", "Sister visibility")

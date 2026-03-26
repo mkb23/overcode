@@ -248,7 +248,9 @@ class SupervisorTUI(
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
         self.launcher = ClaudeLauncher(tmux_session)
-        self.detector = StatusDetectorDispatcher(tmux_session)
+        from .settings import resolve_detection_mode
+        detection_mode = resolve_detection_mode(tmux_session)
+        self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
         # Track collapsed parents in tree view (#244)
         self.collapsed_parents: set[str] = set()
         # Max repo/branch/name widths for alignment in full detail mode

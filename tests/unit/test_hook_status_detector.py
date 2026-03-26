@@ -108,26 +108,17 @@ class TestStalenessDetection:
 
         assert state is not None
 
-    def test_stale_state_returns_none(self, tmp_path):
-        """State older than threshold is considered stale."""
+    def test_old_state_is_still_valid(self, tmp_path):
+        """Old hook state is trusted (no staleness threshold)."""
         state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=time.time() - 200)
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", timestamp=time.time() - 600)
 
-        detector = HookStatusDetector("agents", state_dir=state_dir, stale_threshold_seconds=120)
+        detector = HookStatusDetector("agents", state_dir=state_dir)
         state = detector._read_hook_state("test-agent")
 
-        assert state is None
-
-    def test_custom_stale_threshold(self, tmp_path):
-        """Custom stale threshold is respected."""
-        state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=time.time() - 5)
-
-        # With 3-second threshold, 5-second-old state should be stale
-        detector = HookStatusDetector("agents", state_dir=state_dir, stale_threshold_seconds=3)
-        state = detector._read_hook_state("test-agent")
-
-        assert state is None
+        # No stale threshold — running hooks are trusted indefinitely
+        assert state is not None
+        assert state["event"] == "PostToolUse"
 
     def test_invalid_timestamp_returns_none(self, tmp_path):
         """Invalid timestamp type returns None."""
@@ -282,46 +273,47 @@ mike@mac ~/Code/overcode %
         assert status == STATUS_WAITING_USER
 
 
-class TestFallbackToPolling:
-    """Test fallback to polling when hook state is unavailable."""
+class TestNoHookState:
+    """Test behaviour when no hook state file exists."""
 
-    def test_falls_back_when_no_state_file(self, tmp_path):
-        """Falls back to polling when no hook state file exists."""
+    def test_no_state_file_with_window_alive(self, tmp_path):
+        """No hook state + window alive → WAITING_USER."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True)
-        mock_tmux = create_mock_tmux_with_content("agents", 1, """
-⏺ Finished work.
-
->
-  ? for shortcuts
-""")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
 
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, _, _ = detector.detect_status(session)
 
-        # Polling should detect waiting_user from the empty prompt
         assert status == STATUS_WAITING_USER
 
-    def test_falls_back_when_stale(self, tmp_path):
-        """Falls back to polling when hook state is stale."""
+    def test_no_state_file_with_window_gone(self, tmp_path):
+        """No hook state + window gone → TERMINATED."""
         state_dir = tmp_path / "sessions" / "agents"
-        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit",
-                         timestamp=time.time() - 300)  # 5 minutes old
-        mock_tmux = create_mock_tmux_with_content("agents", 1, """
-⏺ Finished work.
+        state_dir.mkdir(parents=True)
+        mock_tmux = MockTmux()
+        mock_tmux.new_session("agents")
+        # No window content → capture_pane returns None
 
->
-  ? for shortcuts
-""")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=999, name="test-agent")
+        status, _, _ = detector.detect_status(session)
 
-        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir,
-                                     stale_threshold_seconds=120)
+        assert status == STATUS_TERMINATED
+
+    def test_old_running_hook_is_trusted(self, tmp_path):
+        """Old running hook (e.g. PostToolUse 10 min ago) is still RUNNING."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PostToolUse",
+                         tool_name="Bash", timestamp=time.time() - 600)
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, _, _ = detector.detect_status(session)
 
-        # Should fall back to polling and detect waiting_user
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_RUNNING
 
 
 class TestPaneContent:
@@ -339,8 +331,8 @@ class TestPaneContent:
 
         assert "some pane content here" in pane
 
-    def test_get_pane_content_delegates_to_polling(self, tmp_path):
-        """get_pane_content works via the polling detector's tmux interface."""
+    def test_get_pane_content_via_tmux_interface(self, tmp_path):
+        """get_pane_content works via the tmux interface."""
         state_dir = tmp_path / "sessions" / "agents"
         mock_tmux = create_mock_tmux_with_content("agents", 1, "line1\nline2\nline3")
 

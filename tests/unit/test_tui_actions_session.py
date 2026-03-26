@@ -720,199 +720,41 @@ class TestToggleTimeContext:
 
 
 class TestToggleHookDetection:
-    """Test action_toggle_hook_detection method."""
+    """Test action_toggle_hook_detection — global mode toggle."""
 
-    def test_no_agent_focused(self):
-        """Should warn when no agent is focused."""
+    def test_toggle_from_polling_to_hooks(self, tmp_path):
+        """Should switch global mode from polling to hooks."""
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.focused = MagicMock()  # Not a SessionSummary
+        mock_tui.detector = MagicMock()
+        mock_tui.detector.mode = "polling"
+        mock_tui.tmux_session = "agents"
 
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+        with patch("overcode.settings.write_detection_mode") as mock_write:
+            SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
+        assert mock_tui.detector.mode == "hooks"
+        mock_write.assert_called_once_with("agents", "hooks")
         mock_tui.notify.assert_called_once()
-        assert "No agent focused" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+        assert "hooks" in mock_tui.notify.call_args[0][0]
 
-    def test_enable_hook_detection(self):
-        """Should enable hook detection on a local agent."""
+    def test_toggle_from_hooks_to_polling(self, tmp_path):
+        """Should switch global mode from hooks to polling."""
         from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.is_remote = False
-        mock_session.hook_status_detection = False
-        mock_session.name = "test-agent"
-        mock_session.id = "session-123"
-
-        mock_widget = MagicMock(spec=SessionSummary)
-        mock_widget.session = mock_session
 
         mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
-        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
-        # Default: all sisters reachable (tests needing stale sisters override this)
-        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
-        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
+        mock_tui.detector = MagicMock()
+        mock_tui.detector.mode = "hooks"
+        mock_tui.tmux_session = "agents"
 
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+        with patch("overcode.settings.write_detection_mode") as mock_write:
+            SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
-        mock_tui.session_manager.update_session.assert_called_once_with(
-            "session-123", hook_status_detection=True
-        )
-        assert mock_session.hook_status_detection is True
+        assert mock_tui.detector.mode == "polling"
+        mock_write.assert_called_once_with("agents", "polling")
         mock_tui.notify.assert_called_once()
-        assert "enabled" in mock_tui.notify.call_args[0][0]
-        mock_widget.refresh.assert_called_once()
-
-    def test_disable_hook_detection(self):
-        """Should disable hook detection on a local agent."""
-        from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.is_remote = False
-        mock_session.hook_status_detection = True
-        mock_session.name = "test-agent"
-        mock_session.id = "session-123"
-
-        mock_widget = MagicMock(spec=SessionSummary)
-        mock_widget.session = mock_session
-
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
-        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
-        # Default: all sisters reachable (tests needing stale sisters override this)
-        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
-        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
-
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
-
-        mock_tui.session_manager.update_session.assert_called_once_with(
-            "session-123", hook_status_detection=False
-        )
-        assert mock_session.hook_status_detection is False
-        mock_tui.notify.assert_called_once()
-        assert "disabled" in mock_tui.notify.call_args[0][0]
         assert "polling" in mock_tui.notify.call_args[0][0]
-
-    def test_remote_agent_enable_hook_detection(self):
-        """Should enable hook detection via sister controller for remote agents."""
-        from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.is_remote = True
-        mock_session.hook_status_detection = False
-        mock_session.name = "remote-agent"
-        mock_session.source_url = "http://remote:8080"
-        mock_session.source_api_key = "key-abc"
-
-        mock_widget = MagicMock(spec=SessionSummary)
-        mock_widget.session = mock_session
-
-        mock_result = MagicMock()
-        mock_result.ok = True
-
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
-        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
-        # Default: all sisters reachable (tests needing stale sisters override this)
-        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
-        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
-        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
-
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
-
-        mock_tui._sister_controller.set_hook_detection.assert_called_once_with(
-            "http://remote:8080", "key-abc", "remote-agent", enabled=True,
-        )
-        mock_tui.notify.assert_called_once()
-        assert "enabled" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "information"
-        # Should NOT update local session manager for remote agents
-        mock_tui.session_manager.update_session.assert_not_called()
-
-    def test_remote_agent_disable_hook_detection(self):
-        """Should disable hook detection via sister controller for remote agents."""
-        from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.is_remote = True
-        mock_session.hook_status_detection = True
-        mock_session.name = "remote-agent"
-        mock_session.source_url = "http://remote:8080"
-        mock_session.source_api_key = "key-abc"
-
-        mock_widget = MagicMock(spec=SessionSummary)
-        mock_widget.session = mock_session
-
-        mock_result = MagicMock()
-        mock_result.ok = True
-
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
-        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
-        # Default: all sisters reachable (tests needing stale sisters override this)
-        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
-        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
-        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
-
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
-
-        mock_tui._sister_controller.set_hook_detection.assert_called_once_with(
-            "http://remote:8080", "key-abc", "remote-agent", enabled=False,
-        )
-        mock_tui.notify.assert_called_once()
-        assert "disabled" in mock_tui.notify.call_args[0][0]
-
-    def test_remote_agent_hook_detection_failure(self):
-        """Should notify error when remote hook detection toggle fails."""
-        from overcode.tui_actions.session import SessionActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.is_remote = True
-        mock_session.hook_status_detection = False
-        mock_session.name = "remote-agent"
-        mock_session.source_url = "http://remote:8080"
-        mock_session.source_api_key = "key-abc"
-
-        mock_widget = MagicMock(spec=SessionSummary)
-        mock_widget.session = mock_session
-
-        mock_result = MagicMock()
-        mock_result.ok = False
-        mock_result.error = "Timeout"
-
-        mock_tui = MagicMock()
-        mock_tui.focused = mock_widget
-        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
-        mock_tui._sister_reachable = SessionActionsMixin._sister_reachable.__get__(mock_tui)
-        mock_tui._guard_remote = SessionActionsMixin._guard_remote.__get__(mock_tui)
-        # Default: all sisters reachable (tests needing stale sisters override this)
-        _default_sister = MagicMock(url="http://remote:8080", reachable=True)
-        mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
-        mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_hook_detection.return_value = mock_result
-
-        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "Remote error: Timeout" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "error"
 
 
 class TestExecuteRemoteKill:

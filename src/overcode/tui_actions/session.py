@@ -295,47 +295,16 @@ class SessionActionsMixin:
         focused.refresh()
 
     def action_toggle_hook_detection(self) -> None:
-        """Toggle hook-based status detection for the focused agent (#5).
+        """Toggle global detection mode between hooks and polling.
 
-        When enabled, the agent uses hook state files for status detection
-        instead of tmux pane scraping. Falls back to polling when no hook
-        state is available.
+        Switches ALL agents between hook-based and polling-based status
+        detection. The mode is persisted and shared with the monitor daemon.
         """
-        focused = _get_focused_session(self)
-        if not focused:
-            self.notify("No agent focused", severity="warning")
-            return
-
-        session = focused.session
-
-        if self._is_remote(session):
-            if self._guard_remote(session):
-                return
-            new_state = not session.hook_status_detection
-            result = self._sister_controller.set_hook_detection(
-                session.source_url, session.source_api_key,
-                session.name, enabled=new_state,
-            )
-            state_word = "enabled" if new_state else "disabled"
-            self._remote_notify(result, f"Hook detection {state_word} for '{session.name}'")
-            return
-
-        new_state = not session.hook_status_detection
-
-        # Update the session in the session manager
-        self.session_manager.update_session(session.id, hook_status_detection=new_state)
-
-        # Update the local session object
-        session.hook_status_detection = new_state
-
-        # Dispatcher auto-selects based on session.hook_status_detection
-        if new_state:
-            self.notify(f"Hook detection enabled for '{session.name}'", severity="information")
-        else:
-            self.notify(f"Hook detection disabled for '{session.name}' (using polling)", severity="information")
-
-        # Force a refresh
-        focused.refresh()
+        from ..settings import write_detection_mode
+        new_mode = "polling" if self.detector.mode == "hooks" else "hooks"
+        self.detector.mode = new_mode
+        write_detection_mode(self.tmux_session, new_mode)
+        self.notify(f"Detection mode: {new_mode} (all agents)", severity="information")
 
     def action_kill_focused(self) -> None:
         """Kill or clean up the currently focused agent/job (requires confirmation).

@@ -1,25 +1,27 @@
 """
 Hook-based status detector for Claude sessions (#5).
 
-Reads hook state files written by Claude Code hooks (UserPromptSubmit, Stop,
-PermissionRequest, PostToolUse, SessionEnd) to determine agent status without
-tmux pane scraping.
+Reads hook state files written by Claude Code hooks (UserPromptSubmit,
+PreToolUse, PostToolUse, Stop, PermissionRequest, SessionEnd) to determine
+agent status without tmux pane scraping.
 
 Design:
-- Hook state is authoritative for STATUS when fresh (< stale_threshold_seconds).
-- Pane content is read for enrichment (activity description) but never for status.
-- Falls back to PollingStatusDetector when hook state is missing or stale.
-- One source of truth at any given moment: either hooks or polling, never both.
+- Hook state is the sole authority for status. No polling fallback.
+- Running-state hooks (UserPromptSubmit, PreToolUse, PostToolUse) are
+  trusted indefinitely — Claude will send Stop or SessionEnd when done.
+- Pane content is read only for activity enrichment, never for status.
 """
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
+    STATUS_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_BUSY_SLEEPING,
     STATUS_WAITING_USER,
@@ -43,13 +45,12 @@ if TYPE_CHECKING:
 # Hook event → status mapping
 _HOOK_STATUS_MAP = {
     "UserPromptSubmit": STATUS_RUNNING,
+    "PreToolUse": STATUS_RUNNING,
+    "PostToolUse": STATUS_RUNNING,
     "Stop": STATUS_WAITING_USER,
     "PermissionRequest": STATUS_WAITING_USER,
-    "PostToolUse": STATUS_RUNNING,
     "SessionEnd": STATUS_TERMINATED,
 }
-
-DEFAULT_STALE_THRESHOLD = 120  # seconds
 
 
 class HookStatusDetector:
@@ -62,10 +63,11 @@ class HookStatusDetector:
         {
             "event": "UserPromptSubmit",
             "timestamp": 1234567890.123,
-            "tool_name": "Read"  // optional, for PostToolUse
+            "tool_name": "Read"  // optional, for PostToolUse/PreToolUse
         }
 
-    When hook state is missing or stale (>120s), falls back to polling.
+    No polling fallback. If no hook state file exists, the detector checks
+    whether the tmux window is alive and returns a sensible default.
     """
 
     # Re-export status constants for backward compat (same interface as PollingStatusDetector)
@@ -79,14 +81,17 @@ class HookStatusDetector:
         tmux: "TmuxInterface" = None,
         patterns: "StatusPatterns" = None,
         state_dir: Optional[Path] = None,
-        stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD,
+        # Legacy params kept for API compat — ignored
+        stale_threshold_seconds: float = 0,
         polling_fallback=None,
     ):
         self.tmux_session = tmux_session
         self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
         self._patterns = patterns
-        self._stale_threshold = stale_threshold_seconds
+        # Diagnostic phase tracking (same interface as PollingStatusDetector)
+        self._last_detect_phase: Dict[str, str] = {}
+        self._content_changed: Dict[str, bool] = {}
 
         # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
@@ -98,19 +103,6 @@ class HookStatusDetector:
             else:
                 self._state_dir = Path.home() / ".overcode" / "sessions" / tmux_session
 
-        # Shared or lazy-created polling fallback.  When the dispatcher injects
-        # its polling detector, hash state and phase tracking are shared.
-        self._polling_fallback = polling_fallback
-
-    def _get_polling_fallback(self):
-        """Return (or lazily create) the polling fallback detector."""
-        if self._polling_fallback is None:
-            from .status_detector import PollingStatusDetector
-            self._polling_fallback = PollingStatusDetector(
-                self.tmux_session, tmux=self._tmux, patterns=self._patterns
-            )
-        return self._polling_fallback
-
     def _hook_state_path(self, session_name: str) -> Path:
         """Get the hook state file path for a session."""
         return self._state_dir / f"hook_state_{session_name}.json"
@@ -120,7 +112,8 @@ class HookStatusDetector:
 
         Returns:
             Parsed dict with 'event', 'timestamp', optional 'tool_name',
-            or None if file is missing, corrupt, or stale.
+            or None if file is missing or corrupt.
+            No staleness check — running hooks are trusted indefinitely.
         """
         path = self._hook_state_path(session_name)
         try:
@@ -135,58 +128,61 @@ class HookStatusDetector:
         if "event" not in data or "timestamp" not in data:
             return None
 
-        # Check staleness
+        # Validate timestamp is a number
         try:
-            ts = float(data["timestamp"])
+            float(data["timestamp"])
         except (TypeError, ValueError):
-            return None
-
-        age = time.time() - ts
-        if age > self._stale_threshold:
             return None
 
         return data
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
-        """Get pane content via the polling detector's tmux interface."""
-        fallback = self._get_polling_fallback()
-        fallback.capture_lines = self.capture_lines
-        return fallback.get_pane_content(window, num_lines)
+        """Get pane content via tmux capture-pane."""
+        if self._tmux:
+            return self._tmux.capture_pane(
+                self.tmux_session, window,
+                lines=num_lines or self.capture_lines
+            )
+        # Direct tmux subprocess fallback
+        lines_arg = num_lines or self.capture_lines
+        try:
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-t", f"{self.tmux_session}:{window}",
+                 "-p", "-S", f"-{lines_arg}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.stdout if result.returncode == 0 else None
+        except (subprocess.TimeoutExpired, OSError):
+            return None
 
     def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Detect session status using hook state files.
 
-        When fresh hook state exists, uses that for status determination.
-        Still reads pane content for activity enrichment.
-        Falls back to full polling when hook state is missing or stale.
+        No polling fallback. When no hook state exists, checks if the
+        tmux window is alive and returns a sensible default.
 
         Returns:
             Tuple of (status, current_activity, pane_content)
         """
         hook_state = self._read_hook_state(session.name)
 
-        # Record phase on the shared polling detector for diagnostics
-        polling = self._get_polling_fallback()
-
         if hook_state is None:
-            # No hook state or stale → full polling fallback
-            # Phase tracking is set by the polling detector itself.
-            return polling.detect_status(session, num_lines=num_lines)
+            # No hook state file — agent hasn't triggered a hook yet.
+            # Check if the window exists to distinguish fresh-start from terminated.
+            pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines)
+            if pane_content is None:
+                self._last_detect_phase[session.id] = "hook:no_state+no_window"
+                return STATUS_TERMINATED, "Window no longer exists", ""
+            # Window alive, no hooks yet — assume waiting for input
+            self._last_detect_phase[session.id] = "hook:no_state"
+            return STATUS_WAITING_USER, "Waiting for first hook event", pane_content
 
-        # Hook state is fresh → use it for status
+        # Hook state exists — use it for status
         event = hook_state.get("event", "")
 
         if event == "SessionEnd":
-            # SessionEnd fires both on actual exit AND on /clear.
-            # We know Claude reported ending, so do a targeted pane check:
-            # - Shell prompt on last line → actual exit → TERMINATED
-            # - Claude's prompt (› or >) on last line → /clear → fall back to polling
-            #
-            # We can't use the full polling _is_shell_prompt() here because it
-            # rejects shell prompts when Claude's ⏺ output is in the last 5 lines,
-            # which is always the case right after exit.
-            polling._last_detect_phase[session.id] = f"hook:SessionEnd"
-            return self._detect_session_end_status(session)
+            self._last_detect_phase[session.id] = "hook:SessionEnd"
+            return self._detect_session_end_status(session, num_lines)
 
         status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
 
@@ -212,24 +208,19 @@ class HookStatusDetector:
             activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
 
         # Record hook phase for diagnostics
-        polling._last_detect_phase[session.id] = f"hook:{event}"
+        self._last_detect_phase[session.id] = f"hook:{event}"
 
         return status, activity, pane_content
 
-    def _detect_session_end_status(self, session: "Session") -> Tuple[str, str, str]:
+    def _detect_session_end_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Determine status after a SessionEnd hook event.
 
         SessionEnd fires both on actual exit AND on /clear. We distinguish
         by checking the last line of the pane:
         - Shell prompt (user@host path %) → actual exit → TERMINATED
-        - Claude's prompt (› or >) → /clear was used → fall back to polling
-
-        Unlike the full polling _is_shell_prompt(), this does NOT reject shell
-        prompts when Claude's ⏺ output appears in nearby lines — that output
-        is always present right after exit and is irrelevant once we know
-        SessionEnd fired.
+        - Claude's prompt (› or >) → /clear was used → WAITING_USER
         """
-        pane_content = self.get_pane_content(session.tmux_window) or ""
+        pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
         clean = strip_ansi(pane_content)
         lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
 
@@ -241,20 +232,11 @@ class HookStatusDetector:
         if is_shell_prompt(last_line):
             return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
 
-        # No shell prompt → likely /clear, fall back to full polling
-        return self._get_polling_fallback().detect_status(session)
+        # No shell prompt → likely /clear, agent is waiting for input
+        return STATUS_WAITING_USER, "Waiting for user input", pane_content
 
     def _find_sleep_duration(self, pane_content: str, hook_state: dict) -> int | None:
-        """Find sleep duration from pane content or hook state (#289).
-
-        Checks two signals:
-        1. Pane content for sleep commands (e.g., "Running Bash("sleep 30")")
-        2. Hook state tool_input for sleep commands (from PostToolUse)
-
-        Returns:
-            Sleep duration in seconds, or None if not sleeping.
-            A return value of 0 means sleeping but duration unknown.
-        """
+        """Find sleep duration from pane content or hook state (#289)."""
         # Check pane content for sleep patterns
         clean = strip_ansi(pane_content)
         for line in clean.strip().split('\n')[-10:]:
@@ -262,7 +244,7 @@ class HookStatusDetector:
             if dur is not None:
                 return dur
 
-        # Check tool_input from hook state (PostToolUse includes tool_input)
+        # Check tool_input from hook state (PostToolUse/PreToolUse include tool_input)
         tool_input = hook_state.get("tool_input")
         if isinstance(tool_input, dict):
             command = tool_input.get("command", "")
@@ -274,6 +256,12 @@ class HookStatusDetector:
 
     def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
         """Build an activity description from hook event and pane content."""
+        if event == "PreToolUse":
+            tool_name = hook_state.get("tool_name", "")
+            if tool_name:
+                return f"Starting {tool_name}"
+            return "Starting tool"
+
         if event == "PostToolUse":
             tool_name = hook_state.get("tool_name", "")
             if tool_name:

@@ -970,9 +970,10 @@ def show(
     else:
         # Daemon not running — fall back to direct detection
         from ..status_detector_factory import create_status_detector
+        from ..settings import resolve_detection_mode
         detector = create_status_detector(
             session,
-            strategy="hooks" if sess.hook_status_detection else "polling",
+            strategy=resolve_detection_mode(session),
         )
         status, activity, pane_content_raw = detector.detect_status(sess)
 

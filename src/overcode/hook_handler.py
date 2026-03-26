@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # All hooks that overcode installs
 OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("UserPromptSubmit", "overcode hook-handler"),
+    ("PreToolUse", "overcode hook-handler"),
     ("PostToolUse", "overcode hook-handler"),
     ("Stop", "overcode hook-handler"),
     ("PermissionRequest", "overcode hook-handler"),
