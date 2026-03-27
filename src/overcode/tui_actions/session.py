@@ -308,6 +308,14 @@ class SessionActionsMixin:
         """
         from ..settings import write_detection_mode
         new_mode = "polling" if self.detector.mode == "hooks" else "hooks"
+        if new_mode == "hooks":
+            from ..claude_config import ClaudeConfigEditor
+            if not ClaudeConfigEditor.are_overcode_hooks_installed():
+                self.notify(
+                    "Hooks not installed — run 'overcode hooks install' first",
+                    severity="error",
+                )
+                return
         self.detector.mode = new_mode
         write_detection_mode(self.tmux_session, new_mode)
         self.notify(f"Detection mode: {new_mode} (all agents)", severity="information")
