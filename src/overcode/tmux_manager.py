@@ -186,9 +186,13 @@ class TmuxManager:
                 f" tmux new-session -d -s $LS -t {remote_tmux_session} 2>/dev/null;"
                 # Select our target window in the linked session
                 f" tmux select-window -t $LS:$W;"
-                # Strip status bar for clean display
+                # Strip status bar, generous scrollback
                 f" tmux set -t $LS status off;"
-                # Auto-destroy when SSH disconnects (hook fires after attach)
+                f" tmux set -t $LS history-limit 50000;"
+                # Force resize to match our SSH terminal size
+                f" tmux set -t $LS window-size latest;"
+                f" tmux resize-window -t $LS -A 2>/dev/null;"
+                # Auto-destroy when SSH disconnects
                 f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
                 # Attach to the isolated linked session
                 f" tmux attach-session -t $LS'"
