@@ -752,7 +752,7 @@ class TestGetHealthData:
 
         result = get_health_data()
 
-        assert set(result.keys()) == {"status", "timestamp"}
+        assert set(result.keys()) == {"status", "timestamp", "version"}
 
 
 class TestGetAnalyticsDaily:

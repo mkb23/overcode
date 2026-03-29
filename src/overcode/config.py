@@ -365,9 +365,11 @@ def get_sisters_config() -> List[dict]:
           - name: "desktop"
             url: "http://localhost:25337"
             api_key: "secret"
+            ssh: "user@desktop"        # optional: enables tmux attach + auto-provisioning
+            tmux_session: "agents"     # optional: remote tmux session name (default: "agents")
 
     Returns:
-        List of dicts with name, url, and optional api_key. Empty list if unconfigured.
+        List of dicts with name, url, and optional api_key/ssh/tmux_session. Empty list if unconfigured.
     """
     sisters = _get_config_value("sisters", [])
     if not isinstance(sisters, list):
@@ -385,6 +387,13 @@ def get_sisters_config() -> List[dict]:
         api_key = s.get("api_key")
         if api_key:
             entry["api_key"] = api_key
+        # SSH connectivity (optional)
+        ssh = s.get("ssh")
+        if ssh:
+            entry["ssh"] = ssh
+        tmux_session = s.get("tmux_session")
+        if tmux_session:
+            entry["tmux_session"] = tmux_session
         result.append(entry)
 
     return result

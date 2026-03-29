@@ -41,7 +41,7 @@ from .summarizer_component import (
     SummarizerConfig,
     AgentSummary,
 )
-from .sister_poller import SisterPoller
+from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
 from .tmux_utils import get_pane_base_index
@@ -302,6 +302,15 @@ class SupervisorTUI(
         self._tmux = RealTmux()
         # Optional: target a linked session for sync (set by `overcode split`)
         self.tmux_sync_target: str | None = None
+        # SSH proxy windows for remote agents: session_id -> tmux window name
+        self._ssh_proxies: dict[str, str] = {}
+        # TmuxManager instance for creating proxy windows
+        from .tmux_manager import TmuxManager
+        self._tmux_manager = TmuxManager(tmux_session)
+        # Flag: set by user navigation (j/k), cleared after sync.
+        # Prevents programmatic focused_session_index changes (from
+        # refresh_sessions) from switching the bottom pane.
+        self._user_navigated: bool = False
         # Initialize tmux_sync from preferences
         self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
@@ -426,6 +435,12 @@ class SupervisorTUI(
 
         # Auto-start Monitor Daemon if not running
         self._ensure_monitor_daemon()
+
+        # Clean up stale SSH proxy windows from previous TUI sessions
+        self._cleanup_stale_ssh_proxies()
+
+        # Provision SSH-configured sisters in background
+        self._provision_ssh_sisters()
 
         # Disable command bar inputs to prevent auto-focus capture
         try:
@@ -1025,10 +1040,14 @@ class SupervisorTUI(
         widget.focus()
         if self.preview_visible:
             self._update_preview()
-        self._sync_tmux_window(widget)
-        # Auto-fix window size mismatch when switching between sessions
-        # (happens when terminal is resized while window is not active)
-        self._fix_window_size_if_needed(widget)
+        # Only sync tmux on explicit user navigation, not programmatic restores.
+        # Periodic refresh_sessions → update_session_widgets can temporarily lose
+        # remote sessions (sister poll timing), causing focused_session_index to
+        # land on a local agent and switch the bottom pane away.
+        if getattr(self, '_user_navigated', False):
+            self._user_navigated = False
+            self._sync_tmux_window(widget)
+            self._fix_window_size_if_needed(widget)
 
     def update_focused_status(self) -> None:
         """Update all session statuses every 250ms.
@@ -1916,9 +1935,12 @@ class SupervisorTUI(
         When tmux_sync_target is set (e.g. by `overcode split`), syncs to
         that linked session. Otherwise syncs to the agents session directly.
 
-        In compact mode, selecting a remote/sister agent auto-zooms the TUI
-        pane and shows the preview pane with the sister's content. Selecting
-        a local agent restores the normal split layout.
+        For remote agents with SSH configured, creates a local SSH proxy
+        window that attaches to the remote tmux window. The proxy persists
+        so switching back is instant.
+
+        For remote agents without SSH, auto-zooms the TUI pane and shows
+        the preview pane with polled content (compact mode only).
 
         Args:
             widget: The session widget to sync to. If None, uses self.focused.
@@ -1930,8 +1952,20 @@ class SupervisorTUI(
             target = widget if widget is not None else self.focused
             if isinstance(target, SessionSummary):
                 session = target.session
+                sync_session = self.tmux_sync_target or self.tmux_session
 
-                # Sister zoom: auto-enter/exit sister view in compact mode
+                if session.is_remote and session.source_ssh:
+                    # SSH proxy: create or reuse a local tmux window connected via SSH
+                    # Exit sister zoom if it was active (SSH proxy uses the bottom pane)
+                    if self._sister_zoom_active:
+                        self._exit_sister_view()
+
+                    proxy_window = self._get_or_create_ssh_proxy(session)
+                    if proxy_window:
+                        self._tmux.select_window(sync_session, proxy_window)
+                    return
+
+                # Non-SSH remote: sister zoom (existing behavior)
                 if self.compact and session.is_remote and not self._sister_zoom_active:
                     self._enter_sister_view()
                 elif self.compact and not session.is_remote and self._sister_zoom_active:
@@ -1945,10 +1979,85 @@ class SupervisorTUI(
                         window_index = parent.tmux_window
 
                 if window_index is not None and window_index != "":
-                    sync_session = self.tmux_sync_target or self.tmux_session
                     self._tmux.select_window(sync_session, window_index)
         except Exception:
             pass  # Silent fail - don't disrupt navigation
+
+    def _get_or_create_ssh_proxy(self, session: Session) -> Optional[str]:
+        """Get or create an SSH proxy window for a remote agent.
+
+        Returns the local tmux window name, or None on failure.
+        """
+        proxy_name = f"ssh:{session.source_host}:{session.name}"
+
+        # Check if proxy already exists in our cache
+        if session.id in self._ssh_proxies:
+            window_name = self._ssh_proxies[session.id]
+            # Verify it still exists
+            if self._tmux_manager.window_exists(window_name):
+                return window_name
+            # Window was closed — remove stale entry
+            del self._ssh_proxies[session.id]
+
+        # Kill any stale proxy windows with this name (e.g., leftover from
+        # a previous TUI session) to avoid duplicates that break window lookup.
+        try:
+            sess = self._tmux_manager._get_session()
+            if sess:
+                for win in list(sess.windows):
+                    if win.window_name == proxy_name:
+                        win.kill()
+        except Exception:
+            pass
+
+        # Need the remote window name to attach to.
+        # tmux_window may be empty if remote runs an older version — fall back to agent name
+        # (the SSH command does prefix matching to find "name-uuid" windows).
+        remote_window = session.tmux_window or session.name
+        if not remote_window:
+            return None
+
+        # Create proxy window
+        remote_tmux_session = session.source_tmux_session or "agents"
+
+        window_name = self._tmux_manager.create_ssh_proxy_window(
+            window_name=proxy_name,
+            ssh_target=session.source_ssh,
+            remote_tmux_session=remote_tmux_session,
+            remote_window=remote_window,
+        )
+        if window_name:
+            self._ssh_proxies[session.id] = window_name
+        return window_name
+
+    def _cleanup_stale_ssh_proxies(self) -> None:
+        """Kill any ssh: proxy windows left over from a previous TUI session.
+
+        Called on startup to prevent duplicate window names that break
+        libtmux's window lookup. Uses direct libtmux iteration to handle
+        duplicates safely (TmuxManager.kill_window fails on duplicate names).
+        """
+        try:
+            sess = self._tmux_manager._get_session()
+            if sess is None:
+                return
+            for win in list(sess.windows):
+                if win.window_name.startswith("ssh:"):
+                    try:
+                        win.kill()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _cleanup_ssh_proxies(self) -> None:
+        """Kill all SSH proxy windows. Called on TUI exit."""
+        for session_id, window_name in list(self._ssh_proxies.items()):
+            try:
+                self._tmux_manager.kill_window(window_name)
+            except Exception:
+                pass
+        self._ssh_proxies.clear()
 
     def _fix_window_size_if_needed(self, widget: "SessionSummary") -> None:
         """Auto-fix tmux window size mismatch when switching sessions.
@@ -2566,10 +2675,12 @@ class SupervisorTUI(
                     for i, w in enumerate(widgets):
                         if target_session_id and w.session.id == target_session_id:
                             target_widget = w
+                            self._user_navigated = True
                             self.focused_session_index = i
                             break
                         elif not target_session_id and w.session.name == target_session_name:
                             target_widget = w
+                            self._user_navigated = True
                             self.focused_session_index = i
                             break
                     if target_widget:
@@ -2745,6 +2856,63 @@ class SupervisorTUI(
             self.notify("Monitor Daemon started", severity="information")
         else:
             self.notify("Failed to start Monitor Daemon", severity="warning")
+
+    @work(thread=True, exclusive=True, group="ssh_provision")
+    def _provision_ssh_sisters(self) -> None:
+        """Provision SSH-configured sisters in a background thread.
+
+        Checks each sister with SSH configured to ensure overcode is running
+        and version-matched. Bootstraps or upgrades via uvx as needed.
+        """
+        from .ssh_provisioner import ensure_remote_ready
+        from .config import get_web_port, get_web_host
+
+        sisters_with_ssh: list[SisterState] = [
+            s for s in self._sister_poller.get_sister_states() if s.ssh
+        ]
+        if not sisters_with_ssh:
+            return
+
+        for sister in sisters_with_ssh:
+            try:
+                # Extract port from sister URL
+                from urllib.parse import urlparse
+                parsed = urlparse(sister.url)
+                port = parsed.port or 8080
+                host = get_web_host()
+
+                result = ensure_remote_ready(
+                    ssh_target=sister.ssh,
+                    sister_url=sister.url,
+                    api_key=sister.api_key,
+                    port=port,
+                    host=host,
+                )
+                if result.ok:
+                    if result.action == "bootstrapped":
+                        self.call_from_thread(
+                            self.notify,
+                            f"[b]{sister.name}[/b]: overcode started via uvx",
+                            severity="information",
+                        )
+                    elif result.action == "upgraded":
+                        self.call_from_thread(
+                            self.notify,
+                            f"[b]{sister.name}[/b]: upgraded to v{result.remote_version}",
+                            severity="information",
+                        )
+                else:
+                    self.call_from_thread(
+                        self.notify,
+                        f"[b]{sister.name}[/b]: provision failed — {result.error}",
+                        severity="warning",
+                    )
+            except Exception as e:
+                self.call_from_thread(
+                    self.notify,
+                    f"[b]{sister.name}[/b]: SSH provision error — {e}",
+                    severity="warning",
+                )
 
     def _execute_kill(self, focused: "SessionSummary", session_name: str, session_id: str) -> None:
         """Execute the actual kill operation after confirmation."""
@@ -3342,6 +3510,8 @@ class SupervisorTUI(
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""
         import sys
+        # Clean up SSH proxy windows
+        self._cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)
         self._summarizer.stop()
 

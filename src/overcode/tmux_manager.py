@@ -129,6 +129,85 @@ class TmuxManager:
         except (LibTmuxException, ValueError):
             return None
 
+    def create_ssh_proxy_window(
+        self,
+        window_name: str,
+        ssh_target: str,
+        remote_tmux_session: str,
+        remote_window: str,
+    ) -> Optional[str]:
+        """Create a tmux window that SSH-attaches to a remote agent's tmux window.
+
+        Uses ControlMaster multiplexing so subsequent connections to the same
+        host are near-instant.
+
+        Args:
+            window_name: Local window name (e.g., "ssh:desktop:myagent")
+            ssh_target: SSH target (e.g., "user@host")
+            remote_tmux_session: Remote tmux session name
+            remote_window: Remote tmux window name
+
+        Returns:
+            Window name on success, None on failure
+        """
+        if not self.ensure_session():
+            return None
+
+        try:
+            sess = self._get_session()
+            if sess is None:
+                return None
+
+            # Build the SSH command with ControlMaster for fast reconnection.
+            # Remote windows are named "agent-name-uuid" but we may only
+            # have "agent-name". Use grep to find the full window name,
+            # then select + attach. (tmux prefix match "=name" requires
+            # tmux 3.5+ which isn't universally available.)
+            from .ssh_provisioner import SSH_CONTROL_OPTS
+            import shlex
+
+            ssh_opts_str = " ".join(shlex.quote(o) for o in SSH_CONTROL_OPTS)
+            q_target = shlex.quote(ssh_target)
+
+            # Create a linked session on the remote so our proxy has an
+            # independent window selection — the remote's own TUI/daemon
+            # also calls select-window on the agents session, which would
+            # hijack our view if we attached directly.
+            # The linked session auto-destroys via a client-detached hook
+            # (destroy-unattached can't be used because it fires before
+            # the first attach).
+            ssh_cmd_str = (
+                f"ssh -t {ssh_opts_str} {q_target} "
+                f"'W=$(tmux list-windows -t {remote_tmux_session}"
+                ' -F "#{window_name}"'
+                f" | grep -m1 ^{remote_window});"
+                f" LS=oc-proxy-$W;"
+                # Create linked session sharing the agents window group
+                f" tmux new-session -d -s $LS -t {remote_tmux_session} 2>/dev/null;"
+                # Select our target window in the linked session
+                f" tmux select-window -t $LS:$W;"
+                # Strip status bar for clean display
+                f" tmux set -t $LS status off;"
+                # Auto-destroy when SSH disconnects (hook fires after attach)
+                f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
+                # Attach to the isolated linked session
+                f" tmux attach-session -t $LS'"
+            )
+
+            window = sess.new_window(
+                window_name=window_name,
+                attach=False,
+                window_shell=ssh_cmd_str,
+            )
+            window.set_window_option('automatic-rename', 'off')
+            return window.window_name
+        except (LibTmuxException, ValueError) as e:
+            import logging
+            logging.getLogger(__name__).debug(
+                "Failed to create SSH proxy window %s: %s", window_name, e
+            )
+            return None
+
     def send_keys(self, window_name: str, keys: str, enter: bool = True) -> bool:
         """Send keys to a tmux window.
 

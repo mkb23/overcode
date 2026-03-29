@@ -24,6 +24,7 @@ class NavigationActionsMixin:
         widgets = self._get_widgets_in_session_order()
         if not widgets:
             return
+        self._user_navigated = True
         self.focused_session_index = (self.focused_session_index + 1) % len(widgets)
 
     def action_focus_previous_session(self) -> None:
@@ -37,6 +38,7 @@ class NavigationActionsMixin:
         widgets = self._get_widgets_in_session_order()
         if not widgets:
             return
+        self._user_navigated = True
         self.focused_session_index = (self.focused_session_index - 1) % len(widgets)
 
     def action_jump_to_attention(self) -> None:
@@ -101,6 +103,7 @@ class NavigationActionsMixin:
         # Find its index in the full widget list
         for i, w in enumerate(widgets):
             if w is target_widget:
+                self._user_navigated = True
                 self.focused_session_index = i
                 break
 

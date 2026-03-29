@@ -4,6 +4,7 @@ API data handlers for web server.
 Reuses existing helpers from tui_helpers.py and reads from Monitor Daemon state.
 """
 
+import importlib.metadata
 import logging
 import subprocess
 from datetime import datetime, timedelta
@@ -50,6 +51,14 @@ def get_web_color(status_color: str) -> str:
     return WEB_COLORS.get(status_color, "#6b7280")
 
 
+def _get_version() -> str:
+    """Get the installed overcode version."""
+    try:
+        return importlib.metadata.version("overcode")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
+
+
 def _capture_agent_pane(tmux_session: str, window_id: int) -> str:
     """Capture pane content for a single agent window.
 
@@ -88,6 +97,7 @@ def get_status_data(tmux_session: str) -> Dict[str, Any]:
     result = {
         "timestamp": now.isoformat(),
         "hostname": get_hostname(),
+        "version": _get_version(),
         "daemon": _build_daemon_info(state),
         "presence": _build_presence_info(state),
         "summary": _build_summary(state),
@@ -231,6 +241,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "start_time": s.start_time or "",
         "parent_name": s.parent_name or "",
         "model": getattr(s, "model", "") or "",
+        "tmux_window": s.tmux_window or "",
     }
 
 
@@ -391,6 +402,7 @@ def get_health_data() -> Dict[str, Any]:
     return {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
+        "version": _get_version(),
     }
 
 
