@@ -65,6 +65,7 @@ class ViewActionsMixin:
 
         Useful when nested tmux windows get the wrong size after terminal resizes.
         Only works in compact (tmux split) mode.
+        For remote agents with SSH, sends resize via the sister API.
         """
         if not self.compact:
             self.notify("Resize only works in tmux split mode", severity="warning", timeout=2)
@@ -76,13 +77,8 @@ class ViewActionsMixin:
             if not widget:
                 return
             session = widget.session
-            window_name = session.tmux_window
-            if not window_name:
-                return
 
-            sync_session = self.tmux_sync_target or self.tmux_session
-
-            # Get the bottom pane's actual dimensions (pane 1 in the split)
+            # Get the bottom pane's actual dimensions
             result = subprocess.run(
                 ["tmux", "display-message", "-t", self._bottom_pane_target(),
                  "-p", "#{pane_width} #{pane_height}"],
@@ -96,17 +92,33 @@ class ViewActionsMixin:
                 return
             pane_width, pane_height = int(parts[0]), int(parts[1])
 
-            # Resize directly via subprocess (bypass _tmux abstraction)
-            target = f"{sync_session}:{window_name}"
-            result = subprocess.run(
-                ["tmux", "resize-window", "-t", target,
-                 "-x", str(pane_width), "-y", str(pane_height)],
-                capture_output=True, text=True,
-            )
-            if result.returncode != 0:
-                self.notify(f"Resize failed: {result.stderr.strip()}", severity="error", timeout=3)
+            if session.is_remote and session.source_ssh:
+                # Remote agent: resize via sister API
+                from ..sister_controller import SisterController
+                ctrl_result = SisterController(timeout=3).resize_agent(
+                    session.source_url, session.source_api_key,
+                    session.name, pane_width, pane_height,
+                )
+                if ctrl_result.ok:
+                    self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
+                else:
+                    self.notify(f"Resize failed: {ctrl_result.error}", severity="error", timeout=3)
             else:
-                self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
+                # Local agent: resize via tmux directly
+                window_name = session.tmux_window
+                if not window_name:
+                    return
+                sync_session = self.tmux_sync_target or self.tmux_session
+                target = f"{sync_session}:{window_name}"
+                result = subprocess.run(
+                    ["tmux", "resize-window", "-t", target,
+                     "-x", str(pane_width), "-y", str(pane_height)],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    self.notify(f"Resize failed: {result.stderr.strip()}", severity="error", timeout=3)
+                else:
+                    self.notify(f"Resized {session.name} to {pane_width}x{pane_height}", severity="information", timeout=2)
         except Exception as e:
             self.notify(f"Resize failed: {e}", severity="error", timeout=3)
 
