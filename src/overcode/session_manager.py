@@ -158,6 +158,10 @@ class Session:
     remote_activity_summary_context: str = ""  # AI context summary from remote summarizer
     remote_daemon_state: Optional[dict] = None  # Raw daemon state dict from sister API (for generic forwarding)
 
+    # SSH connectivity for remote agents
+    source_ssh: str = ""  # SSH target (e.g., "user@host") for tmux attach
+    source_tmux_session: str = ""  # Remote tmux session name (default: "agents")
+
     def to_dict(self) -> dict:
         # asdict() recursively converts nested dataclasses (stats)
         return asdict(self)

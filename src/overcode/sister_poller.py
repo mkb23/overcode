@@ -25,6 +25,8 @@ class SisterState:
     name: str
     url: str
     api_key: str = ""
+    ssh: str = ""  # SSH target (e.g., "user@host") for tmux attach
+    tmux_session: str = "agents"  # Remote tmux session name
     reachable: bool = False
     last_fetch: Optional[str] = None  # ISO timestamp
     last_error: str = ""
@@ -55,6 +57,8 @@ class SisterPoller:
                 name=s["name"],
                 url=s["url"],
                 api_key=s.get("api_key", ""),
+                ssh=s.get("ssh", ""),
+                tmux_session=s.get("tmux_session", "agents"),
             )
             for s in sisters_config
         ]
@@ -101,7 +105,16 @@ class SisterPoller:
                 host_name = sister.name
                 break
 
-        return _agent_to_session(agent, host_name, source_url, source_api_key)
+        # Look up SSH config from sister state
+        ssh = ""
+        tmux_sess = "agents"
+        for sister in self._sisters:
+            if sister.url == source_url:
+                ssh = sister.ssh
+                tmux_sess = sister.tmux_session
+                break
+
+        return _agent_to_session(agent, host_name, source_url, source_api_key, ssh, tmux_sess)
 
     def get_sister_states(self) -> List[SisterState]:
         """Return current state of all sisters (for status bar display)."""
@@ -178,7 +191,7 @@ class SisterPoller:
         sessions: List[Session] = []
         total_cost = 0.0
         for agent in agents:
-            session = _agent_to_session(agent, host_name, sister.url, sister.api_key)
+            session = _agent_to_session(agent, host_name, sister.url, sister.api_key, sister.ssh, sister.tmux_session)
             sessions.append(session)
             total_cost += agent.get("cost_usd", 0.0)
 
@@ -194,7 +207,11 @@ class SisterPoller:
         return sessions
 
 
-def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_api_key: str = "") -> Session:
+def _agent_to_session(
+    agent: dict, host_name: str,
+    source_url: str = "", source_api_key: str = "",
+    source_ssh: str = "", source_tmux_session: str = "agents",
+) -> Session:
     """Convert an API agent dict to a virtual Session object."""
     name = agent.get("name", "unknown")
     session_id = f"remote:{host_name}:{name}"
@@ -235,7 +252,7 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         id=session_id,
         name=name,
         tmux_session="",  # No local tmux session
-        tmux_window="",
+        tmux_window=agent.get("tmux_window", ""),
         command=[],
         start_directory=None,
         start_time=start_time,
@@ -271,6 +288,9 @@ def _agent_to_session(agent: dict, host_name: str, source_url: str = "", source_
         # Raw daemon state for generic field forwarding — new SessionDaemonState
         # fields automatically flow through without manual plumbing here.
         remote_daemon_state=agent.get("daemon_state"),
+        # SSH connectivity
+        source_ssh=source_ssh,
+        source_tmux_session=source_tmux_session,
     )
 
 
