@@ -189,14 +189,18 @@ class TmuxManager:
                 # Strip status bar, generous scrollback
                 f" tmux set -t $LS status off;"
                 f" tmux set -t $LS history-limit 50000;"
-                # aggressive-resize: size each window to the smallest client
-                # currently viewing it (not the largest in the group).
-                f" tmux set-window-option -t $LS:$W aggressive-resize on;"
-                # Resize window to match our SSH terminal (stty gives the
-                # PTY dimensions). Shared windows default to the largest
-                # client; this overrides to our terminal size before attach.
-                f" _COLS=$(tput cols); _ROWS=$(tput lines);"
-                f" tmux resize-window -t $LS -x $_COLS -y $_ROWS 2>/dev/null;"
+                # Resize: hook client-resized to a script that reads our
+                # client dimensions and resizes the window to match.
+                # Shared windows default to the largest client in the group;
+                # this overrides to our SSH terminal on every SIGWINCH.
+                f" cat > /tmp/oc-resize-$LS.sh << OCEOF\n"
+                "#!/bin/sh\n"
+                'H=\\$(tmux list-clients -t $LS -F "#{client_height}" | head -1)\n'
+                'W=\\$(tmux list-clients -t $LS -F "#{client_width}" | head -1)\n'
+                "tmux resize-window -t $LS -x \\$W -y \\$H 2>/dev/null\n"
+                "OCEOF\n"
+                f" chmod +x /tmp/oc-resize-$LS.sh;"
+                f' tmux set-hook -t $LS client-resized "run-shell /tmp/oc-resize-$LS.sh";'
                 # Auto-destroy when SSH disconnects
                 f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
                 # Attach to the isolated linked session
