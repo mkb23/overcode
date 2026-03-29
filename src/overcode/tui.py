@@ -2067,6 +2067,9 @@ class SupervisorTUI(
         the wrong size. This method detects the mismatch and sends a tmux command
         to resize it to match the current terminal dimensions.
 
+        For remote agents with SSH, sends a resize command via the sister API
+        so the remote tmux window matches the local proxy pane dimensions.
+
         The fix is silent and non-blocking — if it fails, navigation continues.
         """
         if not self.tmux_sync or not self.size or self.size.height <= 0:
@@ -2074,6 +2077,12 @@ class SupervisorTUI(
 
         try:
             session = widget.session
+
+            # Remote agents with SSH: resize via API
+            if session.is_remote and session.source_ssh and session.name:
+                self._resize_remote_agent(session)
+                return
+
             window_index = session.tmux_window
             if not window_index or window_index == "":
                 return
@@ -2089,6 +2098,40 @@ class SupervisorTUI(
             self._tmux.resize_window(sync_session, window_index, current_width, current_height)
         except Exception:
             pass  # Silent fail - size mismatch isn't critical
+
+    def _resize_remote_agent(self, session: Session) -> None:
+        """Resize a remote agent's tmux window via the sister API.
+
+        Reads the bottom pane dimensions from tmux and sends them to the
+        remote overcode instance, which resizes the agent's window to match.
+        """
+        import subprocess
+
+        try:
+            # Get the bottom pane dimensions (pane index 1 in the split layout)
+            result = subprocess.run(
+                ["tmux", "list-panes", "-t", "overcode:0",
+                 "-F", "#{pane_index} #{pane_width} #{pane_height}"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode != 0:
+                return
+
+            for line in result.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) == 3 and parts[0] != "0":  # Not the TUI pane
+                    width, height = int(parts[1]), int(parts[2])
+                    break
+            else:
+                return
+
+            from .sister_controller import SisterController
+            SisterController(timeout=3).resize_agent(
+                session.source_url, session.source_api_key,
+                session.name, width, height,
+            )
+        except Exception:
+            pass  # Silent fail
 
     # =========================================================================
     # Jobs Mode

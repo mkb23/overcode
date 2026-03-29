@@ -122,6 +122,16 @@ class SisterController:
             {"name": fork_name, "prompt": prompt},
         )
 
+    def resize_agent(
+        self, sister_url: str, api_key: str, agent_name: str,
+        width: int, height: int,
+    ) -> ControlResult:
+        return self._request(
+            "POST", sister_url, api_key,
+            f"/api/agents/{agent_name}/resize",
+            {"width": width, "height": height},
+        )
+
     # --- Agent Configuration ---
 
     def set_standing_orders(

@@ -92,6 +92,28 @@ def send_key_to_agent(tmux_session: str, name: str, key: str) -> dict:
     raise ControlError("Failed to send key to agent", status=500)
 
 
+def resize_agent_window(tmux_session: str, name: str, width: int, height: int) -> dict:
+    """Resize an agent's tmux window to the given dimensions."""
+    from .session_manager import SessionManager
+
+    sm = SessionManager()
+    session = _get_session_or_error(sm, name)
+
+    if not session.tmux_window:
+        raise ControlError("Agent has no tmux window", status=400)
+
+    import subprocess
+    result = subprocess.run(
+        ["tmux", "resize-window", "-t",
+         f"{tmux_session}:{session.tmux_window}",
+         "-x", str(width), "-y", str(height)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        return {"ok": True}
+    raise ControlError(f"Resize failed: {result.stderr.strip()}", status=500)
+
+
 def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
     """Kill an agent (and children by default)."""
     from .launcher import ClaudeLauncher

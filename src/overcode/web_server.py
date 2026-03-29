@@ -86,6 +86,9 @@ _AGENT_CONTROL_ROUTES = {
     ("POST", "fork"): lambda api, ts, name, body: api.fork_agent(
         ts, name, fork_name=body.get("name", ""), prompt=body.get("prompt"),
     ),
+    ("POST", "resize"): lambda api, ts, name, body: api.resize_agent_window(
+        ts, name, width=int(body.get("width", 0)), height=int(body.get("height", 0)),
+    ),
     ("POST", "sleep"): lambda api, ts, name, body: api.set_sleep(
         ts, name, asleep=body.get("asleep", True),
     ),
