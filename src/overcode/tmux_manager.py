@@ -189,9 +189,14 @@ class TmuxManager:
                 # Strip status bar, generous scrollback
                 f" tmux set -t $LS status off;"
                 f" tmux set -t $LS history-limit 50000;"
-                # Force resize to match our SSH terminal size
-                f" tmux set -t $LS window-size latest;"
-                f" tmux resize-window -t $LS -A 2>/dev/null;"
+                # aggressive-resize: size each window to the smallest client
+                # currently viewing it (not the largest in the group).
+                f" tmux set-window-option -t $LS:$W aggressive-resize on;"
+                # Resize window to match our SSH terminal (stty gives the
+                # PTY dimensions). Shared windows default to the largest
+                # client; this overrides to our terminal size before attach.
+                f" _COLS=$(tput cols); _ROWS=$(tput lines);"
+                f" tmux resize-window -t $LS -x $_COLS -y $_ROWS 2>/dev/null;"
                 # Auto-destroy when SSH disconnects
                 f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
                 # Attach to the isolated linked session
