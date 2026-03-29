@@ -2099,16 +2099,22 @@ class SupervisorTUI(
         except Exception:
             pass  # Silent fail - size mismatch isn't critical
 
+    @work(thread=True)
     def _resize_remote_agent(self, session: Session) -> None:
         """Resize a remote agent's tmux window via the sister API.
 
         Reads the bottom pane dimensions from tmux and sends them to the
         remote overcode instance, which resizes the agent's window to match.
+        Runs in a background thread to avoid blocking navigation.
         """
         import subprocess
 
         try:
-            # Get the bottom pane dimensions (pane index 1 in the split layout)
+            # Get the bottom pane dimensions. The split layout has 2 panes
+            # in the overcode session — find the one that isn't the TUI.
+            from .tmux_utils import get_pane_base_index
+            tui_pane_index = get_pane_base_index()
+
             result = subprocess.run(
                 ["tmux", "list-panes", "-t", "overcode:0",
                  "-F", "#{pane_index} #{pane_width} #{pane_height}"],
@@ -2117,12 +2123,14 @@ class SupervisorTUI(
             if result.returncode != 0:
                 return
 
+            width = height = 0
             for line in result.stdout.strip().splitlines():
                 parts = line.split()
-                if len(parts) == 3 and parts[0] != "0":  # Not the TUI pane
+                if len(parts) == 3 and parts[0] != str(tui_pane_index):
                     width, height = int(parts[1]), int(parts[2])
                     break
-            else:
+
+            if width <= 0 or height <= 0:
                 return
 
             from .sister_controller import SisterController
