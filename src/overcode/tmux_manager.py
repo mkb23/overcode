@@ -197,10 +197,10 @@ class TmuxManager:
                 "#!/bin/sh\n"
                 'H=\\$(tmux list-clients -t $LS -F "#{client_height}" | head -1)\n'
                 'W=\\$(tmux list-clients -t $LS -F "#{client_width}" | head -1)\n'
-                "tmux resize-window -t $LS -x \\$W -y \\$H 2>/dev/null\n"
+                "tmux resize-window -t $LS -x \\$W -y \\$H 2>/dev/null || true\n"
                 "OCEOF\n"
                 f" chmod +x /tmp/oc-resize-$LS.sh;"
-                f' tmux set-hook -t $LS client-resized "run-shell \'/tmp/oc-resize-$LS.sh || true\'";'
+                f' tmux set-hook -t $LS client-resized "run-shell /tmp/oc-resize-$LS.sh";'
                 # Auto-destroy when SSH disconnects
                 f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
                 # Attach to the isolated linked session
