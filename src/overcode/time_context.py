@@ -1,11 +1,12 @@
 """
-Time context generation for Claude Code hook integration.
+Enhanced context generation for Claude Code hook integration.
 
-Outputs a compact time-awareness line injected into every prompt via
-a UserPromptSubmit hook, giving Claude continuous temporal context.
+Outputs a compact awareness line injected into every prompt via
+a UserPromptSubmit hook, giving Claude agent identity, temporal context,
+user presence, and operational state.
 
 Example output:
-    Clock: 14:32 PST | User: active | Office: yes | Uptime: 1h23m | Heartbeat: 15m (next: 7m)
+    Agent: my-agent | Clock: 14:32 PST | User: active | Office: yes | Uptime: 1h23m | Heartbeat: 15m (next: 7m)
 
 All functions are pure (no Rich/Typer dependencies) for easy testing.
 """
@@ -173,7 +174,7 @@ def read_heartbeat_timestamp(tmux_session: str, session_name: str) -> Optional[s
         return None
 
 
-def build_time_context_line(
+def build_enhanced_context_line(
     clock: str,
     presence: str,
     office: str,
@@ -181,7 +182,7 @@ def build_time_context_line(
     heartbeat: Optional[str] = None,
     agent_name: Optional[str] = None,
 ) -> str:
-    """Assemble the final time context line.
+    """Assemble the final enhanced context line.
 
     Omits fields that are None.
 
@@ -255,7 +256,7 @@ def _find_session_in_state(state: dict, session_name: str) -> Optional[dict]:
     return None
 
 
-def generate_time_context(
+def generate_enhanced_context(
     tmux_session: str,
     session_name: str,
     now: Optional[datetime] = None,
@@ -267,26 +268,27 @@ def generate_time_context(
         tmux_session: Tmux session name
         session_name: Agent session name
         now: Current datetime (defaults to now with local timezone)
-        config: Time context config dict (defaults to loading from config.yaml)
+        config: Enhanced context config dict (defaults to loading from config.yaml)
 
     Returns:
-        Complete time context line
+        Complete enhanced context line
     """
     if now is None:
         now = datetime.now().astimezone()
 
-    # Check time_context_enabled flag in daemon state before doing any work.
+    # Check enhanced_context_enabled flag in daemon state before doing any work.
     # If the session exists in state and flag is False (or missing), suppress output.
     # If the session is not found or state is unavailable, allow output (graceful degradation).
     state = _load_daemon_state(tmux_session)
     if state:
         session_data = _find_session_in_state(state, session_name)
-        if session_data and not session_data.get("time_context_enabled", False):
+        if session_data and not session_data.get("enhanced_context_enabled",
+                                                  session_data.get("time_context_enabled", False)):
             return ""
 
     if config is None:
-        from .config import get_time_context_config
-        config = get_time_context_config()
+        from .config import get_enhanced_context_config
+        config = get_enhanced_context_config()
 
     # Clock
     clock = format_clock(now)
@@ -316,6 +318,6 @@ def generate_time_context(
     last_heartbeat = read_heartbeat_timestamp(tmux_session, session_name)
     heartbeat = format_heartbeat(interval, last_heartbeat, now)
 
-    line = build_time_context_line(clock, presence, office, uptime, heartbeat, agent_name=session_name)
+    line = build_enhanced_context_line(clock, presence, office, uptime, heartbeat, agent_name=session_name)
     line += "\nPrefix each response with [HH:MM] using the Clock value above."
     return line

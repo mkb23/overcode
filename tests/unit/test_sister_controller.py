@@ -247,9 +247,9 @@ class TestSisterControllerMethods:
             r = self.ctrl.resume_heartbeat(self.url, self.key, "agent1")
         assert r.ok
 
-    def test_set_time_context(self):
-        with self._mock_request("PUT", "/api/agents/agent1/time-context", {"enabled": True}):
-            r = self.ctrl.set_time_context(self.url, self.key, "agent1", True)
+    def test_set_enhanced_context(self):
+        with self._mock_request("PUT", "/api/agents/agent1/enhanced-context", {"enabled": True}):
+            r = self.ctrl.set_enhanced_context(self.url, self.key, "agent1", True)
         assert r.ok
 
     def test_set_hook_detection(self):

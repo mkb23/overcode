@@ -2,7 +2,7 @@
 
 A single command (`overcode hook-handler`) handles all hook events.
 It reads stdin JSON from Claude Code, writes state files for hook-based
-status detection, and outputs time-context for UserPromptSubmit events.
+status detection, and outputs enhanced context for UserPromptSubmit events.
 
 Hook registrations (all use the same command):
     UserPromptSubmit  -> overcode hook-handler
@@ -110,7 +110,7 @@ def handle_hook_event() -> None:
     # Write state file for status detection
     write_hook_state(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 
-    # For UserPromptSubmit, check budget and output time-context
+    # For UserPromptSubmit, check budget and output enhanced context
     if event == "UserPromptSubmit":
         from .time_context import _load_daemon_state, _find_session_in_state
 
@@ -127,8 +127,8 @@ def handle_hook_event() -> None:
                 )
                 sys.exit(2)
 
-        from .time_context import generate_time_context
+        from .time_context import generate_enhanced_context
 
-        line = generate_time_context(tmux_session, session_name)
+        line = generate_enhanced_context(tmux_session, session_name)
         if line:
             print(line)

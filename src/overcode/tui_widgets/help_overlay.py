@@ -66,7 +66,7 @@ class HelpOverlay(Static):
         row("z", "Toggle sleep", "p", "Pause/resume heartbeat")
         row("V", "Edit agent value", "B", "Edit cost budget")
         row("H", "Heartbeat config", "K", "Detection mode")
-        row("F", "Fork agent", "^T", "Toggle time context")
+        row("F", "Fork agent", "^T", "Enhanced context")
         row("T", "Handover all (2x)", "I", "Instruction history")
         row("G", "New agent defaults", "U", "Sister visibility")
         t.append("\n")

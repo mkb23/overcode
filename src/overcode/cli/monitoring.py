@@ -18,7 +18,7 @@ def hook_handler_cmd():
 
     Called by Claude Code hooks, not by users directly.
     Reads event JSON from stdin, writes state for status detection,
-    and outputs time-context for UserPromptSubmit events.
+    and outputs enhanced context for UserPromptSubmit events.
     """
     from ..hook_handler import handle_hook_event
 

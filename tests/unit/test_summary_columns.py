@@ -39,7 +39,7 @@ from overcode.summary_columns import (
     render_bash_count,
     render_permission_mode,
     render_allowed_tools,
-    render_time_context,
+    render_enhanced_context,
     render_human_count,
     render_robot_count,
     render_standing_orders,
@@ -98,7 +98,7 @@ def _make_session(**overrides):
         standing_orders_complete=False,
         standing_instructions_preset=None,
         is_asleep=False,
-        time_context_enabled=False,
+        enhanced_context_enabled=False,
         agent_value=1000,
         permissiveness_mode="normal",
         start_time="2025-01-15T10:00:00",
@@ -758,17 +758,17 @@ class TestRenderToolsPlain:
         assert "(Read,Glob)" in result
 
 
-class TestRenderTimeContext:
-    def test_enabled_shows_clock(self):
-        session = _make_session(time_context_enabled=True)
+class TestRenderEnhancedContext:
+    def test_enabled_shows_icon(self):
+        session = _make_session(enhanced_context_enabled=True)
         ctx = _make_ctx(session=session)
-        result = render_time_context(ctx)
-        assert "🕐" in result[0][0]
+        result = render_enhanced_context(ctx)
+        assert "🪝" in result[0][0]
 
     def test_disabled_shows_dot(self):
-        session = _make_session(time_context_enabled=False)
+        session = _make_session(enhanced_context_enabled=False)
         ctx = _make_ctx(session=session)
-        result = render_time_context(ctx)
+        result = render_enhanced_context(ctx)
         assert "·" in result[0][0]
 
 
@@ -1037,18 +1037,18 @@ class TestRenderBranchPlain:
 
 class TestRenderModePlain:
     def test_normal_mode(self):
-        session = _make_session(permissiveness_mode="normal", time_context_enabled=False)
+        session = _make_session(permissiveness_mode="normal", enhanced_context_enabled=False)
         ctx = _make_ctx(session=session)
         result = render_mode_plain(ctx)
         assert "👮 normal" in result
         assert "disabled" in result
 
-    def test_bypass_with_time_context(self):
-        session = _make_session(permissiveness_mode="bypass", time_context_enabled=True)
+    def test_bypass_with_enhanced_context(self):
+        session = _make_session(permissiveness_mode="bypass", enhanced_context_enabled=True)
         ctx = _make_ctx(session=session)
         result = render_mode_plain(ctx)
         assert "🔥 bypass" in result
-        assert "🕐 enabled" in result
+        assert "🪝 enabled" in result
 
 
 class TestRenderHeartbeatPlain:

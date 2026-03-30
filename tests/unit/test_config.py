@@ -521,7 +521,7 @@ class TestGetTimeContextConfig:
         """Should return defaults when no config file."""
         monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
 
-        result = config.get_time_context_config()
+        result = config.get_enhanced_context_config()
 
         assert result["office_start"] == 9
         assert result["office_end"] == 17
@@ -538,7 +538,7 @@ time_context:
 """)
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
 
-        result = config.get_time_context_config()
+        result = config.get_enhanced_context_config()
 
         assert result["office_start"] == 8
         assert result["office_end"] == 18
@@ -553,19 +553,19 @@ time_context:
 """)
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
 
-        result = config.get_time_context_config()
+        result = config.get_enhanced_context_config()
 
         assert result["office_start"] == 7
         assert result["office_end"] == 17  # default
         assert result["heartbeat_interval_minutes"] is None  # default
 
-    def test_empty_time_context_uses_defaults(self, tmp_path, monkeypatch):
+    def test_empty_enhanced_context_uses_defaults(self, tmp_path, monkeypatch):
         """Empty time_context section should return defaults."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("time_context: {}\n")
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
 
-        result = config.get_time_context_config()
+        result = config.get_enhanced_context_config()
 
         assert result["office_start"] == 9
         assert result["office_end"] == 17

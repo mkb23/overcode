@@ -149,13 +149,13 @@ class TestHandleHookEvent:
         assert data["event"] == "PostToolUse"
         assert data["tool_name"] == "Read"
 
-    def test_user_prompt_submit_outputs_time_context(self, monkeypatch, tmp_path, capsys):
+    def test_user_prompt_submit_outputs_enhanced_context(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
         monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
 
         with patch("sys.stdin") as mock_stdin, \
-             patch("overcode.time_context.generate_time_context", return_value="Clock: 14:00 PST | User: active | Office: yes"):
+             patch("overcode.time_context.generate_enhanced_context", return_value="Clock: 14:00 PST | User: active | Office: yes"):
             mock_stdin.read.return_value = json.dumps({
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "abc123",
@@ -169,13 +169,13 @@ class TestHandleHookEvent:
         state_path = tmp_path / "agents" / "hook_state_test-agent.json"
         assert state_path.exists()
 
-    def test_user_prompt_submit_empty_time_context(self, monkeypatch, tmp_path, capsys):
+    def test_user_prompt_submit_empty_enhanced_context(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
         monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
 
         with patch("sys.stdin") as mock_stdin, \
-             patch("overcode.time_context.generate_time_context", return_value=""):
+             patch("overcode.time_context.generate_enhanced_context", return_value=""):
             mock_stdin.read.return_value = json.dumps({
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "abc123",
@@ -266,7 +266,7 @@ class TestHandleHookEvent:
         }))
 
         with patch("sys.stdin") as mock_stdin, \
-             patch("overcode.time_context.generate_time_context", return_value="Clock: 14:00 PST"):
+             patch("overcode.time_context.generate_enhanced_context", return_value="Clock: 14:00 PST"):
             mock_stdin.read.return_value = json.dumps({
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "abc123",
@@ -284,7 +284,7 @@ class TestHandleHookEvent:
 
         # No daemon state file — budget check should be skipped
         with patch("sys.stdin") as mock_stdin, \
-             patch("overcode.time_context.generate_time_context", return_value="Clock: 14:00 PST"):
+             patch("overcode.time_context.generate_enhanced_context", return_value="Clock: 14:00 PST"):
             mock_stdin.read.return_value = json.dumps({
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "abc123",

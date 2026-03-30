@@ -258,12 +258,12 @@ class SessionActionsMixin:
         # Force a refresh
         focused.refresh()
 
-    def action_toggle_time_context(self) -> None:
-        """Toggle time context hook for the focused agent.
+    def action_toggle_enhanced_context(self) -> None:
+        """Toggle enhanced context hook for the focused agent.
 
-        When enabled, the agent receives time awareness context (clock, uptime,
-        presence) injected into every prompt via the UserPromptSubmit hook.
-        Press T again to disable.
+        When enabled, the agent receives enhanced context (agent name, clock,
+        uptime, presence) injected into every prompt via the UserPromptSubmit hook.
+        Press ^T again to disable.
         """
         focused = _get_focused_session(self)
         if not focused:
@@ -275,27 +275,27 @@ class SessionActionsMixin:
         if self._is_remote(session):
             if self._guard_remote(session):
                 return
-            new_state = not session.time_context_enabled
-            result = self._sister_controller.set_time_context(
+            new_state = not session.enhanced_context_enabled
+            result = self._sister_controller.set_enhanced_context(
                 session.source_url, session.source_api_key,
                 session.name, enabled=new_state,
             )
             state_word = "enabled" if new_state else "disabled"
-            self._remote_notify(result, f"Time context {state_word} for '{session.name}'")
+            self._remote_notify(result, f"Enhanced context {state_word} for '{session.name}'")
             return
 
-        new_state = not session.time_context_enabled
+        new_state = not session.enhanced_context_enabled
 
         # Update the session in the session manager
-        self.session_manager.update_session(session.id, time_context_enabled=new_state)
+        self.session_manager.update_session(session.id, enhanced_context_enabled=new_state)
 
         # Update the local session object
-        session.time_context_enabled = new_state
+        session.enhanced_context_enabled = new_state
 
         if new_state:
-            self.notify(f"Time context enabled for '{session.name}'", severity="information")
+            self.notify(f"Enhanced context enabled for '{session.name}'", severity="information")
         else:
-            self.notify(f"Time context disabled for '{session.name}'", severity="information")
+            self.notify(f"Enhanced context disabled for '{session.name}'", severity="information")
 
         # Force a refresh
         focused.refresh()

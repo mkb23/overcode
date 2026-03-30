@@ -585,9 +585,9 @@ def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
     return f"{''.join(emojis)}  ({', '.join(skills)})"
 
 
-def render_time_context(ctx: ColumnContext) -> ColumnOutput:
-    if ctx.session.time_context_enabled:
-        return [(f" {ctx.e('🕐')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+def render_enhanced_context(ctx: ColumnContext) -> ColumnOutput:
+    if ctx.session.enhanced_context_enabled:
+        return [(f" {ctx.e('🪝')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
     else:
         return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
@@ -838,8 +838,8 @@ def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
     perm = ctx.session.permissiveness_mode
     emoji = PERMISSIVENESS_EMOJIS.get(perm, "👮")
     mode = f"{emoji} {perm}"
-    tc = "🕐 enabled" if ctx.session.time_context_enabled else "disabled"
-    return f"{mode}  Time ctx: {tc}"
+    ec = "🪝 enabled" if ctx.session.enhanced_context_enabled else "disabled"
+    return f"{mode}  Enh ctx: {ec}"
 
 
 def render_tools_plain(ctx: ColumnContext) -> Optional[str]:
@@ -990,8 +990,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Loaded Skills", render_plain=render_skills_plain, header="SKL", name="Loaded Skills"),
     SummaryColumn(id="available_skills", group="supervision", detail_levels=ALL, render=render_available_skills,
                   label="Available Skills", render_plain=render_available_skills_plain, header="ASK", name="Available Skills"),
-    SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context,
-                  header="TC", name="Time Context"),
+    SummaryColumn(id="enhanced_context", group="supervision", detail_levels=ALL, render=render_enhanced_context,
+                  header="EC", name="Enhanced Context"),
     SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count,
                   header="H#", name="Human Count"),
     SummaryColumn(id="robot_count", group="supervision", detail_levels=ALL, render=render_robot_count,

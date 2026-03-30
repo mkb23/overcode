@@ -44,8 +44,8 @@ CONFIG_TEMPLATE = """\
 #       start: "09:00"
 #       end: "17:00"
 
-# Time context hook settings (for 'overcode time-context')
-# time_context:
+# Enhanced context hook settings (agent identity, clock, presence, uptime)
+# enhanced_context:
 #   office_start: 9
 #   office_end: 17
 #   heartbeat_interval_minutes: 15  # omit to disable

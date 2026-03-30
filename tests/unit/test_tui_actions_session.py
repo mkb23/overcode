@@ -528,17 +528,17 @@ class TestToggleHeartbeatPause:
         assert "resumed" in mock_tui.notify.call_args[0][0]
 
 
-class TestToggleTimeContext:
-    """Test action_toggle_time_context method."""
+class TestToggleEnhancedContext:
+    """Test action_toggle_enhanced_context method."""
 
     def test_enables_time_context(self):
-        """Should enable time context on a session that has it disabled."""
+        """Should enable enhanced context on a session that has it disabled."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.is_remote = False
-        mock_session.time_context_enabled = False
+        mock_session.enhanced_context_enabled = False
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
 
@@ -554,23 +554,23 @@ class TestToggleTimeContext:
         _default_sister = MagicMock(url="http://remote:8080", reachable=True)
         mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
         mock_tui.session_manager.update_session.assert_called_once_with(
-            "session-123", time_context_enabled=True
+            "session-123", enhanced_context_enabled=True
         )
-        assert mock_session.time_context_enabled is True
+        assert mock_session.enhanced_context_enabled is True
         assert "enabled" in mock_tui.notify.call_args[0][0]
         mock_widget.refresh.assert_called_once()
 
     def test_disables_time_context(self):
-        """Should disable time context on a session that has it enabled."""
+        """Should disable enhanced context on a session that has it enabled."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.is_remote = False
-        mock_session.time_context_enabled = True
+        mock_session.enhanced_context_enabled = True
         mock_session.name = "test-agent"
         mock_session.id = "session-123"
 
@@ -586,12 +586,12 @@ class TestToggleTimeContext:
         _default_sister = MagicMock(url="http://remote:8080", reachable=True)
         mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
         mock_tui.session_manager.update_session.assert_called_once_with(
-            "session-123", time_context_enabled=False
+            "session-123", enhanced_context_enabled=False
         )
-        assert mock_session.time_context_enabled is False
+        assert mock_session.enhanced_context_enabled is False
         assert "disabled" in mock_tui.notify.call_args[0][0]
 
     def test_no_agent_focused(self):
@@ -601,19 +601,19 @@ class TestToggleTimeContext:
         mock_tui = MagicMock()
         mock_tui.focused = MagicMock()  # Not a SessionSummary
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "No agent focused" in mock_tui.notify.call_args[0][0]
 
     def test_remote_agent_toggle_time_context(self):
-        """Should toggle time context via sister controller for remote agents."""
+        """Should toggle enhanced context via sister controller for remote agents."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.is_remote = True
-        mock_session.time_context_enabled = False
+        mock_session.enhanced_context_enabled = False
         mock_session.name = "remote-agent"
         mock_session.source_url = "http://remote:8080"
         mock_session.source_api_key = "key-abc"
@@ -633,11 +633,11 @@ class TestToggleTimeContext:
         _default_sister = MagicMock(url="http://remote:8080", reachable=True)
         mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_time_context.return_value = mock_result
+        mock_tui._sister_controller.set_enhanced_context.return_value = mock_result
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
-        mock_tui._sister_controller.set_time_context.assert_called_once_with(
+        mock_tui._sister_controller.set_enhanced_context.assert_called_once_with(
             "http://remote:8080", "key-abc", "remote-agent", enabled=True,
         )
         mock_tui.notify.assert_called_once()
@@ -647,13 +647,13 @@ class TestToggleTimeContext:
         mock_tui.session_manager.update_session.assert_not_called()
 
     def test_remote_agent_disable_time_context(self):
-        """Should disable time context via sister controller for remote agents."""
+        """Should disable enhanced context via sister controller for remote agents."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.is_remote = True
-        mock_session.time_context_enabled = True
+        mock_session.enhanced_context_enabled = True
         mock_session.name = "remote-agent"
         mock_session.source_url = "http://remote:8080"
         mock_session.source_api_key = "key-abc"
@@ -673,24 +673,24 @@ class TestToggleTimeContext:
         _default_sister = MagicMock(url="http://remote:8080", reachable=True)
         mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_time_context.return_value = mock_result
+        mock_tui._sister_controller.set_enhanced_context.return_value = mock_result
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
-        mock_tui._sister_controller.set_time_context.assert_called_once_with(
+        mock_tui._sister_controller.set_enhanced_context.assert_called_once_with(
             "http://remote:8080", "key-abc", "remote-agent", enabled=False,
         )
         mock_tui.notify.assert_called_once()
         assert "disabled" in mock_tui.notify.call_args[0][0]
 
     def test_remote_agent_time_context_failure(self):
-        """Should notify error when remote time context toggle fails."""
+        """Should notify error when remote enhanced context toggle fails."""
         from overcode.tui_actions.session import SessionActionsMixin
         from overcode.tui_widgets import SessionSummary
 
         mock_session = MagicMock()
         mock_session.is_remote = True
-        mock_session.time_context_enabled = False
+        mock_session.enhanced_context_enabled = False
         mock_session.name = "remote-agent"
         mock_session.source_url = "http://remote:8080"
         mock_session.source_api_key = "key-abc"
@@ -711,9 +711,9 @@ class TestToggleTimeContext:
         _default_sister = MagicMock(url="http://remote:8080", reachable=True)
         mock_tui._sister_poller.get_sister_states.return_value = [_default_sister]
         mock_tui._remote_notify = SessionActionsMixin._remote_notify.__get__(mock_tui)
-        mock_tui._sister_controller.set_time_context.return_value = mock_result
+        mock_tui._sister_controller.set_enhanced_context.return_value = mock_result
 
-        SessionActionsMixin.action_toggle_time_context(mock_tui)
+        SessionActionsMixin.action_toggle_enhanced_context(mock_tui)
 
         mock_tui.notify.assert_called_once()
         assert "Remote error: Connection refused" in mock_tui.notify.call_args[0][0]

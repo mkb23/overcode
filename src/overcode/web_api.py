@@ -236,7 +236,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "last_heartbeat_time": s.last_heartbeat_time,
         "is_asleep": s.is_asleep,
         "sleep_time_raw": s.sleep_time_seconds,
-        "time_context_enabled": s.time_context_enabled,
+        "enhanced_context_enabled": s.enhanced_context_enabled,
         "human_annotation": getattr(s, "human_annotation", ""),
         "start_time": s.start_time or "",
         "parent_name": s.parent_name or "",

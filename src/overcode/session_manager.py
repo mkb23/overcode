@@ -97,8 +97,8 @@ class Session:
     # Sleep mode - agent is paused and excluded from stats
     is_asleep: bool = False
 
-    # Time context hook - per-agent toggle for time awareness injection
-    time_context_enabled: bool = False
+    # Enhanced context hook - per-agent toggle for enhanced context injection
+    enhanced_context_enabled: bool = False
 
     # Agent value - priority indicator for sorting/attention (#61)
     # Default 1000, higher = more important
@@ -200,6 +200,10 @@ class Session:
         # Backward compat: convert int tmux_window to str
         if 'tmux_window' in filtered and isinstance(filtered['tmux_window'], int):
             filtered['tmux_window'] = str(filtered['tmux_window'])
+
+        # Backward compat: migrate time_context_enabled → enhanced_context_enabled (#378)
+        if 'enhanced_context_enabled' not in filtered and 'time_context_enabled' in data:
+            filtered['enhanced_context_enabled'] = data['time_context_enabled']
 
         try:
             return cls(**filtered)

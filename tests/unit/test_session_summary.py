@@ -47,7 +47,7 @@ def _make_session(**overrides) -> MagicMock:
         standing_orders_complete=False,
         standing_instructions_preset=None,
         is_asleep=False,
-        time_context_enabled=False,
+        enhanced_context_enabled=False,
         agent_value=1000,
         permissiveness_mode="normal",
         start_time="2025-01-15T10:00:00",

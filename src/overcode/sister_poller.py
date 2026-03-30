@@ -265,7 +265,8 @@ def _agent_to_session(
         stats=stats,
         cost_budget_usd=agent.get("cost_budget_usd", 0.0),
         is_asleep=is_asleep,
-        time_context_enabled=agent.get("time_context_enabled", False),
+        enhanced_context_enabled=agent.get("enhanced_context_enabled",
+                                                agent.get("time_context_enabled", False)),
         human_annotation=agent.get("human_annotation", ""),
         # Heartbeat
         heartbeat_enabled=agent.get("heartbeat_enabled", False),

@@ -24,7 +24,7 @@ from overcode.web_control_api import (
     configure_heartbeat,
     pause_heartbeat,
     resume_heartbeat,
-    set_time_context,
+    set_enhanced_context,
     set_hook_detection,
     transport_all,
     cleanup_agents,
@@ -520,17 +520,17 @@ class TestPauseResumeHeartbeat:
 
 
 class TestFeatureToggles:
-    """Tests for set_time_context and set_hook_detection."""
+    """Tests for set_enhanced_context and set_hook_detection."""
 
     @patch(SM_PATH)
     def test_enables_time_context(self, MockSM):
         sm = MockSM.return_value
         sm.get_session_by_name.return_value = _mock_session()
 
-        result = set_time_context("agents", "test-agent", enabled=True)
+        result = set_enhanced_context("agents", "test-agent", enabled=True)
 
         assert result == {"ok": True}
-        sm.update_session.assert_called_once_with("sess-1", time_context_enabled=True)
+        sm.update_session.assert_called_once_with("sess-1", enhanced_context_enabled=True)
 
     @patch(SM_PATH)
     def test_disables_hook_detection(self, MockSM):

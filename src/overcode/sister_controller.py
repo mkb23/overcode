@@ -238,12 +238,12 @@ class SisterController:
 
     # --- Feature Toggles ---
 
-    def set_time_context(
+    def set_enhanced_context(
         self, sister_url: str, api_key: str, agent_name: str, enabled: bool,
     ) -> ControlResult:
         return self._request(
             "PUT", sister_url, api_key,
-            f"/api/agents/{agent_name}/time-context",
+            f"/api/agents/{agent_name}/enhanced-context",
             {"enabled": enabled},
         )
 

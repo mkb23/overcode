@@ -196,8 +196,8 @@ class SupervisorTUI(
         ("H", "configure_heartbeat", "Heartbeat config"),
         # Fork agent - create child with source's conversation context (#347)
         ("F", "fork_focused", "Fork agent"),
-        # Time context toggle - per-agent time awareness hook (moved from F)
-        ("ctrl+t", "toggle_time_context", "Time context"),
+        # Enhanced context toggle - per-agent context injection hook
+        ("ctrl+t", "toggle_enhanced_context", "Enhanced context"),
         # Hook-based status detection toggle (#5)
         ("K", "toggle_hook_detection", "Hook detection"),
         # Column configuration modal (#178)

@@ -197,23 +197,35 @@ def get_web_time_presets() -> list:
     ]
 
 
-def get_time_context_config() -> dict:
-    """Get time context configuration for the time-context hook.
+def get_enhanced_context_config() -> dict:
+    """Get enhanced context configuration for the enhanced-context hook.
 
     Config format in ~/.overcode/config.yaml:
-        time_context:
+        enhanced_context:
           office_start: 9
           office_end: 17
           heartbeat_interval_minutes: 15  # omit to disable
+
+    Falls back to legacy 'time_context' key for backwards compatibility.
 
     Returns:
         Dict with office_start (int), office_end (int),
         heartbeat_interval_minutes (Optional[int])
     """
+    # Try new key first, fall back to legacy key
+    office_start = _get_config_value("enhanced_context.office_start")
+    if office_start is None:
+        office_start = _get_config_value("time_context.office_start", 9)
+    office_end = _get_config_value("enhanced_context.office_end")
+    if office_end is None:
+        office_end = _get_config_value("time_context.office_end", 17)
+    hb_interval = _get_config_value("enhanced_context.heartbeat_interval_minutes")
+    if hb_interval is None:
+        hb_interval = _get_config_value("time_context.heartbeat_interval_minutes")
     return {
-        "office_start": _get_config_value("time_context.office_start", 9),
-        "office_end": _get_config_value("time_context.office_end", 17),
-        "heartbeat_interval_minutes": _get_config_value("time_context.heartbeat_interval_minutes"),
+        "office_start": office_start,
+        "office_end": office_end,
+        "heartbeat_interval_minutes": hb_interval,
     }
 
 

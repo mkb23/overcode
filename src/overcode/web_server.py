@@ -111,7 +111,7 @@ _AGENT_CONTROL_ROUTES = {
         ts, name, enabled=body.get("enabled", True),
         frequency=body.get("frequency"), instruction=body.get("instruction"),
     ),
-    ("PUT", "time-context"): lambda api, ts, name, body: api.set_time_context(
+    ("PUT", "enhanced-context"): lambda api, ts, name, body: api.set_enhanced_context(
         ts, name, enabled=body.get("enabled", True),
     ),
     ("PUT", "hook-detection"): lambda api, ts, name, body: api.set_hook_detection(

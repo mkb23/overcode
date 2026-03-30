@@ -1392,14 +1392,14 @@ class TestDispatchControl:
             enabled=True, frequency=300, instruction="check status"
         )
 
-    def test_put_time_context(self):
-        """PUT /api/agents/<name>/time-context dispatches correctly."""
+    def test_put_enhanced_context(self):
+        """PUT /api/agents/<name>/enhanced-context dispatches correctly."""
         handler = _make_handler()
 
-        with patch('overcode.web_control_api.set_time_context') as mock_fn:
+        with patch('overcode.web_control_api.set_enhanced_context') as mock_fn:
             mock_fn.return_value = {"ok": True}
             result = OvercodeHandler._dispatch_control(
-                handler, "PUT", "/api/agents/agent1/time-context",
+                handler, "PUT", "/api/agents/agent1/enhanced-context",
                 {"enabled": True}
             )
 

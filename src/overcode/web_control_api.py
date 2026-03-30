@@ -424,13 +424,13 @@ def _parse_frequency(freq: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def set_time_context(tmux_session: str, name: str, enabled: bool) -> dict:
-    """Toggle time awareness hooks."""
+def set_enhanced_context(tmux_session: str, name: str, enabled: bool) -> dict:
+    """Toggle enhanced context hooks."""
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
-    sm.update_session(session.id, time_context_enabled=enabled)
+    sm.update_session(session.id, enhanced_context_enabled=enabled)
     return {"ok": True}
 
 

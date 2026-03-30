@@ -1,5 +1,5 @@
 """
-Unit tests for time_context module.
+Unit tests for time_context (enhanced context) module.
 """
 
 import json
@@ -20,8 +20,8 @@ from overcode.time_context import (
     format_uptime,
     format_heartbeat,
     read_heartbeat_timestamp,
-    build_time_context_line,
-    generate_time_context,
+    build_enhanced_context_line,
+    generate_enhanced_context,
 )
 
 
@@ -230,7 +230,7 @@ class TestBuildTimeContextLine:
     """Test line assembly."""
 
     def test_all_fields(self):
-        result = build_time_context_line(
+        result = build_enhanced_context_line(
             clock="14:32 PST",
             presence="active",
             office="yes",
@@ -240,7 +240,7 @@ class TestBuildTimeContextLine:
         assert result == "Clock: 14:32 PST | User: active | Office: yes | Uptime: 1h23m | Heartbeat: 15m (next: 7m)"
 
     def test_minimal_fields(self):
-        result = build_time_context_line(
+        result = build_enhanced_context_line(
             clock="14:32 PST",
             presence="unknown",
             office="no",
@@ -250,7 +250,7 @@ class TestBuildTimeContextLine:
         assert "Heartbeat" not in result
 
     def test_uptime_only(self):
-        result = build_time_context_line(
+        result = build_enhanced_context_line(
             clock="09:00 EST",
             presence="active",
             office="yes",
@@ -260,7 +260,7 @@ class TestBuildTimeContextLine:
         assert "Heartbeat" not in result
 
     def test_heartbeat_only(self):
-        result = build_time_context_line(
+        result = build_enhanced_context_line(
             clock="09:00 EST",
             presence="active",
             office="yes",
@@ -268,6 +268,16 @@ class TestBuildTimeContextLine:
         )
         assert "Heartbeat: 15m (next: now)" in result
         assert "Uptime" not in result
+
+    def test_agent_name_included(self):
+        result = build_enhanced_context_line(
+            clock="14:32 PST",
+            presence="active",
+            office="yes",
+            agent_name="my-agent",
+        )
+        assert result.startswith("Agent: my-agent |")
+        assert "Clock: 14:32 PST" in result
 
 
 class TestGenerateTimeContext:
@@ -289,7 +299,7 @@ class TestGenerateTimeContext:
                 {
                     "name": "my-agent",
                     "start_time": "2025-01-15T13:00:00",
-                    "time_context_enabled": True,
+                    "enhanced_context_enabled": True,
                 }
             ],
         }
@@ -303,8 +313,9 @@ class TestGenerateTimeContext:
         }
 
         now = datetime(2025, 1, 15, 14, 32, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
+        assert "Agent: my-agent" in result
         assert "Clock: 14:32" in result
         assert "User: active" in result
         assert "Office: yes" in result
@@ -326,7 +337,7 @@ class TestGenerateTimeContext:
         }
 
         now = datetime(2025, 1, 15, 14, 0, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         assert "User: unknown" in result
         assert "Uptime" not in result
@@ -355,7 +366,7 @@ class TestGenerateTimeContext:
         }
 
         now = datetime(2025, 1, 15, 14, 0, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         assert "User: idle" in result
         assert "Uptime" not in result
@@ -387,16 +398,16 @@ class TestGenerateTimeContext:
         }
 
         now = datetime(2025, 1, 15, 14, 8, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         assert "Heartbeat: 15m (next: 7m)" in result
 
 
 class TestTimeContextEnabledFlag:
-    """Test time_context_enabled flag check in generate_time_context."""
+    """Test enhanced_context_enabled flag check in generate_enhanced_context."""
 
     def test_returns_empty_when_disabled(self, tmp_path, monkeypatch):
-        """generate_time_context returns empty string when flag is False."""
+        """generate_enhanced_context returns empty string when flag is False."""
         state_dir = tmp_path / "state"
         session_dir = state_dir / "agents"
         session_dir.mkdir(parents=True)
@@ -409,7 +420,7 @@ class TestTimeContextEnabledFlag:
                 {
                     "name": "my-agent",
                     "start_time": "2025-01-15T13:00:00",
-                    "time_context_enabled": False,
+                    "enhanced_context_enabled": False,
                 }
             ],
         }
@@ -418,12 +429,12 @@ class TestTimeContextEnabledFlag:
 
         config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
         now = datetime(2025, 1, 15, 14, 32, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         assert result == ""
 
     def test_returns_output_when_enabled(self, tmp_path, monkeypatch):
-        """generate_time_context returns normal output when flag is True."""
+        """generate_enhanced_context returns normal output when flag is True."""
         state_dir = tmp_path / "state"
         session_dir = state_dir / "agents"
         session_dir.mkdir(parents=True)
@@ -436,7 +447,7 @@ class TestTimeContextEnabledFlag:
                 {
                     "name": "my-agent",
                     "start_time": "2025-01-15T13:00:00",
-                    "time_context_enabled": True,
+                    "enhanced_context_enabled": True,
                 }
             ],
         }
@@ -445,13 +456,13 @@ class TestTimeContextEnabledFlag:
 
         config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
         now = datetime(2025, 1, 15, 14, 32, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         assert "Clock: 14:32" in result
         assert "User: active" in result
 
     def test_returns_output_when_session_not_in_state(self, tmp_path, monkeypatch):
-        """generate_time_context returns output when session is not in daemon state (new agent)."""
+        """generate_enhanced_context returns output when session is not in daemon state (new agent)."""
         state_dir = tmp_path / "state"
         session_dir = state_dir / "agents"
         session_dir.mkdir(parents=True)
@@ -467,13 +478,13 @@ class TestTimeContextEnabledFlag:
 
         config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
         now = datetime(2025, 1, 15, 14, 32, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         # Should still produce output (session not found = no flag to check)
         assert "Clock: 14:32" in result
 
     def test_returns_output_when_no_daemon_state(self, tmp_path, monkeypatch):
-        """generate_time_context returns output when daemon state file missing."""
+        """generate_enhanced_context returns output when daemon state file missing."""
         state_dir = tmp_path / "state"
         session_dir = state_dir / "agents"
         session_dir.mkdir(parents=True)
@@ -483,7 +494,7 @@ class TestTimeContextEnabledFlag:
         # No state file written
         config = {"office_start": 9, "office_end": 17, "heartbeat_interval_minutes": None}
         now = datetime(2025, 1, 15, 14, 32, 0)
-        result = generate_time_context("agents", "my-agent", now=now, config=config)
+        result = generate_enhanced_context("agents", "my-agent", now=now, config=config)
 
         # Should still produce output (no state = no flag to check)
         assert "Clock: 14:32" in result

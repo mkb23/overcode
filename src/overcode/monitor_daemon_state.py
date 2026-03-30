@@ -76,7 +76,7 @@ class SessionDaemonState:
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
     is_asleep: bool = False  # Agent is paused and excluded from stats (#70)
-    time_context_enabled: bool = False  # Per-agent time awareness toggle
+    enhanced_context_enabled: bool = False  # Per-agent enhanced context toggle
 
     # Agent priority value (#61)
     agent_value: int = 1000  # Default 1000, higher = more important
