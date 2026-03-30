@@ -732,7 +732,8 @@ class TestToggleHookDetection:
         mock_tui.detector.mode = "polling"
         mock_tui.tmux_session = "agents"
 
-        with patch("overcode.settings.write_detection_mode") as mock_write:
+        with patch("overcode.settings.write_detection_mode") as mock_write, \
+             patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=True):
             SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
         assert mock_tui.detector.mode == "hooks"
