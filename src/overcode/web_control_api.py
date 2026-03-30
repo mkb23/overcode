@@ -174,6 +174,8 @@ def launch_agent(
     permissions: str = "normal",
 ) -> dict:
     """Launch a new agent."""
+    import io
+    import contextlib
     from .launcher import ClaudeLauncher
     from .session_manager import SessionManager
 
@@ -192,16 +194,23 @@ def launch_agent(
 
     sm = SessionManager()
     launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
-    session = launcher.launch(
-        name=name,
-        start_directory=directory,
-        initial_prompt=prompt,
-        skip_permissions=skip_permissions,
-        dangerously_skip_permissions=dangerously_skip,
-    )
+
+    # Capture print() output from launcher so failure reasons propagate to caller
+    capture = io.StringIO()
+    with contextlib.redirect_stdout(capture):
+        session = launcher.launch(
+            name=name,
+            start_directory=directory,
+            initial_prompt=prompt,
+            skip_permissions=skip_permissions,
+            dangerously_skip_permissions=dangerously_skip,
+        )
+
     if session:
         return {"ok": True, "session_id": session.id}
-    raise ControlError("Failed to launch agent", status=500)
+
+    detail = capture.getvalue().strip()
+    raise ControlError(detail or "Failed to launch agent", status=500)
 
 
 def fork_agent(

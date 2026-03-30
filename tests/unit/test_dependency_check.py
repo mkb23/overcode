@@ -33,8 +33,9 @@ class TestFindExecutable:
         """Should return None for missing executable."""
         with patch("shutil.which") as mock_which:
             mock_which.return_value = None
-            result = find_executable("nonexistent_binary_xyz")
-            assert result is None
+            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
+                result = find_executable("nonexistent_binary_xyz")
+                assert result is None
 
 
 class TestCheckTmux:
@@ -58,10 +59,11 @@ class TestCheckTmux:
         """Should return False when tmux is not found."""
         with patch("shutil.which") as mock_which:
             mock_which.return_value = None
-            available, path, version = check_tmux()
-            assert available is False
-            assert path is None
-            assert version is None
+            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
+                available, path, version = check_tmux()
+                assert available is False
+                assert path is None
+                assert version is None
 
     def test_tmux_version_fails(self):
         """Should return True but no version if version check fails."""
@@ -99,10 +101,11 @@ class TestCheckClaude:
         """Should return False when claude is not found."""
         with patch("shutil.which") as mock_which:
             mock_which.return_value = None
-            available, path, version = check_claude()
-            assert available is False
-            assert path is None
-            assert version is None
+            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
+                available, path, version = check_claude()
+                assert available is False
+                assert path is None
+                assert version is None
 
 
 class TestRequireTmux:
@@ -121,9 +124,10 @@ class TestRequireTmux:
         """Should raise TmuxNotFoundError when tmux missing."""
         with patch("shutil.which") as mock_which:
             mock_which.return_value = None
-            with pytest.raises(TmuxNotFoundError) as exc_info:
-                require_tmux()
-            assert "tmux is required but not found" in str(exc_info.value)
+            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
+                with pytest.raises(TmuxNotFoundError) as exc_info:
+                    require_tmux()
+                assert "tmux is required but not found" in str(exc_info.value)
 
 
 class TestRequireClaude:
@@ -142,8 +146,9 @@ class TestRequireClaude:
         """Should raise ClaudeNotFoundError when claude missing."""
         with patch("shutil.which") as mock_which:
             mock_which.return_value = None
-            with pytest.raises(ClaudeNotFoundError) as exc_info:
-                require_claude()
-            assert "Claude Code CLI is required but not found" in str(exc_info.value)
+            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
+                with pytest.raises(ClaudeNotFoundError) as exc_info:
+                    require_claude()
+                assert "Claude Code CLI is required but not found" in str(exc_info.value)
 
 

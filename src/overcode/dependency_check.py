@@ -15,13 +15,45 @@ from .exceptions import TmuxNotFoundError, ClaudeNotFoundError
 def find_executable(name: str) -> Optional[str]:
     """Find the path to an executable.
 
+    Checks PATH first, then common install locations that may not be on PATH
+    in non-login shells (e.g., web server subprocesses, SSH non-interactive).
+
     Args:
         name: Name of the executable
 
     Returns:
         Full path to executable, or None if not found
     """
-    return shutil.which(name)
+    import os
+    from pathlib import Path
+
+    path = shutil.which(name)
+    if path:
+        return path
+
+    # Check common locations not always on PATH in non-login shells
+    return _find_in_fallback_dirs(name)
+
+
+def _find_in_fallback_dirs(name: str) -> Optional[str]:
+    """Check common install directories for an executable."""
+    import os
+    from pathlib import Path
+
+    home = Path.home()
+    fallback_dirs = [
+        home / ".local" / "bin",           # pip/pipx, claude CLI
+        home / ".npm-global" / "bin",      # npm global
+        home / ".nvm" / "current" / "bin", # nvm
+        Path("/usr/local/bin"),
+        Path("/opt/homebrew/bin"),          # macOS ARM homebrew
+    ]
+    for d in fallback_dirs:
+        candidate = d / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    return None
 
 
 def _check_executable(

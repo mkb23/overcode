@@ -6,10 +6,13 @@ request to the sister's web API and returns a Result.
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+_log = logging.getLogger("overcode.sister")
 
 
 @dataclass
@@ -40,6 +43,7 @@ class SisterController:
     ) -> ControlResult:
         """Send an HTTP request to a sister's control API."""
         url = f"{sister_url.rstrip('/')}{path}"
+        _log.debug("HTTP %s %s body=%s", method, url, body)
 
         data = json.dumps(body or {}).encode("utf-8")
         req = Request(url, data=data, method=method)
@@ -50,14 +54,18 @@ class SisterController:
         try:
             with urlopen(req, timeout=self.timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
+                _log.debug("HTTP %s %s -> ok=%s", method, url, result.get("ok", True))
                 return ControlResult(ok=result.get("ok", True), data=result)
         except HTTPError as e:
             try:
                 error_body = json.loads(e.read().decode("utf-8"))
-                return ControlResult(ok=False, error=error_body.get("error", str(e)))
+                error_msg = error_body.get("error", str(e))
             except (json.JSONDecodeError, UnicodeDecodeError):
-                return ControlResult(ok=False, error=f"HTTP {e.code}: {e.reason}")
+                error_msg = f"HTTP {e.code}: {e.reason}"
+            _log.error("HTTP %s %s -> HTTPError %s: %s", method, url, e.code, error_msg)
+            return ControlResult(ok=False, error=error_msg)
         except (URLError, OSError) as e:
+            _log.error("HTTP %s %s -> ConnectionError: %s", method, url, e)
             return ControlResult(ok=False, error=f"Connection error: {e}")
 
     # --- Agent Interaction ---

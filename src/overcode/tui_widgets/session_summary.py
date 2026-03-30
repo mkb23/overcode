@@ -166,8 +166,13 @@ class SessionSummary(Static, can_focus=True):
         # Update detected status for display
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
         # The session.stats values are read from what Monitor Daemon has persisted
-        # If session is asleep, keep the asleep status instead of the detected status
-        new_status = "asleep" if self.session.is_asleep else status
+        # Terminated supersedes asleep (#399); asleep supersedes detected status (#68)
+        if status == "terminated":
+            new_status = status
+        elif self.session.is_asleep:
+            new_status = "asleep"
+        else:
+            new_status = status
 
         # Track status changes for immediate time-in-state reset (#73)
         # Compare by color group so sub-status changes within the same color

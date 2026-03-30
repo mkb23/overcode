@@ -505,7 +505,11 @@ class CommandBar(Static):
 
     def _handle_remote_agent_sister(self, text: str) -> None:
         """Handle sister name input for remote agent creation."""
+        import logging
+        _log = logging.getLogger("overcode.tui.sister")
+
         if not text:
+            _log.warning("Remote agent flow: empty sister name")
             self.app.notify("Sister name required", severity="error")
             return
 
@@ -515,11 +519,14 @@ class CommandBar(Static):
             from overcode.config import get_sisters_config
             available = [s["name"] for s in get_sisters_config()]
             if available:
+                _log.error("Sister '%s' not found. Available: %s", text, available)
                 self.app.notify(f"Sister '{text}' not found. Available: {', '.join(available)}", severity="error")
             else:
+                _log.error("No sisters configured")
                 self.app.notify("No sisters configured", severity="error")
             return
 
+        _log.info("Remote agent flow started: sister=%s", text)
         self.new_remote_sister = text
         self.mode = "new_remote_agent_dir"
         self._update_target_label()
@@ -528,6 +535,8 @@ class CommandBar(Static):
 
     def _handle_remote_agent_dir(self, text: str) -> None:
         """Handle directory input for remote agent creation."""
+        import logging
+        logging.getLogger("overcode.tui.sister").info("Remote agent dir=%s", text or ".")
         self.new_agent_dir = text if text else "."
         self.mode = "new_remote_agent_name"
         self._update_target_label()
@@ -537,15 +546,21 @@ class CommandBar(Static):
 
     def _handle_remote_agent_name(self, name: str) -> None:
         """Handle name input for remote agent creation."""
+        import logging
+        _log = logging.getLogger("overcode.tui.sister")
         if not name:
+            _log.warning("Remote agent flow: empty agent name")
             self.app.notify("Agent name required", severity="error")
             return
+        _log.info("Remote agent name=%s", name)
         self.new_agent_name = name
         self.mode = "new_remote_agent_perms"
         self._update_target_label()
 
     def _handle_remote_agent_perms(self, text: str) -> None:
         """Handle permissions input and post remote agent message."""
+        import logging
+        _log = logging.getLogger("overcode.tui.sister")
         perms = text.lower().strip()
         if perms in ("bypass", "!"):
             permissions = "bypass"
@@ -554,6 +569,8 @@ class CommandBar(Static):
         else:
             permissions = "normal"
 
+        _log.info("Remote agent perms=%s, posting NewRemoteAgentRequested (sister=%s name=%s dir=%s)",
+                   permissions, self.new_remote_sister, self.new_agent_name, self.new_agent_dir)
         self.post_message(self.NewRemoteAgentRequested(
             sister_name=self.new_remote_sister,
             agent_name=self.new_agent_name,

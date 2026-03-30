@@ -35,6 +35,15 @@ class DaemonActionsMixin:
             on_show=lambda w: w._refresh_logs(),
         )
 
+    def action_toggle_tui_log(self) -> None:
+        """Toggle TUI diagnostic log panel visibility."""
+        from ..tui_widgets import TuiLogPanel
+        from .view import _toggle_widget
+        _toggle_widget(
+            self, "tui-log-panel", TuiLogPanel, "tui_log_panel_visible", "TUI log panel",
+            on_show=lambda w: w._refresh_logs(),
+        )
+
     def action_supervisor_start(self) -> None:
         """Start the Supervisor Daemon (requires double-press confirmation)."""
         self._confirm_double_press(

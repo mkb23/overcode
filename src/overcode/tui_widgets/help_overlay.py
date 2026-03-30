@@ -49,6 +49,7 @@ class HelpOverlay(Static):
         row("$", "Cycle tokens / $ / joules")
         row("C", "Column config", "L", "Column headers")
         row("t", "Timeline", "d", "Daemon panel")
+        row("O", "TUI diagnostic log")
         row("g", "Show killed agents", "Z", "Hide sleeping agents")
         row("D", "Show done agents", "X", "Collapse children")
         row(",/.", "Baseline time ±15m", "0", "Reset baseline")

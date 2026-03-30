@@ -9,6 +9,7 @@ from .fullscreen_preview import FullscreenPreview
 from .help_overlay import HelpOverlay
 from .preview_pane import PreviewPane
 from .daemon_panel import DaemonPanel
+from .tui_log_panel import TuiLogPanel
 from .daemon_status_bar import DaemonStatusBar
 from .status_timeline import StatusTimeline
 from .session_summary import SessionSummary
@@ -25,6 +26,7 @@ __all__ = [
     "HelpOverlay",
     "PreviewPane",
     "DaemonPanel",
+    "TuiLogPanel",
     "DaemonStatusBar",
     "StatusTimeline",
     "SessionSummary",

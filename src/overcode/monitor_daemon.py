@@ -1006,9 +1006,10 @@ class MonitorDaemon:
                 continue
 
             # Track stats and build state
-            # Use "asleep" status if session is marked as sleeping (#68)
-            # Use "running_heartbeat" if running due to heartbeat trigger (#171)
-            if session.is_asleep:
+            # Precedence: terminated > asleep > heartbeat variants > default (#399, #68, #171)
+            if status == STATUS_TERMINATED:
+                effective_status = STATUS_TERMINATED
+            elif session.is_asleep:
                 effective_status = STATUS_ASLEEP
             elif status == STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
                 if session.id in self._heartbeat_start_pending:

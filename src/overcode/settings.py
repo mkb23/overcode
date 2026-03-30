@@ -439,6 +439,11 @@ def resolve_detection_mode(session: str) -> str:
     return "hooks" if ClaudeConfigEditor.are_overcode_hooks_installed() else "polling"
 
 
+def get_tui_log_path(session: str) -> Path:
+    """Get the TUI diagnostic log file path for a specific session."""
+    return get_session_dir(session) / "tui.log"
+
+
 def get_diagnostics_dir(session: str) -> Path:
     """Get the diagnostics directory for a specific session."""
     return get_session_dir(session) / "diagnostics"
@@ -521,6 +526,7 @@ class TUIPreferences:
     summary_detail: str = "full"  # low, med, full
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
+    tui_log_panel_visible: bool = False
     preview_visible: bool = False  # preview pane visibility
     tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline

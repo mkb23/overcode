@@ -65,6 +65,7 @@ from .tui_widgets import (
     HelpOverlay,
     PreviewPane,
     DaemonPanel,
+    TuiLogPanel,
     DaemonStatusBar,
     StatusTimeline,
     SessionSummary,
@@ -107,6 +108,7 @@ class SupervisorTUI(
         ("h", "toggle_help", "Help"),
         ("question_mark", "toggle_help", "Help"),
         ("d", "toggle_daemon", "Daemon panel"),
+        ("O", "toggle_tui_log", "TUI logs"),
         ("t", "toggle_timeline", "Toggle timeline"),
         ("s", "cycle_summary", "Summary detail"),
         ("c", "sync_to_main_and_clear", "Sync main+clear"),
@@ -386,6 +388,7 @@ class SupervisorTUI(
         yield DaemonStatusBar(tmux_session=self.tmux_session, session_manager=self.session_manager, id="daemon-status")
         yield StatusTimeline([], tmux_session=self.tmux_session, id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
+        yield TuiLogPanel(tmux_session=self.tmux_session, id="tui-log-panel")
         yield Static("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield ScrollableContainer(id="jobs-container")
@@ -433,6 +436,10 @@ class SupervisorTUI(
         self._update_subtitle()
         self._update_capture_lines()
 
+        # Set up TUI diagnostic file logger
+        from .tui_widgets.tui_log_panel import setup_tui_file_logger
+        self._tui_log_handler = setup_tui_file_logger(self.tmux_session)
+
         # Auto-start Monitor Daemon if not running
         self._ensure_monitor_daemon()
 
@@ -463,6 +470,12 @@ class SupervisorTUI(
         try:
             daemon_panel = self.query_one("#daemon-panel", DaemonPanel)
             daemon_panel.display = self._prefs.daemon_panel_visible
+        except NoMatches:
+            pass
+
+        try:
+            tui_log_panel = self.query_one("#tui-log-panel", TuiLogPanel)
+            tui_log_panel.display = self._prefs.tui_log_panel_visible
         except NoMatches:
             pass
 
@@ -2833,23 +2846,39 @@ class SupervisorTUI(
 
     def on_command_bar_new_remote_agent_requested(self, message: CommandBar.NewRemoteAgentRequested) -> None:
         """Handle remote agent launch request (#310)."""
+        import logging
+        _log = logging.getLogger("overcode.tui.sister")
+
         sister_name = message.sister_name
         agent_name = message.agent_name
         directory = message.directory
         permissions = message.permissions
 
+        _log.info("Launch request: sister=%s agent=%s dir=%s perms=%s",
+                   sister_name, agent_name, directory, permissions)
+
         from .config import get_sister_by_name
         sister_config = get_sister_by_name(sister_name)
         if not sister_config:
+            _log.error("Sister '%s' not found in config", sister_name)
             self.notify(f"Sister '{sister_name}' not found", severity="error")
             return
 
         # Check sister is reachable before launching
+        sister_found_in_poller = False
         for state in self._sister_poller.get_sister_states():
-            if state.name == sister_name and not state.reachable:
-                self.notify(f"Sister '{sister_name}' is unreachable", severity="warning")
-                return
+            if state.name == sister_name:
+                sister_found_in_poller = True
+                if not state.reachable:
+                    _log.error("Sister '%s' unreachable (last_error=%s)", sister_name, state.last_error)
+                    self.notify(f"Sister '{sister_name}' is unreachable", severity="warning")
+                    return
+                break
 
+        if not sister_found_in_poller:
+            _log.warning("Sister '%s' not found in poller state — skipping reachability check", sister_name)
+
+        _log.info("Calling launch_agent on %s", sister_config["url"])
         try:
             result = self._sister_controller.launch_agent(
                 sister_url=sister_config["url"],
@@ -2859,12 +2888,15 @@ class SupervisorTUI(
                 permissions=permissions,
             )
         except Exception as e:
+            _log.error("Remote launch exception: %s", e, exc_info=True)
             self.notify(f"Remote launch failed: {e}", severity="error")
             return
 
         if result.ok:
+            _log.info("Remote agent '%s' launched successfully on %s", agent_name, sister_name)
             self.notify(f"Remote agent '{agent_name}' launched on {sister_name}", severity="information")
         else:
+            _log.error("Remote launch failed: %s", result.error)
             self.notify(f"Remote launch failed: {result.error}", severity="error")
 
     def _ensure_monitor_daemon(self) -> None:

@@ -140,6 +140,17 @@ SessionSummary.terminated:focus {
     border-bottom: solid $panel;
 }
 
+#tui-log-panel {
+    display: none;
+    height: auto;
+    min-height: 2;
+    max-height: 22;
+    width: 100%;
+    background: $surface;
+    padding: 0 1;
+    border-bottom: solid $panel;
+}
+
 CommandBar {
     dock: bottom;
     height: auto;
