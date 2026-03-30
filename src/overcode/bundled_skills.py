@@ -248,6 +248,32 @@ Jobs are visible in the TUI jobs view (press `J`) and auto-clean after 24h (conf
 }
 
 
+def get_available_skills(project_dir: str | None = None) -> list[str]:
+    """Scan for installed skill directories (user-level + project-level).
+
+    Returns sorted list of skill names found in ~/.claude/skills/
+    and optionally .claude/skills/ relative to project_dir.
+    """
+    skills: set[str] = set()
+
+    # User-level skills
+    user_skills = Path.home() / ".claude" / "skills"
+    if user_skills.is_dir():
+        for d in user_skills.iterdir():
+            if d.is_dir() and (d / "SKILL.md").exists():
+                skills.add(d.name)
+
+    # Project-level skills
+    if project_dir:
+        proj_skills = Path(project_dir) / ".claude" / "skills"
+        if proj_skills.is_dir():
+            for d in proj_skills.iterdir():
+                if d.is_dir() and (d / "SKILL.md").exists():
+                    skills.add(d.name)
+
+    return sorted(skills)
+
+
 def any_skills_stale() -> bool:
     """Check if any installed skills are outdated vs bundled versions."""
     base = Path.home() / ".claude" / "skills"

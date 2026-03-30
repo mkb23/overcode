@@ -95,6 +95,8 @@ class HookStatusDetector:
         # Diagnostic phase tracking (same interface as PollingStatusDetector)
         self._last_detect_phase: Dict[str, str] = {}
         self._content_changed: Dict[str, bool] = {}
+        # Skills observed via Skill tool_use events, keyed by session name (#252)
+        self._loaded_skills: Dict[str, set] = {}
 
         # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
@@ -179,6 +181,17 @@ class HookStatusDetector:
             # Window alive, no hooks yet — assume waiting for input
             self._last_detect_phase[session.id] = "hook:no_state"
             return STATUS_WAITING_USER, "Waiting for first hook event", pane_content
+
+        # Track Skill tool_use events (#252)
+        tool_name = hook_state.get("tool_name")
+        if tool_name == "Skill":
+            tool_input = hook_state.get("tool_input")
+            if isinstance(tool_input, dict):
+                skill_name = tool_input.get("skill", "")
+                if skill_name:
+                    if session.name not in self._loaded_skills:
+                        self._loaded_skills[session.name] = set()
+                    self._loaded_skills[session.name].add(skill_name)
 
         # Hook state exists — use it for status
         event = hook_state.get("event", "")
@@ -308,3 +321,8 @@ class HookStatusDetector:
             return "Claude exited"
 
         return "Unknown state"
+
+    def get_loaded_skills(self, session_name: str) -> list[str]:
+        """Return skills observed via Skill tool_use for a session (#252)."""
+        skills = self._loaded_skills.get(session_name, set())
+        return sorted(skills)

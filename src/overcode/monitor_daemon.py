@@ -312,6 +312,10 @@ class MonitorDaemon:
         self._last_session_id_sync: Optional[datetime] = None
         self._session_id_sync_interval = 10  # seconds
 
+        # Available skills sync (#252) — infrequent, skills rarely change
+        self._last_skills_sync: Optional[datetime] = None
+        self._skills_sync_interval = 60  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -899,6 +903,7 @@ class MonitorDaemon:
             self._legacy_windows_migrated = True
         self._sync_session_ids(sessions, now)
         self._sync_session_stats(sessions, now)
+        self._sync_available_skills(sessions, now)
         self._dispatch_heartbeats(sessions)
         session_states, all_waiting = self._detect_and_enrich(sessions, now)
         self._cleanup_stale(sessions)
@@ -923,6 +928,16 @@ class MonitorDaemon:
             for session in sessions:
                 self.sync_claude_code_stats(session)
             self._last_stats_sync = now
+
+    def _sync_available_skills(self, sessions: list, now: datetime) -> None:
+        """Scan installed skill directories every 60s (#252)."""
+        if should_sync_stats(self._last_skills_sync, now, self._skills_sync_interval):
+            from .bundled_skills import get_available_skills
+            for session in sessions:
+                available = get_available_skills(session.start_directory)
+                if available != session.available_skills:
+                    self.session_manager.update_session(session.id, available_skills=available)
+            self._last_skills_sync = now
 
     def _dispatch_heartbeats(self, sessions: list) -> None:
         """Send heartbeats before status detection (#171)."""
@@ -951,6 +966,12 @@ class MonitorDaemon:
 
                 # Log hook events when they change (diagnostic visibility)
                 self._log_hook_event(session, status, activity)
+
+                # Track loaded skills from hook events (#252)
+                if hasattr(self.detector, 'get_loaded_skills'):
+                    new_skills = self.detector.get_loaded_skills(session.name)
+                    if new_skills and sorted(new_skills) != sorted(session.loaded_skills):
+                        self.session_manager.update_session(session.id, loaded_skills=new_skills)
 
                 # Extract PR number from pane content
                 if pane_content:

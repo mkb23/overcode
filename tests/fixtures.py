@@ -90,6 +90,8 @@ class MockSession:
     standing_orders_complete: bool = False
     stats: MockSessionStats = field(default_factory=MockSessionStats)
     hook_status_detection: bool = True
+    loaded_skills: list = field(default_factory=list)
+    available_skills: list = field(default_factory=list)
     parent_session_id: Optional[str] = None
 
 

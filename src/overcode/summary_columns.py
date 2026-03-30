@@ -51,6 +51,22 @@ TOOL_EMOJI: dict[str, str] = {
 TOOL_EMOJI_DEFAULT = "🔹"  # Fallback for unknown tools
 MAX_TOOL_EMOJI = 10  # Configurable cap
 
+# ---------------------------------------------------------------------------
+# Skill name → emoji registry for loaded-skills column (#252)
+# ---------------------------------------------------------------------------
+SKILL_EMOJI: dict[str, str] = {
+    "overcode": "🐙",
+    "delegating-to-agents": "👥",
+    "claude-api": "🔌",
+    "simplify": "✨",
+    "commit": "📦",
+    "review-pr": "🔍",
+    "reset": "🔄",
+    "loop": "🔁",
+    "schedule": "📅",
+}
+SKILL_EMOJI_DEFAULT = "🧩"  # Fallback for unknown skills
+
 
 def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI, emoji_free: bool = False) -> str:
     """Convert comma-separated tool names to emoji string."""
@@ -522,6 +538,44 @@ def render_allowed_tools(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {emojis}", ctx.mono(f"white{ctx.bg}", ""))]
 
 
+def render_loaded_skills(ctx: ColumnContext) -> ColumnOutput:
+    skills = ctx.session.loaded_skills
+    if not skills:
+        return None
+    from .status_constants import emoji_or_ascii
+    emojis = [emoji_or_ascii(SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
+    sep = " " if ctx.emoji_free else ""
+    text = sep.join(emojis)
+    return [(f" {text}", ctx.mono(f"white{ctx.bg}", ""))]
+
+
+def render_skills_plain(ctx: ColumnContext) -> Optional[str]:
+    skills = ctx.session.loaded_skills
+    if not skills:
+        return None
+    emojis = [SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT) for s in skills]
+    return f"{''.join(emojis)}  ({', '.join(skills)})"
+
+
+def render_available_skills(ctx: ColumnContext) -> ColumnOutput:
+    skills = ctx.session.available_skills
+    if not skills:
+        return None
+    from .status_constants import emoji_or_ascii
+    emojis = [emoji_or_ascii(SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
+    sep = " " if ctx.emoji_free else ""
+    text = sep.join(emojis)
+    return [(f" {text}", ctx.mono(f"dim white{ctx.bg}", "dim"))]
+
+
+def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
+    skills = ctx.session.available_skills
+    if not skills:
+        return None
+    emojis = [SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT) for s in skills]
+    return f"{''.join(emojis)}  ({', '.join(skills)})"
+
+
 def render_time_context(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.time_context_enabled:
         return [(f" {ctx.e('🕐')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
@@ -923,6 +977,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Teams", render_plain=render_teams_plain, header="TM", name="Teams"),
     SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
                   label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools"),
+    SummaryColumn(id="loaded_skills", group="supervision", detail_levels=ALL, render=render_loaded_skills,
+                  label="Loaded Skills", render_plain=render_skills_plain, header="SKL", name="Loaded Skills"),
+    SummaryColumn(id="available_skills", group="supervision", detail_levels=ALL, render=render_available_skills,
+                  label="Available Skills", render_plain=render_available_skills_plain, header="ASK", name="Available Skills"),
     SummaryColumn(id="time_context", group="supervision", detail_levels=ALL, render=render_time_context,
                   header="TC", name="Time Context"),
     SummaryColumn(id="human_count", group="supervision", detail_levels=ALL, render=render_human_count,

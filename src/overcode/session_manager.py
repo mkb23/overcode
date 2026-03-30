@@ -129,6 +129,10 @@ class Session:
     # Hook-based status detection - per-agent toggle (#5)
     hook_status_detection: bool = True
 
+    # Skills loaded during this session (#252)
+    loaded_skills: List[str] = field(default_factory=list)
+    available_skills: List[str] = field(default_factory=list)
+
     # Claude CLI flag passthrough (#290)
     allowed_tools: Optional[str] = None  # Comma-separated tool list for --allowedTools
     extra_claude_args: List[str] = field(default_factory=list)  # Extra CLI flags via --claude-arg

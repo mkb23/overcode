@@ -500,3 +500,83 @@ class TestBusySleepingDetection:
 
         assert status == STATUS_BUSY_SLEEPING
         assert "2.0m" in activity
+
+
+class TestSkillTracking:
+    """Test loaded skill tracking from Skill tool_use events (#252)."""
+
+    def test_skill_tool_use_tracked(self, tmp_path):
+        """Skill tool_use event adds to loaded_skills."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PreToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Skill",
+            "tool_input": {"skill": "overcode"},
+        }
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        detector.detect_status(session)
+
+        assert detector.get_loaded_skills("test-agent") == ["overcode"]
+
+    def test_multiple_skills_accumulated(self, tmp_path):
+        """Multiple Skill events accumulate without duplicates."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+
+        # First skill
+        data = {
+            "event": "PreToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Skill",
+            "tool_input": {"skill": "overcode"},
+        }
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        detector.detect_status(session)
+
+        # Second skill (overwrite hook state file)
+        data["tool_input"] = {"skill": "delegating-to-agents"}
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        detector.detect_status(session)
+
+        # Same skill again (no duplicate)
+        data["tool_input"] = {"skill": "overcode"}
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        detector.detect_status(session)
+
+        assert detector.get_loaded_skills("test-agent") == ["delegating-to-agents", "overcode"]
+
+    def test_non_skill_tool_not_tracked(self, tmp_path):
+        """Non-Skill tool_use events don't add to loaded_skills."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "event": "PreToolUse",
+            "timestamp": time.time(),
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+        }
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        detector.detect_status(session)
+
+        assert detector.get_loaded_skills("test-agent") == []
+
+    def test_no_hook_state_returns_empty(self, tmp_path):
+        """No hook state returns empty skill list."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True)
+        detector = HookStatusDetector("agents", state_dir=state_dir)
+
+        assert detector.get_loaded_skills("nonexistent") == []

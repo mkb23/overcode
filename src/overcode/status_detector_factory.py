@@ -95,3 +95,9 @@ class StatusDetectorDispatcher:
         if self._mode == "hooks":
             return self.hooks.get_pane_content(window, num_lines)
         return self.polling.get_pane_content(window, num_lines)
+
+    def get_loaded_skills(self, session_name: str) -> list[str]:
+        """Return skills observed via hook events (#252)."""
+        if hasattr(self.hooks, 'get_loaded_skills'):
+            return self.hooks.get_loaded_skills(session_name)
+        return []
