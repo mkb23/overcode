@@ -146,29 +146,43 @@ class HelpOverlay(Static):
 
         section("SPECIAL INDICATORS")
 
-        t.append("🔔  ", style="")
-        t.append("Bell — unvisited stall\n", style="white")
-        t.append("     New attention needed, not yet seen\n\n", style="dim")
+        def indicator(emoji, desc):
+            t.append(f"{emoji}  ", style="")
+            t.append(f"{desc}\n", style="white")
 
-        t.append("🤿  ", style="")
-        t.append("Subagent count\n", style="white")
-        t.append("     Active Task tool subprocesses\n\n", style="dim")
+        indicator("🔔", "Unvisited stall (bell)")
+        indicator("🤿", "Subagent count")
+        indicator("🐚", "Background bash count")
+        indicator("👶", "Child agent count")
+        indicator("📋", "Standing orders active")
+        indicator("✓ ", "Standing orders complete")
+        indicator("🤝", "Agent teams enabled")
+        t.append("\n")
 
-        t.append("🐚  ", style="")
-        t.append("Background bash count\n", style="white")
-        t.append("     Running background shell tasks\n\n", style="dim")
+        section("SKILL EMOJI")
 
-        t.append("👶  ", style="")
-        t.append("Child agent count\n", style="white")
-        t.append("     Spawned child agents in hierarchy\n\n", style="dim")
+        from ..summary_columns import get_skill_emoji, SKILL_EMOJI_DEFAULT, TOOL_EMOJI
+        skill_emoji = get_skill_emoji()
+        if skill_emoji:
+            for name, emoji in sorted(skill_emoji.items()):
+                t.append(f"{emoji}  ", style="")
+                t.append(f"{name}\n", style="white")
+            t.append(f"{SKILL_EMOJI_DEFAULT}  ", style="")
+            t.append("(unknown skill)\n", style="dim")
+        else:
+            t.append("No skills configured\n", style="dim")
+        t.append("\n")
+        t.append("Configure in ", style="dim")
+        t.append("~/.overcode/config.yaml\n", style="dim italic")
+        t.append("  skill_emoji:\n", style="dim")
+        t.append("    my-skill: 🎯\n", style="dim")
+        t.append("\n")
 
-        t.append("📋  ", style="")
-        t.append("Standing orders active\n", style="white")
-        t.append("✓   ", style="")
-        t.append("Standing orders complete\n\n", style="white")
-
-        t.append("🤝  ", style="")
-        t.append("Agent teams enabled\n\n", style="white")
+        section("TOOL EMOJI")
+        for name, emoji in sorted(TOOL_EMOJI.items()):
+            t.append(f"{emoji}  ", style="")
+            t.append(f"{name}\n", style="white")
+        t.append("\n")
 
         section("TIMELINE LEGEND")
         t.append("█", style="green")

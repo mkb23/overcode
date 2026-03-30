@@ -53,8 +53,9 @@ MAX_TOOL_EMOJI = 10  # Configurable cap
 
 # ---------------------------------------------------------------------------
 # Skill name → emoji registry for loaded-skills column (#252)
+# Defaults below; user overrides via config.yaml `skill_emoji:` section.
 # ---------------------------------------------------------------------------
-SKILL_EMOJI: dict[str, str] = {
+_SKILL_EMOJI_DEFAULTS: dict[str, str] = {
     "overcode": "🐙",
     "delegating-to-agents": "👥",
     "claude-api": "🔌",
@@ -66,6 +67,14 @@ SKILL_EMOJI: dict[str, str] = {
     "schedule": "📅",
 }
 SKILL_EMOJI_DEFAULT = "🧩"  # Fallback for unknown skills
+
+
+def get_skill_emoji() -> dict[str, str]:
+    """Return merged skill emoji registry (defaults + user config overrides)."""
+    from .settings import get_user_config
+    merged = dict(_SKILL_EMOJI_DEFAULTS)
+    merged.update(get_user_config().skill_emoji)
+    return merged
 
 
 def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI, emoji_free: bool = False) -> str:
@@ -543,7 +552,7 @@ def render_loaded_skills(ctx: ColumnContext) -> ColumnOutput:
     if not skills:
         return None
     from .status_constants import emoji_or_ascii
-    emojis = [emoji_or_ascii(SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
+    emojis = [emoji_or_ascii(get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
     sep = " " if ctx.emoji_free else ""
     text = sep.join(emojis)
     return [(f" {text}", ctx.mono(f"white{ctx.bg}", ""))]
@@ -553,7 +562,7 @@ def render_skills_plain(ctx: ColumnContext) -> Optional[str]:
     skills = ctx.session.loaded_skills
     if not skills:
         return None
-    emojis = [SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT) for s in skills]
+    emojis = [get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT) for s in skills]
     return f"{''.join(emojis)}  ({', '.join(skills)})"
 
 
@@ -562,7 +571,7 @@ def render_available_skills(ctx: ColumnContext) -> ColumnOutput:
     if not skills:
         return None
     from .status_constants import emoji_or_ascii
-    emojis = [emoji_or_ascii(SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
+    emojis = [emoji_or_ascii(get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT), ctx.emoji_free) for s in skills]
     sep = " " if ctx.emoji_free else ""
     text = sep.join(emojis)
     return [(f" {text}", ctx.mono(f"dim white{ctx.bg}", "dim"))]
@@ -572,7 +581,7 @@ def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
     skills = ctx.session.available_skills
     if not skills:
         return None
-    emojis = [SKILL_EMOJI.get(s, SKILL_EMOJI_DEFAULT) for s in skills]
+    emojis = [get_skill_emoji().get(s, SKILL_EMOJI_DEFAULT) for s in skills]
     return f"{''.join(emojis)}  ({', '.join(skills)})"
 
 

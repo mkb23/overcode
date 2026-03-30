@@ -262,6 +262,9 @@ class UserConfig:
     # Per-model pricing overrides (loaded from config.yaml model_pricing section)
     model_pricing: dict = field(default_factory=dict)
 
+    # Skill emoji overrides (loaded from config.yaml skill_emoji section) (#252)
+    skill_emoji: dict = field(default_factory=dict)
+
     @classmethod
     def load(cls) -> "UserConfig":
         """Load configuration from config file."""
@@ -292,6 +295,13 @@ class UserConfig:
                                 cache_read=vals.get("cache_read", 0.30),
                             )
 
+                # Parse skill emoji overrides (#252)
+                skill_emoji_raw = data.get("skill_emoji", {})
+                skill_emoji_parsed = (
+                    {str(k): str(v) for k, v in skill_emoji_raw.items()}
+                    if isinstance(skill_emoji_raw, dict) else {}
+                )
+
                 return cls(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
@@ -302,6 +312,7 @@ class UserConfig:
                     price_cache_write=pricing.get("cache_write", 3.75),
                     price_cache_read=pricing.get("cache_read", 0.30),
                     model_pricing=model_pricing_parsed,
+                    skill_emoji=skill_emoji_parsed,
                 )
         except (yaml.YAMLError, IOError):
             return cls()
