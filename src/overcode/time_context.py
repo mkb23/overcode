@@ -86,7 +86,7 @@ def format_uptime(start_iso: Optional[str], now: datetime) -> Optional[str]:
         now: Current datetime
 
     Returns:
-        e.g. '1h23m', '45m', '2h0m', or None if start_iso is None
+        e.g. '45m', '2h30m', '3d5h', or None if start_iso is None
     """
     if not start_iso:
         return None
@@ -102,8 +102,11 @@ def format_uptime(start_iso: Optional[str], now: datetime) -> Optional[str]:
         seconds = (now - start).total_seconds()
         if seconds < 0:
             return "0m"
-        hours = int(seconds // 3600)
+        days = int(seconds // 86400)
+        hours = int((seconds % 86400) // 3600)
         minutes = int((seconds % 3600) // 60)
+        if days > 0:
+            return f"{days}d{hours}h"
         if hours > 0:
             return f"{hours}h{minutes}m"
         return f"{minutes}m"

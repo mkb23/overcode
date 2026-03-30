@@ -165,6 +165,18 @@ class TestFormatUptime:
         now = datetime(2025, 1, 15, 14, 0)
         assert format_uptime("not-a-date", now) is None
 
+    def test_days_and_hours(self):
+        now = datetime(2025, 1, 28, 21, 23, 0)
+        start = "2025-01-15T14:00:00"
+        result = format_uptime(start, now)
+        assert result == "13d7h"
+
+    def test_exactly_one_day(self):
+        now = datetime(2025, 1, 16, 14, 0, 0)
+        start = "2025-01-15T14:00:00"
+        result = format_uptime(start, now)
+        assert result == "1d0h"
+
     def test_negative_uptime(self):
         now = datetime(2025, 1, 15, 13, 0, 0)
         start = "2025-01-15T14:00:00"
