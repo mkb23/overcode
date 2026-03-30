@@ -263,20 +263,51 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
     # --- Scrollback for the nested tmux in the bottom pane ---
     # The bottom pane runs a nested tmux client. The outer tmux
     # intercepts the prefix key, so copy-mode can't be entered
-    # normally. These bindings use `copy-mode -t` to directly enter
-    # copy mode in the inner session via the tmux API.
+    # normally.
+    #
+    # For local agents: use `copy-mode -t` to directly enter copy mode
+    # in the inner session via the tmux API (the linked session shares
+    # the actual agent panes, so scrollback is real).
+    #
+    # For SSH proxy windows (name starts with "ssh:"): the linked
+    # session pane is an SSH+tmux-attach client whose local scrollback
+    # is just rendering frames. Instead, forward PageUp/scroll through
+    # to the remote tmux which has the actual agent scrollback.
     if linked_session:
         # PageUp: enter copy mode + scroll up, but only when in the
         # bottom pane (pane_index != base) of the split window.
         # Top pane (Textual TUI) and other windows get normal PageUp.
+        #
+        # For SSH proxy windows: forward PageUp through the SSH pane
+        # so the *remote* tmux enters copy mode (the local proxy pane
+        # has no real scrollback — just rendered inner-tmux frames).
+        # For local agents: enter copy mode directly on the linked
+        # session which shares the real agent pane.
+        #
+        # Detection uses the @is_ssh_proxy window option (set by
+        # create_ssh_proxy_window) via a shell-based if-shell — this
+        # avoids tmux format expansion issues in stored bindings.
+        _ssh_check = (
+            f"tmux show-window-option -t {linked_session} -v @is_ssh_proxy "
+            "2>/dev/null | grep -q on"
+        )
         _tmux(
             "bind-key", "-n", "PPage",
             "if-shell", "-F",
             f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},#{{!=:#{{pane_index}},{_base}}}}}",
-            f"copy-mode -t {linked_session} -u",
+            # SSH proxy: send prefix + PPage so the REMOTE tmux enters
+            # copy mode (the remote's root-table PPage is overridden by
+            # overcode, but prefix PPage still maps to copy-mode -u).
+            # Local: enter copy mode directly on the linked session.
+            f'if-shell "{_ssh_check}" '
+            f'"send-keys -t {linked_session} C-b ; '
+            f'send-keys -t {linked_session} PPage" '
+            f'"copy-mode -t {linked_session} -u"',
             "send-keys PPage",
         )
         # PageDown in the inner session's copy mode
+        # (send-keys works for both local and SSH proxy — for local it
+        # controls copy mode, for SSH proxy it forwards to remote tmux)
         _tmux(
             "bind-key", "-n", "NPage",
             "if-shell", "-F",
@@ -288,8 +319,9 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         # Without this, scrolling enters copy mode in the outer pane
         # which has no scrollback (just rendered inner tmux frames).
         #
-        # Strategy: enter copy mode in the inner session (no-op if
-        # already active), then send scroll-up/down commands to it.
+        # For local agents: enter copy mode in the inner session then
+        # send scroll commands. For SSH proxies: forward mouse events
+        # to the remote tmux through the pane.
         _in_bottom = (
             f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
             f"#{{!=:#{{pane_index}},{_base}}}}}"
@@ -297,8 +329,14 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         _tmux(
             "bind-key", "-n", "WheelUpPane",
             "if-shell", "-F", _in_bottom,
-            f"copy-mode -t {linked_session} -e ; "
-            f"send-keys -t {linked_session} -X -N 3 scroll-up",
+            # SSH proxy: send prefix+PPage to enter copy mode on remote
+            # (no-op if already in copy mode, then PPage scrolls up).
+            # Local: enter copy mode + scroll up directly.
+            f'if-shell "{_ssh_check}" '
+            f'"send-keys -t {linked_session} C-b ; '
+            f'send-keys -t {linked_session} PPage" '
+            f'"copy-mode -t {linked_session} -e ; '
+            f'send-keys -t {linked_session} -X -N 3 scroll-up"',
             # Default behaviour for other contexts
             "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
             "'send-keys -M' 'copy-mode -e'",
@@ -306,7 +344,11 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         _tmux(
             "bind-key", "-n", "WheelDownPane",
             "if-shell", "-F", _in_bottom,
-            f"send-keys -t {linked_session} -X -N 3 scroll-down",
+            # SSH proxy: send NPage to remote (works in copy mode).
+            # Local: send scroll-down in local copy mode.
+            f'if-shell "{_ssh_check}" '
+            f'"send-keys -t {linked_session} NPage" '
+            f'"send-keys -t {linked_session} -X -N 3 scroll-down"',
             "send-keys -M",
         )
 

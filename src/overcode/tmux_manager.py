@@ -201,6 +201,9 @@ class TmuxManager:
                 window_shell=ssh_cmd_str,
             )
             window.set_window_option('automatic-rename', 'off')
+            # Tag for keybinding detection (scrollback must be forwarded
+            # to the remote tmux, not handled locally).
+            window.set_window_option('@is_ssh_proxy', 'on')
             return window.window_name
         except (LibTmuxException, ValueError) as e:
             import logging
