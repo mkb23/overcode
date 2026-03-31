@@ -189,6 +189,13 @@ class TmuxManager:
                 # Strip status bar, generous scrollback
                 f" tmux set -t $LS status off;"
                 f" tmux set -t $LS history-limit 50000;"
+                # Smooth scroll: rebind PPage/NPage in copy-mode to scroll
+                # 3 lines instead of a full page, so mouse wheel forwarded
+                # from the local TUI feels natural.
+                ' tmux bind-key -T copy-mode-vi PPage send-keys -X -N 3 scroll-up;'
+                ' tmux bind-key -T copy-mode-vi NPage send-keys -X -N 3 scroll-down;'
+                ' tmux bind-key -T copy-mode PPage send-keys -X -N 3 scroll-up;'
+                ' tmux bind-key -T copy-mode NPage send-keys -X -N 3 scroll-down;'
                 # Auto-destroy when SSH disconnects
                 f' tmux set-hook -t $LS client-detached "kill-session -t $LS";'
                 # Attach to the isolated linked session
