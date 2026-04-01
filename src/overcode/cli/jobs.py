@@ -54,7 +54,7 @@ def bash(
     if agent_name:
         rprint(f"  Linked to agent: {agent_name}")
 
-    if follow:
+    if follow and os.isatty(0):
         launcher.attach(job.name)
 
 
