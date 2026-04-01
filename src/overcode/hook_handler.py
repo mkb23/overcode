@@ -15,6 +15,7 @@ Hook registrations (all use the same command):
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,47 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("PermissionRequest", "overcode hook-handler"),
     ("SessionEnd", "overcode hook-handler"),
 ]
+
+
+def _detect_from_tmux_pane() -> tuple[str | None, str | None]:
+    """Detect agent name and tmux session from the current tmux pane.
+
+    Fallback for when OVERCODE_SESSION_NAME / OVERCODE_TMUX_SESSION env vars
+    are missing (e.g. after a manual session restart with --session-id).
+
+    Returns (session_name, tmux_session) or (None, None) if detection fails.
+    """
+    pane_id = os.environ.get("TMUX_PANE")
+    if not pane_id:
+        return None, None
+    try:
+        window_name = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id, "#{window_name}"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        tmux_session = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id, "#{session_name}"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None, None
+
+    if not window_name or not tmux_session:
+        return None, None
+
+    # Strip oc-view- prefix from split-view session names
+    if tmux_session.startswith("oc-view-"):
+        tmux_session = tmux_session[len("oc-view-"):]
+
+    # Window names are "agentname-XXXX" where XXXX is a UUID prefix
+    # Strip the last "-XXXX" suffix to get the agent name
+    dash_idx = window_name.rfind("-")
+    if dash_idx > 0:
+        session_name = window_name[:dash_idx]
+    else:
+        session_name = window_name
+
+    return session_name, tmux_session
 
 
 def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
@@ -88,7 +130,11 @@ def handle_hook_event() -> None:
     tmux_session = os.environ.get("OVERCODE_TMUX_SESSION")
 
     if not session_name or not tmux_session:
-        return
+        # Fallback: detect from tmux pane when env vars are missing
+        # (e.g. after manual session restart with --session-id)
+        session_name, tmux_session = _detect_from_tmux_pane()
+        if not session_name or not tmux_session:
+            return
 
     # Read stdin JSON
     try:
