@@ -1,17 +1,26 @@
 """
-OpenAI API client for agent summarization.
+LLM API client for agent summarization.
 
-Uses GPT-4o-mini for cost-effective, high-frequency summaries.
+Supports OpenAI Chat Completions and Anthropic Messages API backends.
 
 Configuration via ~/.overcode/config.yaml (preferred) or environment variables (fallback):
 
-Config file format:
+Config file format (OpenAI, default):
     summarizer:
+      api_type: openai
       api_url: https://api.openai.com/v1/chat/completions
       model: gpt-4o-mini
       api_key_var: OPENAI_API_KEY
 
+Config file format (Anthropic):
+    summarizer:
+      api_type: anthropic
+      api_url: https://api.anthropic.com/v1/messages
+      model: claude-haiku-4-5-20250929
+      api_key_var: ANTHROPIC_API_KEY
+
 Environment variable fallbacks:
+    OVERCODE_SUMMARIZER_API_TYPE
     OVERCODE_SUMMARIZER_API_URL
     OVERCODE_SUMMARIZER_MODEL
     OVERCODE_SUMMARIZER_API_KEY_VAR
@@ -74,10 +83,12 @@ RULES:
 
 
 class SummarizerClient:
-    """Client for OpenAI-compatible API to generate agent summaries.
+    """Client for LLM API to generate agent summaries.
 
-    Supports custom API endpoints for corporate gateways via config file or env vars.
+    Supports OpenAI and Anthropic backends via config file or env vars.
     """
+
+    api_type: str = "openai"
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the client.
@@ -89,6 +100,7 @@ class SummarizerClient:
         self.api_url = config["api_url"]
         self.model = config["model"]
         self.api_key = api_key or config["api_key"]
+        self.api_type = config.get("api_type", "openai")
         self._available = bool(self.api_key)
 
     @property
@@ -131,10 +143,55 @@ class SummarizerClient:
             previous_summary=previous_summary or "(no previous summary)",
         )
 
+        if self.api_type == "anthropic":
+            return self._call_anthropic(prompt, max_tokens)
+        else:
+            return self._call_openai(prompt, max_tokens)
+
+    def _call_anthropic(self, prompt: str, max_tokens: int) -> Optional[str]:
+        """Call the Anthropic Messages API."""
         payload = json.dumps({
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": 0.3,  # Low temperature for consistent summaries
+            "temperature": 0.3,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode("utf-8")
+
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+
+        req = urllib.request.Request(
+            self.api_url, data=payload, headers=headers, method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=15.0) as response:
+                if response.status == 200:
+                    result = json.loads(response.read().decode("utf-8"))
+                    content = result["content"][0]["text"]
+                    return content.strip()
+                else:
+                    logger.warning(f"Summarizer API error: {response.status}")
+                    return None
+        except urllib.error.URLError as e:
+            logger.warning(f"Summarizer API error: {e.reason}")
+            return None
+        except TimeoutError:
+            logger.warning("Summarizer API timeout")
+            return None
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.warning(f"Summarizer API error: {e}")
+            return None
+
+    def _call_openai(self, prompt: str, max_tokens: int) -> Optional[str]:
+        """Call the OpenAI Chat Completions API."""
+        payload = json.dumps({
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": 0.3,
             "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
 

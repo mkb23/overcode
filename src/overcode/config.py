@@ -118,8 +118,10 @@ def get_summarizer_config() -> dict:
     default_api_url = "https://api.openai.com/v1/chat/completions"
     default_model = "gpt-4o-mini"
     default_api_key_var = "OPENAI_API_KEY"
+    default_api_type = "openai"
 
     # Config file takes precedence, env vars are fallback
+    api_type = _get_config_value("summarizer.api_type") or os.environ.get("OVERCODE_SUMMARIZER_API_TYPE") or default_api_type
     api_url = _get_config_value("summarizer.api_url") or os.environ.get("OVERCODE_SUMMARIZER_API_URL") or default_api_url
     model = _get_config_value("summarizer.model") or os.environ.get("OVERCODE_SUMMARIZER_MODEL") or default_model
     api_key_var = _get_config_value("summarizer.api_key_var") or os.environ.get("OVERCODE_SUMMARIZER_API_KEY_VAR") or default_api_key_var
@@ -128,6 +130,7 @@ def get_summarizer_config() -> dict:
     api_key = os.environ.get(api_key_var)
 
     return {
+        "api_type": api_type,
         "api_url": api_url,
         "model": model,
         "api_key": api_key,
