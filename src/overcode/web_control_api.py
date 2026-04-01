@@ -359,7 +359,7 @@ def configure_heartbeat(
 
     updates = {"heartbeat_enabled": enabled}
 
-    if frequency is not None:
+    if frequency is not None and enabled:
         freq_seconds = _parse_frequency(frequency)
         if freq_seconds < 30:
             raise ControlError("Heartbeat frequency must be at least 30 seconds")

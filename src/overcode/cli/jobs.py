@@ -54,8 +54,11 @@ def bash(
     if agent_name:
         rprint(f"  Linked to agent: {agent_name}")
 
-    if follow and os.isatty(0):
-        launcher.attach(job.name)
+    if follow:
+        if os.isatty(0):
+            launcher.attach(job.name)
+        else:
+            rprint(f"  [dim]No TTY — use 'overcode jobs attach {job.name}' to follow[/dim]")
 
 
 @jobs_app.command("list")
