@@ -94,8 +94,10 @@ overcode bash "make deploy-staging" --agent my-agent   # Link to an agent
 
 # Manage jobs
 overcode jobs list [--all]        # List running (or all) jobs
+overcode jobs tail <name>         # Stream output (works without TTY)
+overcode jobs tail <name> -n 50   # Last 50 lines and exit
 overcode jobs kill <name>         # Kill a running job
-overcode jobs attach <name>       # Attach to job's tmux window
+overcode jobs attach <name>       # Attach to job's tmux window (needs TTY)
 overcode jobs clear               # Remove completed/failed/killed jobs
 
 # TUI: press J to toggle jobs view, j/k to navigate, x to kill, c to clear
@@ -227,7 +229,8 @@ overcode bash "npm run build" --name frontend-build --agent my-agent
 
 # Check on it later
 overcode jobs list
-overcode jobs attach full-tests    # Attach to see live output
+overcode jobs tail full-tests      # Stream output (no TTY needed)
+overcode jobs tail full-tests -n 50  # Last 50 lines snapshot
 overcode jobs kill full-tests      # Kill if needed
 ```
 

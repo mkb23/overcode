@@ -58,7 +58,7 @@ def bash(
         if os.isatty(0):
             launcher.attach(job.name)
         else:
-            rprint(f"  [dim]No TTY — use 'overcode jobs attach {job.name}' to follow[/dim]")
+            rprint(f"  [dim]No TTY — use 'overcode jobs tail {job.name}' to stream output[/dim]")
 
 
 @jobs_app.command("list")
@@ -145,6 +145,106 @@ def clear_completed():
     manager = JobManager()
     manager.clear_completed()
     rprint("[green]✓[/green] Cleared completed jobs")
+
+
+@jobs_app.command("tail")
+def tail_job(
+    name: Annotated[str, typer.Argument(help="Job name to tail")],
+    lines: Annotated[Optional[int], typer.Option("--lines", "-n", help="Show last N lines and exit")] = None,
+    follow: Annotated[bool, typer.Option("--follow/--no-follow", "-f", help="Stream output until job completes")] = True,
+    poll_interval: Annotated[float, typer.Option("--poll", hidden=True)] = 0.5,
+):
+    """Stream a job's output (like tail -f). Works without a TTY.
+
+    Default: streams output until the job completes or Ctrl-C.
+    With --lines N: shows last N lines and exits.
+
+    Examples:
+        overcode jobs tail my-job
+        overcode jobs tail my-job --lines 50
+        overcode jobs tail my-job --no-follow
+    """
+    import signal
+    import sys
+    import time
+    from collections import deque
+    from ..follow_mode import _capture_pane, _find_dedup_start
+    from ..job_manager import JobManager
+    from ..status_patterns import strip_ansi
+
+    manager = JobManager()
+    job = manager.get_job_by_name(name)
+    if not job:
+        rprint(f"[red]Error: Job '{name}' not found[/red]")
+        raise typer.Exit(1)
+
+    tmux_session = job.tmux_session
+    window_name = job.tmux_window
+
+    # One-shot: capture and print last N lines
+    if lines is not None:
+        raw = _capture_pane(tmux_session, window_name, lines=lines)
+        if raw:
+            for line in raw.rstrip().split('\n'):
+                cleaned = strip_ansi(line).strip()
+                if cleaned:
+                    print(cleaned)
+        return
+
+    # Streaming mode
+    interrupted = False
+
+    def _sigint(sig, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    old_handler = signal.signal(signal.SIGINT, _sigint)
+
+    recent_lines: deque = deque(maxlen=50)
+
+    try:
+        while not interrupted:
+            raw = _capture_pane(tmux_session, window_name)
+            if raw:
+                new_lines = []
+                for line in raw.rstrip().split('\n'):
+                    cleaned = strip_ansi(line).strip()
+                    new_lines.append(cleaned)
+
+                output_start = _find_dedup_start(new_lines, recent_lines)
+                if output_start < len(new_lines):
+                    for line in new_lines[output_start:]:
+                        if line:
+                            print(line)
+                        recent_lines.append(line)
+
+            # Check if job is done
+            if follow:
+                job = manager.get_job_by_name(name)
+                if job and job.status in ("completed", "failed", "killed"):
+                    # Final capture
+                    time.sleep(poll_interval)
+                    raw = _capture_pane(tmux_session, window_name)
+                    if raw:
+                        new_lines = [strip_ansi(l).strip() for l in raw.rstrip().split('\n')]
+                        output_start = _find_dedup_start(new_lines, recent_lines)
+                        for line in new_lines[output_start:]:
+                            if line:
+                                print(line)
+                            recent_lines.append(line)
+                    status_msg = f"completed (exit {job.exit_code})" if job.exit_code is not None else job.status
+                    print(f"\n[tail] Job '{name}' {status_msg}", file=sys.stderr)
+                    raise typer.Exit(0 if job.status == "completed" else 1)
+            else:
+                # --no-follow: one capture cycle then exit
+                break
+
+            time.sleep(poll_interval)
+    finally:
+        signal.signal(signal.SIGINT, old_handler)
+
+    if interrupted:
+        raise typer.Exit(130)
 
 
 @jobs_app.command("_complete", hidden=True)
