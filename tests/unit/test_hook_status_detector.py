@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import HookStatusDetector
-from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_USER, STATUS_TERMINATED
+from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_APPROVAL, STATUS_WAITING_USER, STATUS_TERMINATED
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
@@ -164,8 +164,8 @@ class TestStatusMapping:
 
         assert status == STATUS_WAITING_USER
 
-    def test_permission_request_is_waiting_user(self, tmp_path):
-        """PermissionRequest → WAITING_USER."""
+    def test_permission_request_is_waiting_approval(self, tmp_path):
+        """PermissionRequest → WAITING_APPROVAL."""
         state_dir = tmp_path / "sessions" / "agents"
         _write_hook_state(state_dir, "test-agent", "PermissionRequest")
         mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
@@ -174,7 +174,7 @@ class TestStatusMapping:
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WAITING_USER
+        assert status == STATUS_WAITING_APPROVAL
         assert "Permission" in activity
 
     def test_post_tool_use_is_running(self, tmp_path):

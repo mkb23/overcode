@@ -24,6 +24,7 @@ from .status_constants import (
     STATUS_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_BUSY_SLEEPING,
+    STATUS_WAITING_APPROVAL,
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
@@ -51,7 +52,7 @@ _HOOK_STATUS_MAP = {
     "PostToolUseFailure": STATUS_RUNNING,  # Tool failed but agent is still working
     "Stop": STATUS_WAITING_USER,
     "StopFailure": STATUS_ERROR,  # API error ended the turn (purple indicator)
-    "PermissionRequest": STATUS_WAITING_USER,
+    "PermissionRequest": STATUS_WAITING_APPROVAL,
     "SessionEnd": STATUS_TERMINATED,
 }
 
