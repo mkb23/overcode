@@ -876,11 +876,11 @@ render_value_plain = _make_simple_render_plain("session.agent_value", str)
 
 
 def render_provider(ctx: ColumnContext) -> ColumnOutput:
-    """API provider emoji: 🌐 web, ☁️ bedrock. Hidden when all agents use web."""
+    """API provider: 🪨 bedrock, · web. Hidden when all agents use web."""
     provider = getattr(ctx.session, 'provider', 'web') or 'web'
     if provider == 'bedrock':
-        return [(f" {ctx.e('☁️')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
-    return [(f" {ctx.e('🌐')}", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [(f" {ctx.e('🪨')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+    return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
 def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
