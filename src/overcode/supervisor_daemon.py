@@ -567,6 +567,54 @@ class SupervisorDaemon:
             send_enter=True,
         )
 
+    def _accept_startup_prompts(self, window_name: str, timeout: int = 15) -> bool:
+        """Accept Claude's interactive startup prompts via tmux keys.
+
+        Polls the pane content to detect two possible prompts:
+        1. Workspace trust dialog -- just Enter (default is accept)
+        2. Bypass permissions warning -- Down+Enter to select "Yes, I accept"
+
+        Returns True once the Claude prompt is detected, False on timeout.
+        """
+        from .tmux_utils import tmux_window_target, _build_tmux_cmd
+
+        target = tmux_window_target(self.tmux_session, window_name)
+        tmux_cmd = _build_tmux_cmd()
+        start = time.time()
+        trust_accepted = False
+        perms_accepted = False
+
+        while time.time() - start < timeout:
+            content = self._capture_daemon_pane(lines=20)
+            if content is None:
+                time.sleep(0.5)
+                continue
+
+            if '\u276f' in content and 'Claude Code' in content:
+                self.log.info("Claude startup complete -- prompt detected")
+                return True
+
+            if not trust_accepted and "I trust this folder" in content:
+                self.log.info("Trust prompt detected -- accepting")
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
+                trust_accepted = True
+                time.sleep(1.5)
+                continue
+
+            if not perms_accepted and "Yes, I accept" in content:
+                self.log.info("Permissions prompt detected -- selecting 'Yes, I accept'")
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Down'], timeout=5)
+                time.sleep(0.3)
+                subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
+                perms_accepted = True
+                time.sleep(2.0)
+                continue
+
+            time.sleep(0.5)
+
+        self.log.warning(f"Startup prompt acceptance timed out after {timeout}s")
+        return False
+
     def launch_daemon_claude(self, non_green_sessions: List[SessionDaemonState]) -> bool:
         """Launch daemon claude to handle non-green sessions.
 
@@ -610,8 +658,11 @@ class SupervisorDaemon:
             self.tmux.kill_window(window_name)
             return False
 
-        # Wait for Claude startup
-        time.sleep(3.0)
+        # Wait for Claude startup, accepting any interactive dialogs
+        if not self._accept_startup_prompts(window_name):
+            self.log.error("Failed to accept Claude startup prompts")
+            self.tmux.kill_window(window_name)
+            return False
 
         # Send prompt
         return self._send_prompt_to_window(window_name, full_prompt)

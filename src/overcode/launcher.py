@@ -388,16 +388,42 @@ class ClaudeLauncher:
     ) -> bool:
         """Poll pane content until Claude's input prompt appears.
 
+        Automatically handles startup dialogs:
+        1. Workspace trust dialog -- presses Enter to accept default
+        2. Bypass permissions warning -- selects "Yes, I accept" (Down + Enter)
+
         Returns True if prompt detected, False on timeout.
         """
         from .status_patterns import strip_ansi
+        from .tmux_utils import _build_tmux_cmd
+
+        target = tmux_window_target(self.tmux.session_name, window_name)
+        tmux_cmd = _build_tmux_cmd()
+        trust_accepted = False
+        perms_accepted = False
 
         deadline = time.time() + timeout
         while time.time() < deadline:
             content = get_tmux_pane_content(
-                self.tmux.session_name, window_name, lines=5
+                self.tmux.session_name, window_name, lines=20
             )
             if content:
+                # Trust prompt: default is accept, just Enter
+                if not trust_accepted and "I trust this folder" in content:
+                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
+                    trust_accepted = True
+                    time.sleep(1.5)
+                    continue
+
+                # Permissions warning: navigate Down to "Yes, I accept", then Enter
+                if not perms_accepted and "Yes, I accept" in content:
+                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Down'], timeout=5)
+                    time.sleep(0.3)
+                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
+                    perms_accepted = True
+                    time.sleep(2.0)
+                    continue
+
                 for line in content.split('\n'):
                     cleaned = strip_ansi(line).strip()
                     if cleaned in self.PROMPT_READY_CHARS:
