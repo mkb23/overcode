@@ -613,12 +613,16 @@ class MonitorDaemon:
         self.last_state_times[session_id] = now
 
     def sync_session_id(self, session) -> None:
-        """Detect and bind the current Claude session ID (#116, #373).
+        """Detect and bind Claude session IDs (#116, #373).
 
         For newly launched agents, the launcher prescribes --session-id at
-        launch and immediately binds it. This method handles post-/clear
-        detection: after /clear, Claude restarts with a new sessionId that
-        appears in history.jsonl.
+        launch and immediately binds it. This method handles two scenarios:
+
+        1. Post-/clear detection: after /clear, Claude restarts with a new
+           sessionId that appears in history.jsonl.
+        2. Unmatched prescribed IDs: when Claude Code doesn't honor
+           --session-id (e.g. after restart), the actual sessionIds need
+           to be discovered from history.jsonl.
 
         Uses an ownership guard to prevent cross-contamination when multiple
         agents share the same working directory — a sessionId already owned
@@ -631,11 +635,13 @@ class MonitorDaemon:
 
         try:
             session_start = datetime.fromisoformat(session.start_time)
+
+            # Fast path: discover the most recent sessionId for this directory.
+            # Handles post-/clear detection.
             current_id = get_current_session_id_for_directory(
                 session.start_directory, session_start
             )
             if current_id:
-                # Guard: don't steal a sessionId already owned by another agent
                 all_sessions = [
                     s for s in self.session_manager.list_sessions()
                     if s.tmux_session == self.tmux_session
@@ -643,8 +649,71 @@ class MonitorDaemon:
                 if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
                     self.session_manager.add_claude_session_id(session.id, current_id)
                     self.session_manager.set_active_claude_session_id(session.id, current_id)
+
+            # Slow path: if the agent has owned session IDs but they produced
+            # zero tokens in the last stats sync, scan history.jsonl for ALL
+            # unowned sessionIds in this directory and adopt them.  This
+            # recovers from --session-id not being honored by Claude Code.
+            owned_ids = session.claude_session_ids or []
+            stats = session.stats
+            has_zero_tokens = (
+                owned_ids
+                and stats.input_tokens == 0
+                and stats.output_tokens == 0
+                and stats.last_stats_update is not None  # at least one sync happened
+            )
+            if has_zero_tokens:
+                self._discover_all_session_ids(session, session_start)
         except (ValueError, TypeError):
             pass
+
+    def _discover_all_session_ids(self, session, session_start: datetime) -> None:
+        """Scan history.jsonl for all unowned sessionIds in this directory.
+
+        When the prescribed --session-id wasn't honored by Claude Code,
+        the agent's actual sessionIds are unknown.  This scans all history
+        entries matching the directory+timestamp and adopts any sessionId
+        not already owned by another agent.
+        """
+        from .history_reader import HistoryFile
+        hf = HistoryFile()
+
+        session_dir = str(Path(session.start_directory).resolve())
+        session_start_ms = int(session_start.timestamp() * 1000)
+        owned_ids = set(session.claude_session_ids or [])
+
+        all_sessions = [
+            s for s in self.session_manager.list_sessions()
+            if s.tmux_session == self.tmux_session
+        ]
+
+        discovered = set()
+        latest_id = None
+        latest_ts = 0
+        for entry in hf.read_all():
+            if entry.timestamp_ms < session_start_ms:
+                continue
+            if not entry.project or not entry.session_id:
+                continue
+            entry_dir = str(Path(entry.project).resolve())
+            if entry_dir != session_dir:
+                continue
+            sid = entry.session_id
+            if sid in owned_ids:
+                continue
+            if is_session_id_owned_by_others(sid, session.id, all_sessions):
+                continue
+            discovered.add(sid)
+            if entry.timestamp_ms > latest_ts:
+                latest_ts = entry.timestamp_ms
+                latest_id = sid
+
+        for sid in discovered:
+            self.session_manager.add_claude_session_id(session.id, sid)
+            self.log.info(f"[{session.name}] Discovered unowned sessionId: {sid[:8]}...")
+
+        if latest_id:
+            self.session_manager.set_active_claude_session_id(session.id, latest_id)
 
     def sync_claude_code_stats(self, session) -> None:
         """Sync token/interaction stats from Claude Code history files."""
