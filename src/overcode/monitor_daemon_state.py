@@ -108,8 +108,9 @@ class SessionDaemonState:
     depth: int = 0  # Computed by daemon each cycle
     children_count: int = 0  # Computed by daemon each cycle
 
-    # Model
+    # Model and provider
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
+    provider: str = "web"  # API provider: "web" or "bedrock"
 
     # Oversight system
     oversight_policy: str = "wait"

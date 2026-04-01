@@ -468,6 +468,7 @@ class MonitorDaemon:
             waiting_for_heartbeat=waiting_for_heartbeat,
             # Model — prefer detected model from history over CLI-configured model
             model=stats.model or session.model,
+            provider=session.provider,
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),

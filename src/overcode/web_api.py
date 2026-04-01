@@ -241,6 +241,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "start_time": s.start_time or "",
         "parent_name": s.parent_name or "",
         "model": getattr(s, "model", "") or "",
+        "provider": getattr(s, "provider", "web") or "web",
         "tmux_window": s.tmux_window or "",
     }
 
