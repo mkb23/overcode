@@ -538,6 +538,7 @@ class ClaudeLauncher:
             extra_claude_args=source_session.extra_claude_args,
             resume_session_id=source_session.active_claude_session_id,
             fork=True,
+            model=source_session.model,
         )
 
         perm_mode = source_session.permissiveness_mode or "normal"
@@ -549,6 +550,7 @@ class ClaudeLauncher:
             permissiveness_mode=perm_mode, allowed_tools=source_session.allowed_tools,
             extra_claude_args=source_session.extra_claude_args,
             agent_teams=source_session.agent_teams, claude_agent=source_session.claude_agent,
+            model=source_session.model, provider=source_session.provider,
         )
 
         session = self._prepare_and_launch(
