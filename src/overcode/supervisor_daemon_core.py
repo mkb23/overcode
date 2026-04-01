@@ -54,9 +54,8 @@ def build_daemon_claude_context(
             context_parts.append(f"   Repo: {repo_name}")
         context_parts.append("")
 
-    context_parts.append("Read the daemon claude skill for how to control sessions via tmux.")
-    context_parts.append("Start by reading ~/.overcode/sessions/sessions.json to see full state.")
-    context_parts.append("Then check each non-green session and help them make progress.")
+    context_parts.append("The session list above has everything you need. Follow the daemon claude skill instructions.")
+    context_parts.append("Do NOT run overcode list or read sessions.json -- act immediately on the sessions above.")
 
     return "\n".join(context_parts)
 
