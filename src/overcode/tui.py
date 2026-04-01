@@ -1645,6 +1645,12 @@ class SupervisorTUI(
             for s in self.sessions
         )
 
+        # Check if any agent uses a non-web provider
+        any_has_provider = any(
+            getattr(s, 'provider', 'web') not in ('web', None, '')
+            for s in self.sessions
+        )
+
         # Check if any agent is busy_sleeping (#289)
         any_is_sleeping = any(
             getattr(w, 'detected_status', '') == "busy_sleeping"
@@ -1706,6 +1712,7 @@ class SupervisorTUI(
                     widget.any_is_sleeping = any_is_sleeping
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
+                    widget.any_has_provider = any_has_provider
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
                     widget.any_has_subtree_cost = any_has_subtree_cost
@@ -1760,6 +1767,7 @@ class SupervisorTUI(
                 widget.any_is_sleeping = any_is_sleeping
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
+                widget.any_has_provider = any_has_provider
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost
@@ -2785,11 +2793,13 @@ class SupervisorTUI(
                 dangerously_skip_permissions=bypass_permissions,
                 agent_teams=message.agent_teams,
                 claude_agent=message.claude_agent,
+                provider=getattr(message, 'provider', 'web') or 'web',
             )
             dir_info = f" in {directory}" if directory else ""
             perm_info = " (bypass mode)" if bypass_permissions else ""
             agent_info = f" (agent: {message.claude_agent})" if message.claude_agent else ""
-            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}{agent_info}", severity="information")
+            provider_info = f" (bedrock)" if getattr(message, 'provider', 'web') == 'bedrock' else ""
+            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}{agent_info}{provider_info}", severity="information")
             # Refresh to show new agent
             self.refresh_sessions()
         except Exception as e:

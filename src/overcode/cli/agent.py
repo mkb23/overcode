@@ -212,6 +212,10 @@ def launch(
         bool,
         typer.Option("--teams", help="Enable Claude Code agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)"),
     ] = False,
+    provider: Annotated[
+        Optional[str],
+        typer.Option("--provider", "-P", help="API provider: 'web' (Claude.ai OAuth) or 'bedrock' (AWS Bedrock)"),
+    ] = None,
     sister: Annotated[
         Optional[str],
         typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
@@ -270,6 +274,15 @@ def launch(
     # Parse oversight policy
     oversight_policy, oversight_timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
 
+    # Resolve provider: CLI flag > config default > "web"
+    resolved_provider = provider
+    if resolved_provider is None:
+        from ..config import get_new_agent_defaults
+        resolved_provider = get_new_agent_defaults().get("provider", "web")
+    if resolved_provider not in ("web", "bedrock"):
+        rprint(f"[red]Error: Invalid provider '{resolved_provider}'. Use: web, bedrock[/red]")
+        raise typer.Exit(code=1)
+
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
 
@@ -288,6 +301,7 @@ def launch(
         budget_usd=budget,
         claude_agent=agent,
         model=model,
+        provider=resolved_provider,
     )
 
     if result:
@@ -304,6 +318,8 @@ def launch(
             rprint(f"  Agent: {agent}")
         if teams:
             rprint("  Agent teams: enabled")
+        if resolved_provider != "web":
+            rprint(f"  Provider: {resolved_provider}")
         if budget is not None and budget > 0:
             rprint(f"  Budget: ${budget:.2f}")
 
@@ -479,6 +495,8 @@ def list_agents(
 
     # Pre-compute: any agent with budget, column alignment widths
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
+    any_has_provider = any(getattr(s, 'provider', 'web') not in ('web', None, '') for s in sessions)
+    any_has_model = any(getattr(s, 'model', None) for s in sessions)
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
     max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
@@ -585,6 +603,8 @@ def list_agents(
             oversight_deadline=oversight_deadline,
             pr_number=getattr(sess, 'pr_number', None),
             any_has_pr=any_has_pr,
+            any_has_model=any_has_model,
+            any_has_provider=any_has_provider,
             monochrome=False,
             summary_detail=detail,
             has_sisters=has_sisters,

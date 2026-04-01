@@ -182,6 +182,9 @@ class ColumnContext:
     model: str = ""  # Claude model short name or full name
     any_has_model: bool = False  # True if any agent has a model set
 
+    # Provider
+    any_has_provider: bool = False  # True if any agent uses non-web provider
+
     # Sister integration (#245)
     source_host: str = ""
     is_remote: bool = False
@@ -872,6 +875,21 @@ def render_orders_plain(ctx: ColumnContext) -> Optional[str]:
 render_value_plain = _make_simple_render_plain("session.agent_value", str)
 
 
+def render_provider(ctx: ColumnContext) -> ColumnOutput:
+    """API provider emoji: 🌐 web, ☁️ bedrock. Hidden when all agents use web."""
+    provider = getattr(ctx.session, 'provider', 'web') or 'web'
+    if provider == 'bedrock':
+        return [(f" {ctx.e('☁️')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+    return [(f" {ctx.e('🌐')}", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
+    if not ctx.any_has_provider:
+        return None
+    provider = getattr(ctx.session, 'provider', 'web') or 'web'
+    return provider
+
+
 def render_host(ctx: ColumnContext) -> ColumnOutput:
     """Render host column — hidden when no sisters are configured."""
     if not ctx.has_sisters:
@@ -960,6 +978,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Model", render_plain=render_model_plain,
                   visible=lambda ctx: ctx.any_has_model,
                   placeholder_width=6, header="MDL", name="Model"),
+    SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
+                  label="Provider", render_plain=render_provider_plain,
+                  visible=lambda ctx: ctx.any_has_provider,
+                  placeholder_width=3, header="PRV", name="Provider"),
 
     # Performance group
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
@@ -1021,6 +1043,7 @@ def build_cli_context(
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
     any_has_model: bool = False,
+    any_has_provider: bool = False,
     monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
@@ -1094,6 +1117,7 @@ def build_cli_context(
         any_has_pr=any_has_pr,
         model=getattr(session, 'model', '') or getattr(getattr(session, 'stats', None), 'model', '') or '',
         any_has_model=any_has_model,
+        any_has_provider=any_has_provider,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
         has_sisters=has_sisters,

@@ -141,6 +141,7 @@ class ClaudeLauncher:
         agent_teams: bool = False,
         claude_agent: Optional[str] = None,
         model: Optional[str] = None,
+        provider: str = "web",
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -160,6 +161,7 @@ class ClaudeLauncher:
             agent_teams=agent_teams,
             claude_agent=claude_agent,
             model=model,
+            provider=provider,
             session_id=session_id,
         )
 
@@ -187,6 +189,13 @@ class ClaudeLauncher:
 
         if metadata.get('agent_teams'):
             env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+
+        if metadata.get('provider') == 'bedrock':
+            env_prefix += " CLAUDE_CODE_USE_BEDROCK=1"
+            # Use configured region or default to us-east-1
+            from .config import get_bedrock_config
+            bedrock_cfg = get_bedrock_config()
+            env_prefix += f" AWS_REGION={bedrock_cfg['region']}"
 
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
@@ -221,6 +230,7 @@ class ClaudeLauncher:
         budget_usd: Optional[float] = None,
         claude_agent: Optional[str] = None,
         model: Optional[str] = None,
+        provider: str = "web",
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -236,6 +246,7 @@ class ClaudeLauncher:
                 If not set, auto-detects from OVERCODE_SESSION_NAME env var.
             allowed_tools: Comma-separated tool list for --allowedTools
             extra_claude_args: Extra Claude CLI flags (each a space-separated string)
+            provider: API provider — "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
 
         Returns:
             Session object if successful, None otherwise
@@ -329,7 +340,7 @@ class ClaudeLauncher:
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args, agent_teams=agent_teams,
-            claude_agent=claude_agent, model=model,
+            claude_agent=claude_agent, model=model, provider=provider,
         )
 
         session = self._prepare_and_launch(

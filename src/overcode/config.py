@@ -340,6 +340,7 @@ def get_new_agent_defaults() -> dict:
     return {
         "bypass_permissions": bool(defaults.get("bypass_permissions", False)),
         "agent_teams": bool(defaults.get("agent_teams", False)),
+        "provider": defaults.get("provider", "web"),
     }
 
 
@@ -352,6 +353,22 @@ def save_new_agent_defaults(defaults: dict) -> None:
     config = load_config()
     config["new_agent_defaults"] = defaults
     save_config(config)
+
+
+def get_bedrock_config() -> dict:
+    """Get AWS Bedrock configuration.
+
+    Config format in ~/.overcode/config.yaml:
+        bedrock:
+          region: us-east-1
+
+    Returns:
+        Dict with region (str).
+    """
+    bedrock = _get_config_value("bedrock", {})
+    return {
+        "region": bedrock.get("region", "us-east-1"),
+    }
 
 
 def get_jobs_retention_hours() -> float:

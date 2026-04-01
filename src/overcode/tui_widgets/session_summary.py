@@ -56,6 +56,7 @@ class SessionSummary(Static, can_focus=True):
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
         self.any_has_model: bool = False  # True if any agent has a model set
+        self.any_has_provider: bool = False  # True if any agent uses non-web provider
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
@@ -295,6 +296,8 @@ class SessionSummary(Static, can_focus=True):
             # Model
             model=s.model or getattr(s.stats, 'model', '') or "",
             any_has_model=self.any_has_model,
+            # Provider
+            any_has_provider=self.any_has_provider,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

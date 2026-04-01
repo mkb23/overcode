@@ -34,6 +34,8 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
     elif mode == "new_agent_teams":
         return "[New Agent: Teams] ", "Type 'yes' to enable agent teams, or Enter to skip..."
+    elif mode == "new_agent_provider":
+        return "[New Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
     elif mode == "new_remote_agent_sister":
         return "[Remote Agent: Sister] ", "Enter sister name..."
     elif mode == "new_remote_agent_dir":
@@ -116,13 +118,14 @@ class CommandBar(Static):
 
     class NewAgentRequested(Message):
         """Message sent when user wants to create a new agent."""
-        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False, claude_agent: Optional[str] = None):
+        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False, claude_agent: Optional[str] = None, provider: str = "web"):
             super().__init__()
             self.agent_name = agent_name
             self.directory = directory
             self.bypass_permissions = bypass_permissions
             self.agent_teams = agent_teams
             self.claude_agent = claude_agent
+            self.provider = provider
 
     class NewRemoteAgentRequested(Message):
         """Message sent when user wants to launch a remote agent on a sister (#310)."""
@@ -310,9 +313,19 @@ class CommandBar(Static):
                 event.input.value = ""
                 return
             elif self.mode == "new_agent_teams":
-                # Step 4: Teams chosen, create agent
-                teams = text.lower().strip() in ("yes", "y", "true", "1", "teams")
-                self._create_new_agent(self.new_agent_name, self.new_agent_bypass, teams)
+                # Step 4: Teams chosen, transition to provider step
+                self.new_agent_teams = text.lower().strip() in ("yes", "y", "true", "1", "teams")
+                self._handle_new_agent_provider_step()
+                event.input.value = ""
+                return
+            elif self.mode == "new_agent_provider":
+                # Step 5: Provider chosen, create agent
+                provider_input = text.lower().strip()
+                if provider_input in ("bedrock", "b"):
+                    self.new_agent_provider = "bedrock"
+                else:
+                    self.new_agent_provider = "web"
+                self._create_new_agent(self.new_agent_name, self.new_agent_bypass, self.new_agent_teams)
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -489,15 +502,31 @@ class CommandBar(Static):
             input_widget = self.query_one("#cmd-input", Input)
             input_widget.value = "yes"
 
+    def _handle_new_agent_provider_step(self) -> None:
+        """Transition to provider step. Pre-fills from config defaults."""
+        from ..config import get_new_agent_defaults
+        defaults = get_new_agent_defaults()
+        self.new_agent_provider = defaults.get("provider", "web")
+
+        self.mode = "new_agent_provider"
+        self._update_target_label()
+
+        # Pre-fill with current default
+        if self.new_agent_provider == "bedrock":
+            input_widget = self.query_one("#cmd-input", Input)
+            input_widget.value = "bedrock"
+
     def _create_new_agent(self, name: str, bypass_permissions: bool = False, agent_teams: bool = False) -> None:
-        """Create a new agent with the given name, directory, permission mode, and teams flag."""
-        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent))
+        """Create a new agent with the given name, directory, permission mode, teams flag, and provider."""
+        provider = getattr(self, 'new_agent_provider', 'web') or 'web'
+        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent, provider=provider))
         # Reset state
         self.new_agent_dir = None
         self.new_agent_name = None
         self.new_agent_bypass = False
         self.new_agent_teams = False
         self.new_agent_claude_agent = None
+        self.new_agent_provider = "web"
         self.mode = "send"
         self._update_target_label()
 
@@ -662,6 +691,7 @@ class CommandBar(Static):
         self.new_agent_bypass = False
         self.new_agent_teams = False
         self.new_agent_claude_agent = None
+        self.new_agent_provider = "web"
         self.new_remote_sister = None  # Reset remote agent state (#310)
         self.fork_source_session = None  # Reset fork state (#347)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
