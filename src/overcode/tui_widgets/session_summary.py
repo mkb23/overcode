@@ -214,7 +214,8 @@ class SessionSummary(Static, can_focus=True):
         # Status styling
         from ..status_constants import get_permissiveness_emoji
         ef = self.emoji_free
-        bg = " on #0d2137"
+        is_highlighted = self.has_focus or "selected" in self.classes
+        bg = " on #1a3a50" if is_highlighted else " on #0d2137"
         status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
         status_color = f"bold {base_color}{bg}"
         perm_emoji = get_permissiveness_emoji(s.permissiveness_mode, ef)

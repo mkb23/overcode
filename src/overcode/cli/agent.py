@@ -923,6 +923,15 @@ def send(
         overcode send my-agent escape          # Press Escape (reject)
         overcode send my-agent --no-enter "y"  # Send "y" without Enter
     """
+    from ..session_manager import SessionManager
+    sm = SessionManager()
+
+    # Auto-wake sleeping agent (#168)
+    agent_session = sm.get_session_by_name(name)
+    if agent_session and agent_session.is_asleep:
+        sm.update_session(agent_session.id, is_asleep=False)
+        rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
+
     launcher = ClaudeLauncher(session)
 
     # Join all text parts if multiple were given

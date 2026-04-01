@@ -69,13 +69,13 @@ SessionSummary:hover {
 }
 
 SessionSummary:focus {
-    background: #2d4a5a;
+    background: #1a3a50;
     text-style: bold;
 }
 
 /* .selected class preserves highlight when app loses focus */
 SessionSummary.selected {
-    background: #2d4a5a;
+    background: #1a3a50;
     text-style: bold;
 }
 
