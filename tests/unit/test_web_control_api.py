@@ -199,8 +199,11 @@ class TestRestartAgent:
         # First call: Ctrl-C
         assert tmux.send_keys.call_args_list[0][0] == (1, "C-c")
         assert tmux.send_keys.call_args_list[0][1] == {"enter": False}
-        # Second call: restart command
-        restart_call = tmux.send_keys.call_args_list[1]
+        # Second call: /exit
+        assert tmux.send_keys.call_args_list[1][0] == (1, "/exit")
+        assert tmux.send_keys.call_args_list[1][1] == {"enter": True}
+        # Third call: restart command
+        restart_call = tmux.send_keys.call_args_list[2]
         assert "claude" in restart_call[0][1]
         assert "claude code" not in restart_call[0][1]
 
@@ -215,7 +218,7 @@ class TestRestartAgent:
 
         restart_agent("agents", "test-agent")
 
-        restart_call = tmux.send_keys.call_args_list[1]
+        restart_call = tmux.send_keys.call_args_list[2]
         assert "--dangerously-skip-permissions" in restart_call[0][1]
 
 
