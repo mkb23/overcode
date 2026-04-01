@@ -3099,14 +3099,14 @@ class SupervisorTUI(
 
         cmd_str = " ".join(cmd_parts)
 
-        # Send Ctrl-C to kill the current process
-        if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
-            self.notify(f"Failed to send Ctrl-C to '{session_name}'", severity="error")
-            return
-
-        # Brief delay to allow process to terminate
+        # Gracefully exit Claude: Ctrl-C to cancel any in-flight operation,
+        # then /exit to reliably terminate the process. A single Ctrl-C only
+        # cancels the current tool call but doesn't exit Claude itself.
         import time
+        tmux.send_keys(session.tmux_window, "C-c", enter=False)
         time.sleep(0.5)
+        tmux.send_keys(session.tmux_window, "/exit", enter=True)
+        time.sleep(3.0)
 
         # Send the claude command to restart
         if tmux.send_keys(session.tmux_window, cmd_str, enter=True):

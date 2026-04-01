@@ -150,13 +150,13 @@ def restart_agent(tmux_session: str, name: str) -> dict:
 
     tmux = TmuxManager(tmux_session)
 
-    # Send Ctrl-C
-    if not tmux.send_keys(session.tmux_window, "C-c", enter=False):
-        raise ControlError("Failed to send Ctrl-C", status=500)
-
-    # Wait briefly, then send restart command
+    # Gracefully exit Claude: Ctrl-C to cancel any in-flight operation,
+    # then /exit to reliably terminate the process.
     import time
+    tmux.send_keys(session.tmux_window, "C-c", enter=False)
     time.sleep(0.5)
+    tmux.send_keys(session.tmux_window, "/exit", enter=True)
+    time.sleep(3.0)
 
     env_prefix = f"OVERCODE_SESSION_NAME={session.name} OVERCODE_TMUX_SESSION={tmux_session}"
     restart_cmd = f"{env_prefix} {cmd_str}"
