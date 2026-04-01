@@ -650,8 +650,15 @@ def get_session_stats(
     interactions = hf.get_interactions_for_session(session)
     interaction_count = len(interactions)
 
-    # Derive Claude sessionIds from the already-scoped interactions
+    # Derive Claude sessionIds and their project paths from interactions.
+    # Claude Code may store session files under a different project path
+    # than start_directory (e.g., when the directory doesn't exist or Claude
+    # chooses a different project root).
     session_ids = {e.session_id for e in interactions if e.session_id}
+    sid_to_project: Dict[str, str] = {}
+    for e in interactions:
+        if e.session_id and e.project:
+            sid_to_project[e.session_id] = e.project
 
     # Active session ID for context window after /clear (#116)
     active_session_id = getattr(session, 'active_claude_session_id', None)
@@ -673,6 +680,16 @@ def get_session_stats(
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
         )
+        # Fall back to the project path from history entries if the session
+        # file doesn't exist at the expected start_directory path.  Claude
+        # Code may use a different project root (e.g. home dir) when the
+        # launch directory no longer exists.
+        if not session_file.exists():
+            alt_project = sid_to_project.get(sid)
+            if alt_project:
+                session_file = get_session_file_path(
+                    alt_project, sid, projects_path
+                )
         usage, work_times = read_session_file_stats(session_file, since=session_start)
         total_input += usage["input_tokens"]
         total_output += usage["output_tokens"]
@@ -695,7 +712,9 @@ def get_session_stats(
         all_work_times.extend(work_times)
 
         # Check for subagent files in {sessionId}/subagents/
-        encoded = encode_project_path(session.start_directory)
+        # Use the actual project path where the session file was found.
+        actual_project = sid_to_project.get(sid, session.start_directory)
+        encoded = encode_project_path(actual_project)
         subagents_dir = projects_path / encoded / sid / "subagents"
         if subagents_dir.exists():
             for subagent_file in subagents_dir.glob("agent-*.jsonl"):
