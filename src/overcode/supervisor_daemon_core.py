@@ -202,13 +202,21 @@ def check_daemon_output_completion(content: str, active_indicators: List[str]) -
     Returns:
         True if daemon appears to have finished, False if still working
     """
-    # Active work indicators
+    lines = content.split('\n')
+
+    # Check active work indicators only against the last few lines,
+    # excluding status bar lines (which contain '·' separators and other
+    # UI chrome that false-positive against indicators like '· ').
+    def _is_chrome(l: str) -> bool:
+        s = l.strip()
+        return s.startswith('⏵') or s.startswith('Model:') or s.startswith('───')
+    tail_lines = [l for l in lines[-6:] if l.strip() and not _is_chrome(l)]
+    tail_text = '\n'.join(tail_lines)
     for indicator in active_indicators:
-        if indicator in content:
+        if indicator in tail_text:
             return False
 
     # Check for tool calls without results
-    lines = content.split('\n')
     for i, line in enumerate(lines):
         if '⏺' in line and '(' in line:
             remaining = '\n'.join(lines[i+1:])
@@ -218,7 +226,7 @@ def check_daemon_output_completion(content: str, active_indicators: List[str]) -
     # Check for empty prompt
     last_lines = [l.strip() for l in lines[-8:] if l.strip()]
     for line in last_lines:
-        if line == '>' or line == '›':
+        if line in ('>', '›', '❯'):
             return True
 
     return False
