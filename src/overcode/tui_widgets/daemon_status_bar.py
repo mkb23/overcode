@@ -198,26 +198,29 @@ class DaemonStatusBar(Static):
 
         # AI Summarizer status (from TUI's local summarizer, not daemon)
         content.append(" │ ", style="dim")
-        content.append("AI: ", style="bold")
-        # Get summarizer state from parent app (cheap attribute reads, no I/O)
+        from ..tui_render import render_ai_summarizer_section
         summarizer_enabled = False
         summarizer_calls = 0
+        summarizer_cost_usd = 0.0
+        summarizer_cost_cap = 100.0
+        summarizer_cost_cap_hit = False
         if hasattr(self.app, '_summarizer'):
             summarizer_enabled = self.app._summarizer.enabled
             summarizer_calls = self.app._summarizer.total_calls
-        if self._summarizer_available:
-            if summarizer_enabled:
-                content.append("● ", style="green")
-                if summarizer_calls > 0:
-                    content.append(f"{summarizer_calls}", style="cyan")
-                else:
-                    content.append("on", style="green")
-            else:
-                content.append("○ ", style="dim")
-                content.append("off", style="dim")
-        else:
-            content.append("○ ", style="red")
-            content.append("n/a", style="red dim")
+            cost = getattr(self.app._summarizer, 'total_cost_usd', 0.0)
+            summarizer_cost_usd = cost if isinstance(cost, (int, float)) else 0.0
+            cap = getattr(self.app._summarizer.config, 'cost_cap', 100.0)
+            summarizer_cost_cap = cap if isinstance(cap, (int, float)) else 100.0
+            cap_hit = getattr(self.app._summarizer, 'cost_cap_hit', False)
+            summarizer_cost_cap_hit = cap_hit is True
+        content.append_text(render_ai_summarizer_section(
+            summarizer_available=self._summarizer_available,
+            summarizer_enabled=summarizer_enabled,
+            summarizer_calls=summarizer_calls,
+            summarizer_cost_usd=summarizer_cost_usd,
+            summarizer_cost_cap=summarizer_cost_cap,
+            summarizer_cost_cap_hit=summarizer_cost_cap_hit,
+        ))
 
         # Spin rate stats — aggregate local + sister agents
         local_sessions = self.monitor_state.sessions if monitor_running and self.monitor_state.sessions else []

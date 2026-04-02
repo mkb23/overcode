@@ -205,23 +205,8 @@ TUI = TUISettings()
 # Config File Loading
 # =============================================================================
 
-@dataclass
-class ModelPricing:
-    """Per-million-token pricing for a model."""
-    input: float
-    output: float
-    cache_write: float
-    cache_read: float
-
-
-# Built-in pricing for known Claude model families.
-# Keys are checked as prefixes against model names, so "opus" matches
-# "opus", "claude-opus-4-6", etc.  Order matters: longer prefixes first.
-MODEL_PRICING: dict[str, ModelPricing] = {
-    "opus":   ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
-    "sonnet": ModelPricing(input=3.0,  output=15.0, cache_write=3.75,  cache_read=0.30),
-    "haiku":  ModelPricing(input=0.80, output=4.0,  cache_write=1.0,   cache_read=0.08),
-}
+# Re-exported from pricing module for backward compatibility
+from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401
 
 
 def get_model_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:

@@ -129,12 +129,20 @@ def get_summarizer_config() -> dict:
     # Resolve the actual API key from the configured env var
     api_key = os.environ.get(api_key_var)
 
+    # Cost cap: default $100, configurable
+    cost_cap = _get_config_value("summarizer.cost_cap")
+    if cost_cap is None:
+        cost_cap = 100.0
+    else:
+        cost_cap = float(cost_cap)
+
     return {
         "api_type": api_type,
         "api_url": api_url,
         "model": model,
         "api_key": api_key,
         "api_key_var": api_key_var,
+        "cost_cap": cost_cap,
     }
 
 

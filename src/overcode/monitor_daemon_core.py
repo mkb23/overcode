@@ -104,39 +104,8 @@ def calculate_time_accumulation(
     )
 
 
-def calculate_cost_estimate(
-    input_tokens: int,
-    output_tokens: int,
-    cache_creation_tokens: int = 0,
-    cache_read_tokens: int = 0,
-    price_input: float = 3.0,
-    price_output: float = 15.0,
-    price_cache_write: float = 3.75,
-    price_cache_read: float = 0.30,
-) -> float:
-    """Calculate estimated cost from token counts.
-
-    Pure function - no side effects, fully testable.
-
-    Args:
-        input_tokens: Number of input tokens
-        output_tokens: Number of output tokens
-        cache_creation_tokens: Number of cache creation tokens
-        cache_read_tokens: Number of cache read tokens
-        price_input: Price per million input tokens (default: Sonnet)
-        price_output: Price per million output tokens (default: Sonnet)
-        price_cache_write: Price per million cache write tokens (default: Sonnet)
-        price_cache_read: Price per million cache read tokens (default: Sonnet)
-
-    Returns:
-        Estimated cost in USD
-    """
-    return (
-        (input_tokens / 1_000_000) * price_input +
-        (output_tokens / 1_000_000) * price_output +
-        (cache_creation_tokens / 1_000_000) * price_cache_write +
-        (cache_read_tokens / 1_000_000) * price_cache_read
-    )
+# Re-exported from pricing module for backward compatibility
+from .pricing import calculate_cost_estimate  # noqa: F401
 
 
 def calculate_total_tokens(

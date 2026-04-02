@@ -114,6 +114,29 @@ class DaemonActionsMixin:
             self.notify("AI Summarizer unavailable - set OPENAI_API_KEY", severity="warning")
             return
 
+        # Block re-enable if cost cap was hit (requires TUI restart)
+        if self._summarizer.cost_cap_hit and not self._summarizer.config.enabled:
+            from ..tui_helpers import format_cost
+            cap = self._summarizer.config.cost_cap
+            self.notify(
+                f"AI Summarizer HALTED — cost cap {format_cost(cap)} reached. Restart TUI to reset.",
+                severity="error",
+            )
+            return
+
+        # Block enable if model has no pricing data
+        if not self._summarizer.config.enabled:
+            from ..pricing import lookup_pricing
+            from ..config import get_summarizer_config
+            model = get_summarizer_config()["model"]
+            pricing = lookup_pricing(model)
+            if pricing.input == 0.0 and pricing.output == 0.0:
+                self.notify(
+                    f"AI Summarizer blocked — no cost data for model '{model}'",
+                    severity="error",
+                )
+                return
+
         # Toggle the state
         self._summarizer.config.enabled = not self._summarizer.config.enabled
 

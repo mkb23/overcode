@@ -881,6 +881,103 @@ class TestSummarizerComponentUpdateSession:
         assert second_call_count == first_call_count
 
 
+class TestSummarizerIdleTimeout:
+    """Test the idle timeout configuration for auto-shutoff."""
+
+    def test_default_idle_timeout(self):
+        """Default idle timeout is 5 minutes (300 seconds)."""
+        config = SummarizerConfig()
+        assert config.idle_timeout == 300.0
+
+    def test_custom_idle_timeout(self):
+        """Can set custom idle timeout."""
+        config = SummarizerConfig(idle_timeout=600.0)
+        assert config.idle_timeout == 600.0
+
+    def test_idle_timeout_is_positive(self):
+        """Default idle timeout is a reasonable positive value."""
+        config = SummarizerConfig()
+        assert config.idle_timeout > 0
+
+
+class TestSummarizerCostTracking:
+    """Test cost accumulation in SummarizerComponent."""
+
+    def test_initial_cost_is_zero(self):
+        """Component starts with zero cost."""
+        component = SummarizerComponent(tmux_session="test", tmux=Mock())
+        assert component.total_cost_usd == 0.0
+
+    def test_accumulate_cost_with_real_client_attrs(self):
+        """Cost accumulates when client has token usage."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=Mock(),
+            config=SummarizerConfig(enabled=True),
+        )
+        # Create a mock client with the expected attributes
+        mock_client = Mock()
+        mock_client.model = "gpt-4o-mini"
+        mock_client.last_input_tokens = 1000
+        mock_client.last_output_tokens = 50
+        component._client = mock_client
+
+        component._accumulate_cost()
+        assert component.total_cost_usd > 0
+
+    def test_accumulate_cost_no_client(self):
+        """No error when client is None."""
+        component = SummarizerComponent(tmux_session="test", tmux=Mock())
+        component._client = None
+        component._accumulate_cost()  # should not raise
+        assert component.total_cost_usd == 0.0
+
+    def test_accumulate_cost_zero_tokens(self):
+        """No cost when tokens are zero."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=Mock(),
+            config=SummarizerConfig(enabled=True),
+        )
+        mock_client = Mock()
+        mock_client.model = "gpt-4o-mini"
+        mock_client.last_input_tokens = 0
+        mock_client.last_output_tokens = 0
+        component._client = mock_client
+
+        component._accumulate_cost()
+        assert component.total_cost_usd == 0.0
+
+    def test_cost_cap_default(self):
+        """Default cost cap is $100."""
+        config = SummarizerConfig()
+        assert config.cost_cap == 100.0
+
+    def test_cost_cap_hit_initially_false(self):
+        """cost_cap_hit starts as False."""
+        component = SummarizerComponent(tmux_session="test", tmux=Mock())
+        assert component.cost_cap_hit is False
+
+    def test_cost_accumulates_across_calls(self):
+        """Multiple calls accumulate cost."""
+        component = SummarizerComponent(
+            tmux_session="test",
+            tmux=Mock(),
+            config=SummarizerConfig(enabled=True),
+        )
+        mock_client = Mock()
+        mock_client.model = "gpt-4o-mini"
+        mock_client.last_input_tokens = 1000
+        mock_client.last_output_tokens = 50
+        component._client = mock_client
+
+        component._accumulate_cost()
+        first_cost = component.total_cost_usd
+
+        component._accumulate_cost()
+        assert component.total_cost_usd == pytest.approx(first_cost * 2)
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

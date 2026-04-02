@@ -46,6 +46,8 @@ class SummarizerConfig:
     context_interval: float = 15.0  # Seconds between context summary updates (less frequent)
     lines: int = DEFAULT_CAPTURE_LINES  # Pane lines to capture
     max_tokens: int = 150  # Max response tokens
+    idle_timeout: float = 300.0  # Auto-disable after 5 minutes of no TUI keypresses
+    cost_cap: float = 100.0  # Per-TUI-launch cost cap in USD; requires restart to reset
 
 
 class SummarizerComponent:
@@ -95,6 +97,8 @@ class SummarizerComponent:
         # Stats
         self.total_calls = 0
         self.total_tokens = 0
+        self.total_cost_usd: float = 0.0
+        self.cost_cap_hit: bool = False
 
     @property
     def available(self) -> bool:
@@ -212,6 +216,7 @@ class SummarizerComponent:
             )
 
             self.total_calls += 1
+            self._accumulate_cost()
 
             if result and result.strip().upper() != "UNCHANGED":
                 summary.text = result.strip()
@@ -238,6 +243,7 @@ class SummarizerComponent:
             )
 
             self.total_calls += 1
+            self._accumulate_cost()
 
             if result and result.strip().upper() != "UNCHANGED":
                 summary.context = result.strip()
@@ -248,6 +254,17 @@ class SummarizerComponent:
 
         except Exception as e:
             logger.warning(f"Context summary error for {session.name}: {e}")
+
+    def _accumulate_cost(self) -> None:
+        """Accumulate cost from the most recent API call."""
+        if not self._client:
+            return
+        input_tokens = getattr(self._client, 'last_input_tokens', 0)
+        output_tokens = getattr(self._client, 'last_output_tokens', 0)
+        model = getattr(self._client, 'model', None)
+        if (input_tokens or output_tokens) and isinstance(model, str):
+            from .pricing import estimate_cost
+            self.total_cost_usd += estimate_cost(model, input_tokens, output_tokens)
 
     def _capture_pane(self, window: str) -> Optional[str]:
         """Capture pane content for summarization.

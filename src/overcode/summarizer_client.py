@@ -102,6 +102,9 @@ class SummarizerClient:
         self.api_key = api_key or config["api_key"]
         self.api_type = config.get("api_type", "openai")
         self._available = bool(self.api_key)
+        # Token usage from the most recent API call (for cost tracking)
+        self.last_input_tokens: int = 0
+        self.last_output_tokens: int = 0
 
     @property
     def available(self) -> bool:
@@ -150,6 +153,9 @@ class SummarizerClient:
 
     def _call_anthropic(self, prompt: str, max_tokens: int) -> Optional[str]:
         """Call the Anthropic Messages API."""
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
+
         payload = json.dumps({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -172,6 +178,9 @@ class SummarizerClient:
                 if response.status == 200:
                     result = json.loads(response.read().decode("utf-8"))
                     content = result["content"][0]["text"]
+                    usage = result.get("usage", {})
+                    self.last_input_tokens = usage.get("input_tokens", 0)
+                    self.last_output_tokens = usage.get("output_tokens", 0)
                     return content.strip()
                 else:
                     logger.warning(f"Summarizer API error: {response.status}")
@@ -188,6 +197,9 @@ class SummarizerClient:
 
     def _call_openai(self, prompt: str, max_tokens: int) -> Optional[str]:
         """Call the OpenAI Chat Completions API."""
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
+
         payload = json.dumps({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -210,6 +222,9 @@ class SummarizerClient:
                 if response.status == 200:
                     result = json.loads(response.read().decode("utf-8"))
                     content = result["choices"][0]["message"]["content"]
+                    usage = result.get("usage", {})
+                    self.last_input_tokens = usage.get("prompt_tokens", 0)
+                    self.last_output_tokens = usage.get("completion_tokens", 0)
                     return content.strip()
                 else:
                     logger.warning(

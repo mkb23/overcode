@@ -341,9 +341,11 @@ class SupervisorTUI(
         self._usage_monitor = UsageMonitor()
 
         # AI Summarizer - owned by TUI, not daemon (zero cost when TUI closed)
+        from .config import get_summarizer_config as _get_sum_cfg
+        _sum_cfg = _get_sum_cfg()
         self._summarizer = SummarizerComponent(
             tmux_session=tmux_session,
-            config=SummarizerConfig(enabled=False),  # Disabled by default
+            config=SummarizerConfig(enabled=False, cost_cap=_sum_cfg.get("cost_cap", 100.0)),
         )
         self._summaries: dict[str, AgentSummary] = {}
 
@@ -1554,10 +1556,43 @@ class SupervisorTUI(
     def _update_summaries_async(self) -> None:
         """Background thread for AI summarization.
 
-        Only runs if summarizer is enabled. Updates are applied to widgets
-        via call_from_thread.
+        Only runs if summarizer is enabled. Auto-pauses after idle timeout
+        (no TUI keypresses) to prevent runaway API costs.
         """
         if not self._summarizer.enabled:
+            return
+
+        # Auto-pause if TUI has been idle beyond the configured timeout
+        if self._last_keypress > 0:
+            idle_secs = time.monotonic() - self._last_keypress
+            if idle_secs >= self._summarizer.config.idle_timeout:
+                self._summarizer_idle_paused = True
+                self._summarizer.config.enabled = False
+                if self._summarizer._client:
+                    self._summarizer._client.close()
+                    self._summarizer._client = None
+                idle_mins = int(idle_secs // 60)
+                self.call_from_thread(
+                    self.notify,
+                    f"AI Summarizer paused ({idle_mins}m idle — press any key to resume)",
+                    severity="warning",
+                )
+                return
+
+        # Hard-halt if cost cap exceeded (requires TUI restart to reset)
+        cap = self._summarizer.config.cost_cap
+        if cap > 0 and self._summarizer.total_cost_usd >= cap:
+            self._summarizer.cost_cap_hit = True
+            self._summarizer.config.enabled = False
+            if self._summarizer._client:
+                self._summarizer._client.close()
+                self._summarizer._client = None
+            from .tui_helpers import format_cost
+            self.call_from_thread(
+                self.notify,
+                f"AI Summarizer HALTED — cost cap {format_cost(cap)} reached. Restart TUI to reset.",
+                severity="error",
+            )
             return
 
         # Get fresh session list (filtered to this tmux session)
@@ -3402,6 +3437,9 @@ class SupervisorTUI(
 
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0
+    # Track last keypress for summariser idle auto-shutoff
+    _last_keypress: float = 0.0
+    _summarizer_idle_paused: bool = False
 
     def on_key(self, event: events.Key) -> None:
         """Signal activity to daemon on any keypress."""
@@ -3409,9 +3447,20 @@ class SupervisorTUI(
 
         # Write TUI heartbeat (throttled to every 5s)
         now = time.monotonic()
+        self._last_keypress = now
         if now - self._last_heartbeat_write >= 5.0:
             self._last_heartbeat_write = now
             write_tui_heartbeat(self.tmux_session)
+
+        # Re-enable summariser if it was auto-paused due to idle (not if cost cap hit)
+        if self._summarizer_idle_paused and not self._summarizer.cost_cap_hit:
+            self._summarizer_idle_paused = False
+            self._summarizer.config.enabled = True
+            if not self._summarizer._client:
+                from .summarizer_client import SummarizerClient
+                self._summarizer._client = SummarizerClient()
+            self.notify("AI Summarizer resumed (activity detected)", severity="information")
+            self._update_summaries_async()
 
         # Auto-recover if focus was lost or landed on a non-interactive widget
         # (e.g., clicking the terminal window focuses the preview pane)
