@@ -249,16 +249,18 @@ class TestBuildTimelineRecords:
 
     def test_converts_history_to_records(self):
         with patch("overcode.data_export.read_agent_status_history") as mock_read:
-            # Returns List[Tuple[datetime, agent, status, activity]]
+            # Returns List[Tuple[datetime, agent, status, activity, session_id, hostname]]
             mock_read.return_value = [
-                (datetime(2024, 1, 1, 12, 0), "agent1", "running", ""),
-                (datetime(2024, 1, 1, 12, 5), "agent2", "waiting_user", ""),
+                (datetime(2024, 1, 1, 12, 0), "agent1", "running", "", "sid-1", "host1"),
+                (datetime(2024, 1, 1, 12, 5), "agent2", "waiting_user", "", "sid-2", "host1"),
             ]
             records = _build_timeline_records()
 
             assert len(records) == 2
             assert records[0]["agent"] == "agent1"
             assert records[0]["status"] == "running"
+            assert records[0]["session_id"] == "sid-1"
+            assert records[0]["hostname"] == "host1"
 
     def test_calls_with_24_hours(self):
         """Should request 24 hours of history."""
@@ -272,7 +274,7 @@ class TestBuildTimelineRecords:
         with patch("overcode.data_export.read_agent_status_history") as mock_read:
             ts = datetime(2024, 1, 15, 14, 30, 45)
             mock_read.return_value = [
-                (ts, "agent1", "running", "task"),
+                (ts, "agent1", "running", "task", "sid-1", "host1"),
             ]
             records = _build_timeline_records()
 
@@ -282,7 +284,7 @@ class TestBuildTimelineRecords:
         """Should handle timestamps that are already strings."""
         with patch("overcode.data_export.read_agent_status_history") as mock_read:
             mock_read.return_value = [
-                ("2024-01-01T12:00:00", "agent1", "running", "activity1"),
+                ("2024-01-01T12:00:00", "agent1", "running", "activity1", "", ""),
             ]
             records = _build_timeline_records()
 
@@ -299,13 +301,13 @@ class TestBuildTimelineRecords:
         """Activity is the 4th tuple element but should not be in the record."""
         with patch("overcode.data_export.read_agent_status_history") as mock_read:
             mock_read.return_value = [
-                (datetime(2024, 1, 1, 12, 0), "agent1", "running", "some activity"),
+                (datetime(2024, 1, 1, 12, 0), "agent1", "running", "some activity", "sid-1", "host1"),
             ]
             records = _build_timeline_records()
 
             assert "activity" not in records[0]
-            # Only timestamp, agent, status
-            assert set(records[0].keys()) == {"timestamp", "agent", "status"}
+            # timestamp, agent, status, session_id, hostname
+            assert set(records[0].keys()) == {"timestamp", "agent", "status", "session_id", "hostname"}
 
 
 class TestBuildTimelineTable:
@@ -617,7 +619,7 @@ class TestExportToParquet:
 
                 with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
                     mock_timeline.return_value = [
-                        (datetime(2024, 1, 1, 12, 0), "test-agent", "running", "")
+                        (datetime(2024, 1, 1, 12, 0), "test-agent", "running", "", "sid-1", "host1")
                     ]
                     with patch("overcode.data_export.read_presence_history") as mock_presence:
                         mock_presence.return_value = []
@@ -747,7 +749,7 @@ class TestExportToParquet:
 
                 with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
                     mock_timeline.return_value = [
-                        (datetime(2024, 1, 1, 12, 0), "agent", "running", "")
+                        (datetime(2024, 1, 1, 12, 0), "agent", "running", "", "", "")
                     ]
                     with patch("overcode.data_export.read_presence_history") as mock_presence:
                         mock_presence.return_value = [
@@ -779,7 +781,7 @@ class TestExportToParquet:
 
                 with patch("overcode.data_export.read_agent_status_history") as mock_timeline:
                     mock_timeline.return_value = [
-                        (datetime(2024, 1, 1, 12, 0), "agent", "running", "")
+                        (datetime(2024, 1, 1, 12, 0), "agent", "running", "", "", "")
                     ]
                     with patch("overcode.data_export.read_presence_history") as mock_presence:
                         mock_presence.return_value = []

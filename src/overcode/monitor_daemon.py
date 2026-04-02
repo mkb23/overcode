@@ -284,6 +284,10 @@ class MonitorDaemon:
             mode=detection_mode,
         )
 
+        # Hostname for history disambiguation
+        from .config import get_hostname
+        self._hostname = get_hostname()
+
         # Presence tracking (graceful degradation)
         self.presence = PresenceComponent(tmux_session=tmux_session)
 
@@ -1112,7 +1116,12 @@ class MonitorDaemon:
             session_states.append(session_state)
 
             # Log status history to session-specific file
-            log_agent_status(session.name, effective_status, activity, history_file=self.history_path)
+            log_agent_status(
+                session.name, effective_status, activity,
+                history_file=self.history_path,
+                session_id=session.id,
+                hostname=self._hostname,
+            )
 
             # Track if any session is not waiting for user
             if status != "waiting_user":

@@ -338,7 +338,7 @@ def get_timeline_data(tmux_session: str, hours: float = 3.0, slots: int = 60) ->
 
     # Group by agent
     agent_histories: Dict[str, List] = {}
-    for ts, agent, status, activity in all_history:
+    for ts, agent, status, activity, *_ in all_history:
         if agent not in agent_histories:
             agent_histories[agent] = []
         agent_histories[agent].append((ts, status))
@@ -390,7 +390,7 @@ def get_raw_timeline_data(tmux_session: str, hours: float = 3.0) -> Dict[str, An
     all_history = read_agent_status_history(hours=hours, history_file=history_path)
 
     agents: Dict[str, list] = {}
-    for ts, agent, status, activity in all_history:
+    for ts, agent, status, activity, *_ in all_history:
         if agent not in agents:
             agents[agent] = []
         agents[agent].append({"t": ts.isoformat(), "s": status})
@@ -549,7 +549,7 @@ def get_analytics_timeline(
 
     # Filter to time range and group by agent
     agent_events: Dict[str, List[Dict[str, Any]]] = {}
-    for ts, agent_name, status, activity in all_history:
+    for ts, agent_name, status, activity, *_ in all_history:
         if ts < start or ts > end:
             continue
 
@@ -724,7 +724,7 @@ def _calculate_presence_efficiency(
     presence_history = read_presence_history(hours=hours)
 
     # Filter to time range
-    agent_history = [(ts, name, status, act) for ts, name, status, act in agent_history
+    agent_history = [(ts, name, status, act) for ts, name, status, act, *_ in agent_history
                      if start <= ts <= end]
     presence_history = [(ts, state) for ts, state in presence_history
                         if start <= ts <= end]

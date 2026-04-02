@@ -315,13 +315,18 @@ class TestToggleSummarizer:
         mock_tui = MagicMock()
         mock_tui._summarizer = MagicMock()
         mock_tui._summarizer.config.enabled = False
+        mock_tui._summarizer.cost_cap_hit = False
         mock_tui._summarizer._client = None
         mock_tui.query.return_value = [mock_widget1, mock_widget2]
 
         # is_available is a staticmethod, so we restore it for the check
         mock_client_class.is_available = mock_is_available
 
-        DaemonActionsMixin.action_toggle_summarizer(mock_tui)
+        with patch("overcode.pricing.lookup_pricing") as mock_pricing:
+            mock_pricing.return_value = MagicMock(input=0.15, output=0.60)
+            with patch("overcode.config.get_summarizer_config") as mock_cfg:
+                mock_cfg.return_value = {"model": "gpt-4o-mini"}
+                DaemonActionsMixin.action_toggle_summarizer(mock_tui)
 
         # Should have toggled enabled to True
         assert mock_tui._summarizer.config.enabled is True

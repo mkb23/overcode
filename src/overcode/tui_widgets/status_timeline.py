@@ -93,7 +93,7 @@ class StatusTimeline(Static):
 
         history_path = get_agent_history_path(self.tmux_session)
         all_history = read_agent_status_history(hours=self.timeline_hours, history_file=history_path)
-        for ts, agent, status, activity in all_history:
+        for ts, agent, status, activity, *_ in all_history:
             if agent not in agent_histories:
                 agent_histories[agent] = []
             agent_histories[agent].append((ts, status))

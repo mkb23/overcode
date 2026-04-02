@@ -152,6 +152,7 @@ class SisterPoller:
             return {}
 
         result: Dict[str, List[Tuple[datetime, str]]] = {}
+        host = sister.name
         for agent_name, entries in data.get("agents", {}).items():
             pairs: List[Tuple[datetime, str]] = []
             for entry in entries:
@@ -161,7 +162,8 @@ class SisterPoller:
                 except (KeyError, ValueError):
                     continue
             if pairs:
-                result[agent_name] = pairs
+                # Prefix with hostname for disambiguation across sisters
+                result[f"{host}/{agent_name}"] = pairs
         return result
 
     def _poll_sister(self, sister: SisterState) -> List[Session]:

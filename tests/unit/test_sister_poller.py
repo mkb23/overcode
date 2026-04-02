@@ -354,12 +354,12 @@ class TestPollAllTimelinesWithServer:
             poller = SisterPoller()
             result = poller.poll_all_timelines(hours=3.0)
 
-        assert "agent-a" in result
-        assert "agent-b" in result
-        assert len(result["agent-a"]) == 2
-        assert len(result["agent-b"]) == 1
+        assert "test-sister/agent-a" in result
+        assert "test-sister/agent-b" in result
+        assert len(result["test-sister/agent-a"]) == 2
+        assert len(result["test-sister/agent-b"]) == 1
         # Check parsed datetime and status
-        ts, status = result["agent-a"][0]
+        ts, status = result["test-sister/agent-a"][0]
         assert isinstance(ts, datetime)
         assert status == "running"
 

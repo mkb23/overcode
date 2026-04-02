@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 
+from .config import get_hostname
 from .session_manager import SessionManager
 from .status_history import read_agent_status_history
 from .presence_logger import read_presence_history
@@ -118,6 +119,7 @@ def _session_to_record(session, is_archived: bool) -> Dict[str, Any]:
     return {
         "id": session.id,
         "name": session.name,
+        "hostname": getattr(session, 'source_host', '') or get_hostname(),
         "tmux_session": session.tmux_session,
         "tmux_window": session.tmux_window,
         "start_directory": session.start_directory,
@@ -184,6 +186,7 @@ def _get_sessions_schema():
     return pa.schema([
         ("id", pa.string()),
         ("name", pa.string()),
+        ("hostname", pa.string()),
         ("start_time", pa.string()),
         ("end_time", pa.string()),
         ("is_archived", pa.bool_()),
@@ -201,6 +204,8 @@ def _get_timeline_schema():
         ("timestamp", pa.string()),
         ("agent", pa.string()),
         ("status", pa.string()),
+        ("session_id", pa.string()),
+        ("hostname", pa.string()),
     ])
 
 
@@ -223,11 +228,13 @@ def _build_timeline_records():
     records = []
     history = read_agent_status_history(hours=24.0)
 
-    for ts, agent_name, status, activity in history:
+    for ts, agent_name, status, activity, session_id, hostname in history:
         records.append({
             "timestamp": ts.isoformat() if isinstance(ts, datetime) else str(ts),
             "agent": agent_name,
             "status": status,
+            "session_id": session_id,
+            "hostname": hostname,
         })
 
     return records

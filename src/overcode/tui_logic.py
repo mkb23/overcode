@@ -424,7 +424,7 @@ def calculate_spin_stats(
 
 
 def calculate_mean_spin_from_history(
-    history: List[Tuple[datetime, str, str, str]],
+    history: list,
     agent_names: List[str],
     baseline_minutes: int,
     now: Optional[datetime] = None,
@@ -456,7 +456,7 @@ def calculate_mean_spin_from_history(
     # Filter to window and active agents only
     window_history = [
         (ts, agent, status)
-        for ts, agent, status, _ in history
+        for ts, agent, status, *_ in history
         if cutoff <= ts <= now and agent in agent_names
     ]
 

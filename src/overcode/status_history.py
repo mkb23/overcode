@@ -17,7 +17,9 @@ def log_agent_status(
     agent_name: str,
     status: str,
     activity: str = "",
-    history_file: Optional[Path] = None
+    history_file: Optional[Path] = None,
+    session_id: str = "",
+    hostname: str = "",
 ) -> None:
     """Log agent status to history CSV file.
 
@@ -29,6 +31,8 @@ def log_agent_status(
         status: Current status string
         activity: Optional activity description
         history_file: Optional path override (for testing)
+        session_id: Unique session ID (UUID) for disambiguation
+        hostname: Machine hostname for multi-host disambiguation
     """
     path = history_file or PATHS.agent_history
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,12 +43,14 @@ def log_agent_status(
     with open(path, 'a', newline='') as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(['timestamp', 'agent', 'status', 'activity'])
+            writer.writerow(['timestamp', 'agent', 'status', 'activity', 'session_id', 'hostname'])
         writer.writerow([
             datetime.now().isoformat(),
             agent_name,
             status,
-            activity[:100] if activity else ""
+            activity[:100] if activity else "",
+            session_id,
+            hostname,
         ])
 
 
@@ -63,7 +69,7 @@ class StatusHistoryFile:
         self._lock = threading.Lock()
         self._cached_mtime: float = 0.0
         self._cached_size: int = 0
-        self._cached_entries: List[Tuple[datetime, str, str, str]] = []
+        self._cached_entries: List[Tuple[datetime, str, str, str, str, str]] = []
         self._cached_hours: float = 0.0
         self._read_offset: int = 0
 
@@ -71,7 +77,7 @@ class StatusHistoryFile:
         self,
         hours: float = 3.0,
         agent_name: Optional[str] = None,
-    ) -> List[Tuple[datetime, str, str, str]]:
+    ) -> List[Tuple[datetime, str, str, str, str, str]]:
         """Read status history entries, using cache when possible."""
         try:
             stat = self._path.stat()
@@ -177,11 +183,11 @@ class StatusHistoryFile:
         return lo
 
     @staticmethod
-    def _parse_rows(f, start_offset: int) -> List[Tuple[datetime, str, str, str]]:
+    def _parse_rows(f, start_offset: int) -> List[Tuple[datetime, str, str, str, str, str]]:
         """Parse CSV rows from start_offset to end of file."""
         f.seek(start_offset)
         data = f.read().decode('utf-8', errors='replace')
-        entries: List[Tuple[datetime, str, str, str]] = []
+        entries: List[Tuple[datetime, str, str, str, str, str]] = []
         for row in csv.reader(data.splitlines()):
             if len(row) < 3:
                 continue
@@ -189,7 +195,14 @@ class StatusHistoryFile:
                 continue
             try:
                 ts = datetime.fromisoformat(row[0])
-                entries.append((ts, row[1], row[2], row[3] if len(row) > 3 else ''))
+                entries.append((
+                    ts,
+                    row[1],                             # agent
+                    row[2],                             # status
+                    row[3] if len(row) > 3 else '',     # activity
+                    row[4] if len(row) > 4 else '',     # session_id
+                    row[5] if len(row) > 5 else '',     # hostname
+                ))
             except (ValueError, IndexError):
                 continue
         return entries
@@ -222,7 +235,7 @@ def read_agent_status_history(
     hours: float = 3.0,
     agent_name: Optional[str] = None,
     history_file: Optional[Path] = None
-) -> List[Tuple[datetime, str, str, str]]:
+) -> List[Tuple[datetime, str, str, str, str, str]]:
     """Read agent status history from CSV file.
 
     Args:
@@ -231,7 +244,9 @@ def read_agent_status_history(
         history_file: Optional path override (for testing)
 
     Returns:
-        List of (timestamp, agent, status, activity) tuples, oldest first
+        List of (timestamp, agent, status, activity, session_id, hostname)
+        tuples, oldest first. session_id and hostname may be empty for
+        rows written before v0.3.6.
     """
     path = history_file or PATHS.agent_history
     return _get_or_create_reader(path).read(hours, agent_name)
@@ -253,7 +268,7 @@ def get_agent_timeline(
         List of (timestamp, status) tuples for the agent
     """
     history = read_agent_status_history(hours, agent_name, history_file)
-    return [(ts, status) for ts, _, status, _ in history]
+    return [(ts, status) for ts, _, status, _, _, _ in history]
 
 
 def clear_old_history(
