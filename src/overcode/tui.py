@@ -223,7 +223,7 @@ class SupervisorTUI(
     # Sort modes (#61)
     SORT_MODES = ["alphabetical", "by_status", "by_value", "by_tree"]
     # Summary content modes: what to show in the summary line (#74)
-    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat"]
+    SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"]
 
     sessions: reactive[List[Session]] = reactive(list)
     focused_session_index: reactive[int] = reactive(0, always_update=True)
@@ -1506,7 +1506,9 @@ class SupervisorTUI(
                         )
 
                 # Pass None for claude_stats/git_diff — those come from the slow path
-                widget.apply_status_no_refresh(status, activity, content, None, None)
+                # For remote agents, propagate git_diff from session (#413)
+                git_diff = widget.session.remote_git_diff if widget.session.is_remote else None
+                widget.apply_status_no_refresh(status, activity, content, None, git_diff)
 
         # Recompute column widths before refreshing widgets for alignment
         self._recompute_cell_column_widths()
@@ -1751,6 +1753,9 @@ class SupervisorTUI(
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
                     widget.any_has_subtree_cost = any_has_subtree_cost
+                    # Sync remote git diff to widget (#413)
+                    if new_session.is_remote and new_session.remote_git_diff:
+                        widget.git_diff_stats = new_session.remote_git_diff
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -3373,6 +3378,12 @@ class SupervisorTUI(
 
         self._instruction_history.insert(0, HistoryEntry(text=text, agent_name=agent_name))
         self._instruction_history = self._instruction_history[:MAX_HISTORY]
+
+        # Update per-agent last command on the widget (#413)
+        for widget in self.query(SessionSummary):
+            if widget.session.name == agent_name:
+                widget.last_command = text
+                break
 
     def action_open_instruction_history(self) -> None:
         """Open the instruction history modal (#376)."""

@@ -176,7 +176,7 @@ class TestCycleSummaryContent:
         mock_tui = MagicMock()
         mock_tui.summary_content_mode = "ai_short"
         mock_tui.SUMMARY_CONTENT_MODES = [
-            "ai_short", "ai_long", "orders", "annotation", "heartbeat"
+            "ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"
         ]
         mock_tui.query.return_value = [widget1]
         mock_tui._prefs = MagicMock()
@@ -194,9 +194,9 @@ class TestCycleSummaryContent:
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.summary_content_mode = "heartbeat"
+        mock_tui.summary_content_mode = "last_command"
         mock_tui.SUMMARY_CONTENT_MODES = [
-            "ai_short", "ai_long", "orders", "annotation", "heartbeat"
+            "ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"
         ]
         mock_tui.query.return_value = []
         mock_tui._prefs = MagicMock()
@@ -212,7 +212,7 @@ class TestCycleSummaryContent:
         mock_tui = MagicMock()
         mock_tui.summary_content_mode = "nonexistent"
         mock_tui.SUMMARY_CONTENT_MODES = [
-            "ai_short", "ai_long", "orders", "annotation", "heartbeat"
+            "ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"
         ]
         mock_tui.query.return_value = []
         mock_tui._prefs = MagicMock()

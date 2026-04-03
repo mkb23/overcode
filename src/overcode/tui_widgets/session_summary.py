@@ -78,6 +78,7 @@ class SessionSummary(Static, can_focus=True):
             except (ValueError, TypeError):
                 pass
         self._last_known_status: str = self.detected_status
+        self.last_command: str = ""  # Last instruction sent to this agent (#413)
         # Per-level column overrides for current detail level
         self.column_overrides: dict = {}
         # Agent hierarchy (#244)
@@ -135,9 +136,11 @@ class SessionSummary(Static, can_focus=True):
         """
         # Fetch claude stats (only for standalone update_status calls)
         claude_stats = get_session_stats(self.session)
-        # Fetch git diff stats
+        # Fetch git diff stats — remote agents already have this from the sister API
         git_diff = None
-        if self.session.start_directory:
+        if self.session.is_remote:
+            git_diff = self.session.remote_git_diff
+        elif self.session.start_directory:
             git_diff = get_git_diff_stats(self.session.start_directory)
         self.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
         self.refresh()
@@ -327,6 +330,7 @@ class SessionSummary(Static, can_focus=True):
             heartbeat_instruction=s.heartbeat_instruction,
             summarizer_enabled=self.summarizer_enabled,
             remaining_width=remaining,
+            last_command=self.last_command,
         )
 
         # Map style categories to Rich styles

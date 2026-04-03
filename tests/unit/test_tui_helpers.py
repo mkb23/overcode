@@ -959,6 +959,26 @@ class TestGetSummaryContentText:
         assert "no heartbeat" in text
         assert style == "dim"
 
+    def test_last_command_mode_with_text(self):
+        text, style = get_summary_content_text(
+            mode="last_command", last_command="fix the login bug", **self._defaults
+        )
+        assert "fix the login bug" in text
+        assert style == "bold_cyan"
+
+    def test_last_command_mode_empty(self):
+        text, style = get_summary_content_text(mode="last_command", **self._defaults)
+        assert "no command sent" in text
+        assert style == "dim"
+
+    def test_last_command_mode_multiline(self):
+        text, style = get_summary_content_text(
+            mode="last_command", last_command="line1\nline2\nline3", **self._defaults
+        )
+        assert "↵" in text
+        assert "line1" in text
+        assert style == "bold_cyan"
+
     def test_truncation(self):
         """Should truncate text to remaining_width."""
         text, _ = get_summary_content_text(

@@ -167,6 +167,7 @@ class ViewActionsMixin:
             "orders": "Standing Orders",
             "annotation": "Human Annotation",
             "heartbeat": "Heartbeat Instruction",
+            "last_command": "Last User Command",
         }
         self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
 

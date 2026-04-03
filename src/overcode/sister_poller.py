@@ -300,12 +300,12 @@ def _agent_to_session(
 
 def _parse_git_diff(agent: dict) -> tuple | None:
     """Extract git diff stats tuple from API agent dict."""
-    files = agent.get("git_diff_files", 0)
-    ins = agent.get("git_diff_insertions", 0)
-    dels = agent.get("git_diff_deletions", 0)
-    if files or ins or dels:
-        return (files, ins, dels)
-    return None
+    files = agent.get("git_diff_files")
+    ins = agent.get("git_diff_insertions")
+    dels = agent.get("git_diff_deletions")
+    if files is None and ins is None and dels is None:
+        return None
+    return (files or 0, ins or 0, dels or 0)
 
 
 def _parse_median_work(agent: dict) -> float:

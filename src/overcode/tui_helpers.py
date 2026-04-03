@@ -574,13 +574,14 @@ def get_summary_content_text(
     heartbeat_instruction: Optional[str],
     summarizer_enabled: bool,
     remaining_width: int,
+    last_command: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Compute the text and style category for summary content area.
 
     Pure function — no side effects, fully testable.
 
     Args:
-        mode: Content mode (annotation, orders, ai_long, heartbeat, ai_short)
+        mode: Content mode (annotation, orders, ai_long, heartbeat, ai_short, last_command)
         annotation: Human annotation text
         standing_instructions: Standing orders text
         standing_orders_complete: Whether standing orders are complete
@@ -593,6 +594,7 @@ def get_summary_content_text(
         heartbeat_instruction: Heartbeat instruction text
         summarizer_enabled: Whether summarizer is enabled
         remaining_width: Available width for text
+        last_command: Last instruction sent to this agent
 
     Returns:
         Tuple of (text, style_category) where style_category is one of:
@@ -629,6 +631,12 @@ def get_summary_content_text(
                 return hb_text, "dim"
             return hb_text, "bold_magenta"
         return "💓 (no heartbeat configured - press H)", "dim"
+
+    elif mode == "last_command":
+        if last_command:
+            oneline = last_command.replace("\n", " ↵ ")
+            return f"⌨ {oneline[:remaining_width-3]}", "bold_cyan"
+        return "⌨ (no command sent yet)", "dim"
 
     else:
         # ai_short (default)
