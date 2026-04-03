@@ -206,7 +206,12 @@ class StatusTimeline(Static):
         # Agent timelines
         for session in self.sessions:
             agent_name = session.name
-            history = self._agent_histories.get(agent_name, [])
+            # Remote sessions are keyed with hostname prefix for disambiguation
+            if getattr(session, 'is_remote', False) and getattr(session, 'source_host', ''):
+                history_key = f"{session.source_host}/{agent_name}"
+            else:
+                history_key = agent_name
+            history = self._agent_histories.get(history_key, [])
 
             # Use dynamic label width (#75)
             display_name = truncate_name(agent_name, max_len=label_w)

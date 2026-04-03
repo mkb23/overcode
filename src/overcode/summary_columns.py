@@ -1280,7 +1280,7 @@ def render_header_cells(
         if column_filter is not None:
             if not column_filter(col):
                 continue
-        header = " " + col.header if col.header else col.header
+        header = " " + col.header if col.header else ""
         if column_widths and col_idx < len(column_widths):
             w = column_widths[col_idx]
             # Truncate header to column width

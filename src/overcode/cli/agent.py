@@ -440,7 +440,7 @@ def list_agents(
         get_status_symbol, get_git_diff_stats,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
-    from ..summary_columns import build_cli_context, render_summary_cells, align_summary_rows
+    from ..summary_columns import build_cli_context, render_summary_cells, compute_column_widths, pad_and_join_cells, render_header_cells
     from ..tui_logic import compute_tree_metadata, sort_sessions
     from rich.console import Console
 
@@ -630,7 +630,12 @@ def list_agents(
         activities.append(activity)
 
     # Auto-align columns across all rows, then append activity
-    aligned_lines = align_summary_rows(all_cells)
+    widths = compute_column_widths(all_cells)
+    col_filter = lambda col: detail in col.detail_levels
+    header = render_header_cells(column_filter=col_filter, column_widths=widths)
+    header.truncate(console.width, pad=False)
+    console.print(header, no_wrap=True)
+    aligned_lines = [pad_and_join_cells(row, widths) for row in all_cells]
     for line, activity in zip(aligned_lines, activities):
         line.append(" │ ", style="dim")
         line.append(activity)
