@@ -1669,6 +1669,136 @@ class TestCountUntrackedWindows:
             assert result == 0
 
 
+class TestEnsureDispatch:
+    """Test dispatch agent lifecycle management (#23)."""
+
+    def _make_daemon(self):
+        """Create a MonitorDaemon with mocked dependencies."""
+        from overcode.monitor_daemon import MonitorDaemon
+        daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon.tmux_session = "agents"
+        daemon.session_manager = MagicMock()
+        daemon.log = MagicMock()
+        daemon._last_rc_check = None
+        return daemon
+
+    @patch("overcode.monitor_daemon.get_tmux_pane_content")
+    def test_noop_when_disabled(self, mock_pane):
+        daemon = self._make_daemon()
+        now = datetime.now()
+        with patch("overcode.config.get_dispatch_config", return_value=None):
+            daemon._ensure_dispatch([], now)
+        mock_pane.assert_not_called()
+
+    @patch("overcode.launcher.ClaudeLauncher")
+    def test_launches_when_no_session(self, mock_launcher_cls, tmp_path):
+        daemon = self._make_daemon()
+        now = datetime.now()
+        mock_launcher = MagicMock()
+        mock_launcher.launch.return_value = MagicMock()
+        mock_launcher_cls.return_value = mock_launcher
+        config = {"name": "dispatch", "directory": str(tmp_path / "dispatch"), "rc_keepalive_interval": 120}
+        with patch("overcode.config.get_dispatch_config", return_value=config):
+            daemon._ensure_dispatch([], now)
+        mock_launcher.launch.assert_called_once_with(
+            name="dispatch",
+            start_directory=str(tmp_path / "dispatch"),
+            skip_permissions=True,
+        )
+
+    def test_noop_when_session_alive(self):
+        daemon = self._make_daemon()
+        now = datetime.now()
+        session = MagicMock()
+        session.name = "dispatch"
+        session.status = "running"
+        session.tmux_window = "dispatch-abcd"
+        config = {"name": "dispatch", "directory": "/tmp/dispatch", "rc_keepalive_interval": 120}
+        with patch("overcode.config.get_dispatch_config", return_value=config), \
+             patch.object(daemon, "_ensure_dispatch_rc") as mock_rc:
+            daemon._ensure_dispatch([session], now)
+        mock_rc.assert_called_once_with(session, config, now)
+
+    @patch("overcode.launcher.ClaudeLauncher")
+    def test_relaunches_when_terminated(self, mock_launcher_cls, tmp_path):
+        daemon = self._make_daemon()
+        now = datetime.now()
+        mock_launcher = MagicMock()
+        mock_launcher.launch.return_value = MagicMock()
+        mock_launcher_cls.return_value = mock_launcher
+        session = MagicMock()
+        session.name = "dispatch"
+        session.status = "terminated"
+        config = {"name": "dispatch", "directory": str(tmp_path / "dispatch"), "rc_keepalive_interval": 120}
+        with patch("overcode.config.get_dispatch_config", return_value=config):
+            daemon._ensure_dispatch([session], now)
+        mock_launcher.launch.assert_called_once()
+
+
+class TestIsRcActive:
+    """Test RC detection heuristic (#23)."""
+
+    def test_detects_remote_control_text(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        content = "some output\nRemote control is active\n>"
+        assert MonitorDaemon._is_rc_active(content) is True
+
+    def test_detects_waiting_for_connection(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        content = "Waiting for connection from claude.ai\n>"
+        assert MonitorDaemon._is_rc_active(content) is True
+
+    def test_returns_false_for_normal_prompt(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        content = "Task completed successfully.\n❯"
+        assert MonitorDaemon._is_rc_active(content) is False
+
+
+class TestEnsureDispatchRc:
+    """Test RC keepalive logic (#23)."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon.tmux_session = "agents"
+        daemon.log = MagicMock()
+        daemon._last_rc_check = None
+        return daemon
+
+    @patch("overcode.monitor_daemon.send_text_to_tmux_window")
+    @patch("overcode.monitor_daemon.get_tmux_pane_content", return_value="Task done\n❯")
+    def test_resends_rc_when_at_prompt(self, mock_pane, mock_send):
+        daemon = self._make_daemon()
+        session = MagicMock()
+        session.tmux_window = "dispatch-abcd"
+        config = {"rc_keepalive_interval": 0}
+        daemon._ensure_dispatch_rc(session, config, datetime.now())
+        mock_send.assert_called_once_with(
+            "agents", "dispatch-abcd", "/remote-control", send_enter=True
+        )
+
+    @patch("overcode.monitor_daemon.send_text_to_tmux_window")
+    @patch("overcode.monitor_daemon.get_tmux_pane_content", return_value="Remote control active\n❯")
+    def test_skips_when_rc_active(self, mock_pane, mock_send):
+        daemon = self._make_daemon()
+        session = MagicMock()
+        session.tmux_window = "dispatch-abcd"
+        config = {"rc_keepalive_interval": 0}
+        daemon._ensure_dispatch_rc(session, config, datetime.now())
+        mock_send.assert_not_called()
+
+    @patch("overcode.monitor_daemon.send_text_to_tmux_window")
+    @patch("overcode.monitor_daemon.get_tmux_pane_content", return_value="Task done\n❯")
+    def test_respects_interval(self, mock_pane, mock_send):
+        daemon = self._make_daemon()
+        daemon._last_rc_check = datetime.now()  # Just checked
+        session = MagicMock()
+        session.tmux_window = "dispatch-abcd"
+        config = {"rc_keepalive_interval": 120}
+        daemon._ensure_dispatch_rc(session, config, datetime.now())
+        mock_pane.assert_not_called()  # Skipped due to interval
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

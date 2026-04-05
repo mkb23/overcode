@@ -79,7 +79,7 @@ from .monitor_daemon_core import (
     should_auto_archive,
     should_enforce_oversight_timeout,
 )
-from .tmux_utils import send_text_to_tmux_window
+from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content
 
 
 # Check for macOS presence APIs (optional)
@@ -336,6 +336,9 @@ class MonitorDaemon:
 
         # Legacy migration flag — runs once on first tick
         self._legacy_windows_migrated = False
+
+        # Dispatch agent lifecycle (#23)
+        self._last_rc_check: Optional[datetime] = None
 
     def _migrate_legacy_window_ids(self, sessions: list) -> None:
         """Migrate legacy digit-string tmux_window values to actual window names."""
@@ -982,6 +985,83 @@ class MonitorDaemon:
         session_states, all_waiting = self._detect_and_enrich(sessions, now)
         self._cleanup_stale(sessions)
         self._publish_and_enforce(sessions, session_states, all_waiting)
+        self._ensure_dispatch(sessions, now)
+
+    # ------------------------------------------------------------------
+    # Dispatch agent lifecycle (#23)
+    # ------------------------------------------------------------------
+
+    def _ensure_dispatch(self, sessions: list, now: datetime) -> None:
+        """Ensure the dispatch agent is running and has /remote-control active."""
+        from .config import get_dispatch_config
+        config = get_dispatch_config()
+        if not config:
+            return
+
+        dispatch_name = config["name"]
+        dispatch_session = None
+        for s in sessions:
+            if s.name == dispatch_name:
+                dispatch_session = s
+                break
+
+        if dispatch_session is None or dispatch_session.status == "terminated":
+            # Launch dispatch agent
+            from pathlib import Path
+            Path(config["directory"]).mkdir(parents=True, exist_ok=True)
+            from .launcher import ClaudeLauncher
+            launcher = ClaudeLauncher(self.tmux_session)
+            result = launcher.launch(
+                name=dispatch_name,
+                start_directory=config["directory"],
+                skip_permissions=True,
+            )
+            if result:
+                self.log.info(f"Dispatch agent '{dispatch_name}' launched")
+            else:
+                self.log.warn(f"Failed to launch dispatch agent '{dispatch_name}'")
+            return
+
+        # Session exists and is alive — ensure RC is active
+        self._ensure_dispatch_rc(dispatch_session, config, now)
+
+    def _ensure_dispatch_rc(self, session, config: dict, now: datetime) -> None:
+        """Ensure dispatch agent has /remote-control active."""
+        interval = config.get("rc_keepalive_interval", 120)
+        if self._last_rc_check and (now - self._last_rc_check).total_seconds() < interval:
+            return
+        self._last_rc_check = now
+
+        pane_content = get_tmux_pane_content(
+            self.tmux_session, session.tmux_window, lines=20
+        )
+        if not pane_content:
+            return
+
+        # Check if RC appears active
+        if self._is_rc_active(pane_content):
+            return
+
+        # RC not active — check if agent is at an idle prompt before sending
+        from .status_patterns import is_prompt_line
+        lines = pane_content.strip().split("\n")
+        for line in reversed(lines[-5:]):
+            if is_prompt_line(line):
+                send_text_to_tmux_window(
+                    self.tmux_session, session.tmux_window,
+                    "/remote-control", send_enter=True,
+                )
+                self.log.info("Dispatch: re-sent /remote-control")
+                break
+
+    @staticmethod
+    def _is_rc_active(pane_content: str) -> bool:
+        """Check if /remote-control appears to be active in pane content."""
+        for line in pane_content.split("\n")[-10:]:
+            lower = line.lower()
+            if "remote control" in lower or "waiting for connection" in lower:
+                return True
+        return False
 
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).
