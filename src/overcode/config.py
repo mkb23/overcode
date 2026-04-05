@@ -93,6 +93,32 @@ def get_relay_config() -> Optional[dict]:
     }
 
 
+def get_dispatch_config() -> Optional[dict]:
+    """Get dispatch agent configuration.
+
+    Returns None if dispatch is not enabled.
+
+    Config format in ~/.overcode/config.yaml:
+        dispatch:
+          enabled: true
+          name: dispatch                    # session name (default "dispatch")
+          directory: ~/.overcode/dispatch   # working directory (default)
+          rc_keepalive_interval: 120        # seconds between RC checks (default 120)
+    """
+    if not _get_config_value("dispatch.enabled", False):
+        return None
+
+    return {
+        "name": _get_config_value("dispatch.name", "dispatch"),
+        "directory": str(Path(_get_config_value(
+            "dispatch.directory", "~/.overcode/dispatch"
+        )).expanduser()),
+        "rc_keepalive_interval": _get_config_value(
+            "dispatch.rc_keepalive_interval", 120
+        ),
+    }
+
+
 def get_summarizer_config() -> dict:
     """Get summarizer configuration for AI summaries.
 

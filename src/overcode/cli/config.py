@@ -57,6 +57,13 @@ CONFIG_TEMPLATE = """\
 #   - name: "desktop"
 #     url: "http://192.168.1.10:5337"
 #     api_key: "shared-secret"
+
+# Dispatch agent — persistent session with /remote-control kept alive
+# dispatch:
+#   enabled: false
+#   name: dispatch                    # Session name
+#   directory: ~/.overcode/dispatch   # Working directory
+#   rc_keepalive_interval: 120        # Seconds between RC keepalive checks
 """
 
 
