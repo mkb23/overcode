@@ -186,8 +186,14 @@ class TestSisterControllerMethods:
 
     def test_launch_agent(self):
         with self._mock_request("POST", "/api/agents/launch",
-                                {"directory": "/tmp", "name": "a1", "prompt": "do stuff", "permissions": "normal"}):
+                                {"directory": "/tmp", "name": "a1", "prompt": "do stuff", "permissions": "normal", "provider": "web"}):
             r = self.ctrl.launch_agent(self.url, self.key, "/tmp", "a1", prompt="do stuff")
+        assert r.ok
+
+    def test_launch_agent_bedrock(self):
+        with self._mock_request("POST", "/api/agents/launch",
+                                {"directory": "/tmp", "name": "a1", "prompt": None, "permissions": "bypass", "provider": "bedrock"}):
+            r = self.ctrl.launch_agent(self.url, self.key, "/tmp", "a1", permissions="bypass", provider="bedrock")
         assert r.ok
 
     def test_set_standing_orders(self):

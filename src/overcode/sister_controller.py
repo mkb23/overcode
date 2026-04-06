@@ -112,12 +112,14 @@ class SisterController:
         directory: str, name: str,
         prompt: Optional[str] = None,
         permissions: str = "normal",
+        provider: str = "web",
     ) -> ControlResult:
         return self._request(
             "POST", sister_url, api_key,
             "/api/agents/launch",
             {"directory": directory, "name": name,
-             "prompt": prompt, "permissions": permissions},
+             "prompt": prompt, "permissions": permissions,
+             "provider": provider},
         )
 
     def fork_agent(

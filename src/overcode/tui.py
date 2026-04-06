@@ -2936,6 +2936,7 @@ class SupervisorTUI(
                 directory=directory or ".",
                 name=agent_name,
                 permissions=permissions,
+                provider=message.provider,
             )
         except Exception as e:
             _log.error("Remote launch exception: %s", e, exc_info=True)

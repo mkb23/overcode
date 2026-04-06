@@ -59,6 +59,7 @@ _FIXED_CONTROL_ROUTES = {
     ("POST", "/api/agents/launch"): lambda api, ts, body: api.launch_agent(
         ts, directory=body.get("directory", "."), name=body.get("name", ""),
         prompt=body.get("prompt"), permissions=body.get("permissions", "normal"),
+        provider=body.get("provider", "web"),
     ),
     ("POST", "/api/agents/transport"): lambda api, ts, body: api.transport_all(ts),
     ("POST", "/api/agents/cleanup"): lambda api, ts, body: api.cleanup_agents(

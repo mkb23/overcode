@@ -44,6 +44,8 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[Remote Agent: Name] ", "Enter agent name..."
     elif mode == "new_remote_agent_perms":
         return "[Remote Agent: Permissions] ", "Type 'bypass' or 'skip', or Enter for normal..."
+    elif mode == "new_remote_agent_provider":
+        return "[Remote Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
     elif mode == "fork_name":
         return "[Fork: Name] ", "Enter name for forked agent (or Enter to accept default)..."
     elif mode == "standing_orders":
@@ -129,12 +131,13 @@ class CommandBar(Static):
 
     class NewRemoteAgentRequested(Message):
         """Message sent when user wants to launch a remote agent on a sister (#310)."""
-        def __init__(self, sister_name: str, agent_name: str, directory: Optional[str] = None, permissions: str = "normal"):
+        def __init__(self, sister_name: str, agent_name: str, directory: Optional[str] = None, permissions: str = "normal", provider: str = "web"):
             super().__init__()
             self.sister_name = sister_name
             self.agent_name = agent_name
             self.directory = directory
             self.permissions = permissions
+            self.provider = provider
 
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
@@ -276,6 +279,10 @@ class CommandBar(Static):
                 return
             elif self.mode == "new_remote_agent_perms":
                 self._handle_remote_agent_perms(text)
+                event.input.value = ""
+                return
+            elif self.mode == "new_remote_agent_provider":
+                self._handle_remote_agent_provider(text)
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
@@ -587,29 +594,54 @@ class CommandBar(Static):
         self._update_target_label()
 
     def _handle_remote_agent_perms(self, text: str) -> None:
-        """Handle permissions input and post remote agent message."""
+        """Handle permissions input, then move to provider step."""
         import logging
         _log = logging.getLogger("overcode.tui.sister")
         perms = text.lower().strip()
         if perms in ("bypass", "!"):
-            permissions = "bypass"
+            self.new_agent_bypass = True
+            self._remote_agent_permissions = "bypass"
         elif perms in ("skip", "deny"):
-            permissions = "skip"
+            self.new_agent_bypass = False
+            self._remote_agent_permissions = "skip"
         else:
-            permissions = "normal"
+            self.new_agent_bypass = False
+            self._remote_agent_permissions = "normal"
 
-        _log.info("Remote agent perms=%s, posting NewRemoteAgentRequested (sister=%s name=%s dir=%s)",
-                   permissions, self.new_remote_sister, self.new_agent_name, self.new_agent_dir)
+        _log.info("Remote agent perms=%s, moving to provider step", self._remote_agent_permissions)
+        self.mode = "new_remote_agent_provider"
+        self._update_target_label()
+        # Pre-fill from defaults
+        from overcode.config import get_new_agent_defaults
+        defaults = get_new_agent_defaults()
+        input_widget = self.query_one("#cmd-input", Input)
+        input_widget.value = defaults.get("provider", "")
+
+    def _handle_remote_agent_provider(self, text: str) -> None:
+        """Handle provider input and post remote agent message."""
+        import logging
+        _log = logging.getLogger("overcode.tui.sister")
+        provider_text = text.lower().strip()
+        if provider_text in ("bedrock", "b"):
+            provider = "bedrock"
+        else:
+            provider = "web"
+
+        permissions = getattr(self, '_remote_agent_permissions', 'normal')
+        _log.info("Remote agent provider=%s, posting NewRemoteAgentRequested (sister=%s name=%s dir=%s perms=%s)",
+                   provider, self.new_remote_sister, self.new_agent_name, self.new_agent_dir, permissions)
         self.post_message(self.NewRemoteAgentRequested(
             sister_name=self.new_remote_sister,
             agent_name=self.new_agent_name,
             directory=self.new_agent_dir,
             permissions=permissions,
+            provider=provider,
         ))
         # Reset state
         self.new_remote_sister = None
         self.new_agent_dir = None
         self.new_agent_name = None
+        self._remote_agent_permissions = None
         self.mode = "send"
         self._update_target_label()
 

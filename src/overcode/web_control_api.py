@@ -172,6 +172,7 @@ def launch_agent(
     name: str,
     prompt: Optional[str] = None,
     permissions: str = "normal",
+    provider: str = "web",
 ) -> dict:
     """Launch a new agent."""
     import io
@@ -204,6 +205,7 @@ def launch_agent(
             initial_prompt=prompt,
             skip_permissions=skip_permissions,
             dangerously_skip_permissions=dangerously_skip,
+            provider=provider,
         )
 
     if session:
