@@ -468,6 +468,9 @@ def tmux_layout(
     uninstall: Annotated[
         bool, typer.Option("--uninstall", help="Remove overcode tmux keybindings and exit")
     ] = False,
+    restart: Annotated[
+        bool, typer.Option("--restart", help="Restart the monitor daemon and web server on launch")
+    ] = False,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip the first-run confirmation prompt")
     ] = False,
@@ -640,6 +643,8 @@ def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
     # and respawning the top pane on relaunch.
     overcode_cmd = _find_overcode_cmd()
     monitor_cmd = f"{overcode_cmd} monitor --session {session} --sync-target {linked}"
+    if restart:
+        monitor_cmd += " --restart"
 
     # Check if the split window already exists in the overcode session
     existing = _find_existing_split_window(oc_session)

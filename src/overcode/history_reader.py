@@ -511,22 +511,27 @@ def read_session_file_stats(
                                     pass
 
                         message = data.get("message", {})
-                        model = message.get("model")
-                        if model:
-                            totals["model"] = model
                         usage = message.get("usage", {})
                         if usage:
                             input_tokens = usage.get("input_tokens", 0)
+                            output_tokens = usage.get("output_tokens", 0)
                             cache_read = usage.get("cache_read_input_tokens", 0)
-                            totals["input_tokens"] += input_tokens
-                            totals["output_tokens"] += usage.get("output_tokens", 0)
-                            totals["cache_creation_tokens"] += usage.get(
+                            cache_creation = usage.get(
                                 "cache_creation_input_tokens", 0
                             )
+                            totals["input_tokens"] += input_tokens
+                            totals["output_tokens"] += output_tokens
+                            totals["cache_creation_tokens"] += cache_creation
                             totals["cache_read_tokens"] += cache_read
                             context_size = input_tokens + cache_read
                             if context_size > 0:
                                 totals["current_context_tokens"] = context_size
+                            # Only track model from messages with actual API usage
+                            # (skips synthetic error messages with zero tokens)
+                            if input_tokens + output_tokens + cache_creation + cache_read > 0:
+                                model = message.get("model")
+                                if model:
+                                    totals["model"] = model
 
                     elif msg_type == "user":
                         # Check if this is an actual user prompt (not a tool result)
