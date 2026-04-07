@@ -193,6 +193,18 @@ def launch_agent(
 
     skip_permissions, dangerously_skip = perm_map[permissions]
 
+    # Create directory if it doesn't exist (parity with local agent flow)
+    from pathlib import Path
+    dir_path = Path(directory).expanduser().resolve()
+    if not dir_path.exists():
+        try:
+            dir_path.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise ControlError(f"Failed to create directory: {e}", status=400)
+    if not dir_path.is_dir():
+        raise ControlError(f"Not a directory: {dir_path}", status=400)
+    directory = str(dir_path)
+
     sm = SessionManager()
     launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
 

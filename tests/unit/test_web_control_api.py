@@ -235,12 +235,15 @@ class TestLaunchAgent:
         result = launch_agent("agents", "/tmp/project", "new-agent")
 
         assert result == {"ok": True, "session_id": "new-sess"}
+        from pathlib import Path
+        expected_dir = str(Path("/tmp/project").resolve())
         launcher.launch.assert_called_once_with(
             name="new-agent",
-            start_directory="/tmp/project",
+            start_directory=expected_dir,
             initial_prompt=None,
             skip_permissions=False,
             dangerously_skip_permissions=False,
+            provider="web",
         )
 
     @patch(LAUNCHER_PATH)
@@ -251,12 +254,15 @@ class TestLaunchAgent:
 
         launch_agent("agents", "/tmp", "agent", permissions="permissive")
 
+        from pathlib import Path
+        expected_dir = str(Path("/tmp").resolve())
         launcher.launch.assert_called_once_with(
             name="agent",
-            start_directory="/tmp",
+            start_directory=expected_dir,
             initial_prompt=None,
             skip_permissions=True,
             dangerously_skip_permissions=False,
+            provider="web",
         )
 
     def test_invalid_permissions_raises_400(self):
