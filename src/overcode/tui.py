@@ -1678,7 +1678,7 @@ class SupervisorTUI(
 
         # Check if any agent has a model set
         any_has_model = any(
-            (s.model or getattr(s.stats, 'model', None))
+            s.model
             for s in self.sessions
         )
 

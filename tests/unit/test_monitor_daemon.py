@@ -385,6 +385,7 @@ class TestSyncClaudeCodeStats:
         mock_stats.output_tokens = 2000
         mock_stats.cache_creation_tokens = 100
         mock_stats.cache_read_tokens = 50
+        mock_stats.model = "claude-sonnet-4-6"
 
         monkeypatch.setattr(
             'overcode.monitor_daemon.get_session_stats',

@@ -298,7 +298,7 @@ class SessionSummary(Static, can_focus=True):
             pr_number=self.pr_number,
             any_has_pr=self.any_has_pr,
             # Model
-            model=s.model or getattr(s.stats, 'model', '') or "",
+            model=s.model or "",
             any_has_model=self.any_has_model,
             # Provider
             any_has_provider=self.any_has_provider,

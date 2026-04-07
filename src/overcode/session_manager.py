@@ -39,7 +39,6 @@ class SessionStats:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     current_context_tokens: int = 0  # Current context window usage
-    model: Optional[str] = None  # Most recently seen model name
     last_stats_update: Optional[str] = None  # ISO timestamp of last stats sync
 
     # State tracking
@@ -187,6 +186,12 @@ class Session:
         }
         if not all(k in data for k in required):
             return None
+
+        # Backward compat: migrate stats.model → session.model
+        if 'stats' in data and isinstance(data['stats'], dict):
+            stats_model = data['stats'].get('model')
+            if stats_model and not data.get('model'):
+                data['model'] = stats_model
 
         # Handle stats separately (nested dataclass needs manual conversion)
         if 'stats' in data and isinstance(data['stats'], dict):

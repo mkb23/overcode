@@ -1115,7 +1115,7 @@ def build_cli_context(
         sleep_wake_estimate=sleep_wake_estimate,
         pr_number=pr_number,
         any_has_pr=any_has_pr,
-        model=getattr(session, 'model', '') or getattr(getattr(session, 'stats', None), 'model', '') or '',
+        model=getattr(session, 'model', '') or '',
         any_has_model=any_has_model,
         any_has_provider=any_has_provider,
         source_host=getattr(session, 'source_host', ''),

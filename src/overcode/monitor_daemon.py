@@ -470,8 +470,7 @@ class MonitorDaemon:
             next_heartbeat_due=next_heartbeat_due,
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
-            # Model — prefer detected model from history over CLI-configured model
-            model=stats.model or session.model,
+            model=session.model,
             provider=session.provider,
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
@@ -737,10 +736,14 @@ class MonitorDaemon:
                 stats.cache_read_tokens,
             )
 
+            # Update session-level model if detected from history files
+            if stats.model and stats.model != session.model:
+                self.session_manager.update_session(session.id, model=stats.model)
+
             # Estimate cost using per-model pricing (falls back to global config)
             from .settings import get_user_config, get_model_pricing
             config = get_user_config()
-            mp = get_model_pricing(session.model, config)
+            mp = get_model_pricing(stats.model or session.model, config)
             cost_estimate = calculate_cost_estimate(
                 stats.input_tokens,
                 stats.output_tokens,
@@ -762,7 +765,6 @@ class MonitorDaemon:
                 cache_read_tokens=stats.cache_read_tokens,
                 estimated_cost_usd=round(cost_estimate, 4),
                 current_context_tokens=stats.current_context_tokens,
-                model=stats.model,
                 last_stats_update=now.isoformat(),
             )
         except Exception as e:
