@@ -606,12 +606,12 @@ def tmux_layout(
         raise typer.Exit(1)
 
     try:
-        _tmux_layout_locked(session, ratio, rprint)
+        _tmux_layout_locked(session, ratio, rprint, restart=restart)
     finally:
         _release_setup_lock()
 
 
-def _tmux_layout_locked(session: str, ratio: int, rprint) -> None:
+def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = False) -> None:
     """Create or re-attach to the tmux split layout. Called under setup lock."""
     in_tmux = os.environ.get("TMUX")
 
