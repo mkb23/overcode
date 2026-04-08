@@ -14,6 +14,7 @@ from .daemon_status_bar import DaemonStatusBar
 from .status_timeline import StatusTimeline
 from .session_summary import SessionSummary
 from .command_bar import CommandBar
+from .modal_base import ModalBase
 from .summary_config_modal import SummaryConfigModal
 from .new_agent_defaults_modal import NewAgentDefaultsModal
 from .agent_select_modal import AgentSelectModal

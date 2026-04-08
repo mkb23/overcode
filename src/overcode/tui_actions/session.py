@@ -654,24 +654,8 @@ class SessionActionsMixin:
         """Execute transport/handover instructions to all sessions."""
         from ..launcher import ClaudeLauncher
 
-        # The handover instruction to send to each agent
-        handover_instruction = (
-            "Please prepare for handover. Follow these steps in order:\n\n"
-            "1. Check your current branch with `git branch --show-current`\n"
-            "   - If on main or master, create and switch to a new branch:\n"
-            "     `git checkout -b handover/<brief-task-description>`\n"
-            "   - Never push directly to main/master\n\n"
-            "2. Commit all your current changes with a descriptive commit message\n\n"
-            "3. Push to your branch: `git push -u origin <branch-name>`\n\n"
-            "4. Check if a PR exists: `gh pr list --head $(git branch --show-current)`\n"
-            "   - If no PR exists, create a draft PR:\n"
-            "     `gh pr create --draft --title '<brief title>' --body 'WIP'`\n\n"
-            "5. Post a handover comment on the PR using `gh pr comment` with:\n"
-            "   - What you've accomplished\n"
-            "   - Current state of the work\n"
-            "   - Any pending tasks or next steps\n"
-            "   - Known issues or blockers"
-        )
+        from ..standing_instructions import HANDOVER_INSTRUCTION
+        handover_instruction = HANDOVER_INSTRUCTION
 
         launcher = ClaudeLauncher(
             tmux_session=self.tmux_session,

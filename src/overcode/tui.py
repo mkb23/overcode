@@ -261,6 +261,7 @@ class SupervisorTUI(
         self.max_name_width: int = 10
         self.all_names_match_repos: bool = False
         self.column_widths: list = []  # Per-cell column widths for alignment
+        self._column_widths_dirty: bool = True  # Recompute on first render
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -336,6 +337,8 @@ class SupervisorTUI(
         self._notifier = MacNotifier(mode=self._prefs.notifications)
         # Cache of terminated sessions (killed during this TUI session)
         self._terminated_sessions: dict[str, Session] = {}
+        self._terminated_times: dict[str, float] = {}  # session_id -> monotonic time
+        self._TERMINATED_GC_SECONDS: float = 600.0  # 10 minutes
 
         # Usage monitor (Claude Code subscription limits)
         self._usage_monitor = UsageMonitor()
@@ -759,6 +762,7 @@ class SupervisorTUI(
         """Recalculate max name/repo/branch widths and name-match flag.
 
         Returns True if any width or flag actually changed.
+        Also marks column widths dirty when changes are detected.
         """
         old = (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
         sessions = list(sessions)
@@ -780,23 +784,32 @@ class SupervisorTUI(
             self.max_repo_width = 10
             self.max_branch_width = 10
             self.all_names_match_repos = False
-        return old != (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
+        changed = old != (self.max_name_width, self.max_repo_width, self.max_branch_width, self.all_names_match_repos)
+        if changed:
+            self._column_widths_dirty = True
+        return changed
 
-    def _recompute_cell_column_widths(self) -> None:
+    def _recompute_cell_column_widths(self, force: bool = False) -> None:
         """Recompute per-cell column widths across all visible widgets.
 
         Collects render_summary_cells() output from every SessionSummary
         widget, then computes max visual width per column position. Stored
         as self.column_widths for use by widget render() via pad_and_join_cells().
 
+        Skips recomputation if not dirty (no structural changes since last call)
+        unless force=True.
+
         This ensures all widgets align perfectly regardless of content width.
         Same compute_column_widths() function is used by CLI's align_summary_rows(),
         so testing `overcode list` validates the TUI alignment code.
         """
+        if not force and not self._column_widths_dirty:
+            return
         from .summary_columns import render_summary_cells, compute_column_widths
         widgets = list(self.query(SessionSummary))
         if not widgets:
             self.column_widths = []
+            self._column_widths_dirty = False
             return
         all_cells = []
         for w in widgets:
@@ -804,6 +817,7 @@ class SupervisorTUI(
             cells = render_summary_cells(ctx, column_filter=w.column_visible)
             all_cells.append(cells)
         self.column_widths = compute_column_widths(all_cells)
+        self._column_widths_dirty = False
         # Update column headers if visible
         self._update_column_headers()
 
@@ -1533,8 +1547,23 @@ class SupervisorTUI(
         self._notifier.flush()
         self._mark_event("apply_status_end")
 
+    def _gc_terminated_sessions(self) -> None:
+        """Remove terminated sessions older than _TERMINATED_GC_SECONDS."""
+        if not self._terminated_times:
+            return
+        import time as _time
+        now = _time.monotonic()
+        expired = [
+            sid for sid, t in self._terminated_times.items()
+            if (now - t) > self._TERMINATED_GC_SECONDS
+        ]
+        for sid in expired:
+            del self._terminated_sessions[sid]
+            del self._terminated_times[sid]
+
     def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
+        self._gc_terminated_sessions()
         self._mark_event("apply_stats_start")
         changed_widgets = []
         for widget in self.query(SessionSummary):
@@ -1549,6 +1578,7 @@ class SupervisorTUI(
             if claude_stats is not None or git_diff is not None:
                 changed_widgets.append(widget)
         if changed_widgets:
+            self._column_widths_dirty = True
             self._recompute_cell_column_widths()
             for widget in changed_widgets:
                 widget.refresh()
@@ -1766,6 +1796,7 @@ class SupervisorTUI(
                     if changed:
                         widget.refresh()
             # Recompute cell column widths for alignment after data update
+            self._column_widths_dirty = True
             self._recompute_cell_column_widths()
             # Still reorder widgets to handle sort mode changes
             self._reorder_session_widgets(container)
@@ -1837,6 +1868,7 @@ class SupervisorTUI(
         # This must run after any structural changes AND after sort mode changes
         self._reorder_session_widgets(container)
         # Recompute cell column widths for alignment after structural changes
+        self._column_widths_dirty = True
         self._recompute_cell_column_widths()
         self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
 
@@ -3066,7 +3098,9 @@ class SupervisorTUI(
             self.notify(f"Killed agent: {session_name}", severity="information")
 
             # Store in terminated sessions cache for ghost mode
+            import time as _time
             self._terminated_sessions[session_id] = terminated_session
+            self._terminated_times[session_id] = _time.monotonic()
 
             # Remove from self.sessions so j/k ordering stays consistent
             self.sessions = [s for s in self.sessions if s.id != session_id]
@@ -3100,6 +3134,7 @@ class SupervisorTUI(
         # Remove from caches
         if session_id in self._terminated_sessions:
             del self._terminated_sessions[session_id]
+        self._terminated_times.pop(session_id, None)
         if session_id in self._sessions_cache:
             del self._sessions_cache[session_id]
         # Remove the widget
@@ -3240,6 +3275,7 @@ class SupervisorTUI(
         # Remove from terminated cache
         if session.id in self._terminated_sessions:
             del self._terminated_sessions[session.id]
+        self._terminated_times.pop(session.id, None)
 
         resume_info = " (resuming session)" if session.active_claude_session_id else ""
         self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
@@ -3279,6 +3315,7 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             widget.column_overrides = new_overrides
             widget.refresh()
+        self._column_widths_dirty = True
         self._recompute_cell_column_widths()
 
         self.notify(f"Column config saved for {level}", severity="information")
@@ -3292,6 +3329,7 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             widget.column_overrides = original_overrides
             widget.refresh()
+        self._column_widths_dirty = True
         self._recompute_cell_column_widths()
         self._dialog_did_close()
 

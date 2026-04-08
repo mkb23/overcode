@@ -9,7 +9,6 @@ Updates live summary lines as you toggle groups/columns.
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 
-from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
@@ -18,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from ..summary_groups import SUMMARY_GROUPS, SUMMARY_GROUPS_BY_ID
 from ..summary_columns import SUMMARY_COLUMNS, SummaryColumn, resolve_column_visible
+from .modal_base import ModalBase
 
 
 # Build group -> columns mapping
@@ -28,7 +28,7 @@ def _columns_by_group() -> Dict[str, List[SummaryColumn]]:
     return result
 
 
-class SummaryConfigModal(Static, can_focus=True):
+class SummaryConfigModal(ModalBase):
     """Modal dialog for configuring per-level column visibility.
 
     Groups with individual columns always shown.
@@ -53,8 +53,6 @@ class SummaryConfigModal(Static, can_focus=True):
         self.overrides: Dict[str, bool] = {}
         self.original_overrides: Dict[str, bool] = {}
         self.cursor_pos: int = 0
-        self._app_ref: Optional[Any] = None
-        self._previous_focus: Optional[Any] = None
         self._cols_by_group = _columns_by_group()
         self._flat_rows: List[Tuple[str, str]] = []
         self._rebuild_flat_rows()
@@ -246,16 +244,6 @@ class SummaryConfigModal(Static, can_focus=True):
             current = self._col_effective(row_id)
             self.overrides[row_id] = not current
 
-    def _hide(self) -> None:
-        """Hide the modal and restore focus."""
-        self.remove_class("visible")
-        if self._previous_focus is not None:
-            try:
-                self._previous_focus.focus()
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to restore focus: %s", e)
-        self._previous_focus = None
-
     def _apply_config(self) -> None:
         """Apply the current configuration."""
         # Clean up overrides that match defaults (no need to store them)
@@ -278,15 +266,9 @@ class SummaryConfigModal(Static, can_focus=True):
         self.level = level
         self.overrides = dict(overrides)
         self.original_overrides = dict(overrides)
-        self._app_ref = app_ref
-        self._previous_focus = None
-        if app_ref:
-            try:
-                self._previous_focus = app_ref.focused
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to save focus: %s", e)
         self.cursor_pos = 0
         self._rebuild_flat_rows()
+        self._save_focus(app_ref)
         self.refresh()
         self.add_class("visible")
         try:

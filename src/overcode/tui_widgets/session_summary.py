@@ -145,27 +145,46 @@ class SessionSummary(Static, can_focus=True):
         self.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
         self.refresh()
 
-    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None) -> None:
+    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None) -> bool:
         """Apply pre-fetched status data without triggering refresh.
 
         Used for batched updates where the caller will refresh once at the end.
         All data including claude_stats should be pre-fetched in background thread.
+
+        Returns True if any data actually changed (caller should refresh).
         """
-        self.current_activity = activity
+        changed = False
+
+        if self.current_activity != activity:
+            self.current_activity = activity
+            changed = True
 
         # Use pane content from detect_status (already fetched)
         if content:
             # Keep all lines including blanks for proper formatting, just strip trailing blanks
             lines = content.rstrip().split('\n')
-            self.pane_content = lines if lines else []
+            new_pane = lines if lines else []
             # Pure extraction — results stored as widget vars, never on session
             extracted = extract_from_pane(content)
-            self.background_bash_count = extracted.background_bash_count
-            self.live_subagent_count = extracted.live_subagent_count
+            if self.pane_content != new_pane:
+                self.pane_content = new_pane
+                changed = True
+            if self.background_bash_count != extracted.background_bash_count:
+                self.background_bash_count = extracted.background_bash_count
+                changed = True
+            if self.live_subagent_count != extracted.live_subagent_count:
+                self.live_subagent_count = extracted.live_subagent_count
+                changed = True
         else:
-            self.pane_content = []
-            self.background_bash_count = 0
-            self.live_subagent_count = 0
+            if self.pane_content:
+                self.pane_content = []
+                changed = True
+            if self.background_bash_count != 0:
+                self.background_bash_count = 0
+                changed = True
+            if self.live_subagent_count != 0:
+                self.live_subagent_count = 0
+                changed = True
 
         # Update detected status for display
         # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
@@ -183,17 +202,24 @@ class SessionSummary(Static, can_focus=True):
         # (e.g. running ↔ running_heartbeat) don't reset the timer.
         if get_status_color(new_status) != get_status_color(self._last_known_status):
             self._status_changed_at = datetime.now()
+            changed = True
         self._last_known_status = new_status
 
-        self.detected_status = new_status
+        if self.detected_status != new_status:
+            self.detected_status = new_status
+            changed = True
 
         # Use pre-fetched claude stats (no file I/O on main thread)
         if claude_stats is not None:
             self.claude_stats = claude_stats
+            changed = True
 
         # Use pre-fetched git diff stats
         if git_diff_stats is not None:
             self.git_diff_stats = git_diff_stats
+            changed = True
+
+        return changed
 
     def watch_summary_detail(self, summary_detail: str) -> None:
         """Called when summary_detail changes"""

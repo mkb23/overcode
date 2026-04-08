@@ -205,55 +205,53 @@ class SummarizerComponent:
         self, session, summary: AgentSummary, content: str, status: str, now: datetime
     ) -> None:
         """Update the short (current activity) summary."""
-        try:
-            result = self._client.summarize(
-                pane_content=content,
-                previous_summary=summary.text,
-                current_status=status,
-                lines=self.config.lines,
-                max_tokens=50,  # Aggressive limit for terse output
-                mode="short",
-            )
-
-            self.total_calls += 1
-            self._accumulate_cost()
-
-            if result and result.strip().upper() != "UNCHANGED":
-                summary.text = result.strip()
-                summary.updated_at = now.isoformat()
-                logger.debug(f"Updated short summary for {session.name}: {result[:50]}...")
-
-            self._last_update[session.id] = now
-
-        except Exception as e:
-            logger.warning(f"Short summary error for {session.name}: {e}")
+        self._update_summary(session, summary, content, status, now, mode="short")
 
     def _update_context_summary(
         self, session, summary: AgentSummary, content: str, status: str, now: datetime
     ) -> None:
         """Update the context (wider context) summary."""
+        self._update_summary(session, summary, content, status, now, mode="context")
+
+    def _update_summary(
+        self, session, summary: AgentSummary, content: str, status: str, now: datetime,
+        mode: str = "short",
+    ) -> None:
+        """Update a summary field (short or context) via the AI client."""
+        is_short = mode == "short"
+        previous = summary.text if is_short else summary.context
+        max_tokens = 50 if is_short else 75
+
         try:
             result = self._client.summarize(
                 pane_content=content,
-                previous_summary=summary.context,
+                previous_summary=previous,
                 current_status=status,
                 lines=self.config.lines,
-                max_tokens=75,  # Aggressive limit for terse output
-                mode="context",
+                max_tokens=max_tokens,
+                mode=mode,
             )
 
             self.total_calls += 1
             self._accumulate_cost()
 
             if result and result.strip().upper() != "UNCHANGED":
-                summary.context = result.strip()
-                summary.context_updated_at = now.isoformat()
-                logger.debug(f"Updated context summary for {session.name}: {result[:50]}...")
+                stripped = result.strip()
+                if is_short:
+                    summary.text = stripped
+                    summary.updated_at = now.isoformat()
+                else:
+                    summary.context = stripped
+                    summary.context_updated_at = now.isoformat()
+                logger.debug(f"Updated {mode} summary for {session.name}: {stripped[:50]}...")
 
-            self._last_context_update[session.id] = now
+            if is_short:
+                self._last_update[session.id] = now
+            else:
+                self._last_context_update[session.id] = now
 
         except Exception as e:
-            logger.warning(f"Context summary error for {session.name}: {e}")
+            logger.warning(f"{mode.capitalize()} summary error for {session.name}: {e}")
 
     def _accumulate_cost(self) -> None:
         """Accumulate cost from the most recent API call."""

@@ -85,8 +85,9 @@ def main():
         log(session, "Server created, starting serve_forever()")
 
         # Redirect stdout/stderr AFTER setup is complete
-        sys.stdout = open(os.devnull, 'w')
-        sys.stderr = open(os.devnull, 'w')
+        _devnull = open(os.devnull, 'w')
+        sys.stdout = _devnull
+        sys.stderr = _devnull
 
         server.serve_forever()
 

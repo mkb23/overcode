@@ -392,8 +392,16 @@ def get_current_presence_state(tui_active: bool = False) -> tuple[int, float, bo
     return state, idle, locked
 
 
+_presence_cache: list[tuple[dt.datetime, int]] = []
+_presence_cache_mtime: float = 0.0
+_presence_cache_size: int = 0
+_presence_cache_hours: float = 0.0
+
+
 def read_presence_history(hours: float = 3.0) -> list[tuple[dt.datetime, int]]:
     """Read presence history from CSV file.
+
+    Uses mtime+size cache to avoid re-parsing unchanged files.
 
     Args:
         hours: How many hours of history to read (default 3)
@@ -401,9 +409,22 @@ def read_presence_history(hours: float = 3.0) -> list[tuple[dt.datetime, int]]:
     Returns:
         List of (timestamp, state) tuples, oldest first
     """
+    global _presence_cache, _presence_cache_mtime, _presence_cache_size, _presence_cache_hours
+
     log_path = default_log_path()
     if not Path(log_path).exists():
         return []
+
+    try:
+        stat = Path(log_path).stat()
+    except OSError:
+        return []
+
+    # Return cached result if file unchanged and same hours window
+    if (stat.st_mtime == _presence_cache_mtime
+            and stat.st_size == _presence_cache_size
+            and hours == _presence_cache_hours):
+        return _presence_cache
 
     cutoff = dt.datetime.now() - dt.timedelta(hours=hours)
     history = []
@@ -421,6 +442,11 @@ def read_presence_history(hours: float = 3.0) -> list[tuple[dt.datetime, int]]:
                     continue
     except (OSError, IOError):
         pass
+
+    _presence_cache = history
+    _presence_cache_mtime = stat.st_mtime
+    _presence_cache_size = stat.st_size
+    _presence_cache_hours = hours
 
     return history
 

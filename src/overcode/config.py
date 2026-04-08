@@ -9,6 +9,7 @@ Example config:
 """
 
 import socket
+import time
 from pathlib import Path
 from typing import List, Optional
 import yaml
@@ -16,27 +17,65 @@ import yaml
 
 CONFIG_PATH = Path.home() / ".overcode" / "config.yaml"
 
+# TTL-based config cache to avoid file I/O + YAML parse on every access
+_config_cache: dict | None = None
+_config_cache_time: float = 0.0
+_config_cache_mtime: float = 0.0
+_CONFIG_CACHE_TTL: float = 5.0  # seconds
+
+
+def _clear_config_cache() -> None:
+    """Clear the config cache. Useful for testing."""
+    global _config_cache, _config_cache_time, _config_cache_mtime
+    _config_cache = None
+    _config_cache_time = 0.0
+    _config_cache_mtime = 0.0
+
 
 def save_config(config: dict) -> None:
     """Save configuration dict to ~/.overcode/config.yaml."""
+    global _config_cache, _config_cache_time, _config_cache_mtime
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+    # Invalidate cache so next read picks up the write
+    _config_cache = None
+    _config_cache_time = 0.0
 
 
 def load_config() -> dict:
     """Load configuration from ~/.overcode/config.yaml.
 
     Returns empty dict if file doesn't exist or is invalid.
+    Uses a TTL + mtime cache to avoid repeated file I/O.
     """
+    global _config_cache, _config_cache_time, _config_cache_mtime
+
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_time) < _CONFIG_CACHE_TTL:
+        return _config_cache
+
     if not CONFIG_PATH.exists():
-        return {}
+        _config_cache = {}
+        _config_cache_time = now
+        return _config_cache
 
     try:
+        mtime = CONFIG_PATH.stat().st_mtime
+        # If file hasn't changed since last parse, reuse cached result
+        if _config_cache is not None and mtime == _config_cache_mtime:
+            _config_cache_time = now
+            return _config_cache
+
         with open(CONFIG_PATH) as f:
             config = yaml.safe_load(f)
-            return config if isinstance(config, dict) else {}
+            _config_cache = config if isinstance(config, dict) else {}
+            _config_cache_time = now
+            _config_cache_mtime = mtime
+            return _config_cache
     except (yaml.YAMLError, IOError):
-        return {}
+        _config_cache = {}
+        _config_cache_time = now
+        return _config_cache
 
 
 def _get_config_value(key_path: str, default=None):

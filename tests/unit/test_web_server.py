@@ -1212,7 +1212,7 @@ class TestDispatchControl:
 
         mock_fn.assert_called_once_with(
             "test-session", directory="/tmp", name="new-agent",
-            prompt="test", permissions="normal"
+            prompt="test", permissions="normal", provider="web"
         )
 
     def test_post_sleep_agent(self):

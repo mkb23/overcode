@@ -5,17 +5,15 @@ Shows the last N instructions sent to any agent, allowing the user
 to select one and reinject it into the currently focused agent (#376).
 """
 
-import logging
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Any
 
-from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
 
-logger = logging.getLogger(__name__)
+from .modal_base import ModalBase
 
 MAX_HISTORY = 10
 
@@ -31,7 +29,7 @@ class HistoryEntry:
     @property
     def preview(self) -> str:
         """Single-line preview, truncated to 60 chars."""
-        oneline = self.text.replace("\n", " ↵ ")
+        oneline = self.text.replace("\n", " \u21b5 ")
         if len(oneline) > 60:
             return oneline[:57] + "..."
         return oneline
@@ -48,7 +46,7 @@ class HistoryEntry:
             return f"{delta // 3600}h ago"
 
 
-class InstructionHistoryModal(Static, can_focus=True):
+class InstructionHistoryModal(ModalBase):
     """Modal showing recent instructions sent to agents.
 
     Navigate with j/k or up/down arrows.
@@ -70,8 +68,6 @@ class InstructionHistoryModal(Static, can_focus=True):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._entries: List[HistoryEntry] = []
-        self.selected_index: int = 0
-        self._previous_focus: Optional[Any] = None
 
     def render(self) -> Text:
         text = Text()
@@ -102,63 +98,33 @@ class InstructionHistoryModal(Static, can_focus=True):
         return text
 
     def on_key(self, event: events.Key) -> None:
-        key = event.key
         total = len(self._entries)
 
         if not total:
-            if key in ("escape", "q", "Q"):
+            if event.key in ("escape", "q", "Q"):
                 self._dismiss()
                 event.stop()
             return
 
-        if key in ("j", "down"):
-            self.selected_index = (self.selected_index + 1) % total
-            self.refresh()
-            event.stop()
+        if self._navigate(event, total):
+            return
 
-        elif key in ("k", "up"):
-            self.selected_index = (self.selected_index - 1) % total
-            self.refresh()
-            event.stop()
-
-        elif key == "enter":
+        key = event.key
+        if key == "enter":
             entry = self._entries[self.selected_index]
             self.post_message(self.ReinjectRequested(entry.text))
             self._dismiss()
             event.stop()
-
         elif key in ("escape", "q", "Q"):
             self._dismiss()
             event.stop()
 
     def _dismiss(self) -> None:
-        self.remove_class("visible")
         self.post_message(self.Cancelled())
-        if self._previous_focus is not None:
-            try:
-                self._previous_focus.focus()
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to restore focus: %s", e)
-        self._previous_focus = None
+        self._hide()
 
     def show(self, entries: List[HistoryEntry], app_ref: Optional[Any] = None) -> None:
-        """Display the modal with instruction history.
-
-        Args:
-            entries: List of HistoryEntry objects (most recent first).
-            app_ref: Reference to the app for focus management.
-        """
+        """Display the modal with instruction history."""
         self._entries = list(entries)
-        self._previous_focus = None
-        if app_ref:
-            try:
-                self._previous_focus = app_ref.focused
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to save focus: %s", e)
-        self.selected_index = 0
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except (AttributeError, Exception) as e:
-            logger.debug("Failed to focus modal: %s", e)
+        self._save_focus(app_ref)
+        self._show()
