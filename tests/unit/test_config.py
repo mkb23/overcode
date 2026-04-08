@@ -783,3 +783,45 @@ sisters:
 
         result = config.get_sisters_config()
         assert result == []
+
+
+class TestGetDispatchConfig:
+    """Test dispatch agent configuration retrieval (#23)."""
+
+    def test_returns_none_when_disabled(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("dispatch:\n  enabled: false\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_dispatch_config() is None
+
+    def test_returns_none_when_not_configured(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("tmux_session: agents\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_dispatch_config() is None
+
+    def test_returns_config_when_enabled(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("dispatch:\n  enabled: true\n  name: mybot\n  rc_keepalive_interval: 60\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_dispatch_config()
+        assert result is not None
+        assert result["name"] == "mybot"
+        assert result["rc_keepalive_interval"] == 60
+
+    def test_uses_defaults(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("dispatch:\n  enabled: true\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_dispatch_config()
+        assert result["name"] == "dispatch"
+        assert result["rc_keepalive_interval"] == 120
+        assert result["directory"].endswith(".overcode/dispatch")
+
+    def test_directory_expanded(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("dispatch:\n  enabled: true\n  directory: ~/my-dispatch\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_dispatch_config()
+        assert "~" not in result["directory"]
+        assert result["directory"].endswith("my-dispatch")
