@@ -9,6 +9,14 @@ from pathlib import Path
 from overcode import config
 
 
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    """Clear config cache before each test to prevent cross-test contamination."""
+    config._clear_config_cache()
+    yield
+    config._clear_config_cache()
+
+
 class TestLoadConfig:
     """Test config loading functionality."""
 

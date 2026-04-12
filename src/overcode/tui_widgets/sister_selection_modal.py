@@ -5,18 +5,16 @@ Allows toggling visibility of each configured sister instance.
 Disabled sisters' agents are hidden from the agent list.
 """
 
-import logging
 from typing import Dict, List, Optional, Any, Set
 
-from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
 
-logger = logging.getLogger(__name__)
+from .modal_base import ModalBase
 
 
-class SisterSelectionModal(Static, can_focus=True):
+class SisterSelectionModal(ModalBase):
     """Modal dialog for toggling sister visibility.
 
     Navigate with j/k, toggle with space/enter.
@@ -39,9 +37,6 @@ class SisterSelectionModal(Static, can_focus=True):
         self._sisters: List[Dict[str, str]] = []  # [{name, url}, ...]
         self._disabled: Set[str] = set()
         self._original_disabled: Set[str] = set()
-        self.selected_index: int = 0
-        self._app_ref: Optional[Any] = None
-        self._previous_focus: Optional[Any] = None
 
     def render(self) -> Text:
         text = Text()
@@ -79,25 +74,16 @@ class SisterSelectionModal(Static, can_focus=True):
                 event.stop()
             return
 
-        if key in ("j", "down"):
-            self.selected_index = (self.selected_index + 1) % len(self._sisters)
-            self.refresh()
-            event.stop()
+        if self._navigate(event, len(self._sisters)):
+            return
 
-        elif key in ("k", "up"):
-            self.selected_index = (self.selected_index - 1) % len(self._sisters)
-            self.refresh()
-            event.stop()
-
-        elif key in ("space", "enter"):
+        if key in ("space", "enter"):
             self._toggle_current()
             self.refresh()
             event.stop()
-
         elif key in ("a", "A"):
             self._apply()
             event.stop()
-
         elif key in ("escape", "q", "Q"):
             self._cancel()
             event.stop()
@@ -111,15 +97,6 @@ class SisterSelectionModal(Static, can_focus=True):
         else:
             self._disabled.add(name)
 
-    def _hide(self) -> None:
-        self.remove_class("visible")
-        if self._previous_focus is not None:
-            try:
-                self._previous_focus.focus()
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to restore focus: %s", e)
-        self._previous_focus = None
-
     def _apply(self) -> None:
         self.post_message(self.SelectionChanged(set(self._disabled)))
         self._hide()
@@ -131,27 +108,9 @@ class SisterSelectionModal(Static, can_focus=True):
 
     def show(self, sisters: List[Dict[str, str]], disabled: Set[str],
              app_ref: Optional[Any] = None) -> None:
-        """Display the modal with configured sisters.
-
-        Args:
-            sisters: List of dicts with 'name' and 'url' keys.
-            disabled: Set of sister names currently disabled.
-            app_ref: Reference to the app for focus management.
-        """
+        """Display the modal with configured sisters."""
         self._sisters = list(sisters)
         self._disabled = set(disabled)
         self._original_disabled = set(disabled)
-        self._app_ref = app_ref
-        self._previous_focus = None
-        if app_ref:
-            try:
-                self._previous_focus = app_ref.focused
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to save focus: %s", e)
-        self.selected_index = 0
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except (AttributeError, Exception) as e:
-            logger.debug("Failed to focus modal: %s", e)
+        self._save_focus(app_ref)
+        self._show()

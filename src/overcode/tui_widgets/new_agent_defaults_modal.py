@@ -5,15 +5,13 @@ Keyboard-navigable checkbox list to toggle bypass_permissions and agent_teams.
 Persists to ~/.overcode/config.yaml via config helpers.
 """
 
-import logging
 from typing import Optional, Any
 
-from textual.widgets import Static
 from textual.message import Message
 from textual import events
 from rich.text import Text
 
-logger = logging.getLogger(__name__)
+from .modal_base import ModalBase
 
 
 # (label, dict key)
@@ -23,7 +21,7 @@ _OPTIONS = [
 ]
 
 
-class NewAgentDefaultsModal(Static, can_focus=True):
+class NewAgentDefaultsModal(ModalBase):
     """Modal dialog for configuring new-agent defaults.
 
     Navigate with j/k or up/down arrows, toggle with space/enter.
@@ -44,9 +42,6 @@ class NewAgentDefaultsModal(Static, can_focus=True):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.defaults: dict = {"bypass_permissions": False, "agent_teams": False}
-        self.selected_index: int = 0
-        self._app_ref: Optional[Any] = None
-        self._previous_focus: Optional[Any] = None
 
     def render(self) -> Text:
         text = Text()
@@ -73,40 +68,21 @@ class NewAgentDefaultsModal(Static, can_focus=True):
         return text
 
     def on_key(self, event: events.Key) -> None:
+        if self._navigate(event, len(_OPTIONS)):
+            return
+
         key = event.key
-
-        if key in ("j", "down"):
-            self.selected_index = (self.selected_index + 1) % len(_OPTIONS)
-            self.refresh()
-            event.stop()
-
-        elif key in ("k", "up"):
-            self.selected_index = (self.selected_index - 1) % len(_OPTIONS)
-            self.refresh()
-            event.stop()
-
-        elif key in ("space", "enter"):
+        if key in ("space", "enter"):
             _, dict_key = _OPTIONS[self.selected_index]
             self.defaults[dict_key] = not self.defaults.get(dict_key, False)
             self.refresh()
             event.stop()
-
         elif key in ("a", "A"):
             self._apply()
             event.stop()
-
         elif key in ("escape", "q", "Q"):
             self._cancel()
             event.stop()
-
-    def _hide(self) -> None:
-        self.remove_class("visible")
-        if self._previous_focus is not None:
-            try:
-                self._previous_focus.focus()
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to restore focus: %s", e)
-        self._previous_focus = None
 
     def _apply(self) -> None:
         self.post_message(self.DefaultsChanged(dict(self.defaults)))
@@ -118,17 +94,5 @@ class NewAgentDefaultsModal(Static, can_focus=True):
 
     def show(self, defaults: dict, app_ref: Optional[Any] = None) -> None:
         self.defaults = dict(defaults)
-        self._app_ref = app_ref
-        self._previous_focus = None
-        if app_ref:
-            try:
-                self._previous_focus = app_ref.focused
-            except (AttributeError, Exception) as e:
-                logger.debug("Failed to save focus: %s", e)
-        self.selected_index = 0
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except (AttributeError, Exception) as e:
-            logger.debug("Failed to focus modal: %s", e)
+        self._save_focus(app_ref)
+        self._show()

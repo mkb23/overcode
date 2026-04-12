@@ -14,10 +14,12 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # Helper to build a bare StatusTimeline without the Textual app
 # ---------------------------------------------------------------------------
 
-def _make_mock_session(name="agent-1"):
+def _make_mock_session(name="agent-1", is_remote=False, source_host=""):
     """Create a minimal mock session with a name attribute."""
     mock = MagicMock()
     mock.name = name
+    mock.is_remote = is_remote
+    mock.source_host = source_host
     return mock
 
 

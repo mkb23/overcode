@@ -130,22 +130,18 @@ def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
 
 def restart_agent(tmux_session: str, name: str) -> dict:
     """Ctrl-C + relaunch with same permissions."""
-    import os
+    from .launcher import ClaudeLauncher
     from .tmux_manager import TmuxManager
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
 
-    # Build the claude command based on permissiveness mode
-    claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-    cmd_parts = [claude_command]
-
-    if session.permissiveness_mode == "bypass":
-        cmd_parts.append("--dangerously-skip-permissions")
-    elif session.permissiveness_mode == "permissive":
-        cmd_parts.extend(["--permission-mode", "dontAsk"])
-
+    # Use shared command builder to get the full claude command with all flags
+    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    cmd_parts = launcher._build_claude_command(
+        permissiveness_mode=session.permissiveness_mode,
+    )
     cmd_str = " ".join(cmd_parts)
 
     tmux = TmuxManager(tmux_session)
@@ -482,23 +478,8 @@ def transport_all(tmux_session: str) -> dict:
     if not active:
         raise ControlError("No active agents to transport", status=409)
 
-    handover_instruction = (
-        "Please prepare for handover. Follow these steps in order:\n\n"
-        "1. Check your current branch with `git branch --show-current`\n"
-        "   - If on main or master, create and switch to a new branch:\n"
-        "     `git checkout -b handover/<brief-task-description>`\n"
-        "   - Never push directly to main/master\n\n"
-        "2. Commit all your current changes with a descriptive commit message\n\n"
-        "3. Push to your branch: `git push -u origin <branch-name>`\n\n"
-        "4. Check if a PR exists: `gh pr list --head $(git branch --show-current)`\n"
-        "   - If no PR exists, create a draft PR:\n"
-        "     `gh pr create --draft --title '<brief title>' --body 'WIP'`\n\n"
-        "5. Post a handover comment on the PR using `gh pr comment` with:\n"
-        "   - What you've accomplished\n"
-        "   - Current state of the work\n"
-        "   - Any pending tasks or next steps\n"
-        "   - Known issues or blockers"
-    )
+    from .standing_instructions import HANDOVER_INSTRUCTION
+    handover_instruction = HANDOVER_INSTRUCTION
 
     success_count = 0
     for session in active:
