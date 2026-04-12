@@ -280,6 +280,23 @@ NewAgentDefaultsModal.visible {
     display: block;
 }
 
+/* New Agent Modal (unified launch form) */
+NewAgentModal {
+    display: none;
+    layer: above;
+    offset: 4 6;
+    width: auto;
+    height: auto;
+    max-width: 80%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+NewAgentModal.visible {
+    display: block;
+}
+
 /* Agent Selection Modal */
 AgentSelectModal {
     display: none;

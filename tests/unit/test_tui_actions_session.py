@@ -1544,7 +1544,9 @@ class TestNewAgent:
         mock_tui.local_hostname = "test-host"
         mock_tui.sessions = []
 
-        SessionActionsMixin.action_new_agent(mock_tui)
+        with patch("overcode.agent_scanner.scan_agents", return_value=[]):
+            with patch("overcode.wrapper.list_available_wrappers", return_value=[]):
+                SessionActionsMixin.action_new_agent(mock_tui)
 
         mock_tui._dialog_will_open.assert_called_once()
         mock_modal.show.assert_called_once()

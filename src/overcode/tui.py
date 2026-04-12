@@ -73,6 +73,7 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    NewAgentModal,
     AgentSelectModal,
     SisterSelectionModal,
     NewAgentModal,
@@ -403,6 +404,8 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
+        # Modal for new agent creation (unified form)
+        yield NewAgentModal(id="new-agent-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for new agent creation (unified form)
@@ -2912,6 +2915,41 @@ class SupervisorTUI(
             except Exception as e:
                 self.notify(f"Failed to create agent: {e}", severity="error")
 
+        self._dialog_did_close()
+
+    def on_new_agent_modal_cancelled(self, message: NewAgentModal.Cancelled) -> None:
+        """Handle cancel from new-agent modal."""
+        self._dialog_did_close()
+
+    def on_new_agent_modal_launch_requested(self, message: NewAgentModal.LaunchRequested) -> None:
+        """Handle launch from the unified new-agent modal."""
+        name = message.name
+        if not name or len(name) > 50 or ' ' in name:
+            self.notify("Invalid agent name", severity="error")
+            self._dialog_did_close()
+            return
+
+        launcher = ClaudeLauncher(
+            tmux_session=self.tmux_session,
+            session_manager=self.session_manager,
+        )
+        try:
+            launcher.launch(
+                name=name,
+                start_directory=message.directory,
+                dangerously_skip_permissions=message.bypass_permissions,
+                agent_teams=message.agent_teams,
+                claude_agent=message.claude_agent,
+                provider=message.provider or "web",
+                wrapper=message.wrapper,
+            )
+            parts = [f"Created agent: {name}"]
+            if message.wrapper:
+                parts.append(f"wrapper: {message.wrapper}")
+            self.notify(" ".join(parts), severity="information")
+            self.refresh_sessions()
+        except Exception as e:
+            self.notify(f"Failed to create agent: {e}", severity="error")
         self._dialog_did_close()
 
     def on_new_agent_modal_cancelled(self, message: NewAgentModal.Cancelled) -> None:

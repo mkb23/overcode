@@ -507,6 +507,7 @@ class SessionActionsMixin:
         from ..tui_widgets import NewAgentModal
         from ..config import get_new_agent_defaults, get_sisters_config
         from ..agent_scanner import scan_agents
+        from ..wrapper import list_available_wrappers
 
         try:
             modal = self.query_one("#new-agent-modal", NewAgentModal)
@@ -517,6 +518,7 @@ class SessionActionsMixin:
         directory = str(Path.cwd())
         defaults = get_new_agent_defaults()
         agents = scan_agents(directory)
+        wrappers = [name for name, _ in list_available_wrappers()]
 
         existing_names: set[str] = set()
         if hasattr(self, 'sessions'):
@@ -532,6 +534,7 @@ class SessionActionsMixin:
             existing_names=existing_names,
             local_hostname=self.local_hostname,
             sister_names=sister_names,
+            wrappers=wrappers,
             app_ref=self,
         )
 

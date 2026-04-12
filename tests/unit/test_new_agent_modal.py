@@ -2,7 +2,8 @@
 Unit tests for NewAgentModal form logic.
 
 Tests the field model, cycling, name derivation, host switching,
-and launch message construction without needing a running Textual app.
+wrapper field, and launch message construction without needing a
+running Textual app.
 """
 
 import sys
@@ -56,7 +57,7 @@ class TestNewAgentModalState:
         """Create a modal and populate fields as show() would."""
         modal = self._make_modal()
         directory = kwargs.get("directory", "/Users/mike/Code/myproject")
-        defaults = kwargs.get("defaults", {"bypass_permissions": False, "agent_teams": True, "provider": "web"})
+        defaults = kwargs.get("defaults", {"bypass_permissions": False, "agent_teams": True, "provider": "web", "wrapper": ""})
         agents = kwargs.get("agents", ["coder", "reviewer"])
         existing = kwargs.get("existing_names", {"other-agent"})
         local_hostname = kwargs.get("local_hostname", "macbook")
@@ -66,6 +67,7 @@ class TestNewAgentModalState:
         default_name = _unique_name(base_name, existing)
         agent_options = ["(none)"] + agents
         host_options = [local_hostname] + sister_names
+        wrapper_default = defaults.get("wrapper", "") or ""
 
         modal._existing_names = existing
         modal._local_hostname = local_hostname
@@ -83,13 +85,14 @@ class TestNewAgentModalState:
             FormField("provider", "Provider", "toggle",
                       value=defaults.get("provider", "web"),
                       options=["web", "bedrock"]),
+            FormField("wrapper", "Wrapper", "text", value=wrapper_default),
         ]
         modal.selected_index = 2
         return modal
 
     def test_fields_populated(self):
         modal = self._make_modal_with_fields()
-        assert len(modal.fields) == 7
+        assert len(modal.fields) == 8
         assert modal._field("host").value == "macbook"
         assert modal._field("directory").value == "/Users/mike/Code/myproject"
         assert modal._field("name").value == "myproject"
@@ -97,6 +100,7 @@ class TestNewAgentModalState:
         assert modal._field("agent").options == ["(none)", "coder", "reviewer"]
         assert modal._field("perms").value == "normal"
         assert modal._field("teams").value == "on"
+        assert modal._field("wrapper").value == ""
 
     def test_host_field_includes_sisters(self):
         modal = self._make_modal_with_fields(sister_names=["desktop", "server"])
@@ -169,6 +173,16 @@ class TestNewAgentModalState:
         # Switch back to local
         modal._cycle(host)
         assert modal._field("directory").value != "."
+
+    def test_wrapper_field_with_default(self):
+        modal = self._make_modal_with_fields(
+            defaults={"bypass_permissions": False, "agent_teams": False, "provider": "web", "wrapper": "devcontainer"},
+        )
+        assert modal._field("wrapper").value == "devcontainer"
+
+    def test_wrapper_field_empty_by_default(self):
+        modal = self._make_modal_with_fields()
+        assert modal._field("wrapper").value == ""
 
     def test_confirm_edit_clears_auto(self):
         modal = self._make_modal_with_fields()
