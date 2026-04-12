@@ -391,6 +391,7 @@ def get_new_agent_defaults() -> dict:
         "bypass_permissions": bool(defaults.get("bypass_permissions", False)),
         "agent_teams": bool(defaults.get("agent_teams", False)),
         "provider": defaults.get("provider", "web"),
+        "wrapper": defaults.get("wrapper", ""),
     }
 
 

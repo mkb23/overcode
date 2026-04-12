@@ -216,6 +216,10 @@ def launch(
         Optional[str],
         typer.Option("--provider", "-P", help="API provider: 'web' (Claude.ai OAuth) or 'bedrock' (AWS Bedrock)"),
     ] = None,
+    wrapper: Annotated[
+        Optional[str],
+        typer.Option("--wrapper", "-w", help="Wrapper script (path or name from ~/.overcode/wrappers/)"),
+    ] = None,
     sister: Annotated[
         Optional[str],
         typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
@@ -275,13 +279,20 @@ def launch(
     oversight_policy, oversight_timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
 
     # Resolve provider: CLI flag > config default > "web"
+    from ..config import get_new_agent_defaults
+    agent_defaults = get_new_agent_defaults()
+
     resolved_provider = provider
     if resolved_provider is None:
-        from ..config import get_new_agent_defaults
-        resolved_provider = get_new_agent_defaults().get("provider", "web")
+        resolved_provider = agent_defaults.get("provider", "web")
     if resolved_provider not in ("web", "bedrock"):
         rprint(f"[red]Error: Invalid provider '{resolved_provider}'. Use: web, bedrock[/red]")
         raise typer.Exit(code=1)
+
+    # Resolve wrapper: CLI flag > config default > None
+    resolved_wrapper = wrapper
+    if resolved_wrapper is None:
+        resolved_wrapper = agent_defaults.get("wrapper") or None
 
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
@@ -302,6 +313,7 @@ def launch(
         claude_agent=agent,
         model=model,
         provider=resolved_provider,
+        wrapper=resolved_wrapper,
     )
 
     if result:
@@ -318,6 +330,8 @@ def launch(
             rprint(f"  Agent: {agent}")
         if teams:
             rprint("  Agent teams: enabled")
+        if resolved_wrapper:
+            rprint(f"  Wrapper: {resolved_wrapper}")
         if resolved_provider != "web":
             rprint(f"  Provider: {resolved_provider}")
         if budget is not None and budget > 0:
@@ -1126,6 +1140,8 @@ def show(
             print(f"{'Agent:':<{label_width + 1}} {sess.claude_agent}")
         if sess.agent_teams:
             print(f"{'Teams:':<{label_width + 1}} enabled")
+        if sess.wrapper:
+            print(f"{'Wrapper:':<{label_width + 1}} {sess.wrapper}")
 
         print()
 

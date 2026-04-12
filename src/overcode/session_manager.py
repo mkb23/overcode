@@ -139,6 +139,7 @@ class Session:
     claude_agent: Optional[str] = None  # Claude agent persona (from .claude/agents/)
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus", "haiku", or full name)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
+    wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
@@ -512,7 +513,8 @@ class SessionManager:
                       claude_agent: Optional[str] = None,
                       model: Optional[str] = None,
                       provider: str = "web",
-                      session_id: Optional[str] = None) -> Session:
+                      session_id: Optional[str] = None,
+                      wrapper: Optional[str] = None) -> Session:
         """Create and register a new session.
 
         Args:
@@ -550,6 +552,7 @@ class SessionManager:
             claude_agent=claude_agent,
             model=model,
             provider=provider,
+            wrapper=wrapper,
         )
 
         with self._locked_state() as state:
