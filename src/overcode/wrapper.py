@@ -81,11 +81,11 @@ WORK_DIR="${OVERCODE_WRAPPER_DIR:-.}"
 CONTAINER_NAME="${DEVCONTAINER_NAME:-overcode-${OVERCODE_SESSION_NAME:-agent}}"
 CONTAINER_SHELL="${DEVCONTAINER_SHELL:-/bin/bash}"
 
-# Default image: Microsoft devcontainer base with Node.js pre-installed.
-# Claude Code requires Node >= 18; this image ships a recent LTS and
-# common build tools so npm install -g @anthropic-ai/claude-code works
-# without extra setup.
-DEFAULT_IMAGE="mcr.microsoft.com/devcontainers/javascript-node:22-bookworm"
+# Default image: Microsoft universal devcontainer with Python, Node, Go,
+# Java, Ruby, .NET, Rust, and common build tools.  Heavier first pull
+# (~2 GB) but works for any project type out of the box.  Claude Code
+# requires Node >= 18 which is included.
+DEFAULT_IMAGE="mcr.microsoft.com/devcontainers/universal:2"
 
 # ---------------------------------------------------------------------------
 # Resolve image: explicit override > .devcontainer build > .devcontainer.json > default

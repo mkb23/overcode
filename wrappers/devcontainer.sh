@@ -67,7 +67,7 @@ print(data.get('image', ''))
     fi
 else
     # No devcontainer config at all -- use a sensible default
-    IMAGE="node:22-bookworm-slim"
+    IMAGE="mcr.microsoft.com/devcontainers/universal:2"
     echo "[devcontainer wrapper] No .devcontainer/ found, using default image: $IMAGE"
 fi
 
