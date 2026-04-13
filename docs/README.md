@@ -11,6 +11,7 @@ Welcome to the overcode documentation. Overcode is a TUI supervisor for managing
 | [CLI Reference](cli-reference.md) | Complete reference for all commands and options |
 | [Configuration](configuration.md) | Config file, environment variables, and presets |
 | [Advanced Features](advanced-features.md) | Sleep mode, handover, remote monitoring, and more |
+| [Claude Session Files](claude-session-files.md) | How token counting and cost estimation works internally |
 
 ## Quick Links
 

@@ -334,6 +334,35 @@ class HistoryFile:
         return result
 
 
+def _is_duplicate_subagent(subagent_file: Path) -> bool:
+    """Detect subagent files that duplicate parent session messages.
+
+    Claude Code's compaction (``/compact``, auto-compact) and side-question
+    (``/btw``) features write conversation logs into subagent files named
+    ``agent-acompact-*.jsonl`` or ``agent-aside_question-*.jsonl``.  When
+    the first line has ``isMeta: true``, the file is a copy of messages
+    already present in the parent session JSONL — counting its tokens
+    would double-count spend.
+
+    Small compact files (≤10 lines) without ``isMeta`` are the actual API
+    calls Claude Code made to generate the compaction summary.  Those
+    represent real, unique token usage and must still be counted.
+    """
+    name = subagent_file.name
+    if not (name.startswith("agent-acompact-") or name.startswith("agent-aside_question-")):
+        return False
+    # Read only the first line to check isMeta — fast even for huge files
+    try:
+        with open(subagent_file, 'r') as f:
+            first_line = f.readline().strip()
+        if not first_line:
+            return False
+        data = json.loads(first_line)
+        return bool(data.get("isMeta"))
+    except (IOError, json.JSONDecodeError, TypeError):
+        return False
+
+
 def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str]:
     """Read the last chunk of a file and return lines in reverse order.
 
@@ -725,6 +754,12 @@ def get_session_stats(
         subagents_dir = projects_path / encoded / sid / "subagents"
         if subagents_dir.exists():
             for subagent_file in subagents_dir.glob("agent-*.jsonl"):
+                # Skip duplicate conversation logs from compaction/side-question
+                # subagents. Claude Code writes these with isMeta=True and they
+                # contain copies of messages already in the parent session file.
+                # See docs/claude-session-files.md for details.
+                if _is_duplicate_subagent(subagent_file):
+                    continue
                 subagent_count += 1
                 if now - subagent_file.stat().st_mtime < 30:
                     live_subagent_count += 1

@@ -706,6 +706,160 @@ class TestGetSessionStatsWithSubagents:
         assert stats.output_tokens == 500
 
 
+class TestIsDuplicateSubagent:
+    """Test _is_duplicate_subagent correctly identifies duplicate logs."""
+
+    def test_regular_subagent_not_duplicate(self, tmp_path):
+        """Regular agent-a*.jsonl files are never duplicates."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-a86c0d0f1234.jsonl"
+        f.write_text(json.dumps({"type": "user", "message": {"content": "hello"}}))
+        assert _is_duplicate_subagent(f) is False
+
+    def test_compact_with_is_meta_is_duplicate(self, tmp_path):
+        """Compact files with isMeta=True are conversation log duplicates."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-acompact-c5ffb4cc2474443d.jsonl"
+        f.write_text(json.dumps({"type": "user", "isMeta": True, "message": {}}))
+        assert _is_duplicate_subagent(f) is True
+
+    def test_compact_without_is_meta_not_duplicate(self, tmp_path):
+        """Small compact files without isMeta are real compaction API calls."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-acompact-eafe41.jsonl"
+        f.write_text(json.dumps({"type": "user", "message": {"content": "summarize"}}))
+        assert _is_duplicate_subagent(f) is False
+
+    def test_side_question_with_is_meta_is_duplicate(self, tmp_path):
+        """Side-question files with isMeta=True are conversation log duplicates."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-aside_question-b655bed3.jsonl"
+        f.write_text(json.dumps({"type": "user", "isMeta": True, "message": {}}))
+        assert _is_duplicate_subagent(f) is True
+
+    def test_empty_file_not_duplicate(self, tmp_path):
+        """Empty files should not be treated as duplicates."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-acompact-empty.jsonl"
+        f.write_text("")
+        assert _is_duplicate_subagent(f) is False
+
+    def test_malformed_json_not_duplicate(self, tmp_path):
+        """Malformed JSON should not be treated as duplicate."""
+        from overcode.history_reader import _is_duplicate_subagent
+
+        f = tmp_path / "agent-acompact-bad.jsonl"
+        f.write_text("not json at all")
+        assert _is_duplicate_subagent(f) is False
+
+
+class TestGetSessionStatsSkipsDuplicateSubagents:
+    """Verify get_session_stats excludes duplicate compact/side_question logs."""
+
+    def test_skips_is_meta_compact_subagent(self, tmp_path):
+        """isMeta compact subagent tokens must not be double-counted."""
+        from overcode.history_reader import get_session_stats, encode_project_path
+
+        history_file = tmp_path / "history.jsonl"
+        session_start = datetime(2026, 1, 15, 10, 0, 0)
+        session_start_ms = int(session_start.timestamp() * 1000)
+        session_id = "main-session-dup"
+
+        history_entry = {
+            "display": "test prompt",
+            "timestamp": session_start_ms + 1000,
+            "project": "/test/project",
+            "sessionId": session_id,
+        }
+        history_file.write_text(json.dumps(history_entry))
+
+        projects_path = tmp_path / "projects"
+        encoded_path = encode_project_path("/test/project")
+        project_dir = projects_path / encoded_path
+        project_dir.mkdir(parents=True)
+
+        # Parent session: 500 input tokens
+        main_session_file = project_dir / f"{session_id}.jsonl"
+        main_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 200,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                }
+            },
+        }
+        main_session_file.write_text(json.dumps(main_entry))
+
+        subagents_dir = project_dir / session_id / "subagents"
+        subagents_dir.mkdir(parents=True)
+
+        # Duplicate compact file (isMeta=True) — should be SKIPPED
+        dup_file = subagents_dir / "agent-acompact-c5ffb4cc2474443d.jsonl"
+        dup_entry = {
+            "type": "user",
+            "isMeta": True,
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {},
+        }
+        dup_assistant = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:01:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 200,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 9000000000,
+                }
+            },
+        }
+        dup_file.write_text(
+            json.dumps(dup_entry) + "\n" + json.dumps(dup_assistant)
+        )
+
+        # Real subagent — should be COUNTED
+        real_file = subagents_dir / "agent-a1234567890abcdef.jsonl"
+        real_entry = {
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:02:00.000Z",
+            "message": {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                }
+            },
+        }
+        real_file.write_text(json.dumps(real_entry))
+
+        session = create_test_session(
+            start_directory="/test/project",
+            start_time=session_start.isoformat()
+        )
+
+        stats = get_session_stats(
+            session,
+            history_path=history_file,
+            projects_path=projects_path
+        )
+
+        # Should be main (500) + real subagent (100), NOT + duplicate (500)
+        assert stats.input_tokens == 600
+        assert stats.output_tokens == 250
+        # The 9B cache_read from the duplicate must not appear
+        assert stats.cache_read_tokens == 0
+
+
 class TestFormatTokens:
     """Test token formatting helper."""
 
