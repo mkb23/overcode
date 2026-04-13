@@ -112,6 +112,9 @@ class SessionDaemonState:
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
     provider: str = "web"  # API provider: "web" or "bedrock"
 
+    # Last user command (from history.jsonl)
+    last_command: Optional[str] = None
+
     # Oversight system
     oversight_policy: str = "wait"
     oversight_timeout_seconds: float = 0.0

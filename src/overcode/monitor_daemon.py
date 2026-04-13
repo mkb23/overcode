@@ -307,6 +307,7 @@ class MonitorDaemon:
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
+        self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
         # Stats sync throttling - None forces immediate sync on first loop
         self._last_stats_sync: Optional[datetime] = None
@@ -483,6 +484,8 @@ class MonitorDaemon:
             oversight_policy=getattr(session, 'oversight_policy', 'wait') or 'wait',
             oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
             oversight_deadline=getattr(session, 'oversight_deadline', None),
+            # Last user command (from history sync)
+            last_command=self._last_commands.get(session_id),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -739,6 +742,10 @@ class MonitorDaemon:
             # Update session-level model if detected from history files
             if stats.model and stats.model != session.model:
                 self.session_manager.update_session(session.id, model=stats.model)
+
+            # Cache last command for daemon state publishing
+            if stats.last_command:
+                self._last_commands[session.id] = stats.last_command
 
             # Estimate cost using per-model pricing (falls back to global config)
             from .settings import get_user_config, get_model_pricing

@@ -149,6 +149,7 @@ def synthesize_remote_stats(session) -> "ClaudeSessionStats":
         work_times=[mwt] if mwt > 0 else [],
         current_context_tokens=rds.get('current_context_tokens', 0),
         model=rds.get('model'),
+        last_command=rds.get('last_command'),
     )
 
 
