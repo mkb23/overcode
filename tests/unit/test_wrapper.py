@@ -11,7 +11,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.wrapper import resolve_wrapper, list_available_wrappers, _wrappers_dir
+from overcode.wrapper import (
+    resolve_wrapper, list_available_wrappers, _wrappers_dir,
+    install_all_bundled, reset_wrapper, BUNDLED_WRAPPERS, _install_bundled,
+)
 
 
 class TestResolveWrapperAbsolutePath:
@@ -213,3 +216,118 @@ class TestWrappersDir:
         monkeypatch.setenv("OVERCODE_DIR", "/custom/overcode")
         result = _wrappers_dir()
         assert result == Path("/custom/overcode/wrappers")
+
+
+class TestAutoInstall:
+    """Test auto-installation of bundled wrappers on first resolve."""
+
+    def test_auto_installs_on_bare_name(self, tmp_path):
+        """Resolving a bundled name auto-installs when dir is empty."""
+        wrappers = tmp_path / "wrappers"
+        # Don't create dir — auto-install should create it
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = resolve_wrapper("devcontainer")
+
+        assert result is not None
+        assert "devcontainer.sh" in result
+        assert Path(result).is_file()
+        assert os.access(result, os.X_OK)
+
+    def test_auto_installs_passthrough(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = resolve_wrapper("passthrough")
+
+        assert result is not None
+        assert "passthrough.sh" in result
+
+    def test_existing_takes_precedence_over_auto_install(self, tmp_path):
+        """If user has their own 'devcontainer.sh', don't overwrite."""
+        wrappers = tmp_path / "wrappers"
+        wrappers.mkdir()
+        custom = wrappers / "devcontainer.sh"
+        custom.write_text("#!/bin/bash\n# my custom version")
+        custom.chmod(custom.stat().st_mode | stat.S_IEXEC)
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = resolve_wrapper("devcontainer")
+
+        assert result == str(custom)
+        assert "my custom version" in custom.read_text()
+
+    def test_unknown_name_not_auto_installed(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+        wrappers.mkdir()
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = resolve_wrapper("nonexistent-wrapper")
+
+        assert result is None
+
+
+class TestInstallAllBundled:
+    """Test install_all_bundled()."""
+
+    def test_installs_all(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            results = install_all_bundled()
+
+        assert len(results) == len(BUNDLED_WRAPPERS)
+        assert all(status == "installed" for _, status in results)
+        for filename in BUNDLED_WRAPPERS:
+            assert (wrappers / filename).exists()
+            assert os.access(str(wrappers / filename), os.X_OK)
+
+    def test_unchanged_on_second_install(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            install_all_bundled()
+            results = install_all_bundled()
+
+        assert all(status == "unchanged" for _, status in results)
+
+    def test_detects_modified(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            install_all_bundled()
+
+            # Modify one
+            (wrappers / "devcontainer.sh").write_text("#!/bin/bash\n# modified")
+
+            results = install_all_bundled()
+
+        statuses = {name: s for name, s in results}
+        assert statuses["devcontainer.sh"] == "updated"
+        assert statuses["passthrough.sh"] == "unchanged"
+
+
+class TestResetWrapper:
+    """Test reset_wrapper()."""
+
+    def test_resets_modified(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+        wrappers.mkdir()
+        script = wrappers / "devcontainer.sh"
+        script.write_text("#!/bin/bash\n# user modified")
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = reset_wrapper("devcontainer")
+
+        assert result == "restored"
+        assert script.read_text() == BUNDLED_WRAPPERS["devcontainer.sh"]
+
+    def test_unknown_name_returns_none(self, tmp_path):
+        wrappers = tmp_path / "wrappers"
+        wrappers.mkdir()
+
+        with patch("overcode.wrapper._wrappers_dir", return_value=wrappers):
+            result = reset_wrapper("nonexistent")
+
+        assert result is None
