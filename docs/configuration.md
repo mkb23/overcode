@@ -127,6 +127,22 @@ export OVERCODE_SUMMARIZER_MODEL="claude-3-haiku-20240307"
 export OVERCODE_SUMMARIZER_API_KEY_VAR="ANTHROPIC_API_KEY"
 ```
 
+## New Agent Defaults
+
+Set defaults for new agents in `~/.overcode/config.yaml`:
+
+```yaml
+new_agent_defaults:
+  bypass_permissions: false   # Use --dangerously-skip-permissions
+  agent_teams: false          # Enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+  provider: web               # "web" (Claude.ai OAuth) or "bedrock" (AWS)
+  wrapper: ""                 # Wrapper script name or path (e.g., "devcontainer")
+```
+
+These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults.
+
+Setting `wrapper: devcontainer` makes all new agents launch inside a Docker container by default. See the [Wrappers Guide](wrappers.md) for details.
+
 ## Standing Instruction Presets
 
 Presets are saved in `~/.overcode/presets.json`. View available presets:

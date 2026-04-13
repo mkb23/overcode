@@ -77,6 +77,15 @@ An optional Claude-powered orchestrator that:
 - Follows per-agent standing orders
 - Tracks interventions and steering decisions
 
+### Wrappers
+Run agents in custom environments — containers, VMs, or any setup your project needs:
+- **Devcontainer wrapper** - Launch agents inside Docker containers with a single flag
+- **Auto-install** - Bundled wrappers install themselves on first use
+- **Customisable** - Write your own wrapper script or modify the bundled ones
+- Set per-agent (`--wrapper devcontainer`) or as default in config
+
+See the [Wrappers Guide](docs/wrappers.md) for setup and customisation.
+
 ### Sister Integration
 Aggregate agents from multiple machines into one dashboard:
 - Configure sister machines in `~/.overcode/config.yaml`
@@ -111,6 +120,7 @@ See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
 - [CLI Reference](docs/cli-reference.md) - All commands and options
 - [TUI Guide](docs/tui-guide.md) - Keyboard shortcuts and display modes
 - [Configuration](docs/configuration.md) - Config file and environment variables
+- [Wrappers](docs/wrappers.md) - Run agents in containers and custom environments
 - [Advanced Features](docs/advanced-features.md) - Sleep mode, handover, remote monitoring
 
 ## License
