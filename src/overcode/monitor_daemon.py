@@ -22,6 +22,7 @@ Pure business logic is extracted to monitor_daemon_core.py for testability.
 
 import os
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -724,9 +725,120 @@ class MonitorDaemon:
         if latest_id:
             self.session_manager.set_active_claude_session_id(session.id, latest_id)
 
+    def _sync_container_stats(self, session) -> bool:
+        """Sync stats from a container agent via docker exec.
+
+        Reads session JSONL files from inside the container since the
+        host filesystem doesn't have them (container uses /workspace path
+        encoding, not the host project path).
+
+        Returns True if stats were synced, False to fall back to normal path.
+        """
+        if not session.wrapper:
+            return False
+
+        container_name = f"overcode-{session.name}"
+        active_sid = session.active_claude_session_id
+        if not active_sid and session.claude_session_ids:
+            active_sid = session.claude_session_ids[-1]
+        if not active_sid:
+            return False
+
+        # Detect container user's home directory
+        try:
+            home_result = subprocess.run(
+                ["docker", "exec", container_name, "sh", "-c",
+                 "echo $HOME"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if home_result.returncode != 0:
+                return False
+            container_home = home_result.stdout.strip() or "/home/node"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+
+        # Read session file(s) from inside the container
+        from .history_reader import read_session_stats_from_content, ClaudeSessionStats
+
+        total_input = 0
+        total_output = 0
+        total_cache_creation = 0
+        total_cache_read = 0
+        current_context = 0
+        detected_model = None
+        all_work_times = []
+
+        for sid in (session.claude_session_ids or [active_sid]):
+            # Claude encodes /workspace as -workspace inside the container
+            session_path = f"{container_home}/.claude/projects/-workspace/{sid}.jsonl"
+            try:
+                result = subprocess.run(
+                    ["docker", "exec", container_name, "cat", session_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode != 0:
+                    continue
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+
+            usage, work_times = read_session_stats_from_content(result.stdout)
+            total_input += usage["input_tokens"]
+            total_output += usage["output_tokens"]
+            total_cache_creation += usage["cache_creation_tokens"]
+            total_cache_read += usage["cache_read_tokens"]
+            all_work_times.extend(work_times)
+
+            if sid == active_sid:
+                current_context = usage["current_context_tokens"]
+                if usage["model"]:
+                    detected_model = usage["model"]
+            elif usage["current_context_tokens"] > current_context:
+                current_context = usage["current_context_tokens"]
+            if usage["model"] and not detected_model:
+                detected_model = usage["model"]
+
+        if total_input + total_output == 0:
+            return False
+
+        # Update model if detected
+        if detected_model and detected_model != session.model:
+            self.session_manager.update_session(session.id, model=detected_model)
+
+        # Cost estimate
+        from .settings import get_user_config, get_model_pricing
+        from .monitor_daemon_core import calculate_total_tokens, calculate_cost_estimate
+        config = get_user_config()
+        mp = get_model_pricing(detected_model or session.model, config)
+        cost = calculate_cost_estimate(
+            total_input, total_output, total_cache_creation, total_cache_read,
+            price_input=mp.input, price_output=mp.output,
+            price_cache_write=mp.cache_write, price_cache_read=mp.cache_read,
+        )
+
+        now = datetime.now()
+        total_tokens = calculate_total_tokens(
+            total_input, total_output, total_cache_creation, total_cache_read,
+        )
+        self.session_manager.update_stats(
+            session.id,
+            total_tokens=total_tokens,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            cache_creation_tokens=total_cache_creation,
+            cache_read_tokens=total_cache_read,
+            estimated_cost_usd=round(cost, 4),
+            current_context_tokens=current_context,
+            last_stats_update=now.isoformat(),
+        )
+        return True
+
     def sync_claude_code_stats(self, session) -> None:
         """Sync token/interaction stats from Claude Code history files."""
         try:
+            # Container agents: read stats via docker exec
+            if session.wrapper and self._sync_container_stats(session):
+                return
+
             # Session ID detection also runs here for the first sync
             self.sync_session_id(session)
 

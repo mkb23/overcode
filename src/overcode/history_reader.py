@@ -503,6 +503,113 @@ def get_session_file_path(
     return projects_path / encoded / f"{session_id}.jsonl"
 
 
+def _parse_session_lines(
+    lines,
+    since: Optional[datetime] = None,
+) -> Tuple[dict, List[float]]:
+    """Parse token usage and work times from session JSONL lines.
+
+    Core parsing logic shared by read_session_file_stats (file-based)
+    and read_session_stats_from_content (string-based, for containers).
+
+    Args:
+        lines: Iterable of JSONL line strings
+        since: Only count data from messages after this time
+
+    Returns:
+        (token_usage_dict, work_times_list)
+    """
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "current_context_tokens": 0,
+        "model": None,
+    }
+
+    user_prompt_times: List[datetime] = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            msg_type = data.get("type")
+
+            if msg_type == "assistant":
+                # Check timestamp if filtering by time
+                if since:
+                    ts_str = data.get("timestamp")
+                    if ts_str:
+                        try:
+                            msg_time = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            ).astimezone().replace(tzinfo=None)
+                            if msg_time < since:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
+                message = data.get("message", {})
+                usage = message.get("usage", {})
+                if usage:
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    cache_read = usage.get("cache_read_input_tokens", 0)
+                    cache_creation = usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
+                    totals["input_tokens"] += input_tokens
+                    totals["output_tokens"] += output_tokens
+                    totals["cache_creation_tokens"] += cache_creation
+                    totals["cache_read_tokens"] += cache_read
+                    context_size = input_tokens + cache_read
+                    if context_size > 0:
+                        totals["current_context_tokens"] = context_size
+                    # Only track model from messages with actual API usage
+                    # (skips synthetic error messages with zero tokens)
+                    if input_tokens + output_tokens + cache_creation + cache_read > 0:
+                        model = message.get("model")
+                        if model:
+                            totals["model"] = model
+
+            elif msg_type == "user":
+                # Check if this is an actual user prompt (not a tool result)
+                message = data.get("message", {})
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    if content and content[0].get("type") == "tool_result":
+                        continue
+
+                ts_str = data.get("timestamp")
+                if not ts_str:
+                    continue
+
+                try:
+                    msg_time = datetime.fromisoformat(
+                        ts_str.replace("Z", "+00:00")
+                    ).astimezone().replace(tzinfo=None)
+                    if since and msg_time < since:
+                        continue
+                    user_prompt_times.append(msg_time)
+                except (ValueError, TypeError):
+                    continue
+
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+
+    # Calculate durations between consecutive prompts
+    work_times = []
+    for i in range(1, len(user_prompt_times)):
+        duration = (user_prompt_times[i] - user_prompt_times[i - 1]).total_seconds()
+        if duration > 0:
+            work_times.append(duration)
+
+    return totals, work_times
+
+
 def read_session_file_stats(
     session_file: Path,
     since: Optional[datetime] = None,
@@ -519,102 +626,52 @@ def read_session_file_stats(
     Returns:
         (token_usage_dict, work_times_list)
     """
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_tokens": 0,
-        "cache_read_tokens": 0,
-        "current_context_tokens": 0,
-        "model": None,
-    }
-
     if not session_file.exists():
-        return totals, []
-
-    user_prompt_times: List[datetime] = []
+        defaults = {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+            "current_context_tokens": 0, "model": None,
+        }
+        return defaults, []
 
     try:
         with open(session_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    msg_type = data.get("type")
-
-                    if msg_type == "assistant":
-                        # Check timestamp if filtering by time
-                        if since:
-                            ts_str = data.get("timestamp")
-                            if ts_str:
-                                try:
-                                    msg_time = datetime.fromisoformat(
-                                        ts_str.replace("Z", "+00:00")
-                                    ).astimezone().replace(tzinfo=None)
-                                    if msg_time < since:
-                                        continue
-                                except (ValueError, TypeError):
-                                    pass
-
-                        message = data.get("message", {})
-                        usage = message.get("usage", {})
-                        if usage:
-                            input_tokens = usage.get("input_tokens", 0)
-                            output_tokens = usage.get("output_tokens", 0)
-                            cache_read = usage.get("cache_read_input_tokens", 0)
-                            cache_creation = usage.get(
-                                "cache_creation_input_tokens", 0
-                            )
-                            totals["input_tokens"] += input_tokens
-                            totals["output_tokens"] += output_tokens
-                            totals["cache_creation_tokens"] += cache_creation
-                            totals["cache_read_tokens"] += cache_read
-                            context_size = input_tokens + cache_read
-                            if context_size > 0:
-                                totals["current_context_tokens"] = context_size
-                            # Only track model from messages with actual API usage
-                            # (skips synthetic error messages with zero tokens)
-                            if input_tokens + output_tokens + cache_creation + cache_read > 0:
-                                model = message.get("model")
-                                if model:
-                                    totals["model"] = model
-
-                    elif msg_type == "user":
-                        # Check if this is an actual user prompt (not a tool result)
-                        message = data.get("message", {})
-                        content = message.get("content", "")
-                        if isinstance(content, list):
-                            if content and content[0].get("type") == "tool_result":
-                                continue
-
-                        ts_str = data.get("timestamp")
-                        if not ts_str:
-                            continue
-
-                        try:
-                            msg_time = datetime.fromisoformat(
-                                ts_str.replace("Z", "+00:00")
-                            ).astimezone().replace(tzinfo=None)
-                            if since and msg_time < since:
-                                continue
-                            user_prompt_times.append(msg_time)
-                        except (ValueError, TypeError):
-                            continue
-
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    continue
+            return _parse_session_lines(f, since=since)
     except IOError:
-        return totals, []
+        defaults = {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+            "current_context_tokens": 0, "model": None,
+        }
+        return defaults, []
 
-    # Calculate durations between consecutive prompts
-    work_times = []
-    for i in range(1, len(user_prompt_times)):
-        duration = (user_prompt_times[i] - user_prompt_times[i - 1]).total_seconds()
-        if duration > 0:
-            work_times.append(duration)
 
-    return totals, work_times
+def read_session_stats_from_content(
+    content: str,
+    since: Optional[datetime] = None,
+) -> Tuple[dict, List[float]]:
+    """Read token usage and work times from session JSONL content string.
+
+    Same as read_session_file_stats but accepts string content instead
+    of a file path.  Used for reading session files from containers
+    via docker exec.
+
+    Args:
+        content: JSONL content as a string
+        since: Only count data from messages after this time
+
+    Returns:
+        (token_usage_dict, work_times_list)
+    """
+    if not content or not content.strip():
+        defaults = {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+            "current_context_tokens": 0, "model": None,
+        }
+        return defaults, []
+
+    return _parse_session_lines(content.splitlines(), since=since)
 
 
 def read_token_usage_from_session_file(

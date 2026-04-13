@@ -133,10 +133,22 @@ trap _cleanup EXIT
 # Remove stale container with same name
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
+# ---------------------------------------------------------------------------
+# Mount the overcode state exchange directory so hooks inside the container
+# can write hook_state/report files directly to the host, and read
+# monitor_daemon_state for budget enforcement.  Only JSON state files
+# live here — no code, no credentials.
+# ---------------------------------------------------------------------------
+TMUX_SESSION="${OVERCODE_TMUX_SESSION:-agents}"
+STATE_EXCHANGE="${HOME}/.overcode/sessions/${TMUX_SESSION}"
+mkdir -p "$STATE_EXCHANGE"
+CONTAINER_STATE_DIR="/overcode-state"
+
 echo "[devcontainer] Starting container ${CONTAINER_NAME} (image: ${IMAGE}) ..."
 docker run -d \\
     --name "$CONTAINER_NAME" \\
     -v "${WORK_DIR}:/workspace" \\
+    -v "${STATE_EXCHANGE}:${CONTAINER_STATE_DIR}/${TMUX_SESSION}" \\
     -w /workspace \\
     "$IMAGE" \\
     sleep infinity >/dev/null
@@ -184,6 +196,32 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which claude >/dev/null 2>&
 fi
 
 # ---------------------------------------------------------------------------
+# Install overcode for hook handler (enables status detection, budget, context)
+# ---------------------------------------------------------------------------
+if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2>&1; then
+    echo "[devcontainer] Installing overcode (hook handler) inside container ..."
+    # Ensure pip is available
+    if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which pip >/dev/null 2>&1; then
+        if docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which pip3 >/dev/null 2>&1; then
+            docker exec "$CONTAINER_NAME" ln -sf "$(docker exec "$CONTAINER_NAME" which pip3)" /usr/local/bin/pip 2>/dev/null || true
+        else
+            docker exec "$CONTAINER_NAME" $CONTAINER_SHELL -c \\
+                'apt-get update -qq && apt-get install -y -qq python3-pip >/dev/null 2>&1' || true
+        fi
+    fi
+    docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" pip install --break-system-packages overcode 2>&1 || \\
+        docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" pip install overcode 2>&1 || \\
+        echo "[devcontainer] Warning: Could not install overcode — hooks will be degraded"
+fi
+
+# Install overcode hooks into Claude Code settings inside the container
+if docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2>&1; then
+    docker exec "${USER_FLAG[@]}" \\
+        -e "OVERCODE_STATE_DIR=${CONTAINER_STATE_DIR}" \\
+        "$CONTAINER_NAME" overcode hooks install 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # Build docker exec env-var flags
 # ---------------------------------------------------------------------------
 EXEC_ARGS=()
@@ -197,6 +235,9 @@ fi
 while IFS='=' read -r key value; do
     EXEC_ARGS+=(-e "${key}=${value}")
 done < <(env | grep '^OVERCODE_' || true)
+
+# Point hook handler at the mounted state exchange directory
+EXEC_ARGS+=(-e "OVERCODE_STATE_DIR=${CONTAINER_STATE_DIR}")
 
 # ---------------------------------------------------------------------------
 # Exec claude inside the container
