@@ -515,7 +515,12 @@ class SessionActionsMixin:
             self.notify("New agent modal not found", severity="error")
             return
 
-        directory = str(Path.cwd())
+        # Use focused agent's directory if available, otherwise fall back to cwd
+        focused = self._get_focused_widget() if hasattr(self, '_get_focused_widget') else None
+        if focused and getattr(focused, 'session', None) and focused.session.start_directory:
+            directory = focused.session.start_directory
+        else:
+            directory = str(Path.cwd())
         defaults = get_new_agent_defaults()
         agents = scan_agents(directory)
         wrappers = [name for name, _ in list_available_wrappers()]
