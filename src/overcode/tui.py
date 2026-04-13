@@ -1573,6 +1573,9 @@ class SupervisorTUI(
             if claude_stats is not None:
                 widget.claude_stats = claude_stats
                 widget.file_subagent_count = claude_stats.live_subagent_count
+                # Populate last_command from history
+                if claude_stats.last_command:
+                    widget.last_command = claude_stats.last_command
             if git_diff is not None:
                 widget.git_diff_stats = git_diff
             if claude_stats is not None or git_diff is not None:

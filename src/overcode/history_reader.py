@@ -100,6 +100,7 @@ class ClaudeSessionStats:
     live_subagent_count: int = 0  # Subagents with recently-modified files (#256)
     background_task_count: int = 0  # Number of background/farm tasks (#177)
     model: Optional[str] = None  # Most recently seen model name (#272)
+    last_command: Optional[str] = None  # Most recent user prompt text
 
     @property
     def max_context_tokens(self) -> int:
@@ -740,6 +741,13 @@ def get_session_stats(
         if tasks_dir.exists():
             background_task_count += len(list(tasks_dir.glob("task-*.jsonl")))
 
+    # Extract last command from history interactions
+    last_command = None
+    if interactions:
+        last_entry = interactions[-1]
+        if last_entry.display:
+            last_command = last_entry.display
+
     return ClaudeSessionStats(
         interaction_count=interaction_count,
         input_tokens=total_input,
@@ -752,4 +760,5 @@ def get_session_stats(
         live_subagent_count=live_subagent_count,
         background_task_count=background_task_count,
         model=detected_model,
+        last_command=last_command,
     )
