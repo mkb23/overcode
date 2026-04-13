@@ -14,7 +14,7 @@ overcode launch -n my-agent -d ~/project --wrapper devcontainer
 
 That's it. On first use, overcode auto-installs the bundled `devcontainer` wrapper to `~/.overcode/wrappers/devcontainer.sh`. The wrapper:
 
-1. Pulls the [Microsoft Universal devcontainer image](https://github.com/devcontainers/images/tree/main/src/universal) (Python, Node, Go, Java, Ruby, Rust, .NET, and build tools)
+1. Pulls the [Microsoft Node.js devcontainer image](https://github.com/devcontainers/images/tree/main/src/javascript-node) (Node 22 on Debian Bookworm, multi-arch: Intel + Apple Silicon)
 2. Starts a container with your project mounted at `/workspace`
 3. Installs the Claude Code CLI inside the container
 4. Runs claude interactively via `docker exec -it`

@@ -70,6 +70,7 @@ set -euo pipefail
 #   DEVCONTAINER_IMAGE    — override the Docker image (skip build)
 #   DEVCONTAINER_NAME     — override the container name
 #   DEVCONTAINER_SHELL    — shell inside container (default: /bin/bash)
+#   DEVCONTAINER_USER     — user inside container (default: auto-detect, then node)
 #
 # Usage:
 #   overcode launch -n my-agent --wrapper devcontainer
@@ -81,11 +82,11 @@ WORK_DIR="${OVERCODE_WRAPPER_DIR:-.}"
 CONTAINER_NAME="${DEVCONTAINER_NAME:-overcode-${OVERCODE_SESSION_NAME:-agent}}"
 CONTAINER_SHELL="${DEVCONTAINER_SHELL:-/bin/bash}"
 
-# Default image: Microsoft universal devcontainer with Python, Node, Go,
-# Java, Ruby, .NET, Rust, and common build tools.  Heavier first pull
-# (~2 GB) but works for any project type out of the box.  Claude Code
-# requires Node >= 18 which is included.
-DEFAULT_IMAGE="mcr.microsoft.com/devcontainers/universal:2"
+# Default image: Microsoft devcontainer with Node.js (required by Claude
+# Code) on a Debian Bookworm base.  Multi-arch (amd64 + arm64) so it
+# works on both Intel and Apple Silicon.  Python/Go/etc. can be added
+# via apt inside the container or by using a project .devcontainer/.
+DEFAULT_IMAGE="mcr.microsoft.com/devcontainers/javascript-node:22-bookworm"
 
 # ---------------------------------------------------------------------------
 # Resolve image: explicit override > .devcontainer build > .devcontainer.json > default
@@ -141,9 +142,34 @@ docker run -d \\
     sleep infinity >/dev/null
 
 # ---------------------------------------------------------------------------
+# Detect non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+# ---------------------------------------------------------------------------
+CONTAINER_USER="${DEVCONTAINER_USER:-}"
+if [[ -z "$CONTAINER_USER" ]]; then
+    # Try common devcontainer users: node, vscode, ubuntu, then fall back
+    for candidate in node vscode ubuntu; do
+        if docker exec "$CONTAINER_NAME" id "$candidate" >/dev/null 2>&1; then
+            CONTAINER_USER="$candidate"
+            break
+        fi
+    done
+fi
+USER_FLAG=()
+if [[ -n "$CONTAINER_USER" ]]; then
+    USER_FLAG=(-u "$CONTAINER_USER")
+fi
+
+# ---------------------------------------------------------------------------
+# Auth: if ANTHROPIC_API_KEY is set it will be forwarded via env vars below.
+# Otherwise claude will prompt for login in the tmux pane on first use —
+# visit the URL it shows and paste the code.  The session persists inside
+# the container for subsequent runs.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Install claude CLI if not present
 # ---------------------------------------------------------------------------
-if ! docker exec "$CONTAINER_NAME" which claude >/dev/null 2>&1; then
+if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which claude >/dev/null 2>&1; then
     echo "[devcontainer] Installing Claude Code CLI inside container ..."
     # Ensure npm is available (node images have it; others may not)
     if ! docker exec "$CONTAINER_NAME" which npm >/dev/null 2>&1; then
@@ -154,7 +180,7 @@ if ! docker exec "$CONTAINER_NAME" which claude >/dev/null 2>&1; then
             exit 1
         }
     fi
-    docker exec "$CONTAINER_NAME" npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+    docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" npm install -g @anthropic-ai/claude-code 2>&1
 fi
 
 # ---------------------------------------------------------------------------
@@ -175,8 +201,9 @@ done < <(env | grep '^OVERCODE_' || true)
 # ---------------------------------------------------------------------------
 # Exec claude inside the container
 # ---------------------------------------------------------------------------
-echo "[devcontainer] Launching claude inside container ..."
+echo "[devcontainer] Launching claude inside container${CONTAINER_USER:+ (user: $CONTAINER_USER)} ..."
 exec docker exec -it \\
+    "${USER_FLAG[@]}" \\
     "${EXEC_ARGS[@]}" \\
     -w /workspace \\
     "$CONTAINER_NAME" \\
