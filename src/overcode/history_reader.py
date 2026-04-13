@@ -504,7 +504,7 @@ def read_session_file_stats(
                                 try:
                                     msg_time = datetime.fromisoformat(
                                         ts_str.replace("Z", "+00:00")
-                                    ).replace(tzinfo=None)
+                                    ).astimezone().replace(tzinfo=None)
                                     if msg_time < since:
                                         continue
                                 except (ValueError, TypeError):
@@ -548,7 +548,7 @@ def read_session_file_stats(
                         try:
                             msg_time = datetime.fromisoformat(
                                 ts_str.replace("Z", "+00:00")
-                            ).replace(tzinfo=None)
+                            ).astimezone().replace(tzinfo=None)
                             if since and msg_time < since:
                                 continue
                             user_prompt_times.append(msg_time)
