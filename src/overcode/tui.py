@@ -75,6 +75,7 @@ from .tui_widgets import (
     NewAgentDefaultsModal,
     AgentSelectModal,
     SisterSelectionModal,
+    HostSelectModal,
     InstructionHistoryModal,
 )
 from .tui_actions import (
@@ -404,6 +405,8 @@ class SupervisorTUI(
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
+        # Modal for host selection during new agent creation
+        yield HostSelectModal(id="host-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
@@ -3374,6 +3377,33 @@ class SupervisorTUI(
             cmd_bar.new_agent_claude_agent = None
             cmd_bar._transition_to_name_step()
             cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_host_select_modal_host_selected(self, message: HostSelectModal.HostSelected) -> None:
+        """Handle host selection — set sister and start unified dir step."""
+        from pathlib import Path
+        self._dialog_did_close()
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            if message.is_local:
+                cmd_bar.new_remote_sister = None
+            else:
+                cmd_bar.new_remote_sister = message.host_name
+            # Proceed to directory step (unified flow)
+            cmd_bar.set_mode("new_agent_dir")
+            input_widget = cmd_bar.query_one("#cmd-input", Input)
+            input_widget.value = "." if cmd_bar.new_remote_sister else str(Path.cwd())
+            cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_host_select_modal_host_select_cancelled(self, message: HostSelectModal.HostSelectCancelled) -> None:
+        """Handle host selection cancelled."""
+        self._dialog_did_close()
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.action_clear_and_unfocus()
         except NoMatches:
             pass
 

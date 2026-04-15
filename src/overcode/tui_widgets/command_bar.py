@@ -26,9 +26,7 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
     Returns:
         Tuple of (label_text, placeholder_text)
     """
-    if mode == "new_agent_host":
-        return "[New Agent: Host] ", "Enter host name (or Enter for local)..."
-    elif mode == "new_agent_dir":
+    if mode == "new_agent_dir":
         return "[New Agent: Directory] ", "Enter working directory path..."
     elif mode == "new_agent_name":
         return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
@@ -259,10 +257,7 @@ class CommandBar(Static):
         if event.input.id == "cmd-input":
             text = event.value.strip()
 
-            if self.mode == "new_agent_host":
-                self._handle_new_agent_host(text)
-                return
-            elif self.mode == "fork_name":
+            if self.mode == "fork_name":
                 # Fork agent: name entered, create the fork (#347)
                 fork_name = text if text else event.input.value.strip()
                 if not fork_name:
@@ -360,37 +355,6 @@ class CommandBar(Static):
         if not self.target_session or not text.strip():
             return
         self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
-
-    def _handle_new_agent_host(self, text: str) -> None:
-        """Handle host input for new agent creation.
-
-        Empty/local hostname → local agent. Sister name → remote agent.
-        """
-        text = text.strip()
-
-        if not text or text == getattr(self.app, 'local_hostname', ''):
-            # Local agent
-            self.new_remote_sister = None
-        else:
-            # Validate sister exists
-            from overcode.config import get_sister_by_name
-            sister = get_sister_by_name(text)
-            if not sister:
-                from overcode.config import get_sisters_config
-                available = [s["name"] for s in get_sisters_config()]
-                self.app.notify(f"Host '{text}' not found. Available: {', '.join(available)}", severity="error")
-                return
-            self.new_remote_sister = text
-
-        # Transition to directory step
-        self.mode = "new_agent_dir"
-        self._update_target_label()
-        input_widget = self.query_one("#cmd-input", Input)
-        if self.new_remote_sister:
-            input_widget.value = "."
-        else:
-            from pathlib import Path
-            input_widget.value = str(Path.cwd())
 
     def _handle_new_agent_dir(self, directory: Optional[str]) -> None:
         """Handle directory input for new agent creation.

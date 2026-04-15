@@ -505,7 +505,7 @@ class SessionActionsMixin:
     def action_new_agent(self) -> None:
         """Prompt to create a new agent (local or remote).
 
-        When sisters are configured, starts with a host selection step.
+        When sisters are configured, shows a host selection modal first.
         Otherwise goes straight to the directory step.
         """
         from ..tui_widgets import CommandBar
@@ -515,14 +515,21 @@ class SessionActionsMixin:
             command_bar.add_class("visible")  # Must show the command bar first
 
             if self.has_sisters:
-                # Start with host selection step
+                # Show host selection modal (local + sisters)
                 from ..config import get_sisters_config
-                names = [s["name"] for s in get_sisters_config()]
-                command_bar.set_mode("new_agent_host")
-                input_widget = command_bar.query_one("#cmd-input", Input)
-                input_widget.placeholder = f"Enter host ({self.local_hostname}, {', '.join(names)}) or Enter for local..."
-                input_widget.value = self.local_hostname
-                command_bar.focus_input()
+                from ..tui_widgets.host_select_modal import HostSelectModal
+                sister_names = [s["name"] for s in get_sisters_config()]
+                try:
+                    modal = self.query_one("#host-select-modal", HostSelectModal)
+                    if hasattr(self, '_dialog_will_open'):
+                        self._dialog_will_open()
+                    modal.show(self.local_hostname, sister_names, self)
+                except NoMatches:
+                    # Fallback: go straight to directory step
+                    command_bar.set_mode("new_agent_dir")
+                    input_widget = command_bar.query_one("#cmd-input", Input)
+                    input_widget.value = str(Path.cwd())
+                    command_bar.focus_input()
             else:
                 # No sisters: go straight to directory step
                 command_bar.set_mode("new_agent_dir")
