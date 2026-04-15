@@ -36,8 +36,6 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Teams] ", "Type 'yes' to enable agent teams, or Enter to skip..."
     elif mode == "new_agent_provider":
         return "[New Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
-    elif mode == "new_remote_agent_sister":
-        return "[Remote Agent: Sister] ", "Enter sister name..."
     elif mode == "new_remote_agent_dir":
         return "[Remote Agent: Directory] ", "Enter remote directory (or Enter for '.')..."
     elif mode == "new_remote_agent_name":
@@ -267,10 +265,7 @@ class CommandBar(Static):
         if event.input.id == "cmd-input":
             text = event.value.strip()
 
-            if self.mode == "new_remote_agent_sister":
-                self._handle_remote_agent_sister(text)
-                return
-            elif self.mode == "new_remote_agent_dir":
+            if self.mode == "new_remote_agent_dir":
                 self._handle_remote_agent_dir(text)
                 return
             elif self.mode == "new_remote_agent_name":
@@ -538,36 +533,6 @@ class CommandBar(Static):
         self._update_target_label()
 
     # --- Remote agent flow (#310) ---
-
-    def _handle_remote_agent_sister(self, text: str) -> None:
-        """Handle sister name input for remote agent creation."""
-        import logging
-        _log = logging.getLogger("overcode.tui.sister")
-
-        if not text:
-            _log.warning("Remote agent flow: empty sister name")
-            self.app.notify("Sister name required", severity="error")
-            return
-
-        from overcode.config import get_sister_by_name
-        sister = get_sister_by_name(text)
-        if not sister:
-            from overcode.config import get_sisters_config
-            available = [s["name"] for s in get_sisters_config()]
-            if available:
-                _log.error("Sister '%s' not found. Available: %s", text, available)
-                self.app.notify(f"Sister '{text}' not found. Available: {', '.join(available)}", severity="error")
-            else:
-                _log.error("No sisters configured")
-                self.app.notify("No sisters configured", severity="error")
-            return
-
-        _log.info("Remote agent flow started: sister=%s", text)
-        self.new_remote_sister = text
-        self.mode = "new_remote_agent_dir"
-        self._update_target_label()
-        input_widget = self.query_one("#cmd-input", Input)
-        input_widget.value = "."
 
     def _handle_remote_agent_dir(self, text: str) -> None:
         """Handle directory input for remote agent creation."""

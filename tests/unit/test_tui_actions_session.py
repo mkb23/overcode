@@ -1534,7 +1534,7 @@ class TestNewAgent:
     """Test action_new_agent method."""
 
     def test_opens_command_bar_in_new_agent_dir_mode(self):
-        """Should open command bar with new_agent_dir mode."""
+        """Should open command bar with new_agent_dir mode when no sisters."""
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_cmd_bar = MagicMock()
@@ -1543,6 +1543,7 @@ class TestNewAgent:
 
         mock_tui = MagicMock()
         mock_tui.query_one.return_value = mock_cmd_bar
+        mock_tui.has_sisters = False
 
         SessionActionsMixin.action_new_agent(mock_tui)
 
@@ -1556,6 +1557,7 @@ class TestNewAgent:
         from textual.css.query import NoMatches
 
         mock_tui = MagicMock()
+        mock_tui.has_sisters = False
         mock_tui.query_one.side_effect = NoMatches()
 
         SessionActionsMixin.action_new_agent(mock_tui)

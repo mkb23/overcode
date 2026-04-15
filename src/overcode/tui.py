@@ -75,6 +75,7 @@ from .tui_widgets import (
     NewAgentDefaultsModal,
     AgentSelectModal,
     SisterSelectionModal,
+    HostSelectModal,
     InstructionHistoryModal,
 )
 from .tui_actions import (
@@ -204,8 +205,6 @@ class SupervisorTUI(
         ("C", "open_column_config", "Columns"),
         # Column headers toggle
         ("L", "toggle_column_headers", "Column headers"),
-        # Remote agent launch on sister (#310)
-        ("N", "new_remote_agent", "Remote agent"),
         # New agent defaults modal
         ("G", "open_new_agent_defaults", "Agent defaults"),
         # Sister selection modal (#323)
@@ -406,6 +405,8 @@ class SupervisorTUI(
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
+        # Modal for host selection during new agent creation
+        yield HostSelectModal(id="host-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
@@ -3376,6 +3377,37 @@ class SupervisorTUI(
             cmd_bar.new_agent_claude_agent = None
             cmd_bar._transition_to_name_step()
             cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_host_select_modal_host_selected(self, message: HostSelectModal.HostSelected) -> None:
+        """Handle host selection from modal — route to local or remote agent flow."""
+        from pathlib import Path
+        self._dialog_did_close()
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            if message.is_local:
+                # Local flow: proceed to directory step
+                cmd_bar.set_mode("new_agent_dir")
+                input_widget = cmd_bar.query_one("#cmd-input", Input)
+                input_widget.value = str(Path.cwd())
+                cmd_bar.focus_input()
+            else:
+                # Remote flow: store sister, proceed to directory step
+                cmd_bar.new_remote_sister = message.host_name
+                cmd_bar.set_mode("new_remote_agent_dir")
+                input_widget = cmd_bar.query_one("#cmd-input", Input)
+                input_widget.value = "."
+                cmd_bar.focus_input()
+        except NoMatches:
+            pass
+
+    def on_host_select_modal_host_select_cancelled(self, message: HostSelectModal.HostSelectCancelled) -> None:
+        """Handle host selection cancelled."""
+        self._dialog_did_close()
+        try:
+            cmd_bar = self.query_one("#command-bar", CommandBar)
+            cmd_bar.action_clear_and_unfocus()
         except NoMatches:
             pass
 

@@ -502,48 +502,40 @@ class SessionActionsMixin:
         else:
             self.notify(f"Failed to send /clear to '{session_name}'", severity="error")
 
-    def action_new_remote_agent(self) -> None:
-        """Prompt to launch a new agent on a remote sister machine (#310).
-
-        Multi-step flow: sister name → directory → name → permissions.
-        """
-        from ..tui_widgets import CommandBar
-
-        if not self.has_sisters:
-            self.notify("No sisters configured", severity="warning")
-            return
-
-        try:
-            command_bar = self.query_one("#command-bar", CommandBar)
-            command_bar.add_class("visible")
-            command_bar.set_mode("new_remote_agent_sister")
-            # Pre-fill with available sister names as hint
-            from ..config import get_sisters_config
-            names = [s["name"] for s in get_sisters_config()]
-            input_widget = command_bar.query_one("#cmd-input", Input)
-            input_widget.placeholder = f"Enter sister name ({', '.join(names)})..."
-            input_widget.value = names[0] if len(names) == 1 else ""
-            command_bar.focus_input()
-        except NoMatches:
-            self.notify("Command bar not found", severity="error")
-
     def action_new_agent(self) -> None:
-        """Prompt for directory and name to create a new agent.
+        """Prompt for host, directory, and name to create a new agent.
 
-        Two-step flow:
-        1. Enter working directory (or press Enter for current directory)
-        2. Enter agent name (defaults to directory basename)
+        When sisters are configured, shows a host selector first (local + sisters).
+        Otherwise goes straight to the directory step for local agent creation.
         """
         from ..tui_widgets import CommandBar
 
         try:
             command_bar = self.query_one("#command-bar", CommandBar)
             command_bar.add_class("visible")  # Must show the command bar first
-            command_bar.set_mode("new_agent_dir")
-            # Pre-fill with current working directory
-            input_widget = command_bar.query_one("#cmd-input", Input)
-            input_widget.value = str(Path.cwd())
-            command_bar.focus_input()
+
+            if self.has_sisters:
+                # Show host selection modal (local + sisters)
+                from ..config import get_sisters_config
+                from ..tui_widgets.host_select_modal import HostSelectModal
+                sister_names = [s["name"] for s in get_sisters_config()]
+                try:
+                    modal = self.query_one("#host-select-modal", HostSelectModal)
+                    if hasattr(self, '_dialog_will_open'):
+                        self._dialog_will_open()
+                    modal.show(self.local_hostname, sister_names, self)
+                except NoMatches:
+                    # Fallback: go straight to directory step
+                    command_bar.set_mode("new_agent_dir")
+                    input_widget = command_bar.query_one("#cmd-input", Input)
+                    input_widget.value = str(Path.cwd())
+                    command_bar.focus_input()
+            else:
+                # No sisters: go straight to directory step
+                command_bar.set_mode("new_agent_dir")
+                input_widget = command_bar.query_one("#cmd-input", Input)
+                input_widget.value = str(Path.cwd())
+                command_bar.focus_input()
         except NoMatches:
             self.notify("Command bar not found", severity="error")
 

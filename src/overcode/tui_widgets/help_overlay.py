@@ -61,7 +61,7 @@ class HelpOverlay(Static):
         row("i/:", "Send instruction", "o", "Set standing orders")
         row("a", "Edit annotation", "Enter", "Approve (send Enter)")
         row("1-5", "Send number", "Esc", "Interrupt agent")
-        row("n", "New agent", "N", "New remote agent")
+        row("n", "New agent (local/remote)", "", "")
         row("x", "Kill agent", "R", "Restart/revive agent")
         row("z", "Toggle sleep", "p", "Pause/resume heartbeat")
         row("V", "Edit agent value", "B", "Edit cost budget")
