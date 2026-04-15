@@ -20,23 +20,13 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
     Pure function — no side effects, fully testable.
 
     Args:
-        mode: The command bar mode (send, standing_orders, new_agent_dir, etc.)
+        mode: The command bar mode (send, standing_orders, fork_name, etc.)
         target_session: The currently targeted session name, or None
 
     Returns:
         Tuple of (label_text, placeholder_text)
     """
-    if mode == "new_agent_dir":
-        return "[New Agent: Directory] ", "Enter working directory path..."
-    elif mode == "new_agent_name":
-        return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
-    elif mode == "new_agent_perms":
-        return "[New Agent: Permissions] ", "Type 'bypass' for --dangerously-skip-permissions, or Enter for normal..."
-    elif mode == "new_agent_teams":
-        return "[New Agent: Teams] ", "Type 'yes' to enable agent teams, or Enter to skip..."
-    elif mode == "new_agent_provider":
-        return "[New Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
-    elif mode == "fork_name":
+    if mode == "fork_name":
         return "[Fork: Name] ", "Enter name for forked agent (or Enter to accept default)..."
     elif mode == "standing_orders":
         prefix = f"[{target_session} Standing Orders] " if target_session else "[Standing Orders] "
@@ -72,24 +62,14 @@ class CommandBar(Static):
     Modes:
     - "send": Default mode for sending instructions to an agent
     - "standing_orders": Mode for editing standing orders for an agent
-    - "new_agent_dir": First step of new agent creation - enter working directory
-    - "new_agent_name": Second step of new agent creation - enter agent name
-    - "new_agent_perms": Third step of new agent creation - choose permission mode
-
     Key handling is done via on_key() since Input/TextArea consume most keys.
     """
 
     expanded = reactive(False)  # Toggle single/multi-line mode
     target_session: Optional[str] = None
     target_session_id: Optional[str] = None
-    mode: str = "send"  # "send", "standing_orders", "new_agent_*", "heartbeat_freq", "heartbeat_instruction", etc.
-    new_agent_dir: Optional[str] = None  # Store directory between steps
-    new_agent_name: Optional[str] = None  # Store name between steps
-    new_agent_bypass: bool = False  # Store permissions between steps
-    new_agent_teams: bool = False  # Store teams flag between steps (#309)
-    new_agent_claude_agent: Optional[str] = None  # Store selected Claude agent between steps
+    mode: str = "send"  # "send", "standing_orders", "heartbeat_freq", "heartbeat_instruction", etc.
     heartbeat_freq: Optional[int] = None  # Store frequency between heartbeat steps (#171)
-    new_remote_sister: Optional[str] = None  # Store selected sister name for remote agent flow (#310)
     fork_source_session: Optional[object] = None  # Store source session for fork flow (#347)
 
     class SendRequested(Message):
@@ -107,27 +87,6 @@ class CommandBar(Static):
             self.session_name = session_name
             self.text = text
             self.session_id = session_id
-
-    class NewAgentRequested(Message):
-        """Message sent when user wants to create a new agent."""
-        def __init__(self, agent_name: str, directory: Optional[str] = None, bypass_permissions: bool = False, agent_teams: bool = False, claude_agent: Optional[str] = None, provider: str = "web"):
-            super().__init__()
-            self.agent_name = agent_name
-            self.directory = directory
-            self.bypass_permissions = bypass_permissions
-            self.agent_teams = agent_teams
-            self.claude_agent = claude_agent
-            self.provider = provider
-
-    class NewRemoteAgentRequested(Message):
-        """Message sent when user wants to launch a remote agent on a sister (#310)."""
-        def __init__(self, sister_name: str, agent_name: str, directory: Optional[str] = None, permissions: str = "normal", provider: str = "web"):
-            super().__init__()
-            self.sister_name = sister_name
-            self.agent_name = agent_name
-            self.directory = directory
-            self.permissions = permissions
-            self.provider = provider
 
     class ValueUpdated(Message):
         """Message sent when user updates agent value (#61)."""
@@ -268,45 +227,6 @@ class CommandBar(Static):
                 event.input.value = ""
                 self.action_clear_and_unfocus()
                 return
-            elif self.mode == "new_agent_dir":
-                # Step 1: Directory entered, validate and move to name step
-                # Note: _handle_new_agent_dir sets input value to default name, don't clear it
-                self._handle_new_agent_dir(text if text else None)
-                return
-            elif self.mode == "new_agent_name":
-                # Step 2: Name entered (or default accepted), move to permissions step
-                # If empty, use the pre-filled default
-                name = text if text else event.input.value.strip()
-                if not name:
-                    # Derive from directory as fallback
-                    from pathlib import Path
-                    name = Path(self.new_agent_dir).name if self.new_agent_dir else "agent"
-                self._handle_new_agent_name(name)
-                event.input.value = ""
-                return
-            elif self.mode == "new_agent_perms":
-                # Step 3: Permissions chosen, transition to teams step
-                self.new_agent_bypass = text.lower().strip() in ("bypass", "y", "yes", "!")
-                self._handle_new_agent_perms()
-                event.input.value = ""
-                return
-            elif self.mode == "new_agent_teams":
-                # Step 4: Teams chosen, transition to provider step
-                self.new_agent_teams = text.lower().strip() in ("yes", "y", "true", "1", "teams")
-                self._handle_new_agent_provider_step()
-                event.input.value = ""
-                return
-            elif self.mode == "new_agent_provider":
-                # Step 5: Provider chosen, create agent
-                provider_input = text.lower().strip()
-                if provider_input in ("bedrock", "b"):
-                    self.new_agent_provider = "bedrock"
-                else:
-                    self.new_agent_provider = "web"
-                self._create_new_agent(self.new_agent_name, self.new_agent_bypass, self.new_agent_teams)
-                event.input.value = ""
-                self.action_clear_and_unfocus()
-                return
             elif self.mode == "standing_orders":
                 # Set standing orders (empty string clears them)
                 self._set_standing_order(text)
@@ -356,187 +276,17 @@ class CommandBar(Static):
             return
         self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
-    def _handle_new_agent_dir(self, directory: Optional[str]) -> None:
-        """Handle directory input for new agent creation.
-
-        Validates directory and transitions to name input step.
-        For remote agents, skips agent scanning.
-        """
-        if self.new_remote_sister:
-            # Remote: just store the dir and move to name step
-            self.new_agent_dir = directory if directory else "."
-            self._transition_to_name_step()
-            return
-
-        from pathlib import Path
-
-        # Expand ~ and resolve path
-        if directory:
-            dir_path = Path(directory).expanduser().resolve()
-            if not dir_path.exists():
-                # Create the directory
-                try:
-                    dir_path.mkdir(parents=True, exist_ok=True)
-                    self.app.notify(f"Created directory: {dir_path}", severity="information")
-                except OSError as e:
-                    self.app.notify(f"Failed to create directory: {e}", severity="error")
-                    return
-            if not dir_path.is_dir():
-                self.app.notify(f"Not a directory: {dir_path}", severity="error")
-                return
-            self.new_agent_dir = str(dir_path)
-        else:
-            # Use current working directory if none specified
-            self.new_agent_dir = str(Path.cwd())
-
-        # Check for available Claude agents
-        from ..agent_scanner import scan_agents
-        agents = scan_agents(self.new_agent_dir)
-
-        if agents:
-            # Show agent selection modal (TUI will handle the message and
-            # transition us to name step afterwards)
-            from .agent_select_modal import AgentSelectModal
-            try:
-                modal = self.app.query_one("#agent-select-modal", AgentSelectModal)
-                if hasattr(self.app, '_dialog_will_open'):
-                    self.app._dialog_will_open()
-                modal.show(agents, self.app)
-            except Exception:
-                # Modal not found — fall through to name step
-                self._transition_to_name_step()
-        else:
-            # No agents found — skip straight to name step
-            self._transition_to_name_step()
-
-    def _transition_to_name_step(self) -> None:
-        """Transition to the name input step of new agent creation."""
-        from pathlib import Path
-
-        # Derive default agent name from directory basename (#131)
-        # If an agent with that name exists, increment (foo -> foo2 -> foo3)
-        base_name = Path(self.new_agent_dir).name
-        default_name = self._get_unique_agent_name(base_name)
-
-        # Transition to name step
-        self.mode = "new_agent_name"
-        self._update_target_label()
-
-        # Pre-fill the input with the default name
-        input_widget = self.query_one("#cmd-input", Input)
-        input_widget.value = default_name
-
     def _get_unique_agent_name(self, base_name: str) -> str:
-        """Get a unique agent name by incrementing suffix if needed (#131).
-
-        Args:
-            base_name: The base name to start with (e.g., directory name)
-
-        Returns:
-            A unique name: base_name if available, else base_name2, base_name3, etc.
-        """
-        # Check if base name is available
+        """Get a unique agent name by incrementing suffix if needed (#131)."""
         if not self.app.session_manager.get_session_by_name(base_name):
             return base_name
-
-        # Try incrementing suffix until we find an unused name
         suffix = 2
-        while suffix < 100:  # Reasonable limit
+        while suffix < 100:
             candidate = f"{base_name}{suffix}"
             if not self.app.session_manager.get_session_by_name(candidate):
                 return candidate
             suffix += 1
-
-        # Fallback (very unlikely to reach)
         return f"{base_name}_{suffix}"
-
-    def _handle_new_agent_name(self, name: str) -> None:
-        """Handle name input for new agent creation.
-
-        Stores the name and transitions to permissions step.
-        Pre-fills bypass from config defaults.
-        """
-        self.new_agent_name = name
-
-        # Transition to permissions step
-        self.mode = "new_agent_perms"
-        self._update_target_label()
-
-        # Pre-fill from config defaults
-        from ..config import get_new_agent_defaults
-        defaults = get_new_agent_defaults()
-        if defaults.get("bypass_permissions", False):
-            input_widget = self.query_one("#cmd-input", Input)
-            input_widget.value = "bypass"
-
-    def _handle_new_agent_perms(self) -> None:
-        """Handle permissions input for new agent creation.
-
-        For local agents: transitions to teams step.
-        For remote agents: skips teams and goes straight to provider step.
-        """
-        if self.new_remote_sister:
-            # Remote agents don't have teams — skip to provider
-            self._handle_new_agent_provider_step()
-            return
-
-        from ..config import get_new_agent_defaults
-        defaults = get_new_agent_defaults()
-        self.new_agent_teams = defaults.get("agent_teams", False)
-
-        self.mode = "new_agent_teams"
-        self._update_target_label()
-
-        # Pre-fill with current default
-        if self.new_agent_teams:
-            input_widget = self.query_one("#cmd-input", Input)
-            input_widget.value = "yes"
-
-    def _handle_new_agent_provider_step(self) -> None:
-        """Transition to provider step. Pre-fills from config defaults."""
-        from ..config import get_new_agent_defaults
-        defaults = get_new_agent_defaults()
-        self.new_agent_provider = defaults.get("provider", "web")
-
-        self.mode = "new_agent_provider"
-        self._update_target_label()
-
-        # Pre-fill with current default
-        if self.new_agent_provider == "bedrock":
-            input_widget = self.query_one("#cmd-input", Input)
-            input_widget.value = "bedrock"
-
-    def _create_new_agent(self, name: str, bypass_permissions: bool = False, agent_teams: bool = False) -> None:
-        """Create a new agent — dispatches to local or remote based on new_remote_sister."""
-        provider = getattr(self, 'new_agent_provider', 'web') or 'web'
-
-        if self.new_remote_sister:
-            # Remote agent on sister
-            if bypass_permissions:
-                permissions = "bypass"
-            else:
-                permissions = "normal"
-            self.post_message(self.NewRemoteAgentRequested(
-                sister_name=self.new_remote_sister,
-                agent_name=name,
-                directory=self.new_agent_dir,
-                permissions=permissions,
-                provider=provider,
-            ))
-        else:
-            # Local agent
-            self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent, provider=provider))
-
-        # Reset state
-        self.new_agent_dir = None
-        self.new_agent_name = None
-        self.new_agent_bypass = False
-        self.new_agent_teams = False
-        self.new_agent_claude_agent = None
-        self.new_agent_provider = "web"
-        self.new_remote_sister = None
-        self.mode = "send"
-        self._update_target_label()
 
     def _set_standing_order(self, text: str) -> None:
         """Set text as standing order (empty string clears orders)."""
@@ -611,13 +361,6 @@ class CommandBar(Static):
             input_widget.value = ""
         # Reset mode and state
         self.mode = "send"
-        self.new_agent_dir = None
-        self.new_agent_name = None
-        self.new_agent_bypass = False
-        self.new_agent_teams = False
-        self.new_agent_claude_agent = None
-        self.new_agent_provider = "web"
-        self.new_remote_sister = None  # Reset remote agent state (#310)
         self.fork_source_session = None  # Reset fork state (#347)
         self.heartbeat_freq = None  # Reset heartbeat state (#171)
         self._update_target_label()

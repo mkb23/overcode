@@ -503,41 +503,37 @@ class SessionActionsMixin:
             self.notify(f"Failed to send /clear to '{session_name}'", severity="error")
 
     def action_new_agent(self) -> None:
-        """Prompt to create a new agent (local or remote).
-
-        When sisters are configured, shows a host selection modal first.
-        Otherwise goes straight to the directory step.
-        """
-        from ..tui_widgets import CommandBar
+        """Open the unified new-agent modal pre-filled with defaults."""
+        from ..tui_widgets import NewAgentModal
+        from ..config import get_new_agent_defaults, get_sisters_config
+        from ..agent_scanner import scan_agents
 
         try:
-            command_bar = self.query_one("#command-bar", CommandBar)
-            command_bar.add_class("visible")  # Must show the command bar first
-
-            if self.has_sisters:
-                # Show host selection modal (local + sisters)
-                from ..config import get_sisters_config
-                from ..tui_widgets.host_select_modal import HostSelectModal
-                sister_names = [s["name"] for s in get_sisters_config()]
-                try:
-                    modal = self.query_one("#host-select-modal", HostSelectModal)
-                    if hasattr(self, '_dialog_will_open'):
-                        self._dialog_will_open()
-                    modal.show(self.local_hostname, sister_names, self)
-                except NoMatches:
-                    # Fallback: go straight to directory step
-                    command_bar.set_mode("new_agent_dir")
-                    input_widget = command_bar.query_one("#cmd-input", Input)
-                    input_widget.value = str(Path.cwd())
-                    command_bar.focus_input()
-            else:
-                # No sisters: go straight to directory step
-                command_bar.set_mode("new_agent_dir")
-                input_widget = command_bar.query_one("#cmd-input", Input)
-                input_widget.value = str(Path.cwd())
-                command_bar.focus_input()
+            modal = self.query_one("#new-agent-modal", NewAgentModal)
         except NoMatches:
-            self.notify("Command bar not found", severity="error")
+            self.notify("New agent modal not found", severity="error")
+            return
+
+        directory = str(Path.cwd())
+        defaults = get_new_agent_defaults()
+        agents = scan_agents(directory)
+
+        existing_names: set[str] = set()
+        if hasattr(self, 'sessions'):
+            existing_names = {s.name for s in self.sessions}
+
+        sister_names = [s["name"] for s in get_sisters_config()] if self.has_sisters else []
+
+        self._dialog_will_open()
+        modal.show(
+            directory=directory,
+            defaults=defaults,
+            agents=agents,
+            existing_names=existing_names,
+            local_hostname=self.local_hostname,
+            sister_names=sister_names,
+            app_ref=self,
+        )
 
     def _open_command_bar(
         self,

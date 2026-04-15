@@ -41,8 +41,6 @@ def _make_bare_command_bar(**extra_attrs):
     widget.target_session = None
     widget.target_session_id = None
     widget.mode = "send"
-    widget.new_agent_dir = None
-    widget.new_agent_name = None
     widget.heartbeat_freq = None
     # Bypass the reactive descriptor for ``expanded`` — its watcher calls
     # query_one() which requires a fully mounted widget tree.
@@ -79,20 +77,6 @@ class TestCommandBarMessages:
         msg = CommandBar.StandingOrderRequested("agent-2", "always test")
         assert msg.session_name == "agent-2"
         assert msg.text == "always test"
-
-    def test_new_agent_requested_stores_attributes(self):
-        from overcode.tui_widgets.command_bar import CommandBar
-        msg = CommandBar.NewAgentRequested("my-agent", directory="/tmp/dir", bypass_permissions=True)
-        assert msg.agent_name == "my-agent"
-        assert msg.directory == "/tmp/dir"
-        assert msg.bypass_permissions is True
-
-    def test_new_agent_requested_defaults(self):
-        from overcode.tui_widgets.command_bar import CommandBar
-        msg = CommandBar.NewAgentRequested("my-agent")
-        assert msg.agent_name == "my-agent"
-        assert msg.directory is None
-        assert msg.bypass_permissions is False
 
     def test_value_updated_stores_attributes(self):
         from overcode.tui_widgets.command_bar import CommandBar
@@ -459,60 +443,6 @@ class TestSetAnnotation:
 
 
 # ===========================================================================
-# _handle_new_agent_name
-# ===========================================================================
-
-
-class TestHandleNewAgentName:
-    """Tests for CommandBar._handle_new_agent_name."""
-
-    def test_stores_name_and_transitions_to_perms(self):
-        widget = _make_bare_command_bar()
-        widget._update_target_label = MagicMock()
-        widget._handle_new_agent_name("my-agent")
-        assert widget.new_agent_name == "my-agent"
-        assert widget.mode == "new_agent_perms"
-        widget._update_target_label.assert_called_once()
-
-
-# ===========================================================================
-# _create_new_agent
-# ===========================================================================
-
-
-class TestCreateNewAgent:
-    """Tests for CommandBar._create_new_agent."""
-
-    def test_posts_message_and_resets_state(self):
-        widget = _make_bare_command_bar(
-            new_agent_dir="/tmp/test",
-            new_agent_name="agent-1",
-        )
-        widget.post_message = MagicMock()
-        widget._update_target_label = MagicMock()
-        widget._create_new_agent("agent-1", bypass_permissions=False)
-
-        widget.post_message.assert_called_once()
-        msg = widget.post_message.call_args[0][0]
-        assert msg.agent_name == "agent-1"
-        assert msg.directory == "/tmp/test"
-        assert msg.bypass_permissions is False
-
-        # State reset
-        assert widget.new_agent_dir is None
-        assert widget.new_agent_name is None
-        assert widget.mode == "send"
-
-    def test_bypass_permissions(self):
-        widget = _make_bare_command_bar(new_agent_dir="/tmp")
-        widget.post_message = MagicMock()
-        widget._update_target_label = MagicMock()
-        widget._create_new_agent("agent-1", bypass_permissions=True)
-        msg = widget.post_message.call_args[0][0]
-        assert msg.bypass_permissions is True
-
-
-# ===========================================================================
 # _handle_heartbeat_instruction
 # ===========================================================================
 
@@ -609,11 +539,6 @@ class TestSetTargetAndMode:
         assert widget.mode == "standing_orders"
         widget._update_target_label.assert_called_once()
 
-    def test_set_mode_to_new_agent_dir(self):
-        widget = _make_bare_command_bar()
-        widget._update_target_label = MagicMock()
-        widget.set_mode("new_agent_dir")
-        assert widget.mode == "new_agent_dir"
 
 
 # ===========================================================================
@@ -647,24 +572,6 @@ class TestActionToggleExpand:
 
 class TestGetModeLabelAndPlaceholder:
     """Tests for the pure get_mode_label_and_placeholder function."""
-
-    def test_new_agent_dir_mode(self):
-        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
-        label, placeholder = get_mode_label_and_placeholder("new_agent_dir", None)
-        assert label == "[New Agent: Directory] "
-        assert "directory" in placeholder.lower()
-
-    def test_new_agent_name_mode(self):
-        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
-        label, placeholder = get_mode_label_and_placeholder("new_agent_name", None)
-        assert label == "[New Agent: Name] "
-        assert "name" in placeholder.lower()
-
-    def test_new_agent_perms_mode(self):
-        from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder
-        label, placeholder = get_mode_label_and_placeholder("new_agent_perms", None)
-        assert label == "[New Agent: Permissions] "
-        assert "bypass" in placeholder.lower()
 
     def test_standing_orders_with_session(self):
         from overcode.tui_widgets.command_bar import get_mode_label_and_placeholder

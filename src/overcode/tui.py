@@ -75,7 +75,7 @@ from .tui_widgets import (
     NewAgentDefaultsModal,
     AgentSelectModal,
     SisterSelectionModal,
-    HostSelectModal,
+    NewAgentModal,
     InstructionHistoryModal,
 )
 from .tui_actions import (
@@ -405,8 +405,8 @@ class SupervisorTUI(
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
-        # Modal for host selection during new agent creation
-        yield HostSelectModal(id="host-select-modal", classes="modal")
+        # Modal for new agent creation (unified form)
+        yield NewAgentModal(id="new-agent-modal", classes="modal")
         # Modal for sister instance visibility (#323)
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
@@ -2841,45 +2841,78 @@ class SupervisorTUI(
         except NoMatches:
             pass
 
-    def on_command_bar_new_agent_requested(self, message: CommandBar.NewAgentRequested) -> None:
-        """Handle new agent creation request."""
-        agent_name = message.agent_name
-        directory = message.directory
-        bypass_permissions = message.bypass_permissions
+    def on_new_agent_modal_launch_requested(self, message: NewAgentModal.LaunchRequested) -> None:
+        """Handle launch from the unified new-agent modal."""
+        import logging
+        _log = logging.getLogger("overcode.tui.new_agent")
 
-        # Validate name (no spaces, reasonable length)
-        if not agent_name or len(agent_name) > 50:
+        name = message.name
+        if not name or len(name) > 50 or ' ' in name:
             self.notify("Invalid agent name", severity="error")
+            self._dialog_did_close()
             return
 
-        if ' ' in agent_name:
-            self.notify("Agent name cannot contain spaces", severity="error")
-            return
+        if message.is_remote:
+            # Launch on remote sister
+            from .config import get_sister_by_name
+            sister_config = get_sister_by_name(message.host)
+            if not sister_config:
+                self.notify(f"Sister '{message.host}' not found", severity="error")
+                self._dialog_did_close()
+                return
 
-        # Create new agent using launcher
-        launcher = ClaudeLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
+            # Check reachability
+            for state in self._sister_poller.get_sister_states():
+                if state.name == message.host and not state.reachable:
+                    self.notify(f"Sister '{message.host}' is unreachable", severity="warning")
+                    self._dialog_did_close()
+                    return
 
-        try:
-            launcher.launch(
-                name=agent_name,
-                start_directory=directory,
-                dangerously_skip_permissions=bypass_permissions,
-                agent_teams=message.agent_teams,
-                claude_agent=message.claude_agent,
-                provider=getattr(message, 'provider', 'web') or 'web',
+            permissions = "bypass" if message.bypass_permissions else "normal"
+            try:
+                result = self._sister_controller.launch_agent(
+                    sister_url=sister_config["url"],
+                    api_key=sister_config.get("api_key", ""),
+                    directory=message.directory or ".",
+                    name=name,
+                    permissions=permissions,
+                    provider=message.provider,
+                )
+            except Exception as e:
+                _log.error("Remote launch exception: %s", e, exc_info=True)
+                self.notify(f"Remote launch failed: {e}", severity="error")
+                self._dialog_did_close()
+                return
+
+            if result.ok:
+                self.notify(f"Remote agent '{name}' launched on {message.host}", severity="information")
+            else:
+                self.notify(f"Remote launch failed: {result.error}", severity="error")
+        else:
+            # Launch locally
+            launcher = ClaudeLauncher(
+                tmux_session=self.tmux_session,
+                session_manager=self.session_manager,
             )
-            dir_info = f" in {directory}" if directory else ""
-            perm_info = " (bypass mode)" if bypass_permissions else ""
-            agent_info = f" (agent: {message.claude_agent})" if message.claude_agent else ""
-            provider_info = f" (bedrock)" if getattr(message, 'provider', 'web') == 'bedrock' else ""
-            self.notify(f"Created agent: {agent_name}{dir_info}{perm_info}{agent_info}{provider_info}", severity="information")
-            # Refresh to show new agent
-            self.refresh_sessions()
-        except Exception as e:
-            self.notify(f"Failed to create agent: {e}", severity="error")
+            try:
+                launcher.launch(
+                    name=name,
+                    start_directory=message.directory,
+                    dangerously_skip_permissions=message.bypass_permissions,
+                    agent_teams=message.agent_teams,
+                    claude_agent=message.claude_agent,
+                    provider=message.provider or "web",
+                )
+                self.notify(f"Created agent: {name}", severity="information")
+                self.refresh_sessions()
+            except Exception as e:
+                self.notify(f"Failed to create agent: {e}", severity="error")
+
+        self._dialog_did_close()
+
+    def on_new_agent_modal_cancelled(self, message: NewAgentModal.Cancelled) -> None:
+        """Handle cancel from new-agent modal."""
+        self._dialog_did_close()
 
     def on_command_bar_fork_requested(self, message: CommandBar.ForkRequested) -> None:
         """Handle fork agent request (#347)."""
@@ -2929,62 +2962,6 @@ class SupervisorTUI(
                 self.notify(f"Failed to fork '{source_session.name}'", severity="error")
         except Exception as e:
             self.notify(f"Failed to fork: {e}", severity="error")
-
-    def on_command_bar_new_remote_agent_requested(self, message: CommandBar.NewRemoteAgentRequested) -> None:
-        """Handle remote agent launch request (#310)."""
-        import logging
-        _log = logging.getLogger("overcode.tui.sister")
-
-        sister_name = message.sister_name
-        agent_name = message.agent_name
-        directory = message.directory
-        permissions = message.permissions
-
-        _log.info("Launch request: sister=%s agent=%s dir=%s perms=%s",
-                   sister_name, agent_name, directory, permissions)
-
-        from .config import get_sister_by_name
-        sister_config = get_sister_by_name(sister_name)
-        if not sister_config:
-            _log.error("Sister '%s' not found in config", sister_name)
-            self.notify(f"Sister '{sister_name}' not found", severity="error")
-            return
-
-        # Check sister is reachable before launching
-        sister_found_in_poller = False
-        for state in self._sister_poller.get_sister_states():
-            if state.name == sister_name:
-                sister_found_in_poller = True
-                if not state.reachable:
-                    _log.error("Sister '%s' unreachable (last_error=%s)", sister_name, state.last_error)
-                    self.notify(f"Sister '{sister_name}' is unreachable", severity="warning")
-                    return
-                break
-
-        if not sister_found_in_poller:
-            _log.warning("Sister '%s' not found in poller state — skipping reachability check", sister_name)
-
-        _log.info("Calling launch_agent on %s", sister_config["url"])
-        try:
-            result = self._sister_controller.launch_agent(
-                sister_url=sister_config["url"],
-                api_key=sister_config.get("api_key", ""),
-                directory=directory or ".",
-                name=agent_name,
-                permissions=permissions,
-                provider=message.provider,
-            )
-        except Exception as e:
-            _log.error("Remote launch exception: %s", e, exc_info=True)
-            self.notify(f"Remote launch failed: {e}", severity="error")
-            return
-
-        if result.ok:
-            _log.info("Remote agent '%s' launched successfully on %s", agent_name, sister_name)
-            self.notify(f"Remote agent '{agent_name}' launched on {sister_name}", severity="information")
-        else:
-            _log.error("Remote launch failed: %s", result.error)
-            self.notify(f"Remote launch failed: {result.error}", severity="error")
 
     def _ensure_monitor_daemon(self) -> None:
         """Start or restart the Monitor Daemon as needed.
@@ -3357,55 +3334,6 @@ class SupervisorTUI(
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
         self._dialog_did_close()
-
-    def on_agent_select_modal_agent_selected(self, message: AgentSelectModal.AgentSelected) -> None:
-        """Handle agent selection from modal."""
-        self._dialog_did_close()
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            cmd_bar.new_agent_claude_agent = message.agent_name
-            cmd_bar._transition_to_name_step()
-            cmd_bar.focus_input()
-        except NoMatches:
-            pass
-
-    def on_agent_select_modal_agent_select_skipped(self, message: AgentSelectModal.AgentSelectSkipped) -> None:
-        """Handle agent selection skipped (q/Esc)."""
-        self._dialog_did_close()
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            cmd_bar.new_agent_claude_agent = None
-            cmd_bar._transition_to_name_step()
-            cmd_bar.focus_input()
-        except NoMatches:
-            pass
-
-    def on_host_select_modal_host_selected(self, message: HostSelectModal.HostSelected) -> None:
-        """Handle host selection — set sister and start unified dir step."""
-        from pathlib import Path
-        self._dialog_did_close()
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            if message.is_local:
-                cmd_bar.new_remote_sister = None
-            else:
-                cmd_bar.new_remote_sister = message.host_name
-            # Proceed to directory step (unified flow)
-            cmd_bar.set_mode("new_agent_dir")
-            input_widget = cmd_bar.query_one("#cmd-input", Input)
-            input_widget.value = "." if cmd_bar.new_remote_sister else str(Path.cwd())
-            cmd_bar.focus_input()
-        except NoMatches:
-            pass
-
-    def on_host_select_modal_host_select_cancelled(self, message: HostSelectModal.HostSelectCancelled) -> None:
-        """Handle host selection cancelled."""
-        self._dialog_did_close()
-        try:
-            cmd_bar = self.query_one("#command-bar", CommandBar)
-            cmd_bar.action_clear_and_unfocus()
-        except NoMatches:
-            pass
 
     def action_open_sister_selection(self) -> None:
         """Open the sister selection modal (#323)."""

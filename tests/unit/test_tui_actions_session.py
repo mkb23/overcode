@@ -1533,26 +1533,24 @@ class TestTransportAll:
 class TestNewAgent:
     """Test action_new_agent method."""
 
-    def test_opens_command_bar_in_new_agent_dir_mode(self):
-        """Should open command bar with new_agent_dir mode when no sisters."""
+    def test_opens_modal_with_defaults(self):
+        """Should open new-agent modal pre-filled with defaults."""
         from overcode.tui_actions.session import SessionActionsMixin
 
-        mock_cmd_bar = MagicMock()
-        mock_input = MagicMock()
-        mock_cmd_bar.query_one.return_value = mock_input
-
+        mock_modal = MagicMock()
         mock_tui = MagicMock()
-        mock_tui.query_one.return_value = mock_cmd_bar
+        mock_tui.query_one.return_value = mock_modal
         mock_tui.has_sisters = False
+        mock_tui.local_hostname = "test-host"
+        mock_tui.sessions = []
 
         SessionActionsMixin.action_new_agent(mock_tui)
 
-        mock_cmd_bar.add_class.assert_called_once_with("visible")
-        mock_cmd_bar.set_mode.assert_called_once_with("new_agent_dir")
-        mock_cmd_bar.focus_input.assert_called_once()
+        mock_tui._dialog_will_open.assert_called_once()
+        mock_modal.show.assert_called_once()
 
     def test_handles_no_matches(self):
-        """Should handle NoMatches gracefully when command bar is not found."""
+        """Should handle NoMatches gracefully when modal is not found."""
         from overcode.tui_actions.session import SessionActionsMixin
         from textual.css.query import NoMatches
 
@@ -1563,7 +1561,7 @@ class TestNewAgent:
         SessionActionsMixin.action_new_agent(mock_tui)
 
         mock_tui.notify.assert_called_once()
-        assert "Command bar not found" in mock_tui.notify.call_args[0][0]
+        assert "modal not found" in mock_tui.notify.call_args[0][0]
 
 
 class TestFocusCommandBar:
