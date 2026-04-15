@@ -167,6 +167,8 @@ def handle_hook_event() -> None:
             if session_data and session_data.get("budget_exceeded", False):
                 budget = session_data.get("cost_budget_usd", 0)
                 cost = session_data.get("estimated_cost_usd", 0)
+                # Overwrite hook state so status detector shows error, not stuck green (#428)
+                write_hook_state("UserPromptSubmitRejected", tmux_session, session_name)
                 print(
                     f"Budget exceeded (${cost:.2f} / ${budget:.2f}). Prompt blocked.",
                     file=sys.stderr,

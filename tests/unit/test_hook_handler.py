@@ -246,6 +246,11 @@ class TestHandleHookEvent:
         assert "$5.42" in captured.err
         assert "$5.00" in captured.err
 
+        # Hook state must show rejection, not stuck as UserPromptSubmit (#428)
+        hook_state_path = state_dir / "hook_state_test-agent.json"
+        hook_state = json.loads(hook_state_path.read_text())
+        assert hook_state["event"] == "UserPromptSubmitRejected"
+
     def test_budget_not_exceeded_allows_prompt(self, monkeypatch, tmp_path, capsys):
         """Normal flow when budget is not exceeded (#246)."""
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")

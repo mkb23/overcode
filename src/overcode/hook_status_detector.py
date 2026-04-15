@@ -52,6 +52,7 @@ _HOOK_STATUS_MAP = {
     "PostToolUseFailure": STATUS_RUNNING,  # Tool failed but agent is still working
     "Stop": STATUS_WAITING_USER,
     "StopFailure": STATUS_ERROR,  # API error ended the turn (purple indicator)
+    "UserPromptSubmitRejected": STATUS_ERROR,  # Hook blocked prompt e.g. budget exceeded (#428)
     "PermissionRequest": STATUS_WAITING_APPROVAL,
     "SessionEnd": STATUS_TERMINATED,
 }
@@ -306,6 +307,9 @@ class HookStatusDetector:
 
         if event == "UserPromptSubmit":
             return "Processing prompt"
+
+        if event == "UserPromptSubmitRejected":
+            return "Prompt blocked by hook"
 
         if event == "Stop":
             if session and session.parent_session_id is not None:

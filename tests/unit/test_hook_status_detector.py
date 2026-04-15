@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import HookStatusDetector
-from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_APPROVAL, STATUS_WAITING_USER, STATUS_TERMINATED
+from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_APPROVAL, STATUS_WAITING_USER, STATUS_TERMINATED, STATUS_ERROR
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
@@ -259,6 +259,19 @@ mike@mac ~/Code/overcode %
         status, _, _ = detector.detect_status(session)
 
         assert status == STATUS_WAITING_USER
+
+    def test_user_prompt_submit_rejected_is_error(self, tmp_path):
+        """UserPromptSubmitRejected → ERROR (purple) (#428)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "UserPromptSubmitRejected")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "Budget exceeded")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_ERROR
+        assert "blocked" in activity.lower()
 
     def test_unknown_event_defaults_to_waiting_user(self, tmp_path):
         """Unknown event → WAITING_USER (safe default)."""
