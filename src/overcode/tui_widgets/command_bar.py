@@ -26,7 +26,9 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
     Returns:
         Tuple of (label_text, placeholder_text)
     """
-    if mode == "new_agent_dir":
+    if mode == "new_agent_host":
+        return "[New Agent: Host] ", "Enter host name (or Enter for local)..."
+    elif mode == "new_agent_dir":
         return "[New Agent: Directory] ", "Enter working directory path..."
     elif mode == "new_agent_name":
         return "[New Agent: Name] ", "Enter agent name (or Enter to accept default)..."
@@ -36,14 +38,6 @@ def get_mode_label_and_placeholder(mode: str, target_session: Optional[str]) -> 
         return "[New Agent: Teams] ", "Type 'yes' to enable agent teams, or Enter to skip..."
     elif mode == "new_agent_provider":
         return "[New Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
-    elif mode == "new_remote_agent_dir":
-        return "[Remote Agent: Directory] ", "Enter remote directory (or Enter for '.')..."
-    elif mode == "new_remote_agent_name":
-        return "[Remote Agent: Name] ", "Enter agent name..."
-    elif mode == "new_remote_agent_perms":
-        return "[Remote Agent: Permissions] ", "Type 'bypass' or 'skip', or Enter for normal..."
-    elif mode == "new_remote_agent_provider":
-        return "[Remote Agent: Provider] ", "Type 'bedrock' for AWS Bedrock, or Enter for web (Claude.ai)..."
     elif mode == "fork_name":
         return "[Fork: Name] ", "Enter name for forked agent (or Enter to accept default)..."
     elif mode == "standing_orders":
@@ -265,21 +259,8 @@ class CommandBar(Static):
         if event.input.id == "cmd-input":
             text = event.value.strip()
 
-            if self.mode == "new_remote_agent_dir":
-                self._handle_remote_agent_dir(text)
-                return
-            elif self.mode == "new_remote_agent_name":
-                self._handle_remote_agent_name(text)
-                event.input.value = ""
-                return
-            elif self.mode == "new_remote_agent_perms":
-                self._handle_remote_agent_perms(text)
-                event.input.value = ""
-                return
-            elif self.mode == "new_remote_agent_provider":
-                self._handle_remote_agent_provider(text)
-                event.input.value = ""
-                self.action_clear_and_unfocus()
+            if self.mode == "new_agent_host":
+                self._handle_new_agent_host(text)
                 return
             elif self.mode == "fork_name":
                 # Fork agent: name entered, create the fork (#347)
@@ -380,11 +361,49 @@ class CommandBar(Static):
             return
         self.post_message(self.SendRequested(self.target_session, text.strip(), session_id=self.target_session_id or ""))
 
+    def _handle_new_agent_host(self, text: str) -> None:
+        """Handle host input for new agent creation.
+
+        Empty/local hostname → local agent. Sister name → remote agent.
+        """
+        text = text.strip()
+
+        if not text or text == getattr(self.app, 'local_hostname', ''):
+            # Local agent
+            self.new_remote_sister = None
+        else:
+            # Validate sister exists
+            from overcode.config import get_sister_by_name
+            sister = get_sister_by_name(text)
+            if not sister:
+                from overcode.config import get_sisters_config
+                available = [s["name"] for s in get_sisters_config()]
+                self.app.notify(f"Host '{text}' not found. Available: {', '.join(available)}", severity="error")
+                return
+            self.new_remote_sister = text
+
+        # Transition to directory step
+        self.mode = "new_agent_dir"
+        self._update_target_label()
+        input_widget = self.query_one("#cmd-input", Input)
+        if self.new_remote_sister:
+            input_widget.value = "."
+        else:
+            from pathlib import Path
+            input_widget.value = str(Path.cwd())
+
     def _handle_new_agent_dir(self, directory: Optional[str]) -> None:
         """Handle directory input for new agent creation.
 
         Validates directory and transitions to name input step.
+        For remote agents, skips agent scanning.
         """
+        if self.new_remote_sister:
+            # Remote: just store the dir and move to name step
+            self.new_agent_dir = directory if directory else "."
+            self._transition_to_name_step()
+            return
+
         from pathlib import Path
 
         # Expand ~ and resolve path
@@ -489,9 +508,14 @@ class CommandBar(Static):
     def _handle_new_agent_perms(self) -> None:
         """Handle permissions input for new agent creation.
 
-        Stores the bypass flag and transitions to teams step.
-        Pre-fills teams from config defaults.
+        For local agents: transitions to teams step.
+        For remote agents: skips teams and goes straight to provider step.
         """
+        if self.new_remote_sister:
+            # Remote agents don't have teams — skip to provider
+            self._handle_new_agent_provider_step()
+            return
+
         from ..config import get_new_agent_defaults
         defaults = get_new_agent_defaults()
         self.new_agent_teams = defaults.get("agent_teams", False)
@@ -519,9 +543,26 @@ class CommandBar(Static):
             input_widget.value = "bedrock"
 
     def _create_new_agent(self, name: str, bypass_permissions: bool = False, agent_teams: bool = False) -> None:
-        """Create a new agent with the given name, directory, permission mode, teams flag, and provider."""
+        """Create a new agent — dispatches to local or remote based on new_remote_sister."""
         provider = getattr(self, 'new_agent_provider', 'web') or 'web'
-        self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent, provider=provider))
+
+        if self.new_remote_sister:
+            # Remote agent on sister
+            if bypass_permissions:
+                permissions = "bypass"
+            else:
+                permissions = "normal"
+            self.post_message(self.NewRemoteAgentRequested(
+                sister_name=self.new_remote_sister,
+                agent_name=name,
+                directory=self.new_agent_dir,
+                permissions=permissions,
+                provider=provider,
+            ))
+        else:
+            # Local agent
+            self.post_message(self.NewAgentRequested(name, self.new_agent_dir, bypass_permissions, agent_teams, claude_agent=self.new_agent_claude_agent, provider=provider))
+
         # Reset state
         self.new_agent_dir = None
         self.new_agent_name = None
@@ -529,84 +570,7 @@ class CommandBar(Static):
         self.new_agent_teams = False
         self.new_agent_claude_agent = None
         self.new_agent_provider = "web"
-        self.mode = "send"
-        self._update_target_label()
-
-    # --- Remote agent flow (#310) ---
-
-    def _handle_remote_agent_dir(self, text: str) -> None:
-        """Handle directory input for remote agent creation."""
-        import logging
-        logging.getLogger("overcode.tui.sister").info("Remote agent dir=%s", text or ".")
-        self.new_agent_dir = text if text else "."
-        self.mode = "new_remote_agent_name"
-        self._update_target_label()
-        # Clear input so directory value doesn't leak into name step (#355)
-        input_widget = self.query_one("#cmd-input", Input)
-        input_widget.value = ""
-
-    def _handle_remote_agent_name(self, name: str) -> None:
-        """Handle name input for remote agent creation."""
-        import logging
-        _log = logging.getLogger("overcode.tui.sister")
-        if not name:
-            _log.warning("Remote agent flow: empty agent name")
-            self.app.notify("Agent name required", severity="error")
-            return
-        _log.info("Remote agent name=%s", name)
-        self.new_agent_name = name
-        self.mode = "new_remote_agent_perms"
-        self._update_target_label()
-
-    def _handle_remote_agent_perms(self, text: str) -> None:
-        """Handle permissions input, then move to provider step."""
-        import logging
-        _log = logging.getLogger("overcode.tui.sister")
-        perms = text.lower().strip()
-        if perms in ("bypass", "!"):
-            self.new_agent_bypass = True
-            self._remote_agent_permissions = "bypass"
-        elif perms in ("skip", "deny"):
-            self.new_agent_bypass = False
-            self._remote_agent_permissions = "skip"
-        else:
-            self.new_agent_bypass = False
-            self._remote_agent_permissions = "normal"
-
-        _log.info("Remote agent perms=%s, moving to provider step", self._remote_agent_permissions)
-        self.mode = "new_remote_agent_provider"
-        self._update_target_label()
-        # Pre-fill from defaults
-        from overcode.config import get_new_agent_defaults
-        defaults = get_new_agent_defaults()
-        input_widget = self.query_one("#cmd-input", Input)
-        input_widget.value = defaults.get("provider", "")
-
-    def _handle_remote_agent_provider(self, text: str) -> None:
-        """Handle provider input and post remote agent message."""
-        import logging
-        _log = logging.getLogger("overcode.tui.sister")
-        provider_text = text.lower().strip()
-        if provider_text in ("bedrock", "b"):
-            provider = "bedrock"
-        else:
-            provider = "web"
-
-        permissions = getattr(self, '_remote_agent_permissions', 'normal')
-        _log.info("Remote agent provider=%s, posting NewRemoteAgentRequested (sister=%s name=%s dir=%s perms=%s)",
-                   provider, self.new_remote_sister, self.new_agent_name, self.new_agent_dir, permissions)
-        self.post_message(self.NewRemoteAgentRequested(
-            sister_name=self.new_remote_sister,
-            agent_name=self.new_agent_name,
-            directory=self.new_agent_dir,
-            permissions=permissions,
-            provider=provider,
-        ))
-        # Reset state
         self.new_remote_sister = None
-        self.new_agent_dir = None
-        self.new_agent_name = None
-        self._remote_agent_permissions = None
         self.mode = "send"
         self._update_target_label()
 
