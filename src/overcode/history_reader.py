@@ -20,7 +20,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
@@ -455,6 +455,8 @@ def encode_project_path(path: str) -> str:
 
     Claude Code stores project data in directories named like:
     /home/user/myproject -> -home-user-myproject
+    /home/user/.config   -> -home-user--config
+    Both '/' and '.' are replaced with '-'.
 
     Args:
         path: The project path to encode
@@ -462,10 +464,8 @@ def encode_project_path(path: str) -> str:
     Returns:
         Encoded directory name
     """
-    # Resolve to absolute path and replace / with -
     resolved = str(Path(path).resolve())
-    # Replace path separators with dashes, prepend dash
-    return resolved.replace("/", "-")
+    return resolved.replace("/", "-").replace(".", "-")
 
 
 def get_session_file_path(
@@ -671,9 +671,12 @@ def get_session_stats(
     if not session.start_directory:
         return None
 
-    # Parse session start time for filtering
+    # Parse session start time for filtering.
+    # session.start_time is local time (naive), but Claude Code session files
+    # store timestamps in UTC.  Convert to UTC-naive for correct comparison.
     try:
-        session_start = datetime.fromisoformat(session.start_time)
+        session_start_local = datetime.fromisoformat(session.start_time)
+        session_start = session_start_local.astimezone(timezone.utc).replace(tzinfo=None)
     except (ValueError, TypeError):
         return None
 
