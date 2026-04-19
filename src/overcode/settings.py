@@ -591,6 +591,22 @@ class TUIPreferences:
                 elif sc is False:
                     kwargs["show_cost"] = "tokens"
 
+                # Migration: show_cost str → column_config overrides (#416)
+                sc = kwargs.get("show_cost", "tokens")
+                col_cfg = kwargs.setdefault("column_config", {})
+                if sc in ("cost", "joules") and not any(
+                    col_cfg.get(lvl, {}).get("cost") is not None
+                    for lvl in ("low", "med", "high", "full")
+                ):
+                    preset = {
+                        "cost": {"token_count": False, "cost": True, "joules": False,
+                                 "budget": True, "subtree_cost": True},
+                        "joules": {"token_count": False, "cost": False, "joules": True,
+                                   "budget": False, "subtree_cost": True},
+                    }.get(sc, {})
+                    for lvl in ("low", "med", "high", "full"):
+                        col_cfg.setdefault(lvl, {}).update(preset)
+
                 return cls(**kwargs)
         except (json.JSONDecodeError, IOError):
             return cls()

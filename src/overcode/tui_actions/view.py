@@ -472,49 +472,84 @@ class ViewActionsMixin:
             severity="information"
         )
 
-    # Cost display modes: tokens → cost → joules
-    _COST_DISPLAY_MODES = ["tokens", "cost", "joules"]
-    _COST_DISPLAY_LABELS = {
-        "tokens": "Showing token counts",
-        "cost": "Showing cost/budget",
-        "joules": "Showing energy (joules)",
-    }
+    # $ key presets: each entry is (label, {column_id: visible, ...}, status_bar_mode)
+    _COST_PRESETS = [
+        ("Showing token counts", {
+            "token_count": True, "cost": False, "joules": False,
+            "budget": False, "subtree_cost": False,
+        }, "tokens"),
+        ("Showing cost/budget", {
+            "token_count": False, "cost": True, "joules": False,
+            "budget": True, "subtree_cost": True,
+        }, "cost"),
+        ("Showing energy (joules)", {
+            "token_count": False, "cost": False, "joules": True,
+            "budget": False, "subtree_cost": True,
+        }, "joules"),
+        ("Showing tokens + cost + joules", {
+            "token_count": True, "cost": True, "joules": True,
+            "budget": True, "subtree_cost": True,
+        }, "cost"),
+    ]
 
     def action_toggle_cost_display(self) -> None:
-        """Cycle between token counts, dollar costs, and energy (joules).
+        """Cycle through cost-column presets via column overrides.
 
-        Modes:
-        - tokens: Show Σ123K token counts
-        - cost: Show $X.XX estimated cost in USD
-        - joules: Show ⚡51MJ estimated energy consumption
+        Each preset sets visibility for token_count, cost, and joules columns
+        independently. The column configurator can still override any of them.
         """
         from ..tui_widgets import SessionSummary, DaemonStatusBar
 
-        modes = self._COST_DISPLAY_MODES
-        current_idx = modes.index(self.show_cost) if self.show_cost in modes else 0
-        self.show_cost = modes[(current_idx + 1) % len(modes)]
+        # Determine current preset index by matching column overrides
+        current_level = self.SUMMARY_LEVELS[self.summary_level_index]
+        overrides = self._prefs.column_config.get(current_level, {})
+        current_idx = self._match_cost_preset(overrides)
+        next_idx = (current_idx + 1) % len(self._COST_PRESETS)
+        label, col_vis, bar_mode = self._COST_PRESETS[next_idx]
 
-        # Save preference
-        self._prefs.show_cost = self.show_cost
+        # Apply column overrides at all detail levels
+        for level in self.SUMMARY_LEVELS:
+            level_overrides = self._prefs.column_config.setdefault(level, {})
+            level_overrides.update(col_vis)
+
+        # Update status bar mode (for its own totals rendering)
+        self.show_cost = bar_mode
+        self._prefs.show_cost = bar_mode
         self._save_prefs()
 
-        # Update all session widgets
+        # Push updated overrides to all widgets
+        active_overrides = self._prefs.column_config.get(current_level, {})
         for widget in self.query(SessionSummary):
-            widget.show_cost = self.show_cost
+            widget.show_cost = bar_mode
+            widget.column_overrides = active_overrides
             widget.refresh()
 
-        # Update daemon status bar
         try:
             status_bar = self.query_one(DaemonStatusBar)
-            status_bar.show_cost = self.show_cost
+            status_bar.show_cost = bar_mode
             status_bar.refresh()
         except NoMatches:
             pass
 
-        self.notify(
-            self._COST_DISPLAY_LABELS.get(self.show_cost, "Showing token counts"),
-            severity="information"
-        )
+        self._recompute_cell_column_widths()
+        self.notify(label, severity="information")
+
+    _COST_PRESET_KEYS = ("token_count", "cost", "joules")
+
+    _COST_PRESET_KEYS = ("token_count", "cost", "joules")
+    # Default visibility when no override exists (matches detail_levels defaults)
+    _COST_COLUMN_DEFAULTS = {"token_count": True, "cost": False, "joules": False}
+
+    def _match_cost_preset(self, overrides: dict) -> int:
+        """Find which preset best matches the current overrides. Returns index."""
+        for i, (_, col_vis, _) in enumerate(self._COST_PRESETS):
+            if all(
+                overrides.get(k, self._COST_COLUMN_DEFAULTS.get(k)) == col_vis.get(k)
+                for k in self._COST_PRESET_KEYS
+            ):
+                return i
+        # No exact match (user has custom config) — cycle from position 0
+        return len(self._COST_PRESETS) - 1
 
     def action_expand_preview(self) -> None:
         """Expand the preview pane into a fullscreen scrollable overlay (#190)."""

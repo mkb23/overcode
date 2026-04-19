@@ -373,9 +373,7 @@ def render_active_pct(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_token_count(ctx: ColumnContext) -> ColumnOutput:
-    """Token count (Σ123K). Hidden when show_cost != 'tokens'."""
-    if ctx.show_cost != "tokens":
-        return None
+    """Token count (Σ123K)."""
     if ctx.claude_stats is not None:
         return [(f" Σ{format_tokens(ctx.claude_stats.total_tokens):>6}", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
     else:
@@ -408,9 +406,7 @@ def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_cost(ctx: ColumnContext) -> ColumnOutput:
-    """Dollar cost. Hidden when show_cost != 'cost'."""
-    if ctx.show_cost != "cost":
-        return None
+    """Dollar cost."""
     s = ctx.session
     if ctx.claude_stats is not None:
         cost = s.stats.estimated_cost_usd
@@ -430,9 +426,7 @@ def render_cost(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_joules(ctx: ColumnContext) -> ColumnOutput:
-    """Energy in joules. Hidden when show_cost != 'joules'."""
-    if ctx.show_cost != "joules":
-        return None
+    """Energy in joules."""
     s = ctx.session
     if ctx.claude_stats is not None:
         cost = s.stats.estimated_cost_usd
@@ -454,9 +448,6 @@ def render_budget(ctx: ColumnContext) -> ColumnOutput:
 def render_subtree_cost(ctx: ColumnContext) -> ColumnOutput:
     """Subtree cost (self + descendants). Visibility gated by column's visible callback."""
     if ctx.subtree_cost_usd > 0:
-        if ctx.show_cost == "joules":
-            joules = usd_to_joules(ctx.subtree_cost_usd)
-            return [(f" Σ{format_joules(joules)}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
         return [(f" Σ{format_cost(ctx.subtree_cost_usd):>6}", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
     return None
 
@@ -958,17 +949,17 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     # Budget group — token count, cost, budget ($-toggled); context always visible
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
                   label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count"),
-    SummaryColumn(id="cost", group="llm_usage", detail_levels=ALL, render=render_cost,
+    SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
                   label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
-    SummaryColumn(id="joules", group="llm_usage", detail_levels=ALL, render=render_joules,
+    SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
                   header="ENRG", name="Energy (Joules)"),
-    SummaryColumn(id="budget", group="llm_usage", detail_levels=ALL, render=render_budget,
-                  visible=lambda ctx: ctx.show_cost == "cost" and ctx.any_has_budget, placeholder_width=7,
+    SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
+                  visible=lambda ctx: ctx.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget"),
-    SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=ALL,
+    SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=set(),
                   render=render_subtree_cost, label="Subtree",
                   render_plain=render_subtree_cost_plain,
-                  visible=lambda ctx: ctx.show_cost != "tokens" and ctx.any_has_subtree_cost,
+                  visible=lambda ctx: ctx.any_has_subtree_cost,
                   placeholder_width=8, header="SUB$", name="Subtree Cost"),
 
     # Context group — always visible, independent of $ toggle

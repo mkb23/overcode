@@ -1076,44 +1076,45 @@ class TestToggleMonochrome:
 class TestToggleCostDisplay:
     """Test action_toggle_cost_display method."""
 
-    def test_enables_cost_display(self):
-        """Should enable cost display, save prefs, and update all widgets."""
+    def _make_mock_tui(self, show_cost="tokens", column_config=None):
         from overcode.tui_actions.view import ViewActionsMixin
-
-        widget1 = MagicMock()
-        widget2 = MagicMock()
-        mock_status_bar = MagicMock()
-
         mock_tui = MagicMock()
-        mock_tui.show_cost = "tokens"
-        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
-        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
+        mock_tui.show_cost = show_cost
+        mock_tui._COST_PRESETS = ViewActionsMixin._COST_PRESETS
+        mock_tui._COST_PRESET_KEYS = ViewActionsMixin._COST_PRESET_KEYS
+        mock_tui._COST_COLUMN_DEFAULTS = ViewActionsMixin._COST_COLUMN_DEFAULTS
+        mock_tui._match_cost_preset = lambda overrides: ViewActionsMixin._match_cost_preset(mock_tui, overrides)
+        mock_tui._recompute_cell_column_widths = MagicMock()
+        mock_tui.SUMMARY_LEVELS = ["low", "med", "high", "full"]
+        mock_tui.summary_level_index = 0
         mock_tui._prefs = MagicMock()
-        mock_tui.query.return_value = [widget1, widget2]
-        mock_tui.query_one.return_value = mock_status_bar
+        mock_tui._prefs.show_cost = show_cost
+        mock_tui._prefs.column_config = column_config or {}
+        return mock_tui
+
+    def test_cycles_from_tokens_to_cost(self):
+        """Should cycle from tokens-only to cost display."""
+        from overcode.tui_actions.view import ViewActionsMixin
+        mock_tui = self._make_mock_tui()
+        mock_tui.query.return_value = [MagicMock(), MagicMock()]
+        mock_tui.query_one.return_value = MagicMock()
 
         ViewActionsMixin.action_toggle_cost_display(mock_tui)
 
         assert mock_tui.show_cost == "cost"
-        assert mock_tui._prefs.show_cost == "cost"
-        mock_tui._save_prefs.assert_called_once()
-        assert widget1.show_cost == "cost"
-        widget1.refresh.assert_called_once()
-        assert widget2.show_cost == "cost"
-        widget2.refresh.assert_called_once()
-        assert mock_status_bar.show_cost == "cost"
-        mock_status_bar.refresh.assert_called_once()
         assert "cost/budget" in mock_tui.notify.call_args[0][0]
+        # Column overrides should hide token_count, show cost
+        overrides = mock_tui._prefs.column_config["low"]
+        assert overrides["token_count"] is False
+        assert overrides["cost"] is True
 
-    def test_cycles_to_joules(self):
+    def test_cycles_from_cost_to_joules(self):
         """Should cycle from cost to joules display."""
         from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.show_cost = "cost"
-        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
-        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
-        mock_tui._prefs = MagicMock()
+        config = {lvl: {"token_count": False, "cost": True, "joules": False,
+                        "budget": True, "subtree_cost": True}
+                  for lvl in ("low", "med", "high", "full")}
+        mock_tui = self._make_mock_tui(show_cost="cost", column_config=config)
         mock_tui.query.return_value = []
         mock_tui.query_one.return_value = MagicMock()
 
@@ -1122,15 +1123,31 @@ class TestToggleCostDisplay:
         assert mock_tui.show_cost == "joules"
         assert "joules" in mock_tui.notify.call_args[0][0].lower()
 
-    def test_cycles_back_to_tokens(self):
-        """Should cycle from joules back to token counts."""
+    def test_cycles_from_joules_to_all(self):
+        """Should cycle from joules to all three columns."""
         from overcode.tui_actions.view import ViewActionsMixin
+        config = {lvl: {"token_count": False, "cost": False, "joules": True,
+                        "budget": False, "subtree_cost": True}
+                  for lvl in ("low", "med", "high", "full")}
+        mock_tui = self._make_mock_tui(show_cost="joules", column_config=config)
+        mock_tui.query.return_value = []
+        mock_tui.query_one.return_value = MagicMock()
 
-        mock_tui = MagicMock()
-        mock_tui.show_cost = "joules"
-        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
-        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
-        mock_tui._prefs = MagicMock()
+        ViewActionsMixin.action_toggle_cost_display(mock_tui)
+
+        assert mock_tui.show_cost == "cost"
+        overrides = mock_tui._prefs.column_config["low"]
+        assert overrides["token_count"] is True
+        assert overrides["cost"] is True
+        assert overrides["joules"] is True
+
+    def test_cycles_from_all_back_to_tokens(self):
+        """Should cycle from all three back to tokens only."""
+        from overcode.tui_actions.view import ViewActionsMixin
+        config = {lvl: {"token_count": True, "cost": True, "joules": True,
+                        "budget": True, "subtree_cost": True}
+                  for lvl in ("low", "med", "high", "full")}
+        mock_tui = self._make_mock_tui(show_cost="cost", column_config=config)
         mock_tui.query.return_value = []
         mock_tui.query_one.return_value = MagicMock()
 
@@ -1144,11 +1161,7 @@ class TestToggleCostDisplay:
         from overcode.tui_actions.view import ViewActionsMixin
         from textual.css.query import NoMatches
 
-        mock_tui = MagicMock()
-        mock_tui.show_cost = "tokens"
-        mock_tui._COST_DISPLAY_MODES = ViewActionsMixin._COST_DISPLAY_MODES
-        mock_tui._COST_DISPLAY_LABELS = ViewActionsMixin._COST_DISPLAY_LABELS
-        mock_tui._prefs = MagicMock()
+        mock_tui = self._make_mock_tui()
         mock_tui.query.return_value = []
         mock_tui.query_one.side_effect = NoMatches()
 

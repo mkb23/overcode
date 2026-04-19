@@ -487,10 +487,11 @@ class TestRenderTokenCount:
         assert len(result) == 1
         assert "Σ" in result[0][0]
 
-    def test_hidden_when_show_cost(self):
+    def test_renders_regardless_of_show_cost(self):
+        """Token count renders regardless of show_cost — visibility is via column config."""
         stats = _make_claude_stats()
         ctx = _make_ctx(claude_stats=stats, show_cost="cost")
-        assert render_token_count(ctx) is None
+        assert render_token_count(ctx) is not None
 
 
 class TestRenderContextUsage:
@@ -522,10 +523,13 @@ class TestRenderContextUsage:
 
 
 class TestRenderCost:
-    def test_hidden_when_not_show_cost(self):
+    def test_renders_regardless_of_show_cost(self):
+        """Cost renders regardless of show_cost — visibility is via column config."""
         stats = _make_claude_stats()
-        ctx = _make_ctx(claude_stats=stats, show_cost="tokens")
-        assert render_cost(ctx) is None
+        session = _make_session()
+        session.stats.estimated_cost_usd = 12.5
+        ctx = _make_ctx(claude_stats=stats, show_cost="tokens", session=session)
+        assert render_cost(ctx) is not None
 
     def test_shows_cost(self):
         stats = _make_claude_stats()
@@ -578,17 +582,14 @@ class TestRenderBudget:
         assert result is None
 
     def test_visibility_gate_on_column(self):
-        """The budget column's visible callback gates on show_cost and any_has_budget."""
+        """The budget column's visible callback gates on any_has_budget."""
         budget_col = next(c for c in SUMMARY_COLUMNS if c.id == "budget")
         assert budget_col.visible is not None
-        # Not visible when show_cost="tokens"
-        ctx_no_cost = _make_ctx(show_cost="tokens", any_has_budget=True)
-        assert budget_col.visible(ctx_no_cost) is False
         # Not visible when no budgets
-        ctx_no_budget = _make_ctx(show_cost="cost", any_has_budget=False)
+        ctx_no_budget = _make_ctx(any_has_budget=False)
         assert budget_col.visible(ctx_no_budget) is False
-        # Visible when both conditions met
-        ctx_visible = _make_ctx(show_cost="cost", any_has_budget=True)
+        # Visible when any agent has a budget
+        ctx_visible = _make_ctx(any_has_budget=True)
         assert budget_col.visible(ctx_visible) is True
 
 
@@ -1246,17 +1247,14 @@ class TestRenderSubtreeCost:
         assert result is None
 
     def test_visibility_gate_on_column(self):
-        """The subtree_cost column's visible callback gates on show_cost and any_has_subtree_cost."""
+        """The subtree_cost column's visible callback gates on any_has_subtree_cost."""
         col = next(c for c in SUMMARY_COLUMNS if c.id == "subtree_cost")
         assert col.visible is not None
-        # Not visible when show_cost="tokens"
-        ctx = _make_ctx(show_cost="tokens", any_has_subtree_cost=True)
-        assert col.visible(ctx) is False
         # Not visible when no subtree costs
-        ctx = _make_ctx(show_cost="cost", any_has_subtree_cost=False)
+        ctx = _make_ctx(any_has_subtree_cost=False)
         assert col.visible(ctx) is False
-        # Visible when both conditions met
-        ctx = _make_ctx(show_cost="cost", any_has_subtree_cost=True)
+        # Visible when any parent has subtree cost
+        ctx = _make_ctx(any_has_subtree_cost=True)
         assert col.visible(ctx) is True
 
 
