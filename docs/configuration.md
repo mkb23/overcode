@@ -81,6 +81,16 @@ sisters:
   - name: "desktop"
     url: "http://localhost:25337"
     api_key: "secret"  # Only needed for direct LAN access
+
+# Custom emoticons for skills
+# Overrides built-in defaults shown in the "Available Skills" (ASK) column
+skill_emoji:
+  overcode: 🐙           # Default: 🐙 (built-in)
+  delegating-to-agents: 👥  # Default: 👥 (built-in)
+  claude-api: 🔌         # Default: 🔌 (built-in)
+  simplify: ✨            # Default: ✨ (built-in)
+  shirka: 🔬             # Custom skill example
+  my-custom-skill: 🚀    # Add any custom skill with any emoji
 ```
 
 ## Environment Variables
@@ -226,6 +236,43 @@ model_pricing:
 Model names are matched as substrings, so `"sonnet"` matches `"claude-sonnet-4-6"`. User overrides in `model_pricing:` take precedence over the built-in table.
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
+
+## Skill Emoticons
+
+Overcode displays emoticons for available skills in the TUI's "Available Skills" (ASK) column. You can customize these emoticons in your config file.
+
+### Built-in Skill Emoticons
+
+| Skill | Default Emoji | Purpose |
+|-------|:-------------:|---------|
+| `overcode` | 🐙 | Overcode CLI commands reference |
+| `delegating-to-agents` | 👥 | Parallel agent delegation |
+| `claude-api` | 🔌 | Claude API/SDK development |
+| `simplify` | ✨ | Code quality review |
+| `commit` | 📦 | Git commit creation |
+| `review-pr` | 🔍 | Pull request review |
+| `reset` | 🔄 | Branch reset |
+| `loop` | 🔁 | Recurring task execution |
+| `schedule` | 📅 | Scheduled tasks |
+| *(other skills)* | 🧩 | Default fallback |
+
+### Custom Skill Emoticons
+
+Override defaults or add emoticons for custom skills:
+
+```yaml
+skill_emoji:
+  shirka: 🔬        # Research project organization
+  data-analysis: 📊  # Data science work
+  security: 🔒       # Security reviews
+```
+
+Emoticons appear in:
+- TUI "Available Skills" (ASK) column when viewing agents with `--full` detail
+- Skill selection dialogs
+- Agent summary outputs
+
+**Note:** Emoticons are purely cosmetic and don't affect skill functionality.
 
 ## Corporate API Gateway
 

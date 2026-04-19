@@ -57,6 +57,15 @@ CONFIG_TEMPLATE = """\
 #   - name: "desktop"
 #     url: "http://192.168.1.10:5337"
 #     api_key: "shared-secret"
+
+# Custom emoticons for skills (overrides built-in defaults)
+# skill_emoji:
+#   overcode: 🐙           # Default: 🐙
+#   delegating-to-agents: 👥  # Default: 👥
+#   claude-api: 🔌         # Default: 🔌
+#   simplify: ✨            # Default: ✨
+#   shirka: 🔬             # Example: research project organization
+#   # Add your custom skills here with any emoji
 """
 
 
