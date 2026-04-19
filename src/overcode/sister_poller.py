@@ -278,6 +278,9 @@ def _agent_to_session(
         # Model and provider
         model=agent.get("model") or None,
         provider=agent.get("provider", "web") or "web",
+        # Skills (#252)
+        available_skills=agent.get("available_skills", []),
+        loaded_skills=agent.get("loaded_skills", []),
         # Sister metadata
         is_remote=True,
         source_host=host_name,

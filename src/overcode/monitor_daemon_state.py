@@ -120,6 +120,10 @@ class SessionDaemonState:
     oversight_timeout_seconds: float = 0.0
     oversight_deadline: Optional[str] = None
 
+    # Skills (#252)
+    available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills
+    loaded_skills: List[str] = field(default_factory=list)     # Skills currently loaded by Claude
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)
