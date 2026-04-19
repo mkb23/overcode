@@ -311,6 +311,26 @@ class TestEncodeProjectPath:
         assert tmp_path.name in result
 
 
+class TestProviderFromModel:
+    """Test provider_from_model detection from API model IDs."""
+
+    def test_web_models(self):
+        from overcode.history_reader import provider_from_model
+        assert provider_from_model("claude-opus-4-7") == "web"
+        assert provider_from_model("claude-opus-4-6") == "web"
+        assert provider_from_model("claude-sonnet-4-5-20250929") == "web"
+
+    def test_bedrock_models(self):
+        from overcode.history_reader import provider_from_model
+        assert provider_from_model("us.anthropic.claude-sonnet-4-5-20250929-v1:0") == "bedrock"
+        assert provider_from_model("anthropic.claude-3-sonnet-20240229-v1:0") == "bedrock"
+
+    def test_none_or_empty(self):
+        from overcode.history_reader import provider_from_model
+        assert provider_from_model(None) is None
+        assert provider_from_model("") is None
+
+
 class TestClaudeSessionStats:
     """Test ClaudeSessionStats dataclass."""
 

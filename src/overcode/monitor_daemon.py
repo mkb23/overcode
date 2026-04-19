@@ -742,9 +742,14 @@ class MonitorDaemon:
                 stats.cache_read_tokens,
             )
 
-            # Update session-level model if detected from history files
+            # Update session-level model and provider from history files
             if stats.model and stats.model != session.model:
                 self.session_manager.update_session(session.id, model=stats.model)
+            if stats.model:
+                from .history_reader import provider_from_model
+                detected_provider = provider_from_model(stats.model)
+                if detected_provider and detected_provider != session.provider:
+                    self.session_manager.update_session(session.id, provider=detected_provider)
 
             # Cache last command for daemon state publishing
             if stats.last_command:

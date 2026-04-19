@@ -37,6 +37,7 @@ CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 # the actual context size from token counts at runtime and update here
 # for the models known to support extended context.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
     "claude-sonnet-4-5-20250929": 200_000,
@@ -51,6 +52,7 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 
 # Model ID → human-readable short name for display
 MODEL_SHORT_NAMES: Dict[str, str] = {
+    "claude-opus-4-7": "Op4.7",
     "claude-opus-4-6": "Op4.6",
     "claude-sonnet-4-6": "Sn4.6",
     "claude-sonnet-4-5-20250929": "Sn4.5",
@@ -84,6 +86,20 @@ def model_context_window(model: Optional[str]) -> int:
     if not model:
         return DEFAULT_CONTEXT_WINDOW
     return MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+
+
+def provider_from_model(model: Optional[str]) -> Optional[str]:
+    """Derive API provider from a model ID returned in API responses.
+
+    Bedrock model IDs have a dotted prefix (e.g. "us.anthropic.claude-..."),
+    while API/Max IDs are plain (e.g. "claude-opus-4-7").
+
+    Returns "bedrock", "web", or None if model is unknown/empty.
+    """
+    if not model:
+        return None
+    prefix = model.split("claude")[0] if "claude" in model else ""
+    return "bedrock" if "." in prefix else "web"
 
 
 @dataclass
