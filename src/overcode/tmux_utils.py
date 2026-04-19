@@ -57,6 +57,10 @@ def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
             if rest:
                 pane.send_keys(rest, enter=False)
                 time.sleep(0.15)
+                # Dismiss autocomplete so Enter submits the raw text
+                # rather than whatever the menu has highlighted (#427)
+                pane.send_keys('Escape', enter=False)
+                time.sleep(0.1)
         else:
             pane.send_keys(keys, enter=False)
             # Small delay for Claude Code to process text
