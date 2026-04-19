@@ -53,10 +53,22 @@ def get_web_color(status_color: str) -> str:
 
 def _get_version() -> str:
     """Get the installed overcode version with git info."""
+    # Try pyproject.toml first (for editable installs), matching __init__.py logic
     try:
-        base_version = importlib.metadata.version("overcode")
-    except importlib.metadata.PackageNotFoundError:
-        base_version = "dev"
+        from pathlib import Path
+        import tomllib
+        pkg_dir = Path(__file__).resolve().parent
+        toml_path = pkg_dir.parent.parent / "pyproject.toml"
+        if toml_path.is_file():
+            with open(toml_path, "rb") as f:
+                base_version = tomllib.load(f)["project"]["version"]
+        else:
+            base_version = importlib.metadata.version("overcode")
+    except Exception:
+        try:
+            base_version = importlib.metadata.version("overcode")
+        except importlib.metadata.PackageNotFoundError:
+            base_version = "dev"
 
     # Add git commit info if available (editable install)
     try:
