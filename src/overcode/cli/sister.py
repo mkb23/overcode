@@ -106,6 +106,75 @@ def sister_remove(
     rprint(f"[green]✓ Removed sister '{name}'[/green]")
 
 
+@sister_app.command("status")
+def sister_status():
+    """Show status and version info for all configured sisters.
+
+    Polls each sister to check reachability, version, and agent counts.
+    Useful for diagnosing version mismatches across instances.
+
+    Examples:
+        overcode sister status
+    """
+    from ..sister_poller import SisterPoller
+    from .. import __version__
+
+    poller = SisterPoller()
+    if not poller.has_sisters:
+        rprint("[dim]No sister instances configured.[/dim]")
+        rprint("[dim]Use 'overcode sister add <name> <url>' to add one.[/dim]")
+        return
+
+    # Get local version for comparison
+    local_version = __version__
+    try:
+        from pathlib import Path
+        import subprocess
+        pkg_dir = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "describe", "--always", "--dirty"],
+            capture_output=True, text=True, cwd=pkg_dir, timeout=2,
+        )
+        if result.returncode == 0:
+            local_version = f"{__version__} ({result.stdout.strip()})"
+    except Exception:
+        pass
+
+    rprint(f"[bold]Local version:[/bold] {local_version}\n")
+    rprint(f"[bold]Sister instances:[/bold]\n")
+
+    # Poll all sisters (this fetches current state)
+    poller.poll_all()
+    sisters = poller.get_sister_states()
+
+    for sister in sisters:
+        status_icon = "🟢" if sister.reachable else "🔴"
+        name_style = "bold green" if sister.reachable else "bold red"
+
+        rprint(f"{status_icon} [{name_style}]{sister.name}[/{name_style}]")
+        rprint(f"  URL: {sister.url}")
+
+        if sister.reachable:
+            version_match = sister.version == local_version
+            version_style = "green" if version_match else "yellow"
+            rprint(f"  Version: [{version_style}]{sister.version}[/{version_style}]")
+
+            if not version_match:
+                rprint(f"  [dim yellow]⚠ Version mismatch with local ({local_version})[/dim yellow]")
+
+            rprint(f"  Agents: {sister.total_agents} total, {sister.green_agents} running")
+            rprint(f"  Cost: ${sister.total_cost:.2f}")
+
+            if sister.last_fetch:
+                rprint(f"  Last poll: {sister.last_fetch}")
+        else:
+            rprint(f"  Status: [red]Unreachable[/red]")
+            if sister.last_error:
+                rprint(f"  Error: [dim]{sister.last_error}[/dim]")
+
+        rprint()
+
+
 @sister_app.command("allow-control")
 def sister_allow_control(
     on: Annotated[bool, typer.Option("--on", help="Enable remote control")] = False,

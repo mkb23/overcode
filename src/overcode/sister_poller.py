@@ -30,6 +30,7 @@ class SisterState:
     reachable: bool = False
     last_fetch: Optional[str] = None  # ISO timestamp
     last_error: str = ""
+    version: str = ""  # Remote overcode version
     sessions: List[Session] = field(default_factory=list)
     green_agents: int = 0
     total_agents: int = 0
@@ -182,6 +183,7 @@ class SisterPoller:
         sister.reachable = True
         sister.last_fetch = datetime.now().isoformat()
         sister.last_error = ""
+        sister.version = data.get("version", "unknown")
 
         host_name = data.get("hostname", sister.name)
         agents = data.get("agents", [])

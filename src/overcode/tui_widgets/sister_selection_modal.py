@@ -34,7 +34,7 @@ class SisterSelectionModal(ModalBase):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._sisters: List[Dict[str, str]] = []  # [{name, url}, ...]
+        self._sisters: List[Dict[str, str]] = []  # [{name, url, version, reachable}, ...]
         self._disabled: Set[str] = set()
         self._original_disabled: Set[str] = set()
 
@@ -51,6 +51,7 @@ class SisterSelectionModal(ModalBase):
         for i, sister in enumerate(self._sisters):
             is_selected = i == self.selected_index
             is_enabled = sister["name"] not in self._disabled
+            is_reachable = sister.get("reachable", False)
 
             prefix = "> " if is_selected else "  "
             check = "[x]" if is_enabled else "[ ]"
@@ -62,7 +63,18 @@ class SisterSelectionModal(ModalBase):
 
             name_style = "bold" if is_selected else ""
             text.append(sister["name"], style=name_style)
-            text.append(f"  {sister['url']}\n", style="dim")
+            text.append(f"  {sister['url']}", style="dim")
+
+            # Add version and reachability status
+            version = sister.get("version", "")
+            if version:
+                text.append(f"  v{version}", style="green" if is_reachable else "dim red")
+            elif is_reachable:
+                text.append("  (unknown version)", style="dim yellow")
+            else:
+                text.append("  (unreachable)", style="dim red")
+
+            text.append("\n", style="")
 
         return text
 

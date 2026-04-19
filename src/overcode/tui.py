@@ -3338,7 +3338,7 @@ class SupervisorTUI(
     def action_open_sister_selection(self) -> None:
         """Open the sister selection modal (#323)."""
         sisters = [
-            {"name": s.name, "url": s.url}
+            {"name": s.name, "url": s.url, "version": s.version, "reachable": s.reachable}
             for s in self._sister_poller.get_sister_states()
         ]
         if not sisters:

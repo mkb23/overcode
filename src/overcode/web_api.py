@@ -52,11 +52,28 @@ def get_web_color(status_color: str) -> str:
 
 
 def _get_version() -> str:
-    """Get the installed overcode version."""
+    """Get the installed overcode version with git info."""
     try:
-        return importlib.metadata.version("overcode")
+        base_version = importlib.metadata.version("overcode")
     except importlib.metadata.PackageNotFoundError:
-        return "dev"
+        base_version = "dev"
+
+    # Add git commit info if available (editable install)
+    try:
+        from pathlib import Path
+        import subprocess
+        pkg_dir = Path(__file__).resolve().parent
+        result = subprocess.run(
+            ["git", "describe", "--always", "--dirty"],
+            capture_output=True, text=True, cwd=pkg_dir, timeout=2,
+        )
+        if result.returncode == 0:
+            git_info = result.stdout.strip()
+            return f"{base_version} ({git_info})"
+    except Exception:
+        pass
+
+    return base_version
 
 
 def _capture_agent_pane(tmux_session: str, window_id: int) -> str:
