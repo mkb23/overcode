@@ -2076,7 +2076,11 @@ class SupervisorTUI(
                         window_index = parent.tmux_window
 
                 if window_index is not None and window_index != "":
-                    self._tmux.select_window(sync_session, window_index)
+                    if not self._tmux.select_window(sync_session, window_index):
+                        self.notify(
+                            f"Window for '{session.name}' no longer exists",
+                            severity="warning",
+                        )
         except Exception:
             pass  # Silent fail - don't disrupt navigation
 

@@ -874,6 +874,8 @@ class TestTmuxManagerLibtmuxKeys:
             ("sleep", 0.3),
             ("send", ("clear",), {"enter": False}),
             ("sleep", 0.15),
+            ("send", ("Escape",), {"enter": False}),
+            ("sleep", 0.1),
             ("send", ("",), {"enter": True}),
         ]
 
