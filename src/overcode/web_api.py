@@ -272,6 +272,9 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "model": getattr(s, "model", "") or "",
         "provider": getattr(s, "provider", "web") or "web",
         "tmux_window": s.tmux_window or "",
+        # Skills (#252)
+        "available_skills": s.available_skills,
+        "loaded_skills": s.loaded_skills,
     }
 
 
