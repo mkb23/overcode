@@ -113,13 +113,21 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
 class TestColumnVisible:
     """Tests for SessionSummary.column_visible with per-level overrides."""
 
-    def test_full_mode_always_visible(self):
-        """In full mode all columns are visible regardless of overrides."""
+    def test_full_mode_defaults_visible(self):
+        """In full mode all columns default to visible (no overrides)."""
         from overcode.summary_columns import SUMMARY_COLUMNS
         widget = _make_bare_widget(summary_detail="full")
-        widget.column_overrides = {"uptime": False, "running_time": False}
+        widget.column_overrides = {}
         for col in SUMMARY_COLUMNS:
             assert widget.column_visible(col) is True
+
+    def test_full_mode_respects_false_overrides(self):
+        """In full mode, explicit False overrides still hide columns."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        widget = _make_bare_widget(summary_detail="full")
+        widget.column_overrides = {"uptime": False}
+        uptime_col = next(c for c in SUMMARY_COLUMNS if c.id == "uptime")
+        assert widget.column_visible(uptime_col) is False
 
     def test_default_visibility_from_detail_levels(self):
         """Without overrides, visibility comes from detail_levels."""

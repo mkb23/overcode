@@ -1121,12 +1121,10 @@ def build_cli_context(
 def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict) -> bool:
     """Determine if a column is visible at a given level with user overrides.
 
-    - full: always shows every column, no overrides applied
+    - full: default True for all columns, but explicit False overrides still apply
     - low/med/high: start from col.detail_levels default, then apply overrides
     """
-    if level == "full":
-        return True
-    base = level in col.detail_levels
+    base = True if level == "full" else level in col.detail_levels
     col_override = overrides.get(col.id)
     if col_override is not None:
         return col_override
