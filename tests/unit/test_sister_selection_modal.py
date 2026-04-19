@@ -35,9 +35,9 @@ def modal():
 
 
 SISTERS = [
-    {"name": "macbook", "url": "http://macbook:15337"},
-    {"name": "desktop", "url": "http://desktop:15337"},
-    {"name": "server", "url": "http://server:15337"},
+    {"name": "macbook", "url": "http://macbook:15337", "reachable": True, "daemon_running": True, "api_key": "key1"},
+    {"name": "desktop", "url": "http://desktop:15337", "reachable": True, "daemon_running": False, "api_key": "key2"},
+    {"name": "server", "url": "http://server:15337", "reachable": False, "daemon_running": False, "api_key": ""},
 ]
 
 
@@ -138,6 +138,34 @@ class TestSisterSelectionModal:
         modal.show(SISTERS, set())
         modal.on_key(FakeEvent("enter"))
         assert "macbook" in modal._disabled
+
+    def test_restart_daemon_sends_message(self, modal):
+        modal.show(SISTERS, set())
+        # Navigate to desktop (index 1, reachable but daemon down)
+        modal.on_key(FakeEvent("j"))
+        modal.on_key(FakeEvent("r"))
+        modal.post_message.assert_called()
+        msg = modal.post_message.call_args[0][0]
+        assert isinstance(msg, SisterSelectionModal.RestartDaemon)
+        assert msg.sister_name == "desktop"
+        assert msg.api_key == "key2"
+
+    def test_restart_daemon_ignored_when_unreachable(self, modal):
+        modal.show(SISTERS, set())
+        # Navigate to server (index 2, unreachable)
+        modal.on_key(FakeEvent("j"))
+        modal.on_key(FakeEvent("j"))
+        modal.on_key(FakeEvent("r"))
+        # Should not post a RestartDaemon message
+        calls = [c[0][0] for c in modal.post_message.call_args_list]
+        assert not any(isinstance(c, SisterSelectionModal.RestartDaemon) for c in calls)
+
+    def test_render_shows_daemon_status(self, modal):
+        modal.show(SISTERS, set())
+        text = modal.render()
+        plain = text.plain
+        assert "daemon:" in plain
+        assert "unreachable" in plain  # server
 
     def test_empty_sisters_only_allows_cancel(self, modal):
         modal.show([], set())

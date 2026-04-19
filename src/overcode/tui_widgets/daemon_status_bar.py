@@ -353,10 +353,16 @@ class DaemonStatusBar(Static):
             for i, sister in enumerate(self._sister_states):
                 if i > 0:
                     content.append(" ", style="")
-                if sister.reachable:
+                if sister.reachable and sister.daemon_running:
                     content.append(
                         f"{sister.name}({sister.green_agents}/{sister.total_agents})",
                         style="green",
+                    )
+                elif sister.reachable and not sister.daemon_running:
+                    # Web server up but daemon down
+                    content.append(
+                        f"{sister.name}({sister.total_agents}⚠)",
+                        style="bold yellow",
                     )
                 elif sister.sessions:
                     # Stale: unreachable but still showing last-known agents

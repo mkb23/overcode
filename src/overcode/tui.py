@@ -3340,9 +3340,15 @@ class SupervisorTUI(
         self._dialog_did_close()
 
     def action_open_sister_selection(self) -> None:
-        """Open the sister selection modal (#323)."""
+        """Open the sister management modal (#323)."""
         sisters = [
-            {"name": s.name, "url": s.url, "version": s.version, "reachable": s.reachable}
+            {
+                "name": s.name, "url": s.url, "api_key": s.api_key,
+                "version": s.version, "reachable": s.reachable,
+                "daemon_running": s.daemon_running,
+                "green_agents": s.green_agents, "total_agents": s.total_agents,
+                "last_error": s.last_error,
+            }
             for s in self._sister_poller.get_sister_states()
         ]
         if not sisters:
@@ -3371,6 +3377,15 @@ class SupervisorTUI(
     def on_sister_selection_modal_cancelled(self, message: SisterSelectionModal.Cancelled) -> None:
         """Handle sister selection modal cancellation (#323)."""
         self._dialog_did_close()
+
+    def on_sister_selection_modal_restart_daemon(self, message: SisterSelectionModal.RestartDaemon) -> None:
+        """Handle daemon restart request from sister management modal."""
+        self.notify(f"Restarting daemon on {message.sister_name}...", severity="information")
+        result = self._sister_controller.restart_monitor(message.sister_url, message.api_key)
+        if result.ok:
+            self.notify(f"Daemon restarted on {message.sister_name}", severity="information")
+        else:
+            self.notify(f"Restart failed: {result.error}", severity="error")
 
     # -- Instruction history (#376) ------------------------------------------
 

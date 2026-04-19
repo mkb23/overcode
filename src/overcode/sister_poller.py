@@ -28,6 +28,7 @@ class SisterState:
     ssh: str = ""  # SSH target (e.g., "user@host") for tmux attach
     tmux_session: str = "agents"  # Remote tmux session name
     reachable: bool = False
+    daemon_running: bool = False  # Monitor daemon alive on remote
     last_fetch: Optional[str] = None  # ISO timestamp
     last_error: str = ""
     version: str = ""  # Remote overcode version
@@ -40,6 +41,7 @@ class SisterState:
 def _reset_sister_state(sister: SisterState, error: str) -> List[Session]:
     """Reset a sister's state on error, keeping stale sessions visible."""
     sister.reachable = False
+    sister.daemon_running = False
     sister.last_error = error
     # Keep last-known sessions so agents remain visible (stale)
     # but zero out live counters since we can't verify them.
@@ -181,6 +183,7 @@ class SisterPoller:
             return _reset_sister_state(sister, str(e))
 
         sister.reachable = True
+        sister.daemon_running = data.get("daemon", {}).get("running", False)
         sister.last_fetch = datetime.now().isoformat()
         sister.last_error = ""
         sister.version = data.get("version", "unknown")

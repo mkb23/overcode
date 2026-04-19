@@ -1,8 +1,8 @@
 """
-Sister selection modal for TUI.
+Sister management modal for TUI.
 
-Allows toggling visibility of each configured sister instance.
-Disabled sisters' agents are hidden from the agent list.
+Shows sister health, daemon status, and allows toggling visibility
+and restarting remote daemons.
 """
 
 from typing import Dict, List, Optional, Any, Set
@@ -15,9 +15,10 @@ from .modal_base import ModalBase
 
 
 class SisterSelectionModal(ModalBase):
-    """Modal dialog for toggling sister visibility.
+    """Modal dialog for managing sister instances.
 
-    Navigate with j/k, toggle with space/enter.
+    Navigate with j/k, toggle visibility with space/enter.
+    Press r to restart daemon on selected sister.
     Press a to apply, q/Esc to cancel.
     """
 
@@ -32,16 +33,25 @@ class SisterSelectionModal(ModalBase):
         """Message sent when modal is cancelled."""
         pass
 
+    class RestartDaemon(Message):
+        """Message sent to request daemon restart on a sister."""
+
+        def __init__(self, sister_name: str, sister_url: str, api_key: str) -> None:
+            super().__init__()
+            self.sister_name = sister_name
+            self.sister_url = sister_url
+            self.api_key = api_key
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._sisters: List[Dict[str, str]] = []  # [{name, url, version, reachable}, ...]
+        self._sisters: List[Dict[str, Any]] = []
         self._disabled: Set[str] = set()
         self._original_disabled: Set[str] = set()
 
     def render(self) -> Text:
         text = Text()
         text.append("Sister Instances\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  a:apply  q:cancel\n\n", style="dim")
+        text.append("j/k:move  space:toggle  r:restart daemon  a:apply  q:cancel\n\n", style="dim")
 
         if not self._sisters:
             text.append("  No sisters configured.\n", style="dim")
@@ -52,6 +62,7 @@ class SisterSelectionModal(ModalBase):
             is_selected = i == self.selected_index
             is_enabled = sister["name"] not in self._disabled
             is_reachable = sister.get("reachable", False)
+            daemon_running = sister.get("daemon_running", False)
 
             prefix = "> " if is_selected else "  "
             check = "[x]" if is_enabled else "[ ]"
@@ -63,16 +74,36 @@ class SisterSelectionModal(ModalBase):
 
             name_style = "bold" if is_selected else ""
             text.append(sister["name"], style=name_style)
-            text.append(f"  {sister['url']}", style="dim")
 
-            # Add version and reachability status
-            version = sister.get("version", "")
-            if version:
-                text.append(f"  v{version}", style="green" if is_reachable else "dim red")
-            elif is_reachable:
-                text.append("  (unknown version)", style="dim yellow")
+            # Health indicators
+            if not is_reachable:
+                text.append("  unreachable", style="bold red")
+                error = sister.get("last_error", "")
+                if error:
+                    # Truncate long errors
+                    short = error[:60] + "..." if len(error) > 60 else error
+                    text.append(f" ({short})", style="dim red")
             else:
-                text.append("  (unreachable)", style="dim red")
+                # Web server is reachable
+                text.append("  web:", style="dim")
+                text.append("ok", style="green")
+
+                # Daemon status
+                text.append("  daemon:", style="dim")
+                if daemon_running:
+                    text.append("ok", style="green")
+                else:
+                    text.append("down", style="bold red")
+
+                # Agent counts
+                green = sister.get("green_agents", 0)
+                total = sister.get("total_agents", 0)
+                text.append(f"  {green}/{total} agents", style="dim")
+
+                # Version
+                version = sister.get("version", "")
+                if version:
+                    text.append(f"  v{version}", style="dim")
 
             text.append("\n", style="")
 
@@ -93,6 +124,9 @@ class SisterSelectionModal(ModalBase):
             self._toggle_current()
             self.refresh()
             event.stop()
+        elif key in ("r", "R"):
+            self._restart_daemon()
+            event.stop()
         elif key in ("a", "A"):
             self._apply()
             event.stop()
@@ -109,6 +143,18 @@ class SisterSelectionModal(ModalBase):
         else:
             self._disabled.add(name)
 
+    def _restart_daemon(self) -> None:
+        if not self._sisters:
+            return
+        sister = self._sisters[self.selected_index]
+        if not sister.get("reachable", False):
+            return  # Can't restart if web server is unreachable
+        self.post_message(self.RestartDaemon(
+            sister_name=sister["name"],
+            sister_url=sister["url"],
+            api_key=sister.get("api_key", ""),
+        ))
+
     def _apply(self) -> None:
         self.post_message(self.SelectionChanged(set(self._disabled)))
         self._hide()
@@ -118,7 +164,7 @@ class SisterSelectionModal(ModalBase):
         self.post_message(self.Cancelled())
         self._hide()
 
-    def show(self, sisters: List[Dict[str, str]], disabled: Set[str],
+    def show(self, sisters: List[Dict[str, Any]], disabled: Set[str],
              app_ref: Optional[Any] = None) -> None:
         """Display the modal with configured sisters."""
         self._sisters = list(sisters)
