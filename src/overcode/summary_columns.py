@@ -946,13 +946,13 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Time", render_plain=render_time_plain),
 
-    # Budget group — token count, cost, budget ($-toggled); context always visible
+    # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
                   label="Tokens", render_plain=render_token_count_plain, header="TOK", name="Token Count"),
-    SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
-                  label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
     SummaryColumn(id="joules", group="llm_usage", detail_levels=set(), render=render_joules,
                   header="ENRG", name="Energy (Joules)"),
+    SummaryColumn(id="cost", group="llm_usage", detail_levels=set(), render=render_cost,
+                  label="Cost", render_plain=render_cost_plain, header="$", name="Cost"),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
                   visible=lambda ctx: ctx.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget"),
