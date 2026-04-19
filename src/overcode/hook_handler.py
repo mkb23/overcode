@@ -105,6 +105,20 @@ def write_hook_state(
     state_path = _get_hook_state_path(tmux_session, session_name)
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Read previous state to preserve accumulated loaded_skills
+    prev_skills: list[str] = []
+    try:
+        prev = json.loads(state_path.read_text())
+        prev_skills = prev.get("loaded_skills", [])
+    except (json.JSONDecodeError, FileNotFoundError, OSError):
+        pass
+
+    # Accumulate Skill tool invocations
+    if tool_name == "Skill" and isinstance(tool_input, dict):
+        skill = tool_input.get("skill", "")
+        if skill and skill not in prev_skills:
+            prev_skills = prev_skills + [skill]
+
     state = {
         "event": event,
         "timestamp": time.time(),
@@ -113,6 +127,8 @@ def write_hook_state(
         state["tool_name"] = tool_name
     if tool_input is not None:
         state["tool_input"] = tool_input
+    if prev_skills:
+        state["loaded_skills"] = prev_skills
 
     state_path.write_text(json.dumps(state))
 

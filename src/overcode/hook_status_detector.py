@@ -184,16 +184,14 @@ class HookStatusDetector:
             self._last_detect_phase[session.id] = "hook:no_state"
             return STATUS_WAITING_USER, "Waiting for first hook event", pane_content
 
-        # Track Skill tool_use events (#252)
-        tool_name = hook_state.get("tool_name")
-        if tool_name == "Skill":
-            tool_input = hook_state.get("tool_input")
-            if isinstance(tool_input, dict):
-                skill_name = tool_input.get("skill", "")
-                if skill_name:
-                    if session.name not in self._loaded_skills:
-                        self._loaded_skills[session.name] = set()
-                    self._loaded_skills[session.name].add(skill_name)
+        # Track loaded skills from persisted hook state (#252)
+        # hook_handler.py accumulates skills in the "loaded_skills" field,
+        # so we always read the full list — no race with polling interval.
+        persisted_skills = hook_state.get("loaded_skills", [])
+        if persisted_skills:
+            if session.name not in self._loaded_skills:
+                self._loaded_skills[session.name] = set()
+            self._loaded_skills[session.name].update(persisted_skills)
 
         # Hook state exists — use it for status
         event = hook_state.get("event", "")

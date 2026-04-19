@@ -519,7 +519,7 @@ class TestSkillTracking:
     """Test loaded skill tracking from Skill tool_use events (#252)."""
 
     def test_skill_tool_use_tracked(self, tmp_path):
-        """Skill tool_use event adds to loaded_skills."""
+        """Persisted loaded_skills in hook state are picked up by detector."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
         data = {
@@ -527,6 +527,7 @@ class TestSkillTracking:
             "timestamp": time.time(),
             "tool_name": "Skill",
             "tool_input": {"skill": "overcode"},
+            "loaded_skills": ["overcode"],
         }
         (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
         mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
@@ -538,30 +539,27 @@ class TestSkillTracking:
         assert detector.get_loaded_skills("test-agent") == ["overcode"]
 
     def test_multiple_skills_accumulated(self, tmp_path):
-        """Multiple Skill events accumulate without duplicates."""
+        """Accumulated loaded_skills from hook_handler are read by detector."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
         mock_tmux = create_mock_tmux_with_content("agents", 1, "some content")
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
 
-        # First skill
+        # Simulate hook_handler accumulating skills across writes
         data = {
             "event": "PreToolUse",
             "timestamp": time.time(),
             "tool_name": "Skill",
             "tool_input": {"skill": "overcode"},
+            "loaded_skills": ["overcode"],
         }
         (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
         detector.detect_status(session)
 
-        # Second skill (overwrite hook state file)
+        # Second skill added by hook_handler
         data["tool_input"] = {"skill": "delegating-to-agents"}
-        (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
-        detector.detect_status(session)
-
-        # Same skill again (no duplicate)
-        data["tool_input"] = {"skill": "overcode"}
+        data["loaded_skills"] = ["overcode", "delegating-to-agents"]
         (state_dir / "hook_state_test-agent.json").write_text(json.dumps(data))
         detector.detect_status(session)
 
