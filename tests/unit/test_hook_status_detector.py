@@ -273,6 +273,51 @@ mike@mac ~/Code/overcode %
         assert status == STATUS_ERROR
         assert "blocked" in activity.lower()
 
+    def test_escape_interrupt_downgrades_running_to_waiting(self, tmp_path):
+        """Pane showing the Escape-interrupt prompt overrides RUNNING → WAITING_USER (#431)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PreToolUse", tool_name="Bash")
+        pane = (
+            "⏺ Agent(Search for foo)\n"
+            "  ⎿  Bash(curl https://example.com)\n"
+            "     Running…\n"
+            "  ⎿  Interrupted · What should Claude do instead?\n"
+            "\n"
+            "❯ "
+        )
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
+    def test_escape_interrupt_does_not_override_non_running(self, tmp_path):
+        """Interrupt prompt in pane doesn't demote statuses below RUNNING (#431)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PermissionRequest")
+        pane = "⎿  Interrupted · What should Claude do instead?"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_APPROVAL
+
+    def test_no_interrupt_marker_keeps_running(self, tmp_path):
+        """Running status stays running when pane does not show the interrupt prompt (#431)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PreToolUse", tool_name="Read")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "⏺ Reading file...")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_RUNNING
+
     def test_unknown_event_defaults_to_waiting_user(self, tmp_path):
         """Unknown event → WAITING_USER (safe default)."""
         state_dir = tmp_path / "sessions" / "agents"

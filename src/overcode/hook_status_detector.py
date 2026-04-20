@@ -44,6 +44,26 @@ if TYPE_CHECKING:
     from .session_manager import Session
 
 
+# Escape-interrupt prompt that Claude Code prints when the user hits
+# Escape to interrupt an in-flight turn (#431). When we see this text
+# in the pane, the agent is effectively waiting for user input even
+# though no Stop hook fires.
+_INTERRUPT_PROMPT_MARKERS = (
+    "Interrupted · What should Claude do instead?",
+    "Interrupted by user",
+)
+
+
+def _pane_shows_interrupt_prompt(pane_content: str) -> bool:
+    """Return True if the pane looks like Claude is showing the interrupt prompt (#431)."""
+    if not pane_content:
+        return False
+    clean = strip_ansi(pane_content)
+    # Only look at the tail — older interrupt prompts may linger in scrollback
+    tail = "\n".join(clean.splitlines()[-40:])
+    return any(marker in tail for marker in _INTERRUPT_PROMPT_MARKERS)
+
+
 # Hook event → status mapping
 _HOOK_STATUS_MAP = {
     "UserPromptSubmit": STATUS_RUNNING,
@@ -215,6 +235,15 @@ class HookStatusDetector:
             sleep_dur = self._find_sleep_duration(hook_state)
             if sleep_dur is not None:
                 status = STATUS_BUSY_SLEEPING
+
+        # Claude Code does not fire a Stop/SessionEnd hook when the user
+        # hits Escape to interrupt the turn, so status can stay stuck as
+        # RUNNING indefinitely. Detect the interrupt prompt that Claude
+        # Code prints ("Interrupted · What should Claude do instead?") in
+        # the pane and downgrade to waiting_user in that case (#431).
+        if status == STATUS_RUNNING and _pane_shows_interrupt_prompt(pane_content):
+            status = STATUS_WAITING_USER
+            self._last_detect_phase[session.id] = f"hook:{event}+interrupt"
 
         # Build activity description
         activity = self._build_activity(event, hook_state, pane_content, session)
