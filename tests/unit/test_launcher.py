@@ -1693,6 +1693,39 @@ class TestSettingsInjection:
         assert "--settings" in fork_cmds[0]
 
 
+class TestLauncherVersionStamp:
+    """Session records which overcode build launched / relaunched it."""
+
+    def test_launch_stamps_launcher_version(self, tmp_path):
+        from overcode import __version__
+        mock_tmux = MockTmux()
+        tm = TmuxManager("agents", tmux=mock_tmux)
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tm, sm)
+
+        sess = launcher.launch(name="stamped")
+        assert sess is not None
+        refreshed = sm.get_session(sess.id)
+        assert refreshed.launcher_version.startswith(__version__)
+
+    def test_restart_restamps_launcher_version(self, tmp_path):
+        """Restart replays through the shared helper — stamp must refresh."""
+        mock_tmux = MockTmux()
+        tm = TmuxManager("agents", tmux=mock_tmux)
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tm, sm)
+
+        sess = launcher.launch(name="restarted")
+        # Clear the stamp so we can prove restart re-populates it
+        sm.update_session(sess.id, launcher_version="")
+        refreshed = sm.get_session(sess.id)
+        assert refreshed.launcher_version == ""
+
+        assert launcher.restart(refreshed, graceful_exit_wait=0) is True
+        after = sm.get_session(sess.id)
+        assert after.launcher_version != ""
+
+
 class TestResolveOvercodeBin:
     """Tests for _resolve_overcode_bin helper."""
 

@@ -167,6 +167,12 @@ class Session:
     source_ssh: str = ""  # SSH target (e.g., "user@host") for tmux attach
     source_tmux_session: str = ""  # Remote tmux session name (default: "agents")
 
+    # Overcode build that launched this agent, e.g. "0.4.0 (ff82801-dirty)".
+    # Lets us tell which code path spawned the agent — and whether it predates
+    # feature changes like --settings hook injection (#435) — without digging
+    # through tmux pane history.
+    launcher_version: str = ""
+
     def to_dict(self) -> dict:
         # asdict() recursively converts nested dataclasses (stats)
         return asdict(self)
@@ -514,7 +520,8 @@ class SessionManager:
                       model: Optional[str] = None,
                       provider: str = "web",
                       session_id: Optional[str] = None,
-                      wrapper: Optional[str] = None) -> Session:
+                      wrapper: Optional[str] = None,
+                      launcher_version: str = "") -> Session:
         """Create and register a new session.
 
         Args:
@@ -553,6 +560,7 @@ class SessionManager:
             model=model,
             provider=provider,
             wrapper=wrapper,
+            launcher_version=launcher_version,
         )
 
         with self._locked_state() as state:

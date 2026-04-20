@@ -20,6 +20,7 @@ from typing import List, Optional
 
 import re
 
+from . import get_full_version
 from .tmux_manager import TmuxManager
 from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content, tmux_window_target
 from .session_manager import SessionManager, Session
@@ -216,6 +217,7 @@ class ClaudeLauncher:
             provider=provider,
             session_id=session_id,
             wrapper=wrapper,
+            launcher_version=get_full_version(),
         )
 
     def _build_launch_cmd_str(
@@ -699,7 +701,13 @@ class ClaudeLauncher:
         if not self.tmux.send_keys(window_name, cmd_str, enter=True):
             return False
 
-        self.sessions.update_session(session.id, command=claude_cmd)
+        # Stamp launcher_version on every (re)launch so the session reflects the
+        # code that last spawned the claude process, not just the original launch.
+        self.sessions.update_session(
+            session.id,
+            command=claude_cmd,
+            launcher_version=get_full_version(),
+        )
 
         if new_claude_sid:
             self.sessions.update_session(session.id, claude_session_ids=[new_claude_sid])

@@ -1133,6 +1133,8 @@ def show(
             print(f"{'Teams:':<{label_width + 1}} enabled")
         if sess.wrapper:
             print(f"{'Wrapper:':<{label_width + 1}} {sess.wrapper}")
+        if sess.launcher_version:
+            print(f"{'Launcher:':<{label_width + 1}} {sess.launcher_version}")
 
         print()
 
