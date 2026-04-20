@@ -24,6 +24,7 @@ from . import config  # noqa: F401
 from . import split  # noqa: F401
 from . import jobs  # noqa: F401
 from . import wrappers  # noqa: F401
+from . import doctor  # noqa: F401
 
 
 def main():
