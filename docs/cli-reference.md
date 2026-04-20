@@ -52,6 +52,11 @@ overcode launch -n reviewer -d ~/project --allowed-tools "Read,Glob,Grep" --skip
 # Pass extra Claude CLI flags
 overcode launch -n fast -d ~/project --claude-arg "--model haiku" --claude-arg "--effort low"
 
+# Enable Claude-in-Chrome integration (requires the Claude for Chrome extension
+# and a claude.ai Pro/Max/Team/Enterprise subscription — NOT supported with
+# --provider bedrock as of 2026-04; see anthropics/claude-code#16128)
+overcode launch -n web -d ~/project --claude-arg --chrome
+
 # Launch with a cost budget (auto-deducted from parent if parent has budget)
 overcode launch -n task --budget 2.00 -p "Fix the bug. When done: overcode report --status success"
 
