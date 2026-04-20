@@ -532,6 +532,7 @@ class ViewActionsMixin:
         except NoMatches:
             pass
 
+        self._column_widths_dirty = True
         self._recompute_cell_column_widths()
         self.notify(label, severity="information")
 
