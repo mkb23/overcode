@@ -575,6 +575,7 @@ def get_summary_content_text(
     summarizer_enabled: bool,
     remaining_width: int,
     last_command: Optional[str] = None,
+    scraped_recap: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Compute the text and style category for summary content area.
 
@@ -619,6 +620,8 @@ def get_summary_content_text(
     elif mode == "ai_long":
         if ai_summary_context:
             return f"📖 {ai_summary_context[:remaining_width-3]}", "bold"
+        elif not summarizer_enabled and scraped_recap:
+            return f"📖 {scraped_recap[:remaining_width-3]}", "dim"
         elif not summarizer_enabled:
             return "📖 (summarizer disabled - press 'a')", "dim"
         return "📖 (awaiting context...)", "dim"
@@ -642,6 +645,8 @@ def get_summary_content_text(
         # ai_short (default)
         if ai_summary_short:
             return f"💬 {ai_summary_short[:remaining_width-3]}", "bold"
+        elif not summarizer_enabled and scraped_recap:
+            return f"💬 {scraped_recap[:remaining_width-3]}", "dim"
         elif not summarizer_enabled:
             return "💬 (summarizer disabled - press 'a')", "dim"
         return "💬 (awaiting summary...)", "dim"

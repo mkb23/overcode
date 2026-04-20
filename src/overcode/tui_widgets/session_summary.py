@@ -27,6 +27,22 @@ from ..tui_helpers import (
 from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
 
 
+_SCRAPED_RECAP_PLACEHOLDERS = frozenset({
+    "", "Initializing...", "Idle", "Restarting...", "Reviving...",
+    "Synced to main",
+})
+
+
+def _scraped_recap_from_stats(stats) -> Optional[str]:
+    """Return the scraped last-activity string from stats, skipping placeholders (#440)."""
+    if not stats:
+        return None
+    task = (getattr(stats, "current_task", "") or "").strip()
+    if not task or task in _SCRAPED_RECAP_PLACEHOLDERS:
+        return None
+    return task
+
+
 class SessionSummary(Static, can_focus=True):
     """Widget displaying single-line session summary"""
 
@@ -357,6 +373,7 @@ class SessionSummary(Static, can_focus=True):
             summarizer_enabled=self.summarizer_enabled,
             remaining_width=remaining,
             last_command=self.last_command,
+            scraped_recap=_scraped_recap_from_stats(s.stats),
         )
 
         # Map style categories to Rich styles

@@ -8,6 +8,7 @@ from overcode.session_manager import Session, SessionStats
 from overcode.history_reader import ClaudeSessionStats
 from overcode.tui_widgets.session_summary import (
     SessionSummary,
+    _scraped_recap_from_stats,
 )
 
 
@@ -285,3 +286,25 @@ class TestMessageClasses:
         """StalledAgentVisited message stores session_id."""
         msg = SessionSummary.StalledAgentVisited("stalled-1")
         assert msg.session_id == "stalled-1"
+
+
+class TestScrapedRecapFromStats:
+    """Tests for _scraped_recap_from_stats helper (#440)."""
+
+    def test_returns_none_when_stats_missing(self):
+        assert _scraped_recap_from_stats(None) is None
+
+    def test_returns_none_for_empty_current_task(self):
+        assert _scraped_recap_from_stats(_make_stats(current_task="")) is None
+
+    def test_returns_none_for_initializing_placeholder(self):
+        assert _scraped_recap_from_stats(_make_stats(current_task="Initializing...")) is None
+
+    def test_returns_none_for_idle_placeholder(self):
+        assert _scraped_recap_from_stats(_make_stats(current_task="Idle")) is None
+
+    def test_returns_task_when_real(self):
+        assert _scraped_recap_from_stats(_make_stats(current_task="Running tests")) == "Running tests"
+
+    def test_strips_whitespace(self):
+        assert _scraped_recap_from_stats(_make_stats(current_task="  Wrote file.py  ")) == "Wrote file.py"

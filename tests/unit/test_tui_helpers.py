@@ -928,6 +928,53 @@ class TestGetSummaryContentText:
         assert "awaiting" in text
         assert style == "dim"
 
+    def test_ai_short_uses_scraped_recap_when_summarizer_off(self):
+        """When summarizer is off, scraped recap replaces the disabled-placeholder (#440)."""
+        text, style = get_summary_content_text(
+            mode="ai_short",
+            summarizer_enabled=False,
+            scraped_recap="Wrote foo.py",
+            **{k: v for k, v in self._defaults.items()
+               if k != "summarizer_enabled"},
+        )
+        assert "Wrote foo.py" in text
+        assert "disabled" not in text
+        assert style == "dim"
+
+    def test_ai_short_falls_back_to_disabled_message_when_no_recap(self):
+        text, style = get_summary_content_text(
+            mode="ai_short",
+            summarizer_enabled=False,
+            **{k: v for k, v in self._defaults.items()
+               if k != "summarizer_enabled"},
+        )
+        assert "disabled" in text
+        assert style == "dim"
+
+    def test_ai_short_prefers_ai_summary_over_scraped_recap(self):
+        text, _ = get_summary_content_text(
+            mode="ai_short",
+            ai_summary_short="AI summary wins",
+            scraped_recap="scraped loses",
+            summarizer_enabled=True,
+            **{k: v for k, v in self._defaults.items()
+               if k not in ("ai_summary_short", "summarizer_enabled")},
+        )
+        assert "AI summary wins" in text
+        assert "scraped" not in text
+
+    def test_ai_long_uses_scraped_recap_when_summarizer_off(self):
+        text, style = get_summary_content_text(
+            mode="ai_long",
+            summarizer_enabled=False,
+            scraped_recap="Last thing done",
+            **{k: v for k, v in self._defaults.items()
+               if k != "summarizer_enabled"},
+        )
+        assert "Last thing done" in text
+        assert "disabled" not in text
+        assert style == "dim"
+
     def test_heartbeat_mode_active(self):
         text, style = get_summary_content_text(
             mode="heartbeat",
