@@ -2873,6 +2873,8 @@ class SupervisorTUI(
                     return
 
             permissions = "bypass" if message.bypass_permissions else "normal"
+            if message.extra_claude_args:
+                self.notify("Claude args are not yet supported for remote launches — ignored", severity="warning")
             try:
                 result = self._sister_controller.launch_agent(
                     sister_url=sister_config["url"],
@@ -2907,6 +2909,7 @@ class SupervisorTUI(
                     claude_agent=message.claude_agent,
                     provider=message.provider or "web",
                     wrapper=message.wrapper,
+                    extra_claude_args=message.extra_claude_args or None,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:

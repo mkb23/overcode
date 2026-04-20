@@ -6,7 +6,7 @@ defaults.  The user can review, tweak individual fields, and press 'a'
 to launch — locally or on a remote sister.
 
 Field types:
-  text   — inline editable (directory, name, wrapper)
+  text   — inline editable (directory, name, wrapper, claude_args)
   toggle — space/enter cycles through options (host, perms, teams, provider)
   select — space/enter cycles through a dynamic list (agent persona)
 """
@@ -14,6 +14,7 @@ Field types:
 from __future__ import annotations
 
 import logging
+import shlex
 from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Any, List, Optional
@@ -84,6 +85,7 @@ class NewAgentModal(ModalBase):
             claude_agent: Optional[str],
             provider: str,
             wrapper: Optional[str],
+            extra_claude_args: List[str],
         ) -> None:
             super().__init__()
             self.host = host
@@ -95,6 +97,7 @@ class NewAgentModal(ModalBase):
             self.claude_agent = claude_agent
             self.provider = provider
             self.wrapper = wrapper
+            self.extra_claude_args = extra_claude_args
 
     class Cancelled(Message):
         pass
@@ -159,6 +162,7 @@ class NewAgentModal(ModalBase):
             FormField("teams",     "Teams",     "toggle", value="on" if defaults.get("agent_teams") else "off", options=["off", "on"]),
             FormField("provider",  "Provider",  "toggle", value=defaults.get("provider", "web"), options=["web", "bedrock"]),
             FormField("wrapper",   "Wrapper",   "text",   value=wrapper_default),
+            FormField("claude_args", "Claude args", "text", value=""),
         ]
 
         self._editing = False
@@ -250,6 +254,16 @@ class NewAgentModal(ModalBase):
         wrapper = d["wrapper"].strip() or None
         host = d["host"]
         is_remote = self._is_remote
+        raw_args = d.get("claude_args", "").strip()
+        if raw_args:
+            try:
+                shlex.split(raw_args)  # syntax-check (balanced quotes etc)
+            except ValueError as e:
+                self.notify(f"Invalid Claude args: {e}", severity="error")
+                return
+            extra_claude_args = [raw_args]
+        else:
+            extra_claude_args = []
         self.post_message(self.LaunchRequested(
             host=host,
             is_remote=is_remote,
@@ -260,6 +274,7 @@ class NewAgentModal(ModalBase):
             claude_agent=agent,
             provider=d["provider"],
             wrapper=wrapper,
+            extra_claude_args=extra_claude_args,
         ))
         self._hide()
 
@@ -272,7 +287,7 @@ class NewAgentModal(ModalBase):
 
     # ── render ───────────────────────────────────────────────────────────
 
-    LABEL_W = 11  # fixed label column width
+    LABEL_W = 12  # fixed label column width
 
     def render(self) -> Text:
         t = Text()
