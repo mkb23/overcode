@@ -6,7 +6,7 @@ defaults.  The user can review, tweak individual fields, and press 'a'
 to launch — locally or on a remote sister.
 
 Field types:
-  text   — inline editable (directory, name)
+  text   — inline editable (directory, name, wrapper)
   toggle — space/enter cycles through options (host, perms, teams, provider)
   select — space/enter cycles through a dynamic list (agent persona)
 """
@@ -83,6 +83,7 @@ class NewAgentModal(ModalBase):
             agent_teams: bool,
             claude_agent: Optional[str],
             provider: str,
+            wrapper: Optional[str],
         ) -> None:
             super().__init__()
             self.host = host
@@ -93,6 +94,7 @@ class NewAgentModal(ModalBase):
             self.agent_teams = agent_teams
             self.claude_agent = claude_agent
             self.provider = provider
+            self.wrapper = wrapper
 
     class Cancelled(Message):
         pass
@@ -119,6 +121,7 @@ class NewAgentModal(ModalBase):
         existing_names: set[str],
         local_hostname: str = "",
         sister_names: List[str] | None = None,
+        wrappers: List[str] | None = None,
         app_ref: Optional[Any] = None,
     ) -> None:
         """Populate the form and display it.
@@ -130,6 +133,7 @@ class NewAgentModal(ModalBase):
             existing_names: Names already in use (for uniqueness check).
             local_hostname: Name of the local machine.
             sister_names: Names of available remote sisters (omit if none).
+            wrappers: Available wrapper names (from list_available_wrappers).
             app_ref: The Textual app, for focus save/restore.
         """
         self._existing_names = existing_names
@@ -139,6 +143,7 @@ class NewAgentModal(ModalBase):
         default_name = _unique_name(base_name, existing_names)
 
         agent_options = ["(none)"] + agents
+        wrapper_default = defaults.get("wrapper", "") or ""
 
         # Build host options: local first, then sisters
         host_options = [local_hostname] if local_hostname else ["local"]
@@ -153,6 +158,7 @@ class NewAgentModal(ModalBase):
             FormField("perms",     "Perms",     "toggle", value="bypass" if defaults.get("bypass_permissions") else "normal", options=["normal", "bypass"]),
             FormField("teams",     "Teams",     "toggle", value="on" if defaults.get("agent_teams") else "off", options=["off", "on"]),
             FormField("provider",  "Provider",  "toggle", value=defaults.get("provider", "web"), options=["web", "bedrock"]),
+            FormField("wrapper",   "Wrapper",   "text",   value=wrapper_default),
         ]
 
         self._editing = False
@@ -241,6 +247,7 @@ class NewAgentModal(ModalBase):
     def _launch(self) -> None:
         d = {f.key: f.value for f in self.fields}
         agent = d["agent"] if d["agent"] != "(none)" else None
+        wrapper = d["wrapper"].strip() or None
         host = d["host"]
         is_remote = self._is_remote
         self.post_message(self.LaunchRequested(
@@ -252,6 +259,7 @@ class NewAgentModal(ModalBase):
             agent_teams=(d["teams"] == "on"),
             claude_agent=agent,
             provider=d["provider"],
+            wrapper=wrapper,
         ))
         self._hide()
 

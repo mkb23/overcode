@@ -51,6 +51,14 @@ skills_app = typer.Typer(
 )
 app.add_typer(skills_app, name="skills")
 
+# Wrappers subcommand group
+wrappers_app = typer.Typer(
+    name="wrappers",
+    help="Manage agent launch wrapper scripts.",
+    no_args_is_help=True,
+)
+app.add_typer(wrappers_app, name="wrappers")
+
 # Perms subcommand group
 perms_app = typer.Typer(
     name="perms",

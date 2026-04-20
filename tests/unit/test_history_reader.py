@@ -1299,5 +1299,84 @@ class TestHistoryEntryEdgeCases:
         assert result == []
 
 
+class TestReadSessionStatsFromContent:
+    """Test reading stats from JSONL content strings (for container agents)."""
+
+    def test_returns_zeros_for_empty_content(self):
+        from overcode.history_reader import read_session_stats_from_content
+
+        usage, work_times = read_session_stats_from_content("")
+        assert usage["input_tokens"] == 0
+        assert usage["output_tokens"] == 0
+        assert work_times == []
+
+    def test_returns_zeros_for_none(self):
+        from overcode.history_reader import read_session_stats_from_content
+
+        usage, work_times = read_session_stats_from_content(None)
+        assert usage["input_tokens"] == 0
+
+    def test_parses_token_usage(self):
+        from overcode.history_reader import read_session_stats_from_content
+
+        content = "\n".join([
+            json.dumps({"type": "user", "message": {"role": "user"}}),
+            json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-01-02T10:00:00.000Z",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 200,
+                        "cache_creation_input_tokens": 50,
+                        "cache_read_input_tokens": 25,
+                    }
+                },
+            }),
+        ])
+
+        usage, _ = read_session_stats_from_content(content)
+        assert usage["input_tokens"] == 100
+        assert usage["output_tokens"] == 200
+        assert usage["cache_creation_tokens"] == 50
+        assert usage["cache_read_tokens"] == 25
+        assert usage["model"] == "claude-opus-4-6"
+        assert usage["current_context_tokens"] == 125  # input + cache_read
+
+    def test_matches_file_based_reader(self, tmp_path):
+        """Content-based and file-based readers should produce identical results."""
+        from overcode.history_reader import (
+            read_session_file_stats,
+            read_session_stats_from_content,
+        )
+
+        entries = [
+            json.dumps({"type": "user", "timestamp": "2026-01-02T10:00:00.000Z",
+                         "message": {"role": "user", "content": "hello"}}),
+            json.dumps({"type": "assistant", "timestamp": "2026-01-02T10:00:05.000Z",
+                         "message": {"model": "claude-sonnet-4-6",
+                                     "usage": {"input_tokens": 500, "output_tokens": 1000,
+                                               "cache_creation_input_tokens": 100,
+                                               "cache_read_input_tokens": 200}}}),
+            json.dumps({"type": "user", "timestamp": "2026-01-02T10:01:00.000Z",
+                         "message": {"role": "user", "content": "next"}}),
+            json.dumps({"type": "assistant", "timestamp": "2026-01-02T10:01:05.000Z",
+                         "message": {"model": "claude-sonnet-4-6",
+                                     "usage": {"input_tokens": 600, "output_tokens": 1200,
+                                               "cache_creation_input_tokens": 150,
+                                               "cache_read_input_tokens": 300}}}),
+        ]
+        content = "\n".join(entries)
+        session_file = tmp_path / "session.jsonl"
+        session_file.write_text(content)
+
+        file_usage, file_times = read_session_file_stats(session_file)
+        content_usage, content_times = read_session_stats_from_content(content)
+
+        assert file_usage == content_usage
+        assert file_times == content_times
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

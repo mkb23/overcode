@@ -193,6 +193,7 @@ class ClaudeLauncher:
         claude_agent: Optional[str] = None,
         model: Optional[str] = None,
         provider: str = "web",
+        wrapper: Optional[str] = None,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -214,6 +215,7 @@ class ClaudeLauncher:
             model=model,
             provider=provider,
             session_id=session_id,
+            wrapper=wrapper,
         )
 
     def _prepare_and_launch(
@@ -230,6 +232,12 @@ class ClaudeLauncher:
 
         Builds the environment prefix, constructs the full command string,
         sends it to the tmux window, and registers the session.
+
+        When a wrapper is specified in metadata, the wrapper script is
+        invoked with the claude command as arguments. The wrapper receives
+        OVERCODE_WRAPPER_DIR (the agent's working directory) so it can
+        set up the execution environment (e.g. a container) before running
+        claude. All existing OVERCODE_* env vars are inherited.
 
         Returns the Session on success, None on failure (kills window on error).
         """
@@ -248,9 +256,16 @@ class ClaudeLauncher:
             bedrock_cfg = get_bedrock_config()
             env_prefix += f" AWS_REGION={bedrock_cfg['region']}"
 
+        wrapper = metadata.get('wrapper')
+        if wrapper:
+            wrapper_dir = metadata.get('start_directory', '.')
+            env_prefix += f" OVERCODE_WRAPPER_DIR={shlex.quote(wrapper_dir)}"
+
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
             cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
+        elif wrapper:
+            cmd_str = f"{env_prefix} {shlex.quote(wrapper)} {shlex.join(claude_cmd)}"
         else:
             cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
 
@@ -282,6 +297,7 @@ class ClaudeLauncher:
         claude_agent: Optional[str] = None,
         model: Optional[str] = None,
         provider: str = "web",
+        wrapper: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -298,6 +314,8 @@ class ClaudeLauncher:
             allowed_tools: Comma-separated tool list for --allowedTools
             extra_claude_args: Extra Claude CLI flags (each a space-separated string)
             provider: API provider — "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
+            wrapper: Optional wrapper script path. The wrapper receives the claude
+                command as arguments and OVERCODE_WRAPPER_DIR for the working directory.
 
         Returns:
             Session object if successful, None otherwise
@@ -334,6 +352,15 @@ class ClaudeLauncher:
             parent_depth = self.sessions.compute_depth(parent_session)
             if parent_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
                 print(f"Cannot launch: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
+                return None
+
+        # Resolve wrapper if specified
+        resolved_wrapper = None
+        if wrapper:
+            from .wrapper import resolve_wrapper as _resolve_wrapper
+            resolved_wrapper = _resolve_wrapper(wrapper)
+            if resolved_wrapper is None:
+                print(f"Cannot launch: wrapper '{wrapper}' not found or not executable")
                 return None
 
         # Check if a session with this name already exists
@@ -392,6 +419,7 @@ class ClaudeLauncher:
             permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
             extra_claude_args=extra_claude_args, agent_teams=agent_teams,
             claude_agent=claude_agent, model=model, provider=provider,
+            wrapper=resolved_wrapper,
         )
 
         session = self._prepare_and_launch(

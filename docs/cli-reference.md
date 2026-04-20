@@ -26,6 +26,7 @@ overcode launch --name <name> [options]
 | `--allowed-tools` | | Comma-separated tools for Claude (e.g., `Read,Glob,Grep,Edit`). Maps to `--allowedTools` |
 | `--claude-arg` | | Extra Claude CLI flag (repeatable). Each value is a space-separated flag+value string |
 | `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
+| `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Examples:**
@@ -53,6 +54,9 @@ overcode launch -n fast -d ~/project --claude-arg "--model haiku" --claude-arg "
 
 # Launch with a cost budget (auto-deducted from parent if parent has budget)
 overcode launch -n task --budget 2.00 -p "Fix the bug. When done: overcode report --status success"
+
+# Launch inside a devcontainer (auto-installs wrapper on first use)
+overcode launch -n builder -d ~/project --wrapper devcontainer --bypass-permissions
 ```
 
 ### `overcode list`
@@ -395,6 +399,39 @@ overcode supervisor-daemon status [--session <session>]
 
 # Watch logs
 overcode supervisor-daemon watch [--session <session>]
+```
+
+---
+
+## Wrapper Commands
+
+### `overcode wrappers list`
+
+List installed and available wrappers.
+
+```bash
+overcode wrappers list
+```
+
+Shows wrappers in `~/.overcode/wrappers/`, indicates whether each is bundled or custom, and flags modified bundled wrappers. Also lists bundled wrappers that haven't been installed yet (these auto-install on first use).
+
+### `overcode wrappers install`
+
+Install or update all bundled wrappers.
+
+```bash
+overcode wrappers install
+```
+
+Copies bundled wrapper scripts to `~/.overcode/wrappers/`. Reports which were installed, updated, or unchanged.
+
+### `overcode wrappers reset`
+
+Reset wrapper(s) to the bundled version, undoing any local modifications.
+
+```bash
+overcode wrappers reset              # Reset all bundled wrappers
+overcode wrappers reset devcontainer # Reset only devcontainer
 ```
 
 ---

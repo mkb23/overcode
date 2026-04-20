@@ -73,9 +73,9 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    NewAgentModal,
     AgentSelectModal,
     SisterSelectionModal,
-    NewAgentModal,
     InstructionHistoryModal,
 )
 from .tui_actions import (
@@ -403,10 +403,10 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
-        # Modal for agent selection during new agent creation
-        yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
+        # Modal for agent selection during new agent creation
+        yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
@@ -2906,8 +2906,12 @@ class SupervisorTUI(
                     agent_teams=message.agent_teams,
                     claude_agent=message.claude_agent,
                     provider=message.provider or "web",
+                    wrapper=message.wrapper,
                 )
-                self.notify(f"Created agent: {name}", severity="information")
+                parts = [f"Created agent: {name}"]
+                if message.wrapper:
+                    parts.append(f"wrapper: {message.wrapper}")
+                self.notify(" ".join(parts), severity="information")
                 self.refresh_sessions()
             except Exception as e:
                 self.notify(f"Failed to create agent: {e}", severity="error")

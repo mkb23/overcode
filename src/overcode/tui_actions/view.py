@@ -141,6 +141,7 @@ class ViewActionsMixin:
 
         # Update footer and column headers
         self._update_footer()
+        self._column_widths_dirty = True
         self._recompute_cell_column_widths()
 
         self.notify(f"Summary: {new_level}", severity="information")
