@@ -859,8 +859,8 @@ class TestTmuxManagerLibtmuxKeys:
 
 
     @patch("overcode.tmux_utils.time.sleep")
-    def test_send_keys_slash_command_splits_and_delays(self, mock_sleep):
-        """send_keys with / prefix sends / first with longer delay (#307)."""
+    def test_send_keys_slash_command_literal_and_delays(self, mock_sleep):
+        """send_keys with / prefix sends entire command as literal text (#307)."""
         manager, mock_pane = self._make_manager_with_pane()
 
         call_order = []
@@ -870,10 +870,8 @@ class TestTmuxManagerLibtmuxKeys:
         manager.send_keys("my-window", "/clear", enter=True)
 
         assert call_order == [
-            ("send", ("/",), {"enter": False}),
-            ("sleep", 0.3),
-            ("send", ("clear",), {"enter": False, "literal": True}),
-            ("sleep", 0.3),
+            ("send", ("/clear",), {"enter": False, "literal": True}),
+            ("sleep", 0.5),
             ("send", ("",), {"enter": True}),
         ]
 

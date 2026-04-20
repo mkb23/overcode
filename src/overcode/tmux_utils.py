@@ -47,17 +47,12 @@ def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:
                 pane.send_keys(rest, enter=False)
                 time.sleep(0.1)
         elif keys.startswith('/') and len(keys) > 1:
-            # Special handling for slash commands (#307)
-            # Claude Code shows a command menu when / is typed.
-            # Send / first so the menu appears, then the rest of the
-            # command so autocomplete filters to the exact match.
-            # Use literal=True so tmux doesn't interpret special chars.
-            pane.send_keys('/', enter=False)
-            time.sleep(0.3)
-            rest = keys[1:]
-            if rest:
-                pane.send_keys(rest, enter=False, literal=True)
-                time.sleep(0.3)
+            # Send slash commands as one literal string so the full text
+            # lands in the input buffer before the autocomplete menu can
+            # interfere.  A 0.5s delay before Enter lets Claude Code
+            # process the text and match the correct command.
+            pane.send_keys(keys, enter=False, literal=True)
+            time.sleep(0.5)
         else:
             pane.send_keys(keys, enter=False)
             # Small delay for Claude Code to process text
