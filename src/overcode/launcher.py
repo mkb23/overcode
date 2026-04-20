@@ -7,10 +7,13 @@ Claude starts, not as CLI arguments.
 
 """
 
-import time
+import json
+import shlex
+import shutil
 import subprocess
 import os
-import shlex
+import sys
+import time
 import uuid
 from pathlib import Path
 from typing import List, Optional
@@ -42,6 +45,47 @@ def validate_session_name(name: str) -> None:
         raise InvalidSessionNameError(name, "name cannot be empty")
     if not SESSION_NAME_PATTERN.match(name):
         raise InvalidSessionNameError(name)
+
+def _resolve_overcode_bin() -> str:
+    """Resolve absolute path to the overcode binary.
+
+    Tries shutil.which first (covers global/pipx installs), then falls
+    back to invoking via the current Python interpreter (covers uv run,
+    venv-only installs, etc.).
+    """
+    which = shutil.which("overcode")
+    if which:
+        return which
+    return f"{sys.executable} -m overcode.cli"
+
+
+def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False) -> dict:
+    """Build the --settings JSON for overcode-launched agents.
+
+    Includes all overcode hooks (with absolute-path commands) and
+    permissions so agents don't depend on user-level settings.json
+    containing these entries.
+    """
+    from .hook_handler import OVERCODE_HOOKS
+    from .cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
+
+    # Build hooks dict: event -> [matcher group]
+    hooks: dict[str, list] = {}
+    for event, _bare_command in OVERCODE_HOOKS:
+        hooks.setdefault(event, []).append({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
+        })
+
+    perms = list(OVERCODE_SAFE_PERMS)
+    if include_punchy_perms:
+        perms.extend(OVERCODE_PUNCHY_PERMS)
+
+    return {
+        "hooks": hooks,
+        "permissions": {"allow": perms},
+    }
+
 
 class ClaudeLauncher:
     """Launches interactive Claude Code sessions in tmux windows.
@@ -82,6 +126,7 @@ class ClaudeLauncher:
         fork: bool = False,
         claude_session_id: Optional[str] = None,
         model: Optional[str] = None,
+        include_punchy_perms: bool = False,
     ) -> List[str]:
         """Construct the claude CLI argument list.
 
@@ -107,6 +152,12 @@ class ClaudeLauncher:
         # this agent without needing PID-based discovery (#373).
         if claude_session_id and not resume_session_id:
             cmd.extend(["--session-id", claude_session_id])
+
+        # Inject overcode hooks and permissions via --settings so launched
+        # agents don't depend on user-level settings.json (#435).
+        overcode_bin = _resolve_overcode_bin()
+        settings = _build_launch_settings(overcode_bin, include_punchy_perms=include_punchy_perms)
+        cmd.extend(["--settings", json.dumps(settings)])
 
         # Permission flags — from explicit args or inherited mode
         if dangerously_skip_permissions or permissiveness_mode == "bypass":

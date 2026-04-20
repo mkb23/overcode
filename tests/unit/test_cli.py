@@ -1461,61 +1461,13 @@ class TestShowExtended:
 
 
 class TestHooksInstallCommand:
-    """Test hooks install command."""
+    """Test hooks install command (deprecated)."""
 
-    def test_hooks_install_user_level(self):
-        """Hooks install at user level."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_hook.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "install"])
-                assert result.exit_code == 0
-                assert "Installed 1 hook" in result.output
-
-    def test_hooks_install_project_level(self):
-        """Hooks install at project level."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_hook.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.project_level.return_value = mock_editor
-
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "install", "--project"])
-                assert result.exit_code == 0
-                assert "project" in result.output
-
-    def test_hooks_install_already_installed(self):
-        """Hooks install when all already installed."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_hook.return_value = False
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            with patch('overcode.hook_handler.OVERCODE_HOOKS', [("TestEvent", "test-cmd")]):
-                result = runner.invoke(app, ["hooks", "install"])
-                assert result.exit_code == 0
-                assert "already installed" in result.output
-
-    def test_hooks_install_invalid_json(self):
-        """Hooks install handles invalid JSON."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.side_effect = ValueError("Invalid JSON")
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["hooks", "install"])
-            assert result.exit_code == 1
-            assert "Invalid JSON" in result.output
+    def test_hooks_install_shows_deprecation(self):
+        """Hooks install shows deprecation notice and exits."""
+        result = runner.invoke(app, ["hooks", "install"])
+        assert result.exit_code == 0
+        assert "deprecated" in result.output.lower()
 
 
 class TestHooksUninstallCommand:
@@ -1731,57 +1683,13 @@ class TestSkillsStatusCommand:
 
 
 class TestPermsInstallCommand:
-    """Test perms install command."""
+    """Test perms install command (deprecated)."""
 
-    def test_perms_install_safe(self):
-        """Perms install adds safe permissions."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_permission.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["perms", "install"])
-            assert result.exit_code == 0
-            assert "Installed" in result.output
-            assert "safe" in result.output
-
-    def test_perms_install_all(self):
-        """Perms install --all adds safe + punchy permissions."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_permission.return_value = True
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["perms", "install", "--all"])
-            assert result.exit_code == 0
-            assert "punchy" in result.output
-
-    def test_perms_install_already(self):
-        """Perms install when all already installed."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.return_value = {}
-            mock_editor.add_permission.return_value = False
-            mock_editor.path = Path("/tmp/.claude/settings.json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["perms", "install"])
-            assert result.exit_code == 0
-            assert "already installed" in result.output
-
-    def test_perms_install_invalid_json(self):
-        """Perms install handles invalid JSON."""
-        with patch('overcode.claude_config.ClaudeConfigEditor') as mock_editor_cls:
-            mock_editor = MagicMock()
-            mock_editor.load.side_effect = ValueError("bad json")
-            mock_editor_cls.user_level.return_value = mock_editor
-
-            result = runner.invoke(app, ["perms", "install"])
-            assert result.exit_code == 1
+    def test_perms_install_shows_deprecation(self):
+        """Perms install shows deprecation notice and exits."""
+        result = runner.invoke(app, ["perms", "install"])
+        assert result.exit_code == 0
+        assert "deprecated" in result.output.lower()
 
 
 class TestPermsUninstallCommand:
