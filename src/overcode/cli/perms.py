@@ -1,5 +1,5 @@
 """
-Permissions commands: install, uninstall, status.
+Permissions commands: install (deprecated), uninstall, status.
 """
 
 from typing import Annotated
@@ -25,7 +25,14 @@ OVERCODE_PUNCHY_PERMS = [
 ]
 
 
-@perms_app.command("install")
+DEPRECATION_NOTE = (
+    "[yellow]Note:[/yellow] Manual permission installation is deprecated.\n"
+    "  Permissions are now injected automatically when agents are launched via 'overcode launch'.\n"
+    "  Use 'overcode perms uninstall' to remove legacy permissions from your settings."
+)
+
+
+@perms_app.command("install", deprecated=True)
 def perms_install(
     project: Annotated[
         bool,
@@ -36,47 +43,13 @@ def perms_install(
         typer.Option("--all", help="Include punchy permissions (launch, send, instruct)"),
     ] = False,
 ):
-    """Install overcode tool permissions into Claude Code settings.
+    """[Deprecated] Install overcode permissions into Claude Code settings.
 
-    By default installs safe (read-only) permissions. Use --all to also
-    include punchy permissions that can spawn or control agents.
-
-    Safe: report, show, list, follow, kill, budget
-    Punchy (--all): launch, send, instruct
+    Permissions are now injected automatically at launch time via --settings.
+    This command is no longer needed for overcode-launched agents.
     """
-    from ..claude_config import ClaudeConfigEditor
-
-    if project:
-        editor = ClaudeConfigEditor.project_level()
-        level = "project"
-    else:
-        editor = ClaudeConfigEditor.user_level()
-        level = "user"
-
-    try:
-        editor.load()
-    except ValueError as e:
-        rprint(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-
-    perms = OVERCODE_SAFE_PERMS + (OVERCODE_PUNCHY_PERMS if all_perms else [])
-
-    installed = 0
-    already = 0
-    for perm in perms:
-        if editor.add_permission(perm):
-            installed += 1
-        else:
-            already += 1
-
-    if installed > 0:
-        tier = "safe + punchy" if all_perms else "safe"
-        rprint(f"[green]\u2713[/green] Installed {installed} permission(s) in {level} settings ({tier})")
-        rprint(f"  [dim]{editor.path}[/dim]")
-        for perm in perms:
-            rprint(f"  {perm}")
-    elif already == len(perms):
-        rprint(f"[green]\u2713[/green] All {already} permissions already installed in {level} settings")
+    rprint(DEPRECATION_NOTE)
+    raise typer.Exit(0)
 
 
 @perms_app.command("uninstall")
@@ -118,6 +91,8 @@ def perms_uninstall(
 def perms_status():
     """Show which overcode permissions are installed."""
     from ..claude_config import ClaudeConfigEditor
+
+    rprint(f"\n{DEPRECATION_NOTE}\n")
 
     all_perms = OVERCODE_SAFE_PERMS + OVERCODE_PUNCHY_PERMS
 

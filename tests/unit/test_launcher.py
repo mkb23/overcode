@@ -1574,6 +1574,178 @@ class TestSessionIdPrescribing:
 
 
 # =============================================================================
+# Settings injection (#435)
+# =============================================================================
+
+class TestSettingsInjection:
+    """Overcode hooks and permissions are injected via --settings flag."""
+
+    def test_launch_includes_settings_flag(self, tmp_path):
+        """Launch command includes --settings with JSON blob."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        launcher.launch(name="test-agent")
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        assert any("--settings" in cmd for cmd in sent_commands)
+
+    def test_settings_contains_hooks(self, tmp_path):
+        """Injected settings JSON contains all overcode hooks."""
+        import json
+        from overcode.hook_handler import OVERCODE_HOOKS
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        launcher.launch(name="test-agent")
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        # Find the --settings argument value
+        for cmd in sent_commands:
+            if "--settings" in cmd:
+                # The settings JSON is the token after --settings
+                # In the shlex-joined command string, find it
+                for event, _ in OVERCODE_HOOKS:
+                    assert event in cmd, f"Hook event {event} missing from --settings"
+                break
+
+    def test_settings_contains_safe_permissions(self, tmp_path):
+        """Injected settings include safe overcode permissions."""
+        from overcode.cli.perms import OVERCODE_SAFE_PERMS
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        launcher.launch(name="test-agent")
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        for cmd in sent_commands:
+            if "--settings" in cmd:
+                for perm in OVERCODE_SAFE_PERMS:
+                    assert perm in cmd, f"Permission {perm} missing from --settings"
+                break
+
+    def test_settings_excludes_punchy_permissions_by_default(self, tmp_path):
+        """Punchy permissions (launch, send) are NOT included by default."""
+        from overcode.cli.perms import OVERCODE_PUNCHY_PERMS
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        launcher.launch(name="test-agent")
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        for cmd in sent_commands:
+            if "--settings" in cmd:
+                for perm in OVERCODE_PUNCHY_PERMS:
+                    assert perm not in cmd, f"Punchy perm {perm} should not be in default --settings"
+                break
+
+    def test_hook_commands_use_absolute_path(self, tmp_path):
+        """Hook commands use resolved absolute path, not bare 'overcode'."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        launcher.launch(name="test-agent")
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        for cmd in sent_commands:
+            if "--settings" in cmd:
+                # The hook command should NOT be the bare "overcode hook-handler"
+                # It should be an absolute path or python -m invocation
+                assert '"overcode hook-handler"' not in cmd or \
+                    '/' in cmd.split('hook-handler')[0], \
+                    "Hook command should use absolute path"
+                break
+
+    def test_fork_includes_settings_flag(self, tmp_path):
+        """Fork command also includes --settings."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        source = launcher.launch(name="source", dangerously_skip_permissions=True)
+        session_manager.set_active_claude_session_id(source.id, "sess-123")
+        source = session_manager.get_session(source.id)
+
+        launcher.launch_fork(name="forked", source_session=source)
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        fork_cmds = [c for c in sent_commands if "--fork-session" in c]
+        assert len(fork_cmds) == 1
+        assert "--settings" in fork_cmds[0]
+
+
+class TestResolveOvercodeBin:
+    """Tests for _resolve_overcode_bin helper."""
+
+    def test_uses_which_when_available(self):
+        from overcode.launcher import _resolve_overcode_bin
+        with patch("overcode.launcher.shutil.which", return_value="/usr/local/bin/overcode"):
+            assert _resolve_overcode_bin() == "/usr/local/bin/overcode"
+
+    def test_falls_back_to_python_m(self):
+        from overcode.launcher import _resolve_overcode_bin
+        with patch("overcode.launcher.shutil.which", return_value=None):
+            result = _resolve_overcode_bin()
+            assert result.endswith("-m overcode.cli")
+            assert sys.executable in result
+
+
+class TestBuildLaunchSettings:
+    """Tests for _build_launch_settings helper."""
+
+    def test_all_hook_events_present(self):
+        from overcode.launcher import _build_launch_settings
+        from overcode.hook_handler import OVERCODE_HOOKS
+
+        settings = _build_launch_settings("/usr/local/bin/overcode")
+        for event, _ in OVERCODE_HOOKS:
+            assert event in settings["hooks"]
+
+    def test_hook_commands_use_provided_bin(self):
+        from overcode.launcher import _build_launch_settings
+
+        settings = _build_launch_settings("/opt/custom/overcode")
+        for event, entries in settings["hooks"].items():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    assert hook["command"] == "/opt/custom/overcode hook-handler"
+
+    def test_safe_perms_only_by_default(self):
+        from overcode.launcher import _build_launch_settings
+        from overcode.cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
+
+        settings = _build_launch_settings("/usr/local/bin/overcode")
+        allow = settings["permissions"]["allow"]
+        for p in OVERCODE_SAFE_PERMS:
+            assert p in allow
+        for p in OVERCODE_PUNCHY_PERMS:
+            assert p not in allow
+
+    def test_includes_punchy_when_requested(self):
+        from overcode.launcher import _build_launch_settings
+        from overcode.cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
+
+        settings = _build_launch_settings("/usr/local/bin/overcode", include_punchy_perms=True)
+        allow = settings["permissions"]["allow"]
+        for p in OVERCODE_SAFE_PERMS + OVERCODE_PUNCHY_PERMS:
+            assert p in allow
+
+
+# =============================================================================
 # Run tests directly
 # =============================================================================
 

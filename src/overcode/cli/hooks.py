@@ -1,5 +1,5 @@
 """
-Hooks commands: install, uninstall, status.
+Hooks commands: install (deprecated), uninstall, status.
 """
 
 from typing import Annotated
@@ -10,51 +10,27 @@ from rich import print as rprint
 from ._shared import hooks_app
 
 
-@hooks_app.command("install")
+DEPRECATION_NOTE = (
+    "[yellow]Note:[/yellow] Manual hook installation is deprecated.\n"
+    "  Hooks are now injected automatically when agents are launched via 'overcode launch'.\n"
+    "  Use 'overcode hooks uninstall' to remove legacy hooks from your settings."
+)
+
+
+@hooks_app.command("install", deprecated=True)
 def hooks_install(
     project: Annotated[
         bool,
         typer.Option("--project", "-p", help="Install to project-level .claude/settings.json instead of user-level"),
     ] = False,
 ):
-    """Install all overcode hooks into Claude Code settings.
+    """[Deprecated] Install overcode hooks into Claude Code settings.
 
-    Installs hooks for: UserPromptSubmit, PostToolUse, Stop,
-    PermissionRequest, SessionEnd. All use the unified 'overcode hook-handler'.
+    Hooks are now injected automatically at launch time via --settings.
+    This command is no longer needed for overcode-launched agents.
     """
-    from ..claude_config import ClaudeConfigEditor
-    from ..hook_handler import OVERCODE_HOOKS
-
-    if project:
-        editor = ClaudeConfigEditor.project_level()
-        level = "project"
-    else:
-        editor = ClaudeConfigEditor.user_level()
-        level = "user"
-
-    try:
-        editor.load()
-    except ValueError as e:
-        rprint(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-
-    # Install all overcode hooks (idempotent)
-    installed = 0
-    already = 0
-    for event, command in OVERCODE_HOOKS:
-        if editor.add_hook(event, command):
-            installed += 1
-        else:
-            already += 1
-
-    if installed > 0:
-        events = ", ".join(event for event, _ in OVERCODE_HOOKS)
-        rprint(f"[green]\u2713[/green] Installed {installed} hook(s) in {level} settings")
-        rprint(f"  [dim]{editor.path}[/dim]")
-        rprint(f"\n  Events: {events}")
-        rprint("  All hooks run 'overcode hook-handler' (reads event from stdin).")
-    elif already == len(OVERCODE_HOOKS):
-        rprint(f"[green]\u2713[/green] All {already} hooks already installed in {level} settings")
+    rprint(DEPRECATION_NOTE)
+    raise typer.Exit(0)
 
 
 @hooks_app.command("uninstall")
@@ -97,6 +73,8 @@ def hooks_status():
     """Show which overcode hooks are installed."""
     from ..claude_config import ClaudeConfigEditor
     from ..hook_handler import OVERCODE_HOOKS
+
+    rprint(f"\n{DEPRECATION_NOTE}\n")
 
     for level_name, editor in [
         ("User-level", ClaudeConfigEditor.user_level()),

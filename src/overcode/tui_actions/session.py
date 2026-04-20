@@ -312,7 +312,7 @@ class SessionActionsMixin:
             from ..claude_config import ClaudeConfigEditor
             if not ClaudeConfigEditor.are_overcode_hooks_installed():
                 self.notify(
-                    "Hooks not installed — run 'overcode hooks install' first",
+                    "No legacy hooks found in settings — launched agents inject hooks automatically",
                     severity="error",
                 )
                 return
