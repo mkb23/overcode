@@ -68,6 +68,16 @@ _SKILL_EMOJI_DEFAULTS: dict[str, str] = {
 }
 SKILL_EMOJI_DEFAULT = "🧩"  # Fallback for unknown skills
 
+# ---------------------------------------------------------------------------
+# Wrapper name → emoji registry for wrapper column (#437)
+# Defaults below; user overrides via config.yaml `wrapper_emoji:` section.
+# ---------------------------------------------------------------------------
+_WRAPPER_EMOJI_DEFAULTS: dict[str, str] = {
+    "devcontainer": "🐳",
+    "passthrough": "🔗",
+}
+WRAPPER_EMOJI_DEFAULT = "🎁"  # Fallback for unknown wrappers
+
 
 def get_skill_emoji() -> dict[str, str]:
     """Return merged skill emoji registry (defaults + user config overrides)."""
@@ -75,6 +85,20 @@ def get_skill_emoji() -> dict[str, str]:
     merged = dict(_SKILL_EMOJI_DEFAULTS)
     merged.update(get_user_config().skill_emoji)
     return merged
+
+
+def get_wrapper_emoji() -> dict[str, str]:
+    """Return merged wrapper emoji registry (defaults + user config overrides)."""
+    from .settings import get_user_config
+    merged = dict(_WRAPPER_EMOJI_DEFAULTS)
+    merged.update(getattr(get_user_config(), "wrapper_emoji", {}))
+    return merged
+
+
+def _wrapper_name(wrapper_path: str) -> str:
+    """Extract display name from a wrapper path (e.g. '/path/foo.sh' → 'foo')."""
+    from pathlib import Path
+    return Path(wrapper_path).stem or wrapper_path
 
 
 def _tool_emojis(allowed_tools: Optional[str], max_n: int = MAX_TOOL_EMOJI, emoji_free: bool = False) -> str:
@@ -586,6 +610,23 @@ def render_enhanced_context(ctx: ColumnContext) -> ColumnOutput:
         return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
+def render_wrapper(ctx: ColumnContext) -> ColumnOutput:
+    """Wrapper name with an emoji badge. None when no wrapper is set."""
+    wrapper = ctx.session.wrapper
+    if not wrapper:
+        return None
+    name = _wrapper_name(wrapper)
+    emoji = get_wrapper_emoji().get(name, WRAPPER_EMOJI_DEFAULT)
+    return [(f" {ctx.e(emoji)}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+
+
+def render_wrapper_plain(ctx: ColumnContext) -> Optional[str]:
+    wrapper = ctx.session.wrapper
+    if not wrapper:
+        return None
+    return _wrapper_name(wrapper)
+
+
 def render_human_count(ctx: ColumnContext) -> ColumnOutput:
     if ctx.claude_stats is not None:
         human_count = max(0, ctx.claude_stats.interaction_count - ctx.stats.steers_count)
@@ -997,6 +1038,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Mode", render_plain=render_mode_plain, header="MOD", name="Permission Mode"),
     SummaryColumn(id="agent_teams", group="supervision", detail_levels=ALL, render=render_agent_teams,
                   label="Teams", render_plain=render_teams_plain, header="TM", name="Teams"),
+    SummaryColumn(id="wrapper", group="supervision", detail_levels=ALL, render=render_wrapper,
+                  label="Wrapper", render_plain=render_wrapper_plain, header="WRP", name="Wrapper"),
     SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
                   label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools"),
     SummaryColumn(id="loaded_skills", group="supervision", detail_levels=ALL, render=render_loaded_skills,

@@ -250,6 +250,9 @@ class UserConfig:
     # Skill emoji overrides (loaded from config.yaml skill_emoji section) (#252)
     skill_emoji: dict = field(default_factory=dict)
 
+    # Wrapper emoji overrides (loaded from config.yaml wrapper_emoji section) (#437)
+    wrapper_emoji: dict = field(default_factory=dict)
+
     @classmethod
     def load(cls) -> "UserConfig":
         """Load configuration from config file."""
@@ -287,6 +290,13 @@ class UserConfig:
                     if isinstance(skill_emoji_raw, dict) else {}
                 )
 
+                # Parse wrapper emoji overrides (#437)
+                wrapper_emoji_raw = data.get("wrapper_emoji", {})
+                wrapper_emoji_parsed = (
+                    {str(k): str(v) for k, v in wrapper_emoji_raw.items()}
+                    if isinstance(wrapper_emoji_raw, dict) else {}
+                )
+
                 return cls(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
@@ -298,6 +308,7 @@ class UserConfig:
                     price_cache_read=pricing.get("cache_read", 0.30),
                     model_pricing=model_pricing_parsed,
                     skill_emoji=skill_emoji_parsed,
+                    wrapper_emoji=wrapper_emoji_parsed,
                 )
         except (yaml.YAMLError, IOError):
             return cls()

@@ -40,6 +40,8 @@ from overcode.summary_columns import (
     render_permission_mode,
     render_allowed_tools,
     render_enhanced_context,
+    render_wrapper,
+    render_wrapper_plain,
     render_human_count,
     render_robot_count,
     render_standing_orders,
@@ -771,6 +773,36 @@ class TestRenderEnhancedContext:
         ctx = _make_ctx(session=session)
         result = render_enhanced_context(ctx)
         assert "·" in result[0][0]
+
+
+class TestRenderWrapper:
+    def test_no_wrapper_hides_column(self):
+        session = _make_session(wrapper=None)
+        ctx = _make_ctx(session=session)
+        assert render_wrapper(ctx) is None
+        assert render_wrapper_plain(ctx) is None
+
+    def test_known_wrapper_uses_registry_emoji(self):
+        session = _make_session(wrapper="/Users/x/.overcode/wrappers/devcontainer.sh")
+        ctx = _make_ctx(session=session)
+        result = render_wrapper(ctx)
+        assert "🐳" in result[0][0]
+
+    def test_unknown_wrapper_uses_default_emoji(self):
+        session = _make_session(wrapper="/opt/custom-wrapper.sh")
+        ctx = _make_ctx(session=session)
+        result = render_wrapper(ctx)
+        assert "🎁" in result[0][0]
+
+    def test_plain_shows_wrapper_name(self):
+        session = _make_session(wrapper="/path/to/devcontainer.sh")
+        ctx = _make_ctx(session=session)
+        assert render_wrapper_plain(ctx) == "devcontainer"
+
+    def test_plain_accepts_bare_name(self):
+        session = _make_session(wrapper="mywrap")
+        ctx = _make_ctx(session=session)
+        assert render_wrapper_plain(ctx) == "mywrap"
 
 
 class TestRenderHumanCount:
