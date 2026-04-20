@@ -280,6 +280,22 @@ NewAgentDefaultsModal.visible {
     display: block;
 }
 
+/* Tmux Toggle Key Modal (#442) */
+TmuxConfigModal {
+    display: none;
+    layer: above;
+    offset: 27 30;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+TmuxConfigModal.visible {
+    display: block;
+}
+
 /* New Agent Modal (unified launch form) */
 NewAgentModal {
     display: none;

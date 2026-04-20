@@ -73,6 +73,7 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    TmuxConfigModal,
     NewAgentModal,
     AgentSelectModal,
     SisterSelectionModal,
@@ -207,6 +208,8 @@ class SupervisorTUI(
         ("L", "toggle_column_headers", "Column headers"),
         # New agent defaults modal
         ("G", "open_new_agent_defaults", "Agent defaults"),
+        # Tmux pane-toggle key modal (#442)
+        ("ctrl+g", "open_tmux_config", "Tmux toggle key"),
         # Sister selection modal (#323)
         ("U", "open_sister_selection", "Sisters"),
         # Instruction history modal (#376)
@@ -403,6 +406,8 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
+        # Modal for tmux pane-toggle key (#442)
+        yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         # Modal for agent selection during new agent creation
@@ -3253,6 +3258,41 @@ class SupervisorTUI(
 
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
+        self._dialog_did_close()
+
+    def action_open_tmux_config(self) -> None:
+        """Open the tmux toggle-key modal (#442)."""
+        try:
+            modal = self.query_one("#tmux-config-modal", TmuxConfigModal)
+            self._dialog_will_open()
+            modal.show(self)
+        except NoMatches:
+            pass
+
+    def on_tmux_config_modal_toggle_key_changed(
+        self, message: TmuxConfigModal.ToggleKeyChanged
+    ) -> None:
+        """Handle new toggle key selected from modal (#442)."""
+        if message.reinstalled:
+            self.notify(
+                f"Toggle key set to {message.label} (tmux bindings reinstalled)",
+                severity="information",
+            )
+        else:
+            self.notify(
+                f"Toggle key set to {message.label} — run 'overcode tmux' to install bindings",
+                severity="information",
+            )
+        # Refresh the TERMINAL ACTIVE banner so it shows the new key label
+        try:
+            banner = self.query_one("#terminal-active-banner", Static)
+            banner.update(self._terminal_active_banner_text())
+        except NoMatches:
+            pass
+        self._dialog_did_close()
+
+    def on_tmux_config_modal_cancelled(self, message: TmuxConfigModal.Cancelled) -> None:
+        """Handle tmux config modal cancellation (#442)."""
         self._dialog_did_close()
 
     def action_open_sister_selection(self) -> None:

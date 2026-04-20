@@ -17,6 +17,7 @@ from .command_bar import CommandBar
 from .modal_base import ModalBase
 from .summary_config_modal import SummaryConfigModal
 from .new_agent_defaults_modal import NewAgentDefaultsModal
+from .tmux_config_modal import TmuxConfigModal
 from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
@@ -36,6 +37,7 @@ __all__ = [
     "CommandBar",
     "SummaryConfigModal",
     "NewAgentDefaultsModal",
+    "TmuxConfigModal",
     "AgentSelectModal",
     "SisterSelectionModal",
     "NewAgentModal",

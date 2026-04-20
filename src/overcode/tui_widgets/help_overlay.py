@@ -69,6 +69,7 @@ class HelpOverlay(Static):
         row("F", "Fork agent", "^T", "Enhanced context")
         row("T", "Handover all (2x)", "I", "Instruction history")
         row("G", "New agent defaults", "U", "Sister visibility")
+        row("^G", "Tmux toggle-key config")
         t.append("\n")
 
         section("DAEMON & SERVICES")

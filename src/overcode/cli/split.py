@@ -108,8 +108,64 @@ TOGGLE_KEY_CHOICES: list[tuple[str, str]] = [
     ("Tab", "Tab"),
     ("Ctrl+]", "C-]"),
     ("Ctrl+Space", "C-Space"),
+    ("§ (section)", "§"),
+    ("` (backtick)", "`"),
 ]
 DEFAULT_TOGGLE_KEY = "Tab"
+
+
+def run_toggle_key_picker(current_key: str | None) -> str | None:
+    """Run the interactive toggle-key picker.
+
+    Prints choices, reads input, applies via change_toggle_key (reinstalling
+    keybindings if needed). Returns the chosen tmux key name, or None if cancelled.
+    """
+    rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
+    for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
+        tags = []
+        if _tmux_key == DEFAULT_TOGGLE_KEY:
+            tags.append("default")
+        if current_key and _tmux_key == current_key:
+            tags.append("current")
+        tag = f" [dim]({', '.join(tags)})[/dim]" if tags else ""
+        rprint(f"  [cyan]{i}[/cyan]) {label}{tag}")
+    rprint("")
+    try:
+        choice = input("  Choice [1]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        rprint("")
+        return None
+    if choice == "":
+        idx = 0
+    elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
+        idx = int(choice) - 1
+    else:
+        rprint("[dim]Invalid choice — using default (Tab).[/dim]")
+        idx = 0
+    chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
+    reinstalled = change_toggle_key(chosen_key)
+    rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
+    if reinstalled:
+        rprint("  [dim]Re-installed tmux keybindings with new toggle key.[/dim]\n")
+    else:
+        rprint("  [dim]Run 'overcode tmux' to install keybindings.[/dim]\n")
+    return chosen_key
+
+
+def change_toggle_key(new_key: str, linked_session: str = "") -> bool:
+    """Change the toggle key in config and reinstall keybindings if present.
+
+    Returns True if tmux keybindings were reinstalled, False if only config was saved.
+    """
+    from ..config import set_tmux_toggle_key
+
+    had_bindings = _are_keybindings_installed()
+    if had_bindings:
+        _remove_keybindings()
+    set_tmux_toggle_key(new_key)
+    if had_bindings:
+        _setup_keybindings(linked_session=linked_session, toggle_key=new_key)
+    return had_bindings
 
 
 def _linked_session_name(agents_session: str) -> str:
@@ -547,27 +603,7 @@ def tmux_layout(
     configured_key = get_tmux_toggle_key()
 
     if not yes and not configured_key:
-        rprint("\n[bold]overcode tmux[/bold] — choose a key to toggle between panes:\n")
-        for i, (label, _tmux_key) in enumerate(TOGGLE_KEY_CHOICES, 1):
-            default_tag = " [dim](default)[/dim]" if _tmux_key == DEFAULT_TOGGLE_KEY else ""
-            rprint(f"  [cyan]{i}[/cyan]) {label}{default_tag}")
-        rprint("")
-        try:
-            choice = input("  Choice [1]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            rprint("")
-            raise typer.Exit(0)
-        if choice == "":
-            idx = 0
-        elif choice.isdigit() and 1 <= int(choice) <= len(TOGGLE_KEY_CHOICES):
-            idx = int(choice) - 1
-        else:
-            rprint("[dim]Invalid choice — using default (Tab).[/dim]")
-            idx = 0
-        chosen_label, chosen_key = TOGGLE_KEY_CHOICES[idx]
-        set_tmux_toggle_key(chosen_key)
-        rprint(f"\n  Saved [cyan]{chosen_label}[/cyan] as toggle key in ~/.overcode/config.yaml")
-        rprint(f"  [dim]Change later: set tmux.toggle_key in config.yaml[/dim]\n")
+        run_toggle_key_picker(current_key=None)
     elif not configured_key:
         # --yes passed but no key configured: save the default silently
         set_tmux_toggle_key(DEFAULT_TOGGLE_KEY)

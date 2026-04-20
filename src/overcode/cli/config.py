@@ -168,3 +168,19 @@ def config_path():
     """Show the config file path."""
     from ..config import CONFIG_PATH
     print(CONFIG_PATH)
+
+
+@config_app.command("tmux")
+def config_tmux():
+    """Change the tmux pane-toggle key.
+
+    Re-runs the toggle-key picker and (if overcode-tmux keybindings are
+    already installed) reinstalls them with the new key.
+    """
+    from ..config import get_tmux_toggle_key
+    from .split import run_toggle_key_picker
+
+    current = get_tmux_toggle_key()
+    if current:
+        rprint(f"[dim]Current toggle key: [cyan]{current}[/cyan][/dim]")
+    run_toggle_key_picker(current_key=current)
