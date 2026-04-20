@@ -1431,14 +1431,19 @@ class TestLaunchFork:
         assert "--dangerously-skip-permissions" in fork_cmd
 
     def test_fork_requires_active_session_id(self, tmp_path):
-        """Fork fails if source has no active_claude_session_id."""
+        """Fork fails if source has no active_claude_session_id.
+
+        launch() prescribes an active_claude_session_id up front (#373), so
+        we clear it explicitly to simulate a legacy/corrupted source session.
+        """
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
 
         source = launcher.launch(name="source")
-        # Don't set active_claude_session_id
+        session_manager.update_session(source.id, active_claude_session_id=None)
+        source = session_manager.get_session(source.id)
 
         forked = launcher.launch_fork(name="fork-fail", source_session=source)
         assert forked is None
@@ -1743,6 +1748,449 @@ class TestBuildLaunchSettings:
         allow = settings["permissions"]["allow"]
         for p in OVERCODE_SAFE_PERMS + OVERCODE_PUNCHY_PERMS:
             assert p in allow
+
+
+class TestLauncherRestart:
+    """Test ClaudeLauncher.restart — restart preserves full launch context (#XXX)."""
+
+    def _launch_and_bind_claude_sid(self, tmp_path, *, claude_sid="claude-abc", **launch_kwargs):
+        """Helper: launch an agent and bind a known active_claude_session_id."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        session = launcher.launch(**launch_kwargs)
+        session_manager.set_active_claude_session_id(session.id, claude_sid)
+        session = session_manager.get_session(session.id)
+
+        # Clear launch-time send_keys so restart assertions only see restart traffic.
+        mock_tmux.sent_keys.clear()
+        return launcher, session, mock_tmux
+
+    def _restart_cmd(self, mock_tmux):
+        """Pull out the relaunch shell line (not Ctrl-C / /exit)."""
+        sent = [k[2] for k in mock_tmux.sent_keys]
+        cmds = [c for c in sent if "claude" in c and c not in ("C-c", "/exit")]
+        assert cmds, f"no relaunch command found in {sent}"
+        return cmds[-1]
+
+    def test_restart_default_resumes_prior_claude_session(self, tmp_path):
+        """Default restart uses --resume <active_claude_session_id>."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, claude_sid="sess-resume-me", name="agent"
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            ok = launcher.restart(session)
+
+        assert ok is True
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--resume" in cmd
+        assert "sess-resume-me" in cmd
+
+    def test_restart_fresh_prescribes_new_session_id(self, tmp_path):
+        """--fresh restart generates a new --session-id and rebinds it on the session."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, claude_sid="sess-old", name="agent"
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            ok = launcher.restart(session, fresh=True)
+
+        assert ok is True
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--resume" not in cmd
+        assert "--session-id" in cmd
+        assert "sess-old" not in cmd
+
+        reloaded = launcher.sessions.get_session(session.id)
+        assert reloaded.active_claude_session_id is not None
+        assert reloaded.active_claude_session_id != "sess-old"
+        assert reloaded.active_claude_session_id in cmd
+
+    def test_restart_without_prior_session_degrades_to_fresh(self, tmp_path):
+        """If no active_claude_session_id is known, restart can't --resume — it prescribes fresh."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        session = launcher.launch(name="agent")
+        session_manager.set_active_claude_session_id(session.id, None)
+        session = session_manager.get_session(session.id)
+        mock_tmux.sent_keys.clear()
+
+        with patch("overcode.launcher.time.sleep"):
+            ok = launcher.restart(session)
+
+        assert ok is True
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--resume" not in cmd
+        assert "--session-id" in cmd
+
+    def test_restart_includes_settings_flag(self, tmp_path):
+        """Restart injects --settings (overcode hooks + permissions) — the core bug this fix targets."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(tmp_path, name="agent")
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--settings" in cmd
+        assert "hooks" in cmd
+        assert "permissions" in cmd
+
+    def test_restart_includes_overcode_env_prefix(self, tmp_path):
+        """Restart sets OVERCODE_SESSION_NAME / ID / TMUX_SESSION env vars."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(tmp_path, name="myagent")
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "OVERCODE_SESSION_NAME=myagent" in cmd
+        assert f"OVERCODE_SESSION_ID={session.id}" in cmd
+        assert "OVERCODE_TMUX_SESSION=agents" in cmd
+
+    def test_restart_includes_parent_env_vars(self, tmp_path):
+        """Restart of a child agent sets OVERCODE_PARENT_* env vars."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        parent = launcher.launch(name="parent")
+        session_manager.set_active_claude_session_id(parent.id, "p-sess")
+
+        child = launcher.launch(name="child", parent_name="parent")
+        session_manager.set_active_claude_session_id(child.id, "c-sess")
+        child = session_manager.get_session(child.id)
+        mock_tmux.sent_keys.clear()
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(child)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert f"OVERCODE_PARENT_SESSION_ID={parent.id}" in cmd
+        assert "OVERCODE_PARENT_NAME=parent" in cmd
+
+    def test_restart_includes_agent_teams_flag(self, tmp_path):
+        """Restart of an agent_teams session sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, name="agent", agent_teams=True
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in cmd
+
+    def test_restart_includes_bedrock_env_vars(self, tmp_path):
+        """Restart of a bedrock session sets CLAUDE_CODE_USE_BEDROCK=1 and AWS_REGION."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, name="agent", provider="bedrock"
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "CLAUDE_CODE_USE_BEDROCK=1" in cmd
+        assert "AWS_REGION=" in cmd
+
+    def test_restart_includes_model_and_agent_flags(self, tmp_path):
+        """Restart replays --model and --agent from the stored Session."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, name="agent", model="opus", claude_agent="reviewer"
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--model opus" in cmd
+        assert "--agent reviewer" in cmd
+
+    def test_restart_includes_allowed_tools_and_extra_args(self, tmp_path):
+        """Restart replays --allowedTools and --claude-arg extras."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path,
+            name="agent",
+            allowed_tools="Read,Grep",
+            extra_claude_args=["--debug"],
+        )
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--allowedTools Read,Grep" in cmd
+        assert "--debug" in cmd
+
+    def test_restart_sends_graceful_exit_before_relaunch(self, tmp_path):
+        """Restart sends Ctrl-C and /exit before the relaunch command."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(tmp_path, name="agent")
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        sent = [k[2] for k in mock_tmux.sent_keys]
+        ctrl_c_idx = sent.index("C-c")
+        exit_idx = sent.index("/exit")
+        relaunch_idx = next(i for i, c in enumerate(sent) if "--settings" in c)
+        assert ctrl_c_idx < exit_idx < relaunch_idx
+
+    def test_restart_returns_false_when_window_missing(self, tmp_path):
+        """Restart bails out if the tmux window no longer exists."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(tmp_path, name="agent")
+        launcher.tmux.kill_window(session.tmux_window)
+
+        ok = launcher.restart(session)
+        assert ok is False
+
+
+class TestLauncherRevive:
+    """Test ClaudeLauncher.revive — revival preserves full launch context."""
+
+    def _launch_and_kill_window(self, tmp_path, *, claude_sid="claude-abc", **launch_kwargs):
+        """Helper: launch, bind an active Claude session ID, then kill the window
+        to simulate a terminated agent."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        session = launcher.launch(**launch_kwargs)
+        if claude_sid is not None:
+            session_manager.set_active_claude_session_id(session.id, claude_sid)
+        session = session_manager.get_session(session.id)
+
+        launcher.tmux.kill_window(session.tmux_window)
+        mock_tmux.sent_keys.clear()
+        return launcher, session, mock_tmux
+
+    def _revive_cmd(self, mock_tmux):
+        """Pull out the relaunch shell line."""
+        sent = [k[2] for k in mock_tmux.sent_keys]
+        cmds = [c for c in sent if "claude" in c]
+        assert cmds, f"no relaunch command found in {sent}"
+        return cmds[-1]
+
+    def test_revive_creates_new_window_and_resumes(self, tmp_path):
+        """Revive creates a new tmux window and resumes the prior Claude session."""
+        launcher, session, mock_tmux = self._launch_and_kill_window(
+            tmp_path, name="agent", claude_sid="sess-live"
+        )
+        assert not launcher.tmux.window_exists(session.tmux_window)
+
+        ok = launcher.revive(session)
+        assert ok is True
+
+        reloaded = launcher.sessions.get_session(session.id)
+        assert launcher.tmux.window_exists(reloaded.tmux_window)
+        assert reloaded.status == "running"
+
+        cmd = self._revive_cmd(mock_tmux)
+        assert "--resume" in cmd
+        assert "sess-live" in cmd
+
+    def test_revive_fresh_prescribes_new_session_id(self, tmp_path):
+        """revive(fresh=True) prescribes a new --session-id instead of resuming."""
+        launcher, session, mock_tmux = self._launch_and_kill_window(
+            tmp_path, name="agent", claude_sid="sess-old"
+        )
+
+        ok = launcher.revive(session, fresh=True)
+        assert ok is True
+
+        cmd = self._revive_cmd(mock_tmux)
+        assert "--resume" not in cmd
+        assert "--session-id" in cmd
+        assert "sess-old" not in cmd
+
+    def test_revive_includes_full_launch_context(self, tmp_path):
+        """Revive replays --settings, env prefix, model, persona, allowed_tools, wrapper env."""
+        launcher, session, mock_tmux = self._launch_and_kill_window(
+            tmp_path,
+            name="myagent",
+            claude_sid="sess-ctx",
+            model="opus",
+            claude_agent="reviewer",
+            allowed_tools="Read,Grep",
+            extra_claude_args=["--debug"],
+            agent_teams=True,
+            provider="bedrock",
+        )
+
+        launcher.revive(session)
+        cmd = self._revive_cmd(mock_tmux)
+
+        assert "--settings" in cmd
+        assert "OVERCODE_SESSION_NAME=myagent" in cmd
+        assert f"OVERCODE_SESSION_ID={session.id}" in cmd
+        assert "--model opus" in cmd
+        assert "--agent reviewer" in cmd
+        assert "--allowedTools Read,Grep" in cmd
+        assert "--debug" in cmd
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in cmd
+        assert "CLAUDE_CODE_USE_BEDROCK=1" in cmd
+
+    def test_revive_degrades_to_restart_when_window_exists(self, tmp_path):
+        """If the tmux window still exists, revive() transparently calls restart()."""
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        session = launcher.launch(name="agent")
+        session_manager.set_active_claude_session_id(session.id, "sess-still-up")
+        session = session_manager.get_session(session.id)
+        mock_tmux.sent_keys.clear()
+
+        with patch("overcode.launcher.time.sleep"):
+            ok = launcher.revive(session)
+
+        assert ok is True
+        sent = [k[2] for k in mock_tmux.sent_keys]
+        # Restart sends Ctrl-C and /exit before the relaunch; revive-only would not.
+        assert "C-c" in sent
+        assert "/exit" in sent
+
+    def test_revive_cleans_up_window_on_send_failure(self, tmp_path):
+        """If send_keys fails after window creation, revive kills the window to avoid leaks."""
+        launcher, session, mock_tmux = self._launch_and_kill_window(
+            tmp_path, name="agent", claude_sid="sess"
+        )
+
+        with patch.object(launcher.tmux, "send_keys", return_value=False):
+            ok = launcher.revive(session)
+
+        assert ok is False
+        # No orphaned window: the session is still marked with its old (dead) window
+        reloaded = launcher.sessions.get_session(session.id)
+        assert not launcher.tmux.window_exists(reloaded.tmux_window)
+
+
+class TestLaunchRestartDivergence:
+    """Contract test: every non-default launch-time Session field survives restart.
+
+    This pins the invariant that an agent's relaunch invocation replays all
+    the launch-time knobs recorded on its Session. Adding a new launch-time
+    flag to Session without threading it through the restart/revive path will
+    trip this test.
+    """
+
+    def test_all_launch_flags_survive_restart(self, tmp_path):
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        session = launcher.launch(
+            name="divergence-check",
+            skip_permissions=True,
+            model="haiku",
+            claude_agent="rev",
+            allowed_tools="Read,Write",
+            extra_claude_args=["--debug", "--verbose"],
+            agent_teams=True,
+            provider="bedrock",
+        )
+        assert session is not None
+        session_manager.set_active_claude_session_id(session.id, "sess-div")
+        session = session_manager.get_session(session.id)
+
+        launch_cmd = [k[2] for k in mock_tmux.sent_keys if "claude" in k[2]][-1]
+        mock_tmux.sent_keys.clear()
+
+        with patch("overcode.launcher.time.sleep"):
+            assert launcher.restart(session) is True
+
+        restart_cmd = [k[2] for k in mock_tmux.sent_keys if "claude" in k[2]][-1]
+
+        # Tokens expected on both launch and restart. Anything added to launch
+        # that changes the shell line should be asserted here (or the token
+        # design should be stable enough that the fingerprint check below
+        # catches it).
+        expected_tokens = [
+            "--settings",
+            "OVERCODE_SESSION_NAME=divergence-check",
+            f"OVERCODE_SESSION_ID={session.id}",
+            "OVERCODE_TMUX_SESSION=agents",
+            "--permission-mode",
+            "dontAsk",
+            "--model haiku",
+            "--agent rev",
+            "--allowedTools Read,Write",
+            "--debug",
+            "--verbose",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
+            "CLAUDE_CODE_USE_BEDROCK=1",
+        ]
+        for token in expected_tokens:
+            assert token in launch_cmd, f"{token!r} missing from launch cmd — test stale"
+            assert token in restart_cmd, (
+                f"{token!r} is on launch but missing from restart — "
+                "a launch-time knob isn't being replayed on restart. "
+                "See ClaudeLauncher._send_launch_for_session."
+            )
+
+    def test_all_launch_flags_survive_fork(self, tmp_path):
+        """launch_fork now goes through _send_launch_for_session too, so the
+        same launch-time knobs that survive restart must survive fork."""
+        import stat
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+
+        # Make an executable wrapper so wrapper resolution succeeds.
+        wrapper_path = tmp_path / "wrap.sh"
+        wrapper_path.write_text('#!/bin/bash\nexec "$@"\n')
+        wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC)
+
+        source = launcher.launch(
+            name="fork-src",
+            skip_permissions=True,
+            model="haiku",
+            claude_agent="rev",
+            allowed_tools="Read,Write",
+            extra_claude_args=["--debug"],
+            agent_teams=True,
+            provider="bedrock",
+            wrapper=str(wrapper_path),
+        )
+        assert source is not None
+
+        mock_tmux.sent_keys.clear()
+        forked = launcher.launch_fork(name="fork-dst", source_session=source)
+        assert forked is not None
+
+        fork_cmd = [k[2] for k in mock_tmux.sent_keys if "--fork-session" in k[2]][-1]
+
+        expected_tokens = [
+            "--settings",
+            "--resume",
+            "--fork-session",
+            "OVERCODE_SESSION_NAME=fork-dst",
+            "--permission-mode",
+            "dontAsk",
+            "--model haiku",
+            "--agent rev",
+            "--allowedTools Read,Write",
+            "--debug",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
+            "CLAUDE_CODE_USE_BEDROCK=1",
+            str(wrapper_path),  # wrapper must be inherited to the forked child
+            "OVERCODE_WRAPPER_DIR=",
+        ]
+        for token in expected_tokens:
+            assert token in fork_cmd, (
+                f"{token!r} missing from fork cmd — a launch-time knob isn't "
+                "being propagated to launch_fork. See ClaudeLauncher._send_launch_for_session."
+            )
 
 
 # =============================================================================

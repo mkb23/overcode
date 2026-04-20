@@ -218,28 +218,20 @@ class ClaudeLauncher:
             wrapper=wrapper,
         )
 
-    def _prepare_and_launch(
+    def _build_launch_cmd_str(
         self,
         *,
         name: str,
         session_id: str,
-        window_name: str,
         claude_cmd: List[str],
         metadata: dict,
         parent_session: Optional[Session] = None,
-    ) -> Optional[Session]:
-        """Send command to tmux window, create session, and set parent.
+    ) -> str:
+        """Build the full shell command string (env prefix + wrapper + claude args).
 
-        Builds the environment prefix, constructs the full command string,
-        sends it to the tmux window, and registers the session.
-
-        When a wrapper is specified in metadata, the wrapper script is
-        invoked with the claude command as arguments. The wrapper receives
-        OVERCODE_WRAPPER_DIR (the agent's working directory) so it can
-        set up the execution environment (e.g. a container) before running
-        claude. All existing OVERCODE_* env vars are inherited.
-
-        Returns the Session on success, None on failure (kills window on error).
+        This is the single source of truth for the launch/restart shell line,
+        so an agent relaunched via restart gets the same env vars, wrapper
+        invocation, and mock handling as a fresh launch.
         """
         env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
 
@@ -251,7 +243,6 @@ class ClaudeLauncher:
 
         if metadata.get('provider') == 'bedrock':
             env_prefix += " CLAUDE_CODE_USE_BEDROCK=1"
-            # Use configured region or default to us-east-1
             from .config import get_bedrock_config
             bedrock_cfg = get_bedrock_config()
             env_prefix += f" AWS_REGION={bedrock_cfg['region']}"
@@ -263,24 +254,11 @@ class ClaudeLauncher:
 
         mock_scenario = os.environ.get("MOCK_SCENARIO")
         if mock_scenario:
-            cmd_str = f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
+            return f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
         elif wrapper:
-            cmd_str = f"{env_prefix} {shlex.quote(wrapper)} {shlex.join(claude_cmd)}"
+            return f"{env_prefix} {shlex.quote(wrapper)} {shlex.join(claude_cmd)}"
         else:
-            cmd_str = f"{env_prefix} {shlex.join(claude_cmd)}"
-
-        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
-            print(f"Failed to send command to window {window_name}")
-            self.tmux.kill_window(window_name)
-            return None
-
-        session = self.sessions.create_session(**metadata)
-
-        if parent_session:
-            self.sessions.update_session(session.id, parent_session_id=parent_session.id)
-            session.parent_session_id = parent_session.id
-
-        return session
+            return f"{env_prefix} {shlex.join(claude_cmd)}"
 
     def launch(
         self,
@@ -389,21 +367,6 @@ class ClaudeLauncher:
             print(f"Failed to create tmux window '{name}'")
             return None
 
-        # Generate a Claude session ID upfront so we know exactly which
-        # session file belongs to this agent — no discovery needed (#373).
-        claude_session_id = str(uuid.uuid4())
-
-        # Build command and metadata, then launch
-        claude_cmd = self._build_claude_command(
-            skip_permissions=skip_permissions,
-            dangerously_skip_permissions=dangerously_skip_permissions,
-            claude_agent=claude_agent,
-            allowed_tools=allowed_tools,
-            extra_claude_args=extra_claude_args,
-            claude_session_id=claude_session_id,
-            model=model,
-        )
-
         if dangerously_skip_permissions:
             perm_mode = "bypass"
         elif skip_permissions:
@@ -411,9 +374,16 @@ class ClaudeLauncher:
         else:
             perm_mode = "normal"
 
+        # Persist the Session in the DB first with all launch-time state
+        # populated. `_send_launch_for_session` is the single place that
+        # turns a Session into the shell line, so launch / restart / revive
+        # all render the same way — a new launch flag only needs to be
+        # plumbed through Session + _send_launch_for_session + metadata,
+        # never re-implemented per caller.
+        # command is left empty; the helper fills it in via update_session.
         default_instructions = get_default_standing_instructions()
         metadata = self._build_session_metadata(
-            name=name, tmux_window=window_name, command=claude_cmd,
+            name=name, tmux_window=window_name, command=[],
             start_directory=start_directory, session_id=session_id,
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
@@ -422,18 +392,21 @@ class ClaudeLauncher:
             wrapper=resolved_wrapper,
         )
 
-        session = self._prepare_and_launch(
-            name=name, session_id=session_id, window_name=window_name,
-            claude_cmd=claude_cmd, metadata=metadata,
-            parent_session=parent_session,
-        )
-        if session is None:
+        session = self.sessions.create_session(**metadata)
+        if parent_session:
+            self.sessions.update_session(session.id, parent_session_id=parent_session.id)
+            session = self.sessions.get_session(session.id)
+
+        # fresh=True triggers the helper's "prescribe a new --session-id" branch
+        # (#373), giving us the Claude session ID upfront without PID discovery.
+        if not self._send_launch_for_session(session, window_name, fresh=True):
+            print(f"Failed to send command to window {window_name}")
+            self.tmux.kill_window(window_name)
+            self.sessions.delete_session(session.id, archive=False)
             return None
 
-        # Bind the prescribed Claude session ID immediately (#373).
-        # No need for PID-based discovery on first sync.
-        self.sessions.add_claude_session_id(session.id, claude_session_id)
-        self.sessions.set_active_claude_session_id(session.id, claude_session_id)
+        # Reload so caller sees the active_claude_session_id / command set by the helper.
+        session = self.sessions.get_session(session.id)
 
         # Apply budget at launch time
         if budget_usd is not None and budget_usd > 0:
@@ -609,36 +582,40 @@ class ClaudeLauncher:
             print(f"Failed to create tmux window '{name}'")
             return None
 
-        # Build command and metadata, then launch
-        claude_cmd = self._build_claude_command(
-            permissiveness_mode=source_session.permissiveness_mode,
-            claude_agent=source_session.claude_agent,
-            allowed_tools=source_session.allowed_tools,
-            extra_claude_args=source_session.extra_claude_args,
-            resume_session_id=source_session.active_claude_session_id,
-            fork=True,
-            model=source_session.model,
-        )
-
         perm_mode = source_session.permissiveness_mode or "normal"
 
+        # Persist the forked Session with all inherited launch-time state
+        # populated. The shared helper below then renders the shell line.
+        # wrapper is inherited so a forked child lands in the same execution
+        # environment (e.g. the same container) as its source.
         metadata = self._build_session_metadata(
-            name=name, tmux_window=window_name, command=claude_cmd,
+            name=name, tmux_window=window_name, command=[],
             start_directory=source_session.start_directory, session_id=session_id,
             standing_instructions=source_session.standing_instructions,
             permissiveness_mode=perm_mode, allowed_tools=source_session.allowed_tools,
             extra_claude_args=source_session.extra_claude_args,
             agent_teams=source_session.agent_teams, claude_agent=source_session.claude_agent,
             model=source_session.model, provider=source_session.provider,
+            wrapper=source_session.wrapper,
         )
 
-        session = self._prepare_and_launch(
-            name=name, session_id=session_id, window_name=window_name,
-            claude_cmd=claude_cmd, metadata=metadata,
-            parent_session=source_session,
-        )
-        if session is None:
+        session = self.sessions.create_session(**metadata)
+        self.sessions.update_session(session.id, parent_session_id=source_session.id)
+        session = self.sessions.get_session(session.id)
+
+        # fork_from → helper emits --resume <id> --fork-session. No prescribed
+        # session_id; Claude generates the fork's new ID and the monitor daemon
+        # discovers it.
+        if not self._send_launch_for_session(
+            session, window_name,
+            fork_from=source_session.active_claude_session_id,
+        ):
+            print(f"Failed to send command to window {window_name}")
+            self.tmux.kill_window(window_name)
+            self.sessions.delete_session(session.id, archive=False)
             return None
+
+        session = self.sessions.get_session(session.id)
 
         print(f"✓ Forked '{source_session.name}' → '{name}' in tmux window {window_name}")
 
@@ -647,6 +624,169 @@ class ClaudeLauncher:
             self._send_prompt_to_window(window_name, initial_prompt)
 
         return session
+
+    def _send_launch_for_session(
+        self,
+        session: Session,
+        window_name: str,
+        *,
+        fresh: bool = False,
+        fork_from: Optional[str] = None,
+    ) -> bool:
+        """Rebuild the full launch command from a Session and send it to a window.
+
+        Single source of truth for the launch shell line — shared between
+        launch (new agent), restart (same window), revive (new window after
+        termination), and launch_fork (new agent inheriting history). Replays
+        every launch-time knob the Session records — --settings hooks/permissions,
+        wrapper, env prefix (parent linkage, agent_teams, bedrock, wrapper dir),
+        model, persona, allowed_tools, extra CLI args — so every lifecycle
+        transition produces an identical shell line modulo session resumption.
+
+        Session-selection mode (mutually exclusive in practice):
+          * fork_from set: --resume <fork_from> --fork-session. Claude generates
+            a new session ID; monitor daemon discovers it.
+          * fresh=True or no active_claude_session_id: prescribe a new
+            --session-id, bind it on the Session eagerly (no PID discovery).
+          * otherwise: --resume <active_claude_session_id> preserves history.
+
+        Does NOT create windows, send graceful-exit keys, or touch session
+        stats — callers own those concerns.
+        """
+        parent_session = None
+        if session.parent_session_id:
+            parent_session = self.sessions.get_session(session.parent_session_id)
+
+        if fork_from:
+            resume_sid = fork_from
+            new_claude_sid = None
+            use_fork = True
+        elif fresh or not session.active_claude_session_id:
+            resume_sid = None
+            new_claude_sid = str(uuid.uuid4())
+            use_fork = False
+        else:
+            resume_sid = session.active_claude_session_id
+            new_claude_sid = None
+            use_fork = False
+
+        claude_cmd = self._build_claude_command(
+            permissiveness_mode=session.permissiveness_mode,
+            claude_agent=session.claude_agent,
+            allowed_tools=session.allowed_tools,
+            extra_claude_args=session.extra_claude_args,
+            resume_session_id=resume_sid,
+            fork=use_fork,
+            claude_session_id=new_claude_sid,
+            model=session.model,
+        )
+
+        metadata = {
+            "agent_teams": session.agent_teams,
+            "provider": session.provider,
+            "wrapper": session.wrapper,
+            "start_directory": session.start_directory,
+        }
+
+        cmd_str = self._build_launch_cmd_str(
+            name=session.name,
+            session_id=session.id,
+            claude_cmd=claude_cmd,
+            metadata=metadata,
+            parent_session=parent_session,
+        )
+
+        if not self.tmux.send_keys(window_name, cmd_str, enter=True):
+            return False
+
+        self.sessions.update_session(session.id, command=claude_cmd)
+
+        if new_claude_sid:
+            self.sessions.update_session(session.id, claude_session_ids=[new_claude_sid])
+            self.sessions.set_active_claude_session_id(session.id, new_claude_sid)
+
+        return True
+
+    def restart(
+        self,
+        session: Session,
+        fresh: bool = False,
+        graceful_exit_wait: float = 3.0,
+    ) -> bool:
+        """Restart an agent in its existing tmux window, preserving all launch context.
+
+        Args:
+            session: The Session to restart (must have an existing tmux window).
+            fresh: If False (default), resume the prior Claude session with
+                --resume <active_claude_session_id> so conversation history is
+                preserved. If True, prescribe a brand-new --session-id.
+            graceful_exit_wait: Seconds to wait after /exit before relaunching.
+
+        Returns:
+            True if the relaunch command was sent, False if the tmux window
+            is gone or send failed.
+        """
+        if not self.tmux.window_exists(session.tmux_window):
+            return False
+
+        # Ctrl-C cancels any in-flight tool call, then /exit reliably
+        # terminates the claude process.
+        self.tmux.send_keys(session.tmux_window, "C-c", enter=False)
+        time.sleep(0.5)
+        self.tmux.send_keys(session.tmux_window, "/exit", enter=True)
+        time.sleep(graceful_exit_wait)
+
+        if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh):
+            return False
+
+        self.sessions.update_stats(session.id, current_task="Restarting...")
+        return True
+
+    def revive(
+        self,
+        session: Session,
+        fresh: bool = False,
+    ) -> bool:
+        """Revive a terminated agent by creating a new tmux window and relaunching.
+
+        Mirrors `restart` semantics (same full-context replay, same resume-by-default
+        behavior) but creates a new tmux window because the original one is gone.
+        If the original window still exists, degrades to restart so callers can
+        dispatch blindly.
+
+        Args:
+            session: The Session to revive.
+            fresh: If False (default), resume the prior Claude session; if True,
+                prescribe a new --session-id.
+
+        Returns:
+            True on success, False if window creation or send failed.
+        """
+        # Original window still around — caller probably meant restart.
+        if self.tmux.window_exists(session.tmux_window):
+            return self.restart(session, fresh=fresh)
+
+        if not self.tmux.ensure_session():
+            return False
+
+        # Reuse the overcode session id as the window suffix (stable across
+        # revives, so listings stay consistent).
+        window_label = f"{session.name}-{session.id[:4]}"
+        window_name = self.tmux.create_window(window_label, session.start_directory)
+        if window_name is None:
+            return False
+
+        if not self._send_launch_for_session(session, window_name, fresh=fresh):
+            self.tmux.kill_window(window_name)
+            return False
+
+        self.sessions.update_session(
+            session.id,
+            tmux_window=window_name,
+            status="running",
+        )
+        self.sessions.update_stats(session.id, current_task="Reviving...")
+        return True
 
     def attach(self, name: str = None, bare: bool = False):
         """Attach to the tmux session, optionally targeting a specific agent.

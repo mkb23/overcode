@@ -3138,128 +3138,55 @@ class SupervisorTUI(
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).
 
-        Sends Ctrl-C to kill the current Claude process, then restarts it
-        with the same configuration (directory, permissions).
-        If the tmux window is gone (terminated agent), delegates to _execute_revive.
+        Delegates to ClaudeLauncher.restart, which rebuilds the full launch
+        environment (hooks/permissions --settings, wrapper, env prefix,
+        model, persona, allowed tools, extra args) from the stored Session
+        and relaunches in the existing tmux window, resuming the prior
+        Claude conversation.
+
+        If the tmux window is gone (terminated agent), delegates to
+        _execute_revive.
         """
-        import os
+        from .launcher import ClaudeLauncher
         from .tmux_manager import TmuxManager
         session = focused.session
         session_name = session.name
         tmux = TmuxManager(self.tmux_session)
 
-        # If the tmux window is gone, revive instead of restart
         if not tmux.window_exists(session.tmux_window):
             self._execute_revive(focused, tmux)
             return
 
-        # Build the claude command based on permissiveness mode
-        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-        cmd_parts = [claude_command]
-
-        if session.permissiveness_mode == "bypass":
-            cmd_parts.append("--dangerously-skip-permissions")
-        elif session.permissiveness_mode == "permissive":
-            cmd_parts.extend(["--permission-mode", "dontAsk"])
-
-        cmd_str = " ".join(cmd_parts)
-
-        # Gracefully exit Claude: Ctrl-C to cancel any in-flight operation,
-        # then /exit to reliably terminate the process. A single Ctrl-C only
-        # cancels the current tool call but doesn't exit Claude itself.
-        import time
-        tmux.send_keys(session.tmux_window, "C-c", enter=False)
-        time.sleep(0.5)
-        tmux.send_keys(session.tmux_window, "/exit", enter=True)
-        time.sleep(3.0)
-
-        # Send the claude command to restart
-        if tmux.send_keys(session.tmux_window, cmd_str, enter=True):
+        launcher = ClaudeLauncher(
+            self.tmux_session,
+            tmux_manager=tmux,
+            session_manager=self.session_manager,
+        )
+        if launcher.restart(session):
             self.notify(f"Restarted agent: {session_name}", severity="information")
-            # Reset session stats for fresh start
-            self.session_manager.update_stats(
-                session.id,
-                current_task="Restarting..."
-            )
-            # Clear the claude session IDs since this is a new claude instance
-            self.session_manager.update_session(session.id, claude_session_ids=[])
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
     def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
-        """Revive a terminated agent by creating a new tmux window and resuming.
+        """Revive a terminated agent by creating a new tmux window and relaunching.
 
-        If the agent has an active_claude_session_id, resumes that session.
-        Otherwise starts a fresh claude instance.
+        Delegates to ClaudeLauncher.revive, which rebuilds the full launch
+        environment from the stored Session (hooks/permissions --settings,
+        wrapper, env prefix, model, persona, allowed tools, extra args) and
+        resumes the prior Claude conversation when available.
         """
-        import os
-        import uuid as _uuid
+        from .launcher import ClaudeLauncher
         session = focused.session
         session_name = session.name
 
-        # Generate new window name with unique suffix
-        new_session_id = str(_uuid.uuid4())
-        window_label = f"{session_name}-{new_session_id[:4]}"
-
-        # Create new tmux window
-        window_name = tmux.create_window(window_label, session.start_directory)
-        if window_name is None:
-            self.notify(f"Failed to create tmux window for '{session_name}'", severity="error")
-            return
-
-        # Build the claude command
-        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-        if session.active_claude_session_id:
-            # Resume existing session — `claude --resume` (no `code` subcommand)
-            if claude_command == "claude":
-                cmd_parts = ["claude", "--resume", session.active_claude_session_id]
-            else:
-                cmd_parts = [claude_command, "--resume", session.active_claude_session_id]
-        else:
-            # Fresh start
-            cmd_parts = [claude_command]
-
-        # Permission flags
-        if session.permissiveness_mode == "bypass":
-            cmd_parts.append("--dangerously-skip-permissions")
-        elif session.permissiveness_mode == "permissive":
-            cmd_parts.extend(["--permission-mode", "dontAsk"])
-
-        # Agent persona
-        if session.claude_agent:
-            cmd_parts.extend(["--agent", session.claude_agent])
-
-        # Environment prefix
-        env_prefix = f"OVERCODE_SESSION_NAME={session_name} OVERCODE_SESSION_ID={session.id} OVERCODE_TMUX_SESSION={self.tmux_session}"
-
-        # Parent env vars
-        if session.parent_session_id:
-            parent = self.session_manager.get_session(session.parent_session_id)
-            if parent:
-                env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent.id} OVERCODE_PARENT_NAME={parent.name}"
-
-        # Agent teams
-        if session.agent_teams:
-            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
-
-        cmd_str = f"{env_prefix} {' '.join(cmd_parts)}"
-
-        # Send command to new window
-        if not tmux.send_keys(window_name, cmd_str, enter=True):
-            tmux.kill_window(window_name)
+        launcher = ClaudeLauncher(
+            self.tmux_session,
+            tmux_manager=tmux,
+            session_manager=self.session_manager,
+        )
+        if not launcher.revive(session):
             self.notify(f"Failed to revive agent: {session_name}", severity="error")
             return
-
-        # Update session state
-        self.session_manager.update_session(
-            session.id,
-            tmux_window=window_name,
-            status="running",
-        )
-        self.session_manager.update_stats(
-            session.id,
-            current_task="Reviving..."
-        )
 
         # Remove from terminated cache
         if session.id in self._terminated_sessions:

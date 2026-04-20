@@ -715,51 +715,42 @@ def kill(
 @app.command()
 def restart(
     name: Annotated[str, typer.Argument(help="Name of agent to restart")],
+    fresh: Annotated[
+        bool,
+        typer.Option(
+            "--fresh",
+            help="Start a brand-new Claude session instead of resuming the prior conversation.",
+        ),
+    ] = False,
     session: SessionOption = "agents",
 ):
     """Restart a running agent with the same configuration.
 
-    Gracefully exits Claude (Ctrl-C + /exit), then relaunches with the
-    same permissions mode. Useful when MCP server configs change.
-    """
-    import os
-    import time
-    from ..session_manager import SessionManager
-    from ..tmux_manager import TmuxManager
-    from ..tmux_utils import tmux_window_target, _build_tmux_cmd
+    Gracefully exits Claude (Ctrl-C + /exit), then relaunches with the same
+    full launch environment as a fresh `overcode launch` — hooks/permissions
+    via --settings, wrapper script, env prefix, model, persona, allowed tools,
+    and extra CLI args.
 
-    sm = SessionManager()
-    sess = sm.get_session_by_name(name)
+    By default, resumes the agent's prior Claude session so conversation
+    history is preserved. Pass --fresh to start a brand-new session (useful
+    when the old session is stuck or MCP configs have changed).
+    """
+    from ..launcher import ClaudeLauncher
+
+    launcher = ClaudeLauncher(session)
+    sess = launcher.sessions.get_session_by_name(name)
     if not sess:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
 
-    tmux = TmuxManager(session)
-    if not tmux.window_exists(sess.tmux_window):
+    if not launcher.tmux.window_exists(sess.tmux_window):
         rprint(f"[red]Error: Tmux window for '{name}' no longer exists[/red]")
         raise typer.Exit(code=1)
 
-    # Build the claude command based on permissiveness mode
-    claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
-    cmd_parts = [claude_command]
-    if sess.permissiveness_mode == "bypass":
-        cmd_parts.append("--dangerously-skip-permissions")
-    elif sess.permissiveness_mode == "permissive":
-        cmd_parts.extend(["--permission-mode", "dontAsk"])
-    cmd_str = " ".join(cmd_parts)
-
-    # Gracefully exit Claude: Ctrl-C + /exit
     rprint(f"[dim]Stopping '{name}'...[/dim]")
-    tmux.send_keys(sess.tmux_window, "C-c", enter=False)
-    time.sleep(0.5)
-    tmux.send_keys(sess.tmux_window, "/exit", enter=True)
-    time.sleep(3.0)
-
-    # Relaunch
-    if tmux.send_keys(sess.tmux_window, cmd_str, enter=True):
-        sm.update_stats(sess.id, current_task="Restarting...")
-        sm.update_session(sess.id, claude_session_ids=[])
-        rprint(f"[green]Restarted agent: {name}[/green]")
+    if launcher.restart(sess, fresh=fresh):
+        mode = "fresh" if fresh else "resumed"
+        rprint(f"[green]Restarted agent: {name} ({mode})[/green]")
     else:
         rprint(f"[red]Failed to restart agent: {name}[/red]")
         raise typer.Exit(code=1)
