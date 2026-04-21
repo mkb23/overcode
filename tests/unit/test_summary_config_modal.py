@@ -180,6 +180,49 @@ class TestModalNavigation:
         modal.cursor_pos = (modal.cursor_pos - 1) % num_rows
         assert modal.cursor_pos == num_rows - 1
 
+    def test_column_breakpoint_balances_rows(self):
+        """Two-column layout breakpoint should fall near the middle (#443)."""
+        modal = SummaryConfigModal()
+        total = len(modal._flat_rows)
+        breakpoint = modal._column_breakpoint
+        # Breakpoint must leave both columns non-empty and at most one group apart.
+        assert 0 < breakpoint < total
+        left = breakpoint
+        right = total - breakpoint
+        # Columns should be roughly balanced — the larger side shouldn't be
+        # more than ~2x the smaller side (groups vary in size).
+        assert max(left, right) <= 2 * min(left, right)
+
+    def test_column_breakpoint_on_group_boundary(self):
+        """Breakpoint must fall immediately before a 'group' row (#443).
+
+        Otherwise a group header would appear in one column while its
+        columns appear in the other.
+        """
+        modal = SummaryConfigModal()
+        breakpoint = modal._column_breakpoint
+        # Row 0 is always a group (Identity)
+        # Row at breakpoint must also be a group header
+        assert modal._flat_rows[breakpoint][0] == "group"
+
+    def test_render_produces_two_column_layout(self):
+        """render() should place one column's rows on each visible line (#443)."""
+        modal = SummaryConfigModal()
+        modal.level = "med"
+        modal.overrides = {}
+        rendered = modal.render()
+        plain = rendered.plain
+        lines = plain.split("\n")
+        # Skip title + help line + blank = 3 header lines
+        body_lines = [l for l in lines[3:] if l.strip()]
+        # Body should be at most the size of the larger half of rows
+        total = len(modal._flat_rows)
+        breakpoint = modal._column_breakpoint
+        max_col = max(breakpoint, total - breakpoint)
+        assert len(body_lines) <= max_col
+        # Body should be significantly shorter than total row count
+        assert len(body_lines) < total
+
     def test_toggle_group_sets_all_columns(self):
         """Toggling a group should set overrides for all its columns."""
         modal = SummaryConfigModal()

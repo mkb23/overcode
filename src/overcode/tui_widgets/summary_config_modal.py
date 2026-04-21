@@ -47,6 +47,9 @@ class SummaryConfigModal(ModalBase):
         """Message sent when modal is cancelled."""
         pass
 
+    # Two-column layout — left column width in cells (#443)
+    _LEFT_COL_WIDTH = 32
+
     def __init__(self, current_config: dict = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.level: str = "med"
@@ -55,6 +58,8 @@ class SummaryConfigModal(ModalBase):
         self.cursor_pos: int = 0
         self._cols_by_group = _columns_by_group()
         self._flat_rows: List[Tuple[str, str]] = []
+        # Index where the right column starts — everything < breakpoint is left (#443)
+        self._column_breakpoint: int = 0
         self._rebuild_flat_rows()
 
     def _rebuild_flat_rows(self) -> None:
@@ -65,6 +70,21 @@ class SummaryConfigModal(ModalBase):
             for col in self._cols_by_group.get(group.id, []):
                 rows.append(("column", col.id))
         self._flat_rows = rows
+        # Split at the group boundary that best balances column height (#443).
+        # Walking groups in order, cut as soon as the running total crosses
+        # half — keeps a group and its columns together in the same column.
+        half = len(rows) / 2
+        running = 0
+        breakpoint = len(rows)
+        for group in SUMMARY_GROUPS:
+            group_size = 1 + len(self._cols_by_group.get(group.id, []))
+            if running >= half:
+                breakpoint = running
+                break
+            running += group_size
+        else:
+            breakpoint = running
+        self._column_breakpoint = breakpoint
         # Clamp cursor
         if self._flat_rows:
             self.cursor_pos = min(self.cursor_pos, len(self._flat_rows) - 1)
@@ -95,70 +115,98 @@ class SummaryConfigModal(ModalBase):
             return "none"
         return "mixed"
 
+    def _render_row(self, index: int) -> Optional[Text]:
+        """Render a single flat-row (group or column) as one Text line (no newline)."""
+        row_type, row_id = self._flat_rows[index]
+        is_cursor = index == self.cursor_pos
+        prefix = "> " if is_cursor else "  "
+        cursor_style = "bold cyan" if is_cursor else ""
+        line = Text()
+
+        if row_type == "group":
+            group = SUMMARY_GROUPS_BY_ID.get(row_id)
+            if group is None:
+                return None
+            is_identity = group.always_visible
+            state = self._group_state(row_id)
+
+            if state == "all":
+                check = "[x]"
+                check_style = "bold green" if not is_identity else "dim green"
+            elif state == "none":
+                check = "[ ]"
+                check_style = "dim"
+            else:
+                check = "[-]"
+                check_style = "bold yellow"
+
+            line.append(prefix, style=cursor_style)
+            line.append(check, style=check_style if not is_identity else "dim")
+            line.append(" ", style="")
+            name_style = "bold" if is_cursor else ("dim" if is_identity else "")
+            line.append(group.name, style=name_style)
+            return line
+
+        elif row_type == "column":
+            col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
+            if col is None:
+                return None
+            is_on = self._col_effective(row_id)
+            is_default = self._col_default(row_id)
+            is_identity = col.group == "identity"
+
+            check = "[x]" if is_on else "[ ]"
+            check_style = "bold green" if is_on else "dim"
+
+            marker = ""
+            if is_on and not is_default:
+                marker = " +"
+            elif not is_on and is_default:
+                marker = " -"
+
+            display_name = col.name or col.id
+
+            line.append(prefix, style=cursor_style)
+            line.append("     ", style="")  # indent under group
+            line.append(check, style=check_style if not is_identity else "dim")
+            line.append(" ", style="")
+            name_style = "bold" if is_cursor else ("dim" if is_identity else "")
+            line.append(display_name, style=name_style)
+            if marker:
+                line.append(marker, style="bold cyan" if marker == " +" else "bold red")
+            return line
+
+        return None
+
     def render(self) -> Text:
-        """Render the modal content."""
+        """Render the modal content in two side-by-side columns (#443)."""
         text = Text()
         text.append(f"Column Configuration ({self.level})\n", style="bold cyan")
         text.append("j/k:move  space:toggle  a:accept  q:cancel  r:reset\n\n", style="dim")
 
-        for i, (row_type, row_id) in enumerate(self._flat_rows):
-            is_cursor = i == self.cursor_pos
-            prefix = "> " if is_cursor else "  "
-            cursor_style = "bold cyan" if is_cursor else ""
+        breakpoint = self._column_breakpoint
+        left_rows = [self._render_row(i) for i in range(breakpoint)]
+        right_rows = [self._render_row(i) for i in range(breakpoint, len(self._flat_rows))]
+        left_rows = [r for r in left_rows if r is not None]
+        right_rows = [r for r in right_rows if r is not None]
 
-            if row_type == "group":
-                group = SUMMARY_GROUPS_BY_ID.get(row_id)
-                if group is None:
-                    continue
-                is_identity = group.always_visible
-                state = self._group_state(row_id)
+        max_lines = max(len(left_rows), len(right_rows))
+        for i in range(max_lines):
+            if i < len(left_rows):
+                left = left_rows[i]
+                pad = max(0, self._LEFT_COL_WIDTH - len(left.plain))
+                text.append(left)
+                if pad:
+                    text.append(" " * pad)
+            else:
+                text.append(" " * self._LEFT_COL_WIDTH)
 
-                # Checkbox
-                if state == "all":
-                    check = "[x]"
-                    check_style = "bold green" if not is_identity else "dim green"
-                elif state == "none":
-                    check = "[ ]"
-                    check_style = "dim"
-                else:
-                    check = "[-]"
-                    check_style = "bold yellow"
+            text.append("  ")  # inter-column separator
 
-                text.append(prefix, style=cursor_style)
-                text.append(check, style=check_style if not is_identity else "dim")
-                text.append(" ", style="")
-                name_style = "bold" if is_cursor else ("dim" if is_identity else "")
-                text.append(f"{group.name}\n", style=name_style)
+            if i < len(right_rows):
+                text.append(right_rows[i])
 
-            elif row_type == "column":
-                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
-                if col is None:
-                    continue
-                is_on = self._col_effective(row_id)
-                is_default = self._col_default(row_id)
-                is_identity = col.group == "identity"
-
-                check = "[x]" if is_on else "[ ]"
-                check_style = "bold green" if is_on else "dim"
-
-                # Marker for non-default state
-                marker = ""
-                if is_on and not is_default:
-                    marker = " +"
-                elif not is_on and is_default:
-                    marker = " -"
-
-                display_name = col.name or col.id
-
-                text.append(prefix, style=cursor_style)
-                text.append("     ", style="")  # indent under group
-                text.append(check, style=check_style if not is_identity else "dim")
-                text.append(" ", style="")
-                name_style = "bold" if is_cursor else ("dim" if is_identity else "")
-                text.append(display_name, style=name_style)
-                if marker:
-                    text.append(marker, style="bold cyan" if marker == " +" else "bold red")
-                text.append("\n", style="")
+            text.append("\n")
 
         return text
 
