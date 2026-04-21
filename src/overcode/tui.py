@@ -316,6 +316,11 @@ class SupervisorTUI(
         # Prevents programmatic focused_session_index changes (from
         # refresh_sessions) from switching the bottom pane.
         self._user_navigated: bool = False
+        # Flag: True after the first tmux-sync has fired on startup. Without
+        # this, the `_user_navigated` guard in watch_focused_session_index
+        # leaves the bottom pane stuck on whatever window tmux picked when
+        # the split was opened.
+        self._initial_tmux_sync_done: bool = False
         # Initialize tmux_sync from preferences
         self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
@@ -729,6 +734,20 @@ class SupervisorTUI(
             self.update_session_widgets(force_refresh=False)
         except MountError:
             return
+
+        # First-load sync: align the external tmux pane with the TUI's focused
+        # agent exactly once. The periodic-refresh guard in the focus watcher
+        # (see _user_navigated) would otherwise leave the bottom pane stranded
+        # on whatever window tmux happened to pick when `overcode tmux` opened
+        # the split.
+        if not self._initial_tmux_sync_done and self.tmux_sync and self.tmux_sync_target:
+            try:
+                widget = self._get_focused_widget()
+            except Exception:
+                widget = None
+            if widget is not None:
+                self._sync_tmux_window(widget)
+                self._initial_tmux_sync_done = True
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
         new_names = {s.name for s in sessions}
