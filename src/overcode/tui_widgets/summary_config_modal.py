@@ -216,11 +216,17 @@ class SummaryConfigModal(ModalBase):
             return
         try:
             from .session_summary import SessionSummary
+            # Publish the live overrides so the app's header/width lookups
+            # see them instead of the persisted prefs (#449).
+            if hasattr(self._app_ref, "_live_column_overrides"):
+                self._app_ref._live_column_overrides = dict(self.overrides)
             for widget in self._app_ref.query(SessionSummary):
                 widget.column_overrides = self.overrides
                 widget.refresh()
-            # Recompute column widths
+            # Recompute column widths (also refreshes the header via
+            # _update_column_headers at the tail of the recompute).
             if hasattr(self._app_ref, '_recompute_cell_column_widths'):
+                self._app_ref._column_widths_dirty = True
                 self._app_ref._recompute_cell_column_widths()
                 for widget in self._app_ref.query(SessionSummary):
                     widget.refresh()

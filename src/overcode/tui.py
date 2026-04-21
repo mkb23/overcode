@@ -264,6 +264,10 @@ class SupervisorTUI(
         self.all_names_match_repos: bool = False
         self.column_widths: list = []  # Per-cell column widths for alignment
         self._column_widths_dirty: bool = True  # Recompute on first render
+        # Live overrides while the C-modal is open — header/width lookups use
+        # these instead of the persisted prefs so toggling updates everything
+        # in sync (#449).
+        self._live_column_overrides: Optional[dict] = None
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
@@ -2524,7 +2528,11 @@ class SupervisorTUI(
 
             from .summary_columns import render_header_cells, resolve_column_visible
             level = self.SUMMARY_LEVELS[self.summary_level_index]
-            overrides = self._prefs.column_config.get(level, {})
+            # Prefer live modal overrides (#449) so header tracks toggles.
+            if self._live_column_overrides is not None:
+                overrides = self._live_column_overrides
+            else:
+                overrides = self._prefs.column_config.get(level, {})
 
             def col_filter(col):
                 return resolve_column_visible(col, level, overrides)
@@ -3219,6 +3227,7 @@ class SupervisorTUI(
         try:
             modal = self.query_one("#summary-config-modal", SummaryConfigModal)
             overrides = self._prefs.column_config.get(current_level, {})
+            self._live_column_overrides = dict(overrides)
             self._dialog_will_open()
             modal.show(current_level, overrides, self)
         except NoMatches:
@@ -3240,6 +3249,7 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             widget.column_overrides = new_overrides
             widget.refresh()
+        self._live_column_overrides = None
         self._column_widths_dirty = True
         self._recompute_cell_column_widths()
 
@@ -3254,6 +3264,7 @@ class SupervisorTUI(
         for widget in self.query(SessionSummary):
             widget.column_overrides = original_overrides
             widget.refresh()
+        self._live_column_overrides = None
         self._column_widths_dirty = True
         self._recompute_cell_column_widths()
         self._dialog_did_close()
