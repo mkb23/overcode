@@ -91,6 +91,82 @@ def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     return base / tmux_session / f"hook_state_{session_name}.json"
 
 
+def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
+    """Get the path for the append-only hook event log (#448).
+
+    Returns ~/.overcode/sessions/{tmux_session}/hook_events_{session_name}.jsonl
+    """
+    state_dir = os.environ.get("OVERCODE_STATE_DIR")
+    if state_dir:
+        base = Path(state_dir)
+    else:
+        base = Path.home() / ".overcode" / "sessions"
+    return base / tmux_session / f"hook_events_{session_name}.jsonl"
+
+
+# Rotate the event log when it grows past this (roughly). We keep the tail
+# so recent-activity lookups stay cheap.
+_EVENT_LOG_ROTATE_BYTES = 100 * 1024
+_EVENT_LOG_KEEP_LINES = 200
+
+
+def _rotate_event_log(path: Path) -> None:
+    """Truncate the event log to the last N lines when it grows too big."""
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    if len(lines) <= _EVENT_LOG_KEEP_LINES:
+        return
+    tmp = path.with_suffix(".jsonl.tmp")
+    try:
+        tmp.write_text("".join(lines[-_EVENT_LOG_KEEP_LINES:]))
+        os.replace(tmp, path)
+    except OSError:
+        # Best-effort; leave the file alone if rotation fails.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def append_hook_event(
+    event: str,
+    tmux_session: str,
+    session_name: str,
+    tool_name: str | None = None,
+    tool_input: dict | None = None,
+) -> None:
+    """Append one event record to the hook event log (#448).
+
+    The log is the authoritative source for recent-activity detection.
+    Overwrite-based state files hide fast event bursts (PreToolUse →
+    PostToolUse → Stop within a single poll); the log preserves them so
+    the detector can keep the agent marked RUNNING across short Stops.
+    """
+    path = _get_hook_event_log_path(tmux_session, session_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    entry: dict = {"event": event, "timestamp": time.time()}
+    if tool_name is not None:
+        entry["tool_name"] = tool_name
+    if tool_input is not None:
+        entry["tool_input"] = tool_input
+
+    line = json.dumps(entry) + "\n"
+    # O_APPEND writes are atomic on POSIX for payloads under PIPE_BUF (4KB
+    # typical) — no lock needed for concurrent hook invocations.
+    with open(path, "a") as f:
+        f.write(line)
+
+    try:
+        if path.stat().st_size > _EVENT_LOG_ROTATE_BYTES:
+            _rotate_event_log(path)
+    except OSError:
+        pass
+
+
 def write_hook_state(
     event: str,
     tmux_session: str,
@@ -169,8 +245,10 @@ def handle_hook_event() -> None:
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
 
-    # Write state file for status detection
+    # Write state file for status detection (snapshot) and append to the
+    # event log (#448 — preserves bursts hidden by overwrite).
     write_hook_state(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
+    append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 
     # For UserPromptSubmit, check budget and output enhanced context
     if event == "UserPromptSubmit":
@@ -185,6 +263,7 @@ def handle_hook_event() -> None:
                 cost = session_data.get("estimated_cost_usd", 0)
                 # Overwrite hook state so status detector shows error, not stuck green (#428)
                 write_hook_state("UserPromptSubmitRejected", tmux_session, session_name)
+                append_hook_event("UserPromptSubmitRejected", tmux_session, session_name)
                 print(
                     f"Budget exceeded (${cost:.2f} / ${budget:.2f}). Prompt blocked.",
                     file=sys.stderr,

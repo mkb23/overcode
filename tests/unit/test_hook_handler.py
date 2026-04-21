@@ -10,6 +10,8 @@ import pytest
 from overcode.hook_handler import (
     OVERCODE_HOOKS,
     _get_hook_state_path,
+    _get_hook_event_log_path,
+    append_hook_event,
     write_hook_state,
     handle_hook_event,
 )
@@ -335,3 +337,69 @@ class TestHandleHookEvent:
             mock_stdin.read.return_value = json.dumps({"session_id": "abc123"})
             handle_hook_event()
         assert not list(tmp_path.rglob("hook_state_*.json"))
+
+
+class TestAppendHookEvent:
+    """Event log is append-only and preserves event bursts (#448)."""
+
+    def test_appends_jsonl_line(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        append_hook_event("PreToolUse", "agents", "a1", tool_name="Read")
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        assert path.exists()
+        lines = path.read_text().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["event"] == "PreToolUse"
+        assert entry["tool_name"] == "Read"
+        assert "timestamp" in entry
+
+    def test_appends_preserve_prior_events(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        append_hook_event("UserPromptSubmit", "agents", "a1")
+        append_hook_event("PreToolUse", "agents", "a1", tool_name="Read")
+        append_hook_event("PostToolUse", "agents", "a1", tool_name="Read")
+        append_hook_event("Stop", "agents", "a1")
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        events = [json.loads(l) for l in path.read_text().splitlines()]
+        assert [e["event"] for e in events] == [
+            "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
+        ]
+
+    def test_handle_hook_event_writes_both_snapshot_and_log(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "a1")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "session_id": "abc123",
+            })
+            handle_hook_event()
+        snap = tmp_path / "agents" / "hook_state_a1.json"
+        log = tmp_path / "agents" / "hook_events_a1.jsonl"
+        assert snap.exists() and log.exists()
+        assert json.loads(snap.read_text())["event"] == "PostToolUse"
+        assert json.loads(log.read_text().splitlines()[-1])["event"] == "PostToolUse"
+
+    def test_rotation_truncates_large_log(self, monkeypatch, tmp_path):
+        """Log rotation keeps tail when file grows past the threshold (#448)."""
+        import overcode.hook_handler as hh
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        # Shrink thresholds so the test is fast.
+        monkeypatch.setattr(hh, "_EVENT_LOG_ROTATE_BYTES", 2048)
+        monkeypatch.setattr(hh, "_EVENT_LOG_KEEP_LINES", 10)
+        for _ in range(100):
+            append_hook_event("PreToolUse", "agents", "a1", tool_name="Read")
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        lines = path.read_text().splitlines()
+        # After rotation, only the trailing _EVENT_LOG_KEEP_LINES plus a few
+        # post-rotation appends should remain — never the full 100.
+        assert len(lines) < 100
+        assert len(lines) >= 10
+
+    def test_event_log_path_respects_state_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "custom"))
+        path = _get_hook_event_log_path("agents", "a1")
+        assert path == tmp_path / "custom" / "agents" / "hook_events_a1.jsonl"

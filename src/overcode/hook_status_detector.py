@@ -80,6 +80,17 @@ _HOOK_STATUS_MAP = {
 }
 
 
+# Window used for the sticky-green upgrade (#448). A Stop event whose last
+# RUNNING-class predecessor fired within this many seconds is treated as
+# part of an ongoing burst rather than a real stall — otherwise fast
+# turns (quick text replies, sub-250ms tool uses) flicker yellow because
+# the reader's poll window lands after Stop has overwritten the snapshot.
+_RECENT_ACTIVITY_WINDOW_SECONDS = 1.5
+
+# How many log lines to keep in memory per read — plenty for a 1.5s window.
+_RECENT_EVENTS_LIMIT = 50
+
+
 class HookStatusDetector:
     """Detects session status from hook state files.
 
@@ -135,6 +146,57 @@ class HookStatusDetector:
     def _hook_state_path(self, session_name: str) -> Path:
         """Get the hook state file path for a session."""
         return self._state_dir / f"hook_state_{session_name}.json"
+
+    def _hook_event_log_path(self, session_name: str) -> Path:
+        """Get the hook event log path for a session (#448)."""
+        return self._state_dir / f"hook_events_{session_name}.jsonl"
+
+    def _read_recent_events(self, session_name: str, limit: int = _RECENT_EVENTS_LIMIT) -> list:
+        """Return recent event records from the append-only log (#448).
+
+        Events are oldest→newest. Partial/corrupt tail lines are skipped
+        silently — rotation or a mid-write read can leave one such line.
+        """
+        path = self._hook_event_log_path(session_name)
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+        except (FileNotFoundError, OSError):
+            return []
+
+        events: list = []
+        for line in lines[-limit:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if "event" not in entry or "timestamp" not in entry:
+                continue
+            try:
+                float(entry["timestamp"])
+            except (TypeError, ValueError):
+                continue
+            events.append(entry)
+        return events
+
+    def _most_recent_running_event_age(
+        self, session_name: str, now: Optional[float] = None
+    ) -> Optional[float]:
+        """Seconds since the most recent RUNNING-class event, or None (#448)."""
+        if now is None:
+            now = time.time()
+        for entry in reversed(self._read_recent_events(session_name)):
+            if _HOOK_STATUS_MAP.get(entry.get("event", "")) == STATUS_RUNNING:
+                try:
+                    return now - float(entry["timestamp"])
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     def _read_hook_state(self, session_name: str) -> Optional[dict]:
         """Read and parse hook state file.
@@ -243,9 +305,29 @@ class HookStatusDetector:
         # RUNNING indefinitely. Detect the interrupt prompt that Claude
         # Code prints ("Interrupted · What should Claude do instead?") in
         # the pane and downgrade to waiting_user in that case (#431).
-        if status == STATUS_RUNNING and _pane_shows_interrupt_prompt(pane_content):
+        has_interrupt = bool(pane_content) and _pane_shows_interrupt_prompt(pane_content)
+        if status == STATUS_RUNNING and has_interrupt:
             status = STATUS_WAITING_USER
             self._last_detect_phase[session.id] = f"hook:{event}+interrupt"
+
+        # Sticky-green upgrade (#448). A Stop hook firing between bursts of
+        # RUNNING-class events would otherwise flash yellow on every poll
+        # that lands after Stop but before the next UserPromptSubmit. If
+        # the event log shows a RUNNING-class event within the last
+        # _RECENT_ACTIVITY_WINDOW_SECONDS, treat the agent as still
+        # running. Skip when the pane shows a real interrupt prompt — that
+        # is a genuine pause, not a burst.
+        if (
+            event == "Stop"
+            and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT)
+            and not has_interrupt
+        ):
+            age = self._most_recent_running_event_age(session.name)
+            if age is not None and age <= _RECENT_ACTIVITY_WINDOW_SECONDS:
+                status = STATUS_RUNNING
+                self._last_detect_phase[session.id] = (
+                    f"hook:{event}+sticky_green({age:.2f}s)"
+                )
 
         # Monitor tool leaves a persistent stream that can wake the agent
         # after Stop/SessionEnd has fired. When the pane still shows live

@@ -704,3 +704,123 @@ class TestSkillTracking:
         detector = HookStatusDetector("agents", state_dir=state_dir)
 
         assert detector.get_loaded_skills("nonexistent") == []
+
+
+def _append_event_log(state_dir: Path, session_name: str, events: list) -> None:
+    """Write events as JSONL to the event log.
+
+    events is a list of (event_name, timestamp) tuples; order preserved.
+    """
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / f"hook_events_{session_name}.jsonl"
+    lines = []
+    for name, ts in events:
+        lines.append(json.dumps({"event": name, "timestamp": ts}))
+    path.write_text("\n".join(lines) + "\n")
+
+
+class TestStickyGreen:
+    """Sticky-green upgrade avoids flicker on fast-turn Stops (#448)."""
+
+    def test_recent_running_event_upgrades_stop_to_running(self, tmp_path):
+        """A Stop with a RUNNING-class event within the window → RUNNING."""
+        state_dir = tmp_path / "sessions" / "agents"
+        now = time.time()
+        # Latest snapshot is Stop, but the log shows a burst that ended <1s ago
+        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=now)
+        _append_event_log(state_dir, "test-agent", [
+            ("UserPromptSubmit", now - 2.0),
+            ("PreToolUse", now - 1.2),
+            ("PostToolUse", now - 0.3),
+            ("Stop", now),
+        ])
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_RUNNING
+
+    def test_old_running_event_leaves_stop_as_waiting(self, tmp_path):
+        """If last RUNNING-class event is older than the window, stay yellow."""
+        state_dir = tmp_path / "sessions" / "agents"
+        now = time.time()
+        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=now)
+        _append_event_log(state_dir, "test-agent", [
+            ("PostToolUse", now - 30.0),  # well outside 1.5s window
+            ("Stop", now - 29.5),
+        ])
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
+    def test_no_event_log_stays_waiting(self, tmp_path):
+        """Missing event log file → no upgrade, Stop stays WAITING_USER."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "Stop")
+        # No event log written
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
+    def test_interrupt_prompt_suppresses_sticky_green(self, tmp_path):
+        """Real user-interrupt must not be papered over by sticky-green."""
+        state_dir = tmp_path / "sessions" / "agents"
+        now = time.time()
+        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=now)
+        _append_event_log(state_dir, "test-agent", [
+            ("PreToolUse", now - 0.5),
+            ("Stop", now),
+        ])
+        pane = "running some command\nInterrupted · What should Claude do instead?\n"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
+    def test_child_oversight_also_upgrades(self, tmp_path):
+        """Child agents get WAITING_OVERSIGHT instead of WAITING_USER — upgrade must still apply."""
+        state_dir = tmp_path / "sessions" / "agents"
+        now = time.time()
+        _write_hook_state(state_dir, "test-agent", "Stop", timestamp=now)
+        _append_event_log(state_dir, "test-agent", [
+            ("PostToolUse", now - 0.2),
+            ("Stop", now),
+        ])
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        session.parent_session_id = "parent-123"
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_RUNNING
+
+    def test_read_recent_events_skips_partial_lines(self, tmp_path):
+        """Mid-rotation partial lines are tolerated."""
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True)
+        now = time.time()
+        path = state_dir / "hook_events_test-agent.jsonl"
+        path.write_text(
+            "{corrupt partial\n"
+            + json.dumps({"event": "PreToolUse", "timestamp": now - 0.5}) + "\n"
+            + "{\"event\":\"Stop\",\"timestamp\":"  # truncated final line
+        )
+        detector = HookStatusDetector("agents", state_dir=state_dir)
+        events = detector._read_recent_events("test-agent")
+        # Only the one complete JSON line should survive parsing.
+        assert len(events) == 1
+        assert events[0]["event"] == "PreToolUse"
