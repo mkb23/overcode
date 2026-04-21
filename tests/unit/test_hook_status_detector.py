@@ -15,7 +15,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import HookStatusDetector
-from overcode.status_constants import STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_APPROVAL, STATUS_WAITING_USER, STATUS_TERMINATED, STATUS_ERROR
+from overcode.status_constants import (
+    STATUS_RUNNING,
+    STATUS_BUSY_SLEEPING,
+    STATUS_WAITING_APPROVAL,
+    STATUS_WAITING_USER,
+    STATUS_WAITING_OVERSIGHT,
+    STATUS_WATCHING,
+    STATUS_TERMINATED,
+    STATUS_ERROR,
+)
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
@@ -317,6 +326,65 @@ mike@mac ~/Code/overcode %
         status, _, _ = detector.detect_status(session)
 
         assert status == STATUS_RUNNING
+
+    def test_live_monitor_upgrades_waiting_user_to_watching(self, tmp_path):
+        """Stop + pane shows '1 monitor' → STATUS_WATCHING (#441)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "Stop")
+        pane = (
+            "⏺ Monitor(date ticks every 15s)\n"
+            "  ⎿  Monitor started · task abc123 · persistent\n"
+            "❯  \n"
+            "⏵⏵ bypass permissions on · 1 monitor · ↓ to manage"
+        )
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_WATCHING
+        assert "1 monitor" in activity
+
+    def test_live_monitors_plural_in_activity(self, tmp_path):
+        """Multiple monitors → plural 'monitors' in activity (#441)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "Stop")
+        pane = "⏵⏵ bypass permissions on · 3 monitors · ↓ to manage"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, activity, _ = detector.detect_status(session)
+
+        assert status == STATUS_WATCHING
+        assert "3 monitors" in activity
+
+    def test_live_monitor_does_not_override_running(self, tmp_path):
+        """Active monitors don't demote an in-flight RUNNING status (#441)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "PreToolUse", tool_name="Bash")
+        pane = "⏵⏵ bypass permissions on · 1 monitor · ↓ to manage"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_RUNNING
+
+    def test_no_monitor_keeps_waiting_user(self, tmp_path):
+        """Stop + no monitor in status bar → plain WAITING_USER (#441)."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "Stop")
+        pane = "⏵⏵ bypass permissions on · esc to interrupt"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
 
     def test_unknown_event_defaults_to_waiting_user(self, tmp_path):
         """Unknown event → WAITING_USER (safe default)."""

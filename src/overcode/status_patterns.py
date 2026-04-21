@@ -529,6 +529,37 @@ def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *
     return 0
 
 
+def extract_active_monitor_count(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> int:
+    """Extract the number of live Monitor-tool streams from pane content (#441).
+
+    Claude Code shows the count in the status bar:
+    - "1 monitor" for a single monitor
+    - "N monitors" for 2+ monitors
+    - Nothing when 0 monitors
+
+    A live monitor means the agent may look idle (post-Stop) but a background
+    stream can fire an event and wake it, analogous to how background bashes
+    can produce output that re-enters the turn.
+
+    Args:
+        content: Raw pane content (may include ANSI codes)
+        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
+        clean_content: Pre-stripped content (avoids redundant strip_ansi calls)
+
+    Returns:
+        Number of active monitor streams (0 if none detected)
+    """
+    stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
+    if stripped is None:
+        return 0
+
+    match = re.search(r'(\d+)\s+monitors?\b', stripped)
+    if match:
+        return int(match.group(1))
+
+    return 0
+
+
 def strip_ansi_clean(line: str) -> str:
     """Strip ANSI codes and whitespace from a line.
 
@@ -656,6 +687,7 @@ class PaneExtraction:
     """
     background_bash_count: int = 0
     live_subagent_count: int = 0
+    active_monitor_count: int = 0
     pr_number: Optional[int] = None
 
 
@@ -678,5 +710,6 @@ def extract_from_pane(content: str) -> PaneExtraction:
     return PaneExtraction(
         background_bash_count=extract_background_bash_count(content, clean_content=clean),
         live_subagent_count=extract_live_subagent_count(content, clean_content=clean),
+        active_monitor_count=extract_active_monitor_count(content, clean_content=clean),
         pr_number=extract_pr_number(content, clean_content=clean),
     )

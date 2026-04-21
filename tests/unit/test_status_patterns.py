@@ -18,6 +18,7 @@ from overcode.status_patterns import (
     is_command_menu_line,
     count_command_menu_lines,
     clean_line,
+    extract_active_monitor_count,
     extract_background_bash_count,
     extract_live_subagent_count,
     extract_pr_number,
@@ -514,6 +515,56 @@ class TestExtractLiveSubagentCount:
 some output
 ⏵⏵ bypass permissions on · 2 local agents · esc to interrupt"""
         assert extract_live_subagent_count(content) == 2
+
+
+class TestExtractActiveMonitorCount:
+    """Tests for extract_active_monitor_count function (#441)."""
+
+    def test_detects_single_monitor(self):
+        """'1 monitor' in the status bar → count = 1."""
+        content = "⏵⏵ bypass permissions on · 1 monitor · ↓ to manage"
+        assert extract_active_monitor_count(content) == 1
+
+    def test_detects_multiple_monitors(self):
+        """'N monitors' in the status bar → count = N."""
+        content = "⏵⏵ bypass permissions on · 3 monitors · ↓ to manage"
+        assert extract_active_monitor_count(content) == 3
+
+    def test_returns_zero_when_no_monitors(self):
+        """Status bar without monitors → 0."""
+        content = "⏵⏵ bypass permissions on · 2 bashes · esc to interrupt"
+        assert extract_active_monitor_count(content) == 0
+
+    def test_returns_zero_for_empty_content(self):
+        assert extract_active_monitor_count("") == 0
+
+    def test_returns_zero_without_status_bar(self):
+        """No status-bar line → 0, even if 'monitor' appears elsewhere."""
+        assert extract_active_monitor_count("talking about a monitor in text") == 0
+
+    def test_handles_monitors_and_bashes_together(self):
+        """Detects monitors when status bar lists several backgrounds."""
+        content = "⏵⏵ bypass permissions on · 2 monitors · 1 bashes · esc"
+        assert extract_active_monitor_count(content) == 2
+
+    def test_uses_last_status_bar_line(self):
+        """Stale status bar lines in scrollback should be ignored."""
+        content = (
+            "⏵⏵ bypass permissions on · 5 monitors · esc to interrupt\n"
+            "some later output\n"
+            "⏵⏵ bypass permissions on · 1 monitor · ↓ to manage"
+        )
+        assert extract_active_monitor_count(content) == 1
+
+    def test_handles_real_captured_pane(self):
+        """Regression: real pane line captured from a live Monitor session (#441)."""
+        content = (
+            "⏺ Monitor(date ticks every 15s)\n"
+            "  ⎿  Monitor started · task bel0h8tqa · persistent\n"
+            "❯  \n"
+            "⏵⏵ bypass permissions on · 1 monitor · ↓ to manage                    1 MCP server failed · /mcp"
+        )
+        assert extract_active_monitor_count(content) == 1
 
 
 class TestIsSleepCommand:
