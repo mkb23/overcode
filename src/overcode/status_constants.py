@@ -298,7 +298,7 @@ def get_daemon_status_style(status: str) -> Tuple[str, str]:
 # =============================================================================
 
 
-GREEN_STATUSES = frozenset({STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START})
+GREEN_STATUSES = frozenset({STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START, STATUS_BUSY_SLEEPING})
 WAITING_STATUSES = frozenset({STATUS_WAITING_USER, STATUS_WAITING_HEARTBEAT})
 USER_BLOCKED_STATUSES = frozenset({STATUS_WAITING_USER})
 ASLEEP_STATUSES = frozenset({STATUS_ASLEEP})

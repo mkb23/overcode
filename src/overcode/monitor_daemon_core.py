@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List, Tuple
 
-from .status_constants import STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
+from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
 
 @dataclass
@@ -64,8 +64,10 @@ def calculate_time_accumulation(
     non_green = current_non_green
     sleep = current_sleep
 
-    # Accumulate based on status
-    if current_status in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
+    # Accumulate based on status. is_green_status covers running/heartbeat
+    # and busy_sleeping — the agent chose to wait (bash sleep or live Monitor)
+    # and doesn't need the user; that counts as productive time.
+    if is_green_status(current_status):
         green += elapsed_seconds
     elif current_status == STATUS_ASLEEP:
         sleep += elapsed_seconds  # Track sleep time separately (#141)
