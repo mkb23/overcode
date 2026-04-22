@@ -2500,6 +2500,16 @@ class SupervisorTUI(
         except NoMatches:
             pass
 
+    def _current_column_overrides(self, level: str) -> dict:
+        """Override lookup used by header + cell-width computation.
+
+        Live modal overrides (#449) take precedence over persisted prefs so
+        header labels re-render as the user toggles columns in the C modal.
+        """
+        if self._live_column_overrides is not None:
+            return self._live_column_overrides
+        return self._prefs.column_config.get(level, {})
+
     def _update_column_headers(self) -> None:
         """Update the column headers widget based on current state."""
         try:
@@ -2528,11 +2538,7 @@ class SupervisorTUI(
 
             from .summary_columns import render_header_cells, resolve_column_visible
             level = self.SUMMARY_LEVELS[self.summary_level_index]
-            # Prefer live modal overrides (#449) so header tracks toggles.
-            if self._live_column_overrides is not None:
-                overrides = self._live_column_overrides
-            else:
-                overrides = self._prefs.column_config.get(level, {})
+            overrides = self._current_column_overrides(level)
 
             def col_filter(col):
                 return resolve_column_visible(col, level, overrides)

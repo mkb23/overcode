@@ -244,3 +244,175 @@ class TestModalNavigation:
         modal._toggle_current()
         for col in time_cols:
             assert modal.overrides.get(col.id) is False
+
+
+class _FakeApp:
+    """Minimal app stand-in for testing live override plumbing (#449)."""
+    def __init__(self):
+        self._live_column_overrides = None
+        self._column_widths_dirty = False
+        self._recompute_calls = 0
+
+    def query(self, _cls):
+        return []
+
+    def _recompute_cell_column_widths(self):
+        self._recompute_calls += 1
+
+
+class TestLiveOverridePlumbing:
+    """#449 — modal publishes its in-flight overrides to the app."""
+
+    def test_update_live_summaries_publishes_overrides(self):
+        modal = SummaryConfigModal()
+        app = _FakeApp()
+        modal._app_ref = app
+        modal.overrides = {"uptime": False, "cost": True}
+
+        modal._update_live_summaries()
+
+        assert app._live_column_overrides == {"uptime": False, "cost": True}
+        # Must be a copy, not a live alias — mutating modal state shouldn't
+        # silently change what the app has already read.
+        assert app._live_column_overrides is not modal.overrides
+        assert app._column_widths_dirty is True
+        assert app._recompute_calls == 1
+
+    def test_update_live_summaries_republishes_on_each_toggle(self):
+        modal = SummaryConfigModal()
+        app = _FakeApp()
+        modal._app_ref = app
+
+        modal.overrides = {"uptime": True}
+        modal._update_live_summaries()
+        assert app._live_column_overrides == {"uptime": True}
+
+        modal.overrides = {"uptime": False, "cost": True}
+        modal._update_live_summaries()
+        assert app._live_column_overrides == {"uptime": False, "cost": True}
+
+    def test_cancel_restore_publishes_original(self):
+        """Cancel restores modal.overrides to original — and the next live
+        update should propagate that restoration to the app."""
+        modal = SummaryConfigModal()
+        app = _FakeApp()
+        modal._app_ref = app
+        modal.show("med", {"uptime": True}, app)
+        # Simulate edits then cancel
+        modal.overrides["cost"] = True
+        modal._update_live_summaries()
+        assert app._live_column_overrides == {"uptime": True, "cost": True}
+        modal._cancel()
+        # _cancel triggers one last _update_live_summaries with the restored
+        # overrides — app sees the original config again.
+        assert app._live_column_overrides == {"uptime": True}
+
+
+class TestCurrentColumnOverrides:
+    """#449 — the helper both the header path and the width path read from."""
+
+    def _bare_app(self):
+        """Construct a SupervisorTUI without running __init__ (which needs
+        Textual's full init). We only exercise the pure-Python helper."""
+        from overcode.tui import SupervisorTUI
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        return app
+
+    def test_returns_prefs_when_no_live_overrides(self):
+        from unittest.mock import MagicMock
+        app = self._bare_app()
+        app._live_column_overrides = None
+        app._prefs = MagicMock()
+        app._prefs.column_config = {"med": {"uptime": False}}
+        assert app._current_column_overrides("med") == {"uptime": False}
+
+    def test_returns_empty_when_level_missing_from_prefs(self):
+        from unittest.mock import MagicMock
+        app = self._bare_app()
+        app._live_column_overrides = None
+        app._prefs = MagicMock()
+        app._prefs.column_config = {}
+        assert app._current_column_overrides("high") == {}
+
+    def test_live_overrides_take_precedence(self):
+        """Even when prefs have a config for the level, the live dict wins."""
+        from unittest.mock import MagicMock
+        app = self._bare_app()
+        app._live_column_overrides = {"cost": True}
+        app._prefs = MagicMock()
+        app._prefs.column_config = {"med": {"uptime": False}}
+        # Must be the live dict — not merged with prefs. The modal owns the
+        # complete in-flight config while open.
+        assert app._current_column_overrides("med") == {"cost": True}
+
+    def test_empty_live_overrides_still_wins(self):
+        """Empty-but-present live overrides (user cleared everything via `r`)
+        must not fall back to prefs."""
+        from unittest.mock import MagicMock
+        app = self._bare_app()
+        app._live_column_overrides = {}
+        app._prefs = MagicMock()
+        app._prefs.column_config = {"med": {"uptime": False}}
+        assert app._current_column_overrides("med") == {}
+
+
+class TestTUIHeaderSync:
+    """#449 — the TUI header path reads live overrides when present."""
+
+    def test_update_column_headers_uses_live_overrides(self, monkeypatch):
+        """End-to-end: when _live_column_overrides is set, the header rendered
+        by _update_column_headers reflects those overrides rather than prefs."""
+        from unittest.mock import MagicMock
+        from overcode.tui import SupervisorTUI
+
+        captured = {}
+
+        def fake_render_header_cells(column_filter, column_widths):
+            from overcode.summary_columns import SUMMARY_COLUMNS
+            captured["visible"] = [c.id for c in SUMMARY_COLUMNS if column_filter(c)]
+            from rich.text import Text
+            return Text("HEADER")
+
+        # Patch where tui.py imports it from — tui.py does a local import
+        # of render_header_cells inside _update_column_headers.
+        import overcode.summary_columns as sc_mod
+        monkeypatch.setattr(sc_mod, "render_header_cells", fake_render_header_cells)
+
+        # Subclass shadows DOMNode.id (property), so reactive.__get__'s
+        # `hasattr(obj, "id")` guard passes without touching Textual init.
+        class _TestTUI(SupervisorTUI):
+            id = "test-app"
+
+        app = _TestTUI.__new__(_TestTUI)
+        # tui_mode is a Textual reactive — bypass the descriptor's setter by
+        # writing directly to the internal storage slot.
+        app._reactive_tui_mode = "list"
+
+        app._prefs = MagicMock()
+        app._prefs.show_column_headers = True
+        app._prefs.column_config = {"med": {}}  # prefs: no overrides at med
+        app.SUMMARY_LEVELS = ["low", "med", "high", "full"]
+        app.summary_level_index = 1
+        app.column_widths = []
+
+        header_widget = MagicMock()
+        header_widget.display = True
+
+        def fake_query_one(sel, cls):
+            assert sel == "#column-headers"
+            return header_widget
+        app.query_one = fake_query_one
+
+        # Baseline: no live overrides → header follows prefs (defaults at med).
+        app._live_column_overrides = None
+        app._update_column_headers()
+        baseline = set(captured["visible"])
+        assert "uptime" in baseline  # uptime is MED_PLUS → visible at med
+
+        # Live override hides uptime — header MUST reflect it, even though
+        # prefs still say "no overrides".
+        app._live_column_overrides = {"uptime": False}
+        app._update_column_headers()
+        with_override = set(captured["visible"])
+        assert "uptime" not in with_override
+        assert with_override != baseline
