@@ -31,8 +31,7 @@ STATUS_ERROR = "error"  # API timeout, etc. (#22)
 STATUS_HEARTBEAT_START = "heartbeat_start"  # First observation of heartbeat-triggered run (timeline only)
 STATUS_DONE = "done"  # Child agent completed its delegated work (#244)
 STATUS_WAITING_OVERSIGHT = "waiting_oversight"  # Child stopped, awaiting oversight report
-STATUS_BUSY_SLEEPING = "busy_sleeping"  # Agent running but executing a sleep command (#289)
-STATUS_WATCHING = "watching"  # Agent idle at Stop but has live Monitor streams that may wake it (#441)
+STATUS_BUSY_SLEEPING = "busy_sleeping"  # Agent running but executing a sleep command (#289) or waiting on a live Monitor stream (#441)
 
 # All valid agent status values
 ALL_STATUSES = [
@@ -99,8 +98,7 @@ STATUS_SYMBOLS = {
     STATUS_HEARTBEAT_START: ("💚", "green"),  # Heartbeat commencement (timeline only)
     STATUS_DONE: ("☑️", "dim"),  # Done child agent (#244)
     STATUS_WAITING_OVERSIGHT: ("👁️", "yellow"),  # Waiting for oversight report
-    STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289)
-    STATUS_WATCHING: ("👀", "yellow"),  # Idle but Monitor stream live (#441)
+    STATUS_BUSY_SLEEPING: ("🟡", "yellow"),  # Running but sleeping (#289) or watching a live Monitor (#441)
 }
 
 
@@ -127,7 +125,6 @@ EMOJI_ASCII = {
     "☑️": "[D]",
     "👁️": "[O]",
     "🟡": "[S]",
-    "👀": "[M]",
     "⚪": "[?]",
     # Tool indicators
     "🖥️": "Sh",

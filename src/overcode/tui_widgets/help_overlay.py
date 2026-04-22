@@ -133,6 +133,9 @@ class HelpOverlay(Static):
         status("🔴", "░", "red", "Waiting (user)",
                "Blocked — needs human input")
 
+        status("🟡", "█", "yellow", "Busy (sleep/monitor)",
+               "Sleeping or watching a live Monitor — will self-resume")
+
         status("🟣", "▓", "magenta", "Error",
                "API timeout, rate limit, etc.")
 

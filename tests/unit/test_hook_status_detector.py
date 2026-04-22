@@ -21,7 +21,6 @@ from overcode.status_constants import (
     STATUS_WAITING_APPROVAL,
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
-    STATUS_WATCHING,
     STATUS_TERMINATED,
     STATUS_ERROR,
 )
@@ -327,8 +326,8 @@ mike@mac ~/Code/overcode %
 
         assert status == STATUS_RUNNING
 
-    def test_live_monitor_upgrades_waiting_user_to_watching(self, tmp_path):
-        """Stop + pane shows '1 monitor' → STATUS_WATCHING (#441)."""
+    def test_live_monitor_upgrades_waiting_user_to_busy_sleeping(self, tmp_path):
+        """Stop + pane shows '1 monitor' → STATUS_BUSY_SLEEPING (#441)."""
         state_dir = tmp_path / "sessions" / "agents"
         _write_hook_state(state_dir, "test-agent", "Stop")
         pane = (
@@ -343,7 +342,7 @@ mike@mac ~/Code/overcode %
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WATCHING
+        assert status == STATUS_BUSY_SLEEPING
         assert "1 monitor" in activity
 
     def test_live_monitors_plural_in_activity(self, tmp_path):
@@ -357,7 +356,7 @@ mike@mac ~/Code/overcode %
         session = create_mock_session(tmux_window=1, name="test-agent")
         status, activity, _ = detector.detect_status(session)
 
-        assert status == STATUS_WATCHING
+        assert status == STATUS_BUSY_SLEEPING
         assert "3 monitors" in activity
 
     def test_live_monitor_does_not_override_running(self, tmp_path):

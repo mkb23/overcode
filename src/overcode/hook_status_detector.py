@@ -27,7 +27,6 @@ from .status_constants import (
     STATUS_WAITING_APPROVAL,
     STATUS_WAITING_USER,
     STATUS_WAITING_OVERSIGHT,
-    STATUS_WATCHING,
     STATUS_TERMINATED,
     STATUS_ERROR,
 )
@@ -330,25 +329,25 @@ class HookStatusDetector:
                 )
 
         # Monitor tool leaves a persistent stream that can wake the agent
-        # after Stop/SessionEnd has fired. When the pane still shows live
-        # monitors, upgrade the "waiting" status to STATUS_WATCHING so the
-        # TUI reflects that the agent is externally trigger-able (#441).
+        # after Stop/SessionEnd has fired. Treat that as STATUS_BUSY_SLEEPING
+        # — same "idle but externally trigger-able" category as a bash sleep
+        # (#441 reuses the #289 state instead of minting a new one).
         monitor_count = extract_active_monitor_count(pane_content) if pane_content else 0
         if monitor_count > 0 and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT):
-            status = STATUS_WATCHING
+            status = STATUS_BUSY_SLEEPING
             self._last_detect_phase[session.id] = f"hook:{event}+monitors={monitor_count}"
 
         # Build activity description
         activity = self._build_activity(event, hook_state, pane_content, session)
 
-        # Enrich activity for busy_sleeping with parsed duration (#289)
+        # Enrich activity for busy_sleeping: either a parsed sleep duration (#289)
+        # or a live Monitor count (#441). Monitor count wins if both apply.
         if status == STATUS_BUSY_SLEEPING:
-            activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
-
-        # Enrich activity for watching with monitor count (#441)
-        if status == STATUS_WATCHING:
-            plural = "s" if monitor_count != 1 else ""
-            activity = f"Watching {monitor_count} monitor{plural}"
+            if monitor_count > 0:
+                plural = "s" if monitor_count != 1 else ""
+                activity = f"Watching {monitor_count} monitor{plural}"
+            else:
+                activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
 
         # Record hook phase for diagnostics
         self._last_detect_phase[session.id] = f"hook:{event}"
