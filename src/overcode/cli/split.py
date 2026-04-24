@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich import print as rprint
 
 from ._shared import app, SessionOption
 from ..tmux_utils import get_pane_base_index
@@ -548,8 +549,6 @@ def tmux_layout(
     normally elsewhere, but they do override any custom user bindings for
     the same keys. Use --uninstall to remove them.
     """
-    from rich import print as rprint
-
     # --- Uninstall mode ---
     if uninstall:
         removed_anything = False
