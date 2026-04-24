@@ -254,6 +254,22 @@ class NewAgentModal(ModalBase):
         wrapper = d["wrapper"].strip() or None
         host = d["host"]
         is_remote = self._is_remote
+        # Ensure the local directory exists — tmux silently falls back to
+        # $HOME when `new-window -c <path>` points at a missing dir, which
+        # lands the agent in the wrong place. mkdir -p it so the agent
+        # starts where the user asked. Remote dirs live on another host,
+        # so we can't touch them from here.
+        if not is_remote:
+            local_dir = Path(d["directory"]).expanduser()
+            try:
+                local_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                self.notify(
+                    f"Could not create directory {local_dir}: {e}",
+                    severity="error",
+                )
+                return
+            d["directory"] = str(local_dir)
         raw_args = d.get("claude_args", "").strip()
         if raw_args:
             try:

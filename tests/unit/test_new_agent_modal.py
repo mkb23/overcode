@@ -221,3 +221,76 @@ class TestNewAgentModalState:
         result = modal.render()
         assert isinstance(result, Text)
         assert "type to edit" in result.plain
+
+
+class TestLaunchDirectoryAutoCreate:
+    """Auto-create the local directory on launch.
+
+    tmux silently falls back to $HOME when `new-window -c <path>` targets a
+    missing directory, so the modal mkdir -p's the path before posting the
+    launch message.
+    """
+
+    def _make_launchable_modal(self, directory: str, is_remote: bool = False):
+        modal = TestNewAgentModalState()._make_modal_with_fields(
+            directory=directory,
+            sister_names=["desktop"] if is_remote else [],
+        )
+        if is_remote:
+            modal._cycle(modal._field("host"))  # flip host to remote sister
+        posted: list = []
+        notified: list = []
+        hidden: list = []
+        modal.post_message = lambda msg: posted.append(msg)
+        modal.notify = lambda msg, severity="information": notified.append((msg, severity))
+        modal._hide = lambda: hidden.append(True)
+        return modal, posted, notified, hidden
+
+    def test_existing_local_dir_launches(self, tmp_path):
+        modal, posted, notified, hidden = self._make_launchable_modal(str(tmp_path))
+        modal._launch()
+        assert len(posted) == 1
+        assert posted[0].directory == str(tmp_path)
+        assert not notified
+        assert hidden == [True]
+
+    def test_missing_local_dir_is_created(self, tmp_path):
+        missing = tmp_path / "nested" / "new-project"
+        modal, posted, notified, hidden = self._make_launchable_modal(str(missing))
+        modal._launch()
+        assert missing.is_dir()
+        assert len(posted) == 1
+        assert posted[0].directory == str(missing)
+        assert not notified
+        assert hidden == [True]
+
+    def test_local_dir_expands_user(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modal, posted, notified, _ = self._make_launchable_modal("~/newagent")
+        modal._launch()
+        assert (tmp_path / "newagent").is_dir()
+        assert len(posted) == 1
+        assert posted[0].directory == str(tmp_path / "newagent")
+        assert not notified
+
+    def test_mkdir_failure_reports_error(self, tmp_path):
+        # A file in the way of the target path makes mkdir raise FileExistsError.
+        conflict = tmp_path / "conflict"
+        conflict.write_text("not a dir")
+        modal, posted, notified, hidden = self._make_launchable_modal(str(conflict))
+        modal._launch()
+        assert not posted
+        assert not hidden
+        assert len(notified) == 1
+        msg, severity = notified[0]
+        assert "Could not create directory" in msg
+        assert severity == "error"
+
+    def test_remote_dir_not_touched(self):
+        # Remote dirs live on another host; we can't mkdir from here.
+        modal, posted, notified, _ = self._make_launchable_modal(
+            "/definitely/not/here", is_remote=True,
+        )
+        modal._launch()
+        assert len(posted) == 1
+        assert not notified
