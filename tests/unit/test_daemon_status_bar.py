@@ -6,7 +6,7 @@ in isolation without requiring a running Textual application.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 
 
@@ -502,10 +502,12 @@ class TestDaemonStatusBarRenderUsage:
     """Tests for usage snapshot section of DaemonStatusBar.render."""
 
     def test_usage_snapshot_shown(self):
-        snap = MagicMock()
-        snap.error = False
-        snap.five_hour_pct = 45.0
-        snap.seven_day_pct = 60.0
+        from overcode.usage_monitor import UsageSnapshot
+        snap = UsageSnapshot(
+            five_hour_pct=45.0,
+            seven_day_pct=60.0,
+            fetched_at=datetime.now() - timedelta(seconds=30),
+        )
         widget = _make_bare_status_bar(_usage_snapshot=snap)
         result = widget.render()
         plain = result.plain
@@ -514,15 +516,32 @@ class TestDaemonStatusBarRenderUsage:
         assert "45%" in plain
         assert "7d:" in plain
         assert "60%" in plain
+        assert "ago" in plain
+
+    def test_usage_snapshot_with_5h_reset(self):
+        from overcode.usage_monitor import UsageSnapshot
+        future = (datetime.now(timezone.utc) + timedelta(hours=2, minutes=30)).isoformat()
+        snap = UsageSnapshot(
+            five_hour_pct=45.0,
+            seven_day_pct=60.0,
+            five_hour_resets_at=future,
+        )
+        widget = _make_bare_status_bar(_usage_snapshot=snap)
+        result = widget.render()
+        plain = result.plain
+        assert "↻" in plain
+        # ~2.5h remaining
+        assert "2.5h" in plain
 
     def test_usage_snapshot_error(self):
-        snap = MagicMock()
-        snap.error = True
+        from overcode.usage_monitor import UsageSnapshot
+        snap = UsageSnapshot(error="no token")
         widget = _make_bare_status_bar(_usage_snapshot=snap)
         result = widget.render()
         plain = result.plain
         assert "Usage:" in plain
         assert "--" in plain
+        assert "ago" in plain
 
     def test_usage_snapshot_none_not_shown(self):
         widget = _make_bare_status_bar(_usage_snapshot=None)

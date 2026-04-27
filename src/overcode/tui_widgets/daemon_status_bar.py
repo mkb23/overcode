@@ -4,7 +4,7 @@ Daemon status bar widget for TUI.
 Shows Monitor Daemon, Supervisor Daemon, AI, spin stats, and presence status.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 from textual.widgets import Static
@@ -111,6 +111,31 @@ class DaemonStatusBar(Static):
         ]
 
     @staticmethod
+    def _format_queried_ago(fetched_at: Optional[datetime]) -> str:
+        """Return a short 'Xs/Xm/Xh ago' string for the last fetch time."""
+        if fetched_at is None:
+            return ""
+        delta = (datetime.now() - fetched_at).total_seconds()
+        if delta < 0:
+            delta = 0
+        return f"{format_duration(delta)} ago"
+
+    @staticmethod
+    def _format_reset_in(resets_at: Optional[str]) -> str:
+        """Return a short duration until the given ISO reset time, or '' if unknown."""
+        if not resets_at:
+            return ""
+        try:
+            dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return ""
+        now = datetime.now(timezone.utc) if dt.tzinfo else datetime.now()
+        remaining = (dt - now).total_seconds()
+        if remaining <= 0:
+            return "0s"
+        return format_duration(remaining)
+
+    @staticmethod
     def _usage_pct_style(pct: float) -> str:
         """Return a Rich style string based on usage percentage."""
         if pct >= 90:
@@ -138,8 +163,14 @@ class DaemonStatusBar(Static):
             else:
                 content.append("5h:", style="dim")
                 content.append(f"{snap.five_hour_pct:.0f}%", style=self._usage_pct_style(snap.five_hour_pct))
+                reset_in = self._format_reset_in(snap.five_hour_resets_at)
+                if reset_in:
+                    content.append(f"(↻{reset_in})", style="dim")
                 content.append(" 7d:", style="dim")
                 content.append(f"{snap.seven_day_pct:.0f}%", style=self._usage_pct_style(snap.seven_day_pct))
+            queried_ago = self._format_queried_ago(snap.fetched_at)
+            if queried_ago:
+                content.append(f" ({queried_ago})", style="dim")
             content.append(" │ ", style="dim")
 
         # Monitor Daemon status
