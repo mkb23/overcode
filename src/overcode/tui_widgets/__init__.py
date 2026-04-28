@@ -23,6 +23,7 @@ from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
 from .instruction_history_modal import InstructionHistoryModal
 from .new_agent_modal import NewAgentModal
+from .jump_modal import JumpModal, JumpCandidate
 from .job_summary import JobSummary
 
 __all__ = [
@@ -43,5 +44,7 @@ __all__ = [
     "NewAgentModal",
     "InstructionHistoryModal",
     "NewAgentModal",
+    "JumpModal",
+    "JumpCandidate",
     "JobSummary",
 ]

@@ -78,6 +78,8 @@ from .tui_widgets import (
     AgentSelectModal,
     SisterSelectionModal,
     InstructionHistoryModal,
+    JumpModal,
+    JumpCandidate,
 )
 from .tui_actions import (
     NavigationActionsMixin,
@@ -161,6 +163,8 @@ class SupervisorTUI(
         ("g", "toggle_show_terminated", "Show killed"),
         # Jump to sessions needing attention (bell/red)
         ("b", "jump_to_attention", "Jump attention"),
+        # VSCode-style jump-to-agent by name (#420)
+        ("ctrl+p", "jump_to_agent", "Jump to agent"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
@@ -425,6 +429,8 @@ class SupervisorTUI(
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
         yield InstructionHistoryModal(id="instruction-history-modal", classes="modal")
+        # Modal for VSCode-style jump-to-agent (#420)
+        yield JumpModal(id="jump-modal", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -3492,6 +3498,44 @@ class SupervisorTUI(
         self, message: InstructionHistoryModal.Cancelled
     ) -> None:
         """Handle instruction history modal dismissal (#376)."""
+        self._dialog_did_close()
+
+    # --- Jump-to-agent modal (#420) --------------------------------
+
+    def action_jump_to_agent(self) -> None:
+        """Open the VSCode-style jump-to-agent modal (#420)."""
+        if self.tui_mode == "jobs":
+            return
+        widgets = self._get_widgets_in_session_order()
+        if not widgets:
+            self.notify("No agents to jump to", severity="information")
+            return
+        candidates = [
+            JumpCandidate(
+                session_id=w.session.id,
+                name=w.session.name,
+                repo=getattr(w.session, 'repo_name', '') or '',
+                branch=getattr(w.session, 'branch', '') or '',
+            )
+            for w in widgets
+        ]
+        try:
+            modal = self.query_one("#jump-modal", JumpModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show(candidates, self)
+
+    def on_jump_modal_agent_selected(self, message: JumpModal.AgentSelected) -> None:
+        widgets = self._get_widgets_in_session_order()
+        for i, w in enumerate(widgets):
+            if w.session.id == message.session_id:
+                self._user_navigated = True
+                self.focused_session_index = i
+                break
+        self._dialog_did_close()
+
+    def on_jump_modal_cancelled(self, message: JumpModal.Cancelled) -> None:
         self._dialog_did_close()
 
     # Throttle TUI heartbeat writes to once per 5 seconds

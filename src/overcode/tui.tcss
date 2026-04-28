@@ -379,6 +379,24 @@ InstructionHistoryModal.visible {
     display: block;
 }
 
+/* Jump-to-agent Modal (#420) */
+JumpModal {
+    display: none;
+    layer: above;
+    offset: 27 10;
+    width: auto;
+    height: auto;
+    max-height: 70%;
+    overflow-y: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+JumpModal.visible {
+    display: block;
+}
+
 /* Jobs container — hidden by default, shown when tui_mode == "jobs" */
 #jobs-container {
     display: none;
