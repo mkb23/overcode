@@ -274,6 +274,30 @@ However, **Overcode's narrow focus (Claude-only, terminal-only, shared-repo-only
 
     **Complexity:** Low. 2-3 days.
 
+18. **Generation-counter poll pattern (`?since=N`)** (Bobbit) — `SessionStore` / `GoalStore` maintain a monotonic counter incremented on every mutation. Client polls with `?since=N`; server returns `{changed: false, generation: N}` when nothing moved — client skips JSON parsing and renders nothing.
+
+    **Recommendation:** Apply to every polling path in Overcode's web dashboard and — especially — the sister aggregation loop. Sister currently re-serializes full state from each remote on every poll. Adding a per-store monotonic counter makes a 5-second poll on an idle fleet essentially free. This is the single highest-ROI mechanic from the Bobbit re-read.
+
+    **Complexity:** Low. 3-5 days.
+
+19. **Errored-turn implicit unstick with consecutive-error cap** (Bobbit) — When an agent turn ends with `stopReason: "error"`, `session.consecutiveErrorTurns` increments. Next prompt/steer: if count < 3, clear `lastTurnErrored`, prepend `[SYSTEM: previous turn failed with: …. Ignore the incomplete last turn and handle the following.]`, dispatch (no retry of failed turn — treat new input as fresh intent). If ≥ 3, park in queue until explicit Retry. Counter resets on any successful turn.
+
+    **Recommendation:** Overcode hits this often — Anthropic API transport blips end a Claude Code turn in error state, and the next user message or heartbeat gets swallowed. Adding the same cap + prefix pattern to Overcode's status machine would self-heal one-off glitches while stopping persistently broken sessions from burning model calls on every heartbeat.
+
+    **Complexity:** Low-Medium. 1 week.
+
+20. **Large-content truncation at the event broadcast layer** (Bobbit) — 32 KB threshold. When an agent writes a 40 MB file, every streaming chunk carries the full accumulated message. Bobbit intercepts `message_update` between cost-tracker/search-indexer (full content) and broadcast/EventBuffer (truncated stub). UI lazy-loads via `GET /api/sessions/:id/tool-content/:mi/:bi`. Plus 2×/sec streaming throttle when content is truncated.
+
+    **Recommendation:** Overcode has the same footgun latent in its tmux pane parsing + web dashboard WebSocket streaming — Claude Code's transcript JSON has the same full-accumulating-message property. A 40 MB generated-data file written by an agent will currently freeze the TUI and blow up the dashboard. Intercepting at the broadcast layer with a lazy-load REST endpoint is a small change that prevents a catastrophic-memory incident.
+
+    **Complexity:** Medium. 1-2 weeks.
+
+21. **Viewer WebSocket — sessionless read-only live feed** (Bobbit) — A `/ws/viewer` endpoint that authenticates with the gateway token but is not bound to any session. Server broadcasts gate-verification events to all authenticated sessionless clients. Used by the goal dashboard, which has no active session but still wants live verification logs.
+
+    **Recommendation:** Overcode's timeline view and sister-side dashboards need exactly this shape — live observability without owning a session. Current architecture likely has them polling; a viewer WebSocket is a cleaner primitive. Aligns well with the Viewer-WS-plus-generation-counter-poll combination.
+
+    **Complexity:** Low. 3-5 days.
+
 ### Medium-Value Gaps
 
 11. **Multi-agent support** (10/11 tools) — Codex, Gemini, OpenCode, Aider, etc.
