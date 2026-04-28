@@ -7,6 +7,7 @@ Feature comparisons between Overcode and tools in the multi-agent coding orchest
 | Tool | File | Status |
 |---|---|---|
 | dmux | [overcode-vs-dmux.md](overcode-vs-dmux.md) | Done |
+| Bobbit | [overcode-vs-bobbit.md](overcode-vs-bobbit.md) | Done |
 | Zellij vs Tmux | [zellij-vs-tmux.md](zellij-vs-tmux.md) | Done (backend choice, not competitor) |
 
 ## Candidates

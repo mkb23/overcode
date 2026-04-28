@@ -28,6 +28,7 @@
 |---|---|---|
 | **dmux** | [standardagents/dmux](https://github.com/standardagents/dmux) | [overcode-vs-dmux.md](overcode-vs-dmux.md) |
 | **Orca** | [stablyai/orca](https://github.com/stablyai/orca) | [overcode-vs-orca.md](overcode-vs-orca.md) |
+| **Bobbit** | [SuuBro/bobbit](https://github.com/SuuBro/bobbit) | [overcode-vs-bobbit.md](overcode-vs-bobbit.md) |
 
 ### Noted but Not Prioritized
 
