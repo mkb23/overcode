@@ -8,6 +8,16 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 
 
+class _RunInline:
+    """Stub for threading.Thread that runs the target synchronously on start()."""
+
+    def __init__(self, target):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
 class TestIsFreetextOption:
     """Test _is_freetext_option helper method."""
 
@@ -360,7 +370,7 @@ class TestSendEscapeToFocused:
 
     @patch("overcode.launcher.ClaudeLauncher", autospec=True)
     def test_sends_escape_to_local_agent(self, MockLauncher):
-        """Should send escape to local agent via launcher."""
+        """Should send escape to local agent via launcher (async, post notify via call_from_thread)."""
         from overcode.tui_actions.input import InputActionsMixin
         from overcode.tui_widgets import SessionSummary
 
@@ -377,16 +387,22 @@ class TestSendEscapeToFocused:
         mock_launcher_instance = MockLauncher.return_value
         mock_launcher_instance.send_to_session_by_id.return_value = True
 
-        InputActionsMixin.action_send_escape_to_focused(mock_tui)
+        with patch("overcode.tui_actions.input.threading.Thread") as MockThread:
+            # Run the worker inline so we can assert on the side effects
+            MockThread.side_effect = lambda target, daemon: _RunInline(target)
+            InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
         mock_launcher_instance.send_to_session_by_id.assert_called_once_with(mock_session.id, "escape")
-        mock_tui.notify.assert_called_once()
-        assert "Sent Escape" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "information"
+        # Notify is posted onto the main loop via call_from_thread
+        mock_tui.call_from_thread.assert_called_once()
+        args = mock_tui.call_from_thread.call_args
+        assert args[0][0] is mock_tui.notify
+        assert "Sent Escape" in args[0][1]
+        assert args[1]["severity"] == "information"
 
     @patch("overcode.launcher.ClaudeLauncher", autospec=True)
     def test_notifies_error_on_failed_send(self, MockLauncher):
-        """Should notify error when send fails."""
+        """Should notify error when send fails (async, posted via call_from_thread)."""
         from overcode.tui_actions.input import InputActionsMixin
         from overcode.tui_widgets import SessionSummary
 
@@ -403,11 +419,15 @@ class TestSendEscapeToFocused:
         mock_launcher_instance = MockLauncher.return_value
         mock_launcher_instance.send_to_session_by_id.return_value = False
 
-        InputActionsMixin.action_send_escape_to_focused(mock_tui)
+        with patch("overcode.tui_actions.input.threading.Thread") as MockThread:
+            MockThread.side_effect = lambda target, daemon: _RunInline(target)
+            InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
-        mock_tui.notify.assert_called_once()
-        assert "Failed to send Escape" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "error"
+        mock_tui.call_from_thread.assert_called_once()
+        args = mock_tui.call_from_thread.call_args
+        assert args[0][0] is mock_tui.notify
+        assert "Failed to send Escape" in args[0][1]
+        assert args[1]["severity"] == "error"
 
 
 class TestSendKeyToFocused:

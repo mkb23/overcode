@@ -5,6 +5,7 @@ Handles sending keys and commands to agents.
 """
 
 import re
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -53,12 +54,24 @@ def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | N
     )
 
     send_kwargs = {"enter": True} if enter else {}
-    if launcher.send_to_session_by_id(session.id, keys, **send_kwargs):
-        tui.notify(f"Sent {display} to {session_name}", severity="information")
-        return True
-    else:
-        tui.notify(f"Failed to send {display} to {session_name}", severity="error")
-        return False
+
+    # Fire-and-forget via a background thread so the TUI main loop stays
+    # responsive — send_keys_to_pane sleeps up to 500ms per call for Claude
+    # Code's input-handler race. Blocking the main thread on that shows up
+    # as keypress lag.
+    def _send_and_notify() -> None:
+        ok = launcher.send_to_session_by_id(session.id, keys, **send_kwargs)
+        if ok:
+            tui.call_from_thread(
+                tui.notify, f"Sent {display} to {session_name}", severity="information",
+            )
+        else:
+            tui.call_from_thread(
+                tui.notify, f"Failed to send {display} to {session_name}", severity="error",
+            )
+
+    threading.Thread(target=_send_and_notify, daemon=True).start()
+    return True
 
 
 class InputActionsMixin:
