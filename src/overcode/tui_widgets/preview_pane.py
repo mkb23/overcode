@@ -51,6 +51,7 @@ class PreviewPane(ScrollableContainer):
         self.content_lines: List[str] = []
         self.monochrome: bool = False
         self.session_name: str = ""
+        self.stale_banner: str = ""  # Non-empty = show stale banner above content (#385)
         self._auto_scroll = True
         self._user_scrolled = False  # Set True by mouse wheel, cleared by auto-scroll
 
@@ -71,6 +72,11 @@ class PreviewPane(ScrollableContainer):
         content.append("─" * max(0, pane_width - len(header)), style=border_style)
         content.append("\n")
 
+        # Stale-content banner for unreachable sisters (#385)
+        if self.stale_banner:
+            banner_style = "bold" if self.monochrome else "bold yellow"
+            content.append(f"⚠ {self.stale_banner}\n", style=banner_style)
+
         if not self.content_lines:
             content.append("(no output)", style="dim italic")
         else:
@@ -84,10 +90,17 @@ class PreviewPane(ScrollableContainer):
 
         return content
 
-    def update_from_widget(self, widget: "SessionSummary") -> None:
-        """Update preview content from a SessionSummary widget."""
+    def update_from_widget(self, widget: "SessionSummary", stale_banner: str = "") -> None:
+        """Update preview content from a SessionSummary widget.
+
+        Args:
+            widget: Source summary widget whose pane content drives the preview.
+            stale_banner: Optional banner text shown above content when the
+                source sister is unreachable (#385). Empty string = no banner.
+        """
         self.session_name = widget.session.name
         self.content_lines = list(widget.pane_content) if widget.pane_content else []
+        self.stale_banner = stale_banner
 
         # Save scroll position before content replacement
         saved_scroll = self.scroll_offset.y

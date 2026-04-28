@@ -2575,9 +2575,48 @@ class SupervisorTUI(
             preview = self.query_one("#preview-pane", PreviewPane)
             widgets = self._get_widgets_in_session_order()
             if 0 <= self.focused_session_index < len(widgets):
-                preview.update_from_widget(widgets[self.focused_session_index])
+                widget = widgets[self.focused_session_index]
+                preview.update_from_widget(widget, stale_banner=self._stale_banner_for(widget.session))
         except NoMatches:
             pass
+
+    def _stale_banner_for(self, session) -> str:
+        """Build a "sister unreachable" banner for a remote session (#385).
+
+        Returns an empty string for local sessions or when the source sister
+        is still reachable — the preview pane then renders normally.
+        """
+        if not getattr(session, 'is_remote', False):
+            return ""
+        source_url = getattr(session, 'source_url', '')
+        if not source_url:
+            return ""
+        for sister in self._sister_poller.get_sister_states():
+            if sister.url != source_url:
+                continue
+            if sister.reachable:
+                return ""
+            age = self._sister_last_fetch_age(sister)
+            host = sister.name or "sister"
+            return f"{host} unreachable — last updated {age}"
+        return ""
+
+    @staticmethod
+    def _sister_last_fetch_age(sister) -> str:
+        """Format how long ago the sister last succeeded, for the stale banner."""
+        last_fetch = getattr(sister, 'last_fetch', None)
+        if not last_fetch:
+            return "never"
+        try:
+            ts = datetime.fromisoformat(last_fetch)
+        except (TypeError, ValueError):
+            return "unknown"
+        secs = (datetime.now() - ts).total_seconds()
+        if secs < 60:
+            return f"{int(secs)}s ago"
+        if secs < 3600:
+            return f"{int(secs / 60)}m ago"
+        return f"{int(secs / 3600)}h ago"
 
     def _find_any_session_by_name(self, name: str):
         """Find a session by name, including remote sessions.
