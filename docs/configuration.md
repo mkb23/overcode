@@ -143,6 +143,34 @@ These apply to agents created via both the CLI (`overcode launch`) and the TUI (
 
 Setting `wrapper: devcontainer` makes all new agents launch inside a Docker container by default. See the [Wrappers Guide](wrappers.md) for details.
 
+## Passthru Keys
+
+By default, a handful of TUI hotkeys are forwarded straight to the focused agent's Claude Code session rather than being handled by overcode: `Enter`, `Esc`, `1`–`5` (for numbered prompts), and `Ctrl+O`.
+
+You can toggle these on and off from inside the TUI with `Ctrl+K`, which saves your choices to `config.yaml`. For more advanced customization — remapping a slot to send a different key, or adding fully new passthru keys — edit `~/.overcode/config.yaml` directly:
+
+```yaml
+passthru_keys:
+  # Disable a default slot by setting it to null:
+  "5": null
+
+  # Remap a slot to forward a different key
+  # (e.g. let Ctrl+O send Esc to the agent):
+  ctrl+o: "escape"
+
+  # Add a brand-new passthru slot beyond the defaults.
+  # The key name must be something Textual recognises
+  # (e.g. "f5", "alt+j", "ctrl+space"), and the value is
+  # the key actually sent to the tmux pane.
+  # Note: adding a new slot also requires a corresponding
+  # BINDING to be registered — the modal will surface user-added
+  # slots for on/off toggling, but new bindings themselves are a
+  # developer-level change.
+  # f5: "f5"
+```
+
+Only deltas from the defaults are written — a fresh config keeps the section empty. Disabled slots show `☐` in the modal; remapped slots show their target in yellow.
+
 ## Standing Instruction Presets
 
 Presets are saved in `~/.overcode/presets.json`. View available presets:

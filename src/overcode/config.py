@@ -375,6 +375,81 @@ def set_tmux_toggle_key(key: str) -> None:
     save_config(config)
 
 
+# Default passthru keys — overcode hotkeys forwarded straight to the focused
+# agent's tmux pane rather than being handled locally. Keys are the overcode
+# hotkey names; values are the tmux key strings actually sent. A user can
+# disable a slot by removing it from config.yaml, or remap it to send a
+# different key (e.g. forward ctrl+o as "escape"). Adding fully new keys
+# (beyond this default set) requires editing config.yaml — see the commented
+# examples section below.
+DEFAULT_PASSTHRU_KEYS: dict[str, str] = {
+    "enter": "enter",
+    "escape": "escape",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "ctrl+o": "ctrl+o",
+}
+
+
+def get_passthru_keys() -> dict[str, str]:
+    """Return the active passthru-key map.
+
+    Merges defaults with user config. A user can:
+      - disable a default slot by setting its value to null/empty in config
+      - remap a slot to a different target (e.g. ctrl+o -> escape)
+      - add new slots if their key name exists as a class-level BINDING
+
+    Config format in ~/.overcode/config.yaml:
+        passthru_keys:
+          enter: "enter"
+          escape: "escape"
+          "1": "1"
+          # disable the 5 key:
+          "5": null
+          # remap ctrl+o to send escape instead:
+          ctrl+o: "escape"
+    """
+    merged = dict(DEFAULT_PASSTHRU_KEYS)
+    user = _get_config_value("passthru_keys", {})
+    if isinstance(user, dict):
+        for k, v in user.items():
+            if v in (None, ""):
+                merged.pop(k, None)
+            elif isinstance(v, str):
+                merged[k] = v
+    return merged
+
+
+def save_passthru_keys(mapping: dict[str, str]) -> None:
+    """Save the passthru-key overlay to config.yaml.
+
+    Writes only the deltas from DEFAULT_PASSTHRU_KEYS so the config file
+    stays small. A slot present in defaults but missing from ``mapping``
+    is written as ``null`` to record the user's intent to disable it.
+    """
+    deltas: dict[str, Optional[str]] = {}
+    for k, default_v in DEFAULT_PASSTHRU_KEYS.items():
+        new_v = mapping.get(k)
+        if new_v is None:
+            deltas[k] = None
+        elif new_v != default_v:
+            deltas[k] = new_v
+    # Also persist any user-added slots beyond the defaults
+    for k, v in mapping.items():
+        if k not in DEFAULT_PASSTHRU_KEYS and v:
+            deltas[k] = v
+
+    config = load_config()
+    if deltas:
+        config["passthru_keys"] = deltas
+    else:
+        config.pop("passthru_keys", None)
+    save_config(config)
+
+
 def get_new_agent_defaults() -> dict:
     """Get new-agent default settings from config.
 

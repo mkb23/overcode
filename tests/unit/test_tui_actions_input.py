@@ -327,6 +327,8 @@ class TestSendEnterToFocused:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._passthru_target.return_value = "enter"
+        mock_tui.tui_mode = "agents"
 
         InputActionsMixin.action_send_enter_to_focused(mock_tui)
 
@@ -343,6 +345,7 @@ class TestSendEscapeToFocused:
         mock_tui = MagicMock()
         mock_tui.focused = Mock()  # Not a SessionSummary
         mock_tui.notify = Mock()
+        mock_tui._passthru_target.return_value = "escape"
 
         InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
@@ -363,6 +366,7 @@ class TestSendEscapeToFocused:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._passthru_target.return_value = "escape"
 
         InputActionsMixin.action_send_escape_to_focused(mock_tui)
 
@@ -386,6 +390,7 @@ class TestSendEscapeToFocused:
 
         mock_launcher_instance = MockLauncher.return_value
         mock_launcher_instance.send_to_session_by_id.return_value = True
+        mock_tui._passthru_target.return_value = "escape"
 
         with patch("overcode.tui_actions.input.threading.Thread") as MockThread:
             # Run the worker inline so we can assert on the side effects
@@ -418,6 +423,7 @@ class TestSendEscapeToFocused:
 
         mock_launcher_instance = MockLauncher.return_value
         mock_launcher_instance.send_to_session_by_id.return_value = False
+        mock_tui._passthru_target.return_value = "escape"
 
         with patch("overcode.tui_actions.input.threading.Thread") as MockThread:
             MockThread.side_effect = lambda target, daemon: _RunInline(target)
@@ -440,6 +446,7 @@ class TestSendKeyToFocused:
         mock_tui = MagicMock()
         mock_tui.focused = Mock()  # Not a SessionSummary
         mock_tui.notify = Mock()
+        mock_tui._passthru_target.return_value = "1"
 
         InputActionsMixin._send_key_to_focused(mock_tui, "1")
 
@@ -460,10 +467,24 @@ class TestSendKeyToFocused:
 
         mock_tui = MagicMock()
         mock_tui.focused = mock_widget
+        mock_tui._passthru_target.return_value = "3"
 
         InputActionsMixin._send_key_to_focused(mock_tui, "3")
 
         mock_tui._send_remote_key.assert_called_once_with(mock_session, "3")
+
+    def test_disabled_slot_notifies_and_does_not_send(self):
+        """Disabling a slot via config should notify and not forward."""
+        from overcode.tui_actions.input import InputActionsMixin
+
+        mock_tui = MagicMock()
+        mock_tui._passthru_target.return_value = None
+
+        InputActionsMixin._send_key_to_focused(mock_tui, "1")
+
+        mock_tui.notify.assert_called_once()
+        assert "disabled" in mock_tui.notify.call_args[0][0]
+        mock_tui._send_remote_key.assert_not_called()
 
 
 class TestNumberedKeyActions:

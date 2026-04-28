@@ -74,6 +74,7 @@ from .tui_widgets import (
     SummaryConfigModal,
     NewAgentDefaultsModal,
     TmuxConfigModal,
+    PassthruConfigModal,
     NewAgentModal,
     AgentSelectModal,
     SisterSelectionModal,
@@ -151,6 +152,10 @@ class SupervisorTUI(
         ("3", "send_3_to_focused", "Send 3"),
         ("4", "send_4_to_focused", "Send 4"),
         ("5", "send_5_to_focused", "Send 5"),
+        # Ctrl+O forwarded to focused agent by default (#446)
+        ("ctrl+o", "send_ctrl_o_to_focused", "Send Ctrl+O"),
+        # Passthru key configuration modal (#446)
+        ("ctrl+k", "open_passthru_config", "Passthru keys"),
         # Copy mode - disable mouse capture for native terminal selection
         ("y", "toggle_copy_mode", "Copy mode"),
         # Heartbeat pause/resume toggle (#265) - promoted to lowercase
@@ -421,6 +426,8 @@ class SupervisorTUI(
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
         # Modal for tmux pane-toggle key (#442)
         yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
+        # Modal for passthru key configuration (#446)
+        yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         # Modal for agent selection during new agent creation
@@ -3437,6 +3444,32 @@ class SupervisorTUI(
 
     def on_tmux_config_modal_cancelled(self, message: TmuxConfigModal.Cancelled) -> None:
         """Handle tmux config modal cancellation (#442)."""
+        self._dialog_did_close()
+
+    def action_open_passthru_config(self) -> None:
+        """Open the passthru-key configuration modal (#446)."""
+        try:
+            modal = self.query_one("#passthru-config-modal", PassthruConfigModal)
+            self._dialog_will_open()
+            modal.show(self)
+        except NoMatches:
+            pass
+
+    def on_passthru_config_modal_saved(
+        self, message: PassthruConfigModal.Saved
+    ) -> None:
+        """Handle saved passthru-key config (#446)."""
+        enabled = sorted(message.mapping.keys())
+        self.notify(
+            f"Passthru keys saved: {', '.join(enabled) if enabled else '(none enabled)'}",
+            severity="information",
+        )
+        self._dialog_did_close()
+
+    def on_passthru_config_modal_cancelled(
+        self, message: PassthruConfigModal.Cancelled
+    ) -> None:
+        """Handle passthru config modal cancellation (#446)."""
         self._dialog_did_close()
 
     def action_open_sister_selection(self) -> None:

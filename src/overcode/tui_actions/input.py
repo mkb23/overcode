@@ -125,16 +125,37 @@ class InputActionsMixin:
             self.notify(f"Remote error: {result.error}", severity="error")
         return result.ok
 
+    def _passthru_target(self, slot: str) -> str | None:
+        """Resolve the target key for a passthru slot, or None if disabled (#446)."""
+        from ..config import get_passthru_keys
+        return get_passthru_keys().get(slot)
+
     def action_send_enter_to_focused(self) -> None:
         """Send Enter keypress to the focused agent/job."""
         if getattr(self, 'tui_mode', 'agents') == 'jobs':
             self._action_send_enter_to_focused_job()
             return
-        _send_keys_to_focused(self, "enter", label="Enter")
+        target = self._passthru_target("enter")
+        if target is None:
+            self.notify("Enter passthru disabled — enable it in Ctrl+K", severity="warning")
+            return
+        _send_keys_to_focused(self, target, label="Enter")
 
     def action_send_escape_to_focused(self) -> None:
         """Send Escape keypress to the focused agent (for interrupting)."""
-        _send_keys_to_focused(self, "escape", label="Escape", auto_wake=False)
+        target = self._passthru_target("escape")
+        if target is None:
+            self.notify("Escape passthru disabled — enable it in Ctrl+K", severity="warning")
+            return
+        _send_keys_to_focused(self, target, label="Escape", auto_wake=False)
+
+    def action_send_ctrl_o_to_focused(self) -> None:
+        """Send Ctrl+O to the focused agent (#446)."""
+        target = self._passthru_target("ctrl+o")
+        if target is None:
+            self.notify("Ctrl+O passthru disabled — enable it in Ctrl+K", severity="warning")
+            return
+        _send_keys_to_focused(self, target, label="Ctrl+O")
 
     def _is_freetext_option(self, pane_content: str, key: str) -> bool:
         """Check if a numbered menu option is a free-text instruction option.
@@ -178,38 +199,44 @@ class InputActionsMixin:
         scanning the pane content), automatically opens the command bar (#72).
 
         Args:
-            key: The key to send
+            key: The overcode hotkey slot (e.g. "1"); the actual sent key is
+                resolved via the passthru config (#446).
         """
         from ..tui_widgets import SessionSummary
+
+        target = self._passthru_target(key)
+        if target is None:
+            self.notify(f"{key} passthru disabled — enable it in Ctrl+K", severity="warning")
+            return
 
         # Check freetext before sending (need access to focused widget)
         focused = self.focused
         if isinstance(focused, SessionSummary):
             pane_content = self.detector.get_pane_content(focused.session.tmux_window) or ""
-            is_freetext = self._is_freetext_option(pane_content, key)
+            is_freetext = self._is_freetext_option(pane_content, target)
         else:
             is_freetext = False
 
-        if _send_keys_to_focused(self, key, enter=True) and is_freetext:
+        if _send_keys_to_focused(self, target, enter=True) and is_freetext:
             # Open command bar if this was a free-text instruction option (#72)
             self.action_focus_command_bar()
 
     def action_send_1_to_focused(self) -> None:
-        """Send '1' to focused agent."""
+        """Send '1' (or its passthru remap) to focused agent."""
         self._send_key_to_focused("1")
 
     def action_send_2_to_focused(self) -> None:
-        """Send '2' to focused agent."""
+        """Send '2' (or its passthru remap) to focused agent."""
         self._send_key_to_focused("2")
 
     def action_send_3_to_focused(self) -> None:
-        """Send '3' to focused agent."""
+        """Send '3' (or its passthru remap) to focused agent."""
         self._send_key_to_focused("3")
 
     def action_send_4_to_focused(self) -> None:
-        """Send '4' to focused agent."""
+        """Send '4' (or its passthru remap) to focused agent."""
         self._send_key_to_focused("4")
 
     def action_send_5_to_focused(self) -> None:
-        """Send '5' to focused agent."""
+        """Send '5' (or its passthru remap) to focused agent."""
         self._send_key_to_focused("5")

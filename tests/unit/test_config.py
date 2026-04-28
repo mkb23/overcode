@@ -817,3 +817,64 @@ class TestGetSyncBranch:
         config_file.write_text('sync:\n  branch: "  develop  "\n')
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
         assert config.get_sync_branch() == "develop"
+
+
+class TestPassthruKeys:
+    """Tests for configurable passthru keys (#446)."""
+
+    def test_defaults_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        result = config.get_passthru_keys()
+        assert result == config.DEFAULT_PASSTHRU_KEYS
+
+    def test_null_disables_default_slot(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('passthru_keys:\n  "5": null\n  escape: null\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_passthru_keys()
+        assert "5" not in result
+        assert "escape" not in result
+        assert "enter" in result
+
+    def test_remap_overrides_default(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('passthru_keys:\n  ctrl+o: "escape"\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_passthru_keys()
+        assert result["ctrl+o"] == "escape"
+
+    def test_user_added_slot_is_included(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('passthru_keys:\n  f5: "f5"\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_passthru_keys()
+        assert result.get("f5") == "f5"
+
+    def test_save_writes_only_deltas(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        # Disable "5" and remap ctrl+o, leave everything else at default
+        mapping = dict(config.DEFAULT_PASSTHRU_KEYS)
+        del mapping["5"]
+        mapping["ctrl+o"] = "escape"
+        mapping["f5"] = "f5"  # user-added
+        config.save_passthru_keys(mapping)
+        import yaml
+        written = yaml.safe_load(config_file.read_text())
+        pt = written["passthru_keys"]
+        assert pt["5"] is None
+        assert pt["ctrl+o"] == "escape"
+        assert pt["f5"] == "f5"
+        # unchanged defaults are NOT written
+        assert "enter" not in pt
+        assert "1" not in pt
+
+    def test_save_removes_empty_section(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('passthru_keys:\n  "5": null\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        # Back to full defaults
+        config.save_passthru_keys(dict(config.DEFAULT_PASSTHRU_KEYS))
+        import yaml
+        written = yaml.safe_load(config_file.read_text()) or {}
+        assert "passthru_keys" not in written
