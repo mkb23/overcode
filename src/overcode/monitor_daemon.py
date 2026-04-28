@@ -1030,6 +1030,8 @@ class MonitorDaemon:
                 self.state.supervisor_claude_running = stats.get("supervisor_claude_running", False)
                 self.state.supervisor_claude_started_at = stats.get("supervisor_claude_started_at")
                 self.state.supervisor_claude_total_run_seconds = stats.get("supervisor_claude_total_run_seconds", 0.0)
+                self.state.supervisor_consecutive_timeouts = stats.get("consecutive_timeouts", 0)
+                self.state.supervisor_last_timeout_at = stats.get("last_timeout_at")
             except (json.JSONDecodeError, OSError):
                 pass
 

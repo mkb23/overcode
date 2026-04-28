@@ -178,6 +178,10 @@ class MonitorDaemonState:
     supervisor_claude_started_at: Optional[str] = None  # ISO timestamp
     supervisor_claude_total_run_seconds: float = 0.0   # Cumulative run time
 
+    # Supervisor health (from SupervisorStats)
+    supervisor_consecutive_timeouts: int = 0
+    supervisor_last_timeout_at: Optional[str] = None
+
     # Summarizer status
     summarizer_enabled: bool = False
     summarizer_available: bool = False

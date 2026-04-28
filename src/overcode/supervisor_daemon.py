@@ -86,6 +86,12 @@ class SupervisorStats:
     supervisor_claude_started_at: Optional[str] = None  # ISO timestamp
     supervisor_claude_total_run_seconds: float = 0.0   # Cumulative run time
 
+    # Health tracking: consecutive daemon-claude timeouts (no completion detected).
+    # Surfaces in the TUI status bar when >= 2, so the user spots stuck supervisors
+    # without having to open the log.
+    consecutive_timeouts: int = 0
+    last_timeout_at: Optional[str] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -99,6 +105,8 @@ class SupervisorStats:
             "supervisor_claude_running": self.supervisor_claude_running,
             "supervisor_claude_started_at": self.supervisor_claude_started_at,
             "supervisor_claude_total_run_seconds": self.supervisor_claude_total_run_seconds,
+            "consecutive_timeouts": self.consecutive_timeouts,
+            "last_timeout_at": self.last_timeout_at,
         }
 
     @classmethod
@@ -115,6 +123,8 @@ class SupervisorStats:
             supervisor_claude_running=data.get("supervisor_claude_running", False),
             supervisor_claude_started_at=data.get("supervisor_claude_started_at"),
             supervisor_claude_total_run_seconds=data.get("supervisor_claude_total_run_seconds", 0.0),
+            consecutive_timeouts=data.get("consecutive_timeouts", 0),
+            last_timeout_at=data.get("last_timeout_at"),
         )
 
     def save(self, path: Path) -> None:
@@ -825,8 +835,15 @@ class SupervisorDaemon:
                         session_names = [s.name for s in non_green]
                         self.update_intervention_counts(session_names)
                         self._sync_daemon_claude_tokens()
+                        # Reset health counter on any successful completion
+                        if self.supervisor_stats.consecutive_timeouts:
+                            self.supervisor_stats.consecutive_timeouts = 0
+                            self.supervisor_stats.save(self.stats_path)
                     else:
                         self.log.warn("Daemon claude still working, continuing...")
+                        self.supervisor_stats.consecutive_timeouts += 1
+                        self.supervisor_stats.last_timeout_at = datetime.now().isoformat()
+                        self.supervisor_stats.save(self.stats_path)
                 elif action.action == "waiting_user":
                     self.status = "waiting_user"
                     self.log.warn(action.reason)

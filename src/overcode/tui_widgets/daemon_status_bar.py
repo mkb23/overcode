@@ -199,7 +199,18 @@ class DaemonStatusBar(Static):
         content.append("Supervisor: ", style="bold")
 
         if self._supervisor_running:
-            content.append("● ", style="green")
+            # Health check: surface repeated daemon-claude timeouts so the user
+            # notices the supervisor is stuck without having to open the log.
+            timeouts = 0
+            if monitor_running:
+                raw = getattr(self.monitor_state, "supervisor_consecutive_timeouts", 0)
+                timeouts = raw if isinstance(raw, int) else 0
+            if timeouts >= 2:
+                content.append("⚠ ", style="bold red")
+                content.append(f"{timeouts}× timeout", style="bold red")
+                content.append(" ", style="")
+            else:
+                content.append("● ", style="green")
             # Show if daemon Claude is currently running
             if monitor_running and self.monitor_state.supervisor_claude_running:
                 # Calculate current run duration
