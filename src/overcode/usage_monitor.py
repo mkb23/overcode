@@ -51,6 +51,12 @@ class UsageMonitor:
         """Fetch usage data, throttled to _min_interval seconds.
 
         Safe to call frequently; will skip if called too soon.
+
+        On fetch failure (rate limit, network error, missing token), keep
+        the last successful snapshot instead of blanking it out. The UI's
+        "Xm ago" marker grows naturally so users can still tell the data
+        is stale. Only replace with an error snapshot if we have nothing
+        good to fall back on.
         """
         now = time.time()
         if now - self._last_fetch_time < self._min_interval:
@@ -60,13 +66,24 @@ class UsageMonitor:
 
         token = self._get_access_token()
         if token is None:
-            self._snapshot = UsageSnapshot(
-                error="no token",
-                fetched_at=datetime.now(),
-            )
+            self._set_snapshot_on_error("no token")
             return
 
-        self._snapshot = self._fetch_usage(token)
+        new_snapshot = self._fetch_usage(token)
+        if new_snapshot.error and self._snapshot and not self._snapshot.error:
+            # Keep the last good snapshot so its fetched_at/values survive
+            # a transient refresh failure (e.g. 429).
+            return
+        self._snapshot = new_snapshot
+
+    def _set_snapshot_on_error(self, message: str) -> None:
+        """Store an error snapshot only if we have no prior good data."""
+        if self._snapshot and not self._snapshot.error:
+            return
+        self._snapshot = UsageSnapshot(
+            error=message,
+            fetched_at=datetime.now(),
+        )
 
     @staticmethod
     def _get_access_token() -> Optional[str]:

@@ -92,6 +92,59 @@ class TestUsageMonitor:
 
         assert m._last_fetch_time > 0
 
+    def test_fetch_failure_preserves_prior_good_snapshot(self):
+        """Rate-limited / network-failed refresh must not blank out cached data (#453)."""
+        m = UsageMonitor()
+        good = UsageSnapshot(five_hour_pct=0.42, seven_day_pct=0.18)
+        m._snapshot = good
+        m._last_fetch_time = 0
+
+        error_snap = UsageSnapshot(error="HTTP Error 429: Too Many Requests")
+        with patch.object(UsageMonitor, "_get_access_token", return_value="t"):
+            with patch.object(UsageMonitor, "_fetch_usage", return_value=error_snap):
+                m.fetch()
+
+        assert m.snapshot is good
+        assert m.snapshot.five_hour_pct == 0.42
+
+    def test_fetch_failure_with_no_prior_snapshot_sets_error(self):
+        """First-ever fetch that fails still records the error so UI can show '--'."""
+        m = UsageMonitor()
+        m._last_fetch_time = 0
+        error_snap = UsageSnapshot(error="connection refused")
+
+        with patch.object(UsageMonitor, "_get_access_token", return_value="t"):
+            with patch.object(UsageMonitor, "_fetch_usage", return_value=error_snap):
+                m.fetch()
+
+        assert m.snapshot is not None
+        assert m.snapshot.error == "connection refused"
+
+    def test_fetch_no_token_preserves_prior_good_snapshot(self):
+        """Losing the token mid-session should not wipe previously fetched usage."""
+        m = UsageMonitor()
+        good = UsageSnapshot(five_hour_pct=0.5)
+        m._snapshot = good
+        m._last_fetch_time = 0
+
+        with patch.object(UsageMonitor, "_get_access_token", return_value=None):
+            m.fetch()
+
+        assert m.snapshot is good
+
+    def test_fetch_success_replaces_error_snapshot(self):
+        """Recovery from an error should swap the error snapshot for the new good one."""
+        m = UsageMonitor()
+        m._snapshot = UsageSnapshot(error="prior failure")
+        m._last_fetch_time = 0
+        good = UsageSnapshot(five_hour_pct=0.7)
+
+        with patch.object(UsageMonitor, "_get_access_token", return_value="t"):
+            with patch.object(UsageMonitor, "_fetch_usage", return_value=good):
+                m.fetch()
+
+        assert m.snapshot is good
+
 
 class TestGetAccessToken:
     """Tests for _get_access_token static method."""
