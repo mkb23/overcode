@@ -444,7 +444,6 @@ def export(
             rprint(f"  Presence rows: {result['presence_rows']}")
     except ImportError as e:
         rprint(f"[red]Error:[/red] {e}")
-        rprint("[dim]Install pyarrow: pip install pyarrow[/dim]")
         raise typer.Exit(1)
     except Exception as e:
         rprint(f"[red]Export failed:[/red] {e}")
