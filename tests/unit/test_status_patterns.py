@@ -755,3 +755,24 @@ class TestExtractFromPane:
         result = extract_from_pane(content)
         assert result.background_bash_count == 1
         assert result.pr_number is None
+
+    def test_lone_running_flagged_as_ambiguous(self):
+        """#259: a bare "(running)" could be a bash or a subagent."""
+        content = "⏵⏵ bypass permissions on · (running)\n"
+        result = extract_from_pane(content)
+        assert result.background_bash_count == 1
+        assert result.bash_count_ambiguous is True
+
+    def test_n_bashes_not_ambiguous(self):
+        """An explicit "2 bashes" is unambiguous."""
+        content = "⏵⏵ bypass permissions on · 2 bashes · esc\n"
+        result = extract_from_pane(content)
+        assert result.background_bash_count == 2
+        assert result.bash_count_ambiguous is False
+
+    def test_no_bashes_not_ambiguous(self):
+        """Empty status bar yields count=0, not ambiguous."""
+        content = "⏵⏵ bypass permissions on · 50 files +229 -82\n"
+        result = extract_from_pane(content)
+        assert result.background_bash_count == 0
+        assert result.bash_count_ambiguous is False

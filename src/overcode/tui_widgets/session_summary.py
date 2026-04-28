@@ -79,6 +79,7 @@ class SessionSummary(Static, can_focus=True):
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
+        self.bash_count_ambiguous: bool = False  # Count came from lone "(running)" (#259)
         self.live_subagent_count: int = 0  # Live count from status bar
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
@@ -188,6 +189,9 @@ class SessionSummary(Static, can_focus=True):
             if self.background_bash_count != extracted.background_bash_count:
                 self.background_bash_count = extracted.background_bash_count
                 changed = True
+            if self.bash_count_ambiguous != extracted.bash_count_ambiguous:
+                self.bash_count_ambiguous = extracted.bash_count_ambiguous
+                changed = True
             if self.live_subagent_count != extracted.live_subagent_count:
                 self.live_subagent_count = extracted.live_subagent_count
                 changed = True
@@ -197,6 +201,9 @@ class SessionSummary(Static, can_focus=True):
                 changed = True
             if self.background_bash_count != 0:
                 self.background_bash_count = 0
+                changed = True
+            if self.bash_count_ambiguous:
+                self.bash_count_ambiguous = False
                 changed = True
             if self.live_subagent_count != 0:
                 self.live_subagent_count = 0
@@ -323,7 +330,13 @@ class SessionSummary(Static, can_focus=True):
             perm_emoji=perm_emoji,
             all_names_match_repos=getattr(self.app, 'all_names_match_repos', False),
             live_subagent_count=max(self.live_subagent_count, self.file_subagent_count),
-            background_bash_count=self.background_bash_count,
+            # #259: suppress the ambiguous lone-"(running)" bash count when the
+            # file-based subagent count confirms a subagent is running — the
+            # token almost certainly refers to that subagent, not a bash.
+            background_bash_count=(
+                0 if self.bash_count_ambiguous and self.file_subagent_count > 0
+                else self.background_bash_count
+            ),
             child_count=self.child_count,
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,

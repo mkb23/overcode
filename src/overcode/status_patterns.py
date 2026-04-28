@@ -12,7 +12,7 @@ Each pattern set includes documentation about when it's used and what it matches
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
@@ -474,8 +474,14 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None,
 
     Claude Code shows background task counts in the status bar:
     - "2 bashes" when there are 2+ background tasks
-    - "command... (running)" when there is 1 background task
+    - "command... (running)" when there is 1 background task OR 1 subagent
     - Nothing when there are 0 background tasks
+
+    The lone "(running)" form is ambiguous between a bash task and a
+    subagent. This function optimistically claims it as a bash; callers
+    that have access to a reliable subagent count (e.g. the file-based
+    count from #256) should use extract_bash_count_ambiguous() to
+    disambiguate.
 
     Args:
         content: Raw pane content (can include ANSI codes)
@@ -485,21 +491,33 @@ def extract_background_bash_count(content: str, patterns: StatusPatterns = None,
     Returns:
         Number of active background bash tasks (0 if none detected)
     """
+    count, _ = _extract_bash_count_and_ambiguity(content, patterns, clean_content=clean_content)
+    return count
+
+
+def _extract_bash_count_and_ambiguity(
+    content: str, patterns: StatusPatterns = None, *, clean_content: str = None
+) -> Tuple[int, bool]:
+    """Return (bash_count, was_inferred_from_lone_running) — internal helper.
+
+    The second element is True when the count was derived from a bare
+    "(running)" status with no "bashes" or "local agents" disambiguator,
+    meaning the token could actually be a subagent.
+    """
     stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
-        return 0
+        return 0, False
 
-    # Pattern 1: "N bashes" for 2+ background tasks
+    # Pattern 1: "N bashes" for 2+ background tasks — unambiguous
     match = re.search(r'(\d+)\s+bashes', stripped)
     if match:
-        return int(match.group(1))
+        return int(match.group(1)), False
 
-    # Pattern 2: "(running)" without "bashes" = 1 background task
-    # This appears when a single command is running in background
+    # Pattern 2: "(running)" without "bashes" — ambiguous (could be 1 bash or 1 subagent)
     if '(running)' in stripped and 'bashes' not in stripped:
-        return 1
+        return 1, True
 
-    return 0
+    return 0, False
 
 
 def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> int:
@@ -689,6 +707,11 @@ class PaneExtraction:
     live_subagent_count: int = 0
     active_monitor_count: int = 0
     pr_number: Optional[int] = None
+    # True when background_bash_count was inferred from a lone "(running)"
+    # token that could also be a subagent (#259). Callers with a reliable
+    # subagent count should treat this as "possibly subagent" and suppress
+    # the bash count accordingly.
+    bash_count_ambiguous: bool = False
 
 
 def extract_from_pane(content: str) -> PaneExtraction:
@@ -707,9 +730,11 @@ def extract_from_pane(content: str) -> PaneExtraction:
         PaneExtraction with all extracted values
     """
     clean = strip_ansi(content)
+    bash_count, bash_ambiguous = _extract_bash_count_and_ambiguity(content, clean_content=clean)
     return PaneExtraction(
-        background_bash_count=extract_background_bash_count(content, clean_content=clean),
+        background_bash_count=bash_count,
         live_subagent_count=extract_live_subagent_count(content, clean_content=clean),
         active_monitor_count=extract_active_monitor_count(content, clean_content=clean),
         pr_number=extract_pr_number(content, clean_content=clean),
+        bash_count_ambiguous=bash_ambiguous,
     )
