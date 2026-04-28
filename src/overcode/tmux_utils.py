@@ -139,6 +139,37 @@ def tmux_window_target(session: str, window) -> str:
     return f"{session}:={window}"
 
 
+def exit_copy_mode_if_active(
+    tmux_session: str,
+    window: str,
+) -> None:
+    """Drop the target pane out of copy-mode if it's currently in it.
+
+    tmux's copy-mode (often entered accidentally by scrolling) silently
+    swallows paste-buffer inputs and interprets Enter as a copy-mode
+    command. If a heartbeat (or any programmatic send) is dispatched
+    while the pane is in copy-mode, the text queues up invisibly and
+    only flushes when the user manually exits copy-mode — by which
+    point many heartbeats may have piled up (#401).
+
+    Calling this before send is a no-op when copy-mode is inactive.
+    """
+    tmux_cmd = _build_tmux_cmd()
+    target = tmux_window_target(tmux_session, window)
+    try:
+        result = subprocess.run(
+            tmux_cmd + ["display-message", "-p", "-t", target, "#{pane_in_mode}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip() == "1":
+            subprocess.run(
+                tmux_cmd + ["send-keys", "-t", target, "-X", "cancel"],
+                timeout=5, check=False,
+            )
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.debug("copy-mode check failed for %s: %s", target, e)
+
+
 def send_text_to_tmux_window(
     tmux_session: str,
     window: str,
@@ -163,6 +194,9 @@ def send_text_to_tmux_window(
     """
     if startup_delay > 0:
         time.sleep(startup_delay)
+
+    # Exit copy-mode first so paste-buffer / Enter aren't swallowed (#401)
+    exit_copy_mode_if_active(tmux_session, window)
 
     tmux_cmd = _build_tmux_cmd()
 

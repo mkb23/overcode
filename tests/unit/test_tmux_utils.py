@@ -5,7 +5,11 @@ import pytest
 from unittest.mock import patch, MagicMock, call
 import subprocess
 
-from overcode.tmux_utils import send_text_to_tmux_window, get_tmux_pane_content
+from overcode.tmux_utils import (
+    send_text_to_tmux_window,
+    get_tmux_pane_content,
+    exit_copy_mode_if_active,
+)
 
 
 class TestSendTextToTmuxWindow:
@@ -13,21 +17,21 @@ class TestSendTextToTmuxWindow:
 
     def test_sends_single_line_text(self):
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="0")
             result = send_text_to_tmux_window("agents", 1, "hello world")
 
         assert result is True
-        # Should have 3 calls: load-buffer, paste-buffer, send-keys (Enter)
-        assert mock_run.call_count == 3
+        # 4 calls: copy-mode probe, load-buffer, paste-buffer, send-keys (Enter)
+        assert mock_run.call_count == 4
 
     def test_sends_without_enter(self):
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="0")
             result = send_text_to_tmux_window("agents", 1, "hello", send_enter=False)
 
         assert result is True
-        # Should have 2 calls: load-buffer, paste-buffer (no send-keys)
-        assert mock_run.call_count == 2
+        # 3 calls: copy-mode probe, load-buffer, paste-buffer (no send-keys)
+        assert mock_run.call_count == 3
 
     def test_handles_multiline_text_batching(self):
         # Create text with more than 10 lines to trigger batching
@@ -35,13 +39,13 @@ class TestSendTextToTmuxWindow:
         text = "\n".join(lines)
 
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="0")
             with patch("overcode.tmux_utils.time.sleep"):
                 result = send_text_to_tmux_window("agents", 1, text)
 
         assert result is True
-        # 2 batches * 2 calls (load-buffer + paste-buffer) + 1 send-keys = 5
-        assert mock_run.call_count == 5
+        # copy-mode probe + 2 batches * 2 calls (load-buffer + paste-buffer) + 1 send-keys = 6
+        assert mock_run.call_count == 6
 
     def test_returns_false_on_load_buffer_failure(self):
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
@@ -103,6 +107,34 @@ class TestSendTextToTmuxWindow:
                 send_text_to_tmux_window("agents", 1, "hello")
                 # unlink should have been called to clean up tempfile
                 assert mock_unlink.called
+
+
+class TestExitCopyModeIfActive:
+    """Tests for exit_copy_mode_if_active (#401)."""
+
+    def test_sends_cancel_when_pane_in_copy_mode(self):
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="1\n")
+            exit_copy_mode_if_active("agents", "w1")
+
+        # Two calls: display-message probe, then send-keys -X cancel
+        assert mock_run.call_count == 2
+        second_args = mock_run.call_args_list[1][0][0]
+        assert "-X" in second_args and "cancel" in second_args
+
+    def test_noop_when_not_in_copy_mode(self):
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="0")
+            exit_copy_mode_if_active("agents", "w1")
+
+        # Only the display-message probe; no cancel
+        assert mock_run.call_count == 1
+
+    def test_swallows_errors(self):
+        """Probe failures must never crash the caller — heartbeats still run."""
+        with patch("overcode.tmux_utils.subprocess.run",
+                   side_effect=subprocess.SubprocessError("tmux gone")):
+            exit_copy_mode_if_active("agents", "w1")  # no exception
 
 
 class TestGetTmuxPaneContent:
