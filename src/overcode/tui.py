@@ -566,6 +566,10 @@ class SupervisorTUI(
             self.set_interval(5, self._refresh_jobs)
             # Refresh focused job pane content every second
             self.set_interval(1, self._poll_focused_job_pane)
+            # Periodically reconcile nested agent tmux windows with the outer
+            # pane size — on_resize catches most changes, but tmux auto-resize
+            # misfires after splits/zooms leave windows stuck at the old size.
+            self.set_interval(15, self._periodic_agent_resize)
 
         # Apply initial jobs mode if requested (e.g. --jobs flag)
         if self._initial_jobs_mode:
@@ -705,6 +709,65 @@ class SupervisorTUI(
         self._update_capture_lines()
         self.refresh()
         self.update_session_widgets()
+        # Cascade to nested agent tmux windows in compact (split) mode so
+        # they track the outer terminal size — otherwise you get either
+        # zoom artefacts (content cut off) or dotted-fill padding when the
+        # outer pane has grown.
+        if self.compact:
+            self._schedule_agent_window_resize()
+
+    def _periodic_agent_resize(self) -> None:
+        """Reconcile agent tmux window sizes in compact mode."""
+        if self.compact:
+            self._schedule_agent_window_resize()
+
+    def _schedule_agent_window_resize(self) -> None:
+        """Resize every agent's tmux window to match the bottom pane.
+
+        Runs in a worker so we don't block the main thread on tmux subprocess
+        calls (one per agent window). Called from on_resize and from a
+        periodic timer to catch drift.
+        """
+        self._resize_agent_windows_async()
+
+    @work(thread=True, exclusive=True, group="agent_resize")
+    def _resize_agent_windows_async(self) -> None:
+        """Worker: read bottom-pane size, then resize each agent window."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["tmux", "display-message", "-t", self._bottom_pane_target(),
+                 "-p", "#{pane_width} #{pane_height}"],
+                capture_output=True, text=True, timeout=2,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        parts = result.stdout.strip().split()
+        if len(parts) != 2:
+            return
+        try:
+            width, height = int(parts[0]), int(parts[1])
+        except ValueError:
+            return
+        sync_session = self.tmux_sync_target or self.tmux_session
+        # Local sessions only — remote sessions have their own resize path
+        for session in list(self.sessions):
+            if getattr(session, "is_remote", False):
+                continue
+            window = getattr(session, "tmux_window", None)
+            if not window:
+                continue
+            target = f"{sync_session}:{window}"
+            try:
+                subprocess.run(
+                    ["tmux", "resize-window", "-t", target,
+                     "-x", str(width), "-y", str(height)],
+                    capture_output=True, timeout=2,
+                )
+            except (subprocess.SubprocessError, OSError):
+                continue
 
     def _update_capture_lines(self) -> None:
         """Scale capture buffer to at least 2x terminal height."""
