@@ -331,6 +331,24 @@ class TestProviderFromModel:
         assert provider_from_model("") is None
 
 
+class TestProviderFromMessageId:
+    """Test provider_from_message_id — the reliable detector for current Bedrock."""
+
+    def test_bedrock_prefix(self):
+        from overcode.history_reader import provider_from_message_id
+        assert provider_from_message_id("msg_bdrk_01FKDsfUh7gdbKwdvCdrs9Dq") == "bedrock"
+
+    def test_web_prefix(self):
+        from overcode.history_reader import provider_from_message_id
+        assert provider_from_message_id("msg_01PyBqcoh2uGZaCcM5iMJpWG") == "web"
+
+    def test_unknown_or_empty(self):
+        from overcode.history_reader import provider_from_message_id
+        assert provider_from_message_id(None) is None
+        assert provider_from_message_id("") is None
+        assert provider_from_message_id("something-else") is None
+
+
 class TestClaudeSessionStats:
     """Test ClaudeSessionStats dataclass."""
 
@@ -1343,6 +1361,63 @@ class TestReadSessionStatsFromContent:
         assert usage["cache_read_tokens"] == 25
         assert usage["model"] == "claude-opus-4-6"
         assert usage["current_context_tokens"] == 125  # input + cache_read
+
+    def test_provider_detected_from_message_id(self):
+        """Provider should be derived from msg_bdrk_ prefix even when the
+        model field is a plain ID. Current Bedrock returns plain model
+        strings like 'claude-opus-4-6' — the message ID is the reliable
+        signal."""
+        from overcode.history_reader import read_session_stats_from_content
+
+        bedrock = "\n".join([
+            json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-01-02T10:00:00.000Z",
+                "message": {
+                    "id": "msg_bdrk_01FKDsfUh7gdbKwdvCdrs9Dq",
+                    "model": "claude-opus-4-6",
+                    "usage": {"input_tokens": 1, "output_tokens": 1,
+                              "cache_creation_input_tokens": 0,
+                              "cache_read_input_tokens": 0},
+                },
+            }),
+        ])
+        web = "\n".join([
+            json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-01-02T10:00:00.000Z",
+                "message": {
+                    "id": "msg_01PyBqcoh2uGZaCcM5iMJpWG",
+                    "model": "claude-opus-4-6",
+                    "usage": {"input_tokens": 1, "output_tokens": 1,
+                              "cache_creation_input_tokens": 0,
+                              "cache_read_input_tokens": 0},
+                },
+            }),
+        ])
+
+        assert read_session_stats_from_content(bedrock)[0]["provider"] == "bedrock"
+        assert read_session_stats_from_content(web)[0]["provider"] == "web"
+
+    def test_provider_ignores_zero_usage_messages(self):
+        """Synthetic messages with zero tokens should not drive provider
+        detection — same guard as model detection."""
+        from overcode.history_reader import read_session_stats_from_content
+
+        content = "\n".join([
+            json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-01-02T10:00:00.000Z",
+                "message": {
+                    "id": "msg_bdrk_synthetic",
+                    "model": "claude-opus-4-6",
+                    "usage": {"input_tokens": 0, "output_tokens": 0,
+                              "cache_creation_input_tokens": 0,
+                              "cache_read_input_tokens": 0},
+                },
+            }),
+        ])
+        assert read_session_stats_from_content(content)[0]["provider"] is None
 
     def test_matches_file_based_reader(self, tmp_path):
         """Content-based and file-based readers should produce identical results."""

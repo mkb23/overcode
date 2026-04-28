@@ -766,6 +766,7 @@ class MonitorDaemon:
         total_cache_read = 0
         current_context = 0
         detected_model = None
+        detected_provider = None
         all_work_times = []
 
         for sid in (session.claude_session_ids or [active_sid]):
@@ -792,17 +793,23 @@ class MonitorDaemon:
                 current_context = usage["current_context_tokens"]
                 if usage["model"]:
                     detected_model = usage["model"]
+                if usage["provider"]:
+                    detected_provider = usage["provider"]
             elif usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
             if usage["model"] and not detected_model:
                 detected_model = usage["model"]
+            if usage["provider"] and not detected_provider:
+                detected_provider = usage["provider"]
 
         if total_input + total_output == 0:
             return False
 
-        # Update model if detected
+        # Update model/provider if detected
         if detected_model and detected_model != session.model:
             self.session_manager.update_session(session.id, model=detected_model)
+        if detected_provider and detected_provider != session.provider:
+            self.session_manager.update_session(session.id, provider=detected_provider)
 
         # Cost estimate
         from .settings import get_user_config, get_model_pricing
@@ -854,14 +861,15 @@ class MonitorDaemon:
                 stats.cache_read_tokens,
             )
 
-            # Update session-level model and provider from history files
+            # Update session-level model and provider from history files.
+            # Provider is detected from the assistant message ID prefix
+            # ("msg_bdrk_" = bedrock, "msg_" = web), which stays correct
+            # across /clear (fixing cases where a bedrock agent switches
+            # to Claude Max and vice versa).
             if stats.model and stats.model != session.model:
                 self.session_manager.update_session(session.id, model=stats.model)
-            if stats.model:
-                from .history_reader import provider_from_model
-                detected_provider = provider_from_model(stats.model)
-                if detected_provider and detected_provider != session.provider:
-                    self.session_manager.update_session(session.id, provider=detected_provider)
+            if stats.provider and stats.provider != session.provider:
+                self.session_manager.update_session(session.id, provider=stats.provider)
 
             # Cache last command for daemon state publishing
             if stats.last_command:

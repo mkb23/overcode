@@ -91,15 +91,37 @@ def model_context_window(model: Optional[str]) -> int:
 def provider_from_model(model: Optional[str]) -> Optional[str]:
     """Derive API provider from a model ID returned in API responses.
 
-    Bedrock model IDs have a dotted prefix (e.g. "us.anthropic.claude-..."),
-    while API/Max IDs are plain (e.g. "claude-opus-4-7").
+    Older Bedrock model IDs have a dotted prefix (e.g. "us.anthropic.claude-..."),
+    while API/Max IDs are plain (e.g. "claude-opus-4-7"). Note that current
+    Bedrock responses often return the plain model ID too, so this heuristic
+    only catches the dotted case — prefer provider_from_message_id when an
+    assistant message ID is available.
 
-    Returns "bedrock", "web", or None if model is unknown/empty.
+    Returns "bedrock" for dotted IDs, "web" for plain, None if unknown/empty.
     """
     if not model:
         return None
     prefix = model.split("claude")[0] if "claude" in model else ""
     return "bedrock" if "." in prefix else "web"
+
+
+def provider_from_message_id(msg_id: Optional[str]) -> Optional[str]:
+    """Derive API provider from an assistant message ID.
+
+    Bedrock responses stamp message IDs with a "msg_bdrk_" prefix; direct
+    Anthropic API and Claude.ai OAuth use plain "msg_" IDs. This is more
+    reliable than looking at the model field, which Bedrock now returns
+    in its plain form (e.g. "claude-opus-4-6").
+
+    Returns "bedrock", "web", or None if the ID doesn't match a known shape.
+    """
+    if not msg_id:
+        return None
+    if msg_id.startswith("msg_bdrk_"):
+        return "bedrock"
+    if msg_id.startswith("msg_"):
+        return "web"
+    return None
 
 
 @dataclass
@@ -116,6 +138,7 @@ class ClaudeSessionStats:
     live_subagent_count: int = 0  # Subagents with recently-modified files (#256)
     background_task_count: int = 0  # Number of background/farm tasks (#177)
     model: Optional[str] = None  # Most recently seen model name (#272)
+    provider: Optional[str] = None  # Detected API provider ("web" or "bedrock")
     last_command: Optional[str] = None  # Most recent user prompt text
 
     @property
@@ -526,6 +549,7 @@ def _parse_session_lines(
         "cache_read_tokens": 0,
         "current_context_tokens": 0,
         "model": None,
+        "provider": None,
     }
 
     user_prompt_times: List[datetime] = []
@@ -568,12 +592,15 @@ def _parse_session_lines(
                     context_size = input_tokens + cache_read
                     if context_size > 0:
                         totals["current_context_tokens"] = context_size
-                    # Only track model from messages with actual API usage
-                    # (skips synthetic error messages with zero tokens)
+                    # Only track model/provider from messages with actual API
+                    # usage (skips synthetic error messages with zero tokens).
                     if input_tokens + output_tokens + cache_creation + cache_read > 0:
                         model = message.get("model")
                         if model:
                             totals["model"] = model
+                        detected = provider_from_message_id(message.get("id"))
+                        if detected:
+                            totals["provider"] = detected
 
             elif msg_type == "user":
                 # Check if this is an actual user prompt (not a tool result)
@@ -782,6 +809,7 @@ def get_session_stats(
     total_cache_read = 0
     current_context = 0
     detected_model: Optional[str] = None
+    detected_provider: Optional[str] = None
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
@@ -814,11 +842,15 @@ def get_session_stats(
                 current_context = usage["current_context_tokens"]
                 if usage["model"]:
                     detected_model = usage["model"]
+                if usage["provider"]:
+                    detected_provider = usage["provider"]
         else:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
             if usage["model"]:
                 detected_model = usage["model"]
+            if usage["provider"]:
+                detected_provider = usage["provider"]
 
         # Collect work times from this session file
         all_work_times.extend(work_times)
@@ -872,5 +904,6 @@ def get_session_stats(
         live_subagent_count=live_subagent_count,
         background_task_count=background_task_count,
         model=detected_model,
+        provider=detected_provider,
         last_command=last_command,
     )
