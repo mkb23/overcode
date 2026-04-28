@@ -269,7 +269,7 @@ The target user is a developer already running 3–10 concurrent agents who need
 9. **Agent-invokable MCP tool surface** (~41 tools in `packages/mcp/src/tools/`) including `start-agent-session`, `create-task`, `update-task` — lets the agent itself spawn sibling workspaces or file issues.
 10. **Mobile companion app** (`apps/mobile`) — genuinely rare; lets you trigger/monitor from a phone.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **GUI diff viewer, syntax highlighting, browser preview, DevTools** — Overcode's TUI can't match any of these. For frontend work especially, the Superset browser pane + DevTools is a killer feature.
 - **Worktree isolation** is first-class, with port allocation, branch prefixes, setup/teardown hooks, and `createdBySuperset` safety. Overcode has nothing here.
@@ -283,7 +283,7 @@ The target user is a developer already running 3–10 concurrent agents who need
 - **Rebindable keyboard shortcuts** with export/import. Overcode's keybindings are code-defined.
 - **Electric SQL real-time sync** — more robust than Overcode's Sister pull-based cross-machine story.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Supervisor daemon** (Claude-powered, with 25 standing-instruction presets) — Superset has nothing analogous. The entire supervision layer is absent.
 - **Heartbeat system** for periodic instruction delivery — Superset doesn't issue directives to idle agents.
@@ -298,7 +298,7 @@ The target user is a developer already running 3–10 concurrent agents who need
 - **Fork with context** — copies conversation state into a new agent; Superset can't do this.
 - **Cascade kill / cascade budget** — agent-tree operations. Superset has no tree.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

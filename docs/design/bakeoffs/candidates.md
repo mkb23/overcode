@@ -222,17 +222,17 @@ How does it think about agents? Sessions? Work? What's the core workflow loop?}
 {List 5-10 features that are genuinely unique or unusually well-done in this tool.
 For each, explain what it does and why it matters.}
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 {Honest assessment. What concrete features or approaches should Overcode consider adopting?
 Be specific — not "better UX" but "the merge workflow auto-commits, creates a PR, and cleans up the worktree in one action."}
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 {Features where Overcode has a clear advantage.
 Reference specific Overcode features.}
 
-## Ideas to Steal
+## Adoption Candidates
 
 {Ranked list of concrete ideas Overcode could adopt, with estimated value and complexity.}
 
@@ -249,7 +249,7 @@ Before finishing, verify:
 - [ ] All keyboard shortcuts are listed
 - [ ] All config options are listed
 - [ ] All agent states/statuses are listed
-- [ ] The "Ideas to Steal" table has at least 5 entries
+- [ ] The "Adoption Candidates" table has at least 5 entries
 - [ ] Claims are backed by specific file paths or code references from the repo
 - [ ] The Overcode comparison columns reference actual Overcode features (not guesses)
 

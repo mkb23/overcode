@@ -283,7 +283,7 @@ Where Overcode is a **control tower over long-lived, human-driven Claude Code se
 11. **MCP + A2A federation** — bidirectional MCP and experimental A2A protocol for agent discovery across orchestrators (`src/bernstein/core/protocols/mcp_gateway.py`, `src/bernstein/core/protocols/a2a.py`).
 12. **Cross-model verifier** — an independent model judges another agent's diff as a gate (`src/bernstein/core/quality/cross_model_verifier.py`).
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **End-to-end merge workflow.** Bernstein owns the loop from goal → decomposition → spawn → verify → merge, with PR creation and conflict quarantining. Overcode stops at "agent produced changes; user reviews." Specific: worktree creation (`src/bernstein/core/git/worktree.py`), janitor verification (`src/bernstein/core/quality/gate_runner.py`), merge with quarantine fallback (`spawner_merge.py`).
 - **Concrete verification gates.** Overcode trusts Claude's self-reporting; Bernstein checks tests-pass, lint-clean, type-check, path-exists as hard signals before merge. The `completion_signals` field forces authors of goals to state what success looks like up front.
@@ -298,7 +298,7 @@ Where Overcode is a **control tower over long-lived, human-driven Claude Code se
 - **Documentation depth.** 135 docs, migration guides, ReadTheDocs, ADRs in `docs/decisions/`. Overcode has design docs only.
 - **Observability.** Prometheus/OTel/Grafana out of the box vs Overcode's in-TUI metrics only.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Live supervision of long-lived sessions.** Overcode is built for the "agent that's been running for an hour and is stuck" case. Bernstein's agents are short-lived; once spawned they run to completion or die. Overcode's heartbeat + standing instructions (25 presets) + Claude-powered supervisor daemon is a whole layer Bernstein doesn't have.
 - **tmux-native.** Users who want to drop into a pane and type at the agent can. Bernstein agents run as piped subprocesses with no shell visibility.
@@ -309,7 +309,7 @@ Where Overcode is a **control tower over long-lived, human-driven Claude Code se
 - **Side-question subagents with token accounting.** Overcode handles compact/side-question subagents and keeps their tokens from double-counting (bcfb3a6). Bernstein doesn't expose a comparable interactive aside.
 - **Sister cross-machine integration** for monitoring agents across hosts.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

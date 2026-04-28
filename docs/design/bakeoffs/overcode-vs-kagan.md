@@ -331,7 +331,7 @@ No explicit attention-weighting/prioritization algorithm documented.
 
 12. **Attach mid-run intervention**. Pressing `a` on a managed-run task shows a warning modal, auto-stops the background agent, and hands off to an interactive launcher (tmux/VS Code/nvim) — an explicit "take over" flow (`docs/guides/managed-vs-interactive.md:43-50`).
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Git worktree isolation out of the box**. One worktree per task per repo at `~/.local/share/kagan/worktrees/task-<id>/`, cleaned up on merge. Overcode has no isolation (shared repo; agents collide). This is a large structural gap.
 - **Merge workflow**. `review_merge(...)` merges worktree → base; `review_rebase(start|continue|abort)` handles rebase; `review_conflicts(...)` surfaces conflicts; `serialize_merges=true` queues them. Overcode has "sync to main" (reset + pull) — no merge story at all.
@@ -348,7 +348,7 @@ No explicit attention-weighting/prioritization algorithm documented.
 - **Prompt override files** (`.kagan/prompts/*.md`) — full replacement at the project level. Overcode has memory/ files but no equivalent of full prompt replacement.
 - **`kagan doctor` preflight**. Silent startup checks, escalating to visible only on blockers; three verbosity levels. Overcode has no documented equivalent.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Cost & budget management**. Per-agent dollar budgets, token accounting, soft/hard enforcement. Kagan has nothing — `max_concurrent_agents=3` is the only cap.
 - **Supervisor daemon**. Claude-powered oversight with standing-instruction delivery, heartbeats to idle agents, periodic redirection. Kagan's orchestrator is reactive (user-driven chat); no autonomous supervision loop.
@@ -362,7 +362,7 @@ No explicit attention-weighting/prioritization algorithm documented.
 - **Timeline view & configurable columns**. TUI customization. Kagan has themes but not column config.
 - **~50+ keybindings** versus Kagan's ~40 across screens.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|
@@ -376,7 +376,7 @@ No explicit attention-weighting/prioritization algorithm documented.
 | **Persona preset distribution via GitHub + trust whitelist** | Med | Med | `persona import|export|audit|trust|untrust` with `registry/` whitelist and `--acknowledge-risk`. Teams share standing-instruction packs. Complements Overcode's 25 hardcoded presets. |
 | **Insights as structured reasoning notes** | Med | Low | `insight_add(category, content)` appends categorized notes mid-run; feeds acceptance-criteria coverage at review. Cheap to add; surfaces chain-of-thought as reviewable artifacts. |
 | **Task-scoped MCP session** (`--session-id <task_id>`) | Med | Med | Scope orchestrator to one agent (sees its state, diff, events). Useful for focused follow-up conversations in overcode's supervisor chat. |
-| **Multi-backend capability flags** | Med | Med | If expanding beyond Claude, steal `BackendCapability` enum pattern (`MANAGED_DETACHED_RUN`, `ACP_STREAMING`, `PROMPT_ARGUMENT`, etc.) — principled routing by capability. |
+| **Multi-backend capability flags** | Med | Med | If expanding beyond Claude, consider adopting the `BackendCapability` enum pattern (`MANAGED_DETACHED_RUN`, `ACP_STREAMING`, `PROMPT_ARGUMENT`, etc.) — principled routing by capability. |
 | **GitHub issue import** with label auto-mapping (`priority:*`) | Med | Med | `overcode import github --repo owner/repo --state open --label bug`. Two-step TUI flow (filter→select). Obvious productivity win; requires `gh` CLI only. |
 | **VS Code extension** (`@overcode` chat participant + diff editor + SCM) | Med | High | Large build but huge for adoption. React 19 web UI already exists; extending to VS Code extension is the natural next step. `packages/vscode/` reference structure. |
 | **Attach mid-run intervention flow** | Med | Low | Press `a` on a running agent → warning modal → auto-stop managed run → hand off to tmux/editor. "Take over" flow with clear UX. |

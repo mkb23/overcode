@@ -338,7 +338,7 @@ No Slack / email / custom webhook notifications. No attention-scoring beyond the
 
 10. **AI-generated PR descriptions as a default-on option**. One checkbox and the PR description is generated from the diff.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 Specific, concrete wins:
 
@@ -359,7 +359,7 @@ Specific, concrete wins:
 - **Full relay/tunnel infrastructure for reaching self-hosted backends from a cloud frontend** (§13).
 - **ts-rs single-source-of-truth types across Rust/TypeScript** — cleaner full-stack DX than Overcode's Python+Textual.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Active supervision loop**: Standing instructions (25 presets + custom), heartbeat for idle nudges, Claude-powered supervisor daemon, intervention history. Vibe Kanban is *reactive* (user reviews after completion); Overcode is *proactive* (the supervisor keeps poking).
 - **Cost tracking and per-agent budgets with soft enforcement** — Vibe Kanban has nothing here.
@@ -373,7 +373,7 @@ Specific, concrete wins:
 - **Per-session dispatch of hook vs polling detection** (Overcode-specific `Session.hook_status_detection` flag) — fine-grained control Vibe Kanban doesn't need but also can't offer because detection is process-level.
 - **Conversation forking with full context** — transplant a session's state into a new agent. Vibe Kanban's sessions are parallel but independent.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

@@ -310,7 +310,7 @@ Hooks run via `spawn(cmd, [], {cwd, shell: true})` in `src/utils/hookExecutor.ts
 
 10. **Multi-project session aggregation** (`src/services/globalSessionOrchestrator.ts`). One `GlobalSessionOrchestrator` manages a `SessionManager` per project, switching between projects without losing sessions. `getAllActiveSessions()` gives a cross-project view.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Agent-agnostic.** Eight CLIs supported with per-tool state detection. Overcode is Claude-only. If you want to run Cursor Agent in one worktree and Cline in another, CCManager is the only option.
 - **No tmux dependency.** Single `npm install`, no second shortcut layer to fight with, no tmux session management quirks. For users who don't already live in tmux, this is a meaningful onboarding reduction.
@@ -321,7 +321,7 @@ Hooks run via `spawn(cmd, [], {cwd, shell: true})` in `src/utils/hookExecutor.ts
 - **Per-CLI state detection strategies.** Claude vs Cline vs OpenCode all render prompts differently; CCManager's 8 hand-tuned strategies handle this, while Overcode's 442-pattern library is Claude-specific.
 - **Pre/post-creation worktree hooks.** Ran `npm install` automatically on every new worktree? Covered. Overcode has no equivalent.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Status detection via Claude Code hooks.** CCManager polls screen contents every 100ms and debounces idle over 1500ms. Overcode's `HookStatusDetector` (`overcode/hook_status_detector.py`) reads authoritative state transitions from Claude Code hooks as they happen — no polling latency, no pattern-miss risk, no debounce needed.
 - **Supervisor daemon + instruction delivery.** Overcode can push prompts into running agents, run a heartbeat, apply 25 standing-instruction presets, and run a Claude-powered supervisor. CCManager has none of this.
@@ -332,7 +332,7 @@ Hooks run via `spawn(cmd, [], {cwd, shell: true})` in `src/utils/hookExecutor.ts
 - **Data export (Parquet) + analytics.** Historical session data for post-hoc analysis. CCManager stores nothing between runs.
 - **Richer TUI** with ~50+ keybindings, timeline view, and configurable columns vs CCManager's 2 rebindable shortcuts.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

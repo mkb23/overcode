@@ -240,7 +240,7 @@ The mental model is a **kanban board of autonomous agents**: a 6-column web UI (
 9. **Post-launch prompt delivery mode** — elegant fix for Claude Code's `-p` one-shot-exit behaviour: `promptDelivery: "post-launch"` starts the agent interactively, then sends the prompt via `sendMessage()`.
 10. **Flat-file state, no DB** — `~/.agent-orchestrator/{hash}-{projectId}/` is grep-able, tail-able, and crash-resistant. Archive preserves ISO8601-stamped session snapshots.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Agent-agnostic plugin system**. Overcode is Claude-only; AO supports 5 agents today and more via plugins. This is a structural capability gap, not a feature gap.
 - **Git worktree isolation**. Every agent has its own branch + PR from spawn; Overcode's shared-repo model means agents can clobber each other.
@@ -254,7 +254,7 @@ The mental model is a **kanban board of autonomous agents**: a 6-column web UI (
 - **3,288 tests + integration CI with all agent CLIs installed**. Overcode is ~1,700 tests, Claude-only.
 - **Zero-config onboarding** (`ao start <url>`). Overcode requires manual host/session setup.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Richer supervision loop** — Claude-powered supervisor daemon can make judgement calls that AO's declarative reactions can't express. 25 standing-instruction presets vs AO's single `agentRules` string.
 - **Per-agent cost budgets with soft enforcement** — AO tracks cost for display only; no budget, no cap.
@@ -267,7 +267,7 @@ The mental model is a **kanban board of autonomous agents**: a 6-column web UI (
 - **Python ecosystem** — Textual TUI, pytest, pyproject.toml.
 - **Sister integration for cross-machine monitoring**.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

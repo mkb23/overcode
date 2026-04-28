@@ -232,7 +232,7 @@ Shortcuts customization is **not supported** ("Shortcuts customization is not cu
 9. **`gh` rate-limit-aware GitHub layer** — the github client uses `acquire()`/`release()` concurrency gating (`gh-utils.ts`) and AGENTS.md explicitly instructs batching. The `checkOrcaStarred`/`starOrca` loop also uses the user's existing `gh` auth — no OAuth, no PAT.
 10. **Cross-platform hardening evident throughout** — WSL path translation (`src/main/wsl.ts`), Windows batch-script runner for setup hooks (`src/main/hooks.ts:333-380`), `CmdOrCtrl` accelerator policy enforced by AGENTS.md. Real multi-OS discipline, not just "we set `process.platform`".
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Built-in source control + PR merge flow**: Orca has Monaco-powered inline/split diff, stage/unstage hunks, and one-click squash/merge/rebase-merge via `gh pr merge` from inside the app. Overcode has no merge workflow, no diff viewer, no VCS panel.
 - **Worktree isolation**: every agent gets its own working tree + branch by default, with auto-branch-create, auto-branch-delete, and configurable base-ref refresh. Overcode uses a shared repo.
@@ -248,7 +248,7 @@ Shortcuts customization is **not supported** ("Shortcuts customization is not cu
 - **Custom terminal split layout engine** (no tmux): lower overhead, no tmux config skew, consistent UX.
 - **Per-worktree browser + file explorer + search** in one window.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **LLM-based status detection and supervision**: Overcode's `HookStatusDetector` (reads Claude Code hook JSON state files) + regex polling (442 patterns) is authoritative for Claude. Orca's OSC-title detection works across 8 agents but can't tell *what* the agent is doing, only `working`/`idle`/`permission`.
 - **Supervisor daemon with standing instructions (25 presets) + heartbeat**: Overcode has a Claude-powered supervisor that periodically nudges agents. Orca has nothing comparable.
@@ -263,7 +263,7 @@ Shortcuts customization is **not supported** ("Shortcuts customization is not cu
 - **Token accounting that matches compact/subagent flows** (recent commit `4f9be06`): Overcode dedupes subagent tokens out of parent totals; Orca's usage scanner is per-session-file only.
 - **Timeline view + configurable columns + 50+ keybindings**: Orca exposes ~30 keyboard shortcuts and has no timeline.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|
@@ -286,6 +286,6 @@ Shortcuts customization is **not supported** ("Shortcuts customization is not cu
 - [x] All keyboard shortcuts listed (§10 table + `useTerminalShortcuts.ts`)
 - [x] All config options listed (§12)
 - [x] All agent states listed (§3, §5)
-- [x] "Ideas to Steal" table has 12 entries
+- [x] "Adoption Candidates" table has 12 entries
 - [x] Claims backed by file paths and line numbers from `~/Code/orca`
 - [x] Overcode comparison cells reference actual Overcode features from `candidates.md`

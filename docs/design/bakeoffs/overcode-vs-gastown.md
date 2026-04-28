@@ -372,7 +372,7 @@ The mental model is **bureaucratic** and **agent-agnostic** — 10 runtimes (`cl
 
 10. **Hooks override chain** (`docs/HOOKS.md:26-40`) — `base → role → rig+role` merge for per-rig/per-role Claude/Copilot settings. Lets you configure e.g. "witnesses in `gastown` rig get a different toolset than crew in `myproject`" without editing files by hand.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Worktree isolation + bisecting merge queue**: Overcode has zero isolation and no merge workflow. Refinery is production-grade and a category Overcode doesn't even attempt.
 - **Agent-agnostic runtime**: 10 built-in agent presets (claude/gemini/codex/cursor/auggie/amp/opencode/copilot/pi/omp) vs Overcode's Claude-only.
@@ -388,7 +388,7 @@ The mental model is **bureaucratic** and **agent-agnostic** — 10 runtimes (`cl
 - **Web dashboard with htmx command palette**: Browser-driven command execution. Overcode's dashboard is read-mostly.
 - **Documentation depth**: Design docs for every subsystem (convoy, polecat-lifecycle-patrol, escalation, scheduler, otel, plugin-system, wasteland).
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Instant-status via 442 regex polling patterns**: Free (no tokens) and lower-latency than Deacon's AI-reasoning patrol. GasTown's supervisors cost tokens to think.
 - **Standing-instructions library (25 presets)**: Tighter and less bureaucratic than GasTown's directive/mail/nudge layering.
@@ -401,7 +401,7 @@ The mental model is **bureaucratic** and **agent-agnostic** — 10 runtimes (`cl
 - **Host selector for remote agents**: Overcode's recently-unified `n` hotkey with host-step flow is smoother than GasTown's rig-centric model for "launch on this machine."
 - **Claude Code hooks as *cheap* authoritative status**: Overcode uses the same mechanism but pairs it with regex polling rather than AI reasoning — cheaper per-agent.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

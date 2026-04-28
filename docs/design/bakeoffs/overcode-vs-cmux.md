@@ -255,7 +255,7 @@ cmux has zero visibility into agent token/dollar consumption. Overcode tracks to
 9. **Per-agent hook installers** for 7+ agents — one command (`cmux setup-hooks`, `cmux cursor install-hooks`, etc.) wires agent events to cmux notifications.
 10. **Claude Code Teams native splits.** `cmux claude-teams` replaces Claude's tmux dependency with native panes + sidebar metadata + notifications per teammate.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Notification system.** Pane rings, sidebar flood, ⌘⇧U jump-to-unread, native macOS notifications, 17 custom sounds, custom shell command per notification. Overcode has no native notifications. This is a concrete adoption candidate.
 - **Scriptable browser alongside the terminal.** A 125-verb browser automation API exposed via CLI, drivable from any agent, with cookies imported from the user's real browsers. Overcode has no browser primitive.
@@ -267,7 +267,7 @@ cmux has zero visibility into agent token/dollar consumption. Overcode tracks to
 - **Ghostty-config reuse + browser cookie import.** Both are small but meaningful "meet the user where they are" moves.
 - **OSC 9/99/777 passive pickup.** Agents that already emit BEL/OSC sequences "just work" with zero config.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Entire supervision layer.** Supervisor daemon, 25 standing-instruction presets, heartbeat-to-idle-agents, oversight mode with stuck detection and timeouts, intervention history, standing-instruction-per-agent. cmux has *none* of this — it stops at "send keys to a surface."
 - **Cost & budget management.** Per-agent tokens, dollars, joules; soft-enforced budgets; budget transfer; pricing model per model. cmux has zero visibility into agent spend.
@@ -280,7 +280,7 @@ cmux has zero visibility into agent token/dollar consumption. Overcode tracks to
 - **Runs on Linux/anywhere Python + tmux runs.** cmux is macOS-only.
 - **Information density.** A Textual dashboard with configurable columns, 4 sort modes, timeline bars, and ~50+ keybindings surfaces far more per-screen than cmux's 200px sidebar of workspace rows.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | # | Idea | Value | Complexity | Notes |
 |---|---|---|---|---|
@@ -309,7 +309,7 @@ The honest positioning:
 - **cmux** owns **the surface** — a native, fast, scriptable container for agents with best-in-class attention management. It has no opinion about what agents should be doing.
 - **Overcode** owns **the orchestration** — standing instructions, heartbeats, budgets, hierarchies, supervisor daemons, cross-machine aggregation. Its surface (Textual TUI) is strictly inferior to a native app.
 
-The biggest concrete cmux wins worth stealing for Overcode are, in order: (1) native notifications with jump-to-unread, (2) OSC 9/99/777 passive pickup so Overcode gets a notification channel free, (3) layout-as-config presets, and (4) free-form per-agent `set-status` / `set-progress` / `log` metadata that agents push into the sidebar. None of these require changing Overcode's core orchestration model.
+The biggest concrete cmux wins worth considering for Overcode are, in order: (1) native notifications with jump-to-unread, (2) OSC 9/99/777 passive pickup so Overcode gets a notification channel free, (3) layout-as-config presets, and (4) free-form per-agent `set-status` / `set-progress` / `log` metadata that agents push into the sidebar. None of these require changing Overcode's core orchestration model.
 
 The biggest Overcode advantages cmux *could* adopt (but won't, given its "primitive not solution" stance) are the supervision layer, cost tracking, and agent hierarchy. cmux has explicitly decided not to be that tool.
 

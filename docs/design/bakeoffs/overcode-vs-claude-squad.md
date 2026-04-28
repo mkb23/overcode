@@ -256,7 +256,7 @@ The product's two opinionated bets are: **worktree isolation per agent** (no two
 
 10. **Reset subcommand wipes everything cleanly** (`cmd/cmd.go:78-113`) — destroys all instances, kills all `claudesquad_*` tmux sessions, cleans worktrees, kills daemon. A real "factory reset" rather than asking the user to clean up by hand.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Worktree-per-agent isolation.** Overcode runs every agent in the shared repo root; two Overcode agents touching the same files race. Claude Squad never has this problem. For parallel feature-branch work, this is a structural win.
 - **Built-in pause/resume with branch preservation.** `c` does commit + worktree-remove + clipboard-copy-branch in one keystroke. Overcode has no equivalent — you'd manually `git stash`/`git commit` and kill the agent.
@@ -269,7 +269,7 @@ The product's two opinionated bets are: **worktree isolation per agent** (no two
 - **Trust-prompt auto-dismiss.** Saves a ceremonial keystroke every new instance.
 - **Help-once onboarding.** Cleaner first-run UX than Overcode's "all keybindings, all the time."
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Hook-based status detection** — instant, authoritative, ~20+ states vs Claude Squad's polled 4-state hash-diff. Less fragile to Claude Code prompt-text changes.
 - **Supervisor daemon is Claude-powered** with 25 standing-instruction presets and judgment-driven approval. Claude Squad's daemon blindly TapEnters.
@@ -283,7 +283,7 @@ The product's two opinionated bets are: **worktree isolation per agent** (no two
 - **Far larger test suite** (~1700 tests vs Claude Squad's small suite).
 - **Active session history / archival** beyond the live in-memory list.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | Idea | Value | Complexity | Notes |
 |---|---|---|---|

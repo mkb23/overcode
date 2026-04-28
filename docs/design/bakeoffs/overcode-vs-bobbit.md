@@ -111,7 +111,7 @@ Overcode is by contrast **supervision-first, Claude-Code-only, tmux-embedded**. 
 - **Budget enforcement:** Not supported.
 - **Cost display:** Per-session via `GET /api/sessions/:id/cost`. **Aggregated** to goal level (`GET /api/goals/:id/cost`) and task level (`GET /api/tasks/:id/cost`). UI shows per-session cost in session cards and headers.
 
-**Overcode:** tracks tokens, dollars, AND joules per agent with soft-enforced budgets, budget transfer between agents, and pricing per model. Bobbit has cleaner aggregation (goal/task roll-ups) but no enforcement. This is a meaningful gap on both sides — Overcode should steal Bobbit's goal/task aggregation, Bobbit should steal Overcode's budget enforcement.
+**Overcode:** tracks tokens, dollars, AND joules per agent with soft-enforced budgets, budget transfer between agents, and pricing per model. Bobbit has cleaner aggregation (goal/task roll-ups) but no enforcement. This is a meaningful gap on both sides — Overcode could adopt Bobbit's goal/task aggregation pattern, and Bobbit could consider the budget enforcement approach in return.
 
 ### 9. Agent Hierarchy & Coordination
 
@@ -285,7 +285,7 @@ Overcode is by contrast **supervision-first, Claude-Code-only, tmux-embedded**. 
 15. **Multi-project search (FlexSearch).** Cross-project lexical search with role-aware content weighting; orphan filtering keeps dead result clicks from showing deleted content; re-index triggers on goal/session mutations.
 16. **Bobbit mascot.** Pixel-art sprite rendered entirely in CSS box-shadows, one colour identity per session, role-accessory signalling (crown = team-lead, magnifying-glass = reviewer, bandana = coder). 580 lines of docs for the sprite system alone.
 
-## What This Tool Does Better Than Overcode
+## Strengths Relative to Overcode
 
 - **Goals/workflows/gates as structured quality gates.** The entire concept of declarative DAG-ordered verification steps (`command` + `llm-review` + `agent-qa`) with phased execution, enforced signal ordering, cascade-reset on re-signal, and baseline-aware diffs is absent from Overcode. Standing instructions are a strictly weaker analogue.
 - **Teams with a team-lead agent that partitions work and merges back.** Parallel coding with a human-in-loop-optional orchestrator that owns file-level conflict avoidance, branch merges, and PR creation. Overcode's 5-level hierarchy is more general but has no equivalent workflow.
@@ -303,7 +303,7 @@ Overcode is by contrast **supervision-first, Claude-Code-only, tmux-embedded**. 
 - **Depth of documentation.** 7.3k lines across 32 docs including symptom-indexed debugging. Overcode's docs are sparser.
 - **Primary branch detection with `origin/` prefix enforcement.** Baseline-aware verification prevents the "branch doesn't match design doc" false-positive that drifts when local master is stale. A detail Overcode doesn't need to care about because it has no verification — but the broader lesson ("never assume local git state is authoritative") applies to Overcode's `sync to main` command.
 
-## What Overcode Does Better
+## Overcode's Relative Strengths
 
 - **Entire supervision layer.** Supervisor daemon, 25 standing-instruction presets, heartbeat-to-idle-agents, oversight mode with stuck detection and timeouts, intervention history, per-session standing instructions, budget soft-enforcement. Bobbit has `TeamManager.nudgePending` + staff-agent triggers + tool policies, but nothing that watches an arbitrary running session and injects instructions every N minutes.
 - **Cost budgets with enforcement.** Per-agent dollar/token/joule budgets, soft-enforced, transferrable between agents. Bobbit has cost *display* + *aggregation* but no enforcement.
@@ -318,7 +318,7 @@ Overcode is by contrast **supervision-first, Claude-Code-only, tmux-embedded**. 
 - **Runs purely in a terminal over SSH.** Bobbit's web UI stops working as soon as you lose the browser; Overcode in tmux works fine over a 300-baud SSH link.
 - **Claude-cost-model accuracy.** Overcode knows Claude's pricing model cold (haiku/sonnet/opus, cache reads/writes, joules). Bobbit inherits whatever `pi-ai` ships.
 
-## Ideas to Steal
+## Adoption Candidates
 
 | # | Idea | Value | Complexity | Notes |
 |---|---|---|---|---|
@@ -361,7 +361,7 @@ Overcode is by contrast **supervision-first, Claude-Code-only, tmux-embedded**. 
 
 ## Additional mechanics surfaced from full `internals.md` re-read
 
-A second pass through Bobbit's 1,510-line `internals.md` surfaced several engineering patterns worth documenting here even when they don't rise to the level of a transferable idea — either because they're Overcode-irrelevant, too tightly bound to Bobbit's architecture, or already implicit in existing Ideas to Steal entries. Listed for completeness:
+A second pass through Bobbit's 1,510-line `internals.md` surfaced several engineering patterns worth documenting here even when they don't rise to the level of a transferable idea — either because they're Overcode-irrelevant, too tightly bound to Bobbit's architecture, or already implicit in existing Adoption Candidates entries. Listed for completeness:
 
 - **Config cascade with `ResolvedItem<T>` origin tags.** `{ item, origin: "builtin" | "server" | "project", overrides?: ConfigOrigin }` returned from `resolveRoles()`, `resolvePersonalities()`, etc. UI renders grey/blue/green origin badges; inherited items render at 70 % opacity in project scope. Customize endpoint copies a resolved item to the target scope for editing; revert endpoint removes the override. This turns a cascade from "invisible magic that sometimes bites you" into a first-class UI concept.
 - **Provisional projects + promote-on-accept.** When the project-setup assistant starts, the server registers a provisional project with a real `projectId` so the session has proper store isolation from the first message. On accept, `POST /api/projects/:id/promote` clears the `provisional: true` flag and writes the final config. If the session terminates without accepting, the provisional project is cleaned up via `DELETE`. Survives page refresh; replaces an earlier client-side `state.pendingProjects` approach.
@@ -402,6 +402,6 @@ None of these change the bakeoff's top-line findings. The full read confirmed th
 4. **Bobbit adopts Overcode's budget enforcement** and **standing-instruction heartbeat** — Bobbit has cost display and static system prompts; adding budget caps and periodic directive injection would round out its supervision story without breaking its architecture.
 5. **Bobbit adopts Overcode's sister-style cross-machine aggregation** — Bobbit's multi-device is single-machine; adding "see all my agents across all my machines in one browser" is the logical next step.
 
-**Biggest single idea for Overcode to steal: workflow gates with phased verification (#1).** It would reframe "agents with standing instructions" as "agents operating within a quality gate DAG" and give users a structured way to enforce "tests pass → code review happens → design is followed." The `command`/`llm-review`/`agent-qa` verify-step trio is expressive enough to cover 80% of what teams want from "don't just merge whatever the agent wrote."
+**Biggest single idea for Overcode to consider: workflow gates with phased verification (#1).** It would reframe "agents with standing instructions" as "agents operating within a quality gate DAG" and give users a structured way to enforce "tests pass → code review happens → design is followed." The `command`/`llm-review`/`agent-qa` verify-step trio is expressive enough to cover 80% of what teams want from "don't just merge whatever the agent wrote."
 
-**Biggest single idea for Bobbit to steal: per-agent budget enforcement with soft-skip / transfer.** Bobbit's cost display is good, but running 12 coders in parallel with no budget ceiling is a foot-gun waiting to fire. A soft-budget check at turn-start and a transfer primitive between sessions would make parallel work materially safer.
+**Biggest single idea Bobbit could consider in return: per-agent budget enforcement with soft-skip / transfer.** Bobbit's cost display is good, but running 12 coders in parallel with no budget ceiling is a foot-gun waiting to fire. A soft-budget check at turn-start and a transfer primitive between sessions would make parallel work materially safer.
