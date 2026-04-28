@@ -434,13 +434,16 @@ class SessionActionsMixin:
 
         session = focused.session
 
+        from ..config import get_sync_branch
+        branch = get_sync_branch()
+
         if self._is_remote(session):
             if self._guard_remote(session):
                 return
             # Sync requires multi-step tmux interaction — send as instruction
             self._confirm_double_press(
                 "sync",
-                f"Press c again to sync remote '{session.name}' to main",
+                f"Press c again to sync remote '{session.name}' to {branch}",
                 lambda: self._execute_remote_sync(session),
                 session_name=session.name,
             )
@@ -449,14 +452,16 @@ class SessionActionsMixin:
         session_name = session.name
         self._confirm_double_press(
             "sync",
-            f"Press c again to sync '{session_name}' to main",
+            f"Press c again to sync '{session_name}' to {branch}",
             lambda: self._execute_sync(focused),
             session_name=session_name,
         )
 
     def _execute_remote_sync(self, session: "Session") -> None:
-        """Sync a remote agent to main via sister controller."""
-        sync_text = "!git checkout main && git pull"
+        """Sync a remote agent to the configured sync branch via sister controller."""
+        from ..config import get_sync_branch
+        branch = get_sync_branch()
+        sync_text = f"!git checkout {branch} && git pull"
         result = self._sister_controller.send_instruction(
             session.source_url, session.source_api_key,
             session.name, text=sync_text,
@@ -467,29 +472,31 @@ class SessionActionsMixin:
                 session.source_url, session.source_api_key,
                 session.name, text="/clear",
             )
-            self.notify(f"Synced remote '{session.name}' to main", severity="information")
+            self.notify(f"Synced remote '{session.name}' to {branch}", severity="information")
         else:
             self.notify(f"Remote error: {result.error}", severity="error")
 
     def _execute_sync(self, widget: "SessionSummary") -> None:
         """Execute the actual sync operation after confirmation."""
         from ..tmux_manager import TmuxManager
+        from ..config import get_sync_branch
 
         session = widget.session
         session_name = session.name
+        branch = get_sync_branch()
         tmux = TmuxManager(self.tmux_session)
 
-        self.notify(f"Syncing '{session_name}' to main...", severity="information")
+        self.notify(f"Syncing '{session_name}' to {branch}...", severity="information")
 
         # Send git commands - Claude will execute and return to prompt
-        git_commands = "!git checkout main && git pull"
+        git_commands = f"!git checkout {branch} && git pull"
         if not tmux.send_keys(session.tmux_window, git_commands, enter=True):
             self.notify(f"Failed to send git commands to '{session_name}'", severity="error")
             return
 
         # Send /clear - tmux queues this, Claude processes after git completes
         if tmux.send_keys(session.tmux_window, "/clear", enter=True):
-            self.notify(f"Synced '{session_name}' to main with fresh context", severity="information")
+            self.notify(f"Synced '{session_name}' to {branch} with fresh context", severity="information")
             # Reset session stats for fresh start
             self.session_manager.update_stats(
                 session.id,

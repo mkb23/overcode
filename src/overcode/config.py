@@ -406,6 +406,20 @@ def save_new_agent_defaults(defaults: dict) -> None:
     save_config(config)
 
 
+def get_sync_branch() -> str:
+    """Get the branch name used by the `cc` sync-to-main chord.
+
+    Config format in ~/.overcode/config.yaml:
+        sync:
+          branch: master   # or main, or any branch name
+
+    Returns:
+        Branch name to check out during sync (default: "main").
+    """
+    value = _get_config_value("sync.branch", "main")
+    return str(value).strip() or "main"
+
+
 def get_bedrock_config() -> dict:
     """Get AWS Bedrock configuration.
 

@@ -791,3 +791,29 @@ sisters:
 
         result = config.get_sisters_config()
         assert result == []
+
+
+class TestGetSyncBranch:
+    """Tests for the configurable sync-to-main branch (#447)."""
+
+    def test_defaults_to_main_when_unset(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        assert config.get_sync_branch() == "main"
+
+    def test_uses_configured_branch(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("sync:\n  branch: master\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_sync_branch() == "master"
+
+    def test_empty_string_falls_back_to_main(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('sync:\n  branch: ""\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_sync_branch() == "main"
+
+    def test_whitespace_stripped(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('sync:\n  branch: "  develop  "\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_sync_branch() == "develop"
