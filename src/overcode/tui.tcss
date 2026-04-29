@@ -296,6 +296,22 @@ TmuxConfigModal.visible {
     display: block;
 }
 
+/* Passthru Key Config Modal (#446) */
+PassthruConfigModal {
+    display: none;
+    layer: above;
+    offset: 27 30;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+PassthruConfigModal.visible {
+    display: block;
+}
+
 /* New Agent Modal (unified launch form) */
 NewAgentModal {
     display: none;
