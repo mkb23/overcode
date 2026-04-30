@@ -228,12 +228,14 @@ class TestColumnStructure:
             if col.visible is not None:
                 assert callable(col.visible), f"Column '{col.id}' visible is not callable"
 
-    def test_placeholder_width_positive_when_visible_set(self):
-        """Columns with a visible gate should have placeholder_width > 0."""
+    def test_placeholder_width_non_negative_when_visible_set(self):
+        """Visible-gated columns may reserve space (>0) to stabilise layout, or
+        collapse to zero width to auto-hide when the gate is false. Either is
+        valid — the test just guards against negative/invalid widths."""
         for col in SUMMARY_COLUMNS:
             if col.visible is not None:
-                assert col.placeholder_width > 0, \
-                    f"Column '{col.id}' has visible gate but placeholder_width={col.placeholder_width}"
+                assert col.placeholder_width >= 0, \
+                    f"Column '{col.id}' has negative placeholder_width={col.placeholder_width}"
 
     def test_columns_with_visible_gate(self):
         """Known columns should have visible gates."""

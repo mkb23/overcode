@@ -237,7 +237,8 @@ class TestModalNavigation:
         # Toggle should set all ON (because state is "none").
         modal._toggle_current()
         from overcode.summary_columns import SUMMARY_COLUMNS
-        time_cols = [c for c in SUMMARY_COLUMNS if c.group == "time"]
+        # CLI-only synthetic columns are excluded from the configurator
+        time_cols = [c for c in SUMMARY_COLUMNS if c.group == "time" and not c.cli_only]
         for col in time_cols:
             assert modal.overrides.get(col.id) is True
         # Toggle again — all are now on, so should turn all OFF

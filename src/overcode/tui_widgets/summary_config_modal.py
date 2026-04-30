@@ -20,10 +20,14 @@ from ..summary_columns import SUMMARY_COLUMNS, SummaryColumn, resolve_column_vis
 from .modal_base import ModalBase
 
 
-# Build group -> columns mapping
+# Build group -> columns mapping. Excludes CLI-only synthetic columns —
+# they never render in the TUI and aren't user-togglable, so surfacing
+# them in the configurator is just noise.
 def _columns_by_group() -> Dict[str, List[SummaryColumn]]:
     result: Dict[str, List[SummaryColumn]] = {}
     for col in SUMMARY_COLUMNS:
+        if col.cli_only:
+            continue
         result.setdefault(col.group, []).append(col)
     return result
 

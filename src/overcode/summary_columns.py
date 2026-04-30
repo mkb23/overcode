@@ -245,6 +245,7 @@ class SummaryColumn:
     visible: Optional[Callable[[ColumnContext], bool]] = None  # App-level visibility gate
     header: str = ""  # Short header label for column header row (e.g., "UPT", "TOK")
     name: str = ""  # Human-readable display name for config modal
+    cli_only: bool = False  # True for synthetic aggregate lines used only by the CLI
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +964,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state,
                   header="ST", name="Time in State"),
     SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
-                  visible=lambda ctx: ctx.any_is_sleeping, placeholder_width=9, header="SLP", name="Sleep Countdown"),
+                  visible=lambda ctx: ctx.any_is_sleeping, header="SLP", name="Sleep Countdown"),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand"),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
@@ -995,7 +996,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="ACT", name="Active %"),
     # Synthetic CLI-only: combined time line
     SummaryColumn(id="time_combined", group="time", detail_levels=set(), render=lambda ctx: None,
-                  label="Time", render_plain=render_time_plain),
+                  label="Time", render_plain=render_time_plain, cli_only=True),
 
     # LLM usage group — TOK, ENRG, $, BDG, SUB$ (energy before cost for readability)
     SummaryColumn(id="token_count", group="llm_usage", detail_levels=ALL, render=render_token_count,
@@ -1039,10 +1040,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="CH", name="Child Count"),
     # Synthetic CLI-only: combined work + interactions line
     SummaryColumn(id="work_combined", group="time", detail_levels=set(), render=lambda ctx: None,
-                  label="Work", render_plain=render_work_plain),
+                  label="Work", render_plain=render_work_plain, cli_only=True),
     # Synthetic CLI-only: combined agents line
     SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,
-                  label="Agents", render_plain=render_agents_plain),
+                  label="Agents", render_plain=render_agents_plain, cli_only=True),
 
     # Supervision group
     SummaryColumn(id="permission_mode", group="supervision", detail_levels=ALL, render=render_permission_mode,
