@@ -657,7 +657,7 @@ def read_session_file_stats(
         defaults = {
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None,
+            "current_context_tokens": 0, "model": None, "provider": None,
         }
         return defaults, []
 
@@ -668,7 +668,7 @@ def read_session_file_stats(
         defaults = {
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None,
+            "current_context_tokens": 0, "model": None, "provider": None,
         }
         return defaults, []
 
@@ -694,7 +694,7 @@ def read_session_stats_from_content(
         defaults = {
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None,
+            "current_context_tokens": 0, "model": None, "provider": None,
         }
         return defaults, []
 
