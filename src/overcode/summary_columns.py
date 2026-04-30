@@ -1025,8 +1025,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   visible=lambda ctx: ctx.any_has_provider,
                   placeholder_width=3, header="PRV", name="Provider"),
 
-    # Performance group
-    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
+    # Median work time (folded into Time group — configurator groups by
+    # col.group, render order preserved by this column's position)
+    SummaryColumn(id="median_work_time", group="time", detail_levels=MED_PLUS, render=render_median_work_time,
                   header="MED", name="Median Work Time"),
 
     # Subprocesses group
@@ -1037,7 +1038,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
                   header="CH", name="Child Count"),
     # Synthetic CLI-only: combined work + interactions line
-    SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
+    SummaryColumn(id="work_combined", group="time", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain),
     # Synthetic CLI-only: combined agents line
     SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,

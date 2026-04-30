@@ -1,7 +1,14 @@
 """
 Summary line group definitions for the TUI.
 
-Defines which fields belong to each group and their default visibility.
+Group membership is declared per-column on SummaryColumn.group in
+summary_columns.py. This file only defines the group *metadata* (display
+name, default visibility, identity flag) and the group *ordering* used by
+the column configurator.
+
+Group ordering here matches the first-appearance order of each group in
+SUMMARY_COLUMNS, so the configurator lists groups in the same order the
+TUI renders them.
 """
 
 from dataclasses import dataclass
@@ -14,74 +21,21 @@ class SummaryGroup:
 
     id: str
     name: str
-    fields: List[str]
     default_enabled: bool = True
     always_visible: bool = False  # identity group is always visible
 
 
-# Group definitions - order matters for display in configurator
+# Group ordering — mirrors SUMMARY_COLUMNS first-appearance order.
 SUMMARY_GROUPS: List[SummaryGroup] = [
-    SummaryGroup(
-        id="identity",
-        name="Identity",
-        fields=["status_symbol", "agent_name", "expand_icon", "unvisited_alert"],
-        default_enabled=True,
-        always_visible=True,  # Cannot be toggled off
-    ),
-    SummaryGroup(
-        id="sisters",
-        name="Sisters",
-        fields=["host"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="time",
-        name="Time",
-        fields=["time_in_state", "sleep_countdown", "uptime", "running_time", "stalled_time", "sleep_time", "active_pct"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="llm_usage",
-        name="Budget",
-        fields=["token_count", "cost", "budget"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="context",
-        name="Context",
-        fields=["context_usage"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="git",
-        name="Git",
-        fields=["repo_branch", "files_changed", "insertions", "deletions", "pr_number"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="supervision",
-        name="Supervision",
-        fields=["permission_mode", "agent_teams", "wrapper", "allowed_tools", "loaded_skills", "available_skills", "enhanced_context", "human_count", "robot_count", "standing_orders", "heartbeat"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="priority",
-        name="Priority",
-        fields=["agent_value", "priority_chevrons"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="performance",
-        name="Performance",
-        fields=["median_work_time"],
-        default_enabled=True,
-    ),
-    SummaryGroup(
-        id="subprocesses",
-        name="Subprocesses",
-        fields=["subagent_count", "bash_count"],
-        default_enabled=True,
-    ),
+    SummaryGroup(id="identity", name="Identity", always_visible=True),
+    SummaryGroup(id="sisters", name="Sisters"),
+    SummaryGroup(id="git", name="Git"),
+    SummaryGroup(id="time", name="Time"),
+    SummaryGroup(id="llm_usage", name="Budget"),
+    SummaryGroup(id="context", name="Context"),
+    SummaryGroup(id="subprocesses", name="Subprocesses"),
+    SummaryGroup(id="supervision", name="Supervision"),
+    SummaryGroup(id="priority", name="Priority"),
 ]
 
 

@@ -17,15 +17,32 @@ class TestSummaryGroups:
 
     def test_summary_groups_structure(self):
         """Test that SUMMARY_GROUPS has expected structure."""
-        assert len(SUMMARY_GROUPS) == 10  # identity, sisters, time, llm_usage, context, git, supervision, priority, performance, subprocesses
+        # identity, sisters, git, time, llm_usage, context, subprocesses,
+        # supervision, priority — performance folded into time
+        assert len(SUMMARY_GROUPS) == 9
 
-        # All groups should have required fields
         for group in SUMMARY_GROUPS:
             assert isinstance(group, SummaryGroup)
             assert group.id
             assert group.name
-            assert isinstance(group.fields, list)
-            assert len(group.fields) > 0
+
+    def test_group_order_matches_render_order(self):
+        """Configurator group order should match first-appearance in SUMMARY_COLUMNS."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        render_order: list[str] = []
+        for col in SUMMARY_COLUMNS:
+            if col.group not in render_order:
+                render_order.append(col.group)
+        configurator_order = [g.id for g in SUMMARY_GROUPS]
+        assert configurator_order == render_order
+
+    def test_every_column_group_is_defined(self):
+        """Every SummaryColumn.group must resolve to a SummaryGroup."""
+        from overcode.summary_columns import SUMMARY_COLUMNS
+        for col in SUMMARY_COLUMNS:
+            assert col.group in SUMMARY_GROUPS_BY_ID, (
+                f"Column {col.id} references unknown group {col.group!r}"
+            )
 
     def test_identity_group_always_visible(self):
         """Test that identity group is always visible."""
@@ -35,7 +52,7 @@ class TestSummaryGroups:
     def test_other_groups_toggleable(self):
         """Test that non-identity groups are toggleable."""
         toggleable = get_toggleable_groups()
-        assert len(toggleable) == 9  # All except identity
+        assert len(toggleable) == len(SUMMARY_GROUPS) - 1  # All except identity
 
         for group in toggleable:
             assert group.always_visible is False
@@ -49,7 +66,7 @@ class TestSummaryGroups:
         assert "identity" not in defaults
 
         # Should include all toggleable groups
-        assert len(defaults) == 9
+        assert len(defaults) == len(SUMMARY_GROUPS) - 1
 
         # All should be enabled by default
         for group_id, enabled in defaults.items():
