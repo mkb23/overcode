@@ -128,6 +128,10 @@ class SessionDaemonState:
     wrapper: Optional[str] = None          # Wrapper script path, or None
     sandbox_enabled: Optional[bool] = None  # /sandbox live state, None = unknown
 
+    # Resource usage (summed across the claude process tree)
+    cpu_percent: float = 0.0
+    rss_bytes: int = 0
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)

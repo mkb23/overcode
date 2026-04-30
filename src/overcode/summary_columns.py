@@ -210,6 +210,10 @@ class ColumnContext:
     # Provider
     any_has_provider: bool = False  # True if any agent uses non-web provider
 
+    # Resource usage (set when at least one agent has a non-zero reading)
+    any_has_cpu: bool = False
+    any_has_ram: bool = False
+
     # Sister integration (#245)
     source_host: str = ""
     is_remote: bool = False
@@ -523,6 +527,65 @@ def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 render_median_work_time = _make_simple_render("median_work", format_duration, " ⏱{v:>5}", "bold blue")
+
+
+def _format_rss(rss_bytes: int) -> str:
+    """Format resident-set-size as a short human string (e.g. 842M, 1.4G)."""
+    if rss_bytes <= 0:
+        return "    -"
+    mib = rss_bytes / (1024 * 1024)
+    if mib < 1024:
+        return f"{mib:>4.0f}M"
+    return f"{mib / 1024:>4.1f}G"
+
+
+def render_cpu_pct(ctx: ColumnContext) -> ColumnOutput:
+    """CPU % for the claude process tree. >100 = multi-core. Auto-hides
+    via visible=any_has_cpu."""
+    cpu = getattr(ctx.session, 'cpu_percent', 0.0) or 0.0
+    if cpu < 1.0:
+        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    if cpu >= 200.0:
+        style = ctx.mono(f"bold red{ctx.bg}", "bold")
+    elif cpu >= 100.0:
+        style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+    elif cpu >= 50.0:
+        style = ctx.mono(f"bold{ctx.bg}", "bold")
+    else:
+        style = ctx.mono(f"dim{ctx.bg}", "dim")
+    return [(f" {cpu:>4.0f}%", style)]
+
+
+def render_cpu_pct_plain(ctx: ColumnContext) -> Optional[str]:
+    cpu = getattr(ctx.session, 'cpu_percent', 0.0) or 0.0
+    if cpu < 1.0:
+        return None
+    return f"{cpu:.0f}%"
+
+
+def render_ram(ctx: ColumnContext) -> ColumnOutput:
+    """Resident memory for the claude process tree, human-readable."""
+    rss = getattr(ctx.session, 'rss_bytes', 0) or 0
+    if rss <= 0:
+        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    # Colour heavy consumers (>4 GB) for parity with CPU highlighting.
+    gib = rss / (1024 * 1024 * 1024)
+    if gib >= 8.0:
+        style = ctx.mono(f"bold red{ctx.bg}", "bold")
+    elif gib >= 4.0:
+        style = ctx.mono(f"bold yellow{ctx.bg}", "bold")
+    elif gib >= 1.0:
+        style = ctx.mono(f"bold{ctx.bg}", "bold")
+    else:
+        style = ctx.mono(f"dim{ctx.bg}", "dim")
+    return [(f" {_format_rss(rss)}", style)]
+
+
+def render_ram_plain(ctx: ColumnContext) -> Optional[str]:
+    rss = getattr(ctx.session, 'rss_bytes', 0) or 0
+    if rss <= 0:
+        return None
+    return _format_rss(rss).strip()
 
 
 def render_subagent_count(ctx: ColumnContext) -> ColumnOutput:
@@ -1026,10 +1089,17 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   visible=lambda ctx: ctx.any_has_provider,
                   placeholder_width=3, header="PRV", name="Provider"),
 
-    # Median work time (folded into Time group — configurator groups by
-    # col.group, render order preserved by this column's position)
-    SummaryColumn(id="median_work_time", group="time", detail_levels=MED_PLUS, render=render_median_work_time,
+    # Performance group — median work, CPU, RAM
+    SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
                   header="MED", name="Median Work Time"),
+    SummaryColumn(id="cpu_pct", group="performance", detail_levels=HIGH_PLUS, render=render_cpu_pct,
+                  label="CPU", render_plain=render_cpu_pct_plain,
+                  visible=lambda ctx: ctx.any_has_cpu,
+                  placeholder_width=6, header="CPU", name="CPU %"),
+    SummaryColumn(id="ram", group="performance", detail_levels=HIGH_PLUS, render=render_ram,
+                  label="RAM", render_plain=render_ram_plain,
+                  visible=lambda ctx: ctx.any_has_ram,
+                  placeholder_width=6, header="RAM", name="Memory (RSS)"),
 
     # Subprocesses group
     SummaryColumn(id="subagent_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_subagent_count,
@@ -1039,7 +1109,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
                   header="CH", name="Child Count"),
     # Synthetic CLI-only: combined work + interactions line
-    SummaryColumn(id="work_combined", group="time", detail_levels=set(), render=lambda ctx: None,
+    SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain, cli_only=True),
     # Synthetic CLI-only: combined agents line
     SummaryColumn(id="agents_combined", group="subprocesses", detail_levels=set(), render=lambda ctx: None,
@@ -1090,6 +1160,7 @@ def build_cli_context(
     pr_number: Optional[int] = None, any_has_pr: bool = False,
     any_has_model: bool = False,
     any_has_provider: bool = False,
+    any_has_cpu: bool = False, any_has_ram: bool = False,
     monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
@@ -1164,6 +1235,8 @@ def build_cli_context(
         model=getattr(session, 'model', '') or '',
         any_has_model=any_has_model,
         any_has_provider=any_has_provider,
+        any_has_cpu=any_has_cpu,
+        any_has_ram=any_has_ram,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
         has_sisters=has_sisters,

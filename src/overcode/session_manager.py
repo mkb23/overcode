@@ -142,6 +142,11 @@ class Session:
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
     sandbox_enabled: Optional[bool] = None  # Live /sandbox state, None = unknown
 
+    # Resource usage (summed over the claude process tree).
+    # Updated each daemon tick by _sync_process_resources.
+    cpu_percent: float = 0.0  # Sum of per-CPU %; >100 means multi-core
+    rss_bytes: int = 0        # Resident set size in bytes
+
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
 

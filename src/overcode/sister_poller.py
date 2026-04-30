@@ -289,6 +289,9 @@ def _agent_to_session(
         # Wrapper/sandbox badges (#437, #451)
         wrapper=agent.get("wrapper"),
         sandbox_enabled=agent.get("sandbox_enabled"),
+        # Resource usage forwarded from remote daemon
+        cpu_percent=float(agent.get("cpu_percent", 0.0) or 0.0),
+        rss_bytes=int(agent.get("rss_bytes", 0) or 0),
         # Sister metadata
         is_remote=True,
         source_host=host_name,

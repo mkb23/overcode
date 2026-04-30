@@ -73,6 +73,8 @@ class SessionSummary(Static, can_focus=True):
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
+        self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
+        self.any_has_ram: bool = False      # True if any agent has a non-zero RAM reading
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
@@ -357,6 +359,9 @@ class SessionSummary(Static, can_focus=True):
             any_has_model=self.any_has_model,
             # Provider
             any_has_provider=self.any_has_provider,
+            # Resource usage (CPU / RAM)
+            any_has_cpu=self.any_has_cpu,
+            any_has_ram=self.any_has_ram,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

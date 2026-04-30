@@ -17,9 +17,9 @@ class TestSummaryGroups:
 
     def test_summary_groups_structure(self):
         """Test that SUMMARY_GROUPS has expected structure."""
-        # identity, sisters, git, time, llm_usage, context, subprocesses,
-        # supervision, priority — performance folded into time
-        assert len(SUMMARY_GROUPS) == 9
+        # identity, sisters, git, time, llm_usage, context, performance,
+        # subprocesses, supervision, priority
+        assert len(SUMMARY_GROUPS) == 10
 
         for group in SUMMARY_GROUPS:
             assert isinstance(group, SummaryGroup)

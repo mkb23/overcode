@@ -1808,6 +1808,16 @@ class SupervisorTUI(
             for s in self.sessions
         )
 
+        # Check if any agent has a non-zero CPU / RAM reading
+        any_has_cpu = any(
+            (getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0
+            for s in self.sessions
+        )
+        any_has_ram = any(
+            (getattr(s, 'rss_bytes', 0) or 0) > 0
+            for s in self.sessions
+        )
+
         # Check if any agent is busy_sleeping (#289)
         any_is_sleeping = any(
             getattr(w, 'detected_status', '') == "busy_sleeping"
@@ -1870,6 +1880,8 @@ class SupervisorTUI(
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
                     widget.any_has_provider = any_has_provider
+                    widget.any_has_cpu = any_has_cpu
+                    widget.any_has_ram = any_has_ram
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
                     widget.any_has_subtree_cost = any_has_subtree_cost

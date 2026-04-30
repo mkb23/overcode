@@ -113,6 +113,8 @@ def _make_session(**overrides):
         cost_budget_usd=0.0,
         allowed_tools=None,
         pr_number=None,
+        cpu_percent=0.0,
+        rss_bytes=0,
         stats=_make_stats(),
     )
     defaults.update(overrides)

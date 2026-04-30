@@ -326,6 +326,12 @@ class MonitorDaemon:
         self._last_sandbox_sync: Optional[datetime] = None
         self._sandbox_sync_interval = 15  # seconds
 
+        # Per-agent CPU / RSS sampling (from `ps`, summed over claude process tree).
+        # Slow enough to avoid adding load, fast enough to flag runaway agents
+        # that are dominating the machine.
+        self._last_resources_sync: Optional[datetime] = None
+        self._resources_sync_interval = 5  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -497,6 +503,9 @@ class MonitorDaemon:
             # Wrapper/sandbox badges (#437, #451)
             wrapper=session.wrapper,
             sandbox_enabled=session.sandbox_enabled,
+            # Resource usage (summed over claude process tree)
+            cpu_percent=session.cpu_percent,
+            rss_bytes=session.rss_bytes,
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -1125,6 +1134,7 @@ class MonitorDaemon:
         self._sync_session_stats(sessions, now)
         self._sync_available_skills(sessions, now)
         self._sync_sandbox_state(sessions, now)
+        self._sync_process_resources(sessions, now)
         self._dispatch_heartbeats(sessions)
         session_states, all_waiting = self._detect_and_enrich(sessions, now)
         self._cleanup_stale(sessions)
@@ -1159,6 +1169,59 @@ class MonitorDaemon:
                 if available != session.available_skills:
                     self.session_manager.update_session(session.id, available_skills=available)
             self._last_skills_sync = now
+
+    def _sync_process_resources(self, sessions: list, now: datetime) -> None:
+        """Sample CPU and RSS for each agent's claude process tree.
+
+        One batched `ps` call populates cpu_percent (sum of per-CPU %) and
+        rss_bytes (sum of resident set size) across the claude process and
+        every descendant. Tools spawned under a bash call (e.g. a runaway
+        `tsc --watch`) therefore show up on the parent agent's row.
+        """
+        if not should_sync_stats(
+            self._last_resources_sync, now, self._resources_sync_interval
+        ):
+            return
+        from .doctor import find_claude_process
+        from .implementations import RealTmux
+        from .process_resources import (
+            snapshot_processes, build_children_index, aggregate_tree,
+        )
+
+        snapshot = snapshot_processes()
+        if not snapshot:
+            self._last_resources_sync = now
+            return
+        # build_children_index walks the whole snapshot, so the argv_by_pid
+        # shape doctor expects is derived on the fly.
+        children = build_children_index(snapshot)
+        argv_by_pid = {pid: info.argv for pid, info in snapshot.items()}
+        tmux = RealTmux()
+        for session in sessions:
+            if getattr(session, "is_remote", False):
+                continue
+            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
+            if pane_pid is None:
+                continue
+            claude_pid, _ = find_claude_process(pane_pid, children, argv_by_pid)
+            if claude_pid is None:
+                # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
+                if session.cpu_percent or session.rss_bytes:
+                    self.session_manager.update_session(
+                        session.id, cpu_percent=0.0, rss_bytes=0,
+                    )
+                continue
+            cpu, rss = aggregate_tree(claude_pid, snapshot, children)
+            # Only write when the value moved meaningfully — avoids a JSON
+            # write every 5s for an idle agent whose CPU is drifting by 0.1%.
+            if (
+                abs(cpu - session.cpu_percent) >= 1.0
+                or abs(rss - session.rss_bytes) >= 1024 * 1024  # 1 MiB
+            ):
+                self.session_manager.update_session(
+                    session.id, cpu_percent=cpu, rss_bytes=rss,
+                )
+        self._last_resources_sync = now
 
     def _sync_sandbox_state(self, sessions: list, now: datetime) -> None:
         """Detect /sandbox toggle state from claude process listeners (#451)."""

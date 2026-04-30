@@ -33,6 +33,7 @@ SUMMARY_GROUPS: List[SummaryGroup] = [
     SummaryGroup(id="time", name="Time"),
     SummaryGroup(id="llm_usage", name="Budget"),
     SummaryGroup(id="context", name="Context"),
+    SummaryGroup(id="performance", name="Performance"),
     SummaryGroup(id="subprocesses", name="Subprocesses"),
     SummaryGroup(id="supervision", name="Supervision"),
     SummaryGroup(id="priority", name="Priority"),
