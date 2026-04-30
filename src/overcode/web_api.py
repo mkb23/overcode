@@ -275,6 +275,9 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         # Skills (#252)
         "available_skills": s.available_skills,
         "loaded_skills": s.loaded_skills,
+        # Wrapper/sandbox badges (#437, #451)
+        "wrapper": getattr(s, "wrapper", None),
+        "sandbox_enabled": getattr(s, "sandbox_enabled", None),
     }
 
 

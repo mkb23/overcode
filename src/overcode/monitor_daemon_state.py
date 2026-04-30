@@ -124,6 +124,10 @@ class SessionDaemonState:
     available_skills: List[str] = field(default_factory=list)  # All skills in ~/.claude/skills
     loaded_skills: List[str] = field(default_factory=list)     # Skills currently loaded by Claude
 
+    # Wrapper/sandbox badges (#437, #451)
+    wrapper: Optional[str] = None          # Wrapper script path, or None
+    sandbox_enabled: Optional[bool] = None  # /sandbox live state, None = unknown
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)

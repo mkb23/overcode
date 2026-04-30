@@ -95,6 +95,28 @@ class TestAgentToSession:
         session = _agent_to_session(agent, "host")
         assert session.cost_budget_usd == 5.0
 
+    def test_wrapper_and_sandbox_round_trip(self):
+        agent = {
+            "name": "a", "status": "running",
+            "wrapper": "/path/to/devcontainer.sh",
+            "sandbox_enabled": True,
+        }
+        session = _agent_to_session(agent, "host")
+        assert session.wrapper == "/path/to/devcontainer.sh"
+        assert session.sandbox_enabled is True
+
+    def test_sandbox_absent_defaults_to_none(self):
+        agent = {"name": "a", "status": "running"}
+        session = _agent_to_session(agent, "host")
+        assert session.wrapper is None
+        assert session.sandbox_enabled is None
+
+    def test_sandbox_off_round_trip(self):
+        # Explicit False must round-trip as False (not None/unknown).
+        agent = {"name": "a", "status": "running", "sandbox_enabled": False}
+        session = _agent_to_session(agent, "host")
+        assert session.sandbox_enabled is False
+
     def test_done_status_passes_through(self):
         """Done agents from sisters should be filterable by hide-done (#D key)."""
         agent = {"name": "finished", "status": "done"}

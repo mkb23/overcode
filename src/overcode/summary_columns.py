@@ -77,6 +77,7 @@ _WRAPPER_EMOJI_DEFAULTS: dict[str, str] = {
     "passthrough": "🔗",
 }
 WRAPPER_EMOJI_DEFAULT = "🎁"  # Fallback for unknown wrappers
+SANDBOX_EMOJI = "🏖️"  # Badge when Claude /sandbox is detected as ON (#451)
 
 
 def get_skill_emoji() -> dict[str, str]:
@@ -611,20 +612,29 @@ def render_enhanced_context(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_wrapper(ctx: ColumnContext) -> ColumnOutput:
-    """Wrapper name with an emoji badge. None when no wrapper is set."""
+    """Wrapper badge + sandbox badge. None when neither is active."""
     wrapper = ctx.session.wrapper
-    if not wrapper:
+    sandbox_on = getattr(ctx.session, "sandbox_enabled", None) is True
+    if not wrapper and not sandbox_on:
         return None
-    name = _wrapper_name(wrapper)
-    emoji = get_wrapper_emoji().get(name, WRAPPER_EMOJI_DEFAULT)
-    return [(f" {ctx.e(emoji)}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+    badges = ""
+    if wrapper:
+        name = _wrapper_name(wrapper)
+        badges += ctx.e(get_wrapper_emoji().get(name, WRAPPER_EMOJI_DEFAULT))
+    if sandbox_on:
+        badges += ctx.e(SANDBOX_EMOJI)
+    return [(f" {badges}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
 
 
 def render_wrapper_plain(ctx: ColumnContext) -> Optional[str]:
     wrapper = ctx.session.wrapper
-    if not wrapper:
-        return None
-    return _wrapper_name(wrapper)
+    sandbox_on = getattr(ctx.session, "sandbox_enabled", None) is True
+    parts = []
+    if wrapper:
+        parts.append(_wrapper_name(wrapper))
+    if sandbox_on:
+        parts.append("sandbox")
+    return "+".join(parts) if parts else None
 
 
 def render_human_count(ctx: ColumnContext) -> ColumnOutput:

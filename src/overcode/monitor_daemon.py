@@ -322,6 +322,10 @@ class MonitorDaemon:
         self._last_skills_sync: Optional[datetime] = None
         self._skills_sync_interval = 60  # seconds
 
+        # Sandbox state sync (#451) — detect /sandbox toggle via claude PID listeners
+        self._last_sandbox_sync: Optional[datetime] = None
+        self._sandbox_sync_interval = 15  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -490,6 +494,9 @@ class MonitorDaemon:
             # Skills (#252)
             available_skills=session.available_skills,
             loaded_skills=session.loaded_skills,
+            # Wrapper/sandbox badges (#437, #451)
+            wrapper=session.wrapper,
+            sandbox_enabled=session.sandbox_enabled,
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -1117,6 +1124,7 @@ class MonitorDaemon:
         self._sync_session_ids(sessions, now)
         self._sync_session_stats(sessions, now)
         self._sync_available_skills(sessions, now)
+        self._sync_sandbox_state(sessions, now)
         self._dispatch_heartbeats(sessions)
         session_states, all_waiting = self._detect_and_enrich(sessions, now)
         self._cleanup_stale(sessions)
@@ -1151,6 +1159,40 @@ class MonitorDaemon:
                 if available != session.available_skills:
                     self.session_manager.update_session(session.id, available_skills=available)
             self._last_skills_sync = now
+
+    def _sync_sandbox_state(self, sessions: list, now: datetime) -> None:
+        """Detect /sandbox toggle state from claude process listeners (#451)."""
+        if not should_sync_stats(self._last_sandbox_sync, now, self._sandbox_sync_interval):
+            return
+        from .doctor import _snapshot_process_table, _build_child_index, find_claude_process
+        from .implementations import RealTmux
+        from .sandbox_detect import detect_sandbox_states
+
+        rows = _snapshot_process_table()
+        if not rows:
+            self._last_sandbox_sync = now
+            return
+        children, argv_by_pid = _build_child_index(rows)
+        tmux = RealTmux()
+        # Gather all local claude PIDs with one lsof call (#451 optimization).
+        session_pids: dict = {}  # session.id -> claude_pid
+        for session in sessions:
+            if getattr(session, "is_remote", False):
+                continue
+            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
+            if pane_pid is None:
+                continue
+            claude_pid, _ = find_claude_process(pane_pid, children, argv_by_pid)
+            if claude_pid is not None:
+                session_pids[session.id] = claude_pid
+        states = detect_sandbox_states(session_pids.values())
+        for session in sessions:
+            if session.id not in session_pids:
+                continue
+            detected = states.get(session_pids[session.id])
+            if detected != session.sandbox_enabled:
+                self.session_manager.update_session(session.id, sandbox_enabled=detected)
+        self._last_sandbox_sync = now
 
     def _dispatch_heartbeats(self, sessions: list) -> None:
         """Send heartbeats before status detection (#171)."""

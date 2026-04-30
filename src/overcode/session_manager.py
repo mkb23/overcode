@@ -140,6 +140,7 @@ class Session:
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus", "haiku", or full name)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
+    sandbox_enabled: Optional[bool] = None  # Live /sandbox state, None = unknown
 
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)

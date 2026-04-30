@@ -416,6 +416,31 @@ class TestBuildAgentInfo:
         assert result["tokens_raw"] == 7000
         assert result["cost_usd"] == 0.50
 
+    def test_exposes_wrapper_and_sandbox_flags(self):
+        """wrapper and sandbox_enabled must be in the API payload for sisters (#451)."""
+        from overcode.web_api import _build_agent_info
+        from overcode.monitor_daemon_state import SessionDaemonState
+        from datetime import datetime
+
+        session = SessionDaemonState(
+            session_id="t", name="a", current_status="running",
+            wrapper="/path/to/devcontainer.sh",
+            sandbox_enabled=True,
+        )
+        result = _build_agent_info(session, datetime.now())
+        assert result["wrapper"] == "/path/to/devcontainer.sh"
+        assert result["sandbox_enabled"] is True
+
+    def test_sandbox_unknown_serializes_as_none(self):
+        from overcode.web_api import _build_agent_info
+        from overcode.monitor_daemon_state import SessionDaemonState
+        from datetime import datetime
+
+        session = SessionDaemonState(session_id="t", name="a", current_status="running")
+        result = _build_agent_info(session, datetime.now())
+        assert result["wrapper"] is None
+        assert result["sandbox_enabled"] is None
+
     def test_calculates_percent_active(self):
         """Should calculate percent active correctly."""
         from overcode.web_api import _build_agent_info

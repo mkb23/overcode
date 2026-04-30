@@ -804,6 +804,35 @@ class TestRenderWrapper:
         ctx = _make_ctx(session=session)
         assert render_wrapper_plain(ctx) == "mywrap"
 
+    def test_sandbox_only_shows_beach(self):
+        session = _make_session(wrapper=None, sandbox_enabled=True)
+        ctx = _make_ctx(session=session)
+        result = render_wrapper(ctx)
+        assert result is not None
+        assert "🏖" in result[0][0]
+        assert render_wrapper_plain(ctx) == "sandbox"
+
+    def test_sandbox_off_hides_column(self):
+        session = _make_session(wrapper=None, sandbox_enabled=False)
+        ctx = _make_ctx(session=session)
+        assert render_wrapper(ctx) is None
+        assert render_wrapper_plain(ctx) is None
+
+    def test_sandbox_unknown_hides_column(self):
+        session = _make_session(wrapper=None, sandbox_enabled=None)
+        ctx = _make_ctx(session=session)
+        assert render_wrapper(ctx) is None
+
+    def test_wrapper_plus_sandbox_shows_both(self):
+        session = _make_session(
+            wrapper="/path/to/devcontainer.sh", sandbox_enabled=True,
+        )
+        ctx = _make_ctx(session=session)
+        result = render_wrapper(ctx)
+        assert "🐳" in result[0][0]
+        assert "🏖" in result[0][0]
+        assert render_wrapper_plain(ctx) == "devcontainer+sandbox"
+
 
 class TestRenderHumanCount:
     def test_no_stats_shows_placeholder(self):
