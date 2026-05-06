@@ -486,6 +486,8 @@ class MonitorDaemon:
             provider=session.provider,
             # Tags (#356)
             tags=list(session.tags),
+            # Focal repo (#170)
+            focal_repo_subdir=getattr(session, 'focal_repo_subdir', None),
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),

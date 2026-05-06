@@ -235,6 +235,25 @@ def truncate_name(name: str, max_len: int = 14) -> str:
     return name[:max_len].ljust(max_len)
 
 
+def effective_git_directory(obj) -> Optional[str]:
+    """Return the directory git stat helpers should sample for ``obj`` (#170).
+
+    ``obj`` is anything carrying ``start_directory`` and (optionally)
+    ``focal_repo_subdir`` attributes — i.e. a Session or SessionDaemonState.
+    When focal is set and resolves to an existing subdir, returns the
+    joined path; otherwise returns ``start_directory`` (which may be None).
+    """
+    start = getattr(obj, 'start_directory', None)
+    if not start:
+        return None
+    focal = getattr(obj, 'focal_repo_subdir', None)
+    if not focal:
+        return start
+    import os
+    candidate = os.path.join(start, focal)
+    return candidate if os.path.isdir(candidate) else start
+
+
 def get_git_untracked_count(directory: str) -> Optional[int]:
     """Count untracked files in a git repository (respecting .gitignore).
 

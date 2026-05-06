@@ -1237,6 +1237,102 @@ class TestSessionHierarchy:
         # Parent budget unchanged
         assert manager.get_session(root.id).cost_budget_usd == pytest.approx(8.0)
 
+    # --- focal repo (#170) --------------------------------------------------
+
+    def _make_workspace(self, tmp_path):
+        """Create a workspace dir with two child git repos and one non-repo dir."""
+        import subprocess
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        for sub in ("alpha", "beta"):
+            d = ws / sub
+            d.mkdir()
+            subprocess.run(["git", "init"], cwd=d, capture_output=True)
+        (ws / "notes").mkdir()  # non-repo subdir, should be ignored
+        return ws
+
+    def test_detect_focal_candidates_returns_subrepos(self, tmp_path):
+        ws = self._make_workspace(tmp_path)
+        result = SessionManager.detect_focal_repo_candidates(str(ws))
+        assert result == ["alpha", "beta"]
+
+    def test_detect_focal_candidates_empty_when_root_is_repo(self, tmp_path):
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        # Sub-repo present but root is a repo → still single-repo from agent's POV
+        (tmp_path / "child").mkdir()
+        subprocess.run(["git", "init"], cwd=tmp_path / "child", capture_output=True)
+        assert SessionManager.detect_focal_repo_candidates(str(tmp_path)) == []
+
+    def test_detect_focal_candidates_handles_missing_dir(self):
+        assert SessionManager.detect_focal_repo_candidates(None) == []
+        assert SessionManager.detect_focal_repo_candidates("/nonexistent/zzz") == []
+
+    def test_resolve_focal_directory(self, tmp_path):
+        ws = self._make_workspace(tmp_path)
+        assert SessionManager.resolve_focal_directory(str(ws), None) == str(ws)
+        assert SessionManager.resolve_focal_directory(str(ws), "alpha") == str(ws / "alpha")
+        # Bad subdir falls back to root
+        assert SessionManager.resolve_focal_directory(str(ws), "nope") == str(ws)
+
+    def test_set_focal_repo_updates_repo_and_branch(self, tmp_path):
+        ws = self._make_workspace(tmp_path)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(ws),
+        )
+        manager.set_focal_repo(s.id, "alpha")
+        reloaded = manager.get_session(s.id)
+        assert reloaded.focal_repo_subdir == "alpha"
+        # Repo name now matches the focal subdir
+        assert reloaded.repo_name == "alpha"
+
+    def test_set_focal_repo_rejects_unknown(self, tmp_path):
+        ws = self._make_workspace(tmp_path)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(ws),
+        )
+        with pytest.raises(ValueError):
+            manager.set_focal_repo(s.id, "not-a-thing")
+
+    def test_set_focal_repo_rejects_single_repo_workspace(self, tmp_path):
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(tmp_path),
+        )
+        with pytest.raises(ValueError):
+            manager.set_focal_repo(s.id, "anything")
+
+    def test_cycle_focal_repo_wraps_around(self, tmp_path):
+        ws = self._make_workspace(tmp_path)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(ws),
+        )
+        # First cycle from None → first candidate
+        assert manager.cycle_focal_repo(s.id) == "alpha"
+        # Second cycle → next
+        assert manager.cycle_focal_repo(s.id) == "beta"
+        # Third cycle → wraps
+        assert manager.cycle_focal_repo(s.id) == "alpha"
+
+    def test_cycle_focal_repo_noop_for_single_repo(self, tmp_path):
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(tmp_path),
+        )
+        assert manager.cycle_focal_repo(s.id) is None
+
     # --- tags (#356) --------------------------------------------------------
 
     def test_add_tags_normalises_and_dedupes(self, tmp_path):

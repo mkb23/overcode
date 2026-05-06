@@ -69,7 +69,11 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         extract_live_subagent_count,
         extract_auto_accept_mode,
     )
-    from ..tui_helpers import get_git_diff_stats, get_git_untracked_count
+    from ..tui_helpers import (
+        get_git_diff_stats,
+        get_git_untracked_count,
+        effective_git_directory,
+    )
 
     bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
     live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
@@ -86,9 +90,10 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     git_diff = None
     git_untracked = None
     try:
-        if sess.start_directory:
-            git_diff = get_git_diff_stats(sess.start_directory)
-            git_untracked = get_git_untracked_count(sess.start_directory)
+        _gdir = effective_git_directory(sess)
+        if _gdir:
+            git_diff = get_git_diff_stats(_gdir)
+            git_untracked = get_git_untracked_count(_gdir)
     except Exception:
         pass
 
@@ -460,7 +465,7 @@ def list_agents(
     """
     from ..history_reader import get_session_stats
     from ..tui_helpers import (
-        get_status_symbol, get_git_diff_stats, get_git_untracked_count,
+        get_status_symbol, get_git_diff_stats, get_git_untracked_count, effective_git_directory,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import build_cli_context, render_summary_cells, compute_column_widths, pad_and_join_cells, render_header_cells
@@ -593,9 +598,10 @@ def list_agents(
             git_untracked = getattr(sess, 'remote_git_untracked', None)
         else:
             try:
-                if sess.start_directory:
-                    git_diff = get_git_diff_stats(sess.start_directory)
-                    git_untracked = get_git_untracked_count(sess.start_directory)
+                _gdir = effective_git_directory(sess)
+                if _gdir:
+                    git_diff = get_git_diff_stats(_gdir)
+                    git_untracked = get_git_untracked_count(_gdir)
             except Exception:
                 pass
 

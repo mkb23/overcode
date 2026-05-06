@@ -239,8 +239,10 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     from .status_constants import PERMISSIVENESS_EMOJIS
     perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
 
-    git_diff = get_git_diff_stats(s.start_directory) if s.start_directory else None
-    git_untracked = get_git_untracked_count(s.start_directory) if s.start_directory else None
+    from .tui_helpers import effective_git_directory
+    _gdir = effective_git_directory(s)
+    git_diff = get_git_diff_stats(_gdir) if _gdir else None
+    git_untracked = get_git_untracked_count(_gdir) if _gdir else None
 
     return {
         "name": s.name,
@@ -280,6 +282,8 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "loaded_skills": s.loaded_skills,
         # Tags (#356)
         "tags": list(getattr(s, "tags", []) or []),
+        # Focal repo for multi-repo workspaces (#170)
+        "focal_repo_subdir": getattr(s, "focal_repo_subdir", None),
         # Wrapper/sandbox badges (#437, #451)
         "wrapper": getattr(s, "wrapper", None),
         "sandbox_enabled": getattr(s, "sandbox_enabled", None),

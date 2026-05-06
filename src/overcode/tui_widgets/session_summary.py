@@ -23,6 +23,7 @@ from ..tui_helpers import (
     get_status_symbol,
     get_git_diff_stats,
     get_git_untracked_count,
+    effective_git_directory,
     get_summary_content_text,
 )
 from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
@@ -164,9 +165,11 @@ class SessionSummary(Static, can_focus=True):
         if self.session.is_remote:
             git_diff = self.session.remote_git_diff
             git_untracked = self.session.remote_git_untracked
-        elif self.session.start_directory:
-            git_diff = get_git_diff_stats(self.session.start_directory)
-            git_untracked = get_git_untracked_count(self.session.start_directory)
+        else:
+            _gdir = effective_git_directory(self.session)
+            if _gdir:
+                git_diff = get_git_diff_stats(_gdir)
+                git_untracked = get_git_untracked_count(_gdir)
         self.apply_status_no_refresh(
             status, activity, content, claude_stats, git_diff, git_untracked
         )

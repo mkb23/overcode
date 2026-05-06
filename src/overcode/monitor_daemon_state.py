@@ -115,6 +115,11 @@ class SessionDaemonState:
     # User-applied tags for grouping/filtering (#356).
     tags: List[str] = field(default_factory=list)
 
+    # Multi-repo focal subdir (#170). When non-empty, git_diff / branch /
+    # repo_name reads should sample ``start_directory/focal_repo_subdir``
+    # rather than ``start_directory`` directly.
+    focal_repo_subdir: Optional[str] = None
+
     # Last user command (from history.jsonl)
     last_command: Optional[str] = None
 

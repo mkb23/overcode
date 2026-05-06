@@ -155,6 +155,12 @@ class Session:
     # multiple casings of the same logical tag.
     tags: List[str] = field(default_factory=list)
 
+    # Multi-repo focal subdir (#170). When the agent's start_directory is a
+    # workspace containing several sibling git repos, ``focal_repo_subdir``
+    # picks which one repo_name / branch / git_diff / untracked are sampled
+    # from. None means "no multi-repo, use start_directory directly".
+    focal_repo_subdir: Optional[str] = None
+
     # Oversight system - report + timeout for child agents
     oversight_policy: str = "wait"  # wait | fail | timeout
     oversight_timeout_seconds: float = 0.0  # 0 = indefinite
@@ -451,6 +457,61 @@ class SessionManager:
         """
         with self._locked_state() as state:
             update_fn(state)
+
+    @staticmethod
+    def detect_focal_repo_candidates(start_directory: Optional[str]) -> List[str]:
+        """Return one-layer-deep git-repo subdir names under ``start_directory`` (#170).
+
+        Multi-repo workspaces are detected by scanning the immediate
+        children of ``start_directory`` for entries that contain ``.git``.
+        Returns the list of subdir *names* (relative to start_directory),
+        sorted alphabetically.
+
+        If ``start_directory`` is itself a git repo, returns an empty list:
+        the user is in a single-repo situation and there's nothing to cycle.
+        Same for missing / unreadable directories.
+        """
+        if not start_directory:
+            return []
+        try:
+            if not os.path.isdir(start_directory):
+                return []
+            # If start_directory itself is a repo, this is single-repo.
+            if os.path.isdir(os.path.join(start_directory, ".git")) or \
+                    os.path.isfile(os.path.join(start_directory, ".git")):
+                return []
+            candidates: List[str] = []
+            for entry in os.listdir(start_directory):
+                if entry.startswith("."):
+                    continue
+                child = os.path.join(start_directory, entry)
+                if not os.path.isdir(child):
+                    continue
+                git_marker = os.path.join(child, ".git")
+                # Either a directory (normal clone) or a file (worktree / submodule)
+                if os.path.isdir(git_marker) or os.path.isfile(git_marker):
+                    candidates.append(entry)
+            return sorted(candidates)
+        except OSError:
+            return []
+
+    @staticmethod
+    def resolve_focal_directory(
+        start_directory: Optional[str], focal_subdir: Optional[str]
+    ) -> Optional[str]:
+        """Return the effective directory for git-stat reads (#170).
+
+        When ``focal_subdir`` is set and exists under ``start_directory``,
+        returns the joined path. Otherwise falls back to start_directory.
+        """
+        if not start_directory:
+            return None
+        if not focal_subdir:
+            return start_directory
+        candidate = os.path.join(start_directory, focal_subdir)
+        if os.path.isdir(candidate):
+            return candidate
+        return start_directory
 
     def _detect_git_context(self, directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         """Detect git repo and branch from directory"""
@@ -866,6 +927,65 @@ class SessionManager:
         """Check if ancestor_id is an ancestor of descendant_id."""
         chain = self.get_parent_chain(descendant_id)
         return any(s.id == ancestor_id for s in chain)
+
+    def set_focal_repo(self, session_id: str, focal_subdir: Optional[str]) -> Optional[str]:
+        """Set the focal repo subdir for a multi-repo workspace agent (#170).
+
+        - ``focal_subdir=None`` clears the focal (back to start_directory).
+        - Otherwise the subdir must be one of the candidates returned by
+          ``detect_focal_repo_candidates(start_directory)``; an unknown
+          value is rejected with a ``ValueError``.
+
+        Updates the session's ``repo_name`` and ``branch`` to reflect the
+        new effective directory so downstream renders pick it up without
+        plumbing extra context.
+
+        Returns the new focal_subdir (or None on clear), or None if the
+        session is missing.
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return None
+        if focal_subdir is not None:
+            candidates = self.detect_focal_repo_candidates(session.start_directory)
+            if not candidates:
+                raise ValueError(
+                    f"'{session.name}' is a single-repo workspace — nothing to focus."
+                )
+            if focal_subdir not in candidates:
+                raise ValueError(
+                    f"'{focal_subdir}' is not one of the focal candidates: "
+                    f"{', '.join(candidates)}"
+                )
+        new_dir = self.resolve_focal_directory(session.start_directory, focal_subdir)
+        new_repo, new_branch = self._detect_git_context(new_dir)
+        self.update_session(
+            session_id,
+            focal_repo_subdir=focal_subdir,
+            repo_name=new_repo,
+            branch=new_branch,
+        )
+        return focal_subdir
+
+    def cycle_focal_repo(self, session_id: str) -> Optional[str]:
+        """Advance the focal repo to the next candidate (#170).
+
+        Returns the new focal subdir, or None when the agent is single-repo
+        (nothing to cycle). Wraps around at the end of the list. If no
+        focal is currently set, picks the first candidate.
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return None
+        candidates = self.detect_focal_repo_candidates(session.start_directory)
+        if not candidates:
+            return None
+        current = session.focal_repo_subdir
+        if current in candidates:
+            idx = (candidates.index(current) + 1) % len(candidates)
+        else:
+            idx = 0
+        return self.set_focal_repo(session_id, candidates[idx])
 
     def add_tags(self, session_id: str, tags: List[str]) -> List[str]:
         """Add tags to a session (#356).

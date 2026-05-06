@@ -181,6 +181,9 @@ class SupervisorTUI(
         # set of tags so the user can pick one. Press T again with the
         # filter active and pick `(clear)` to remove.
         ("T", "filter_by_tag", "Filter by tag"),
+        # Cycle focal repo for the focused agent (#170). No-op when the
+        # agent's start_directory is a single repo.
+        ("ctrl+r", "cycle_focal_repo", "Cycle focal repo"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
@@ -1387,9 +1390,11 @@ class SupervisorTUI(
                     claude_stats = get_session_stats(session, history_file=history_file)
                     git_diff = None
                     git_untracked = None
-                    if session.start_directory:
-                        git_diff = get_git_diff_stats(session.start_directory)
-                        git_untracked = get_git_untracked_count(session.start_directory)
+                    from .tui_helpers import effective_git_directory
+                    _gdir = effective_git_directory(session)
+                    if _gdir:
+                        git_diff = get_git_diff_stats(_gdir)
+                        git_untracked = get_git_untracked_count(_gdir)
                     return (claude_stats, git_diff, git_untracked)
                 except Exception:
                     return (None, None, None)
@@ -3787,6 +3792,39 @@ class SupervisorTUI(
 
     def on_jump_modal_cancelled(self, message: JumpModal.Cancelled) -> None:
         self._dialog_did_close()
+
+    def action_cycle_focal_repo(self) -> None:
+        """Cycle the focal repo for the focused agent (#170).
+
+        No-op for single-repo workspaces and for remote agents (the focal
+        is owned by the source host's session manager and would need a
+        sister-side control API to mutate).
+        """
+        focused = self._get_focused_widget()
+        if focused is None:
+            return
+        session = focused.session
+        if getattr(session, 'is_remote', False):
+            self.notify(
+                "Cycling focal repo on remote agents isn't supported yet.",
+                severity="warning",
+            )
+            return
+        try:
+            new_focal = self.session_manager.cycle_focal_repo(session.id)
+        except ValueError as e:
+            self.notify(str(e), severity="warning")
+            return
+        if new_focal is None:
+            self.notify(
+                f"'{session.name}' is single-repo — no candidates to cycle.",
+                severity="information",
+            )
+            return
+        # Refresh sessions so the widget picks up the new repo_name/branch
+        # the SessionManager just wrote, then trigger a redraw.
+        self.refresh_sessions()
+        self.notify(f"{session.name} focal repo: {new_focal}", severity="information")
 
     # Throttle TUI heartbeat writes to once per 5 seconds
     _last_heartbeat_write: float = 0.0

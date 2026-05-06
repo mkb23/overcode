@@ -288,6 +288,8 @@ def _agent_to_session(
         loaded_skills=agent.get("loaded_skills", []),
         # Tags (#356)
         tags=list(agent.get("tags", []) or []),
+        # Focal repo for multi-repo workspaces (#170)
+        focal_repo_subdir=agent.get("focal_repo_subdir"),
         # Wrapper/sandbox badges (#437, #451)
         wrapper=agent.get("wrapper"),
         sandbox_enabled=agent.get("sandbox_enabled"),
