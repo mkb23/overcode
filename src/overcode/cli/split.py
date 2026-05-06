@@ -398,14 +398,21 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
             "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
             "'send-keys -M' 'copy-mode -e'",
         )
+        # Wheel-down on the bottom pane forwards a NPage keystroke to the
+        # linked session. The previous implementation dispatched a bare
+        # `send-keys -X -N 3 scroll-down`, which is a copy-mode-only
+        # command — when the user had already scrolled back to the bottom
+        # and the pane had auto-exited copy mode, every subsequent wheel
+        # tick made tmux post "not in a mode" in the status line, often
+        # leaving the inner client looking frozen (#454). NPage is a plain
+        # keystroke: it triggers tmux's default page-down inside copy
+        # mode, and is harmlessly delivered to the agent process when not
+        # in copy mode. Same behaviour for SSH proxy windows, where the
+        # remote tmux interprets NPage on its end.
         _tmux(
             "bind-key", "-n", "WheelDownPane",
             "if-shell", "-F", _in_bottom,
-            # SSH proxy: send NPage to remote (works in copy mode).
-            # Local: send scroll-down in local copy mode.
-            f'if-shell "{_ssh_check}" '
-            f'"send-keys -t {linked_session} NPage" '
-            f'"send-keys -t {linked_session} -X -N 3 scroll-down"',
+            f"send-keys -t {linked_session} NPage",
             "send-keys -M",
         )
 
