@@ -1453,5 +1453,55 @@ class TestReadSessionStatsFromContent:
         assert file_times == content_times
 
 
+class TestSynthesizeRemoteStats:
+    """#271 — verify remote agents get full token breakdown / context % from
+    daemon_state forwarded by the sister API."""
+
+    def _make_remote_session(self, daemon_state):
+        from overcode.session_manager import Session, SessionStats
+        return Session(
+            id="remote:host1:foo",
+            name="foo",
+            tmux_session="",
+            tmux_window="",
+            command=[],
+            start_directory=None,
+            start_time=datetime.now().isoformat(),
+            stats=SessionStats(total_tokens=1000),
+            is_remote=True,
+            remote_daemon_state=daemon_state,
+        )
+
+    def test_forwards_token_breakdown_and_context(self):
+        from overcode.history_reader import synthesize_remote_stats
+        rds = {
+            "input_tokens": 800,
+            "output_tokens": 200,
+            "cache_creation_tokens": 50,
+            "cache_read_tokens": 4000,
+            "current_context_tokens": 12345,
+            "median_work_time": 7.5,
+            "model": "sonnet",
+        }
+        sess = self._make_remote_session(rds)
+        stats = synthesize_remote_stats(sess)
+        assert stats.input_tokens == 800
+        assert stats.output_tokens == 200
+        assert stats.cache_creation_tokens == 50
+        assert stats.cache_read_tokens == 4000
+        assert stats.current_context_tokens == 12345
+        assert stats.model == "sonnet"
+        assert stats.median_work_time == pytest.approx(7.5)
+
+    def test_falls_back_to_zero_when_daemon_state_missing(self):
+        from overcode.history_reader import synthesize_remote_stats
+        sess = self._make_remote_session(None)
+        stats = synthesize_remote_stats(sess)
+        # No daemon_state → tokens fall back to total_tokens via SessionStats
+        assert stats.current_context_tokens == 0
+        assert stats.cache_creation_tokens == 0
+        assert stats.cache_read_tokens == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

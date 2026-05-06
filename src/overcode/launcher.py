@@ -21,7 +21,7 @@ from typing import List, Optional
 import re
 
 from . import get_full_version
-from .tmux_manager import TmuxManager
+from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content, tmux_window_target
 from .session_manager import SessionManager, Session
 from .config import get_default_standing_instructions
@@ -900,6 +900,7 @@ class ClaudeLauncher:
 
         # Kill untracked windows (tmux windows exist but not tracked)
         if kill_untracked and self.tmux.session_exists():
+            placeholder = EMPTY_PLACEHOLDER_WINDOW
             active_sessions = [s for s in my_sessions if s.status != "terminated"]
             tracked_windows = {s.tmux_window for s in active_sessions}
             tmux_windows = self.tmux.list_windows()
@@ -908,8 +909,11 @@ class ClaudeLauncher:
             for window_info in tmux_windows:
                 w_name = window_info['name']
                 window_idx = int(window_info['index'])
-                # Don't kill window 0 (default shell) or tracked windows
-                if window_idx != 0 and w_name not in tracked_windows:
+                # Don't kill window 0 (default shell), tracked windows, or
+                # the dead-window placeholder created by the TUI (#457).
+                if (window_idx != 0
+                        and w_name not in tracked_windows
+                        and w_name != placeholder):
                     print(f"Killing untracked window {w_name}")
                     self.tmux.kill_window(w_name)
                     untracked_count += 1

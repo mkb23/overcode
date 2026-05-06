@@ -286,6 +286,8 @@ def _agent_to_session(
         # Skills (#252)
         available_skills=agent.get("available_skills", []),
         loaded_skills=agent.get("loaded_skills", []),
+        # Tags (#356)
+        tags=list(agent.get("tags", []) or []),
         # Wrapper/sandbox badges (#437, #451)
         wrapper=agent.get("wrapper"),
         sandbox_enabled=agent.get("sandbox_enabled"),

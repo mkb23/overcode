@@ -265,6 +265,7 @@ def filter_visible_sessions(
     show_terminated: bool,
     show_done: bool = False,
     collapsed_parents: Optional[Set[str]] = None,
+    tag_filter: Optional[str] = None,
 ) -> List[T]:
     """Filter sessions based on visibility preferences.
 
@@ -309,6 +310,17 @@ def filter_visible_sessions(
         hidden_ids = _get_collapsed_descendants(result, collapsed_parents)
         if hidden_ids:
             result = [s for s in result if s.id not in hidden_ids]
+
+    # Tag filter (#357): keep agents whose tags contain the chosen tag.
+    # Tag matching is case-insensitive to match how add_tags lower-cases
+    # everything. Empty / None disables the filter.
+    if tag_filter:
+        tf = tag_filter.strip().lower()
+        if tf:
+            result = [
+                s for s in result
+                if any(t.lower() == tf for t in (getattr(s, 'tags', None) or []))
+            ]
 
     return result
 

@@ -484,6 +484,8 @@ class MonitorDaemon:
             waiting_for_heartbeat=waiting_for_heartbeat,
             model=session.model,
             provider=session.provider,
+            # Tags (#356)
+            tags=list(session.tags),
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),

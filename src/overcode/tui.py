@@ -171,6 +171,11 @@ class SupervisorTUI(
         ("b", "jump_to_attention", "Jump attention"),
         # VSCode-style jump-to-agent by name (#420)
         ("ctrl+p", "jump_to_agent", "Jump to agent"),
+        # Filter agents by tag (#357). With no tags currently in use this
+        # is a no-op; otherwise opens the same fuzzy modal seeded with the
+        # set of tags so the user can pick one. Press T again with the
+        # filter active and pick `(clear)` to remove.
+        ("T", "filter_by_tag", "Filter by tag"),
         # Hide sleeping agents from display
         ("Z", "toggle_hide_asleep", "Hide sleeping"),
         # Show/hide done child agents (#244)
@@ -243,6 +248,9 @@ class SupervisorTUI(
     tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
+    # Tag filter (#357): when set, only agents whose `tags` contains the
+    # value are displayed. None disables the filter.
+    tag_filter: reactive[Optional[str]] = reactive(None)
     show_done: reactive[bool] = reactive(False)  # show "done" child agents (#244)
     summary_content_mode: reactive[str] = reactive("ai_short")  # what to show in summary (#74)
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
@@ -667,6 +675,7 @@ class SupervisorTUI(
             show_terminated=self.show_terminated,
             show_done=self.show_done,
             collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
+            tag_filter=self.tag_filter,
         )
 
         # Heavy CSV I/O happens here in the worker thread
@@ -1852,6 +1861,7 @@ class SupervisorTUI(
             show_terminated=self.show_terminated,
             show_done=self.show_done,
             collapsed_parents=self.collapsed_parents if self._prefs.sort_mode == "by_tree" else None,
+            tag_filter=self.tag_filter,
         )
 
         # Column widths computed from exactly what will be rendered
@@ -2145,6 +2155,17 @@ class SupervisorTUI(
                 widget.children_collapsed = widget.session.id in self.collapsed_parents
                 widget.tree_prefix = ""
                 widget.tree_depth = 0
+        # Remote agents: prefer the daemon-reported children_count from the
+        # source host. Local computation only sees this host's sessions and
+        # would otherwise always say 0 for a parent whose children live on
+        # another machine (#271).
+        for widget in ordered_widgets:
+            if not widget.session.is_remote:
+                continue
+            rds = getattr(widget.session, 'remote_daemon_state', None) or {}
+            remote_children = rds.get('children_count')
+            if remote_children is not None:
+                widget.child_count = remote_children
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
@@ -2197,12 +2218,38 @@ class SupervisorTUI(
 
                 if window_index is not None and window_index != "":
                     if not self._tmux.select_window(sync_session, window_index):
+                        self._select_empty_placeholder(sync_session, session.name)
                         self.notify(
                             f"Window for '{session.name}' no longer exists",
                             severity="warning",
                         )
+                else:
+                    # Local agent with no tmux_window value — same dead-window
+                    # symptom for the user. Fall back to the placeholder.
+                    self._select_empty_placeholder(sync_session, session.name)
         except Exception:
             pass  # Silent fail - don't disrupt navigation
+
+    def _select_empty_placeholder(self, sync_session: str, agent_name: str) -> None:
+        """Switch the bottom pane to a static placeholder window (#457).
+
+        Called when a real agent window is missing so the user sees a clear
+        empty-state instead of stale content from the previous focus target.
+        Idempotent — the placeholder is created on first need and reused.
+        """
+        from .tmux_manager import EMPTY_PLACEHOLDER_WINDOW
+        msg = (
+            f"\n  This agent has no tmux window.\n"
+            f"  ({agent_name} may have been killed, is mid-launch,\n"
+            f"   or its window vanished.)\n"
+        )
+        try:
+            if self._tmux.ensure_empty_placeholder_window(
+                sync_session, EMPTY_PLACEHOLDER_WINDOW, msg
+            ):
+                self._tmux.select_window(sync_session, EMPTY_PLACEHOLDER_WINDOW)
+        except Exception:
+            pass
 
     def _get_or_create_ssh_proxy(self, session: Session) -> Optional[str]:
         """Get or create an SSH proxy window for a remote agent.
@@ -3638,6 +3685,14 @@ class SupervisorTUI(
 
     # --- Jump-to-agent modal (#420) --------------------------------
 
+    # The jump modal is reused for both jump-to-agent and filter-by-tag.
+    # This flag tells the AgentSelected handler which mode the open modal
+    # is operating in so we can route the chosen value correctly (#357).
+    _jump_modal_mode: str = "agent"
+    # Sentinel session_id used to encode "(clear filter)" as a JumpCandidate.
+    _TAG_CLEAR_SENTINEL: str = "tag::__clear__"
+    _TAG_PREFIX: str = "tag::"
+
     def action_jump_to_agent(self) -> None:
         """Open the VSCode-style jump-to-agent modal (#420)."""
         if self.tui_mode == "jobs":
@@ -3659,10 +3714,64 @@ class SupervisorTUI(
             modal = self.query_one("#jump-modal", JumpModal)
         except NoMatches:
             return
+        self._jump_modal_mode = "agent"
+        self._dialog_will_open()
+        modal.show(candidates, self)
+
+    def action_filter_by_tag(self) -> None:
+        """Filter visible agents by tag (#357).
+
+        Pops the same fuzzy modal as Ctrl+P but seeded with the distinct
+        tags currently in use (across local + remote). A `(clear filter)`
+        row is included so the user can cancel an active filter.
+        """
+        if self.tui_mode == "jobs":
+            return
+        # Collect tags from all sessions (not just visible) so the user can
+        # filter back in to a tag they just filtered out.
+        tag_counts: dict[str, int] = {}
+        for s in self.sessions:
+            for t in (getattr(s, 'tags', None) or []):
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        if not tag_counts and not self.tag_filter:
+            self.notify(
+                "No tags in use yet — apply with `overcode tag <agent> <tag>`.",
+                severity="information",
+            )
+            return
+        candidates: list[JumpCandidate] = []
+        if self.tag_filter:
+            candidates.append(JumpCandidate(
+                session_id=self._TAG_CLEAR_SENTINEL,
+                name="(clear filter)",
+                repo=f"current: {self.tag_filter}",
+            ))
+        for tag in sorted(tag_counts):
+            candidates.append(JumpCandidate(
+                session_id=self._TAG_PREFIX + tag,
+                name=tag,
+                repo=f"{tag_counts[tag]} agent{'s' if tag_counts[tag] != 1 else ''}",
+            ))
+        try:
+            modal = self.query_one("#jump-modal", JumpModal)
+        except NoMatches:
+            return
+        self._jump_modal_mode = "tag"
         self._dialog_will_open()
         modal.show(candidates, self)
 
     def on_jump_modal_agent_selected(self, message: JumpModal.AgentSelected) -> None:
+        if self._jump_modal_mode == "tag":
+            sid = message.session_id
+            if sid == self._TAG_CLEAR_SENTINEL:
+                self.tag_filter = None
+                self.notify("Tag filter cleared", severity="information")
+            elif sid.startswith(self._TAG_PREFIX):
+                self.tag_filter = sid[len(self._TAG_PREFIX):]
+                self.notify(f"Filtering by tag: {self.tag_filter}", severity="information")
+            self._dialog_did_close()
+            self.update_session_widgets()
+            return
         widgets = self._get_widgets_in_session_order()
         for i, w in enumerate(widgets):
             if w.session.id == message.session_id:

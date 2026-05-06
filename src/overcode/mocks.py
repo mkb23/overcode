@@ -83,6 +83,14 @@ class MockTmux:
         """Select a window - no-op in tests, just return True."""
         return session in self.sessions
 
+    def ensure_empty_placeholder_window(self, session: str, window_name: str, message: str) -> bool:
+        """Pretend the placeholder window exists — sufficient for tests."""
+        if session not in self.sessions:
+            return False
+        windows = self.sessions[session].setdefault("windows", {})
+        windows.setdefault(window_name, {"name": window_name, "placeholder": True})
+        return True
+
 
 class MockFileSystem:
     """Mock implementation of FileSystemInterface for testing"""

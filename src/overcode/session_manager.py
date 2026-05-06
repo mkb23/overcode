@@ -150,6 +150,11 @@ class Session:
     # Agent hierarchy (#244) - parent/child relationships
     parent_session_id: Optional[str] = None  # ID of parent agent (None = root)
 
+    # User-applied tags for grouping/filtering (#356).
+    # Lower-cased on write so lookups can be case-insensitive without storing
+    # multiple casings of the same logical tag.
+    tags: List[str] = field(default_factory=list)
+
     # Oversight system - report + timeout for child agents
     oversight_policy: str = "wait"  # wait | fail | timeout
     oversight_timeout_seconds: float = 0.0  # 0 = indefinite
@@ -861,6 +866,42 @@ class SessionManager:
         """Check if ancestor_id is an ancestor of descendant_id."""
         chain = self.get_parent_chain(descendant_id)
         return any(s.id == ancestor_id for s in chain)
+
+    def add_tags(self, session_id: str, tags: List[str]) -> List[str]:
+        """Add tags to a session (#356).
+
+        Tags are lower-cased and de-duplicated. Returns the resulting tag
+        list after the update, or an empty list if the session is missing.
+        """
+        normalised = [t.strip().lower() for t in tags if t and t.strip()]
+        if not normalised:
+            return []
+        with self._locked_state() as state:
+            if session_id not in state:
+                return []
+            current = list(state[session_id].get('tags') or [])
+            for t in normalised:
+                if t not in current:
+                    current.append(t)
+            state[session_id]['tags'] = current
+            return list(current)
+
+    def remove_tags(self, session_id: str, tags: List[str]) -> List[str]:
+        """Remove tags from a session (#356).
+
+        Pass an empty list to clear all tags. Returns the resulting tag
+        list after the update, or an empty list if the session is missing.
+        """
+        drop = {t.strip().lower() for t in tags if t and t.strip()}
+        with self._locked_state() as state:
+            if session_id not in state:
+                return []
+            if not drop:
+                state[session_id]['tags'] = []
+                return []
+            current = [t for t in (state[session_id].get('tags') or []) if t not in drop]
+            state[session_id]['tags'] = current
+            return list(current)
 
     def reclaim_budget(self, child_id: str) -> Optional[float]:
         """Refund a child's unused budget back to its parent (#432).

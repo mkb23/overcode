@@ -1237,6 +1237,46 @@ class TestSessionHierarchy:
         # Parent budget unchanged
         assert manager.get_session(root.id).cost_budget_usd == pytest.approx(8.0)
 
+    # --- tags (#356) --------------------------------------------------------
+
+    def test_add_tags_normalises_and_dedupes(self, tmp_path):
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        s = manager.create_session(
+            name="t", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        result = manager.add_tags(s.id, ["Backend", "  hot-path  ", "backend", ""])
+        assert result == ["backend", "hot-path"]
+        # Persists across reload
+        assert manager.get_session(s.id).tags == ["backend", "hot-path"]
+
+    def test_add_tags_appends_without_duplication(self, tmp_path):
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        s = manager.create_session(
+            name="t", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        manager.add_tags(s.id, ["a", "b"])
+        result = manager.add_tags(s.id, ["b", "c"])
+        assert result == ["a", "b", "c"]
+
+    def test_remove_tags_removes_listed(self, tmp_path):
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        s = manager.create_session(
+            name="t", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        manager.add_tags(s.id, ["a", "b", "c"])
+        result = manager.remove_tags(s.id, ["b"])
+        assert result == ["a", "c"]
+
+    def test_remove_tags_empty_list_clears_all(self, tmp_path):
+        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        s = manager.create_session(
+            name="t", tmux_session="agents", tmux_window=1, command=["claude"]
+        )
+        manager.add_tags(s.id, ["a", "b"])
+        result = manager.remove_tags(s.id, [])
+        assert result == []
+        assert manager.get_session(s.id).tags == []
+
     def test_reclaim_budget_unlimited_parent(self, tmp_path):
         manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
         # Root stays unlimited (0.0). Give child a budget directly.

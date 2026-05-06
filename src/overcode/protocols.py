@@ -107,6 +107,19 @@ class TmuxInterface(Protocol):
         """
         ...
 
+    def ensure_empty_placeholder_window(self, session: str, window_name: str, message: str) -> bool:
+        """Create a static placeholder window if it doesn't already exist (#457).
+
+        The placeholder is a tmux window that runs a long-lived no-op process
+        showing ``message``. The TUI selects it when it cannot select the
+        intended agent window — this guarantees the bottom pane always reflects
+        the focused agent's state instead of silently lingering on the
+        previous agent.
+
+        Idempotent: returns True if the window already exists or was created.
+        """
+        ...
+
 
 @runtime_checkable
 class StatusDetectorProtocol(Protocol):

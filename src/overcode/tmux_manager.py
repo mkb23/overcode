@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from .interfaces import TmuxInterface
 
 
+# Window name reserved for the dead-window placeholder (#457). Lives on the
+# agents tmux session so the TUI can fall back to it when select_window
+# fails for a missing/terminated agent window. Lowercase + dashed so it's
+# clearly distinct from agent windows in tmux's window list.
+EMPTY_PLACEHOLDER_WINDOW = "oc-empty"
+
+
 class TmuxManager:
     """Manages tmux sessions and windows for Overcode.
 

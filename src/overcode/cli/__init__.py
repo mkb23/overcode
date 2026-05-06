@@ -25,6 +25,8 @@ from . import split  # noqa: F401
 from . import jobs  # noqa: F401
 from . import wrappers  # noqa: F401
 from . import doctor  # noqa: F401
+from . import parallelism  # noqa: F401
+from . import tags  # noqa: F401
 
 
 def main():

@@ -328,6 +328,40 @@ class TestFilterVisibleSessions:
 
         assert len(result) == 1
 
+    def test_tag_filter_keeps_only_matching(self):
+        """tag_filter limits the result to sessions whose tags contain it (#357)."""
+        a = make_session("alpha", session_id="a")
+        a.tags = ["backend"]
+        b = make_session("beta", session_id="b")
+        b.tags = ["frontend"]
+        c = make_session("gamma", session_id="c")
+        c.tags = ["backend", "hot-path"]
+
+        result = filter_visible_sessions(
+            [a, b, c], [], hide_asleep=False, show_terminated=False,
+            tag_filter="backend",
+        )
+
+        assert {s.name for s in result} == {"alpha", "gamma"}
+
+    def test_tag_filter_case_insensitive(self):
+        a = make_session("alpha", session_id="a")
+        a.tags = ["Backend"]
+        result = filter_visible_sessions(
+            [a], [], hide_asleep=False, show_terminated=False,
+            tag_filter="BACKEND",
+        )
+        assert len(result) == 1
+
+    def test_tag_filter_none_disables(self):
+        a = make_session("alpha", session_id="a")
+        a.tags = []
+        result = filter_visible_sessions(
+            [a], [], hide_asleep=False, show_terminated=False,
+            tag_filter=None,
+        )
+        assert len(result) == 1
+
     def test_does_not_duplicate_sessions(self):
         """Should not duplicate if same session in both lists."""
         session = make_session("same", session_id="1")

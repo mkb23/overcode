@@ -256,6 +256,39 @@ class RealTmux:
         except LibTmuxException:
             return False
 
+    def ensure_empty_placeholder_window(self, session: str, window_name: str, message: str) -> bool:
+        """Create a static placeholder window if it doesn't already exist (#457).
+
+        Used as a fallback target when select_window() fails — guarantees the
+        bottom pane shows a clear empty-state instead of lingering on the
+        previously-focused agent.
+        """
+        try:
+            sess = self._get_session(session)
+            if sess is None:
+                return False
+            for win in sess.windows:
+                if win.window_name == window_name:
+                    return True
+            # Use printf for embedded newlines + tail -f /dev/null to keep the
+            # window alive without burning CPU. Single-quoted to keep the
+            # shell-passed message escaped safely below.
+            import shlex
+            safe_msg = shlex.quote(message)
+            cmd = f"clear; printf %s {safe_msg}; tail -f /dev/null"
+            window = sess.new_window(
+                window_name=window_name,
+                attach=False,
+                window_shell=cmd,
+            )
+            window.set_window_option('automatic-rename', 'off')
+            # Tag the window so cleanup logic and untracked-window kill paths
+            # can recognise it as overcode infrastructure rather than an agent.
+            window.set_window_option('@is_overcode_placeholder', 'on')
+            return True
+        except (LibTmuxException, ValueError):
+            return False
+
     def resize_window(self, session: str, window: str, width: int, height: int) -> bool:
         """Resize a tmux window to match terminal dimensions.
 

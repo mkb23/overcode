@@ -112,6 +112,9 @@ class SessionDaemonState:
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
     provider: str = "web"  # API provider: "web" or "bedrock"
 
+    # User-applied tags for grouping/filtering (#356).
+    tags: List[str] = field(default_factory=list)
+
     # Last user command (from history.jsonl)
     last_command: Optional[str] = None
 
