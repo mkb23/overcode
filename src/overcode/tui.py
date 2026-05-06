@@ -105,6 +105,11 @@ class SupervisorTUI(
     # Disable any size restrictions
     AUTO_FOCUS = None
 
+    # Free Ctrl+P for our jump-to-agent modal (#420). Textual's built-in
+    # App opens its system command palette on Ctrl+P, which would otherwise
+    # shadow the binding before it reaches us.
+    ENABLE_COMMAND_PALETTE = False
+
     # Load CSS from external file
     CSS_PATH = "tui.tcss"
 
