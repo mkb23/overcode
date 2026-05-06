@@ -681,6 +681,22 @@ def extract_pr_number(content: str, *, clean_content: str = None) -> int | None:
     return None
 
 
+_AUTO_ACCEPT_PATTERN = re.compile(r"⏵⏵\s+auto-?(accept|approve)", re.IGNORECASE)
+
+
+def extract_auto_accept_mode(content: str, *, clean_content: str = None) -> bool:
+    """Detect Claude Code's in-session auto-accept-edits mode (#444).
+
+    The mode is toggled with shift+tab and surfaces in the status bar as
+    `⏵⏵ auto-accept edits on (shift+tab to cycle)` (sometimes "auto-approve").
+    There is no file/env/hook signal, so we scrape the rendered pane.
+
+    Returns True when the indicator is present in the visible status bar.
+    """
+    cleaned = clean_content if clean_content is not None else strip_ansi(content)
+    return bool(_AUTO_ACCEPT_PATTERN.search(cleaned))
+
+
 def is_sleep_command(text: str) -> bool:
     """Check if text contains a bash sleep command.
 
@@ -712,6 +728,8 @@ class PaneExtraction:
     # subagent count should treat this as "possibly subagent" and suppress
     # the bash count accordingly.
     bash_count_ambiguous: bool = False
+    # True when the in-session auto-accept-edits mode is on (#444).
+    auto_accept_mode: bool = False
 
 
 def extract_from_pane(content: str) -> PaneExtraction:
@@ -737,4 +755,5 @@ def extract_from_pane(content: str) -> PaneExtraction:
         active_monitor_count=extract_active_monitor_count(content, clean_content=clean),
         pr_number=extract_pr_number(content, clean_content=clean),
         bash_count_ambiguous=bash_ambiguous,
+        auto_accept_mode=extract_auto_accept_mode(content, clean_content=clean),
     )

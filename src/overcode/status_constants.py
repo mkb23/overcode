@@ -191,6 +191,9 @@ PERMISSIVENESS_EMOJIS = {
     "bypass": "🔥",
     "permissive": "🏃",
     "normal": "👮",
+    # Synthetic mode: in-session auto-accept-edits is ON over a "normal" launch
+    # (#444). Detected from pane scrape; never stored on the session.
+    "auto": "⚡",
 }
 
 

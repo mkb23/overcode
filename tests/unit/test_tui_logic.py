@@ -302,6 +302,32 @@ class TestFilterVisibleSessions:
         assert len(result) == 2
         assert {s.name for s in result} == {"active", "killed"}
 
+    def test_drops_terminated_status_from_active_when_hidden(self):
+        """A session that flipped to status=terminated inside active_sessions
+        is hidden when show_terminated=False (#456)."""
+        active = make_session("zombie", session_id="z")
+        active.status = "terminated"
+        live = make_session("alive", session_id="a")
+        live.status = "running"
+
+        result = filter_visible_sessions(
+            [active, live], [], hide_asleep=False, show_terminated=False
+        )
+
+        assert {s.name for s in result} == {"alive"}
+
+    def test_keeps_terminated_status_when_shown(self):
+        """A session with status=terminated in active_sessions stays when
+        show_terminated=True."""
+        active = make_session("zombie", session_id="z")
+        active.status = "terminated"
+
+        result = filter_visible_sessions(
+            [active], [], hide_asleep=False, show_terminated=True
+        )
+
+        assert len(result) == 1
+
     def test_does_not_duplicate_sessions(self):
         """Should not duplicate if same session in both lists."""
         session = make_session("same", session_id="1")

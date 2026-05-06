@@ -25,6 +25,7 @@ from .tui_helpers import (
     build_timeline_slots,
     calculate_uptime,
     get_git_diff_stats,
+    get_git_untracked_count,
 )
 from .config import get_hostname
 from .status_constants import (
@@ -239,6 +240,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
     perm_emoji = PERMISSIVENESS_EMOJIS.get(s.permissiveness_mode, "👮")
 
     git_diff = get_git_diff_stats(s.start_directory) if s.start_directory else None
+    git_untracked = get_git_untracked_count(s.start_directory) if s.start_directory else None
 
     return {
         "name": s.name,
@@ -256,6 +258,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         "git_diff_files": git_diff[0] if git_diff else 0,
         "git_diff_insertions": git_diff[1] if git_diff else 0,
         "git_diff_deletions": git_diff[2] if git_diff else 0,
+        "git_untracked": git_untracked,
         "activity_summary": s.activity_summary or "",
         "activity_summary_context": s.activity_summary_context or "",
         "activity_summary_updated": s.activity_summary_updated,

@@ -22,6 +22,7 @@ from ..tui_helpers import (
     get_current_state_times,
     get_status_symbol,
     get_git_diff_stats,
+    get_git_untracked_count,
     get_summary_content_text,
 )
 from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
@@ -80,8 +81,10 @@ class SessionSummary(Static, can_focus=True):
         self.pane_content: List[str] = []  # Cached pane content
         self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
+        self.git_untracked_count: Optional[int] = None  # Untracked file count (#455)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
         self.bash_count_ambiguous: bool = False  # Count came from lone "(running)" (#259)
+        self.auto_accept_mode: bool = False  # In-session auto-accept-edits (#444)
         self.live_subagent_count: int = 0  # Live count from status bar
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
@@ -157,14 +160,19 @@ class SessionSummary(Static, can_focus=True):
         claude_stats = get_session_stats(self.session)
         # Fetch git diff stats — remote agents already have this from the sister API
         git_diff = None
+        git_untracked = None
         if self.session.is_remote:
             git_diff = self.session.remote_git_diff
+            git_untracked = self.session.remote_git_untracked
         elif self.session.start_directory:
             git_diff = get_git_diff_stats(self.session.start_directory)
-        self.apply_status_no_refresh(status, activity, content, claude_stats, git_diff)
+            git_untracked = get_git_untracked_count(self.session.start_directory)
+        self.apply_status_no_refresh(
+            status, activity, content, claude_stats, git_diff, git_untracked
+        )
         self.refresh()
 
-    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None) -> bool:
+    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
         """Apply pre-fetched status data without triggering refresh.
 
         Used for batched updates where the caller will refresh once at the end.
@@ -197,6 +205,9 @@ class SessionSummary(Static, can_focus=True):
             if self.live_subagent_count != extracted.live_subagent_count:
                 self.live_subagent_count = extracted.live_subagent_count
                 changed = True
+            if self.auto_accept_mode != extracted.auto_accept_mode:
+                self.auto_accept_mode = extracted.auto_accept_mode
+                changed = True
         else:
             if self.pane_content:
                 self.pane_content = []
@@ -209,6 +220,9 @@ class SessionSummary(Static, can_focus=True):
                 changed = True
             if self.live_subagent_count != 0:
                 self.live_subagent_count = 0
+                changed = True
+            if self.auto_accept_mode:
+                self.auto_accept_mode = False
                 changed = True
 
         # Update detected status for display
@@ -244,6 +258,13 @@ class SessionSummary(Static, can_focus=True):
             self.git_diff_stats = git_diff_stats
             changed = True
 
+        # Use pre-fetched untracked count (#455). None means "no update";
+        # actual missing-data state is represented in widget state by leaving
+        # it as None until the first successful fetch.
+        if git_untracked_count is not None:
+            self.git_untracked_count = git_untracked_count
+            changed = True
+
         return changed
 
     def watch_summary_detail(self, summary_detail: str) -> None:
@@ -272,7 +293,13 @@ class SessionSummary(Static, can_focus=True):
         bg = " on #1a3a50" if is_highlighted else " on #0d2137"
         status_symbol, base_color = get_status_symbol(self.detected_status, emoji_free=ef)
         status_color = f"bold {base_color}{bg}"
-        perm_emoji = get_permissiveness_emoji(s.permissiveness_mode, ef)
+        # Auto-accept-edits is a runtime-only mode that overlays "normal" launch
+        # mode (#444). Bypass / permissive launches override it visually because
+        # they're more permissive.
+        effective_mode = s.permissiveness_mode
+        if self.auto_accept_mode and effective_mode == "normal":
+            effective_mode = "auto"
+        perm_emoji = get_permissiveness_emoji(effective_mode, ef)
 
         # Name width: grows to longest agent name, capped by detail level
         if self.summary_detail == "low":
@@ -308,6 +335,8 @@ class SessionSummary(Static, can_focus=True):
             stats=s.stats,
             claude_stats=self.claude_stats,
             git_diff_stats=self.git_diff_stats,
+            git_untracked_count=self.git_untracked_count,
+            auto_accept_mode=self.auto_accept_mode,
             status_symbol=status_symbol,
             status_color=status_color,
             bg=bg,

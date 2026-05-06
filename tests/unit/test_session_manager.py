@@ -1184,6 +1184,72 @@ class TestSessionHierarchy:
         result = manager.transfer_budget(root.id, child1.id, -1.0)
         assert result is False
 
+    # --- reclaim_budget (#432) ----------------------------------------------
+
+    def test_reclaim_budget_refunds_remaining_to_parent(self, tmp_path):
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        manager.set_cost_budget(root.id, 10.0)
+        # Move 5.0 to child1, child1 spends 2.0
+        assert manager.transfer_budget(root.id, child1.id, 5.0)
+        manager.update_stats(child1.id, estimated_cost_usd=2.0)
+
+        refunded = manager.reclaim_budget(child1.id)
+        assert refunded == pytest.approx(3.0)
+
+        root_after = manager.get_session(root.id)
+        child_after = manager.get_session(child1.id)
+        # 5 left on root after transfer + 3 refunded = 8
+        assert root_after.cost_budget_usd == pytest.approx(8.0)
+        # Child capped at spent
+        assert child_after.cost_budget_usd == pytest.approx(2.0)
+
+    def test_reclaim_budget_is_idempotent(self, tmp_path):
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        manager.set_cost_budget(root.id, 10.0)
+        manager.transfer_budget(root.id, child1.id, 5.0)
+        manager.update_stats(child1.id, estimated_cost_usd=2.0)
+
+        first = manager.reclaim_budget(child1.id)
+        second = manager.reclaim_budget(child1.id)
+        assert first == pytest.approx(3.0)
+        assert second == 0.0
+
+    def test_reclaim_budget_no_parent(self, tmp_path):
+        manager, root, _c1, _c2, _gc = self._make_hierarchy(tmp_path)
+        manager.set_cost_budget(root.id, 10.0)
+        # Root has no parent
+        assert manager.reclaim_budget(root.id) is None
+
+    def test_reclaim_budget_unlimited_child(self, tmp_path):
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        # Child has unlimited budget (0.0) — nothing to reclaim
+        assert manager.reclaim_budget(child1.id) is None
+
+    def test_reclaim_budget_overspent(self, tmp_path):
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        manager.set_cost_budget(root.id, 10.0)
+        manager.transfer_budget(root.id, child1.id, 2.0)
+        manager.update_stats(child1.id, estimated_cost_usd=5.0)
+
+        # Spent more than budget: nothing left to refund
+        refunded = manager.reclaim_budget(child1.id)
+        assert refunded == 0.0
+        # Parent budget unchanged
+        assert manager.get_session(root.id).cost_budget_usd == pytest.approx(8.0)
+
+    def test_reclaim_budget_unlimited_parent(self, tmp_path):
+        manager, root, child1, _c2, _gc = self._make_hierarchy(tmp_path)
+        # Root stays unlimited (0.0). Give child a budget directly.
+        manager.update_session(child1.id, cost_budget_usd=5.0)
+        manager.update_stats(child1.id, estimated_cost_usd=1.0)
+
+        refunded = manager.reclaim_budget(child1.id)
+        assert refunded == pytest.approx(4.0)
+        # Parent stays unlimited
+        assert manager.get_session(root.id).cost_budget_usd == 0.0
+        # Child capped at spent
+        assert manager.get_session(child1.id).cost_budget_usd == pytest.approx(1.0)
+
     def test_parent_session_id_round_trips(self, tmp_path):
         """parent_session_id survives to_dict/from_dict round-trip."""
         manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)

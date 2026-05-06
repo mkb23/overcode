@@ -99,6 +99,47 @@ def budget_transfer(
         raise typer.Exit(code=1)
 
 
+@budget_app.command("reclaim")
+def budget_reclaim(
+    name: Annotated[str, typer.Argument(help="Name of the child agent to reclaim from")],
+    session: SessionOption = "agents",
+):
+    """Refund a child agent's unused budget back to its parent (#432).
+
+    Use this for agents that died or crashed without posting a result. For
+    successful child completions the refund happens automatically when the
+    report is processed.
+
+    The refund is idempotent: a second call returns 0.
+
+    Examples:
+        overcode budget reclaim my-dead-child
+    """
+    from ..session_manager import SessionManager
+
+    manager = SessionManager()
+    agent = manager.get_session_by_name(name)
+    if not agent:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    if not agent.parent_session_id:
+        rprint(f"[red]Error: '{name}' has no parent — nothing to reclaim to[/red]")
+        raise typer.Exit(code=1)
+
+    refunded = manager.reclaim_budget(agent.id)
+    if refunded is None:
+        rprint(f"[yellow]Nothing to reclaim from '{name}' (unlimited or missing parent)[/yellow]")
+        return
+    if refunded <= 0:
+        rprint(f"[yellow]'{name}' has spent its full budget — nothing to refund[/yellow]")
+        return
+
+    parent = manager.get_session(agent.parent_session_id)
+    parent_name = parent.name if parent else "(parent)"
+    rprint(f"[green]✓ Refunded ${refunded:.4f} from {name} to {parent_name}[/green]")
+
+
 @budget_app.command("show")
 def budget_show(
     name: Annotated[

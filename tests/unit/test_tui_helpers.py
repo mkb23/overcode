@@ -33,6 +33,7 @@ from overcode.tui_helpers import (
     get_daemon_status_style,
     calculate_safe_break_duration,
     get_git_diff_stats,
+    get_git_untracked_count,
     get_summary_content_text,
 )
 
@@ -691,6 +692,40 @@ class TestCalculateSafeBreakDuration:
 
         assert result is not None
         assert result == 300
+
+
+class TestGetGitUntrackedCount:
+    """Tests for get_git_untracked_count (#455)."""
+
+    def test_returns_none_for_nonexistent_dir(self):
+        assert get_git_untracked_count("/nonexistent/path") is None
+
+    def _init_repo(self, tmp_path):
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "tracked.txt").write_text("hi")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "i"], cwd=tmp_path, capture_output=True)
+
+    def test_zero_for_clean_repo(self, tmp_path):
+        self._init_repo(tmp_path)
+        assert get_git_untracked_count(str(tmp_path)) == 0
+
+    def test_counts_untracked_files(self, tmp_path):
+        self._init_repo(tmp_path)
+        (tmp_path / "new1.py").write_text("x")
+        (tmp_path / "new2.py").write_text("y")
+        assert get_git_untracked_count(str(tmp_path)) == 2
+
+    def test_respects_gitignore(self, tmp_path):
+        self._init_repo(tmp_path)
+        (tmp_path / ".gitignore").write_text("ignored.txt\n")
+        (tmp_path / "ignored.txt").write_text("x")
+        (tmp_path / "real.txt").write_text("y")
+        # .gitignore itself is also untracked, plus real.txt → 2.
+        assert get_git_untracked_count(str(tmp_path)) == 2
 
 
 class TestGetGitDiffStats:

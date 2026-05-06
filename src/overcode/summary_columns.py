@@ -220,6 +220,13 @@ class ColumnContext:
     has_sisters: bool = False
     local_hostname: str = ""
 
+    # Untracked file count (#455). None when unknown (e.g. not a git repo).
+    git_untracked_count: Optional[int] = None
+
+    # In-session auto-accept-edits mode detected from pane scrape (#444).
+    # Overlay over normal launch mode; ignored when launch mode is permissive/bypass.
+    auto_accept_mode: bool = False
+
     def mono(self, colored: str, simple: str = "bold") -> str:
         """Return colored style (monochrome only applies to preview pane, not summaries)."""
         return colored
@@ -510,6 +517,24 @@ def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
             return [(" Δ - +    - -    -", ctx.mono(f"dim{ctx.bg}", "dim"))]
         else:
             return [(" Δ -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+def render_git_untracked(ctx: ColumnContext) -> ColumnOutput:
+    """Untracked file count (#455). Highlights when there are untracked files,
+    so a 0-line diff doesn't hide work an agent has yet to commit."""
+    n = ctx.git_untracked_count
+    if n is None:
+        return [(" U  -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    if n > 0:
+        return [(f" U{n:>3}", ctx.mono(f"bold yellow{ctx.bg}", "bold"))]
+    return [(" U  0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+
+
+def render_git_untracked_plain(ctx: ColumnContext) -> Optional[str]:
+    n = ctx.git_untracked_count
+    if n is None or n == 0:
+        return None
+    return f"U{n}"
 
 
 def render_pr_number(ctx: ColumnContext) -> ColumnOutput:
@@ -945,6 +970,8 @@ render_branch_plain = _make_simple_render_plain("branch")
 def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
     from .status_constants import PERMISSIVENESS_EMOJIS
     perm = ctx.session.permissiveness_mode
+    if ctx.auto_accept_mode and perm == "normal":
+        perm = "auto"
     emoji = PERMISSIVENESS_EMOJIS.get(perm, "👮")
     mode = f"{emoji} {perm}"
     ec = "🪝 enabled" if ctx.session.enhanced_context_enabled else "disabled"
@@ -1042,6 +1069,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Branch", render_plain=render_branch_plain, header="BR", name="Branch"),
     SummaryColumn(id="git_diff", group="git", detail_levels=ALL, render=render_git_diff,
                   label="Git", render_plain=render_git_diff_plain, header="GIT", name="Git Diff"),
+    SummaryColumn(id="git_untracked", group="git", detail_levels=HIGH_PLUS, render=render_git_untracked,
+                  label="Untracked", render_plain=render_git_untracked_plain, header="UN",
+                  name="Untracked Files"),
     SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
                   label="PR", render_plain=render_pr_number_plain,
                   visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number"),
@@ -1155,6 +1185,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 def build_cli_context(
     session, stats, claude_stats, git_diff_stats,
     status: str, bg_bash_count: int, live_sub_count: int,
+    git_untracked_count: Optional[int] = None,
+    auto_accept_mode: bool = False,
     any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
@@ -1174,7 +1206,10 @@ def build_cli_context(
         stats, is_asleep=session.is_asleep
     )
     median_work = claude_stats.median_work_time if claude_stats else 0.0
-    perm_emoji = get_permissiveness_emoji(session.permissiveness_mode, emoji_free)
+    effective_perm = session.permissiveness_mode
+    if auto_accept_mode and effective_perm == "normal":
+        effective_perm = "auto"
+    perm_emoji = get_permissiveness_emoji(effective_perm, emoji_free)
 
     # Parse state_since for time-in-state
     status_changed_at = None
@@ -1196,6 +1231,8 @@ def build_cli_context(
         stats=stats,
         claude_stats=claude_stats,
         git_diff_stats=git_diff_stats,
+        git_untracked_count=git_untracked_count,
+        auto_accept_mode=auto_accept_mode,
         status_symbol=status_symbol,
         status_color="bold",
         bg="",

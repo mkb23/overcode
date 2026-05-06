@@ -48,6 +48,7 @@ from .tmux_utils import get_pane_base_index
 from .tui_helpers import (
     format_duration,
     get_git_diff_stats,
+    get_git_untracked_count,
 )
 from .tui_logic import (
     sort_sessions,
@@ -1364,14 +1365,20 @@ class SupervisorTUI(
             def fetch_stats(session):
                 try:
                     if session.is_remote:
-                        return (synthesize_remote_stats(session), session.remote_git_diff)
+                        return (
+                            synthesize_remote_stats(session),
+                            session.remote_git_diff,
+                            session.remote_git_untracked,
+                        )
                     claude_stats = get_session_stats(session, history_file=history_file)
                     git_diff = None
+                    git_untracked = None
                     if session.start_directory:
                         git_diff = get_git_diff_stats(session.start_directory)
-                    return (claude_stats, git_diff)
+                        git_untracked = get_git_untracked_count(session.start_directory)
+                    return (claude_stats, git_diff, git_untracked)
                 except Exception:
-                    return (None, None)
+                    return (None, None, None)
 
             sessions = [s for _, s in sessions_to_check]
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
@@ -1379,11 +1386,18 @@ class SupervisorTUI(
 
             stats_results = {}
             git_diff_results = {}
-            for (session_id, _), (claude_stats, git_diff) in zip(sessions_to_check, results):
+            git_untracked_results = {}
+            for (session_id, _), (claude_stats, git_diff, git_untracked) in zip(sessions_to_check, results):
                 stats_results[session_id] = claude_stats
                 git_diff_results[session_id] = git_diff
+                git_untracked_results[session_id] = git_untracked
 
-            self.call_from_thread(self._apply_stats_results, stats_results, git_diff_results)
+            self.call_from_thread(
+                self._apply_stats_results,
+                stats_results,
+                git_diff_results,
+                git_untracked_results,
+            )
         finally:
             self._stats_update_in_progress = False
 
@@ -1607,9 +1621,10 @@ class SupervisorTUI(
                         )
 
                 # Pass None for claude_stats/git_diff — those come from the slow path
-                # For remote agents, propagate git_diff from session (#413)
+                # For remote agents, propagate git_diff/untracked from session (#413, #455)
                 git_diff = widget.session.remote_git_diff if widget.session.is_remote else None
-                widget.apply_status_no_refresh(status, activity, content, None, git_diff)
+                git_untracked = widget.session.remote_git_untracked if widget.session.is_remote else None
+                widget.apply_status_no_refresh(status, activity, content, None, git_diff, git_untracked)
 
         # Recompute column widths before refreshing widgets for alignment
         self._recompute_cell_column_widths()
@@ -1648,15 +1663,18 @@ class SupervisorTUI(
             del self._terminated_sessions[sid]
             del self._terminated_times[sid]
 
-    def _apply_stats_results(self, stats_results: dict, git_diff_results: dict) -> None:
+    def _apply_stats_results(self, stats_results: dict, git_diff_results: dict, git_untracked_results: Optional[dict] = None) -> None:
         """Apply slow-path stats results to widgets (runs on main thread)."""
         self._gc_terminated_sessions()
         self._mark_event("apply_stats_start")
+        if git_untracked_results is None:
+            git_untracked_results = {}
         changed_widgets = []
         for widget in self.query(SessionSummary):
             session_id = widget.session.id
             claude_stats = stats_results.get(session_id)
             git_diff = git_diff_results.get(session_id)
+            git_untracked = git_untracked_results.get(session_id)
             if claude_stats is not None:
                 widget.claude_stats = claude_stats
                 widget.file_subagent_count = claude_stats.live_subagent_count
@@ -1665,7 +1683,9 @@ class SupervisorTUI(
                     widget.last_command = claude_stats.last_command
             if git_diff is not None:
                 widget.git_diff_stats = git_diff
-            if claude_stats is not None or git_diff is not None:
+            if git_untracked is not None:
+                widget.git_untracked_count = git_untracked
+            if claude_stats is not None or git_diff is not None or git_untracked is not None:
                 changed_widgets.append(widget)
         if changed_widgets:
             self._column_widths_dirty = True
@@ -1888,6 +1908,8 @@ class SupervisorTUI(
                     # Sync remote git diff to widget (#413)
                     if new_session.is_remote and new_session.remote_git_diff:
                         widget.git_diff_stats = new_session.remote_git_diff
+                    if new_session.is_remote and new_session.remote_git_untracked is not None:
+                        widget.git_untracked_count = new_session.remote_git_untracked
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -3249,9 +3271,12 @@ class SupervisorTUI(
             # Update session cache
             if session_id in self._sessions_cache:
                 del self._sessions_cache[session_id]
-            # If showing terminated sessions, refresh to add it back
-            if self.show_terminated:
-                self.update_session_widgets()
+            # Reconcile widgets immediately — Textual's Widget.remove() is async,
+            # and without this kicker the row could linger until the next 10 s
+            # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
+            # display_sessions and force-removes anything stale, *and* re-adds
+            # the row from _terminated_sessions when show_terminated is True.
+            self.update_session_widgets()
 
             # Focus next available agent (uses session order for j/k consistency)
             widgets = self._get_widgets_in_session_order()
@@ -3278,6 +3303,9 @@ class SupervisorTUI(
             del self._sessions_cache[session_id]
         # Remove the widget
         focused.remove()
+        # Same reconciliation as _execute_kill (#456) — force a diff so the row
+        # disappears immediately rather than waiting for the next refresh tick.
+        self.update_session_widgets()
 
         # Focus next available agent (uses session order for j/k consistency)
         widgets = self._get_widgets_in_session_order()

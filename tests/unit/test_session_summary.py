@@ -88,9 +88,11 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.pane_content = []
     widget.claude_stats = None
     widget.git_diff_stats = None
+    widget.git_untracked_count = None
     widget.background_bash_count = 0
     widget.bash_count_ambiguous = False
     widget.live_subagent_count = 0
+    widget.auto_accept_mode = False
     widget.pr_number = None
     widget.any_has_pr = False
     widget.is_unvisited_stalled = False

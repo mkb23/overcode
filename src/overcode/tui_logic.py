@@ -289,6 +289,14 @@ def filter_visible_sessions(
     if not show_done:
         result = [s for s in result if getattr(s, 'status', None) != 'done']
 
+    # Filter out terminated agents from active_sessions unless show_terminated (#456).
+    # Without this, a session that flips to status="terminated" inside active_sessions
+    # (e.g. after launcher.list_sessions detects a missing tmux window during a stale
+    # background read) would linger in the summary list until the next refresh cycle
+    # because nothing here removes it.
+    if not show_terminated:
+        result = [s for s in result if getattr(s, 'status', None) != 'terminated']
+
     # Include terminated sessions if requested
     if show_terminated:
         active_ids = {s.id for s in active_sessions}

@@ -235,6 +235,33 @@ def truncate_name(name: str, max_len: int = 14) -> str:
     return name[:max_len].ljust(max_len)
 
 
+def get_git_untracked_count(directory: str) -> Optional[int]:
+    """Count untracked files in a git repository (respecting .gitignore).
+
+    Args:
+        directory: Path to the git repository
+
+    Returns:
+        Untracked file count, or None if not a git repo / git is unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode != 0:
+            return None
+        out = result.stdout.strip()
+        if not out:
+            return 0
+        return out.count("\n") + 1
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
 def get_git_diff_stats(directory: str) -> Optional[Tuple[int, int, int]]:
     """Get git diff stats for a directory.
 

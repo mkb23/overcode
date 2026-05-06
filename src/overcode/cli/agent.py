@@ -64,11 +64,16 @@ def _check_skill_staleness() -> None:
 def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     """Gather claude_stats, git_diff, bg_bash_count, live_sub_count for a session."""
     from ..history_reader import get_session_stats
-    from ..status_patterns import extract_background_bash_count, extract_live_subagent_count
-    from ..tui_helpers import get_git_diff_stats
+    from ..status_patterns import (
+        extract_background_bash_count,
+        extract_live_subagent_count,
+        extract_auto_accept_mode,
+    )
+    from ..tui_helpers import get_git_diff_stats, get_git_untracked_count
 
     bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
     live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
+    auto_accept = extract_auto_accept_mode(pane_content_raw) if pane_content_raw else False
 
     claude_stats = None
     try:
@@ -79,17 +84,21 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         pass
 
     git_diff = None
+    git_untracked = None
     try:
         if sess.start_directory:
             git_diff = get_git_diff_stats(sess.start_directory)
+            git_untracked = get_git_untracked_count(sess.start_directory)
     except Exception:
         pass
 
     return {
         "claude_stats": claude_stats,
         "git_diff": git_diff,
+        "git_untracked": git_untracked,
         "bg_bash_count": bg_bash_count,
         "live_sub_count": live_sub_count,
+        "auto_accept": auto_accept,
     }
 
 
@@ -451,7 +460,7 @@ def list_agents(
     """
     from ..history_reader import get_session_stats
     from ..tui_helpers import (
-        get_status_symbol, get_git_diff_stats,
+        get_status_symbol, get_git_diff_stats, get_git_untracked_count,
     )
     from ..monitor_daemon_state import get_monitor_daemon_state
     from ..summary_columns import build_cli_context, render_summary_cells, compute_column_widths, pad_and_join_cells, render_header_cells
@@ -578,24 +587,27 @@ def list_agents(
             claude_stats = synthesize_remote_stats(sess)
 
         git_diff = None
+        git_untracked = None
         if getattr(sess, 'is_remote', False):
             git_diff = getattr(sess, 'remote_git_diff', None)
+            git_untracked = getattr(sess, 'remote_git_untracked', None)
         else:
             try:
                 if sess.start_directory:
                     git_diff = get_git_diff_stats(sess.start_directory)
+                    git_untracked = get_git_untracked_count(sess.start_directory)
             except Exception:
                 pass
 
-        session_data.append((sess, status, activity, claude_stats, git_diff))
+        session_data.append((sess, status, activity, claude_stats, git_diff, git_untracked))
 
     # Compute cross-session flags
-    any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _ in session_data)
+    any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _, _ in session_data)
 
     # Second pass: build contexts and collect cells for auto-alignment
     all_cells = []
     activities = []
-    for sess, status, activity, claude_stats, git_diff in session_data:
+    for sess, status, activity, claude_stats, git_diff, git_untracked in session_data:
         meta = tree_meta.get(sess.id)
         child_count = meta.child_count if meta else 0
 
@@ -611,6 +623,7 @@ def list_agents(
             session=sess, stats=sess.stats,
             claude_stats=claude_stats, git_diff_stats=git_diff,
             status=status, bg_bash_count=0, live_sub_count=0,
+            git_untracked_count=git_untracked,
             any_has_budget=any_has_budget, child_count=child_count,
             any_is_sleeping=any_is_sleeping,
             any_has_oversight_timeout=any_has_oversight_timeout,
@@ -1084,8 +1097,10 @@ def show(
         stats_data = _gather_session_stats(sess, pane_content_raw)
         claude_stats = stats_data["claude_stats"]
         git_diff = stats_data["git_diff"]
+        git_untracked = stats_data["git_untracked"]
         bg_bash_count = stats_data["bg_bash_count"]
         live_sub_count = stats_data["live_sub_count"]
+        auto_accept = stats_data["auto_accept"]
 
         # AI summaries from daemon state
         ai_short = ""
@@ -1104,6 +1119,8 @@ def show(
             status=status,
             bg_bash_count=bg_bash_count,
             live_sub_count=live_sub_count,
+            git_untracked_count=git_untracked,
+            auto_accept_mode=auto_accept,
             any_has_budget=any_has_budget,
         )
 

@@ -849,6 +849,7 @@ class ClaudeLauncher:
             from .status_constants import STATUS_WAITING_OVERSIGHT
 
             newly_terminated = []
+            newly_done: list[str] = []  # session ids of children that just flipped to done (#432)
             for session in my_sessions:
                 # Only check non-terminated sessions
                 if session.status not in ("terminated", "done"):
@@ -860,6 +861,7 @@ class ClaudeLauncher:
                             if report:
                                 self.sessions.update_session_status(session.id, "done")
                                 session.status = "done"
+                                newly_done.append(session.id)
                             else:
                                 self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
                                 session.status = STATUS_WAITING_OVERSIGHT
@@ -876,11 +878,22 @@ class ClaudeLauncher:
                         and _check_hook_stop(self.tmux.session_name, session.name)):
                     report = _check_report(self.tmux.session_name, session.name)
                     if report:
+                        prev_status = session.status
                         self.sessions.update_session_status(session.id, "done")
                         session.status = "done"
+                        if prev_status != "done":
+                            newly_done.append(session.id)
                     elif session.status != STATUS_WAITING_OVERSIGHT:
                         self.sessions.update_session_status(session.id, STATUS_WAITING_OVERSIGHT)
                         session.status = STATUS_WAITING_OVERSIGHT
+
+            # Auto-refund unused budget on done children (#432). Idempotent —
+            # reclaim_budget caps the child's budget at the spent amount, so a
+            # later list_sessions call won't double-refund.
+            for child_id in newly_done:
+                refunded = self.sessions.reclaim_budget(child_id)
+                if refunded and refunded > 0:
+                    print(f"  Refunded ${refunded:.4f} from child to parent")
 
             if newly_terminated:
                 print(f"Detected {len(newly_terminated)} terminated session(s): {', '.join(newly_terminated)}")

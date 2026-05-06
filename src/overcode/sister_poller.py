@@ -299,6 +299,7 @@ def _agent_to_session(
         source_api_key=source_api_key,
         pane_content=agent.get("pane_content", ""),
         remote_git_diff=_parse_git_diff(agent),
+        remote_git_untracked=agent.get("git_untracked"),
         remote_median_work_time=_parse_median_work(agent),
         # AI summaries from remote summarizer
         remote_activity_summary=agent.get("activity_summary", ""),

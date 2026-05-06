@@ -164,6 +164,7 @@ class Session:
     source_api_key: str = ""  # Sister API key (for authentication)
     pane_content: str = ""  # Cached pane content from remote API (empty for local sessions)
     remote_git_diff: Optional[tuple] = None  # (files, insertions, deletions) from remote API
+    remote_git_untracked: Optional[int] = None  # Untracked file count from remote API (#455)
     remote_median_work_time: float = 0.0  # Median work time from remote API
     remote_activity_summary: str = ""  # AI summary from remote summarizer
     remote_activity_summary_context: str = ""  # AI context summary from remote summarizer
@@ -860,6 +861,49 @@ class SessionManager:
         """Check if ancestor_id is an ancestor of descendant_id."""
         chain = self.get_parent_chain(descendant_id)
         return any(s.id == ancestor_id for s in chain)
+
+    def reclaim_budget(self, child_id: str) -> Optional[float]:
+        """Refund a child's unused budget back to its parent (#432).
+
+        Computes `remaining = max(0, budget - spent)` for the child, transfers
+        that amount onto the parent's budget, and caps the child's budget at
+        what was actually spent so the same allowance can't be reclaimed twice.
+
+        Returns the refunded amount in USD, or None if nothing was refunded
+        (no parent / unlimited child budget / nothing left over). Idempotent:
+        a second call returns 0.0.
+
+        Notes:
+        - If the parent has an unlimited budget (0.0), the child's budget is
+          still trimmed but no on-disk addition happens to the parent.
+        - Operates atomically under the same state lock as transfer_budget.
+        """
+        with self._locked_state() as state:
+            if child_id not in state:
+                return None
+            child = state[child_id]
+            child_budget = child.get('cost_budget_usd', 0.0)
+            if child_budget <= 0:
+                return None  # unlimited budget — nothing to reclaim
+
+            parent_id = child.get('parent_session_id')
+            if not parent_id or parent_id not in state:
+                return None
+
+            spent = float(((child.get('stats') or {}).get('estimated_cost_usd', 0.0)) or 0.0)
+            remaining = max(0.0, child_budget - spent)
+            if remaining <= 0:
+                return 0.0
+
+            # Cap child at what was actually spent to make the reclaim idempotent.
+            child['cost_budget_usd'] = spent
+
+            parent_budget = state[parent_id].get('cost_budget_usd', 0.0)
+            # Unlimited parent budget stays unlimited.
+            if parent_budget > 0:
+                state[parent_id]['cost_budget_usd'] = parent_budget + remaining
+
+            return remaining
 
     def transfer_budget(self, from_id: str, to_id: str, amount: float) -> bool:
         """Transfer budget from one agent to another.

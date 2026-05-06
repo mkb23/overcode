@@ -26,7 +26,35 @@ from overcode.status_patterns import (
     PaneExtraction,
     is_sleep_command,
     extract_sleep_duration,
+    extract_auto_accept_mode,
 )
+
+
+class TestExtractAutoAcceptMode:
+    """Tests for extract_auto_accept_mode (#444)."""
+
+    def test_detects_auto_approve(self):
+        content = "⏵⏵ auto-approve on (shift+tab to cycle) · esc to interrupt"
+        assert extract_auto_accept_mode(content) is True
+
+    def test_detects_auto_accept(self):
+        content = "⏵⏵ auto-accept edits on (shift+tab to cycle)"
+        assert extract_auto_accept_mode(content) is True
+
+    def test_ignores_bypass(self):
+        content = "⏵⏵ bypass permissions on (shift+tab to cycle)"
+        assert extract_auto_accept_mode(content) is False
+
+    def test_ignores_dont_ask(self):
+        content = "⏵⏵ don't ask on (shift+tab to cycle)"
+        assert extract_auto_accept_mode(content) is False
+
+    def test_ignores_plain_text(self):
+        assert extract_auto_accept_mode("just some output") is False
+
+    def test_extract_from_pane_threads_auto(self):
+        pane = "⏵⏵ auto-approve on (shift+tab to cycle)"
+        assert extract_from_pane(pane).auto_accept_mode is True
 
 
 class TestStatusPatterns:
