@@ -1171,7 +1171,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="ST", name="Time in State"),
     SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
                   visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
-                  header="SLP", name="Sleep Countdown"),
+                  header="DTL", name="Status Detail"),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand"),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
