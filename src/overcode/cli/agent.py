@@ -675,6 +675,18 @@ def list_agents(
         line.truncate(console.width, pad=False)
         console.print(line, no_wrap=True)
 
+    # Warn if the terminal is too narrow to render the data columns — the
+    # right side is silently truncated otherwise, hiding metrics (#459).
+    data_width = sum(widths)
+    if data_width > console.width:
+        next_level = "med" if detail == "full" else "low"
+        suggest = f" Use --{next_level} for fewer columns." if detail != "low" else ""
+        rprint(
+            f"\n[yellow]⚠ Terminal is {console.width} cols; "
+            f"{data_width} needed for all columns — output truncated."
+            f"{suggest} Widen the terminal to see the rest.[/yellow]"
+        )
+
     if terminated_count > 0:
         rprint(f"\n[dim]{terminated_count} terminated session(s). Run 'overcode cleanup' to remove.[/dim]")
 
