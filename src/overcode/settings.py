@@ -438,12 +438,51 @@ def write_detection_mode(session: str, mode: str) -> None:
 
 
 def resolve_detection_mode(session: str) -> str:
-    """Resolve 'auto' to 'hooks' or 'polling' based on hook installation."""
+    """Resolve 'auto' to 'hooks' or 'polling' (#TBD).
+
+    Detection order:
+      1. Explicit user choice ('hooks' or 'polling' written to disk).
+      2. Recent hook_state_*.json files in this session's directory —
+         proof that hooks ARE firing, regardless of whether the user-level
+         Claude config has them. Overcode-launched sessions inject hooks
+         via `--settings` JSON inline, so the user-level config check
+         below misses them.
+      3. User-level Claude config (legacy fallback for manually-run
+         Claude Code sessions that read ~/.claude/settings.json).
+    """
     mode = read_detection_mode(session)
     if mode in ("hooks", "polling"):
         return mode
+    if _session_has_recent_hook_activity(session):
+        return "hooks"
     from .claude_config import ClaudeConfigEditor
     return "hooks" if ClaudeConfigEditor.are_overcode_hooks_installed() else "polling"
+
+
+# A hook_state file modified within this many seconds counts as "hooks
+# are live for this session". 10 minutes covers a quiet agent between
+# turns without false-positiving a long-dormant session.
+_RECENT_HOOK_ACTIVITY_SECONDS = 600
+
+
+def _session_has_recent_hook_activity(session: str) -> bool:
+    """True if any hook_state file in the session dir is recent enough."""
+    import time as _time
+    session_dir = get_session_dir(session)
+    if not session_dir.exists():
+        return False
+    now = _time.time()
+    cutoff = now - _RECENT_HOOK_ACTIVITY_SECONDS
+    try:
+        for path in session_dir.glob("hook_state_*.json"):
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    return True
+            except OSError:
+                continue
+    except OSError:
+        return False
+    return False
 
 
 def get_tui_log_path(session: str) -> Path:

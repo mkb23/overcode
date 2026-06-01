@@ -305,15 +305,23 @@ class SessionActionsMixin:
 
         Switches ALL agents between hook-based and polling-based status
         detection. The mode is persisted and shared with the monitor daemon.
+
+        Overcode-launched agents inject hooks inline via --settings, so the
+        user-level Claude config check is not a reliable signal that hooks
+        are firing. Recent hook_state files in the session directory are
+        the authoritative check (#TBD).
         """
-        from ..settings import write_detection_mode
+        from ..settings import write_detection_mode, _session_has_recent_hook_activity
         new_mode = "polling" if self.detector.mode == "hooks" else "hooks"
         if new_mode == "hooks":
             from ..claude_config import ClaudeConfigEditor
-            if not ClaudeConfigEditor.are_overcode_hooks_installed():
+            user_level = ClaudeConfigEditor.are_overcode_hooks_installed()
+            session_active = _session_has_recent_hook_activity(self.tmux_session)
+            if not (user_level or session_active):
                 self.notify(
-                    "No legacy hooks found in settings — launched agents inject hooks automatically",
-                    severity="error",
+                    "No hook activity detected. Launch an overcode agent first, "
+                    "or install hooks user-level with `overcode hooks install`.",
+                    severity="warning",
                 )
                 return
         self.detector.mode = new_mode
