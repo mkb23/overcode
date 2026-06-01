@@ -50,8 +50,29 @@ class TestLookupPricing:
     """Test lookup_pricing substring matching."""
 
     def test_matches_claude_opus(self):
+        # Current Opus (4.5+) is $5/$25.
         p = lookup_pricing("claude-opus-4-6")
+        assert p.input == 5.0
+        assert p.output == 25.0
+
+    def test_matches_legacy_opus_4_1(self):
+        # Opus 4.1 keeps the legacy $15/$75 rate via the longer key.
+        p = lookup_pricing("claude-opus-4-1-20250805")
         assert p.input == 15.0
+        assert p.output == 75.0
+
+    def test_matches_legacy_opus_4_0(self):
+        p = lookup_pricing("claude-opus-4-20250514")
+        assert p.input == 15.0
+
+    def test_matches_haiku_4_5(self):
+        p = lookup_pricing("claude-haiku-4-5-20251001")
+        assert p.input == 1.0
+        assert p.output == 5.0
+
+    def test_matches_legacy_haiku_3_5(self):
+        p = lookup_pricing("claude-3-5-haiku-20241022")
+        assert p.input == 0.80
 
     def test_matches_gpt_4o_mini(self):
         p = lookup_pricing("gpt-4o-mini")
@@ -81,9 +102,9 @@ class TestEstimateCost:
         assert cost == pytest.approx(0.75)  # $0.15 + $0.60
 
     def test_opus_cost(self):
-        """1M input + 1M output tokens at opus rates."""
+        """1M input + 1M output tokens at current opus rates."""
         cost = estimate_cost("claude-opus-4-6", 1_000_000, 1_000_000)
-        assert cost == pytest.approx(90.0)  # $15 + $75
+        assert cost == pytest.approx(30.0)  # $5 + $25
 
     def test_zero_tokens(self):
         cost = estimate_cost("gpt-4o-mini", 0, 0)

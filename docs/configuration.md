@@ -48,6 +48,12 @@ pricing:
   cache_write: 3.75    # $/million tokens for cache writes
   cache_read: 0.30     # $/million tokens for cache reads
 
+# Negotiated Bedrock discount off list prices (see Pricing Configuration below)
+bedrock:
+  discount: 0.0        # flat fraction off list for Bedrock sessions (e.g. 0.30)
+  # model_discount:    # optional per-model-family overrides
+  #   opus: 0.25
+
 # Web server settings
 web:
   # API key for web server authentication
@@ -277,7 +283,25 @@ model_pricing:
     cache_read: 1.0
 ```
 
-Model names are matched as substrings, so `"sonnet"` matches `"claude-sonnet-4-6"`. User overrides in `model_pricing:` take precedence over the built-in table.
+Model names are matched as substrings, **longest key first**, so `"sonnet"` matches `"claude-sonnet-4-6"` and a more specific key like `"opus-4-1"` wins over `"opus"`. User overrides in `model_pricing:` take precedence over the built-in table.
+
+Built-in rates use **list prices** (verified June 2026): current Opus 4.5–4.8 at `$5/$25`, Sonnet 4.x at `$3/$15`, Haiku 4.5 at `$1/$5`; legacy Opus 4.0/4.1 keep `$15/$75` and legacy Haiku 3.5 keeps `$0.80/$4`.
+
+### Bedrock discount
+
+Amazon Bedrock on-demand list prices equal the Anthropic API list prices in the built-in table. Enterprise customers usually pay a **negotiated discount** off that list (an AWS Marketplace private offer / committed-use agreement). Apply it so estimates match your invoice — it only affects sessions detected as Bedrock (`msg_bdrk_` message IDs):
+
+```yaml
+bedrock:
+  discount: 0.30          # flat fraction off list for all Bedrock sessions (30% off)
+  model_discount:         # optional per-model-family overrides (win over the flat rate)
+    opus: 0.25
+    sonnet: 0.35
+```
+
+Discounts are clamped to `[0, 1)` and scale every rate (input, output, cache write, cache read) uniformly. Web / Claude-Max / direct-API sessions are unaffected.
+
+> **What this can't express:** a flat percentage can't model **provisioned throughput** (a fixed `$/hour` reserved-capacity commitment, not per-token billing) or **input/output-asymmetric** net rates. For those, pin exact net per-MTok rates directly via `model_pricing:` instead. Ask your AWS/Anthropic account manager for your effective per-model rate. Note also that Claude **Max** is a flat subscription with no per-token billing, so its `$` figure is an *API-equivalent* estimate, not an amount you are billed.
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
 

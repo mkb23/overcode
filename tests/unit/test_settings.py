@@ -385,6 +385,74 @@ class TestUserConfig:
         assert result == "agents"  # Default value
 
 
+class TestBedrockDiscount:
+    """Test bedrock discount handling in get_model_pricing."""
+
+    def _config(self, **kw):
+        from overcode.settings import UserConfig
+        return UserConfig(**kw)
+
+    def test_no_discount_returns_list_price(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(bedrock_discount=0.30)
+        # web/None provider keeps list price even with a discount configured
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="web")
+        assert mp.input == 5.0
+        assert mp.output == 25.0
+
+    def test_flat_discount_applied_to_bedrock(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(bedrock_discount=0.30)
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        assert mp.input == pytest.approx(5.0 * 0.7)
+        assert mp.output == pytest.approx(25.0 * 0.7)
+        assert mp.cache_write == pytest.approx(6.25 * 0.7)
+        assert mp.cache_read == pytest.approx(0.50 * 0.7)
+
+    def test_per_model_discount_overrides_flat(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config(
+            bedrock_discount=0.30,
+            bedrock_model_discount={"opus": 0.25, "sonnet": 0.40},
+        )
+        opus = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        assert opus.input == pytest.approx(5.0 * 0.75)
+        sonnet = get_model_pricing("claude-sonnet-4-6", cfg, provider="bedrock")
+        assert sonnet.input == pytest.approx(3.0 * 0.60)
+        # haiku has no per-model entry -> falls back to the flat discount
+        haiku = get_model_pricing("claude-haiku-4-5", cfg, provider="bedrock")
+        assert haiku.input == pytest.approx(1.0 * 0.70)
+
+    def test_default_config_has_no_discount(self):
+        from overcode.settings import get_model_pricing
+        cfg = self._config()
+        mp = get_model_pricing("claude-opus-4-6", cfg, provider="bedrock")
+        assert mp.input == 5.0  # unchanged
+
+    def test_discount_loaded_from_yaml(self, tmp_path):
+        from unittest.mock import PropertyMock
+        from overcode.settings import UserConfig, PATHS
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            "bedrock:\n"
+            "  discount: 0.35\n"
+            "  model_discount:\n"
+            "    opus: 0.2\n"
+        )
+        with patch.object(type(PATHS), "config_file", new_callable=PropertyMock,
+                          return_value=cfg_file):
+            cfg = UserConfig.load()
+        assert cfg.bedrock_discount == pytest.approx(0.35)
+        assert cfg.bedrock_model_discount == {"opus": pytest.approx(0.2)}
+
+    def test_discount_clamped(self):
+        from overcode.settings import _clamp_fraction
+        assert _clamp_fraction(-0.5) == 0.0
+        assert _clamp_fraction(1.5) == 0.9999
+        assert _clamp_fraction("nope") == 0.0
+        assert _clamp_fraction(0.3) == pytest.approx(0.3)
+
+
 class TestTUIPreferences:
     """Test TUIPreferences dataclass."""
 

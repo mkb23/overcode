@@ -19,13 +19,30 @@ class ModelPricing:
 
 
 # Built-in pricing for known model families.
-# Keys are checked as substrings against model names, so "opus" matches
-# "claude-opus-4-6", "gpt-4o-mini" matches "gpt-4o-mini-2024-07-18", etc.
+# Keys are checked as substrings against model names, LONGEST KEY FIRST, so
+# "opus-4-1" matches "claude-opus-4-1-..." before the generic "opus" entry,
+# and "gpt-4o-mini" matches before "gpt-4o". Keep this in mind when adding
+# versioned keys: the more specific (longer) key must be a substring of the
+# model id you want it to win for.
+#
+# Claude pricing source: https://platform.claude.com/docs/en/about-claude/pricing
+# (verified June 2026). Bedrock on-demand list prices are identical to these;
+# any AWS private-offer / committed-use discount is applied separately (see
+# the bedrock discount handling in settings.get_model_pricing).
 MODEL_PRICING: dict[str, ModelPricing] = {
-    # Claude models
-    "opus":   ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
-    "sonnet": ModelPricing(input=3.0,  output=15.0, cache_write=3.75,  cache_read=0.30),
-    "haiku":  ModelPricing(input=0.80, output=4.0,  cache_write=1.0,   cache_read=0.08),
+    # Claude models — order here is cosmetic; lookups sort by key length.
+    # Current Opus (4.5 / 4.6 / 4.7 / 4.8) — $5 / $25.
+    "opus":         ModelPricing(input=5.0,  output=25.0, cache_write=6.25,  cache_read=0.50),
+    # Legacy Opus (4.1 and the deprecated original 4.0) — $15 / $75.
+    "opus-4-1":     ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
+    "opus-4-2025":  ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
+    # Sonnet 4.x — $3 / $15.
+    "sonnet":       ModelPricing(input=3.0,  output=15.0, cache_write=3.75,  cache_read=0.30),
+    # Current Haiku (4.5) — $1 / $5.
+    "haiku":        ModelPricing(input=1.0,  output=5.0,  cache_write=1.25,  cache_read=0.10),
+    # Legacy Haiku 3.5 (retired, but still served on Bedrock/Vertex) — $0.80 / $4.
+    # Note: Claude 3.x ids put the version before the family ("claude-3-5-haiku").
+    "3-5-haiku":    ModelPricing(input=0.80, output=4.0,  cache_write=1.0,   cache_read=0.08),
     # OpenAI models (commonly used for summariser)
     "gpt-4o-mini": ModelPricing(input=0.15, output=0.60),
     "gpt-4o":      ModelPricing(input=2.50, output=10.0),

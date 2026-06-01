@@ -835,7 +835,10 @@ class MonitorDaemon:
         from .settings import get_user_config, get_model_pricing
         from .monitor_daemon_core import calculate_total_tokens, calculate_cost_estimate
         config = get_user_config()
-        mp = get_model_pricing(detected_model or session.model, config)
+        mp = get_model_pricing(
+            detected_model or session.model, config,
+            provider=detected_provider or session.provider,
+        )
         cost = calculate_cost_estimate(
             total_input, total_output, total_cache_creation, total_cache_read,
             price_input=mp.input, price_output=mp.output,
@@ -898,7 +901,10 @@ class MonitorDaemon:
             # Estimate cost using per-model pricing (falls back to global config)
             from .settings import get_user_config, get_model_pricing
             config = get_user_config()
-            mp = get_model_pricing(stats.model or session.model, config)
+            mp = get_model_pricing(
+                stats.model or session.model, config,
+                provider=stats.provider or session.provider,
+            )
             cost_estimate = calculate_cost_estimate(
                 stats.input_tokens,
                 stats.output_tokens,

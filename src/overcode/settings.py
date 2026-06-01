@@ -209,20 +209,82 @@ TUI = TUISettings()
 from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401
 
 
-def get_model_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:
+def _clamp_fraction(value) -> float:
+    """Coerce a config value to a discount fraction in [0.0, 1.0).
+
+    Accepts a number; values outside the range are clamped (a 100%+ discount
+    would zero out cost, so we cap just below 1.0). Non-numeric -> 0.0.
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if f < 0.0:
+        return 0.0
+    if f >= 1.0:
+        return 0.9999
+    return f
+
+
+def _bedrock_discount_for(model: str | None, fallback: "UserConfig") -> float:
+    """Resolve the bedrock discount fraction for a model.
+
+    A per-model override (matched longest-key-first, like pricing) wins over
+    the flat ``bedrock.discount``.
+    """
+    if model and fallback.bedrock_model_discount:
+        model_lower = model.lower()
+        for key in sorted(fallback.bedrock_model_discount, key=len, reverse=True):
+            if key in model_lower:
+                return fallback.bedrock_model_discount[key]
+    return fallback.bedrock_discount
+
+
+def _apply_discount(pricing: ModelPricing, fraction: float) -> ModelPricing:
+    """Return a copy of ``pricing`` with every rate scaled by (1 - fraction)."""
+    if not fraction:
+        return pricing
+    keep = 1.0 - fraction
+    return ModelPricing(
+        input=pricing.input * keep,
+        output=pricing.output * keep,
+        cache_write=pricing.cache_write * keep,
+        cache_read=pricing.cache_read * keep,
+    )
+
+
+def get_model_pricing(
+    model: str | None,
+    fallback: "UserConfig",
+    provider: str | None = None,
+) -> ModelPricing:
     """Look up pricing for a model name, falling back to global config.
 
     Matches against MODEL_PRICING keys as substrings of the model name
     (e.g. "claude-sonnet-4-6" matches "sonnet").  User overrides in
     config.yaml under ``model_pricing:`` take precedence over built-ins.
+
+    When ``provider == "bedrock"``, any configured bedrock discount (flat or
+    per-model) is applied to the resolved list rates so the estimate reflects
+    a negotiated private-offer / committed-use rate rather than list price.
     """
+    base = _get_list_pricing(model, fallback)
+    if provider == "bedrock":
+        return _apply_discount(base, _bedrock_discount_for(model, fallback))
+    return base
+
+
+def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:
+    """Resolve list (pre-discount) pricing for a model name."""
     if model:
-        # Check user overrides first, then built-ins
+        # Check user overrides first, then built-ins. Match longest key first
+        # so versioned keys (e.g. "opus-4-1") win over generic ones ("opus");
+        # see MODEL_PRICING for why ordering matters.
         all_pricing = {**MODEL_PRICING, **fallback.model_pricing}
         model_lower = model.lower()
-        for key, pricing in all_pricing.items():
+        for key in sorted(all_pricing, key=len, reverse=True):
             if key in model_lower:
-                return pricing
+                return all_pricing[key]
     return ModelPricing(
         input=fallback.price_input,
         output=fallback.price_output,
@@ -246,6 +308,16 @@ class UserConfig:
 
     # Per-model pricing overrides (loaded from config.yaml model_pricing section)
     model_pricing: dict = field(default_factory=dict)
+
+    # Bedrock discount (loaded from config.yaml bedrock section). Bedrock
+    # on-demand list prices equal the Anthropic API list prices baked into
+    # MODEL_PRICING; enterprise customers negotiate a private-offer / committed-
+    # use discount off that list (commonly a flat % across all models, sometimes
+    # per-model). These are applied only to provider == "bedrock" sessions.
+    # For anything a flat % can't express (input/output-asymmetric net rates,
+    # provisioned throughput), set exact net rates via model_pricing instead.
+    bedrock_discount: float = 0.0          # fraction off list, e.g. 0.30 = 30% off
+    bedrock_model_discount: dict = field(default_factory=dict)  # {family: fraction}
 
     # Skill emoji overrides (loaded from config.yaml skill_emoji section) (#252)
     skill_emoji: dict = field(default_factory=dict)
@@ -283,6 +355,18 @@ class UserConfig:
                                 cache_read=vals.get("cache_read", 0.30),
                             )
 
+                # Parse bedrock discount (flat + optional per-model overrides)
+                bedrock_raw = data.get("bedrock", {})
+                bedrock_discount = 0.0
+                bedrock_model_discount: dict[str, float] = {}
+                if isinstance(bedrock_raw, dict):
+                    bedrock_discount = _clamp_fraction(bedrock_raw.get("discount", 0.0))
+                    md_raw = bedrock_raw.get("model_discount", {})
+                    if isinstance(md_raw, dict):
+                        bedrock_model_discount = {
+                            str(k).lower(): _clamp_fraction(v) for k, v in md_raw.items()
+                        }
+
                 # Parse skill emoji overrides (#252)
                 skill_emoji_raw = data.get("skill_emoji", {})
                 skill_emoji_parsed = (
@@ -307,6 +391,8 @@ class UserConfig:
                     price_cache_write=pricing.get("cache_write", 3.75),
                     price_cache_read=pricing.get("cache_read", 0.30),
                     model_pricing=model_pricing_parsed,
+                    bedrock_discount=bedrock_discount,
+                    bedrock_model_discount=bedrock_model_discount,
                     skill_emoji=skill_emoji_parsed,
                     wrapper_emoji=wrapper_emoji_parsed,
                 )
