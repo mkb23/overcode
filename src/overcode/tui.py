@@ -1644,6 +1644,13 @@ class SupervisorTUI(
                 git_diff = widget.session.remote_git_diff if widget.session.is_remote else None
                 git_untracked = widget.session.remote_git_untracked if widget.session.is_remote else None
                 widget.apply_status_no_refresh(status, activity, content, None, git_diff, git_untracked)
+                # Pull the structured 2-column detail cached by detect_status (#TBD).
+                # Without this, widget.status_detail stays None and the ⏰ column
+                # stays hidden because any_has_status_detail never flips True.
+                try:
+                    widget.status_detail = self.detector.get_status_detail(widget.session.name)
+                except AttributeError:
+                    widget.status_detail = None
 
         # Recompute column widths before refreshing widgets for alignment
         self._recompute_cell_column_widths()

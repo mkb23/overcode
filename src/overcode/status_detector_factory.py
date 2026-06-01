@@ -64,6 +64,8 @@ class StatusDetectorDispatcher:
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
         self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
         self._mode = mode
+        # Cache last (status, activity) so get_status_detail can synthesize in polling mode (#TBD).
+        self._last_seen: dict = {}
 
     @property
     def mode(self) -> str:
@@ -88,7 +90,11 @@ class StatusDetectorDispatcher:
     def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Detect status using the globally configured mode."""
         detector = self.hooks if self._mode == "hooks" else self.polling
-        return detector.detect_status(session, num_lines=num_lines)
+        result = detector.detect_status(session, num_lines=num_lines)
+        # Cache for get_status_detail synthesis (#TBD).
+        status, activity, _ = result
+        self._last_seen[session.name] = (status, activity)
+        return result
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get pane content (delegates to active detector)."""
@@ -101,3 +107,27 @@ class StatusDetectorDispatcher:
         if hasattr(self.hooks, 'get_loaded_skills'):
             return self.hooks.get_loaded_skills(session_name)
         return []
+
+    def get_status_detail(self, session_name: str):
+        """Return the structured 2-column status detail for a session (#TBD).
+
+        Layered:
+          1. If the hook detector has a fresh entry (hooks mode), use it
+             — full obligation tracking + foreground classification.
+          2. Otherwise (polling mode, or hooks installed but not yet
+             fired) synthesize a minimal detail from the most recent
+             legacy status enum so the column still shows a bucket color
+             plus a generic badge.
+          3. Falls back to None if neither is available — column hides.
+        """
+        getter = getattr(self.hooks, 'get_status_detail', None)
+        if getter is not None:
+            detail = getter(session_name)
+            if detail is not None:
+                return detail
+        last = self._last_seen.get(session_name)
+        if last is None:
+            return None
+        from .hook_status_detector import synthesize_status_detail_from_legacy
+        status, activity = last
+        return synthesize_status_detail_from_legacy(status, activity)

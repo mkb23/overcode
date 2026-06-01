@@ -18,6 +18,7 @@ from overcode.hook_status_detector import (
     HookStatusDetector,
     augment_with_legacy_heartbeat,
     compute_status_detail,
+    synthesize_status_detail_from_legacy,
 )
 from overcode.status_constants import (
     STATUS_RUNNING,
@@ -1136,3 +1137,64 @@ class TestAugmentWithLegacyHeartbeat:
 
     def test_none_in_none_out_for_non_heartbeat(self):
         assert augment_with_legacy_heartbeat(None, STATUS_RUNNING) is None
+
+
+class TestSynthesizeStatusDetailFromLegacy:
+    """Polling-mode (or hooks-not-yet-fired) synthesis from the legacy enum."""
+
+    def test_running_with_using_activity_extracts_tool_label(self):
+        d = synthesize_status_detail_from_legacy(STATUS_RUNNING, "Using Read")
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "tool"
+        assert d.badges[0].label == "Read"
+
+    def test_running_with_bash_activity_labels_bash(self):
+        d = synthesize_status_detail_from_legacy(STATUS_RUNNING, "Bash: gh run watch 1")
+        assert d.badges[0].label == "Bash"
+
+    def test_running_without_activity_has_no_label(self):
+        d = synthesize_status_detail_from_legacy(STATUS_RUNNING, "")
+        assert d.badges[0].kind == "tool"
+        assert d.badges[0].label is None
+
+    def test_busy_sleeping_is_green_blocked_sleep(self):
+        d = synthesize_status_detail_from_legacy(STATUS_BUSY_SLEEPING)
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "blocked_sleep"
+
+    def test_waiting_approval_is_orange_permission(self):
+        d = synthesize_status_detail_from_legacy(STATUS_WAITING_APPROVAL)
+        assert d.color == STATUS_COLOR_ORANGE
+        assert d.badges[0].kind == "permission"
+
+    def test_waiting_oversight_is_orange_oversight(self):
+        d = synthesize_status_detail_from_legacy(STATUS_WAITING_OVERSIGHT)
+        assert d.color == STATUS_COLOR_ORANGE
+        assert d.badges[0].kind == "oversight"
+
+    def test_waiting_heartbeat_is_yellow_heartbeat(self):
+        d = synthesize_status_detail_from_legacy(STATUS_WAITING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_YELLOW
+        assert d.badges[0].kind == "heartbeat"
+
+    def test_running_heartbeat_is_green_heartbeat(self):
+        d = synthesize_status_detail_from_legacy(STATUS_RUNNING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "heartbeat"
+
+    def test_waiting_user_is_red_awaiting(self):
+        d = synthesize_status_detail_from_legacy(STATUS_WAITING_USER)
+        assert d.color == STATUS_COLOR_RED
+        assert d.badges[0].kind == "awaiting_input"
+
+    def test_error_is_red_error(self):
+        d = synthesize_status_detail_from_legacy(STATUS_ERROR)
+        assert d.color == STATUS_COLOR_RED
+        assert d.badges[0].kind == "error"
+
+    def test_terminated_returns_none(self):
+        assert synthesize_status_detail_from_legacy(STATUS_TERMINATED) is None
+
+    def test_asleep_returns_none(self):
+        from overcode.status_constants import STATUS_ASLEEP
+        assert synthesize_status_detail_from_legacy(STATUS_ASLEEP) is None

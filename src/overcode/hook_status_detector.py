@@ -286,6 +286,51 @@ def compute_status_detail(
     )
 
 
+def synthesize_status_detail_from_legacy(
+    status: str,
+    activity: str = "",
+) -> Optional[StatusDetail]:
+    """Build a StatusDetail from a legacy status enum alone (#TBD).
+
+    Used in polling mode and when overcode hooks aren't installed — there's
+    no obligation tracking or foreground classification, so we can only
+    show the bucket color and a generic badge. Returns None for lifecycle
+    states (TERMINATED / ASLEEP) which keep their existing display.
+    """
+    from .status_constants import (
+        STATUS_RUNNING, STATUS_BUSY_SLEEPING, STATUS_WAITING_APPROVAL,
+        STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT, STATUS_ERROR,
+        STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT,
+        STATUS_HEARTBEAT_START, STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE,
+    )
+    if status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE):
+        return None
+    if status in (STATUS_RUNNING_HEARTBEAT, STATUS_HEARTBEAT_START):
+        return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="heartbeat")], status)
+    if status == STATUS_RUNNING:
+        # Try to extract a tool name from the activity string (e.g. "Using Read")
+        tool_label = None
+        if activity:
+            if activity.startswith("Using "):
+                tool_label = activity[len("Using "):].split()[0] if len(activity) > 6 else None
+            elif activity.startswith("Bash: "):
+                tool_label = "Bash"
+        return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="tool", label=tool_label)], status)
+    if status == STATUS_BUSY_SLEEPING:
+        return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="blocked_sleep")], status)
+    if status == STATUS_WAITING_APPROVAL:
+        return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission")], status)
+    if status == STATUS_WAITING_OVERSIGHT:
+        return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")], status)
+    if status == STATUS_WAITING_HEARTBEAT:
+        return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind="heartbeat")], status)
+    if status == STATUS_ERROR:
+        return StatusDetail(STATUS_COLOR_RED, [StatusBadge(kind="error")], status)
+    if status == STATUS_WAITING_USER:
+        return StatusDetail(STATUS_COLOR_RED, [StatusBadge(kind="awaiting_input")], status)
+    return None
+
+
 def augment_with_legacy_heartbeat(
     detail: Optional[StatusDetail],
     legacy_status: str,
