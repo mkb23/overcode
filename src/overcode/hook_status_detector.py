@@ -29,6 +29,15 @@ from .status_constants import (
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
     STATUS_ERROR,
+    STATUS_RUNNING_HEARTBEAT,
+    STATUS_WAITING_HEARTBEAT,
+    STATUS_COLOR_GREEN,
+    STATUS_COLOR_ORANGE,
+    STATUS_COLOR_YELLOW,
+    STATUS_COLOR_RED,
+    StatusBadge,
+    StatusDetail,
+    color_priority,
 )
 from .status_patterns import (
     extract_active_monitor_count,
@@ -65,6 +74,13 @@ def _pane_shows_interrupt_prompt(pane_content: str) -> bool:
     return any(marker in tail for marker in _INTERRUPT_PROMPT_MARKERS)
 
 
+# Events that mean Claude is in the middle of an active turn — drives the
+# GREEN "acting" bucket in compute_status_detail.
+_ACTING_EVENTS = frozenset({
+    "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+})
+
+
 # Hook event → status mapping
 _HOOK_STATUS_MAP = {
     "UserPromptSubmit": STATUS_RUNNING,
@@ -88,6 +104,233 @@ _RECENT_ACTIVITY_WINDOW_SECONDS = 1.5
 
 # How many log lines to keep in memory per read — plenty for a 1.5s window.
 _RECENT_EVENTS_LIMIT = 50
+
+
+def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
+    """Convert raw obligation dicts into stacked StatusBadge entries.
+
+    Identical kinds stack: monitor×2 is one badge with count=2 rather than
+    two badges. ETAs collapse to the earliest. Labels collapse to the first
+    one seen — for stacked kinds the label is less important than the count.
+
+    For wake-time obligations we prefer the *remaining* seconds (from the
+    stored absolute wake time) over the original delay, so the column
+    counts down rather than showing a static "in Ns".
+    """
+    now = time.time()
+    by_kind: dict[str, StatusBadge] = {}
+    for obl in obligations:
+        if not isinstance(obl, dict):
+            continue
+        kind = obl.get("kind")
+        if not kind:
+            continue
+        eta_abs = obl.get("eta_absolute")
+        if isinstance(eta_abs, (int, float)):
+            eta = max(0.0, eta_abs - now)
+        else:
+            eta = obl.get("eta_seconds")
+        label = obl.get("label")
+        if kind in by_kind:
+            b = by_kind[kind]
+            b.count += 1
+            if isinstance(eta, (int, float)):
+                if b.eta_seconds is None or eta < b.eta_seconds:
+                    b.eta_seconds = float(eta)
+        else:
+            by_kind[kind] = StatusBadge(
+                kind=kind,
+                label=label if isinstance(label, str) else None,
+                count=1,
+                eta_seconds=float(eta) if isinstance(eta, (int, float)) else None,
+            )
+    # Stable order: YELLOW kinds in a canonical order, then anything else.
+    order = ["schedule_wakeup", "cron", "monitor", "bg_task", "heartbeat"]
+    rank = {k: i for i, k in enumerate(order)}
+    return sorted(by_kind.values(), key=lambda b: rank.get(b.kind, 99))
+
+
+def _green_badges(
+    event: str,
+    hook_state: dict,
+    sleep_duration_seconds: Optional[int],
+) -> list[StatusBadge]:
+    """Build the column-2 badges for the GREEN (acting) bucket."""
+    tool_name = hook_state.get("tool_name") or ""
+    foreground = hook_state.get("foreground") or {}
+    blocked_on = foreground.get("blocked_on") if isinstance(foreground, dict) else None
+
+    if event == "UserPromptSubmit":
+        return [StatusBadge(kind="generating")]
+
+    if blocked_on == "ci":
+        return [StatusBadge(kind="blocked_ci", label=tool_name or None)]
+    if blocked_on == "process":
+        return [StatusBadge(kind="blocked_process", label=tool_name or None)]
+    if blocked_on == "sleep" or sleep_duration_seconds is not None:
+        return [StatusBadge(
+            kind="blocked_sleep",
+            eta_seconds=float(sleep_duration_seconds) if sleep_duration_seconds else None,
+        )]
+
+    if tool_name:
+        return [StatusBadge(kind="tool", label=tool_name)]
+    return [StatusBadge(kind="tool")]
+
+
+def compute_status_detail(
+    hook_state: Optional[dict],
+    event: str,
+    session: "Session",
+    pane_content: str,
+    monitor_count: int,
+    has_interrupt: bool,
+    sleep_duration_seconds: Optional[int],
+    legacy_status: str,
+) -> StatusDetail:
+    """Reduce hook state + side signals into a 4-color StatusDetail.
+
+    Pure-ish: reads `session.parent_session_id` and counts already-extracted
+    monitor streams, but otherwise just consumes the inputs. The reducer
+    builds candidate (color, badges) tuples for each bucket the agent is in,
+    then picks the highest-priority color. Badges from the winning bucket
+    are returned; losing-bucket badges drop on the floor (we'll surface them
+    as sidecars in a follow-up).
+    """
+    if hook_state is None:
+        return StatusDetail(
+            color=STATUS_COLOR_RED,
+            badges=[StatusBadge(kind="awaiting_input")],
+            legacy_status=legacy_status,
+        )
+
+    obligations = hook_state.get("pending_obligations") or []
+    # Monitor streams seen in the pane but never registered as obligations
+    # (Claude installed Monitor before overcode's hook started, or the
+    # PostToolUse already cleared it). Synthesize a badge so the user still
+    # sees the active stream.
+    obligation_monitor_count = sum(
+        1 for o in obligations if isinstance(o, dict) and o.get("kind") == "monitor"
+    )
+    synthetic_monitors = max(0, monitor_count - obligation_monitor_count)
+
+    # --- Candidate buckets -------------------------------------------------
+    candidates: list[tuple[str, list[StatusBadge]]] = []
+
+    # RED — needs substantive input
+    if has_interrupt:
+        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="awaiting_input")]))
+    if event == "StopFailure" or legacy_status == STATUS_ERROR:
+        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="error")]))
+    if event == "UserPromptSubmitRejected":
+        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="error", label="rejected")]))
+
+    # ORANGE — quick yes/no approval
+    if event == "PermissionRequest":
+        tool = hook_state.get("tool_name") or ""
+        candidates.append((
+            STATUS_COLOR_ORANGE,
+            [StatusBadge(kind="permission", label=tool or None)],
+        ))
+    if event == "Stop" and session is not None and session.parent_session_id is not None:
+        candidates.append((STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")]))
+
+    # GREEN — actively working
+    if event in _ACTING_EVENTS:
+        candidates.append((STATUS_COLOR_GREEN, _green_badges(event, hook_state, sleep_duration_seconds)))
+    elif legacy_status == STATUS_RUNNING or (
+        legacy_status == STATUS_BUSY_SLEEPING and sleep_duration_seconds is not None
+    ):
+        # Sticky-green burst (event got overwritten) or a foreground sleep
+        # that lifted Stop back to RUNNING. Monitor-driven BUSY_SLEEPING is
+        # *armed*, not acting — that case falls through to YELLOW below.
+        if sleep_duration_seconds is not None:
+            candidates.append((STATUS_COLOR_GREEN, [
+                StatusBadge(kind="blocked_sleep", eta_seconds=float(sleep_duration_seconds)),
+            ]))
+        else:
+            tool = hook_state.get("tool_name") or ""
+            candidates.append((
+                STATUS_COLOR_GREEN,
+                [StatusBadge(kind="tool", label=tool or None)],
+            ))
+
+    # YELLOW — armed
+    yellow_badges = _badges_from_obligations(obligations)
+    if synthetic_monitors > 0:
+        # Add or bump the monitor badge
+        for b in yellow_badges:
+            if b.kind == "monitor":
+                b.count += synthetic_monitors
+                break
+        else:
+            yellow_badges.append(StatusBadge(kind="monitor", count=synthetic_monitors))
+    if yellow_badges:
+        candidates.append((STATUS_COLOR_YELLOW, yellow_badges))
+
+    # --- Resolve ----------------------------------------------------------
+    if not candidates:
+        # Stop fired (or unknown event) with nothing pending → genuine RED idle.
+        return StatusDetail(
+            color=STATUS_COLOR_RED,
+            badges=[StatusBadge(kind="awaiting_input")],
+            legacy_status=legacy_status,
+        )
+
+    candidates.sort(key=lambda c: color_priority(c[0]), reverse=True)
+    winning_color, winning_badges = candidates[0]
+    return StatusDetail(
+        color=winning_color,
+        badges=winning_badges,
+        legacy_status=legacy_status,
+    )
+
+
+def augment_with_legacy_heartbeat(
+    detail: Optional[StatusDetail],
+    legacy_status: str,
+) -> Optional[StatusDetail]:
+    """Project the legacy heartbeat status enum onto the two-column model (#TBD task 6).
+
+    Until the daemon and TUI stop minting `STATUS_RUNNING_HEARTBEAT` and
+    `STATUS_WAITING_HEARTBEAT`, we bridge them at the column boundary by
+    surfacing a `heartbeat` badge alongside (or in place of) whatever the
+    hook reducer produced.
+
+    Mapping:
+      WAITING_HEARTBEAT — the agent is idle but a heartbeat instruction will
+        re-prompt it. That's YELLOW armed → add a heartbeat badge. If the
+        reducer said RED awaiting_input (no obligations seen), upgrade to
+        YELLOW. If YELLOW already, append. ORANGE/GREEN take precedence
+        (the user is more interested in the approval/work than the
+        heartbeat) so we leave them.
+      RUNNING_HEARTBEAT — the agent IS working, the heartbeat just kicked it
+        off. Stay GREEN, append a heartbeat badge so the row reads "tool
+        … 💓".
+    """
+    if legacy_status == STATUS_WAITING_HEARTBEAT:
+        heartbeat = StatusBadge(kind="heartbeat")
+        if detail is None or not detail.badges:
+            return StatusDetail(STATUS_COLOR_YELLOW, [heartbeat], legacy_status)
+        if detail.color == STATUS_COLOR_RED:
+            return StatusDetail(STATUS_COLOR_YELLOW, [heartbeat], legacy_status)
+        if detail.color == STATUS_COLOR_YELLOW:
+            badges = [b for b in detail.badges if b.kind != "heartbeat"]
+            badges.append(heartbeat)
+            return StatusDetail(STATUS_COLOR_YELLOW, badges, legacy_status)
+        return detail
+
+    if legacy_status == STATUS_RUNNING_HEARTBEAT:
+        heartbeat = StatusBadge(kind="heartbeat")
+        if detail is None:
+            return StatusDetail(STATUS_COLOR_GREEN, [heartbeat], legacy_status)
+        if detail.color == STATUS_COLOR_GREEN:
+            badges = [b for b in detail.badges if b.kind != "heartbeat"]
+            badges.append(heartbeat)
+            return StatusDetail(STATUS_COLOR_GREEN, badges, legacy_status)
+        return detail
+
+    return detail
 
 
 class HookStatusDetector:
@@ -131,6 +374,9 @@ class HookStatusDetector:
         self._content_changed: Dict[str, bool] = {}
         # Skills observed via Skill tool_use events, keyed by session name (#252)
         self._loaded_skills: Dict[str, set] = {}
+        # Structured 2-column status detail, populated by detect_status and
+        # consumed by the ⏰ column. Keyed by session name (#TBD).
+        self._status_details: Dict[str, StatusDetail] = {}
 
         # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
@@ -352,7 +598,28 @@ class HookStatusDetector:
         # Record hook phase for diagnostics
         self._last_detect_phase[session.id] = f"hook:{event}"
 
+        # Cache the structured 2-column detail for the ⏰ column to read.
+        # Parallel to the legacy status — does not affect the tuple return.
+        self._status_details[session.name] = compute_status_detail(
+            hook_state=hook_state,
+            event=event,
+            session=session,
+            pane_content=pane_content,
+            monitor_count=monitor_count,
+            has_interrupt=has_interrupt,
+            sleep_duration_seconds=sleep_dur,
+            legacy_status=status,
+        )
+
         return status, activity, pane_content
+
+    def get_status_detail(self, session_name: str) -> Optional[StatusDetail]:
+        """Return the most recent StatusDetail for a session, or None.
+
+        Populated as a side effect of detect_status. The ⏰ column reads this
+        to render column-2 badges; absent → render nothing.
+        """
+        return self._status_details.get(session_name)
 
     def _detect_session_end_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
         """Determine status after a SessionEnd hook event.

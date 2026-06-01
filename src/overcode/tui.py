@@ -1863,6 +1863,13 @@ class SupervisorTUI(
             for w in self.query(SessionSummary)
         )
 
+        # Check if any agent has a populated StatusDetail — keeps the ⏰ column
+        # visible when someone is showing a non-sleep badge (#TBD).
+        any_has_status_detail = any(
+            getattr(w, 'status_detail', None) is not None
+            for w in self.query(SessionSummary)
+        )
+
         # Build the list of sessions to display using extracted logic
         display_sessions = filter_visible_sessions(
             active_sessions=self.sessions,
@@ -1917,6 +1924,7 @@ class SupervisorTUI(
                     widget.any_has_budget = any_has_budget
                     widget.any_has_oversight_timeout = any_has_oversight_timeout
                     widget.any_is_sleeping = any_is_sleeping
+                    widget.any_has_status_detail = any_has_status_detail
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
                     widget.any_has_provider = any_has_provider
@@ -1980,6 +1988,7 @@ class SupervisorTUI(
                 widget.any_has_budget = any_has_budget
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
                 widget.any_is_sleeping = any_is_sleeping
+                widget.any_has_status_detail = any_has_status_detail
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
                 widget.any_has_provider = any_has_provider

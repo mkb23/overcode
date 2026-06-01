@@ -610,6 +610,29 @@ def list_agents(
     # Compute cross-session flags
     any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _, _ in session_data)
 
+    # Pull structured 2-column status detail off the detector when available
+    # (#TBD). Detector may be None when daemon state alone supplies status.
+    def _get_status_detail(sess):
+        if detector is None:
+            return None
+        getter = getattr(detector, "get_status_detail", None)
+        if getter is None:
+            return None
+        try:
+            return getter(sess.name)
+        except Exception:
+            return None
+
+    any_has_status_detail = any(
+        _get_status_detail(sd[0]) is not None for sd in session_data
+    )
+
+    # Heartbeat status legacy bridge (#TBD task 6)
+    from ..hook_status_detector import augment_with_legacy_heartbeat
+
+    def _augmented_detail(sess, status):
+        return augment_with_legacy_heartbeat(_get_status_detail(sess), status)
+
     # Second pass: build contexts and collect cells for auto-alignment
     all_cells = []
     activities = []
@@ -632,6 +655,8 @@ def list_agents(
             git_untracked_count=git_untracked,
             any_has_budget=any_has_budget, child_count=child_count,
             any_is_sleeping=any_is_sleeping,
+            status_detail=_augmented_detail(sess, status),
+            any_has_status_detail=any_has_status_detail,
             any_has_oversight_timeout=any_has_oversight_timeout,
             oversight_deadline=oversight_deadline,
             pr_number=getattr(sess, 'pr_number', None),

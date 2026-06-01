@@ -403,3 +403,189 @@ class TestAppendHookEvent:
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "custom"))
         path = _get_hook_event_log_path("agents", "a1")
         assert path == tmp_path / "custom" / "agents" / "hook_events_a1.jsonl"
+
+
+# =============================================================================
+# Phase 1: pending_obligations tracking (#TBD — two-column status model)
+# =============================================================================
+
+class TestPendingObligations:
+    """write_hook_state should maintain a `pending_obligations` list across
+    events so the detector can compute the YELLOW armed bucket.
+    """
+
+    def _state(self, tmp_path):
+        return json.loads((tmp_path / "agents" / "hook_state_a1.json").read_text())
+
+    def _write(self, tmp_path, monkeypatch, event, **kw):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        write_hook_state(event, "agents", "a1", **kw)
+
+    def test_schedule_wakeup_arms_obligation(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="ScheduleWakeup", tool_use_id="t1",
+                    tool_input={"delaySeconds": 240, "reason": "watch ci"})
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert len(obls) == 1
+        assert obls[0]["kind"] == "schedule_wakeup"
+        assert obls[0]["tool_use_id"] == "t1"
+        assert obls[0]["eta_seconds"] == 240.0
+        assert obls[0]["label"] == "in 240s"
+
+    def test_cron_create_arms_and_carries_id(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="CronCreate", tool_use_id="t2",
+                    tool_input={"id": "daily-9am", "schedule": "0 9 * * *"})
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert obls[0]["kind"] == "cron"
+        assert obls[0]["cron_id"] == "daily-9am"
+        assert obls[0]["label"] == "0 9 * * *"
+
+    def test_cron_delete_disarms_matching_id(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="CronCreate", tool_use_id="t2",
+                    tool_input={"id": "daily-9am", "schedule": "0 9 * * *"})
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="CronDelete", tool_use_id="t3",
+                    tool_input={"cron_id": "daily-9am"})
+        assert "pending_obligations" not in self._state(tmp_path)
+
+    def test_monitor_arms_unconditionally(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Monitor", tool_use_id="t4",
+                    tool_input={"command": "tail -f log"})
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert obls[0]["kind"] == "monitor"
+
+    def test_bash_arms_only_when_run_in_background(self, monkeypatch, tmp_path):
+        # Foreground Bash — no obligation
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t5",
+                    tool_input={"command": "ls"})
+        assert "pending_obligations" not in self._state(tmp_path)
+        # Background Bash — obligation
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t6",
+                    tool_input={"command": "long-job", "run_in_background": True})
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert obls[0]["kind"] == "bg_task"
+        assert obls[0]["tool_use_id"] == "t6"
+
+    def test_post_tool_use_disarms_by_tool_use_id(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Monitor", tool_use_id="t4")
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Monitor", tool_use_id="t5")
+        assert len(self._state(tmp_path)["pending_obligations"]) == 2
+        self._write(tmp_path, monkeypatch, "PostToolUse",
+                    tool_name="Monitor", tool_use_id="t4")
+        remaining = self._state(tmp_path)["pending_obligations"]
+        assert len(remaining) == 1
+        assert remaining[0]["tool_use_id"] == "t5"
+
+    def test_user_prompt_submit_clears_schedule_wakeup(self, monkeypatch, tmp_path):
+        """ScheduleWakeup fires as a synthetic prompt — disarm on next UserPromptSubmit."""
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="ScheduleWakeup", tool_use_id="t1",
+                    tool_input={"delaySeconds": 60})
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="CronCreate", tool_use_id="t2",
+                    tool_input={"id": "c1", "schedule": "* * * * *"})
+        self._write(tmp_path, monkeypatch, "Stop")
+        # Both obligations survive Stop
+        assert len(self._state(tmp_path)["pending_obligations"]) == 2
+        # UserPromptSubmit drops the wakeup but keeps the cron
+        self._write(tmp_path, monkeypatch, "UserPromptSubmit")
+        remaining = self._state(tmp_path)["pending_obligations"]
+        assert len(remaining) == 1
+        assert remaining[0]["kind"] == "cron"
+
+    def test_session_end_clears_all(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Monitor", tool_use_id="t1")
+        self._write(tmp_path, monkeypatch, "SessionEnd")
+        assert "pending_obligations" not in self._state(tmp_path)
+
+    def test_cron_obligation_survives_post_tool_use(self, monkeypatch, tmp_path):
+        """Persistent obligations (cron, schedule_wakeup) outlive PostToolUse.
+
+        PostToolUse for CronCreate means "the registration completed", not
+        "the cron is done firing". The obligation should remain until
+        CronDelete or SessionEnd.
+        """
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="CronCreate", tool_use_id="t1",
+                    tool_input={"id": "c1", "schedule": "@hourly"})
+        self._write(tmp_path, monkeypatch, "PostToolUse",
+                    tool_name="CronCreate", tool_use_id="t1")
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert len(obls) == 1
+        assert obls[0]["kind"] == "cron"
+        # And Stop also doesn't disarm it
+        self._write(tmp_path, monkeypatch, "Stop")
+        assert len(self._state(tmp_path)["pending_obligations"]) == 1
+
+    def test_schedule_wakeup_survives_post_tool_use(self, monkeypatch, tmp_path):
+        """ScheduleWakeup PostToolUse means scheduled, not fired."""
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="ScheduleWakeup", tool_use_id="t1",
+                    tool_input={"delaySeconds": 300})
+        self._write(tmp_path, monkeypatch, "PostToolUse",
+                    tool_name="ScheduleWakeup", tool_use_id="t1")
+        obls = self._state(tmp_path)["pending_obligations"]
+        assert len(obls) == 1
+        assert obls[0]["kind"] == "schedule_wakeup"
+
+
+class TestForegroundClassification:
+    """write_hook_state should classify foreground Bash commands so the
+    GREEN bucket can show *why* the agent looks blocked (CI watch, sleep…).
+    """
+
+    def _state(self, tmp_path):
+        return json.loads((tmp_path / "agents" / "hook_state_a1.json").read_text())
+
+    def _write(self, tmp_path, monkeypatch, event, **kw):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        write_hook_state(event, "agents", "a1", **kw)
+
+    def test_gh_run_watch_classified_as_ci(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t1",
+                    tool_input={"command": "gh run watch 12345"})
+        fg = self._state(tmp_path)["foreground"]
+        assert fg["kind"] == "tool"
+        assert fg["tool"] == "Bash"
+        assert fg["blocked_on"] == "ci"
+
+    def test_gh_pr_checks_watch_classified_as_ci(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t1",
+                    tool_input={"command": "gh pr checks --watch"})
+        assert self._state(tmp_path)["foreground"]["blocked_on"] == "ci"
+
+    def test_tail_f_classified_as_process(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t1",
+                    tool_input={"command": "tail -f /var/log/system.log"})
+        assert self._state(tmp_path)["foreground"]["blocked_on"] == "process"
+
+    def test_sleep_classified_as_sleep(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t1",
+                    tool_input={"command": "sleep 60"})
+        assert self._state(tmp_path)["foreground"]["blocked_on"] == "sleep"
+
+    def test_plain_bash_has_no_blocked_on(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "PreToolUse",
+                    tool_name="Bash", tool_use_id="t1",
+                    tool_input={"command": "git status"})
+        fg = self._state(tmp_path)["foreground"]
+        assert fg["tool"] == "Bash"
+        assert "blocked_on" not in fg
+
+    def test_foreground_only_set_on_pre_tool_use(self, monkeypatch, tmp_path):
+        self._write(tmp_path, monkeypatch, "Stop")
+        assert "foreground" not in self._state(tmp_path)
+        self._write(tmp_path, monkeypatch, "PostToolUse", tool_name="Bash")
+        assert "foreground" not in self._state(tmp_path)

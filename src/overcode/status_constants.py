@@ -5,7 +5,8 @@ Centralizes all status-related constants, colors, emojis, and display
 mappings used throughout the application.
 """
 
-from typing import Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
 
 
 # =============================================================================
@@ -176,6 +177,16 @@ EMOJI_ASCII = {
     "✓": "ok",
     "▼": "v ",
     "▶": "> ",
+    # Status detail badges (#TBD — two-column status model)
+    "🔁": "Cr",
+    "📡": "Mo",
+    "🔌": "Bg",
+    "⚡": ">>",
+    "⚙": "Tl",
+    "😴": "Sl",
+    "🛡": "Pm",
+    "❓": "??",
+    "📥": "In",
 }
 
 
@@ -343,3 +354,106 @@ def is_done(status: str) -> bool:
 def is_waiting_oversight(status: str) -> bool:
     """Check if status indicates child is waiting for oversight report."""
     return status in WAITING_OVERSIGHT_STATUSES
+
+
+# =============================================================================
+# Two-column status model (#TBD)
+# =============================================================================
+#
+# Column 1 — a 4-color summary of *why* the agent isn't immediately available
+# for new instruction. Priority RED>ORANGE>GREEN>YELLOW when multiple buckets
+# apply (e.g. mid-tool-call AND a cron is armed → GREEN; permission prompt
+# fires mid-tool → ORANGE).
+#
+# Column 2 — a list of detail badges that explain the column-1 color. Lives
+# in the ⏰ slot today; rendered as stacked emoji + optional ETA/count.
+#
+# Lifecycle states (ASLEEP / TERMINATED / ERROR) sit *outside* this scheme —
+# they keep their existing status enum and have no column.
+
+STATUS_COLOR_GREEN = "color_green"      # acting (generating | tool in flight | sync-blocked on external)
+STATUS_COLOR_ORANGE = "color_orange"    # waiting on a quick yes/no approval
+STATUS_COLOR_YELLOW = "color_yellow"    # armed — will resume on its own (timer / cron / monitor / bg task)
+STATUS_COLOR_RED = "color_red"          # needs substantive user input/decision
+
+# Priority order (higher index = higher priority). Used when a single agent is
+# in multiple buckets simultaneously.
+_COLOR_PRIORITY = {
+    STATUS_COLOR_YELLOW: 0,
+    STATUS_COLOR_GREEN: 1,
+    STATUS_COLOR_ORANGE: 2,
+    STATUS_COLOR_RED: 3,
+}
+
+
+def color_priority(color: str) -> int:
+    """Return priority for a status color (higher = wins)."""
+    return _COLOR_PRIORITY.get(color, -1)
+
+
+# Single source of truth for badge emoji + the column it belongs to. New
+# badge kinds add a row here; everything else (hook reducer, column render,
+# ASCII fallback) picks them up automatically.
+#
+# Fields: (emoji, color, ascii_fallback)
+
+BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
+    # ---- YELLOW (armed) ----
+    "schedule_wakeup": ("⏰", STATUS_COLOR_YELLOW, "@@"),  # ScheduleWakeup pending
+    "cron":            ("🔁", STATUS_COLOR_YELLOW, "Cr"),  # CronCreate registered
+    "monitor":         ("📡", STATUS_COLOR_YELLOW, "Mo"),  # Monitor stream open
+    "bg_task":         ("🔌", STATUS_COLOR_YELLOW, "Bg"),  # Background Bash/Agent/Workflow
+    "heartbeat":       ("💓", STATUS_COLOR_YELLOW, "Hb"),  # Overcode heartbeat will re-prompt
+
+    # ---- GREEN (acting) ----
+    "generating":      ("⚡", STATUS_COLOR_GREEN,  ">>"),  # token generation, no tool
+    "tool":            ("⚙",  STATUS_COLOR_GREEN, "Tl"),   # generic foreground tool in flight
+    "blocked_ci":      ("🌐", STATUS_COLOR_GREEN, "CI"),   # gh run watch / pr checks --watch
+    "blocked_process": ("⏳", STATUS_COLOR_GREEN, "Wt"),   # tail -f / kubectl wait / docker wait
+    "blocked_sleep":   ("😴", STATUS_COLOR_GREEN, "Sl"),   # bash `sleep N` (foreground)
+
+    # ---- ORANGE (approval) ----
+    "permission":      ("🛡", STATUS_COLOR_ORANGE, "Pm"),  # PermissionRequest
+    "plan_approval":   ("📋", STATUS_COLOR_ORANGE, "Pl"),  # ExitPlanMode
+    "oversight":       ("👁",  STATUS_COLOR_ORANGE, "Ov"), # child WAITING_OVERSIGHT
+
+    # ---- RED (needs input) ----
+    "ask_question":    ("❓", STATUS_COLOR_RED,   "??"),   # AskUserQuestion open
+    "awaiting_input":  ("📥", STATUS_COLOR_RED,   "In"),   # Stop fired, no obligations, awaiting next prompt
+    "error":           ("⚠",  STATUS_COLOR_RED,  "!W"),    # API/hook error needing intervention
+}
+
+
+@dataclass
+class StatusBadge:
+    """A single detail badge for column 2.
+
+    `kind` is a key in BADGE_KINDS. `label` is an optional human-readable
+    suffix (e.g. tool name for `tool`, "in 4m" for `schedule_wakeup`). `count`
+    lets us stack identical kinds compactly: monitor×2 instead of two badges.
+    `eta_seconds` is the seconds-until-fire for wake-time-aware kinds.
+    """
+
+    kind: str
+    label: Optional[str] = None
+    count: int = 1
+    eta_seconds: Optional[float] = None
+
+
+@dataclass
+class StatusDetail:
+    """Structured status produced by the hook reducer.
+
+    Consumed by the ⏰ column and (later) any UI surface that wants a
+    color-coded view. `legacy_status` is the existing enum value
+    (STATUS_RUNNING/STATUS_WAITING_USER/...) returned for backward
+    compatibility.
+    """
+
+    color: str                                  # STATUS_COLOR_*
+    badges: list[StatusBadge] = field(default_factory=list)
+    legacy_status: str = STATUS_RUNNING         # what detect_status returns today
+
+    def emoji(self, badge: StatusBadge, emoji_free: bool = False) -> str:
+        emoji, _, ascii_fb = BADGE_KINDS.get(badge.kind, ("?", "", "?"))
+        return ascii_fb if emoji_free else emoji

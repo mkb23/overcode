@@ -346,7 +346,13 @@ class TestRenderTimeInState:
 
 
 class TestRenderSleepCountdown:
-    """Tests for render_sleep_countdown column (#289)."""
+    """Tests for render_sleep_countdown column (#289).
+
+    The function does double duty: it renders the legacy sleep countdown
+    when no `status_detail` is provided, and renders the new two-column
+    status badges when one is. These tests cover the legacy path; badge
+    rendering tests live in TestRenderStatusDetailBadges below.
+    """
 
     def test_returns_none_when_not_sleeping(self):
         """Should return None when agent is not sleeping."""
@@ -402,6 +408,124 @@ class TestRenderSleepCountdown:
 
         assert display_width(active[0][0]) == 9
         assert display_width(expired[0][0]) == 9
+
+
+class TestRenderStatusDetailBadges:
+    """render_sleep_countdown should render badges when ctx.status_detail
+    is populated (#TBD — two-column status model).
+    """
+
+    @staticmethod
+    def _display_width(s):
+        import unicodedata
+        return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+    def _detail(self, color, badges):
+        from overcode.status_constants import StatusDetail
+        return StatusDetail(color=color, badges=badges)
+
+    def _badge(self, kind, **kw):
+        from overcode.status_constants import StatusBadge
+        return StatusBadge(kind=kind, **kw)
+
+    def test_status_detail_overrides_legacy_sleep_countdown(self):
+        """A populated status_detail takes precedence over sleep_wake_estimate."""
+        from overcode.status_constants import STATUS_COLOR_YELLOW
+        detail = self._detail(STATUS_COLOR_YELLOW, [self._badge("cron")])
+        ctx = _make_ctx(
+            sleep_wake_estimate=datetime.now() + timedelta(seconds=60),
+            any_is_sleeping=True,
+            status_detail=detail,
+        )
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        text = result[0][0]
+        assert "🔁" in text  # cron emoji, not the legacy ⏰ countdown
+        assert "⏰" not in text
+
+    def test_red_awaiting_input_renders_inbox(self):
+        from overcode.status_constants import STATUS_COLOR_RED
+        ctx = _make_ctx(status_detail=self._detail(
+            STATUS_COLOR_RED, [self._badge("awaiting_input")],
+        ))
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        assert "📥" in result[0][0]
+        assert "red" in result[0][1]
+
+    def test_green_with_tool_label_truncates_to_budget(self):
+        from overcode.status_constants import STATUS_COLOR_GREEN
+        ctx = _make_ctx(status_detail=self._detail(
+            STATUS_COLOR_GREEN,
+            [self._badge("tool", label="Read")],
+        ))
+        result = render_sleep_countdown(ctx)
+        assert result is not None
+        text = result[0][0]
+        # Single-badge label should be visible.
+        assert "Read" in text
+        assert "green" in result[0][1]
+
+    def test_stacked_badges_with_counts(self):
+        from overcode.status_constants import STATUS_COLOR_YELLOW
+        ctx = _make_ctx(status_detail=self._detail(
+            STATUS_COLOR_YELLOW,
+            [self._badge("monitor", count=2), self._badge("cron", count=1)],
+        ))
+        result = render_sleep_countdown(ctx)
+        text = result[0][0]
+        assert "📡" in text
+        assert "×2" in text
+        assert "🔁" in text
+
+    def test_eta_takes_precedence_over_label(self):
+        from overcode.status_constants import STATUS_COLOR_YELLOW
+        ctx = _make_ctx(status_detail=self._detail(
+            STATUS_COLOR_YELLOW,
+            [self._badge("schedule_wakeup", label="some label", eta_seconds=240)],
+        ))
+        result = render_sleep_countdown(ctx)
+        text = result[0][0]
+        assert "⏰" in text
+        # 240s -> "4.0m" via format_duration
+        assert "4.0m" in text or "4m" in text
+        assert "some label" not in text
+
+    def test_empty_badges_falls_back_to_legacy(self):
+        from overcode.status_constants import STATUS_COLOR_RED
+        # Empty badge list shouldn't pretend to have a detail — fall through
+        ctx = _make_ctx(
+            status_detail=self._detail(STATUS_COLOR_RED, []),
+            sleep_wake_estimate=datetime.now() + timedelta(seconds=60),
+            any_is_sleeping=True,
+        )
+        result = render_sleep_countdown(ctx)
+        # Should render legacy countdown
+        assert result is not None
+        assert "⏰" in result[0][0]
+
+    def test_emoji_free_uses_ascii_fallback(self):
+        from overcode.status_constants import STATUS_COLOR_YELLOW
+        ctx = _make_ctx(
+            emoji_free=True,
+            status_detail=self._detail(STATUS_COLOR_YELLOW, [self._badge("cron")]),
+        )
+        result = render_sleep_countdown(ctx)
+        text = result[0][0]
+        assert "🔁" not in text
+        assert "Cr" in text  # ASCII fallback for cron
+
+    def test_width_does_not_exceed_budget(self):
+        """Output stays within the 9-cell column budget regardless of badge count."""
+        from overcode.status_constants import STATUS_COLOR_YELLOW
+        ctx = _make_ctx(status_detail=self._detail(
+            STATUS_COLOR_YELLOW,
+            [self._badge(k) for k in
+             ("schedule_wakeup", "cron", "monitor", "bg_task", "heartbeat")],
+        ))
+        result = render_sleep_countdown(ctx)
+        # 9 cells total (matches legacy sleep countdown width).
+        assert self._display_width(result[0][0]) == 9
 
 
 class TestRenderExpandIcon:

@@ -14,7 +14,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.hook_status_detector import HookStatusDetector
+from overcode.hook_status_detector import (
+    HookStatusDetector,
+    augment_with_legacy_heartbeat,
+    compute_status_detail,
+)
 from overcode.status_constants import (
     STATUS_RUNNING,
     STATUS_BUSY_SLEEPING,
@@ -23,6 +27,10 @@ from overcode.status_constants import (
     STATUS_WAITING_OVERSIGHT,
     STATUS_TERMINATED,
     STATUS_ERROR,
+    STATUS_COLOR_GREEN,
+    STATUS_COLOR_ORANGE,
+    STATUS_COLOR_YELLOW,
+    STATUS_COLOR_RED,
 )
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
@@ -807,6 +815,21 @@ class TestStickyGreen:
 
         assert status == STATUS_RUNNING
 
+    def test_status_detail_cached_after_detect(self, tmp_path):
+        """detect_status populates _status_details for the ⏰ column to read."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        detector.detect_status(session)
+
+        detail = detector.get_status_detail("test-agent")
+        assert detail is not None
+        assert detail.color == "color_green"
+        assert detail.badges[0].kind == "generating"
+
     def test_read_recent_events_skips_partial_lines(self, tmp_path):
         """Mid-rotation partial lines are tolerated."""
         state_dir = tmp_path / "sessions" / "agents"
@@ -823,3 +846,293 @@ class TestStickyGreen:
         # Only the one complete JSON line should survive parsing.
         assert len(events) == 1
         assert events[0]["event"] == "PreToolUse"
+
+
+# =============================================================================
+# Phase 1: compute_status_detail reducer (#TBD — two-column status model)
+# =============================================================================
+
+class TestComputeStatusDetail:
+    """Reducer maps (hook_state + side signals) → (color, badges).
+
+    Color priority RED>ORANGE>GREEN>YELLOW when multiple buckets apply.
+    """
+
+    def _session(self, parent_session_id=None):
+        s = create_mock_session(name="a1")
+        s.parent_session_id = parent_session_id
+        return s
+
+    def _state(self, event, **kw):
+        d = {"event": event, "timestamp": time.time()}
+        d.update(kw)
+        return d
+
+    # ---- None hook_state → RED awaiting_input ----
+    def test_no_hook_state_red_awaiting(self):
+        d = compute_status_detail(
+            hook_state=None, event="", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_RED
+        assert d.badges[0].kind == "awaiting_input"
+
+    # ---- GREEN — acting events ----
+    def test_user_prompt_submit_green_generating(self):
+        st = self._state("UserPromptSubmit")
+        d = compute_status_detail(
+            hook_state=st, event="UserPromptSubmit", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
+        )
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges == [d.badges[0]]
+        assert d.badges[0].kind == "generating"
+
+    def test_pre_tool_use_green_with_tool_label(self):
+        st = self._state("PreToolUse", tool_name="Read")
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
+        )
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "tool"
+        assert d.badges[0].label == "Read"
+
+    def test_bash_blocked_on_ci_shows_blocked_ci(self):
+        st = self._state(
+            "PreToolUse", tool_name="Bash",
+            foreground={"kind": "tool", "tool": "Bash", "blocked_on": "ci"},
+        )
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
+        )
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "blocked_ci"
+
+    def test_sleep_duration_overrides_to_blocked_sleep(self):
+        st = self._state("PreToolUse", tool_name="Bash",
+                         foreground={"kind": "tool", "tool": "Bash", "blocked_on": "sleep"})
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=60, legacy_status=STATUS_BUSY_SLEEPING,
+        )
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "blocked_sleep"
+        assert d.badges[0].eta_seconds == 60.0
+
+    # ---- ORANGE — approval ----
+    def test_permission_request_is_orange(self):
+        st = self._state("PermissionRequest", tool_name="Bash")
+        d = compute_status_detail(
+            hook_state=st, event="PermissionRequest", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_APPROVAL,
+        )
+        assert d.color == STATUS_COLOR_ORANGE
+        assert d.badges[0].kind == "permission"
+        assert d.badges[0].label == "Bash"
+
+    def test_child_stop_is_orange_oversight(self):
+        st = self._state("Stop")
+        d = compute_status_detail(
+            hook_state=st, event="Stop", session=self._session(parent_session_id="p1"),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_OVERSIGHT,
+        )
+        assert d.color == STATUS_COLOR_ORANGE
+        assert d.badges[0].kind == "oversight"
+
+    # ---- YELLOW — armed ----
+    def test_stop_with_obligation_is_yellow(self):
+        st = self._state(
+            "Stop",
+            pending_obligations=[
+                {"kind": "cron", "cron_id": "c1", "label": "@hourly"},
+            ],
+        )
+        d = compute_status_detail(
+            hook_state=st, event="Stop", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_YELLOW
+        assert d.badges[0].kind == "cron"
+
+    def test_obligations_stack_by_kind(self):
+        st = self._state(
+            "Stop",
+            pending_obligations=[
+                {"kind": "monitor", "tool_use_id": "a"},
+                {"kind": "monitor", "tool_use_id": "b"},
+                {"kind": "bg_task", "tool_use_id": "c"},
+            ],
+        )
+        d = compute_status_detail(
+            hook_state=st, event="Stop", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_YELLOW
+        kinds = {b.kind: b.count for b in d.badges}
+        assert kinds == {"monitor": 2, "bg_task": 1}
+
+    def test_synthetic_monitor_count_from_pane(self):
+        """A Monitor visible in the pane but not in obligations still shows up."""
+        st = self._state("Stop")
+        d = compute_status_detail(
+            hook_state=st, event="Stop", session=self._session(),
+            pane_content="", monitor_count=2, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_BUSY_SLEEPING,
+        )
+        assert d.color == STATUS_COLOR_YELLOW
+        assert d.badges[0].kind == "monitor"
+        assert d.badges[0].count == 2
+
+    # ---- RED — needs input ----
+    def test_stop_with_no_obligations_is_red_awaiting(self):
+        st = self._state("Stop")
+        d = compute_status_detail(
+            hook_state=st, event="Stop", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_RED
+        assert d.badges[0].kind == "awaiting_input"
+
+    def test_interrupt_is_red(self):
+        st = self._state("PreToolUse", tool_name="Bash")
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=True,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_RED
+
+    def test_stop_failure_is_red_error(self):
+        st = self._state("StopFailure")
+        d = compute_status_detail(
+            hook_state=st, event="StopFailure", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_ERROR,
+        )
+        assert d.color == STATUS_COLOR_RED
+        assert d.badges[0].kind == "error"
+
+    # ---- Priority resolution ----
+    def test_red_wins_over_yellow_when_interrupt_and_obligation(self):
+        """Mid-tool agent with a cron registered AND interrupted → RED, not YELLOW."""
+        st = self._state(
+            "PreToolUse", tool_name="Bash",
+            pending_obligations=[{"kind": "cron"}],
+        )
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=True,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
+        )
+        assert d.color == STATUS_COLOR_RED
+
+    def test_orange_wins_over_yellow(self):
+        """Permission request while a cron is armed → ORANGE."""
+        st = self._state(
+            "PermissionRequest", tool_name="Bash",
+            pending_obligations=[{"kind": "cron"}],
+        )
+        d = compute_status_detail(
+            hook_state=st, event="PermissionRequest", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_APPROVAL,
+        )
+        assert d.color == STATUS_COLOR_ORANGE
+
+    def test_green_wins_over_yellow(self):
+        """Acting agent with a cron armed → GREEN, badges show tool not cron."""
+        st = self._state(
+            "PreToolUse", tool_name="Read",
+            pending_obligations=[{"kind": "cron"}],
+        )
+        d = compute_status_detail(
+            hook_state=st, event="PreToolUse", session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
+        )
+        assert d.color == STATUS_COLOR_GREEN
+        assert d.badges[0].kind == "tool"
+
+
+# =============================================================================
+# Phase 2 task 6: legacy heartbeat status bridge
+# =============================================================================
+
+from overcode.status_constants import (
+    STATUS_RUNNING_HEARTBEAT,
+    STATUS_WAITING_HEARTBEAT,
+    StatusBadge,
+    StatusDetail,
+)
+
+
+class TestAugmentWithLegacyHeartbeat:
+    """augment_with_legacy_heartbeat bridges old enum overrides into the
+    two-column model so the daemon can keep setting STATUS_*_HEARTBEAT while
+    the column reflects YELLOW armed / GREEN running with a heartbeat badge.
+    """
+
+    def test_waiting_heartbeat_with_none_detail_yields_yellow_heartbeat(self):
+        d = augment_with_legacy_heartbeat(None, STATUS_WAITING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_YELLOW
+        assert [b.kind for b in d.badges] == ["heartbeat"]
+
+    def test_waiting_heartbeat_upgrades_red_to_yellow(self):
+        red = StatusDetail(STATUS_COLOR_RED, [StatusBadge(kind="awaiting_input")])
+        d = augment_with_legacy_heartbeat(red, STATUS_WAITING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_YELLOW
+        assert [b.kind for b in d.badges] == ["heartbeat"]
+
+    def test_waiting_heartbeat_appends_to_existing_yellow(self):
+        existing = StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind="cron")])
+        d = augment_with_legacy_heartbeat(existing, STATUS_WAITING_HEARTBEAT)
+        kinds = [b.kind for b in d.badges]
+        assert "cron" in kinds and "heartbeat" in kinds
+        assert d.color == STATUS_COLOR_YELLOW
+
+    def test_waiting_heartbeat_leaves_orange_alone(self):
+        existing = StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission")])
+        d = augment_with_legacy_heartbeat(existing, STATUS_WAITING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_ORANGE
+        assert [b.kind for b in d.badges] == ["permission"]
+
+    def test_running_heartbeat_with_none_yields_green_heartbeat(self):
+        d = augment_with_legacy_heartbeat(None, STATUS_RUNNING_HEARTBEAT)
+        assert d.color == STATUS_COLOR_GREEN
+        assert [b.kind for b in d.badges] == ["heartbeat"]
+
+    def test_running_heartbeat_appends_to_green_tool_badge(self):
+        existing = StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="tool", label="Read")])
+        d = augment_with_legacy_heartbeat(existing, STATUS_RUNNING_HEARTBEAT)
+        kinds = [b.kind for b in d.badges]
+        assert kinds == ["tool", "heartbeat"]
+        assert d.color == STATUS_COLOR_GREEN
+
+    def test_running_heartbeat_dedupes_existing_heartbeat_badge(self):
+        existing = StatusDetail(STATUS_COLOR_GREEN, [
+            StatusBadge(kind="tool", label="Read"),
+            StatusBadge(kind="heartbeat"),
+        ])
+        d = augment_with_legacy_heartbeat(existing, STATUS_RUNNING_HEARTBEAT)
+        kinds = [b.kind for b in d.badges]
+        assert kinds.count("heartbeat") == 1
+
+    def test_non_heartbeat_status_passes_through(self):
+        existing = StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="tool", label="Read")])
+        d = augment_with_legacy_heartbeat(existing, STATUS_RUNNING)
+        assert d is existing
+
+    def test_none_in_none_out_for_non_heartbeat(self):
+        assert augment_with_legacy_heartbeat(None, STATUS_RUNNING) is None

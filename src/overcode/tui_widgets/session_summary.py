@@ -73,6 +73,9 @@ class SessionSummary(Static, can_focus=True):
         self.any_has_subtree_cost: bool = False  # True if any parent has subtree cost
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
+        self.any_has_status_detail: bool = False  # True if any agent has a populated StatusDetail (#TBD)
+        # Two-column status model (#TBD). Populated by detect_status; consumed by the ⏰ column.
+        self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
         self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
@@ -149,6 +152,12 @@ class SessionSummary(Static, can_focus=True):
         # detect_status returns (status, activity, pane_content) - reuse content to avoid
         # duplicate tmux subprocess calls (was 2 calls per widget, now just 1)
         new_status, self.current_activity, content = self.status_detector.detect_status(self.session)
+        # Pick up the structured 2-column detail cached as a side-effect (#TBD).
+        try:
+            self.status_detail = self.status_detector.get_status_detail(self.session.name)
+        except AttributeError:
+            # Detector predates the two-column model
+            self.status_detail = None
         self.apply_status(new_status, self.current_activity, content)
 
     def apply_status(self, status: str, activity: str, content: str) -> None:
@@ -333,6 +342,10 @@ class SessionSummary(Static, can_focus=True):
             if dur:
                 sleep_wake_estimate = self._status_changed_at + timedelta(seconds=dur)
 
+        # Bridge legacy heartbeat statuses into the two-column model (#TBD task 6)
+        from ..hook_status_detector import augment_with_legacy_heartbeat
+        effective_detail = augment_with_legacy_heartbeat(self.status_detail, self.detected_status)
+
         return ColumnContext(
             session=s,
             stats=s.stats,
@@ -380,6 +393,8 @@ class SessionSummary(Static, can_focus=True):
             oversight_deadline=self.oversight_deadline,
             any_is_sleeping=self.any_is_sleeping,
             sleep_wake_estimate=sleep_wake_estimate,
+            status_detail=effective_detail,
+            any_has_status_detail=self.any_has_status_detail,
             # Subtree cost
             subtree_cost_usd=self.subtree_cost_usd,
             any_has_subtree_cost=self.any_has_subtree_cost,

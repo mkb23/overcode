@@ -15,7 +15,16 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
-from .status_constants import ALL_STATUSES, get_permissiveness_emoji
+from .status_constants import (
+    ALL_STATUSES,
+    BADGE_KINDS,
+    STATUS_COLOR_GREEN,
+    STATUS_COLOR_ORANGE,
+    STATUS_COLOR_RED,
+    STATUS_COLOR_YELLOW,
+    StatusDetail,
+    get_permissiveness_emoji,
+)
 from .status_patterns import extract_sleep_duration
 from .tui_helpers import (
     format_cost,
@@ -195,6 +204,15 @@ class ColumnContext:
     any_is_sleeping: bool = False  # True if any agent is busy_sleeping
     sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
 
+    # Two-column status model (#TBD). When populated, the ⏰ column renders
+    # emoji-stacked badges from the hook reducer instead of just the sleep
+    # countdown. None → legacy sleep countdown rendering.
+    status_detail: Optional["StatusDetail"] = None  # noqa: F821 (forward ref)
+    # App-wide flag — True if any agent has a populated status_detail, used
+    # by the column's visibility predicate so the column stays present when
+    # someone has a non-sleep badge.
+    any_has_status_detail: bool = False
+
     # Subtree cost (parent + all descendants)
     subtree_cost_usd: float = 0.0
     any_has_subtree_cost: bool = False
@@ -352,12 +370,110 @@ def render_time_in_state(ctx: ColumnContext) -> ColumnOutput:
         return [("    - ", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 
-def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
-    """Countdown to estimated sleep wake time (#289).
+_STATUS_COLOR_TO_STYLE: dict[str, str] = {
+    STATUS_COLOR_GREEN:  "green",
+    STATUS_COLOR_ORANGE: "orange1",
+    STATUS_COLOR_YELLOW: "yellow",
+    STATUS_COLOR_RED:    "red",
+}
 
-    Shows countdown for sleeping agents. Visibility and placeholder
-    alignment are handled by the column's visible + placeholder_width.
+# Total display-cell budget for the column. Matches the legacy sleep-countdown
+# layout so headers and other columns line up.
+_STATUS_DETAIL_WIDTH = 9
+
+
+def _display_width(text: str) -> int:
+    """Terminal cell width, accounting for wide chars (emoji = 2)."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
+def _badge_glyph(kind: str, emoji_free: bool) -> str:
+    """Resolve a badge kind to its emoji (or ASCII fallback)."""
+    spec = BADGE_KINDS.get(kind)
+    if spec is None:
+        return "?"
+    emoji, _, ascii_fb = spec
+    return ascii_fb if emoji_free else emoji
+
+
+def _render_status_detail(ctx: "ColumnContext", detail: StatusDetail) -> ColumnOutput:
+    """Render emoji-stacked badges for the column-2 status detail (#TBD).
+
+    Width budget is _STATUS_DETAIL_WIDTH cells. Suffix priority per badge:
+    ETA > count > label > nothing. When only one badge fits, it gets the
+    full remaining width; multi-badge layouts drop labels to keep packing
+    tight. Overflow is signalled with a trailing '+'.
     """
+    color = _STATUS_COLOR_TO_STYLE.get(detail.color, "yellow")
+    style = ctx.mono(f"{color}{ctx.bg}", "bold")
+
+    badges = detail.badges
+    if not badges:
+        return None
+
+    # Reserve one leading space; the remainder is the badge budget.
+    budget = _STATUS_DETAIL_WIDTH - 1
+    parts: list[str] = []
+    n = len(badges)
+    for i, b in enumerate(badges):
+        glyph = _badge_glyph(b.kind, ctx.emoji_free)
+        glyph_w = _display_width(glyph)
+
+        # Pick a suffix in priority order.
+        suffix = ""
+        if b.eta_seconds is not None and b.eta_seconds > 0:
+            suffix = format_duration(int(b.eta_seconds))
+        elif b.count > 1:
+            suffix = f"×{b.count}"
+        elif b.label and n == 1:
+            # Single-badge case — let the label fill the remaining budget.
+            suffix = b.label
+
+        chunk_w = glyph_w + _display_width(suffix)
+        remaining_badges = n - i - 1
+        # Always reserve a cell for '+' if more badges won't fit.
+        reserve = 1 if remaining_badges > 0 else 0
+        if chunk_w > budget - reserve:
+            # Try the glyph alone (drop the suffix).
+            if glyph_w <= budget - reserve:
+                parts.append(glyph)
+                budget -= glyph_w
+                if remaining_badges > 0 and budget >= 1:
+                    parts.append("+")
+                    budget -= 1
+                break
+            if remaining_badges > 0 and budget >= 1:
+                parts.append("+")
+                budget -= 1
+            break
+        parts.append(glyph + suffix)
+        budget -= chunk_w
+
+    body = "".join(parts)
+    # Pad to the full width so columns to the right stay aligned.
+    pad_cells = _STATUS_DETAIL_WIDTH - 1 - _display_width(body)
+    text = " " + body + (" " * max(0, pad_cells))
+    return [(text, style)]
+
+
+def render_sleep_countdown(ctx: ColumnContext) -> ColumnOutput:
+    """Column 2 of the two-column status model (#TBD).
+
+    Renders emoji-stacked status badges from the hook reducer when
+    ctx.status_detail is populated. Falls back to the legacy sleep-wake
+    countdown (#289) when not — so callers that haven't been wired up to
+    the new detector output still get the original behavior.
+
+    Function name is kept (rather than renamed to render_status_detail) for
+    backward compatibility with the column id `sleep_countdown` and the
+    existing test suite.
+    """
+    if ctx.status_detail is not None and ctx.status_detail.badges:
+        rendered = _render_status_detail(ctx, ctx.status_detail)
+        if rendered is not None:
+            return rendered
+
+    # Legacy fallback (#289)
     if ctx.sleep_wake_estimate is not None:
         remaining = max(0, (ctx.sleep_wake_estimate - datetime.now()).total_seconds())
         return [(f" {ctx.e('⏰')}{format_duration(remaining):>5} ", ctx.mono(f"yellow{ctx.bg}", "bold"))]
@@ -1054,7 +1170,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="time_in_state", group="identity", detail_levels=ALL, render=render_time_in_state,
                   header="ST", name="Time in State"),
     SummaryColumn(id="sleep_countdown", group="identity", detail_levels=ALL, render=render_sleep_countdown,
-                  visible=lambda ctx: ctx.any_is_sleeping, header="SLP", name="Sleep Countdown"),
+                  visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
+                  header="SLP", name="Sleep Countdown"),
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand"),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
@@ -1198,6 +1315,8 @@ def build_cli_context(
     max_name_width: int = 16, max_repo_width: int = 10,
     max_branch_width: int = 10, all_names_match_repos: bool = False,
     subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
+    status_detail: Optional[StatusDetail] = None,
+    any_has_status_detail: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status, emoji_free=emoji_free)
@@ -1267,6 +1386,8 @@ def build_cli_context(
         oversight_deadline=oversight_deadline,
         any_is_sleeping=any_is_sleeping,
         sleep_wake_estimate=sleep_wake_estimate,
+        status_detail=status_detail,
+        any_has_status_detail=any_has_status_detail,
         pr_number=pr_number,
         any_has_pr=any_has_pr,
         model=getattr(session, 'model', '') or '',

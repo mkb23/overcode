@@ -15,12 +15,213 @@ Hook registrations (all use the same command):
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Obligation tracking (#TBD — two-column status model)
+# =============================================================================
+#
+# An "obligation" is a pending thing that will wake the agent WITHOUT a human
+# touching it. While obligations are non-empty after Stop, the agent is in
+# the YELLOW "armed" bucket, not RED "needs input". We maintain the list in
+# the hook_state file so the detector can read it without re-parsing every
+# event.
+#
+# Disarm rules:
+#   - Bash/Agent/Workflow with run_in_background → PostToolUse(same id) removes
+#   - Monitor                                    → PostToolUse(same id) removes
+#   - ScheduleWakeup                             → next UserPromptSubmit
+#                                                   (wakeup fires as a prompt)
+#   - CronCreate                                 → CronDelete(matching id) or
+#                                                   SessionEnd
+#   - TaskCreate                                 → PostToolUse(same id) plus
+#                                                   any later TaskStop (not
+#                                                   yet wired)
+
+# tool_name → obligation kind for tools that arm unconditionally
+_UNCONDITIONAL_ARMING_TOOLS: dict[str, str] = {
+    "ScheduleWakeup": "schedule_wakeup",
+    "CronCreate":     "cron",
+    "Monitor":        "monitor",
+    "TaskCreate":     "bg_task",
+}
+
+# Tools that arm ONLY when tool_input.run_in_background is truthy
+_CONDITIONAL_BG_TOOLS: frozenset[str] = frozenset({"Bash", "Agent", "Workflow"})
+
+# Obligation kinds that represent *persistent* state registered with the
+# system. Their PostToolUse means "the registration call completed" not
+# "the obligation is done" — they require an explicit disarm signal
+# (CronDelete for cron, UserPromptSubmit for schedule_wakeup, SessionEnd
+# for anything still pending).
+_PERSISTENT_OBLIGATION_KINDS: frozenset[str] = frozenset({"cron", "schedule_wakeup"})
+
+
+def _obligation_kind(tool_name: str | None, tool_input: dict | None) -> str | None:
+    """Classify what kind of obligation (if any) this PreToolUse arms."""
+    if not tool_name:
+        return None
+    if tool_name in _UNCONDITIONAL_ARMING_TOOLS:
+        return _UNCONDITIONAL_ARMING_TOOLS[tool_name]
+    if tool_name in _CONDITIONAL_BG_TOOLS:
+        if isinstance(tool_input, dict) and tool_input.get("run_in_background"):
+            return "bg_task"
+    return None
+
+
+def _obligation_label(kind: str, tool_input: dict | None) -> str | None:
+    """Best-effort human-readable suffix for an obligation."""
+    if not isinstance(tool_input, dict):
+        return None
+    if kind == "schedule_wakeup":
+        # ScheduleWakeup tool input typically has delaySeconds + reason
+        secs = tool_input.get("delaySeconds")
+        if isinstance(secs, (int, float)) and secs > 0:
+            return f"in {int(secs)}s"
+    if kind == "cron":
+        # CronCreate exposes a `schedule` field
+        sched = tool_input.get("schedule") or tool_input.get("cron")
+        if isinstance(sched, str):
+            return sched
+    if kind == "bg_task":
+        # Best label is the tool that spawned it + a hint
+        cmd = tool_input.get("command") or tool_input.get("prompt") or ""
+        if isinstance(cmd, str) and cmd:
+            return cmd[:40]
+    return None
+
+
+def _obligation_eta_seconds(kind: str, tool_input: dict | None) -> float | None:
+    """Seconds-until-fire for wake-time obligations, or None."""
+    if kind == "schedule_wakeup" and isinstance(tool_input, dict):
+        secs = tool_input.get("delaySeconds")
+        if isinstance(secs, (int, float)) and secs > 0:
+            return float(secs)
+    return None
+
+
+# Classify foreground Bash commands that block on something external. The
+# foreground tool is still genuinely RUNNING — we just want the column-2
+# badge to say *why* the agent looks stalled.
+_BLOCKED_ON_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("ci",      re.compile(r"\b(gh\s+run\s+watch|gh\s+pr\s+checks\s+--watch)\b")),
+    ("process", re.compile(r"\b(tail\s+-[fF]|kubectl\s+wait|docker\s+wait|wait-on)\b")),
+    ("sleep",   re.compile(r"^\s*sleep\s+\d")),
+]
+
+
+def _classify_foreground_blocked_on(command: str) -> str | None:
+    """Identify what a foreground Bash command is blocked on, or None."""
+    for kind, pattern in _BLOCKED_ON_PATTERNS:
+        if pattern.search(command):
+            return kind
+    return None
+
+
+def _compute_foreground(event: str, tool_name: str | None, tool_input: dict | None) -> dict | None:
+    """Build a foreground-detail dict for the current event.
+
+    Only meaningful while a tool call is in flight. Returns None outside that
+    window so the reducer can fall back to other signals.
+    """
+    if event != "PreToolUse" or not tool_name:
+        return None
+    fg: dict = {"kind": "tool", "tool": tool_name}
+    if tool_name == "Bash" and isinstance(tool_input, dict):
+        cmd = tool_input.get("command") or ""
+        if isinstance(cmd, str):
+            blocked_on = _classify_foreground_blocked_on(cmd)
+            if blocked_on:
+                fg["blocked_on"] = blocked_on
+    return fg
+
+
+def _update_obligations(
+    prev_obligations: list[dict],
+    event: str,
+    tool_name: str | None,
+    tool_input: dict | None,
+    tool_use_id: str | None,
+    now: float,
+) -> list[dict]:
+    """Return the new obligation list after applying this event.
+
+    Pure function — no I/O. Disarm rules described at module top.
+    """
+    obligations = list(prev_obligations)
+
+    if event == "PreToolUse":
+        # CronDelete tears down a specific cron by id
+        if tool_name == "CronDelete" and isinstance(tool_input, dict):
+            target = tool_input.get("cron_id") or tool_input.get("id")
+            if target:
+                obligations = [
+                    o for o in obligations
+                    if not (o.get("kind") == "cron" and o.get("cron_id") == target)
+                ]
+            return obligations
+
+        kind = _obligation_kind(tool_name, tool_input)
+        if not kind:
+            return obligations
+        entry: dict = {
+            "kind": kind,
+            "added_at": now,
+        }
+        if tool_use_id:
+            entry["tool_use_id"] = tool_use_id
+        label = _obligation_label(kind, tool_input)
+        if label:
+            entry["label"] = label
+        eta = _obligation_eta_seconds(kind, tool_input)
+        if eta is not None:
+            entry["eta_seconds"] = eta
+            entry["eta_absolute"] = now + eta
+        # For CronCreate, capture the id so a later CronDelete can target it
+        if kind == "cron" and isinstance(tool_input, dict):
+            cron_id = tool_input.get("id") or tool_input.get("cron_id")
+            if cron_id:
+                entry["cron_id"] = cron_id
+        obligations.append(entry)
+        return obligations
+
+    if event in ("PostToolUse", "PostToolUseFailure"):
+        # Persistent obligations (cron / schedule_wakeup) survive PostToolUse
+        # — they require their dedicated disarm signal.
+        if tool_use_id:
+            obligations = [
+                o for o in obligations
+                if not (
+                    o.get("tool_use_id") == tool_use_id
+                    and o.get("kind") not in _PERSISTENT_OBLIGATION_KINDS
+                )
+            ]
+        elif tool_name:
+            # No id — fall back to LIFO match on tool's expected obligation kind
+            kind = _obligation_kind(tool_name, tool_input)
+            if kind and kind not in _PERSISTENT_OBLIGATION_KINDS:
+                for i in range(len(obligations) - 1, -1, -1):
+                    if obligations[i].get("kind") == kind:
+                        obligations.pop(i)
+                        break
+        return obligations
+
+    if event == "UserPromptSubmit":
+        # ScheduleWakeup fires as a synthetic prompt — drop those.
+        obligations = [o for o in obligations if o.get("kind") != "schedule_wakeup"]
+        return obligations
+
+    if event == "SessionEnd":
+        return []
+
+    return obligations
 
 
 # All hooks that overcode installs
@@ -173,6 +374,7 @@ def write_hook_state(
     session_name: str,
     tool_name: str | None = None,
     tool_input: dict | None = None,
+    tool_use_id: str | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
 
@@ -181,11 +383,13 @@ def write_hook_state(
     state_path = _get_hook_state_path(tmux_session, session_name)
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Read previous state to preserve accumulated loaded_skills
+    # Read previous state to preserve accumulated loaded_skills and obligations
     prev_skills: list[str] = []
+    prev_obligations: list[dict] = []
     try:
         prev = json.loads(state_path.read_text())
         prev_skills = prev.get("loaded_skills", [])
+        prev_obligations = prev.get("pending_obligations", []) or []
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -195,16 +399,32 @@ def write_hook_state(
         if skill and skill not in prev_skills:
             prev_skills = prev_skills + [skill]
 
+    now = time.time()
     state = {
         "event": event,
-        "timestamp": time.time(),
+        "timestamp": now,
     }
     if tool_name is not None:
         state["tool_name"] = tool_name
     if tool_input is not None:
         state["tool_input"] = tool_input
+    if tool_use_id is not None:
+        state["tool_use_id"] = tool_use_id
     if prev_skills:
         state["loaded_skills"] = prev_skills
+
+    # Maintain the pending-obligation set across events (#TBD).
+    obligations = _update_obligations(
+        prev_obligations, event, tool_name, tool_input, tool_use_id, now
+    )
+    if obligations:
+        state["pending_obligations"] = obligations
+
+    # Foreground detail — only populated mid-tool (PreToolUse); cleared by
+    # any subsequent event so a stale entry can't outlive its tool call.
+    foreground = _compute_foreground(event, tool_name, tool_input)
+    if foreground is not None:
+        state["foreground"] = foreground
 
     state_path.write_text(json.dumps(state))
 
@@ -244,10 +464,14 @@ def handle_hook_event() -> None:
 
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
+    tool_use_id = data.get("tool_use_id")
 
     # Write state file for status detection (snapshot) and append to the
     # event log (#448 — preserves bursts hidden by overwrite).
-    write_hook_state(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
+    write_hook_state(
+        event, tmux_session, session_name,
+        tool_name=tool_name, tool_input=tool_input, tool_use_id=tool_use_id,
+    )
     append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 
     # For UserPromptSubmit, check budget and output enhanced context
