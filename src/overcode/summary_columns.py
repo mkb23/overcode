@@ -245,16 +245,25 @@ class ColumnContext:
     # Overlay over normal launch mode; ignored when launch mode is permissive/bypass.
     auto_accept_mode: bool = False
 
+    # Window-scoped burn rate for this session (#174). None when the burn
+    # column isn't enabled or the session has no recent token activity.
+    window_burn: Optional[object] = None  # Optional[WindowBurnStats]
+    any_has_burn: bool = False  # True if any agent has a non-zero burn rate
+
     def mono(self, colored: str, simple: str = "bold") -> str:
         """Return colored style (monochrome only applies to preview pane, not summaries)."""
         return colored
 
     def e(self, char: str) -> str:
-        """Return ASCII fallback if emoji_free mode is active (#315)."""
+        """Return ASCII fallback if emoji_free mode is active (#315),
+        otherwise route through the VS16-stripping safety net so
+        Windows Terminal / Konsole don't drift on variation-selector
+        emoji clusters (#174-followup)."""
         if self.emoji_free:
             from .status_constants import EMOJI_ASCII
             return EMOJI_ASCII.get(char, char)
-        return char
+        from .status_constants import _safe_emoji
+        return _safe_emoji(char)
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +619,86 @@ def render_subtree_cost_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.subtree_cost_usd > 0:
         return f"Σ{format_cost(ctx.subtree_cost_usd)}"
     return None
+
+
+def burn_color_for_rate(cost_per_hour: float) -> str:
+    """Pick a color for a $/hr burn rate using user-configured thresholds (#174).
+
+    Thresholds are pairs of (color, max_usd_per_hour) sorted ascending;
+    the first cutoff strictly greater than the rate wins. If the rate
+    exceeds every cutoff, returns 'red'.
+    """
+    from .settings import get_user_config
+    try:
+        thresholds = get_user_config().burn_thresholds
+    except Exception:
+        thresholds = [("green", 1.0), ("yellow", 10.0), ("orange1", 100.0)]
+    for color, cutoff in thresholds:
+        if cost_per_hour < cutoff:
+            return _normalize_rich_color(color)
+    return "red"
+
+
+# Rich rejects "orange" outright (it uses orange1/orange3/orange4) and other
+# common color synonyms have the same issue. Map the obvious aliases so a
+# user typo in burn_thresholds doesn't crash the TUI on launch.
+_RICH_COLOR_ALIASES = {
+    "orange": "orange1",
+    "purple": "purple4",
+    "pink": "pink1",
+    "gray": "grey50",
+    "grey": "grey50",
+}
+
+
+def _normalize_rich_color(color: str) -> str:
+    return _RICH_COLOR_ALIASES.get((color or "").lower(), color)
+
+
+def render_burn_rate_plain(ctx: ColumnContext) -> Optional[str]:
+    """Plain-text burn rate for the CLI (no styling, no emoji)."""
+    burn = ctx.window_burn
+    if burn is None or burn.window_hours <= 0:
+        return None
+    if ctx.show_cost == "cost":
+        return f"{format_cost(burn.cost_per_hour)}/h" if burn.cost_per_hour > 0 else None
+    elif ctx.show_cost == "joules":
+        if burn.cost_per_hour <= 0:
+            return None
+        return f"{format_joules(usd_to_joules(burn.cost_per_hour))}/h"
+    else:
+        return f"{format_tokens(int(burn.tokens_per_hour))}/h" if burn.tokens_per_hour > 0 else None
+
+
+def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
+    """Burn rate (🔥123K/h) over the timeline window (#174).
+
+    Switches units with show_cost (tokens / cost / joules), like the
+    aggregate burn in the spin stats line. Color always tracks the $/hr
+    rate (per burn_thresholds in user config), regardless of which unit
+    is on screen — burn intensity is what matters, the unit just changes
+    the label.
+    """
+    burn = ctx.window_burn
+    if burn is None or burn.window_hours <= 0:
+        return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
+
+    color = burn_color_for_rate(burn.cost_per_hour)
+    if ctx.show_cost == "cost":
+        rate = burn.cost_per_hour
+        if rate <= 0:
+            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
+        return [(f" 🔥{format_cost(rate):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+    elif ctx.show_cost == "joules":
+        rate = burn.cost_per_hour
+        if rate <= 0:
+            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
+        return [(f" 🔥{format_joules(usd_to_joules(rate))}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+    else:
+        rate = burn.tokens_per_hour
+        if rate <= 0:
+            return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
+        return [(f" 🔥{format_tokens(int(rate)):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
 
 
 # Backward-compat alias
@@ -1223,6 +1312,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   render_plain=render_subtree_cost_plain,
                   visible=lambda ctx: ctx.any_has_subtree_cost,
                   placeholder_width=8, header="SUB$", name="Subtree Cost"),
+    # Burn rate over the timeline window (#174). Hidden until at least one
+    # agent has window-scoped activity, so the column doesn't take width
+    # when burn data isn't being computed (TUI not running, no recent tokens).
+    SummaryColumn(id="burn_rate", group="llm_usage", detail_levels=HIGH_PLUS,
+                  render=render_burn_rate, label="Burn",
+                  render_plain=render_burn_rate_plain,
+                  visible=lambda ctx: ctx.any_has_burn,
+                  placeholder_width=9, header="BURN", name="Burn Rate"),
 
     # Context group — always visible, independent of $ toggle
     SummaryColumn(id="context_usage", group="context", detail_levels=ALL, render=render_context_usage,
@@ -1317,6 +1414,8 @@ def build_cli_context(
     subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
     status_detail: Optional[StatusDetail] = None,
     any_has_status_detail: bool = False,
+    window_burn: Optional[object] = None,
+    any_has_burn: bool = False,
 ) -> ColumnContext:
     """Build a ColumnContext from CLI data (no TUI widget needed)."""
     status_symbol, _ = get_status_symbol(status, emoji_free=emoji_free)
@@ -1401,6 +1500,8 @@ def build_cli_context(
         local_hostname=local_hostname,
         subtree_cost_usd=subtree_cost_usd,
         any_has_subtree_cost=any_has_subtree_cost,
+        window_burn=window_burn,
+        any_has_burn=any_has_burn,
     )
 
 

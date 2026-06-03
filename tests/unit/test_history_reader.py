@@ -1115,6 +1115,73 @@ class TestReadWorkTimesFromSessionFile:
         assert result == []
 
 
+class TestReadWindowTokenUsage:
+    """Test read_window_token_usage — used by burn-rate calculation (#174)."""
+
+    def _make_assistant(self, ts, inp=100, out=200, cc=50, cr=300):
+        return {
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "usage": {
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "cache_creation_input_tokens": cc,
+                    "cache_read_input_tokens": cr,
+                },
+            },
+        }
+
+    def test_returns_zeros_for_missing_file(self, tmp_path):
+        from overcode.history_reader import read_window_token_usage
+        result = read_window_token_usage(
+            tmp_path / "missing.jsonl", datetime(2024, 1, 1)
+        )
+        assert result == {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+        }
+
+    def test_sums_only_messages_after_since(self, tmp_path):
+        from overcode.history_reader import read_window_token_usage
+        session_file = tmp_path / "session.jsonl"
+        entries = [
+            self._make_assistant("2024-01-15T09:00:00.000Z", inp=999, out=999),
+            self._make_assistant("2024-01-15T11:00:00.000Z", inp=100, out=200, cc=50, cr=300),
+            self._make_assistant("2024-01-15T12:00:00.000Z", inp=10, out=20, cc=5, cr=30),
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        since = datetime(2024, 1, 15, 10, 0, 0)
+        result = read_window_token_usage(session_file, since)
+        # Excludes the 09:00 entry (before since); includes 11:00 and 12:00.
+        assert result == {
+            "input_tokens": 110,
+            "output_tokens": 220,
+            "cache_creation_tokens": 55,
+            "cache_read_tokens": 330,
+        }
+
+    def test_ignores_non_assistant_and_malformed(self, tmp_path):
+        from overcode.history_reader import read_window_token_usage
+        session_file = tmp_path / "session.jsonl"
+        lines = [
+            json.dumps({"type": "user", "timestamp": "2024-01-15T11:00:00.000Z",
+                        "message": {"content": "hi"}}),
+            "not json at all",
+            "",
+            json.dumps(self._make_assistant("2024-01-15T11:30:00.000Z", inp=42, out=8)),
+            # assistant without timestamp — skipped
+            json.dumps({"type": "assistant",
+                        "message": {"usage": {"input_tokens": 999}}}),
+        ]
+        session_file.write_text("\n".join(lines))
+
+        result = read_window_token_usage(session_file, datetime(2024, 1, 15, 10))
+        assert result["input_tokens"] == 42
+        assert result["output_tokens"] == 8
+
+
 class TestGetSessionStatsOwnership:
     """Test get_session_stats with owned vs unowned sessions."""
 

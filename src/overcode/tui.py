@@ -398,6 +398,9 @@ class SupervisorTUI(
         self.has_sisters: bool = self._sister_poller.has_sisters
         self.local_hostname: str = self._sister_poller.local_hostname
         self._remote_sessions: List[Session] = []
+        # Per-session burn rates over the timeline window, populated by the
+        # daemon-status worker thread (#174).
+        self._session_burn_rates: dict = {}
         from .sister_controller import SisterController
         self._sister_controller = SisterController()
 
@@ -660,6 +663,22 @@ class SupervisorTUI(
         daemon_bar.monitor_state = monitor_state
         daemon_bar._asleep_session_ids = asleep_ids
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
+        # Stash per-session burn rates so the burn-rate column can read them
+        # without redoing the JSONL parse on the main thread (#174). Then
+        # push the fresh values directly to each SessionSummary widget and
+        # refresh — otherwise the column waits until the next update_sessions
+        # cycle to pick up new values, which is gated on session changes.
+        burn = daemon_bar._burn_stats
+        burn_rates = dict(burn.per_session) if burn and burn.per_session else {}
+        self._session_burn_rates = burn_rates
+        any_has_burn = any(
+            b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
+            for b in burn_rates.values()
+        )
+        for widget in self.query(SessionSummary):
+            widget.window_burn = burn_rates.get(widget.session.id)
+            widget.any_has_burn = any_has_burn
+            widget.refresh()
         daemon_bar.refresh()
         self._mark_event("apply_daemon_end")
 
@@ -1555,6 +1574,14 @@ class SupervisorTUI(
             widget.subtree_cost_usd = subtree_costs.get(session_id, 0.0)
             widget.any_has_subtree_cost = any_has_subtree_cost
 
+            # Propagate burn rate from daemon-status worker (#174)
+            burn_rates = getattr(self, '_session_burn_rates', {}) or {}
+            widget.window_burn = burn_rates.get(session_id)
+            widget.any_has_burn = any(
+                b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
+                for b in burn_rates.values()
+            )
+
             # Apply status if we have results for this widget
             if session_id in status_results:
                 status, activity, content = status_results[session_id]
@@ -1835,6 +1862,12 @@ class SupervisorTUI(
             if rds and rds.get('subtree_cost_usd', 0) > 0:
                 subtree_costs[s.id] = rds['subtree_cost_usd']
         any_has_subtree_cost = bool(subtree_costs)
+        # Window-scoped burn rates per session (#174), set by daemon-status worker.
+        burn_rates = getattr(self, '_session_burn_rates', {}) or {}
+        any_has_burn = any(
+            b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
+            for b in burn_rates.values()
+        )
         # Also check widget pr_number vars (sticky — survive session replacement)
         if not any_has_pr:
             any_has_pr = any(
@@ -1940,6 +1973,8 @@ class SupervisorTUI(
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
                     widget.any_has_subtree_cost = any_has_subtree_cost
+                    widget.window_burn = burn_rates.get(widget.session.id)
+                    widget.any_has_burn = any_has_burn
                     # Sync remote git diff to widget (#413)
                     if new_session.is_remote and new_session.remote_git_diff:
                         widget.git_diff_stats = new_session.remote_git_diff
@@ -2002,6 +2037,8 @@ class SupervisorTUI(
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost
+                widget.window_burn = burn_rates.get(session.id)
+                widget.any_has_burn = any_has_burn
                 # Apply per-level column overrides
                 current_level = self.SUMMARY_LEVELS[self.summary_level_index]
                 widget.column_overrides = self._prefs.column_config.get(current_level, {})

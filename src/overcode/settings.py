@@ -325,6 +325,17 @@ class UserConfig:
     # Wrapper emoji overrides (loaded from config.yaml wrapper_emoji section) (#437)
     wrapper_emoji: dict = field(default_factory=dict)
 
+    # Burn-rate color thresholds (#174). USD/hr cutoffs, sorted ascending —
+    # rates below the lowest cutoff get its color, etc., above all cutoffs
+    # gets red. Color names must be valid Rich colors (e.g. "orange1", not
+    # plain "orange", which Rich doesn't recognize).
+    burn_thresholds: list = field(default_factory=lambda: [
+        ("green", 1.0),
+        ("yellow", 10.0),
+        ("orange1", 100.0),
+        # implicit: ≥ 100 → red
+    ])
+
     @classmethod
     def load(cls) -> "UserConfig":
         """Load configuration from config file."""
@@ -381,7 +392,40 @@ class UserConfig:
                     if isinstance(wrapper_emoji_raw, dict) else {}
                 )
 
-                return cls(
+                # Parse burn-rate color thresholds (#174). Accepts either
+                #   burn_thresholds: {green: 1.0, yellow: 10.0, orange: 100.0}
+                # or a list of {color: ..., max_usd_per_hour: ...} entries.
+                # The fallback list is set in the dataclass default.
+                burn_raw = data.get("burn_thresholds")
+                burn_parsed = None
+                if isinstance(burn_raw, dict):
+                    pairs = []
+                    for color, cutoff in burn_raw.items():
+                        try:
+                            pairs.append((str(color), float(cutoff)))
+                        except (TypeError, ValueError):
+                            continue
+                    pairs.sort(key=lambda p: p[1])
+                    if pairs:
+                        burn_parsed = pairs
+                elif isinstance(burn_raw, list):
+                    pairs = []
+                    for entry in burn_raw:
+                        if not isinstance(entry, dict):
+                            continue
+                        color = entry.get("color")
+                        cutoff = entry.get("max_usd_per_hour", entry.get("cutoff"))
+                        if color is None or cutoff is None:
+                            continue
+                        try:
+                            pairs.append((str(color), float(cutoff)))
+                        except (TypeError, ValueError):
+                            continue
+                    pairs.sort(key=lambda p: p[1])
+                    if pairs:
+                        burn_parsed = pairs
+
+                kwargs = dict(
                     default_standing_instructions=data.get(
                         "default_standing_instructions", ""
                     ),
@@ -396,6 +440,9 @@ class UserConfig:
                     skill_emoji=skill_emoji_parsed,
                     wrapper_emoji=wrapper_emoji_parsed,
                 )
+                if burn_parsed is not None:
+                    kwargs["burn_thresholds"] = burn_parsed
+                return cls(**kwargs)
         except (yaml.YAMLError, IOError):
             return cls()
 

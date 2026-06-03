@@ -71,6 +71,8 @@ class SessionSummary(Static, can_focus=True):
         self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
         self.subtree_cost_usd: float = 0.0  # Subtree cost from daemon
         self.any_has_subtree_cost: bool = False  # True if any parent has subtree cost
+        self.window_burn = None  # Per-session WindowBurnStats over timeline window (#174)
+        self.any_has_burn: bool = False  # True if any agent has non-zero burn data
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
         self.any_has_status_detail: bool = False  # True if any agent has a populated StatusDetail (#TBD)
@@ -398,6 +400,9 @@ class SessionSummary(Static, can_focus=True):
             # Subtree cost
             subtree_cost_usd=self.subtree_cost_usd,
             any_has_subtree_cost=self.any_has_subtree_cost,
+            # Burn rate (#174)
+            window_burn=self.window_burn,
+            any_has_burn=self.any_has_burn,
             # PR number (widget var, not session)
             pr_number=self.pr_number,
             any_has_pr=self.any_has_pr,

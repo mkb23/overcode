@@ -111,8 +111,10 @@ class HelpOverlay(Static):
             t.append(f"{title}\n", style="bold bright_white")
             t.append("─" * 38 + "\n", style="dim")
 
+        from ..status_constants import _safe_emoji
+
         def status(emoji, tl_char, tl_color, name, desc):
-            t.append(f"{emoji} ", style="")
+            t.append(f"{_safe_emoji(emoji)} ", style="")
             t.append(tl_char, style=tl_color)
             t.append(f"  {name}\n", style="bold white")
             t.append(f"     {desc}\n\n", style="dim")
@@ -152,7 +154,7 @@ class HelpOverlay(Static):
         section("SPECIAL INDICATORS")
 
         def indicator(emoji, desc):
-            t.append(f"{emoji}  ", style="")
+            t.append(f"{_safe_emoji(emoji)}  ", style="")
             t.append(f"{desc}\n", style="white")
 
         indicator("🔔", "Unvisited stall (bell)")
@@ -170,9 +172,9 @@ class HelpOverlay(Static):
         skill_emoji = get_skill_emoji()
         if skill_emoji:
             for name, emoji in sorted(skill_emoji.items()):
-                t.append(f"{emoji}  ", style="")
+                t.append(f"{_safe_emoji(emoji)}  ", style="")
                 t.append(f"{name}\n", style="white")
-            t.append(f"{SKILL_EMOJI_DEFAULT}  ", style="")
+            t.append(f"{_safe_emoji(SKILL_EMOJI_DEFAULT)}  ", style="")
             t.append("(unknown skill)\n", style="dim")
         else:
             t.append("No skills configured\n", style="dim")
@@ -185,7 +187,7 @@ class HelpOverlay(Static):
 
         section("TOOL EMOJI")
         for name, emoji in sorted(TOOL_EMOJI.items()):
-            t.append(f"{emoji}  ", style="")
+            t.append(f"{_safe_emoji(emoji)}  ", style="")
             t.append(f"{name}\n", style="white")
         t.append("\n")
 

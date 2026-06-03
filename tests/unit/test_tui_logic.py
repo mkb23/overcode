@@ -1387,6 +1387,113 @@ class TestShouldSendStallNotification:
         ) is False
 
 
+class TestComputeWindowBurn:
+    """Test compute_window_burn — aggregate burn rate across sessions (#174)."""
+
+    def _make_session_with_jsonl(self, tmp_path, session_id, claude_sid, entries, model="claude-sonnet-4-6"):
+        """Create a session + matching Claude JSONL file under tmp_path."""
+        import json
+        from overcode.history_reader import encode_project_path
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir(exist_ok=True)
+        encoded = encode_project_path(str(project_dir))
+        sess_files_dir = tmp_path / "claude_projects" / encoded
+        sess_files_dir.mkdir(parents=True)
+        sess_file = sess_files_dir / f"{claude_sid}.jsonl"
+        sess_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        sess = Mock()
+        sess.id = session_id
+        sess.start_directory = str(project_dir)
+        sess.claude_session_ids = [claude_sid]
+        sess.model = model
+        sess.provider = "web"
+        sess.is_asleep = False
+        return sess
+
+    def test_zero_window_returns_empty(self):
+        from overcode.tui_logic import compute_window_burn
+        result = compute_window_burn([], set(), hours=0)
+        assert result.window_hours == 0
+        assert result.total_tokens == 0
+        assert result.tokens_per_hour == 0.0
+        assert result.cost_per_hour == 0.0
+
+    def test_empty_sessions_returns_empty(self):
+        from overcode.tui_logic import compute_window_burn
+        result = compute_window_burn([], set(), hours=1.0)
+        assert result.total_tokens == 0
+
+    def test_aggregates_tokens_in_window(self, tmp_path, monkeypatch):
+        from datetime import timezone
+        from overcode import history_reader
+        from overcode.tui_logic import compute_window_burn
+
+        # Anchor relative to real wall-clock so timezone math (UTC→local in
+        # the reader vs local-naive `since` in compute_window_burn) lines up
+        # regardless of the test runner's zone.
+        now_utc = datetime.now(timezone.utc)
+        inside_ts = (now_utc - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        outside_ts = (now_utc - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        old = {
+            "type": "assistant",
+            "timestamp": outside_ts,
+            "message": {"model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 9999, "output_tokens": 9999}},
+        }
+        inside = {
+            "type": "assistant",
+            "timestamp": inside_ts,
+            "message": {"model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 100, "output_tokens": 200,
+                                  "cache_creation_input_tokens": 50,
+                                  "cache_read_input_tokens": 300}},
+        }
+        sess = self._make_session_with_jsonl(
+            tmp_path, "s1", "csid-1", [old, inside],
+        )
+
+        monkeypatch.setattr(
+            history_reader,
+            "CLAUDE_PROJECTS_PATH",
+            tmp_path / "claude_projects",
+        )
+
+        result = compute_window_burn([sess], set(), hours=2.0)
+        assert result.input_tokens == 100
+        assert result.output_tokens == 200
+        assert result.cache_creation_tokens == 50
+        assert result.cache_read_tokens == 300
+        assert result.cost_usd > 0
+        assert result.tokens_per_hour == 150.0  # (100+200) / 2h
+
+    def test_skips_asleep_sessions(self, tmp_path, monkeypatch):
+        from datetime import timezone
+        from overcode import history_reader
+        from overcode.tui_logic import compute_window_burn
+
+        inside_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
+            "%Y-%m-%dT%H:%M:%S.000Z"
+        )
+        entry = {
+            "type": "assistant",
+            "timestamp": inside_ts,
+            "message": {"model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 100, "output_tokens": 200}},
+        }
+        sess = self._make_session_with_jsonl(tmp_path, "s1", "csid-1", [entry])
+        monkeypatch.setattr(
+            history_reader,
+            "CLAUDE_PROJECTS_PATH",
+            tmp_path / "claude_projects",
+        )
+
+        result = compute_window_burn([sess], {"s1"}, hours=2.0)
+        assert result.total_tokens == 0
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

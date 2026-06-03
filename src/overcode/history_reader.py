@@ -909,3 +909,122 @@ def get_session_stats(
         provider=detected_provider,
         last_command=last_command,
     )
+
+
+def read_window_token_usage(
+    session_file: Path,
+    since: datetime,
+) -> dict:
+    """Sum token usage for assistant messages timestamped at or after ``since``.
+
+    Lighter than read_session_file_stats — only walks the JSONL once tracking
+    a single set of totals, skipping work-time / model / provider extraction.
+    Used by the burn-rate calculation, which re-parses files independently of
+    the daemon's full stats sync (#174).
+
+    ``since`` should be a LOCAL-naive datetime. Each message's UTC timestamp
+    is converted to the local zone and stripped of tzinfo before comparison,
+    matching the convention in _parse_session_lines.
+
+    Returns dict with input_tokens, output_tokens, cache_creation_tokens,
+    cache_read_tokens (all zero if the file is missing or unreadable).
+    """
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+    }
+    if not session_file.exists():
+        return totals
+
+    try:
+        with open(session_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("type") != "assistant":
+                        continue
+                    ts_str = data.get("timestamp")
+                    if not ts_str:
+                        continue
+                    msg_time = datetime.fromisoformat(
+                        ts_str.replace("Z", "+00:00")
+                    ).astimezone().replace(tzinfo=None)
+                    if msg_time < since:
+                        continue
+                    usage = data.get("message", {}).get("usage") or {}
+                    totals["input_tokens"] += usage.get("input_tokens", 0)
+                    totals["output_tokens"] += usage.get("output_tokens", 0)
+                    totals["cache_read_tokens"] += usage.get(
+                        "cache_read_input_tokens", 0
+                    )
+                    totals["cache_creation_tokens"] += usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    continue
+    except IOError:
+        pass
+
+    return totals
+
+
+def get_session_window_token_usage(
+    session: "Session",
+    since: datetime,
+    projects_path: Optional[Path] = None,
+) -> dict:
+    """Sum window-scoped tokens across a session's primary + subagent files.
+
+    Mirrors the file discovery in get_session_stats so subagent token spend
+    (parallel workflows) is counted alongside the main conversation.
+
+    Returns dict with input_tokens, output_tokens, cache_creation_tokens,
+    cache_read_tokens — totals over messages timestamped at or after ``since``.
+    """
+    # Resolve the projects path at call time so monkeypatching
+    # CLAUDE_PROJECTS_PATH (in tests) takes effect without each caller
+    # having to thread it through.
+    if projects_path is None:
+        projects_path = CLAUDE_PROJECTS_PATH
+
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+    }
+    if not session.start_directory:
+        return totals
+
+    sids = list(getattr(session, 'claude_session_ids', None) or [])
+    if not sids:
+        return totals
+
+    for sid in sids:
+        session_file = get_session_file_path(
+            session.start_directory, sid, projects_path
+        )
+        if not session_file.exists():
+            continue
+        u = read_window_token_usage(session_file, since)
+        for k in totals:
+            totals[k] += u[k]
+
+        # Include subagent files (parallel workflows), skipping duplicate
+        # compaction/side-question logs that copy parent messages.
+        encoded = encode_project_path(session.start_directory)
+        subagents_dir = projects_path / encoded / sid / "subagents"
+        if subagents_dir.exists():
+            for sub_file in subagents_dir.glob("agent-*.jsonl"):
+                if _is_duplicate_subagent(sub_file):
+                    continue
+                u = read_window_token_usage(sub_file, since)
+                for k in totals:
+                    totals[k] += u[k]
+
+    return totals

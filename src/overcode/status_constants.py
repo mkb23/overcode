@@ -182,9 +182,11 @@ EMOJI_ASCII = {
     "📡": "Mo",
     "🔌": "Bg",
     "⚡": ">>",
-    "⚙": "Tl",
+    "🔄": "Tl",  # tool (was ⚙ — text-default, width-ambiguous)
     "😴": "Sl",
-    "🛡": "Pm",
+    "🔐": "Pm",  # permission (was 🛡 — text-default)
+    "👀": "Ov",  # oversight (was 👁 — text-default)
+    "❗": "!W",  # error (was ⚠ — text-default)
     "❓": "??",
     "📥": "In",
 }
@@ -194,7 +196,57 @@ def emoji_or_ascii(char: str, emoji_free: bool) -> str:
     """Return ASCII fallback if emoji_free mode is active, else the emoji."""
     if emoji_free:
         return EMOJI_ASCII.get(char, char)
-    return char
+    return _safe_emoji(char)
+
+
+# Variation Selector-16 (U+FE0F) forces emoji-style rendering for codepoints
+# whose default presentation is text (🖥 desktop, ✏ pencil, 🕵 detective, 🏖
+# beach, etc.). Mac/iTerm-class terminals handle the VS16 cluster correctly
+# at width 2; Windows Terminal and KDE Konsole historically render the base
+# at width 1 + a placeholder for the selector, which throws off Rich's cell
+# accounting and overlaps subsequent text. Strip VS16 outside the whitelist
+# so the base character renders as text-style (thinner / monochrome) but at
+# a width every terminal agrees on.
+_VS16 = "️"
+
+
+def _detect_terminal_emoji_support() -> bool:
+    """True if the terminal handles VS16-bearing emoji clusters without drift.
+
+    Whitelist approach — only known-good terminals opt in. Respects
+    OVERCODE_EMOJI_PRESENTATION=color|text|auto for explicit override.
+    """
+    import os
+    override = os.environ.get("OVERCODE_EMOJI_PRESENTATION", "").lower()
+    if override == "color":
+        return True
+    if override == "text":
+        return False
+    # Known-good (full-color VS16): iTerm2, modern Apple Terminal, WezTerm,
+    # Kitty, Alacritty, Ghostty. Anything else → safe text-style fallback.
+    if os.environ.get("WT_SESSION"):
+        return False  # Windows Terminal — known to drift
+    if os.environ.get("KONSOLE_VERSION"):
+        return False  # KDE Konsole — variable, conservative
+    term_program = os.environ.get("TERM_PROGRAM", "")
+    if term_program in {"iTerm.app", "Apple_Terminal", "WezTerm", "ghostty"}:
+        return True
+    if os.environ.get("KITTY_WINDOW_ID"):
+        return True
+    if "alacritty" in os.environ.get("TERM", "").lower():
+        return True
+    return False  # default: safe
+
+
+_FULL_COLOR_EMOJI = _detect_terminal_emoji_support()
+
+
+def _safe_emoji(s: str) -> str:
+    """Strip VS16 from an emoji string when the terminal isn't trusted to
+    render the variation-selector cluster at the expected cell width."""
+    if _FULL_COLOR_EMOJI or _VS16 not in s:
+        return s
+    return s.replace(_VS16, "")
 
 
 # Permissiveness mode → emoji mapping (shared by TUI, CLI, and web API)
@@ -407,20 +459,24 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
 
     # ---- GREEN (acting) ----
     "generating":      ("⚡", STATUS_COLOR_GREEN,  ">>"),  # token generation, no tool
-    "tool":            ("⚙",  STATUS_COLOR_GREEN, "Tl"),   # generic foreground tool in flight
+    # Note: emoji-default codepoints only. Text-default ones (⚙, 🛡, 👁, ⚠)
+    # render with ambiguous width on Windows Terminal / KDE Konsole — they
+    # look like 1-cell monochrome glyphs there while Rich budgets 2 cells,
+    # cascading into column overlap. Pick swaps with Emoji_Presentation=Yes.
+    "tool":            ("🔄", STATUS_COLOR_GREEN, "Tl"),   # generic foreground tool in flight
     "blocked_ci":      ("🌐", STATUS_COLOR_GREEN, "CI"),   # gh run watch / pr checks --watch
     "blocked_process": ("⏳", STATUS_COLOR_GREEN, "Wt"),   # tail -f / kubectl wait / docker wait
     "blocked_sleep":   ("😴", STATUS_COLOR_GREEN, "Sl"),   # bash `sleep N` (foreground)
 
     # ---- ORANGE (approval) ----
-    "permission":      ("🛡", STATUS_COLOR_ORANGE, "Pm"),  # PermissionRequest
+    "permission":      ("🔐", STATUS_COLOR_ORANGE, "Pm"),  # PermissionRequest
     "plan_approval":   ("📋", STATUS_COLOR_ORANGE, "Pl"),  # ExitPlanMode
-    "oversight":       ("👁",  STATUS_COLOR_ORANGE, "Ov"), # child WAITING_OVERSIGHT
+    "oversight":       ("👀", STATUS_COLOR_ORANGE, "Ov"),  # child WAITING_OVERSIGHT
 
     # ---- RED (needs input) ----
     "ask_question":    ("❓", STATUS_COLOR_RED,   "??"),   # AskUserQuestion open
     "awaiting_input":  ("📥", STATUS_COLOR_RED,   "In"),   # Stop fired, no obligations, awaiting next prompt
-    "error":           ("⚠",  STATUS_COLOR_RED,  "!W"),    # API/hook error needing intervention
+    "error":           ("❗", STATUS_COLOR_RED,   "!W"),    # API/hook error needing intervention
 }
 
 

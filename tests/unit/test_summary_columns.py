@@ -68,6 +68,9 @@ from overcode.summary_columns import (
     render_pr_number_plain,
     render_subtree_cost,
     render_subtree_cost_plain,
+    render_burn_rate,
+    render_burn_rate_plain,
+    burn_color_for_rate,
     build_cli_context,
     render_cli_stats,
 )
@@ -622,6 +625,86 @@ class TestRenderTokenCount:
         stats = _make_claude_stats()
         ctx = _make_ctx(claude_stats=stats, show_cost="cost")
         assert render_token_count(ctx) is not None
+
+
+class TestRenderBurnRate:
+    """Burn rate column over the timeline window (#174)."""
+
+    def _make_burn(self, hours=3.0, tokens=900, cost=0.30):
+        from overcode.tui_logic import WindowBurnStats
+        # Split tokens between input/output so they total to `tokens`
+        return WindowBurnStats(
+            window_hours=hours,
+            input_tokens=tokens // 3,
+            output_tokens=tokens - tokens // 3,
+            cost_usd=cost,
+        )
+
+    def test_no_burn_data_shows_placeholder(self):
+        ctx = _make_ctx(window_burn=None, show_cost="tokens")
+        result = render_burn_rate(ctx)
+        assert "-" in result[0][0]
+
+    def test_tokens_mode_shows_rate_per_hour(self):
+        ctx = _make_ctx(window_burn=self._make_burn(hours=3.0, tokens=900),
+                        show_cost="tokens")
+        result = render_burn_rate(ctx)
+        # 900 / 3h = 300/h → "🔥..."
+        assert "🔥" in result[0][0]
+        assert "/h" in result[0][0]
+
+    def test_cost_mode_shows_dollars_per_hour(self):
+        ctx = _make_ctx(window_burn=self._make_burn(hours=2.0, cost=1.50),
+                        show_cost="cost")
+        result = render_burn_rate(ctx)
+        assert "🔥" in result[0][0]
+        assert "/h" in result[0][0]
+
+    def test_zero_window_hides_rate(self):
+        from overcode.tui_logic import WindowBurnStats
+        ctx = _make_ctx(window_burn=WindowBurnStats(window_hours=0),
+                        show_cost="tokens")
+        result = render_burn_rate(ctx)
+        assert "-" in result[0][0]
+
+    def test_plain_returns_none_when_no_burn(self):
+        ctx = _make_ctx(window_burn=None, show_cost="tokens")
+        assert render_burn_rate_plain(ctx) is None
+
+    def test_plain_returns_rate_string(self):
+        ctx = _make_ctx(window_burn=self._make_burn(hours=3.0, tokens=900),
+                        show_cost="tokens")
+        plain = render_burn_rate_plain(ctx)
+        assert plain is not None
+        assert "/h" in plain
+        assert "🔥" not in plain  # no emoji in plain
+
+    def test_color_ramp_uses_default_thresholds(self):
+        # Defaults (per UserConfig): <$1 green, <$10 yellow, <$100 orange1, else red
+        assert burn_color_for_rate(0.50) == "green"
+        assert burn_color_for_rate(5.0) == "yellow"
+        assert burn_color_for_rate(50.0) == "orange1"
+        assert burn_color_for_rate(500.0) == "red"
+
+    def test_color_ramp_aliases_unknown_rich_names(self, monkeypatch):
+        # Rich doesn't accept "orange" — make sure we map it so a user
+        # typo doesn't crash the TUI.
+        from overcode import settings
+        from overcode.settings import UserConfig
+        fake = UserConfig()
+        fake.burn_thresholds = [("orange", 100.0)]
+        monkeypatch.setattr(settings, "_user_config", fake)
+        assert burn_color_for_rate(50.0) == "orange1"
+
+    def test_color_ramp_honors_yaml_overrides(self, monkeypatch):
+        from overcode import settings
+        from overcode.settings import UserConfig
+        fake = UserConfig()
+        fake.burn_thresholds = [("green", 5.0), ("red", 50.0)]
+        monkeypatch.setattr(settings, "_user_config", fake)
+        assert burn_color_for_rate(3.0) == "green"
+        assert burn_color_for_rate(10.0) == "red"
+        assert burn_color_for_rate(100.0) == "red"
 
 
 class TestRenderContextUsage:

@@ -55,8 +55,15 @@ class DaemonStatusBar(Static):
         self._spin_sample_count: int = 0
         self._spin_baseline_minutes: int = 0
         self._sister_states: list = []  # List of SisterState (#245)
+        # Window-scoped burn stats (#174) — scoped to the user's timeline window
+        self._burn_stats = None  # WindowBurnStats or None
+        self._burn_window_hours: float = 0.0
 
-    def fetch_volatile_state(self, baseline_minutes: int = 0, active_session_names: Optional[list] = None) -> None:
+    def fetch_volatile_state(
+        self,
+        baseline_minutes: int = 0,
+        active_session_names: Optional[list] = None,
+    ) -> None:
         """Fetch all I/O-dependent state. Call from a background thread, NOT main thread.
 
         This replaces the I/O that was previously done inside render().
@@ -79,6 +86,32 @@ class DaemonStatusBar(Static):
         else:
             self._mean_spin = 0.0
             self._spin_sample_count = 0
+
+        # Burn rate over the spin-rate baseline window (#174). Tracks the
+        # SAME window as the μ spin stat — cycled with `,` (back) and `.`
+        # (forward). When baseline=0 ("now"), no rate to show.
+        burn_hours = baseline_minutes / 60.0
+        self._burn_window_hours = burn_hours
+        if burn_hours > 0 and self._session_manager:
+            from ..tui_logic import compute_window_burn
+            try:
+                sessions = [
+                    s for s in self._session_manager.list_sessions()
+                    if s.tmux_session == self.tmux_session
+                ]
+                self._burn_stats = compute_window_burn(
+                    sessions, self._asleep_session_ids, burn_hours,
+                )
+            except Exception as exc:
+                # Log so silent failures don't masquerade as "burn stuck at
+                # zero" — but never let a parse error take down the worker.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "compute_window_burn failed: %r", exc, exc_info=True,
+                )
+                self._burn_stats = None
+        else:
+            self._burn_stats = None
 
     def update_status(self) -> None:
         """Refresh daemon state from file.
@@ -289,6 +322,9 @@ class DaemonStatusBar(Static):
             if sleeping_count > 0:
                 content.append(f" 💤{sleeping_count}", style="dim")  # Show sleeping count
 
+            # New "|" section — everything that follows in this block
+            # (μ, Δ, 🔥) is keyed off the movable baseline window (#174).
+            content.append(" │ ", style="dim")
             # Mean spin rate — use cached values from fetch_volatile_state()
             baseline_minutes = self._spin_baseline_minutes
             if baseline_minutes > 0:
@@ -313,25 +349,69 @@ class DaemonStatusBar(Static):
                         hours = baseline_minutes // 60
                         mins = baseline_minutes % 60
                         window_label = f"{hours}h" if mins == 0 else f"{hours}h{mins}m"
-                    content.append(f" μ{combined_mean:.1f} ({window_label})", style="cyan")
+                    content.append(f"μ{combined_mean:.1f} ({window_label})", style="cyan")
                 else:
-                    content.append(" μ-- (no data)", style="dim")
+                    content.append("μ-- (no data)", style="dim")
             else:
                 # Instantaneous: show current running count as the mean
-                content.append(f" μ{green_now}", style="cyan")
+                content.append(f"μ{green_now}", style="cyan")
 
-            # Total tokens/cost/joules across all sessions (include sleeping agents - they used tokens too)
+            # Window-scoped spend (Δ) + burn rate (🔥), both keyed off the
+            # baseline window — these belong in the same "|" section as μ so
+            # everything that moves with `,`/`.` is visually grouped (#174).
+            # Sisters expose only cumulative totals, so window spend is
+            # local-only — same as burn rate.
+            burn = self._burn_stats
+            if burn and burn.window_hours > 0:
+                from ..summary_columns import burn_color_for_rate
+                color = burn_color_for_rate(burn.cost_per_hour)
+                bold_color = f"bold {color}"
+                if self.show_cost == "cost":
+                    if burn.cost_usd > 0:
+                        content.append(f" Δ{format_cost(burn.cost_usd)}", style=color)
+                    if burn.cost_per_hour > 0:
+                        content.append(
+                            f" 🔥{format_cost(burn.cost_per_hour)}/h", style=bold_color,
+                        )
+                elif self.show_cost == "joules":
+                    from ..tui_helpers import format_joules, usd_to_joules
+                    if burn.cost_usd > 0:
+                        content.append(
+                            f" Δ⚡{format_joules(usd_to_joules(burn.cost_usd))}", style=color,
+                        )
+                    if burn.cost_per_hour > 0:
+                        content.append(
+                            f" 🔥{format_joules(usd_to_joules(burn.cost_per_hour))}/h",
+                            style=bold_color,
+                        )
+                else:
+                    if burn.total_tokens > 0:
+                        content.append(f" Δ{format_tokens(burn.total_tokens)}", style=color)
+                    if burn.tokens_per_hour > 0:
+                        content.append(
+                            f" 🔥{format_tokens(int(burn.tokens_per_hour))}/h",
+                            style=bold_color,
+                        )
+
+            # Cumulative all-time spend across all sessions — moved into its
+            # own "|" section and prefixed with Σ to set it apart from the
+            # window-scoped Δ stat (#174). Sleeping agents count too.
             if self.show_cost == "cost":
                 total_cost = sum(s.estimated_cost_usd for s in local_sessions)
                 total_cost += sum(s.total_cost for s in reachable_sisters)
                 if total_cost > 0:
-                    content.append(f" {format_cost(total_cost)}", style="orange1")
+                    content.append(" │ ", style="dim")
+                    content.append(f"Σ{format_cost(total_cost)}", style="orange1")
             elif self.show_cost == "joules":
                 total_cost = sum(s.estimated_cost_usd for s in local_sessions)
                 total_cost += sum(s.total_cost for s in reachable_sisters)
                 if total_cost > 0:
                     from ..tui_helpers import format_joules, usd_to_joules
-                    content.append(f" ⚡{format_joules(usd_to_joules(total_cost))}", style="orange1")
+                    content.append(" │ ", style="dim")
+                    content.append(
+                        f"Σ⚡{format_joules(usd_to_joules(total_cost))}",
+                        style="orange1",
+                    )
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)
                 for sister in reachable_sisters:
@@ -340,7 +420,8 @@ class DaemonStatusBar(Static):
                         if sess.stats
                     )
                 if total_tokens > 0:
-                    content.append(f" Σ{format_tokens(total_tokens)}", style="orange1")
+                    content.append(" │ ", style="dim")
+                    content.append(f"Σ{format_tokens(total_tokens)}", style="orange1")
 
             # Safe break duration (time until 50%+ agents need attention) - exclude sleeping
             safe_break = calculate_safe_break_duration(active_sessions)
