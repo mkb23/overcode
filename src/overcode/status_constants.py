@@ -131,7 +131,8 @@ EMOJI_ASCII = {
     "🖥️": "Sh",
     "📖": "Rd",
     "✏️": "Wr",
-    "🔧": "Ed",
+    "\U0001fa9b": "Ed",  # 🪛 Edit
+    "🔧": "Tl",  # wrench — DTL tool badge
     "🔍": "Gl",
     "🔎": "Gr",
     "🌐": "Wf",
@@ -182,7 +183,6 @@ EMOJI_ASCII = {
     "📡": "Mo",
     "🔌": "Bg",
     "⚡": ">>",
-    "🔄": "Tl",  # tool (was ⚙ — text-default, width-ambiguous)
     "😴": "Sl",
     "🔐": "Pm",  # permission (was 🛡 — text-default)
     "👀": "Ov",  # oversight (was 👁 — text-default)
@@ -463,7 +463,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     # render with ambiguous width on Windows Terminal / KDE Konsole — they
     # look like 1-cell monochrome glyphs there while Rich budgets 2 cells,
     # cascading into column overlap. Pick swaps with Emoji_Presentation=Yes.
-    "tool":            ("🔄", STATUS_COLOR_GREEN, "Tl"),   # generic foreground tool in flight
+    "tool":            ("🔧", STATUS_COLOR_GREEN, "Tl"),   # generic foreground tool in flight
     "blocked_ci":      ("🌐", STATUS_COLOR_GREEN, "CI"),   # gh run watch / pr checks --watch
     "blocked_process": ("⏳", STATUS_COLOR_GREEN, "Wt"),   # tail -f / kubectl wait / docker wait
     "blocked_sleep":   ("😴", STATUS_COLOR_GREEN, "Sl"),   # bash `sleep N` (foreground)

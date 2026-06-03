@@ -46,7 +46,7 @@ TOOL_EMOJI: dict[str, str] = {
     "Bash": "🖥️",
     "Read": "📖",
     "Write": "✏️",
-    "Edit": "🔧",
+    "Edit": "\U0001fa9b",  # 🪛 screwdriver — moved from 🔧 (now the DTL `tool` badge)
     "Glob": "🔍",
     "Grep": "🔎",
     "WebFetch": "🌐",
