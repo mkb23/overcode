@@ -31,6 +31,8 @@ class ModelPricing:
 # the bedrock discount handling in settings.get_model_pricing).
 MODEL_PRICING: dict[str, ModelPricing] = {
     # Claude models — order here is cosmetic; lookups sort by key length.
+    # Fable 5 (claude-fable-5) — $10 / $50.
+    "fable":        ModelPricing(input=10.0, output=50.0, cache_write=12.50, cache_read=1.00),
     # Current Opus (4.5 / 4.6 / 4.7 / 4.8) — $5 / $25.
     "opus":         ModelPricing(input=5.0,  output=25.0, cache_write=6.25,  cache_read=0.50),
     # Legacy Opus (4.1 and the deprecated original 4.0) — $15 / $75.

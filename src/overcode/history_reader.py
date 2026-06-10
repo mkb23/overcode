@@ -37,6 +37,7 @@ CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 # the actual context size from token counts at runtime and update here
 # for the models known to support extended context.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    "claude-fable-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 1_000_000,
@@ -53,6 +54,7 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 
 # Model ID → human-readable short name for display
 MODEL_SHORT_NAMES: Dict[str, str] = {
+    "claude-fable-5": "Fb5",
     "claude-opus-4-8": "Op4.8",
     "claude-opus-4-7": "Op4.7",
     "claude-opus-4-6": "Op4.6",

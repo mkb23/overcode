@@ -37,6 +37,7 @@ class TestModelPricingTable:
     """Test built-in MODEL_PRICING table."""
 
     def test_has_claude_models(self):
+        assert "fable" in MODEL_PRICING
         assert "opus" in MODEL_PRICING
         assert "sonnet" in MODEL_PRICING
         assert "haiku" in MODEL_PRICING
@@ -48,6 +49,14 @@ class TestModelPricingTable:
 
 class TestLookupPricing:
     """Test lookup_pricing substring matching."""
+
+    def test_matches_fable(self):
+        # Fable 5 is $10/$50.
+        p = lookup_pricing("claude-fable-5")
+        assert p.input == 10.0
+        assert p.output == 50.0
+        assert p.cache_write == 12.50
+        assert p.cache_read == 1.00
 
     def test_matches_claude_opus(self):
         # Current Opus (4.5+) is $5/$25.
