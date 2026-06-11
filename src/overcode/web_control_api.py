@@ -168,7 +168,7 @@ def launch_agent(
     name: str,
     prompt: Optional[str] = None,
     permissions: str = "normal",
-    provider: str = "web",
+    provider: Optional[str] = None,
 ) -> dict:
     """Launch a new agent."""
     import io

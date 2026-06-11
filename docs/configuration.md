@@ -145,7 +145,7 @@ new_agent_defaults:
   wrapper: ""                 # Wrapper script name or path (e.g., "devcontainer")
 ```
 
-These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults.
+These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults, and for child agents the parent's settings take precedence over config defaults (#433): explicit flag > parent setting > config default > built-in default. Use `--no-inherit` to skip the parent.
 
 Setting `wrapper: devcontainer` makes all new agents launch inside a Docker container by default. See the [Wrappers Guide](wrappers.md) for details.
 

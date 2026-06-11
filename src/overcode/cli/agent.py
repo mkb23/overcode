@@ -234,6 +234,13 @@ def launch(
         Optional[str],
         typer.Option("--wrapper", "-w", help="Wrapper script (path or name from ~/.overcode/wrappers/)"),
     ] = None,
+    no_inherit: Annotated[
+        bool,
+        typer.Option(
+            "--no-inherit",
+            help="Don't inherit provider/model/wrapper/permissions from the parent agent (#433)",
+        ),
+    ] = False,
     sister: Annotated[
         Optional[str],
         typer.Option("--sister", "-S", help="Launch on a remote sister machine (by name from config)"),
@@ -292,21 +299,12 @@ def launch(
     # Parse oversight policy
     oversight_policy, oversight_timeout_seconds = _parse_oversight_policy(on_stuck, oversight_timeout)
 
-    # Resolve provider: CLI flag > config default > "web"
-    from ..config import get_new_agent_defaults
-    agent_defaults = get_new_agent_defaults()
-
-    resolved_provider = provider
-    if resolved_provider is None:
-        resolved_provider = agent_defaults.get("provider", "web")
-    if resolved_provider not in ("web", "bedrock"):
-        rprint(f"[red]Error: Invalid provider '{resolved_provider}'. Use: web, bedrock[/red]")
+    # Provider/wrapper resolution (CLI flag > parent settings > config
+    # default) happens in the launcher (#433); only validate the explicit
+    # flag here for a clean error message.
+    if provider is not None and provider not in ("web", "bedrock"):
+        rprint(f"[red]Error: Invalid provider '{provider}'. Use: web, bedrock[/red]")
         raise typer.Exit(code=1)
-
-    # Resolve wrapper: CLI flag > config default > None
-    resolved_wrapper = wrapper
-    if resolved_wrapper is None:
-        resolved_wrapper = agent_defaults.get("wrapper") or None
 
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
@@ -326,8 +324,9 @@ def launch(
         budget_usd=budget,
         claude_agent=agent,
         model=model,
-        provider=resolved_provider,
-        wrapper=resolved_wrapper,
+        provider=provider,
+        wrapper=wrapper,
+        inherit_parent_settings=not no_inherit,
     )
 
     if result:
@@ -344,10 +343,12 @@ def launch(
             rprint(f"  Agent: {agent}")
         if teams:
             rprint("  Agent teams: enabled")
-        if resolved_wrapper:
-            rprint(f"  Wrapper: {resolved_wrapper}")
-        if resolved_provider != "web":
-            rprint(f"  Provider: {resolved_provider}")
+        if result.wrapper:
+            rprint(f"  Wrapper: {result.wrapper}")
+        if result.provider != "web":
+            rprint(f"  Provider: {result.provider}")
+        if result.model and not model:
+            rprint(f"  Model: {result.model} (inherited)")
         if budget is not None and budget > 0:
             rprint(f"  Budget: ${budget:.2f}")
 

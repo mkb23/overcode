@@ -27,7 +27,10 @@ overcode launch --name <name> [options]
 | `--claude-arg` | | Extra Claude CLI flag (repeatable). Each value is a space-separated flag+value string |
 | `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
+| `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
 | `--session` | | Tmux session name (default: `agents`) |
+
+**Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only.
 
 **Examples:**
 ```bash

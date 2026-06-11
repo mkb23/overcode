@@ -1011,6 +1011,129 @@ class TestLauncherHierarchy:
         assert any("OVERCODE_PARENT_NAME=env-parent" in cmd for cmd in child_cmd)
 
 
+class TestParentSettingsInheritance:
+    """Children inherit launch settings from their parent agent (#433)."""
+
+    def _make_launcher(self, tmp_path):
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+        return launcher, mock_tmux
+
+    def test_child_inherits_provider_and_model(self, tmp_path):
+        launcher, mock_tmux = self._make_launcher(tmp_path)
+
+        parent = launcher.launch(name="parent", provider="bedrock", model="sonnet")
+        assert parent is not None
+
+        child = launcher.launch(name="child", parent_name="parent")
+        assert child is not None
+        assert child.provider == "bedrock"
+        assert child.model == "sonnet"
+
+        # Bedrock env vars propagate to the child's shell command
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        child_cmd = [c for c in sent_commands if "OVERCODE_SESSION_NAME=child" in c]
+        assert any("CLAUDE_CODE_USE_BEDROCK=1" in cmd for cmd in child_cmd)
+        assert any("--model sonnet" in cmd for cmd in child_cmd)
+
+    def test_explicit_args_override_inheritance(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", provider="bedrock", model="sonnet")
+        child = launcher.launch(
+            name="child", parent_name="parent", provider="web", model="haiku"
+        )
+        assert child.provider == "web"
+        assert child.model == "haiku"
+
+    def test_no_inherit_opts_out(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", provider="bedrock", model="sonnet")
+        with patch("overcode.config.get_new_agent_defaults", return_value={
+            "bypass_permissions": False, "agent_teams": False,
+            "provider": "web", "wrapper": "",
+        }):
+            child = launcher.launch(
+                name="child", parent_name="parent", inherit_parent_settings=False
+            )
+        assert child.provider == "web"
+        assert child.model is None
+
+    def test_child_inherits_wrapper(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        wrapper_path = tmp_path / "wrap.sh"
+        wrapper_path.write_text("#!/bin/sh\nexec \"$@\"\n")
+        wrapper_path.chmod(0o755)
+
+        parent = launcher.launch(name="parent", wrapper=str(wrapper_path))
+        assert parent.wrapper == str(wrapper_path)
+
+        child = launcher.launch(name="child", parent_name="parent")
+        assert child.wrapper == str(wrapper_path)
+
+    def test_child_inherits_permission_mode(self, tmp_path):
+        launcher, mock_tmux = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", dangerously_skip_permissions=True)
+        child = launcher.launch(name="child", parent_name="parent")
+        assert child.permissiveness_mode == "bypass"
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        child_cmd = [c for c in sent_commands if "OVERCODE_SESSION_NAME=child" in c]
+        assert any("--dangerously-skip-permissions" in cmd for cmd in child_cmd)
+
+    def test_explicit_permission_flag_overrides_parent(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", dangerously_skip_permissions=True)
+        child = launcher.launch(
+            name="child", parent_name="parent", skip_permissions=True
+        )
+        assert child.permissiveness_mode == "permissive"
+
+    def test_child_inherits_agent_teams(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", agent_teams=True)
+        child = launcher.launch(name="child", parent_name="parent")
+        assert child.agent_teams is True
+
+    def test_auto_detected_parent_inherits(self, tmp_path):
+        """Inheritance also applies when the parent is auto-detected from env."""
+        launcher, _ = self._make_launcher(tmp_path)
+
+        launcher.launch(name="parent", provider="bedrock")
+        with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "parent"}):
+            child = launcher.launch(name="child")
+        assert child.provider == "bedrock"
+
+    def test_config_default_when_no_parent(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        with patch("overcode.config.get_new_agent_defaults", return_value={
+            "bypass_permissions": False, "agent_teams": False,
+            "provider": "bedrock", "wrapper": "",
+        }):
+            session = launcher.launch(name="solo")
+        assert session.provider == "bedrock"
+
+    def test_invalid_provider_rejected(self, tmp_path, capsys):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        session = launcher.launch(name="bad", provider="azure")
+        assert session is None
+        captured = capsys.readouterr()
+        assert "invalid provider" in captured.out.lower()
+
+
 class TestCascadeKill:
     """Test cascade kill functionality."""
 
