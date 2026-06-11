@@ -3186,7 +3186,7 @@ class SupervisorTUI(
                     dangerously_skip_permissions=message.bypass_permissions,
                     agent_teams=message.agent_teams,
                     claude_agent=message.claude_agent,
-                    provider=message.provider or "web",
+                    provider=message.provider,
                     wrapper=message.wrapper,
                     extra_claude_args=message.extra_claude_args or None,
                 )

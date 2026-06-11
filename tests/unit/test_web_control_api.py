@@ -243,7 +243,7 @@ class TestLaunchAgent:
             initial_prompt=None,
             skip_permissions=False,
             dangerously_skip_permissions=False,
-            provider="web",
+            provider=None,
         )
 
     @patch(LAUNCHER_PATH)
@@ -262,7 +262,7 @@ class TestLaunchAgent:
             initial_prompt=None,
             skip_permissions=True,
             dangerously_skip_permissions=False,
-            provider="web",
+            provider=None,
         )
 
     def test_invalid_permissions_raises_400(self):

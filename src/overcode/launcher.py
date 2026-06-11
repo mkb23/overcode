@@ -276,8 +276,9 @@ class ClaudeLauncher:
         budget_usd: Optional[float] = None,
         claude_agent: Optional[str] = None,
         model: Optional[str] = None,
-        provider: str = "web",
+        provider: Optional[str] = None,
         wrapper: Optional[str] = None,
+        inherit_parent_settings: bool = True,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -293,9 +294,13 @@ class ClaudeLauncher:
                 If not set, auto-detects from OVERCODE_SESSION_NAME env var.
             allowed_tools: Comma-separated tool list for --allowedTools
             extra_claude_args: Extra Claude CLI flags (each a space-separated string)
-            provider: API provider — "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
+            provider: API provider — "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock).
+                None resolves via parent inheritance, then config defaults, then "web".
             wrapper: Optional wrapper script path. The wrapper receives the claude
                 command as arguments and OVERCODE_WRAPPER_DIR for the working directory.
+            inherit_parent_settings: If True (default), provider/model/wrapper/
+                agent_teams/permission mode not explicitly set are inherited from
+                the parent agent (#433).
 
         Returns:
             Session object if successful, None otherwise
@@ -333,6 +338,37 @@ class ClaudeLauncher:
             if parent_depth + 1 >= self.MAX_HIERARCHY_DEPTH:
                 print(f"Cannot launch: maximum hierarchy depth ({self.MAX_HIERARCHY_DEPTH}) exceeded")
                 return None
+
+        # Settings resolution (#433): explicit arg > parent setting > config
+        # default > built-in default. Children inherit the parent's provider,
+        # model, wrapper, agent_teams, and permission mode so a bedrock-pinned
+        # or model-constrained parent doesn't spawn children on different
+        # infrastructure. Opt out with inherit_parent_settings=False.
+        if parent_session and inherit_parent_settings:
+            if provider is None:
+                provider = parent_session.provider
+            if model is None:
+                model = parent_session.model
+            if wrapper is None:
+                wrapper = parent_session.wrapper
+            if not agent_teams:
+                agent_teams = parent_session.agent_teams
+            if not skip_permissions and not dangerously_skip_permissions:
+                if parent_session.permissiveness_mode == "bypass":
+                    dangerously_skip_permissions = True
+                elif parent_session.permissiveness_mode == "permissive":
+                    skip_permissions = True
+
+        from .config import get_new_agent_defaults
+        agent_defaults = get_new_agent_defaults()
+        if provider is None:
+            provider = agent_defaults.get("provider") or "web"
+        if wrapper is None:
+            wrapper = agent_defaults.get("wrapper") or None
+
+        if provider not in ("web", "bedrock"):
+            print(f"Cannot launch: invalid provider '{provider}'. Use: web, bedrock")
+            return None
 
         # Resolve wrapper if specified
         resolved_wrapper = None
