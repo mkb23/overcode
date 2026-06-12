@@ -1,0 +1,97 @@
+name: E2E (containerized)
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      real_llm:
+        description: "Also run the real-LLM smoke tier"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 3 * * *" # nightly 03:00 UTC
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build E2E image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/e2e/Dockerfile
+          target: e2e
+          tags: overcode-e2e:local
+          outputs: type=docker,dest=/tmp/overcode-e2e.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-image
+          path: /tmp/overcode-e2e.tar
+          retention-days: 1
+
+  e2e-workflows:
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-image
+          path: /tmp
+      - run: docker load -i /tmp/overcode-e2e.tar
+      - name: Run workflow tier
+        run: ./scripts/e2e.sh --no-build tests/container/workflows -v --junitxml=/artifacts/junit-workflows.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-workflow-results
+          path: artifacts/e2e/
+
+  e2e-visual:
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-image
+          path: /tmp
+      - run: docker load -i /tmp/overcode-e2e.tar
+      - name: Run visual tier
+        run: ./scripts/e2e.sh --no-build tests/container/visual -v --junitxml=/artifacts/junit-visual.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-visual-results
+          path: artifacts/e2e/
+
+  e2e-real-llm:
+    needs: build-image
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.real_llm)
+    runs-on: ubuntu-latest
+    environment: e2e-real
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-image
+          path: /tmp
+      - run: docker load -i /tmp/overcode-e2e.tar
+      - name: Run real-LLM smoke tier
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: ./scripts/e2e.sh --no-build --real -v --junitxml=/artifacts/junit-real.xml
+      - name: Hint on token expiry
+        if: failure()
+        run: |
+          echo "::warning::If failures are auth-related, the CLAUDE_CODE_OAUTH_TOKEN secret may have expired."
+          echo "::warning::Re-run 'claude setup-token' locally and update the repository secret."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-real-results
+          path: artifacts/e2e/

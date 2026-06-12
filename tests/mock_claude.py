@@ -653,7 +653,10 @@ def main():
     parser.add_argument("--print", "-p", help="Print message and exit")
     parser.add_argument("prompt", nargs="*", help="Initial prompt (ignored)")
 
-    args = parser.parse_args()
+    # Tolerate (and ignore) any real Claude Code flags the launcher adds,
+    # e.g. --session-id and --settings (#373/#435) — the mock only cares
+    # about its scenario.
+    args, _unknown = parser.parse_known_args()
 
     # Handle --print for simple testing
     if args.print:

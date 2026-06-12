@@ -36,6 +36,7 @@ from .monitor_daemon import (
     is_monitor_daemon_running,
 )
 from .pid_utils import is_daemon_lock_held, spawn_daemon
+from .tmux_utils import _build_tmux_cmd as _tmux_base
 from .summarizer_component import (
     SummarizerComponent,
     SummarizerConfig,
@@ -780,7 +781,7 @@ class SupervisorTUI(
         import subprocess
         try:
             result = subprocess.run(
-                ["tmux", "display-message", "-t", self._bottom_pane_target(),
+                [*_tmux_base(), "display-message", "-t", self._bottom_pane_target(),
                  "-p", "#{pane_width} #{pane_height}"],
                 capture_output=True, text=True, timeout=2,
             )
@@ -806,7 +807,7 @@ class SupervisorTUI(
             target = f"{sync_session}:{window}"
             try:
                 subprocess.run(
-                    ["tmux", "resize-window", "-t", target,
+                    [*_tmux_base(), "resize-window", "-t", target,
                      "-x", str(width), "-y", str(height)],
                     capture_output=True, timeout=2,
                 )
@@ -1061,13 +1062,13 @@ class SupervisorTUI(
         target = self._tui_pane_target()
         # Don't zoom if already zoomed
         info = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+            [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
             capture_output=True, text=True,
         )
         if info.returncode == 0 and info.stdout.strip() == "1":
             return
         subprocess.run(
-            ["tmux", "resize-pane", "-t", target, "-Z"],
+            [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
             capture_output=True,
         )
 
@@ -1086,12 +1087,12 @@ class SupervisorTUI(
         import subprocess
         target = self._tui_pane_target()
         info = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+            [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
             capture_output=True, text=True,
         )
         if info.returncode == 0 and info.stdout.strip() == "1":
             subprocess.run(
-                ["tmux", "resize-pane", "-t", target, "-Z"],
+                [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
                 capture_output=True,
             )
 
@@ -1126,12 +1127,12 @@ class SupervisorTUI(
             import subprocess
             target = self._tui_pane_target()
             info = subprocess.run(
-                ["tmux", "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
+                [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
                 capture_output=True, text=True,
             )
             if info.returncode == 0 and info.stdout.strip() == "1":
                 subprocess.run(
-                    ["tmux", "resize-pane", "-t", target, "-Z"],
+                    [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
                     capture_output=True,
                 )
 
@@ -2447,7 +2448,7 @@ class SupervisorTUI(
             tui_pane_index = get_pane_base_index()
 
             result = subprocess.run(
-                ["tmux", "list-panes", "-t", "overcode:0",
+                [*_tmux_base(), "list-panes", "-t", "overcode:0",
                  "-F", "#{pane_index} #{pane_width} #{pane_height}"],
                 capture_output=True, text=True, timeout=2,
             )
@@ -3946,7 +3947,7 @@ class SupervisorTUI(
         if self.compact:
             # Detach the tmux client — returns user to their previous session
             import subprocess
-            subprocess.run(["tmux", "detach-client"], capture_output=True)
+            subprocess.run([*_tmux_base(), "detach-client"], capture_output=True)
         else:
             self.exit()
 
@@ -3956,7 +3957,7 @@ class SupervisorTUI(
             return
         import subprocess
         subprocess.run(
-            ["tmux", "resize-pane", "-t", self._tui_pane_target(),
+            [*_tmux_base(), "resize-pane", "-t", self._tui_pane_target(),
              "-U" if delta > 0 else "-D", str(abs(delta))],
             capture_output=True,
         )
@@ -3964,13 +3965,13 @@ class SupervisorTUI(
         linked = self.tmux_sync_target
         if linked:
             result = subprocess.run(
-                ["tmux", "list-windows", "-t", linked, "-F", "#{window_id}"],
+                [*_tmux_base(), "list-windows", "-t", linked, "-F", "#{window_id}"],
                 capture_output=True, text=True,
             )
             if result.returncode == 0:
                 for win_id in result.stdout.strip().splitlines():
                     subprocess.run(
-                        ["tmux", "resize-window", "-t", win_id, "-A"],
+                        [*_tmux_base(), "resize-window", "-t", win_id, "-A"],
                         capture_output=True,
                     )
 

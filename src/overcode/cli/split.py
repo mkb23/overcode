@@ -747,7 +747,9 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
                       monitor_cmd)
                 rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window (monitor restarted)...[/green]")
                 time.sleep(0.2)
-                os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
+                from ..tmux_utils import _build_tmux_cmd
+                _cmd = [*_build_tmux_cmd(), "attach-session", "-t", oc_session]
+                os.execvp("tmux", _cmd)
             # Always restart the monitor so code changes take effect
             _tmux("respawn-pane", "-k",
                   "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}",
@@ -919,4 +921,6 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
         # Attach to the session (replaces this process)
         rprint(f"[green]Attaching to split layout...[/green]")
         time.sleep(0.2)
-        os.execlp("tmux", "tmux", "attach-session", "-t", oc_session)
+        from ..tmux_utils import _build_tmux_cmd
+        _cmd = [*_build_tmux_cmd(), "attach-session", "-t", oc_session]
+        os.execvp("tmux", _cmd)

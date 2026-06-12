@@ -527,8 +527,11 @@ class HookStatusDetector:
         # Direct tmux subprocess fallback
         lines_arg = num_lines or self.capture_lines
         try:
+            from .tmux_utils import _build_tmux_cmd
+
             result = subprocess.run(
-                ["tmux", "capture-pane", "-t", f"{self.tmux_session}:{window}",
+                [*_build_tmux_cmd(), "capture-pane",
+                 "-t", f"{self.tmux_session}:{window}",
                  "-p", "-S", f"-{lines_arg}"],
                 capture_output=True, text=True, timeout=5,
             )

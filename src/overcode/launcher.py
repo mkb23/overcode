@@ -1146,9 +1146,11 @@ class ClaudeLauncher:
             return None
 
         try:
+            from .tmux_utils import _build_tmux_cmd
+
             result = subprocess.run(
                 [
-                    "tmux", "capture-pane",
+                    *_build_tmux_cmd(), "capture-pane",
                     "-t", tmux_window_target(self.tmux.session_name, session.tmux_window),
                     "-p",  # Print to stdout
                     "-S", f"-{lines}",  # Capture last N lines

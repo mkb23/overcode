@@ -123,6 +123,21 @@ See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
 - [Wrappers](docs/wrappers.md) - Run agents in containers and custom environments
 - [Advanced Features](docs/advanced-features.md) - Sleep mode, handover, remote monitoring
 
+## Testing
+
+Unit tests run on the host (`make test-unit`). End-to-end tests run inside a
+disposable Docker container so daemons, tmux servers and (mock or real) Claude
+processes can never leak onto your machine:
+
+```bash
+make e2e         # workflow + visual tiers (mock Claude, no credentials)
+make e2e-real    # real-LLM smoke tier (needs CLAUDE_CODE_OAUTH_TOKEN)
+make e2e-shell   # debug shell inside the test container
+```
+
+See [docs/design/e2e-devcontainer-testing.md](docs/design/e2e-devcontainer-testing.md)
+for the architecture, coverage matrix, and CI setup.
+
 ## License
 
 MIT

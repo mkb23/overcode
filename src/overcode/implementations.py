@@ -16,6 +16,8 @@ import libtmux
 from libtmux.exc import LibTmuxException
 from libtmux._internal.query_list import ObjectDoesNotExist
 
+from .tmux_utils import _build_tmux_cmd
+
 
 class RealTmux:
     """Production implementation of TmuxInterface using libtmux.
@@ -228,7 +230,8 @@ class RealTmux:
         else:
             from .tmux_utils import tmux_window_target
             target = tmux_window_target(session, window) if window is not None else session
-            os.execlp("tmux", "tmux", "attach-session", "-t", target)
+            cmd = [*_build_tmux_cmd(), "attach-session", "-t", target]
+            os.execvp("tmux", cmd)
 
     def _attach_bare(self, session: str, window: str) -> None:
         """Create a linked session with stripped chrome and attach to it."""
@@ -309,7 +312,7 @@ class RealTmux:
             # Format: session:window.pane
             target = f"{session}:{window}"
             result = self.run(
-                ["tmux", "resize-window", "-t", target, "-x", str(width), "-y", str(height)],
+                [*_build_tmux_cmd(), "resize-window", "-t", target, "-x", str(width), "-y", str(height)],
                 timeout=2
             )
             return result is not None and result.get("returncode") == 0

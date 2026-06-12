@@ -19,7 +19,7 @@ from .session_manager import SessionManager
 from .status_patterns import strip_ansi
 from .settings import get_session_dir
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
-from .tmux_utils import tmux_window_target
+from .tmux_utils import tmux_window_target, _build_tmux_cmd
 
 
 def _capture_pane(tmux_session: str, window_name: str, lines: int = DEFAULT_CAPTURE_LINES) -> Optional[str]:
@@ -27,7 +27,9 @@ def _capture_pane(tmux_session: str, window_name: str, lines: int = DEFAULT_CAPT
     try:
         result = subprocess.run(
             [
-                "tmux", "capture-pane",
+                # _build_tmux_cmd respects OVERCODE_TMUX_SOCKET — a bare
+                # "tmux" would capture from the wrong server (#follow/jobs)
+                *_build_tmux_cmd(), "capture-pane",
                 "-t", tmux_window_target(tmux_session, window_name),
                 "-p",
                 "-S", f"-{lines}",

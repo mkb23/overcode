@@ -299,9 +299,11 @@ class SupervisorDaemon:
             Captured pane content, or None if pane not found (returncode != 0).
             Raises subprocess.SubprocessError on transient errors (timeout, etc.).
         """
+        from .tmux_utils import _build_tmux_cmd
+
         result = subprocess.run(
             [
-                "tmux", "capture-pane",
+                *_build_tmux_cmd(), "capture-pane",
                 "-t", f"{self.tmux_session}:={self.daemon_claude_window}",
                 "-p",
                 "-S", f"-{lines}",
@@ -661,8 +663,10 @@ class SupervisorDaemon:
         self.daemon_claude_window = window_name
         self.daemon_claude_launch_time = datetime.now()
 
-        # Start Claude with auto-permissions
-        claude_cmd = "claude --dangerously-skip-permissions"
+        # Start Claude with auto-permissions (CLAUDE_COMMAND override matches
+        # launcher.py behavior; used by E2E tests to substitute a mock)
+        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        claude_cmd = f"{claude_command} --dangerously-skip-permissions"
         if not self.tmux.send_keys(window_name, claude_cmd, enter=True):
             self.log.error("Failed to start Claude in daemon claude window")
             self.tmux.kill_window(window_name)

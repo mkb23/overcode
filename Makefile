@@ -1,6 +1,6 @@
 # Makefile for overcode development and testing
 
-.PHONY: help install test test-e2e test-unit clean lint format
+.PHONY: help install test test-e2e test-unit clean lint format e2e e2e-real e2e-shell
 
 help:
 	@echo "Overcode Development Commands"
@@ -14,6 +14,9 @@ help:
 	@echo "  make test-e2e       Run only E2E integration tests (slow)"
 	@echo "  make test-unit      Run only fast unit tests"
 	@echo "  make test-quick     Run E2E test directly (bypass pytest for faster dev)"
+	@echo "  make e2e            Containerized E2E: workflow + visual tiers (Docker)"
+	@echo "  make e2e-real       Containerized E2E: real-LLM smoke tier (needs CLAUDE_CODE_OAUTH_TOKEN)"
+	@echo "  make e2e-shell      Interactive shell inside the E2E container"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  make lint           Run type checking with mypy"
@@ -41,6 +44,16 @@ test-unit:
 test-quick:
 	@echo "Running E2E test directly (faster for development)..."
 	python tests/test_e2e_multi_agent_jokes.py
+
+# Containerized E2E (docs/design/e2e-devcontainer-testing.md)
+e2e:
+	./scripts/e2e.sh
+
+e2e-real:
+	./scripts/e2e.sh --real
+
+e2e-shell:
+	./scripts/e2e.sh --shell
 
 lint:
 	mypy src/overcode

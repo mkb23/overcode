@@ -260,9 +260,10 @@ class TmuxManager:
         if bare:
             self._attach_bare(window)
         else:
-            from .tmux_utils import tmux_window_target
+            from .tmux_utils import tmux_window_target, _build_tmux_cmd
             target = tmux_window_target(self.session_name, window) if window is not None else self.session_name
-            os.execlp("tmux", "tmux", "attach-session", "-t", target)
+            cmd = [*_build_tmux_cmd(), "attach-session", "-t", target]
+            os.execvp("tmux", cmd)
 
     def _attach_bare(self, window: str):
         """Create a linked session with stripped chrome and attach to it."""

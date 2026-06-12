@@ -17,6 +17,7 @@ Each assistant message in session files has usage data:
 """
 
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
 
 
 CLAUDE_HISTORY_PATH = Path.home() / ".claude" / "history.jsonl"
+
+# Claude Code encodes project dirs by dashing every non-alphanumeric char
+_NON_ALNUM = re.compile(r"[^a-zA-Z0-9]")
 CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 
 # Model name → context window size in tokens.
@@ -497,9 +501,13 @@ def encode_project_path(path: str) -> str:
     """Encode a project path to Claude Code's directory naming format.
 
     Claude Code stores project data in directories named like:
-    /home/user/myproject -> -home-user-myproject
-    /home/user/.config   -> -home-user--config
-    Both '/' and '.' are replaced with '-'.
+    /home/user/myproject   -> -home-user-myproject
+    /home/user/.config     -> -home-user--config
+    /home/user/my_app.dir  -> -home-user-my-app-dir
+
+    Every non-alphanumeric character becomes '-' (verified empirically
+    against Claude Code v2: underscores included — replacing only '/' and
+    '.' broke token tracking for any project path containing '_').
 
     Args:
         path: The project path to encode
@@ -508,7 +516,7 @@ def encode_project_path(path: str) -> str:
         Encoded directory name
     """
     resolved = str(Path(path).resolve())
-    return resolved.replace("/", "-").replace(".", "-")
+    return _NON_ALNUM.sub("-", resolved)
 
 
 def get_session_file_path(

@@ -1,0 +1,21 @@
+{
+    "name": "OverCode E2E debug container",
+    "build": {
+        "dockerfile": "../docker/e2e/Dockerfile",
+        "context": "..",
+        "target": "dev"
+    },
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+    "remoteUser": "overcode",
+    "containerEnv": {
+        "E2E_ARTIFACTS": "/tmp/artifacts"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }
+}

@@ -295,9 +295,14 @@ class TestEncodeProjectPath:
 
         # Should replace slashes with dashes and start with dash
         assert result.startswith("-")
+        # Claude Code dashes EVERY non-alphanumeric char (incl. '_' and '.')
+        import re
+        expected = re.sub(r"[^a-zA-Z0-9]", "-", str(tmp_path.resolve()))
+        assert result == expected
         assert "/" not in result
-        # Temp path name should be in the result
-        assert tmp_path.name in result
+        # Temp path name (with non-alphanumerics dashed) should be in the result
+        import re
+        assert re.sub(r"[^a-zA-Z0-9]", "-", tmp_path.name) in result
 
     def test_handles_trailing_slash(self, tmp_path):
         """Should handle paths with trailing slashes."""
@@ -308,7 +313,8 @@ class TestEncodeProjectPath:
 
         # Path.resolve() removes trailing slash - result should not end with dash
         assert not result.endswith("-")
-        assert tmp_path.name in result
+        import re
+        assert re.sub(r"[^a-zA-Z0-9]", "-", tmp_path.name) in result
 
 
 class TestProviderFromModel:

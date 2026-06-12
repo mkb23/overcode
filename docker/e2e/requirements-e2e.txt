@@ -1,0 +1,28 @@
+# Python dependencies baked into the E2E container image.
+# OverCode itself is NOT installed — it runs from the read-only /workspace
+# mount via PYTHONPATH (see Dockerfile shims), so local changes need no rebuild.
+
+# OverCode runtime deps (mirror pyproject.toml [project.dependencies])
+textual>=0.40.0
+rich>=13.0.0
+typer>=0.9.0
+pyyaml>=6.0
+libtmux>=0.37.0
+
+# Optional runtime features exercised by tests
+pyarrow>=14.0.0          # overcode export (Parquet)
+
+# tui-eye rendering
+pyte>=0.8.0
+pillow>=10.0.0
+
+# Test stack
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.5.0
+pytest-textual-snapshot>=1.0.0
+requests>=2.31.0
+
+# Web dashboard browser tests
+playwright>=1.40.0

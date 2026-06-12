@@ -932,28 +932,40 @@ class TestTmuxManagerLibtmuxKillSession:
 
 
 class TestTmuxManagerAttachSession:
-    """Test attach_session (mock os.execlp)."""
+    """Test attach_session (mock os.execvp)."""
 
-    @patch("overcode.tmux_manager.os.execlp")
-    def test_attach_session_default(self, mock_execlp):
-        """attach_session calls os.execlp with session name."""
+    @patch("overcode.tmux_manager.os.execvp")
+    def test_attach_session_default(self, mock_execvp):
+        """attach_session calls os.execvp with session name."""
         manager = TmuxManager("agents")
 
         manager.attach_session()
 
-        mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "agents"
+        mock_execvp.assert_called_once_with(
+            "tmux", ["tmux", "attach-session", "-t", "agents"]
         )
 
-    @patch("overcode.tmux_manager.os.execlp")
-    def test_attach_session_with_window(self, mock_execlp):
+    @patch("overcode.tmux_manager.os.execvp")
+    def test_attach_session_with_window(self, mock_execvp):
         """attach_session includes window in target when specified."""
         manager = TmuxManager("agents")
 
         manager.attach_session(window="my-window")
 
-        mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "agents:=my-window"
+        mock_execvp.assert_called_once_with(
+            "tmux", ["tmux", "attach-session", "-t", "agents:=my-window"]
+        )
+
+    @patch("overcode.tmux_manager.os.execvp")
+    def test_attach_session_respects_socket_env(self, mock_execvp, monkeypatch):
+        """attach_session adds -L when OVERCODE_TMUX_SOCKET is set."""
+        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "mysock")
+        manager = TmuxManager("agents")
+
+        manager.attach_session()
+
+        mock_execvp.assert_called_once_with(
+            "tmux", ["tmux", "-L", "mysock", "attach-session", "-t", "agents"]
         )
 
     @patch("overcode.tmux_manager.TmuxManager._attach_bare")

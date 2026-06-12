@@ -101,6 +101,17 @@ def monitor_daemon_status_cmd(session: SessionOption = "agents"):
     _monitor_daemon_status(session)
 
 
+def _format_loop_time_ago(last_loop_time: str) -> str:
+    """MonitorDaemonState timestamps are ISO strings; format_ago needs datetime."""
+    from datetime import datetime
+    from ..tui_helpers import format_ago
+
+    try:
+        return format_ago(datetime.fromisoformat(last_loop_time))
+    except (ValueError, TypeError):
+        return str(last_loop_time)
+
+
 def _monitor_daemon_status(session: str):
     """Internal function for showing monitor daemon status."""
     from ..monitor_daemon import is_monitor_daemon_running, get_monitor_daemon_pid
@@ -110,8 +121,7 @@ def _monitor_daemon_status(session: str):
         rprint(f"[dim]Monitor Daemon ({session}):[/dim] ○ stopped")
         state = get_monitor_daemon_state(session)
         if state and state.last_loop_time:
-            from ..tui_helpers import format_ago
-            rprint(f"  [dim]Last active: {format_ago(state.last_loop_time)}[/dim]")
+            rprint(f"  [dim]Last active: {_format_loop_time_ago(state.last_loop_time)}[/dim]")
         return
 
     pid = get_monitor_daemon_pid(session)
@@ -124,8 +134,7 @@ def _monitor_daemon_status(session: str):
         rprint(f"  Interval: {state.current_interval}s")
         rprint(f"  Sessions: {len(state.sessions)}")
         if state.last_loop_time:
-            from ..tui_helpers import format_ago
-            rprint(f"  Last loop: {format_ago(state.last_loop_time)}")
+            rprint(f"  Last loop: {_format_loop_time_ago(state.last_loop_time)}")
         if state.presence_available:
             rprint(f"  Presence: state={state.presence_state}, idle={state.presence_idle_seconds:.0f}s")
 
