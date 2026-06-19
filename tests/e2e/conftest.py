@@ -29,6 +29,20 @@ COVERAGERC = PROJECT_ROOT / ".coveragerc"
 TEST_TMUX_SOCKET = "overcode-test"
 
 
+def pytest_collection_modifyitems(config, items):
+    """Mark every test under tests/e2e/ as `e2e`.
+
+    These are the legacy host-based end-to-end tests, superseded by the
+    containerized suite in tests/container/. They depend on a real tmux + mock
+    claude environment and are flaky off a configured host, so pytest.ini's
+    default `-m "not e2e"` deselects them; they still run via `make test-e2e`.
+    """
+    e2e_dir = Path(__file__).parent
+    for item in items:
+        if e2e_dir in Path(str(item.fspath)).parents:
+            item.add_marker(pytest.mark.e2e)
+
+
 def stop_daemons_for_session(state_dir: Path, session_name: str) -> None:
     """Stop any daemons running for a test session.
 

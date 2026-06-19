@@ -8,8 +8,6 @@ on:
         description: "Also run the real-LLM smoke tier"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 3 * * *" # nightly 03:00 UTC
 
 jobs:
   build-image:
