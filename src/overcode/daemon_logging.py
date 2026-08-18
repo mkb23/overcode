@@ -25,6 +25,38 @@ DAEMON_THEME = Theme({
     "highlight": "bold white",
 })
 
+# Daemon logs are append-only and were previously uncapped, letting a
+# long-lived session's monitor_daemon.log grow into the hundreds of MB.
+# Rotate to a single .1 backup once the live file passes this size.
+MAX_LOG_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def tail_file_lines(
+    log_file: Path, max_lines: int = 100, max_bytes: int = 256 * 1024
+) -> tuple[List[str], int]:
+    """Return the last ``max_lines`` lines of a file plus its size in bytes.
+
+    Reads at most the final ``max_bytes`` of the file, so tailing a huge log
+    never materializes the whole thing (the old ``readlines()`` path slurped
+    hundreds of MB just to keep the last 100 lines). The returned size doubles
+    as the byte offset callers should resume incremental reads from.
+    """
+    try:
+        size = log_file.stat().st_size
+    except OSError:
+        return [], 0
+    try:
+        with open(log_file, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()  # drop the partial first line
+            data = f.read()
+    except OSError:
+        return [], size
+    text = data.decode("utf-8", errors="replace")
+    lines = [l.rstrip() for l in text.splitlines()][-max_lines:]
+    return lines, size
+
 
 class BaseDaemonLogger:
     """Base logger for daemons with common logging methods."""
@@ -40,8 +72,21 @@ class BaseDaemonLogger:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         self.console = Console(theme=theme or DAEMON_THEME, force_terminal=True)
 
+    def _maybe_rotate(self):
+        """Rotate the log to a single .1 backup once it exceeds MAX_LOG_BYTES."""
+        try:
+            if self.log_file.stat().st_size < MAX_LOG_BYTES:
+                return
+        except OSError:
+            return
+        try:
+            self.log_file.replace(self.log_file.with_name(self.log_file.name + ".1"))
+        except OSError:
+            pass
+
     def _write_to_file(self, message: str, level: str = "INFO"):
         """Write plain text to log file."""
+        self._maybe_rotate()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] [{level}] {message}"
         try:
@@ -78,6 +123,7 @@ class BaseDaemonLogger:
 
     def debug(self, message: str):
         """Log a debug message (only to file, not console)."""
+        self._maybe_rotate()
         timestamp = datetime.now().strftime("%H:%M:%S")
         try:
             with open(self.log_file, 'a') as f:
