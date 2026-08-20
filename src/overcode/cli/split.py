@@ -436,6 +436,33 @@ def _get_first_agent_window(agents_session: str) -> str | None:
     return result.stdout.strip().splitlines()[0]
 
 
+def _hold_wrapper(launch_cmd: str, relaunch_cmd: str) -> str:
+    """Wrap the monitor command so the pane survives the TUI exiting.
+
+    Pressing ``q`` in the TUI exits the viewer process (freeing the CPU it
+    spends rendering) rather than detaching the tmux client. Without this
+    wrapper the pane's command would then end and tmux would close the pane,
+    collapsing the split. Instead we run the monitor and, when it exits, hold
+    the pane at a one-key relaunch prompt — idle cost is a shell blocked on
+    ``read`` (~0% CPU). The monitor daemon is a separate process and keeps
+    collecting stats throughout.
+
+    ``launch_cmd`` runs first (may include ``--restart``); ``relaunch_cmd``
+    omits ``--restart`` so returning to the view doesn't needlessly bounce the
+    daemon. tmux runs the returned string via ``sh -c``; it contains only
+    single-quoted literals (no single quotes in the overcode commands), so the
+    quoting stays flat.
+    """
+    msg = (
+        "\\n  overcode monitor stopped (daemon still running)."
+        "\\n  Press Enter to relaunch, or Ctrl-C to close this pane... "
+    )
+    return (
+        f"{launch_cmd}; "
+        f"while :; do printf '{msg}'; read _ || exit 0; {relaunch_cmd}; done"
+    )
+
+
 def _is_split_window_healthy(window_id: str) -> bool:
     """Check that the split window has 2 panes with the expected processes.
 
@@ -444,17 +471,23 @@ def _is_split_window_healthy(window_id: str) -> bool:
     """
     result = _tmux(
         "list-panes", "-t", window_id,
-        "-F", "#{pane_current_command}",
+        "-F", "#{pane_current_command}\t#{pane_start_command}",
     )
     if result.returncode != 0:
         return False
     panes = result.stdout.strip().splitlines()
     if len(panes) != 2:
         return False
-    # Top pane should be running python/overcode, not a bare shell
-    top_cmd = panes[0].strip()
-    shell_names = {"zsh", "bash", "sh", "fish"}
-    if top_cmd in shell_names:
+    top_cur, _, top_start = panes[0].partition("\t")
+    # The monitor pane is launched via _hold_wrapper, whose wrapping shell is
+    # reported as pane_current_command even while the monitor runs (or holds at
+    # the relaunch prompt) — so a bare shell name no longer means it died.
+    # Trust the pane's start command: if it's our monitor launch, the pane is
+    # ours. A dead pane instead shows up as the pane-count check above.
+    if "monitor --session" in top_start:
+        return True
+    # Legacy / unwrapped launch: fall back to the old "bare shell = dead" check.
+    if top_cur.strip() in {"zsh", "bash", "sh", "fish"}:
         return False
     return True
 
@@ -694,8 +727,14 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     # and respawning the top pane on relaunch.
     overcode_cmd = _find_overcode_cmd()
     monitor_cmd = f"{overcode_cmd} monitor --session {session} --sync-target {linked}"
+    relaunch_cmd = monitor_cmd  # without --restart, for in-pane relaunch
     if restart:
         monitor_cmd += " --restart"
+    # Pressing `q` in the TUI exits the viewer process (freeing CPU) instead of
+    # just detaching; wrap the launch so the pane holds at a one-key relaunch
+    # prompt rather than collapsing the split. The monitor daemon is a separate
+    # process and keeps collecting stats regardless.
+    monitor_cmd = _hold_wrapper(monitor_cmd, relaunch_cmd)
 
     # Check if the split window already exists in the overcode session
     existing = _find_existing_split_window(oc_session)

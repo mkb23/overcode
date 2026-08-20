@@ -3943,13 +3943,21 @@ class SupervisorTUI(
     })
 
     def action_quit(self) -> None:
-        """Quit the app, or detach tmux client in compact (split) mode."""
+        """Quit: in split mode, detach the client AND stop the viewer process.
+
+        Detaching returns the user to their previous tmux session; exiting the
+        app stops the CPU it spends rendering (the old behaviour only detached,
+        leaving the viewer running). The pane is launched via cli/split.py's
+        _hold_wrapper, so after exit the pane holds (split preserved) with a
+        one-key relaunch. The monitor daemon is a separate process and keeps
+        collecting stats throughout.
+        """
         if self.compact:
-            # Detach the tmux client — returns user to their previous session
+            # Detach first so the user returns to their previous session, then
+            # exit so the viewer process stops consuming CPU.
             import subprocess
             subprocess.run([*_tmux_base(), "detach-client"], capture_output=True)
-        else:
-            self.exit()
+        self.exit()
 
     def _resize_split(self, delta: int) -> None:
         """Resize the tmux split pane by delta rows (compact mode only)."""
