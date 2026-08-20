@@ -24,7 +24,7 @@ from overcode.interfaces import MockTmux
 def mock_dependency_checks():
     """Mock dependency checks and strip OVERCODE_* env vars."""
     with patch("overcode.launcher.require_tmux"), \
-         patch("overcode.launcher.require_claude"), \
+         patch("overcode.launcher.require_agent_cli"), \
          patch.dict(os.environ, {}, clear=False) as patched_env:
         for key in ["OVERCODE_SESSION_NAME", "OVERCODE_TMUX_SESSION",
                      "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME"]:

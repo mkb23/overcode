@@ -386,11 +386,17 @@ def fork(
         overcode fork my-agent -p "analyze test failures"  # Fork with initial prompt
     """
     from ..session_manager import SessionManager
+    from ..backends import BackendCapability, get_backend, supports
 
     sm = SessionManager()
     source_session = sm.get_session_by_name(source)
     if not source_session:
         rprint(f"[red]Error: Agent '{source}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    backend = get_backend(getattr(source_session, "backend", None))
+    if not supports(backend, BackendCapability.FORK):
+        rprint(f"[red]Error: backend '{backend.name}' does not support fork[/red]")
         raise typer.Exit(code=1)
 
     if not source_session.active_claude_session_id:

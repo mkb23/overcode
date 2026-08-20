@@ -121,13 +121,54 @@ def check_tmux() -> Tuple[bool, Optional[str], Optional[str]]:
     return _check_executable("tmux", ["-V"], timeout=5)
 
 
+def _resolve_backend(backend):
+    """Accept a backend object or a backend name."""
+    if isinstance(backend, str):
+        from .backends import get_backend
+        return get_backend(backend)
+    return backend
+
+
+def check_agent_cli(backend) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Check if a backend's agent CLI is available and get its version.
+
+    Args:
+        backend: An AgentBackend or a registered backend name
+
+    Returns:
+        Tuple of (is_available, path, version)
+    """
+    resolved = _resolve_backend(backend)
+    return _check_executable(resolved.binary, list(resolved.version_args), timeout=10)
+
+
+def require_agent_cli(backend) -> str:
+    """Ensure a backend's agent CLI is available, raise if not.
+
+    Args:
+        backend: An AgentBackend or a registered backend name
+
+    Returns:
+        Path to the agent CLI executable
+
+    Raises:
+        The backend's not_found_error: If the CLI is not found
+    """
+    resolved = _resolve_backend(backend)
+    return _require_executable(
+        lambda: check_agent_cli(resolved),
+        resolved.not_found_error,
+        resolved.install_hint,
+    )
+
+
 def check_claude() -> Tuple[bool, Optional[str], Optional[str]]:
     """Check if Claude Code CLI is available and get its version.
 
     Returns:
         Tuple of (is_available, path, version)
     """
-    return _check_executable("claude", ["--version"], timeout=10)
+    return check_agent_cli("claude-code")
 
 
 def require_tmux() -> str:
@@ -156,9 +197,4 @@ def require_claude() -> str:
     Raises:
         ClaudeNotFoundError: If claude is not found
     """
-    return _require_executable(
-        check_claude,
-        ClaudeNotFoundError,
-        "Claude Code CLI is required but not found. "
-        "Install it from: https://claude.ai/claude-code",
-    )
+    return require_agent_cli("claude-code")

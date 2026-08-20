@@ -29,7 +29,7 @@ def mock_dependency_checks():
     tries to find a parent in the test's isolated SessionManager, and fails.
     """
     with patch("overcode.launcher.require_tmux"), \
-         patch("overcode.launcher.require_claude"), \
+         patch("overcode.launcher.require_agent_cli"), \
          patch.dict(os.environ, {}, clear=False) as patched_env:
         for key in ["OVERCODE_SESSION_NAME", "OVERCODE_TMUX_SESSION",
                      "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME"]:
@@ -1618,7 +1618,9 @@ class TestLaunchFork:
             )
 
         assert forked is not None
-        mock_send.assert_called_once_with(forked.tmux_window, "Analyze the test failures")
+        args, kwargs = mock_send.call_args
+        assert args == (forked.tmux_window, "Analyze the test failures")
+        assert kwargs["backend"].name == "claude-code"
 
 
 # =============================================================================
@@ -1854,12 +1856,12 @@ class TestResolveOvercodeBin:
 
     def test_uses_which_when_available(self):
         from overcode.launcher import _resolve_overcode_bin
-        with patch("overcode.launcher.shutil.which", return_value="/usr/local/bin/overcode"):
+        with patch("overcode.backends.claude_code.shutil.which", return_value="/usr/local/bin/overcode"):
             assert _resolve_overcode_bin() == "/usr/local/bin/overcode"
 
     def test_falls_back_to_python_m(self):
         from overcode.launcher import _resolve_overcode_bin
-        with patch("overcode.launcher.shutil.which", return_value=None):
+        with patch("overcode.backends.claude_code.shutil.which", return_value=None):
             result = _resolve_overcode_bin()
             assert result.endswith("-m overcode.cli")
             assert sys.executable in result

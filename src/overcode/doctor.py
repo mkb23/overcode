@@ -12,7 +12,7 @@ daemon sees no state changes.
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 from .session_manager import Session
 
@@ -158,30 +158,46 @@ def get_descendant_pids(
     return descendants
 
 
-def find_claude_process(
+def find_agent_process(
     pane_pid: int,
     children: Dict[int, List[int]],
     argv_by_pid: Dict[int, str],
+    expected_basenames: Optional[Sequence[str]] = None,
 ) -> tuple[Optional[int], str]:
-    """Find the claude process in the tmux pane's process tree.
+    """Find the agent CLI process in the tmux pane's process tree.
 
     Returns (pid, argv) of the first descendant whose argv's first token
-    is `claude` (or an absolute path ending in `/claude`). Returns
-    (None, '') if no claude process is found under pane_pid.
+    basename is one of `expected_basenames` (defaulting to the default
+    backend's, i.e. `claude`). Returns (None, '') if none is found under
+    pane_pid.
 
     We search by argv rather than by stored PID because the user may have
-    manually relaunched claude, in which case any PID we recorded at launch
-    is stale — and that's precisely the case we want to diagnose.
+    manually relaunched the agent, in which case any PID we recorded at
+    launch is stale — and that's precisely the case we want to diagnose.
     """
+    if expected_basenames is None:
+        from .backends import get_backend
+        expected_basenames = get_backend().process_basenames
+    wanted = set(expected_basenames)
     for pid in get_descendant_pids(pane_pid, children):
         argv = argv_by_pid.get(pid, "")
         if not argv:
             continue
         first_token = argv.split(None, 1)[0]
         basename = first_token.rsplit("/", 1)[-1]
-        if basename == "claude":
+        if basename in wanted:
             return pid, argv
     return None, ""
+
+
+# Compat alias — callers that only ever look for Claude.
+find_claude_process = find_agent_process
+
+
+def session_process_basenames(session) -> Sequence[str]:
+    """Process basenames to look for under an agent's pane."""
+    from .backends import get_backend
+    return get_backend(getattr(session, "backend", None)).process_basenames
 
 
 def gather_data_findings(
@@ -435,7 +451,9 @@ def inspect_agent(
             data_findings=findings,
         )
 
-    claude_pid, argv = find_claude_process(pane_pid, children, argv_by_pid)
+    claude_pid, argv = find_agent_process(
+        pane_pid, children, argv_by_pid, session_process_basenames(session)
+    )
     if claude_pid is None:
         return AgentHealth(
             **base,

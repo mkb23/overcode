@@ -52,6 +52,7 @@ def _mock_session(**kwargs):
         heartbeat_enabled=False,
         heartbeat_paused=False,
         permissiveness_mode="normal",
+        backend="claude-code",
         parent_session_id=None,
         stats=MagicMock(current_state="running"),
     )

@@ -484,6 +484,7 @@ class MonitorDaemon:
             waiting_for_heartbeat=waiting_for_heartbeat,
             model=session.model,
             provider=session.provider,
+            backend=getattr(session, 'backend', None) or 'claude-code',
             # Tags (#356)
             tags=list(session.tags),
             # Focal repo (#170)
@@ -1192,7 +1193,7 @@ class MonitorDaemon:
             self._last_resources_sync, now, self._resources_sync_interval
         ):
             return
-        from .doctor import find_claude_process
+        from .doctor import find_agent_process, session_process_basenames
         from .implementations import RealTmux
         from .process_resources import (
             snapshot_processes, build_children_index, aggregate_tree,
@@ -1213,7 +1214,9 @@ class MonitorDaemon:
             pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
             if pane_pid is None:
                 continue
-            claude_pid, _ = find_claude_process(pane_pid, children, argv_by_pid)
+            claude_pid, _ = find_agent_process(
+                pane_pid, children, argv_by_pid, session_process_basenames(session)
+            )
             if claude_pid is None:
                 # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
                 if session.cpu_percent or session.rss_bytes:
@@ -1237,7 +1240,10 @@ class MonitorDaemon:
         """Detect /sandbox toggle state from claude process listeners (#451)."""
         if not should_sync_stats(self._last_sandbox_sync, now, self._sandbox_sync_interval):
             return
-        from .doctor import _snapshot_process_table, _build_child_index, find_claude_process
+        from .doctor import (
+            _snapshot_process_table, _build_child_index, find_agent_process,
+            session_process_basenames,
+        )
         from .implementations import RealTmux
         from .sandbox_detect import detect_sandbox_states
 
@@ -1255,7 +1261,9 @@ class MonitorDaemon:
             pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
             if pane_pid is None:
                 continue
-            claude_pid, _ = find_claude_process(pane_pid, children, argv_by_pid)
+            claude_pid, _ = find_agent_process(
+                pane_pid, children, argv_by_pid, session_process_basenames(session)
+            )
             if claude_pid is not None:
                 session_pids[session.id] = claude_pid
         states = detect_sandbox_states(session_pids.values())

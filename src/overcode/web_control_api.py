@@ -137,21 +137,20 @@ def restart_agent(tmux_session: str, name: str) -> dict:
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
 
-    # Use shared command builder to get the full claude command with all flags
+    # Use the launcher's public builder so backend dispatch applies here too
     launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
-    cmd_parts = launcher._build_claude_command(
-        permissiveness_mode=session.permissiveness_mode,
-    )
-    cmd_str = " ".join(cmd_parts)
+    backend = launcher.backend_for(session)
+    cmd_str = " ".join(launcher.build_relaunch_command(session))
 
     tmux = TmuxManager(tmux_session)
 
-    # Gracefully exit Claude: Ctrl-C to cancel any in-flight operation,
-    # then /exit to reliably terminate the process.
+    # Gracefully exit the agent (Claude: Ctrl-C to cancel any in-flight
+    # operation, then /exit to reliably terminate the process).
     import time
-    tmux.send_keys(session.tmux_window, "C-c", enter=False)
-    time.sleep(0.5)
-    tmux.send_keys(session.tmux_window, "/exit", enter=True)
+    for press in backend.graceful_exit_keys():
+        tmux.send_keys(session.tmux_window, press.keys, enter=press.enter)
+        if press.delay_after:
+            time.sleep(press.delay_after)
     time.sleep(3.0)
 
     env_prefix = f"OVERCODE_SESSION_NAME={session.name} OVERCODE_TMUX_SESSION={tmux_session}"
@@ -230,8 +229,16 @@ def fork_agent(
     from .launcher import ClaudeLauncher
     from .session_manager import SessionManager
 
+    from .backends import BackendCapability, get_backend, supports
+
     sm = SessionManager()
     source = _get_session_or_error(sm, name)
+
+    backend = get_backend(getattr(source, "backend", None))
+    if not supports(backend, BackendCapability.FORK):
+        raise ControlError(
+            f"Backend '{backend.name}' does not support fork", status=400
+        )
 
     if source.status in ("terminated", "done"):
         raise ControlError("Cannot fork a terminated agent", status=409)

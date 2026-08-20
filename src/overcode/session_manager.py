@@ -139,6 +139,7 @@ class Session:
     claude_agent: Optional[str] = None  # Claude agent persona (from .claude/agents/)
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus", "haiku", or full name)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
+    backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
     sandbox_enabled: Optional[bool] = None  # Live /sandbox state, None = unknown
 
@@ -592,6 +593,7 @@ class SessionManager:
                       claude_agent: Optional[str] = None,
                       model: Optional[str] = None,
                       provider: str = "web",
+                      backend: str = "claude-code",
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
                       launcher_version: str = "") -> Session:
@@ -607,6 +609,7 @@ class SessionManager:
             permissiveness_mode: Permission mode (normal, permissive, bypass)
             allowed_tools: Comma-separated tool list for --allowedTools
             extra_claude_args: Extra Claude CLI flags via --claude-arg
+            backend: Agent CLI backend name (see overcode.backends)
             session_id: Optional pre-generated session ID (used when ID must be known before window creation)
         """
         if self._skip_git_detection:
@@ -632,6 +635,7 @@ class SessionManager:
             claude_agent=claude_agent,
             model=model,
             provider=provider,
+            backend=backend,
             wrapper=wrapper,
             launcher_version=launcher_version,
         )

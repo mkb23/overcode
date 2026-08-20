@@ -111,6 +111,7 @@ class SessionDaemonState:
     # Model and provider
     model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
     provider: str = "web"  # API provider: "web" or "bedrock"
+    backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
 
     # User-applied tags for grouping/filtering (#356).
     tags: List[str] = field(default_factory=list)
