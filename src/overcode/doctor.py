@@ -243,7 +243,12 @@ def gather_data_findings(
             ),
         ))
 
-    if live_stats is not None:
+    # Token/context/cost checks assume the backend writes readable
+    # transcripts; without them "0" means unknown, not broken.
+    from .backends import BackendCapability, session_supports
+    has_transcripts = session_supports(session, BackendCapability.TRANSCRIPT_STATS)
+
+    if live_stats is not None and has_transcripts:
         if live_stats.interaction_count >= 2 and live_stats.total_tokens == 0:
             findings.append(Finding(
                 code=FINDING_TOKENS_ZERO,

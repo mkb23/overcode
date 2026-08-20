@@ -389,11 +389,11 @@ class TestSyncClaudeCodeStats:
         mock_stats.model = "claude-sonnet-4-6"
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_session_stats',
+            'overcode.history_reader.get_session_stats',
             lambda s: mock_stats
         )
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: "claude-sess-abc"
         )
 
@@ -438,11 +438,11 @@ class TestSyncClaudeCodeStats:
         mock_session.start_time = datetime.now().isoformat()
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_session_stats',
+            'overcode.history_reader.get_session_stats',
             lambda s: None
         )
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: None
         )
 
@@ -462,11 +462,11 @@ class TestSyncClaudeCodeStats:
         mock_session.start_time = datetime.now().isoformat()
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_session_stats',
+            'overcode.history_reader.get_session_stats',
             Mock(side_effect=RuntimeError("disk failure"))
         )
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: None
         )
 
@@ -484,7 +484,7 @@ class TestSyncClaudeCodeStats:
         mock_session.start_time = datetime.now().isoformat()
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_session_stats',
+            'overcode.history_reader.get_session_stats',
             lambda s: None
         )
 

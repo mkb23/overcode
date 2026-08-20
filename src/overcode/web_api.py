@@ -473,7 +473,7 @@ def get_analytics_sessions(
         Dictionary with sessions list and summary stats
     """
     from .session_manager import SessionManager
-    from .history_reader import get_session_stats
+    from .stats_reader import stats_reader_for_session
 
     sessions_mgr = SessionManager()
     all_sessions = []
@@ -482,7 +482,7 @@ def get_analytics_sessions(
     for s in sessions_mgr.list_sessions():
         record = _session_to_analytics_record(s, is_archived=False)
         # Get detailed stats from Claude Code history
-        stats = get_session_stats(s)
+        stats = stats_reader_for_session(s).get_stats(s)
         if stats:
             record["work_times"] = stats.work_times
             record["median_work_time"] = stats.median_work_time

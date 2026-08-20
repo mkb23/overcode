@@ -31,6 +31,7 @@ from overcode.summary_columns import (
     render_token_count,
     render_context_usage,
     render_cost,
+    render_joules,
     render_budget,
     render_tokens,
     render_git_diff,
@@ -849,14 +850,20 @@ class TestRenderGitDiff:
 
 class TestRenderMedianWorkTime:
     def test_nonzero_shows_duration(self):
-        ctx = _make_ctx(median_work=120)
+        ctx = _make_ctx(claude_stats=_make_claude_stats(), median_work=120)
         result = render_median_work_time(ctx)
         assert "2.0m" in result[0][0]
 
     def test_zero_shows_0s(self):
-        ctx = _make_ctx(median_work=0)
+        ctx = _make_ctx(claude_stats=_make_claude_stats(), median_work=0)
         result = render_median_work_time(ctx)
         assert "0s" in result[0][0]
+
+    def test_no_stats_shows_dash(self):
+        ctx = _make_ctx(claude_stats=None, median_work=0)
+        result = render_median_work_time(ctx)
+        assert "-" in result[0][0]
+        assert "0s" not in result[0][0]
 
 
 # ===========================================================================
@@ -1542,3 +1549,37 @@ class TestRenderSubtreeCostPlain:
         ctx = _make_ctx(subtree_cost_usd=0.0)
         result = render_subtree_cost_plain(ctx)
         assert result is None
+
+
+# ===========================================================================
+# Stats-less backend rows (agent-agnostic backends, Phase 2)
+# ===========================================================================
+
+class TestStatslessBackendRow:
+    """A backend with no readable transcripts renders dashes, never zeros."""
+
+    STATS_RENDERS = (
+        render_token_count,
+        render_context_usage,
+        render_cost,
+        render_joules,
+        render_human_count,
+        render_median_work_time,
+    )
+
+    def test_stats_columns_render_placeholders(self):
+        session = _make_session()
+        session.stats.estimated_cost_usd = 0.0
+        for show_cost in ("tokens", "cost", "joules"):
+            ctx = _make_ctx(
+                session=session, claude_stats=None, median_work=0.0,
+                show_cost=show_cost,
+            )
+            for render in self.STATS_RENDERS:
+                segments = render(ctx) or []
+                text = "".join(seg[0] for seg in segments)
+                assert "-" in text, f"{render.__name__} has no placeholder: {text!r}"
+                assert not any(c.isdigit() for c in text), (
+                    f"{render.__name__} rendered a misleading number: {text!r}"
+                )
+                assert "$" not in text

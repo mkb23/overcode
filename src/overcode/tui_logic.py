@@ -547,7 +547,7 @@ def compute_window_burn(
     `(active sessions) × (claude_session_ids per session)`. Safe for the
     typical 5-15 session range; cache externally if you have hundreds.
     """
-    from .history_reader import get_session_window_token_usage
+    from .stats_reader import stats_reader_for_session
     from .pricing import calculate_cost_estimate
     from .settings import get_user_config, get_model_pricing
 
@@ -568,7 +568,7 @@ def compute_window_burn(
         if session.id in asleep_session_ids:
             continue
 
-        u = get_session_window_token_usage(session, since)
+        u = stats_reader_for_session(session).get_window_token_usage(session, since)
         if not (u["input_tokens"] or u["output_tokens"]
                 or u["cache_creation_tokens"] or u["cache_read_tokens"]):
             continue

@@ -22,7 +22,6 @@ Pure business logic is extracted to monitor_daemon_core.py for testability.
 
 import os
 import signal
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -31,8 +30,9 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
+from .backends import BackendCapability, session_supports
 from .claude_pid import is_session_id_owned_by_others
-from .history_reader import get_session_stats, get_current_session_id_for_directory
+from .stats_reader import AgentSessionStats, stats_reader_for_session
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
@@ -664,14 +664,13 @@ class MonitorDaemon:
         if not session.start_directory:
             return
 
+        reader = stats_reader_for_session(session)
         try:
             session_start = datetime.fromisoformat(session.start_time)
 
             # Fast path: discover the most recent sessionId for this directory.
             # Handles post-/clear detection.
-            current_id = get_current_session_id_for_directory(
-                session.start_directory, session_start
-            )
+            current_id = reader.get_current_session_id(session, session_start)
             if current_id:
                 all_sessions = [
                     s for s in self.session_manager.list_sessions()
@@ -694,137 +693,41 @@ class MonitorDaemon:
                 and stats.last_stats_update is not None  # at least one sync happened
             )
             if has_zero_tokens:
-                self._discover_all_session_ids(session, session_start)
+                self._discover_all_session_ids(session, session_start, reader)
         except (ValueError, TypeError):
             pass
 
-    def _discover_all_session_ids(self, session, session_start: datetime) -> None:
-        """Scan history.jsonl for all unowned sessionIds in this directory.
+    def _discover_all_session_ids(
+        self, session, session_start: datetime, reader=None
+    ) -> None:
+        """Adopt unowned agent session ids the backend can see on disk.
 
         When the prescribed --session-id wasn't honored by Claude Code,
-        the agent's actual sessionIds are unknown.  This scans all history
-        entries matching the directory+timestamp and adopts any sessionId
-        not already owned by another agent.
+        the agent's actual sessionIds are unknown.  The reader scans for
+        ids matching this agent's directory+timestamp that no other agent
+        owns; this method persists what it finds.
         """
-        from .history_reader import HistoryFile
-        hf = HistoryFile()
-
-        session_dir = str(Path(session.start_directory).resolve())
-        session_start_ms = int(session_start.timestamp() * 1000)
-        owned_ids = set(session.claude_session_ids or [])
-
+        reader = reader or stats_reader_for_session(session)
         all_sessions = [
             s for s in self.session_manager.list_sessions()
             if s.tmux_session == self.tmux_session
         ]
 
-        discovered = set()
-        latest_id = None
-        latest_ts = 0
-        for entry in hf.read_all():
-            if entry.timestamp_ms < session_start_ms:
-                continue
-            if not entry.project or not entry.session_id:
-                continue
-            entry_dir = str(Path(entry.project).resolve())
-            if entry_dir != session_dir:
-                continue
-            sid = entry.session_id
-            if sid in owned_ids:
-                continue
-            if is_session_id_owned_by_others(sid, session.id, all_sessions):
-                continue
-            discovered.add(sid)
-            if entry.timestamp_ms > latest_ts:
-                latest_ts = entry.timestamp_ms
-                latest_id = sid
+        discovered = reader.discover_session_ids(session, session_start, all_sessions)
 
-        for sid in discovered:
+        for sid in discovered.ids:
             self.session_manager.add_claude_session_id(session.id, sid)
             self.log.info(f"[{session.name}] Discovered unowned sessionId: {sid[:8]}...")
 
-        if latest_id:
-            self.session_manager.set_active_claude_session_id(session.id, latest_id)
-
-    def _sync_container_stats(self, session) -> bool:
-        """Sync stats from a container agent via docker exec.
-
-        Reads session JSONL files from inside the container since the
-        host filesystem doesn't have them (container uses /workspace path
-        encoding, not the host project path).
-
-        Returns True if stats were synced, False to fall back to normal path.
-        """
-        if not session.wrapper:
-            return False
-
-        container_name = f"overcode-{session.name}"
-        active_sid = session.active_claude_session_id
-        if not active_sid and session.claude_session_ids:
-            active_sid = session.claude_session_ids[-1]
-        if not active_sid:
-            return False
-
-        # Detect container user's home directory
-        try:
-            home_result = subprocess.run(
-                ["docker", "exec", container_name, "sh", "-c",
-                 "echo $HOME"],
-                capture_output=True, text=True, timeout=5,
+        if discovered.latest:
+            self.session_manager.set_active_claude_session_id(
+                session.id, discovered.latest
             )
-            if home_result.returncode != 0:
-                return False
-            container_home = home_result.stdout.strip() or "/home/node"
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
 
-        # Read session file(s) from inside the container
-        from .history_reader import read_session_stats_from_content, ClaudeSessionStats
-
-        total_input = 0
-        total_output = 0
-        total_cache_creation = 0
-        total_cache_read = 0
-        current_context = 0
-        detected_model = None
-        detected_provider = None
-        all_work_times = []
-
-        for sid in (session.claude_session_ids or [active_sid]):
-            # Claude encodes /workspace as -workspace inside the container
-            session_path = f"{container_home}/.claude/projects/-workspace/{sid}.jsonl"
-            try:
-                result = subprocess.run(
-                    ["docker", "exec", container_name, "cat", session_path],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if result.returncode != 0:
-                    continue
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-
-            usage, work_times = read_session_stats_from_content(result.stdout)
-            total_input += usage["input_tokens"]
-            total_output += usage["output_tokens"]
-            total_cache_creation += usage["cache_creation_tokens"]
-            total_cache_read += usage["cache_read_tokens"]
-            all_work_times.extend(work_times)
-
-            if sid == active_sid:
-                current_context = usage["current_context_tokens"]
-                if usage["model"]:
-                    detected_model = usage["model"]
-                if usage["provider"]:
-                    detected_provider = usage["provider"]
-            elif usage["current_context_tokens"] > current_context:
-                current_context = usage["current_context_tokens"]
-            if usage["model"] and not detected_model:
-                detected_model = usage["model"]
-            if usage["provider"] and not detected_provider:
-                detected_provider = usage["provider"]
-
-        if total_input + total_output == 0:
-            return False
+    def _apply_container_stats(self, session, stats: AgentSessionStats) -> None:
+        """Persist stats read from inside a container agent's filesystem."""
+        detected_model = stats.model
+        detected_provider = stats.provider
 
         # Update model/provider if detected
         if detected_model and detected_model != session.model:
@@ -834,46 +737,55 @@ class MonitorDaemon:
 
         # Cost estimate
         from .settings import get_user_config, get_model_pricing
-        from .monitor_daemon_core import calculate_total_tokens, calculate_cost_estimate
         config = get_user_config()
         mp = get_model_pricing(
             detected_model or session.model, config,
             provider=detected_provider or session.provider,
         )
         cost = calculate_cost_estimate(
-            total_input, total_output, total_cache_creation, total_cache_read,
+            stats.input_tokens, stats.output_tokens,
+            stats.cache_creation_tokens, stats.cache_read_tokens,
             price_input=mp.input, price_output=mp.output,
             price_cache_write=mp.cache_write, price_cache_read=mp.cache_read,
         )
 
         now = datetime.now()
         total_tokens = calculate_total_tokens(
-            total_input, total_output, total_cache_creation, total_cache_read,
+            stats.input_tokens, stats.output_tokens,
+            stats.cache_creation_tokens, stats.cache_read_tokens,
         )
         self.session_manager.update_stats(
             session.id,
             total_tokens=total_tokens,
-            input_tokens=total_input,
-            output_tokens=total_output,
-            cache_creation_tokens=total_cache_creation,
-            cache_read_tokens=total_cache_read,
+            input_tokens=stats.input_tokens,
+            output_tokens=stats.output_tokens,
+            cache_creation_tokens=stats.cache_creation_tokens,
+            cache_read_tokens=stats.cache_read_tokens,
             estimated_cost_usd=round(cost, 4),
-            current_context_tokens=current_context,
+            current_context_tokens=stats.current_context_tokens,
             last_stats_update=now.isoformat(),
         )
-        return True
 
-    def sync_claude_code_stats(self, session) -> None:
-        """Sync token/interaction stats from Claude Code history files."""
+    def sync_agent_stats(self, session) -> None:
+        """Sync token/interaction stats from the backend's transcripts.
+
+        Backends without readable transcripts get a NullStatsReader, which
+        answers "unknown" for everything — nothing is written, so their
+        columns render placeholders instead of zeros.
+        """
+        reader = stats_reader_for_session(session)
         try:
             # Container agents: read stats via docker exec
-            if session.wrapper and self._sync_container_stats(session):
-                return
+            if session.wrapper:
+                container_stats = reader.get_container_stats(session)
+                if container_stats is not None:
+                    self._apply_container_stats(session, container_stats)
+                    return
 
             # Session ID detection also runs here for the first sync
             self.sync_session_id(session)
 
-            stats = get_session_stats(session)
+            stats = reader.get_stats(session)
             if stats is None:
                 return
 
@@ -931,6 +843,9 @@ class MonitorDaemon:
             )
         except Exception as e:
             self.log.warn(f"Failed to sync stats for {session.name}: {e}")
+
+    # Pre-backend name, kept until the Phase 6 rename sweep.
+    sync_claude_code_stats = sync_agent_stats
 
     def _calculate_median_work_time(self, operation_times: List[float]) -> float:
         """Calculate median operation time."""
@@ -1162,13 +1077,13 @@ class MonitorDaemon:
             self._last_session_id_sync = now
 
     def _sync_session_stats(self, sessions: list, now: datetime) -> None:
-        """Full Claude Code stats sync every 60s (heavier I/O).
+        """Full transcript stats sync every 60s (heavier I/O).
 
         Ensures the first loop has accurate data (fixes #103).
         """
         if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
             for session in sessions:
-                self.sync_claude_code_stats(session)
+                self.sync_agent_stats(session)
             self._last_stats_sync = now
 
     def _sync_available_skills(self, sessions: list, now: datetime) -> None:
@@ -1257,6 +1172,10 @@ class MonitorDaemon:
         session_pids: dict = {}  # session.id -> claude_pid
         for session in sessions:
             if getattr(session, "is_remote", False):
+                continue
+            # The loopback-listener heuristic only means anything for
+            # backends that have a sandbox toggle.
+            if not session_supports(session, BackendCapability.SANDBOX_PROBE):
                 continue
             pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
             if pane_pid is None:

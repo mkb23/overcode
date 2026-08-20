@@ -50,7 +50,7 @@ def doctor(
         VERDICT_WINDOW_GONE,
         VERDICT_REMOTE,
     )
-    from ..history_reader import get_session_stats
+    from ..stats_reader import stats_reader_for_session
     from ..monitor_daemon import is_monitor_daemon_running
 
     launcher = ClaudeLauncher(session)
@@ -73,7 +73,7 @@ def doctor(
         if not getattr(sess, "is_remote", False):
             pane_pid = launcher.tmux.get_pane_pid(sess.tmux_window)
             try:
-                live_stats = get_session_stats(sess)
+                live_stats = stats_reader_for_session(sess).get_stats(sess)
             except Exception:
                 live_stats = None
         results.append(inspect_agent(

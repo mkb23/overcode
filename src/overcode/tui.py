@@ -29,7 +29,8 @@ from .job_launcher import JobLauncher
 from .launcher import ClaudeLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile, synthesize_remote_stats
+from .history_reader import ClaudeSessionStats, HistoryFile, synthesize_remote_stats
+from .stats_reader import stats_reader_for_session
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
@@ -616,8 +617,13 @@ class SupervisorTUI(
             return
 
         # All I/O happens here in the worker thread
-        self._usage_monitor.fetch()  # Internally throttled to 5min
         monitor_state = get_monitor_daemon_state(self.tmux_session)
+        # Subscription usage is fleet-level, not per-agent: the widget shows
+        # the user's own Claude limits, which stay true for a mixed fleet as
+        # long as one agent is on a subscription-metered backend. Skip the
+        # API call entirely when none is.
+        if self._fleet_has_subscription_usage(monitor_state):
+            self._usage_monitor.fetch()  # Internally throttled to 5min
         from .settings import get_monitor_daemon_pid_path
         daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
 
@@ -650,6 +656,21 @@ class SupervisorTUI(
         # Apply results on main thread
         self.call_from_thread(
             self._apply_daemon_status, daemon_bar, monitor_state, daemon_lock_held, asleep_ids
+        )
+
+    def _fleet_has_subscription_usage(self, monitor_state) -> bool:
+        """True when any agent runs on a subscription-metered backend.
+
+        An empty fleet counts as yes — the widget is about the user's
+        account, and hiding it on an idle dashboard would read as a bug.
+        """
+        from .backends import BackendCapability, session_supports
+        sessions = getattr(monitor_state, "sessions", None) if monitor_state else None
+        if not sessions:
+            return True
+        return any(
+            session_supports(s, BackendCapability.SUBSCRIPTION_USAGE)
+            for s in sessions
         )
 
     def _apply_daemon_status(
@@ -1407,7 +1428,9 @@ class SupervisorTUI(
                             session.remote_git_diff,
                             session.remote_git_untracked,
                         )
-                    claude_stats = get_session_stats(session, history_file=history_file)
+                    claude_stats = stats_reader_for_session(session).get_stats(
+                        session, history_file=history_file
+                    )
                     git_diff = None
                     git_untracked = None
                     from .tui_helpers import effective_git_directory

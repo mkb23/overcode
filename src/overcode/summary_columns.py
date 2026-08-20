@@ -756,7 +756,14 @@ def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
     return None
 
 
-render_median_work_time = _make_simple_render("median_work", format_duration, " ⏱{v:>5}", "bold blue")
+def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
+    """Median work-cycle time. Dashed when the backend reports no stats."""
+    if ctx.claude_stats is None:
+        return [(f" ⏱{'-':>5}", ctx.mono(f"dim blue{ctx.bg}", "dim"))]
+    return [(
+        f" ⏱{format_duration(ctx.median_work):>5}",
+        ctx.mono(f"bold blue{ctx.bg}", "bold"),
+    )]
 
 
 def _format_rss(rss_bytes: int) -> str:

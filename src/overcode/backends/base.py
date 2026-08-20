@@ -8,7 +8,19 @@ rest of overcode can stay backend-neutral. See
 
 from dataclasses import dataclass, field
 from enum import Flag, auto
-from typing import Dict, List, Optional, Protocol, Sequence, Set, Type
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    Type,
+)
+
+if TYPE_CHECKING:
+    from ..stats_reader import StatsReader
 
 
 class BackendCapability(Flag):
@@ -119,6 +131,8 @@ class AgentBackend(Protocol):
     def startup_dialog_rules(self) -> List[DialogRule]: ...
 
     def prompt_ready_chars(self) -> Set[str]: ...
+
+    def make_stats_reader(self) -> "StatsReader": ...
 
 
 def supports(backend: AgentBackend, capability: BackendCapability) -> bool:

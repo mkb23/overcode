@@ -4,7 +4,7 @@
 adapter that owns that CLI's argv grammar and gestures.
 """
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .base import (
     AgentBackend,
@@ -51,11 +51,40 @@ def list_backends() -> List[str]:
 def register_backend(backend: AgentBackend) -> None:
     """Register (or replace) a backend. Used by tests to install doubles."""
     _BACKENDS[backend.name] = backend
+    _invalidate_derived_caches()
 
 
 def unregister_backend(name: str) -> None:
     """Remove a backend. Silent when it isn't registered."""
     _BACKENDS.pop(name, None)
+    _invalidate_derived_caches()
+
+
+def _invalidate_derived_caches() -> None:
+    """Drop per-backend objects other modules cache by backend name."""
+    from ..stats_reader import clear_reader_cache
+    clear_reader_cache()
+
+
+def session_backend_name(session: Any) -> str:
+    """Backend name recorded on a session, defaulting for legacy sessions."""
+    name = getattr(session, "backend", None)
+    if isinstance(name, str) and name:
+        return name
+    return DEFAULT_BACKEND
+
+
+def session_supports(session: Any, capability: BackendCapability) -> bool:
+    """True when the session's backend declares ``capability``.
+
+    An unknown backend name answers False — an adapter overcode doesn't
+    have can't be assumed to support anything.
+    """
+    try:
+        backend = get_backend(session_backend_name(session))
+    except UnknownBackendError:
+        return False
+    return supports(backend, capability)
 
 
 __all__ = [
@@ -69,6 +98,8 @@ __all__ = [
     "get_backend",
     "list_backends",
     "register_backend",
+    "session_backend_name",
+    "session_supports",
     "unregister_backend",
     "supports",
 ]

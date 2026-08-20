@@ -89,7 +89,7 @@ class TestSyncSessionIdIntegration:
         session.claude_session_ids = []
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: "history-session-id"
         )
         daemon.session_manager.list_sessions.return_value = [session]
@@ -121,7 +121,7 @@ class TestSyncSessionIdIntegration:
         session_b.claude_session_ids = ["shared-session-id"]
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: "shared-session-id"  # Would return B's session
         )
         daemon.session_manager.list_sessions.return_value = [session_a, session_b]
@@ -150,7 +150,7 @@ class TestSyncSessionIdIntegration:
         session.start_time = "2026-01-01T00:00:00"
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_current_session_id_for_directory',
+            'overcode.history_reader.get_current_session_id_for_directory',
             lambda d, s: None
         )
 

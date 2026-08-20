@@ -16,7 +16,8 @@ from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
 from ..status_patterns import extract_from_pane, extract_sleep_duration
-from ..history_reader import get_session_stats, ClaudeSessionStats
+from ..history_reader import ClaudeSessionStats
+from ..stats_reader import stats_reader_for_session
 from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
@@ -169,7 +170,7 @@ class SessionSummary(Static, can_focus=True):
         Note: This still fetches claude_stats synchronously - used for single widget updates.
         """
         # Fetch claude stats (only for standalone update_status calls)
-        claude_stats = get_session_stats(self.session)
+        claude_stats = stats_reader_for_session(self.session).get_stats(self.session)
         # Fetch git diff stats — remote agents already have this from the sister API
         git_diff = None
         git_untracked = None

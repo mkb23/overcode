@@ -63,7 +63,7 @@ def _check_skill_staleness() -> None:
 
 def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     """Gather claude_stats, git_diff, bg_bash_count, live_sub_count for a session."""
-    from ..history_reader import get_session_stats
+    from ..stats_reader import stats_reader_for_session
     from ..status_patterns import (
         extract_background_bash_count,
         extract_live_subagent_count,
@@ -81,7 +81,7 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
 
     claude_stats = None
     try:
-        claude_stats = get_session_stats(sess)
+        claude_stats = stats_reader_for_session(sess).get_stats(sess)
         if claude_stats:
             live_sub_count = max(live_sub_count, claude_stats.live_subagent_count)
     except Exception:
@@ -470,7 +470,7 @@ def list_agents(
     With no arguments, shows all agents with depth-based indentation.
     With a name, shows that agent + all its descendants.
     """
-    from ..history_reader import get_session_stats
+    from ..stats_reader import stats_reader_for_session
     from ..tui_helpers import (
         get_status_symbol, get_git_diff_stats, get_git_untracked_count, effective_git_directory,
     )
@@ -591,7 +591,7 @@ def list_agents(
 
         claude_stats = None
         try:
-            claude_stats = get_session_stats(sess)
+            claude_stats = stats_reader_for_session(sess).get_stats(sess)
         except Exception:
             pass
         if claude_stats is None and getattr(sess, 'is_remote', False):

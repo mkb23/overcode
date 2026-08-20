@@ -5,7 +5,7 @@ import os
 import shlex
 import shutil
 import sys
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from ..exceptions import ClaudeNotFoundError
 from .base import (
@@ -15,6 +15,9 @@ from .base import (
     KeyPress,
     LaunchSpec,
 )
+
+if TYPE_CHECKING:
+    from ..stats_reader import StatsReader
 
 
 PROMPT_READY_CHARS = {">", "›", "❯"}
@@ -200,6 +203,10 @@ class ClaudeCodeBackend:
 
     def prompt_ready_chars(self) -> Set[str]:
         return PROMPT_READY_CHARS
+
+    def make_stats_reader(self) -> "StatsReader":
+        from ..stats_reader import ClaudeStatsReader
+        return ClaudeStatsReader()
 
 
 _backend: Optional[AgentBackend] = None
