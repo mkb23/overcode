@@ -267,6 +267,8 @@ Ground rules for every phase:
 
 **Objective:** first user-visible opencode support: launch, monitor (polling), instruct, restart, kill, resume — no plugin, no stats yet.
 
+> **Shipped Aug 2026.** The flag/gesture specifics written below were the *pre-verification plan*; three of them turned out to be wrong (`--permissions` does not exist, `ctrl+x q` is unnecessary and `C-c` kills opencode outright, and there is no prompt glyph at all). **Appendix A is now the authority** — it records what was empirically confirmed or refuted against a live v1.18.19. User-facing documentation is `docs/backends.md`.
+
 **Key work items:**
 1. `backends/opencode.py`:
    - `build_command`: `opencode` (binary via `OPENCODE_COMMAND` env override, mirroring `CLAUDE_COMMAND`); model → `-m <provider/model>`; permissiveness: bypass → `--auto`, permissive → `--auto` (document the difference; opencode has no exact "dontAsk"), normal → nothing; allowed_tools → `--permissions <csv>`; extra args pass through. Resume → `--session <id>`; fork → `--session <id> --fork` (capability `FORK` **on** — verify against the pinned opencode version at implementation time; if `--fork` semantics don't fit, drop the capability rather than emulating).
@@ -329,29 +331,42 @@ A pragmatic descope if velocity matters: ship Phase 4 with polling-only status a
 
 ## Appendix A — Claude Code ↔ opencode feature mapping
 
-| overcode concept | Claude Code | opencode |
-|---|---|---|
-| Binary | `claude` (`CLAUDE_COMMAND`) | `opencode` (`OPENCODE_COMMAND`, new) |
-| Bypass permissions | `--dangerously-skip-permissions` | `--auto` (deny rules still win) |
-| Permissive | `--permission-mode dontAsk` | `--auto` (closest) |
-| Allowed tools | `--allowedTools a,b` | `--permissions a,b` |
-| Model | `--model sonnet` | `-m provider/model` |
-| Persona | `--agent name` (`.claude/agents/*.md`) | `agent` config in opencode.json (no launch flag confirmed) |
-| Prescribe session id | `--session-id <uuid>` | ✗ (discover via plugin/SQLite instead) |
-| Resume | `--resume <id>` | `--session <id>` |
-| Fork | `--resume <id> --fork-session` | `--session <id> --fork` (verify) |
-| Hook/telemetry injection | `--settings '<json>'` hooks → `overcode hook-handler` | bundled plugin writing hook-state files |
-| Transcripts/stats | `~/.claude/projects/<enc>/<sid>.jsonl` | SQLite `~/.local/share/opencode/opencode.db` (`session` table) |
-| Graceful exit | C-c, `/exit` | `ctrl+x q` (verify), or C-c ×2 |
-| Clear conversation | `/clear` | `/new` |
-| Permission prompt text | "Do you want to proceed", `❯ 1. Yes` | "Permission required", "Allow once/Allow always/Reject" |
-| Approve / reject keys | Enter / Escape | Enter / Escape |
-| Trust-folder dialog | "I trust this folder" | none known |
-| Skills | `~/.claude/skills` | ✗ |
-| Subscription usage API | api.anthropic.com oauth/usage | ✗ |
-| Sandbox probe | loopback-listener heuristic | ✗ |
+**Status: verified against a live opencode v1.18.19 during Phase 4 (Aug 2026, macOS/arm64, Homebrew npm install, `openai/gpt-4o-mini`).** Every row below is marked ✅ confirmed, ❌ refuted, or ⚠️ unverified. The pane corpus the behavioural rows were read from is committed at `tests/fixtures_opencode_panes/`.
 
-Items marked *(verify)* must be confirmed against the pinned opencode version during Phase 4 — opencode's flag surface was researched at v1.18.19 (Aug 2026) and churns quickly.
+| overcode concept | Claude Code | opencode | Verdict |
+|---|---|---|---|
+| Binary | `claude` (`CLAUDE_COMMAND`) | `opencode` (`OPENCODE_COMMAND`, new) | ✅ |
+| Process basename in `ps` | `claude` | `opencode` (argv[0]); the shim symlinks to a compiled Bun `opencode.exe`, so both basenames are matched | ✅ |
+| Bypass permissions | `--dangerously-skip-permissions` | `--auto` (deny rules still win) | ✅ |
+| Permissive | `--permission-mode dontAsk` | `--auto` — **no separate mode exists**, so permissive and bypass are identical on opencode | ✅ (documented as approximate) |
+| Allowed tools | `--allowedTools a,b` | ❌ **`--permissions` does not exist in v1.18.19.** Not in `opencode --help` (top-level or `run`). Tool restriction is config-only (`permission` map in `opencode.json`). overcode ignores `--allowed-tools` for opencode rather than emitting a flag that fails the launch | ❌ refuted |
+| Model | `--model sonnet` | `--model provider/model` (`-m` alias) — must be fully qualified | ✅ |
+| Persona | `--agent name` (`.claude/agents/*.md`) | ✅ **`--agent <name>` is a real launch flag** (the doc had guessed "config-only") | ❌ refuted (in opencode's favour) |
+| Prescribe session id | `--session-id <uuid>` | ✗ — opencode mints `ses_<random>` ids. Confirmed via `opencode session list`. The launcher now skips prescription for backends without `SESSION_ID_PRESCRIPTION` so a bogus UUID is never bound | ✅ |
+| Resume | `--resume <id>` | `--session <id>` — replays history in the TUI | ✅ |
+| Fork | `--resume <id> --fork-session` | `--session <id> --fork` — creates a new session titled `… (fork #1)`; verified in `opencode session list` | ✅ confirmed → capability `FORK` **on** |
+| Hook/telemetry injection | `--settings '<json>'` hooks → `overcode hook-handler` | bundled plugin writing hook-state files | ⚠️ Phase 5, unbuilt |
+| Transcripts/stats | `~/.claude/projects/<enc>/<sid>.jsonl` | SQLite `~/.local/share/opencode/opencode.db` (`session` table). Directory confirmed present, with `-wal`/`-shm`, plus `log/`, `repos/`, `snapshot/` | ⚠️ path confirmed, schema unread (Phase 5) |
+| Graceful exit | C-c, `/exit` | ❌ **`ctrl+x q` unneeded and `C-c` is dangerous**: a single Ctrl-C kills opencode outright (no confirmation). `/exit` is a real slash command ("Exit the app") and works mid-turn. overcode sends `Escape`, `Escape`, `/exit`⏎ — the first Escape only *arms* the interrupt (`esc interrupt` → `esc again to interrupt`), the second cancels the turn | ❌ refuted / replaced |
+| Clear conversation | `/clear` | `/new` ("New session") — verified to reset the pane to the banner | ✅ |
+| Permission prompt text | "Do you want to proceed", `❯ 1. Yes` | `△ Permission required` / `# Shell command` / `Allow once   Allow always   Reject` / `ctrl+f fullscreen  ⇆ select  enter confirm`. The dialog *replaces* the input box — no info bar while it is up | ✅ |
+| Approve / reject keys | Enter / Escape | Enter (confirms preselected *Allow once*) / Escape (dismisses, abandons the tool call) | ✅ both driven live |
+| Trust-folder dialog | "I trust this folder" | none — with a provider credential in the env, opencode goes straight to the input box. No provider picker, no onboarding | ✅ confirmed absent |
+| Prompt glyph | `❯` / `>` | ❌ **no prompt char.** The input is a *box* with a `┃` gutter; an empty input is a bare `┃` line, and the model footer (`┃  Build · GPT-4o mini OpenAI`) sits inside the same box | ❌ refuted / replaced |
+| Busy marker | `esc to interrupt` | `esc interrupt` (and `esc again to interrupt` after one Escape), with a `⬝`/`■` block spinner | ✅ |
+| Input-hint marker | `? for shortcuts` | `ctrl+p commands` / `tab agents`, plus the box's `╹▀▀▀` bottom border | ✅ |
+| Assistant/tool output glyphs | `⏺`, `⎿` | `▣` closes each assistant turn (`▣  Build · GPT-4o mini · 6.0s`); `→ Read …`, `✱ Glob …`, `$ <cmd>` head individual tool calls | ✅ |
+| Slash-command menu | `  /cmd   Description` | `┃ /cmd   Description   ┃` — drawn *inside* the box gutter | ✅ |
+| Error rendering | `⎿ API Error: …` | ❌ **no structural marker.** Prose inside a red-*coloured* `┃` box; ANSI is stripped before matching, so only message texts are usable and the general case degrades to `waiting_user` | ❌ refuted |
+| Status-bar counters (bashes / subagents / monitors / auto-accept) | `2 bashes`, `3 local agents`, `1 monitor`, `⏵⏵ auto-accept` | none — opencode's info bar carries only directory, tokens, cost, hints. Patterns are built unmatchable | ✅ confirmed absent |
+| Session-id discovery | `--session-id` prescription | On `/exit` opencode prints a farewell block: `Session   <title>` / `Continue  opencode -s ses_…` — the cheapest non-SQLite source of the id | ✅ new finding (Phase 5) |
+| Global config | `~/.claude/settings.json` | `~/.config/opencode/opencode.jsonc` (installer writes `.jsonc`, docs say `.json` — overcode reads both) | ✅ |
+| Skills | `~/.claude/skills` | opencode *does* ship a `/skills` command, but there is no overcode integration | ⚠️ present, unintegrated |
+| Subscription usage API | api.anthropic.com oauth/usage | ✗ | ✅ |
+| Sandbox probe | loopback-listener heuristic | ✗ | ✅ |
+| Mouse capture under tmux | n/a | Not observed to interfere: `send-keys`/`capture-pane` worked throughout corpus capture without touching TUI config | ⚠️ not stress-tested |
+
+Not verified in Phase 4, deliberately: reasoning/"thinking" chrome (no reasoning-capable model was driven, so `thinking_markers` is left empty rather than guessed) and the pane opencode renders *after* an actual interrupt (that field feeds the hook detector, which opencode does not use yet).
 
 ## Appendix B — Research provenance
 

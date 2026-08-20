@@ -86,6 +86,16 @@ Run agents in custom environments — containers, VMs, or any setup your project
 
 See the [Wrappers Guide](docs/wrappers.md) for setup and customisation.
 
+### Agent Backends
+Overcode is not Claude-Code-only. Launch an [opencode](https://opencode.ai) agent with
+`overcode launch -n my-agent --backend opencode` and it appears in the same dashboard with
+live status, previews, AI summaries, send-instruction, restart, kill, resume and fork.
+opencode support is currently observability-lite — token/cost columns and hook-grade status
+detail are Claude-only for now, and render as dashes rather than misleading zeros. A backend
+badge column appears only when your fleet actually mixes backends, so a Claude-only setup
+looks exactly as it did. See the [Backends Guide](docs/backends.md) for the full support
+matrix, flag mapping, and current limitations.
+
 ### Sister Integration
 Aggregate agents from multiple machines into one dashboard:
 - Configure sister machines in `~/.overcode/config.yaml`

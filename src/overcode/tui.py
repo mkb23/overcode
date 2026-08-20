@@ -1911,6 +1911,13 @@ class SupervisorTUI(
             for s in self.sessions
         )
 
+        # Backend badge only earns a column once the fleet is mixed — a
+        # Claude-only dashboard looks exactly as it did before opencode.
+        from .backends import session_backend_name
+        mixed_backends = len({
+            session_backend_name(s) for s in self.sessions
+        }) > 1
+
         # Check if any agent has a non-zero CPU / RAM reading
         any_has_cpu = any(
             (getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0
@@ -1992,6 +1999,7 @@ class SupervisorTUI(
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
                     widget.any_has_provider = any_has_provider
+                    widget.mixed_backends = mixed_backends
                     widget.any_has_cpu = any_has_cpu
                     widget.any_has_ram = any_has_ram
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
@@ -2058,6 +2066,7 @@ class SupervisorTUI(
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
                 widget.any_has_provider = any_has_provider
+                widget.mixed_backends = mixed_backends
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost
@@ -3178,6 +3187,13 @@ class SupervisorTUI(
             permissions = "bypass" if message.bypass_permissions else "normal"
             if message.extra_claude_args:
                 self.notify("Claude args are not yet supported for remote launches — ignored", severity="warning")
+            from .backends import DEFAULT_BACKEND
+            if message.backend and message.backend != DEFAULT_BACKEND:
+                self.notify(
+                    f"Backend '{message.backend}' is not yet supported for remote "
+                    f"launches — the sister will use {DEFAULT_BACKEND}",
+                    severity="warning",
+                )
             try:
                 result = self._sister_controller.launch_agent(
                     sister_url=sister_config["url"],
@@ -3211,6 +3227,7 @@ class SupervisorTUI(
                     agent_teams=message.agent_teams,
                     claude_agent=message.claude_agent,
                     provider=message.provider,
+                    backend=message.backend,
                     wrapper=message.wrapper,
                     extra_claude_args=message.extra_claude_args or None,
                 )

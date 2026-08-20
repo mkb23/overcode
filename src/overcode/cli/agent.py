@@ -233,6 +233,11 @@ def launch(
         Optional[str],
         typer.Option("--provider", "-P", help="API provider: 'web' (Claude.ai OAuth) or 'bedrock' (AWS Bedrock)"),
     ] = None,
+    backend: Annotated[
+        Optional[str],
+        # -b is already --budget, so the backend picker takes -B.
+        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default) or opencode"),
+    ] = None,
     wrapper: Annotated[
         Optional[str],
         typer.Option("--wrapper", "-w", help="Wrapper script (path or name from ~/.overcode/wrappers/)"),
@@ -309,6 +314,15 @@ def launch(
         rprint(f"[red]Error: Invalid provider '{provider}'. Use: web, bedrock[/red]")
         raise typer.Exit(code=1)
 
+    # Backend resolution (flag > parent > config default) happens in the
+    # launcher; validate the explicit flag here for a clean error message.
+    if backend is not None:
+        from ..backends import list_backends
+        if backend not in list_backends():
+            known = ", ".join(list_backends())
+            rprint(f"[red]Error: Unknown backend '{backend}'. Use: {known}[/red]")
+            raise typer.Exit(code=1)
+
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
 
@@ -328,6 +342,7 @@ def launch(
         claude_agent=agent,
         model=model,
         provider=provider,
+        backend=backend,
         wrapper=wrapper,
         inherit_parent_settings=not no_inherit,
     )
@@ -350,6 +365,9 @@ def launch(
             rprint(f"  Wrapper: {result.wrapper}")
         if result.provider != "web":
             rprint(f"  Provider: {result.provider}")
+        from ..backends import DEFAULT_BACKEND, session_backend_name
+        if session_backend_name(result) != DEFAULT_BACKEND:
+            rprint(f"  Backend: {session_backend_name(result)}")
         if result.model and not model:
             rprint(f"  Model: {result.model} (inherited)")
         if budget is not None and budget > 0:
@@ -534,6 +552,8 @@ def list_agents(
     # Pre-compute: any agent with budget, column alignment widths
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
     any_has_provider = any(getattr(s, 'provider', 'web') not in ('web', None, '') for s in sessions)
+    from ..backends import session_backend_name
+    mixed_backends = len({session_backend_name(s) for s in sessions}) > 1
     any_has_model = any(getattr(s, 'model', None) for s in sessions)
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
@@ -673,6 +693,7 @@ def list_agents(
             any_has_pr=any_has_pr,
             any_has_model=any_has_model,
             any_has_provider=any_has_provider,
+            mixed_backends=mixed_backends,
             monochrome=False,
             summary_detail=detail,
             has_sisters=has_sisters,
@@ -1211,6 +1232,13 @@ def show(
             print(f"{'Teams:':<{label_width + 1}} enabled")
         if sess.wrapper:
             print(f"{'Wrapper:':<{label_width + 1}} {sess.wrapper}")
+        from ..backends import get_backend, session_backend_name
+        backend_name = session_backend_name(sess)
+        try:
+            backend_label = get_backend(backend_name).display_name
+        except Exception:
+            backend_label = backend_name
+        print(f"{'Backend:':<{label_width + 1}} {backend_label} ({backend_name})")
         if sess.launcher_version:
             print(f"{'Launcher:':<{label_width + 1}} {sess.launcher_version}")
 

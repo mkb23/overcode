@@ -161,6 +161,20 @@ def doctor(
                f"finding{'s' if findings_count != 1 else ''} across "
                f"{len(flagged)} agent{'s' if len(flagged) != 1 else ''}")
 
+    # Global (not per-agent): opencode churns fast and overcode reads its
+    # on-screen chrome, so flag a version outside the tested range and an
+    # autoupdate setting that would move it out from under us. Only runs
+    # when the fleet actually has an opencode agent.
+    from ..backends import session_backend_name
+    from ..backends.opencode import OpencodeBackend
+    if any(session_backend_name(s) == OpencodeBackend.name for s in sessions):
+        try:
+            from ..backends.opencode import version_findings
+            for finding in version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
     # Global (not per-agent): bundled skills drifted from what's installed.
     # Affects every agent, so it's surfaced once rather than duplicated per row.
     try:

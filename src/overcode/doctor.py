@@ -465,29 +465,25 @@ def inspect_agent(
             claude_pid=None,
             claude_argv="",
             verdict=VERDICT_NO_CLAUDE,
-            details="no claude process under pane — agent may have exited",
+            details=(
+                f"no {session_process_basenames(session)[0]} process under pane "
+                "— agent may have exited"
+            ),
             data_findings=findings,
         )
 
-    if "--settings" in argv:
-        return AgentHealth(
-            **base,
-            claude_pid=claude_pid,
-            claude_argv=argv,
-            verdict=VERDICT_OK,
-            details="hooks injected via --settings",
-            data_findings=findings,
-        )
+    # Each backend answers "was observability wired into this process?" its
+    # own way — Claude Code inspects --settings; opencode has nothing to
+    # inject until Phase 5's plugin, so a live process is a pass.
+    from .backends import get_backend, session_backend_name
+    verdict, details = get_backend(session_backend_name(session)).health_verdict(argv)
 
     return AgentHealth(
         **base,
         claude_pid=claude_pid,
         claude_argv=argv,
-        verdict=VERDICT_MISSING_SETTINGS,
-        details=(
-            "claude running without --settings — hooks will not fire. "
-            "Relaunch via `overcode restart` to re-inject."
-        ),
+        verdict=verdict,
+        details=details,
         data_findings=findings,
     )
 

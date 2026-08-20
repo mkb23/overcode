@@ -81,6 +81,7 @@ class SessionSummary(Static, can_focus=True):
         self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
+        self.mixed_backends: bool = False  # True if the fleet spans >1 agent CLI
         self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
         self.any_has_ram: bool = False      # True if any agent has a non-zero RAM reading
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
@@ -418,6 +419,8 @@ class SessionSummary(Static, can_focus=True):
             any_has_model=self.any_has_model,
             # Provider
             any_has_provider=self.any_has_provider,
+            # Agent CLI backend
+            mixed_backends=self.mixed_backends,
             # Resource usage (CPU / RAM)
             any_has_cpu=self.any_has_cpu,
             any_has_ram=self.any_has_ram,

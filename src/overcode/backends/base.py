@@ -16,6 +16,7 @@ from typing import (
     Protocol,
     Sequence,
     Set,
+    Tuple,
     Type,
 )
 
@@ -136,6 +137,14 @@ class AgentBackend(Protocol):
     def status_patterns(self) -> "StatusPatterns": ...
 
     def make_stats_reader(self) -> "StatsReader": ...
+
+    def health_verdict(self, argv: str) -> Optional[Tuple[str, str]]:
+        """Doctor's "is observability wired up?" answer for a live process.
+
+        Returns ``(verdict, details)`` from the ``doctor.VERDICT_*``
+        vocabulary, given the agent process's full argv.
+        """
+        ...
 
 
 def supports(backend: AgentBackend, capability: BackendCapability) -> bool:

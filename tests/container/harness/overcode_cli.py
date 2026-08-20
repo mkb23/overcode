@@ -15,7 +15,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from .core import MOCK_CLAUDE, REPO_ROOT
+from .core import MOCK_CLAUDE, MOCK_OPENCODE, REPO_ROOT
 from .tmux_sandbox import TmuxSandbox
 
 # Env vars from a host Claude Code session that would confuse agents under test
@@ -50,6 +50,7 @@ class OvercodeCLI:
         env["OVERCODE_TMUX_SOCKET"] = sandbox.socket
         if mock_claude:
             env["CLAUDE_COMMAND"] = str(MOCK_CLAUDE)
+            env["OPENCODE_COMMAND"] = str(MOCK_OPENCODE)
         self.env = env
 
         self._daemons: list[subprocess.Popen] = []

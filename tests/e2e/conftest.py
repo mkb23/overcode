@@ -21,6 +21,7 @@ from tests.daemon_test_utils import kill_by_pid_file, stop_daemons_in_state_dir
 # Paths
 TESTS_DIR = Path(__file__).parent.parent
 MOCK_CLAUDE = TESTS_DIR / "mock_claude.py"
+MOCK_OPENCODE = TESTS_DIR / "mock_opencode.py"
 PROJECT_ROOT = TESTS_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
@@ -100,6 +101,9 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     # (e.g., TUI's _ensure_monitor_daemon)
     env = os.environ.copy()
     env["CLAUDE_COMMAND"] = str(MOCK_CLAUDE)
+    # Same swap for the opencode backend, so a mixed-backend test never
+    # reaches a real `opencode` binary on the host.
+    env["OPENCODE_COMMAND"] = str(MOCK_OPENCODE)
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(SRC_DIR)

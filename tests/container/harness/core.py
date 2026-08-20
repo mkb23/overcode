@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MOCK_CLAUDE = REPO_ROOT / "tests" / "mock_claude.py"
+MOCK_OPENCODE = REPO_ROOT / "tests" / "mock_opencode.py"
 
 
 def artifacts_dir() -> Path:

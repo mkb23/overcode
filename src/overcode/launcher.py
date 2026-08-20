@@ -240,16 +240,8 @@ class ClaudeLauncher:
             return None
 
         try:
-            agent_backend = get_backend(backend or DEFAULT_BACKEND)
-        except UnknownBackendError as e:
-            print(f"Cannot launch: {e}")
-            return None
-
-        # Check dependencies before attempting to launch
-        try:
             require_tmux()
-            require_agent_cli(agent_backend)
-        except (TmuxNotFoundError, ClaudeNotFoundError, agent_backend.not_found_error) as e:
+        except TmuxNotFoundError as e:
             print(f"Cannot launch: {e}")
             return None
 
@@ -279,12 +271,7 @@ class ClaudeLauncher:
         # infrastructure. Opt out with inherit_parent_settings=False.
         if parent_session and inherit_parent_settings:
             if backend is None:
-                backend = getattr(parent_session, "backend", None) or DEFAULT_BACKEND
-                try:
-                    agent_backend = get_backend(backend)
-                except UnknownBackendError as e:
-                    print(f"Cannot launch: {e}")
-                    return None
+                backend = getattr(parent_session, "backend", None) or None
             if provider is None:
                 provider = parent_session.provider
             if model is None:
@@ -305,6 +292,23 @@ class ClaudeLauncher:
             provider = agent_defaults.get("provider") or "web"
         if wrapper is None:
             wrapper = agent_defaults.get("wrapper") or None
+        if backend is None:
+            backend = agent_defaults.get("backend") or DEFAULT_BACKEND
+
+        # Backend resolution is complete (explicit > parent > config >
+        # built-in), so the CLI dependency check can finally target the
+        # right binary rather than always probing `claude`.
+        try:
+            agent_backend = get_backend(backend)
+        except UnknownBackendError as e:
+            print(f"Cannot launch: {e}")
+            return None
+
+        try:
+            require_agent_cli(agent_backend)
+        except (ClaudeNotFoundError, agent_backend.not_found_error) as e:
+            print(f"Cannot launch: {e}")
+            return None
 
         if provider not in ("web", "bedrock"):
             print(f"Cannot launch: invalid provider '{provider}'. Use: web, bedrock")
@@ -648,6 +652,8 @@ class ClaudeLauncher:
         if session.parent_session_id:
             parent_session = self.sessions.get_session(session.parent_session_id)
 
+        backend = self.backend_for(session)
+
         if fork_from:
             resume_sid = fork_from
             new_claude_sid = None
@@ -661,7 +667,13 @@ class ClaudeLauncher:
             new_claude_sid = None
             use_fork = False
 
-        backend = self.backend_for(session)
+        # Only backends that let overcode choose the conversation ID get one
+        # bound eagerly. opencode mints its own `ses_…` ids, so recording a
+        # prescribed UUID would make the next resume pass a nonexistent
+        # session; leave it unset and let Phase 5's discovery fill it in.
+        if not supports(backend, BackendCapability.SESSION_ID_PRESCRIPTION):
+            new_claude_sid = None
+
         spec = LaunchSpec(
             name=session.name,
             session_id=session.id,

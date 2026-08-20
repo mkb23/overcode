@@ -5,7 +5,7 @@ import os
 import shlex
 import shutil
 import sys
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import ClaudeNotFoundError
 from .base import (
@@ -213,6 +213,17 @@ class ClaudeCodeBackend:
     def make_stats_reader(self) -> "StatsReader":
         from ..stats_reader import ClaudeStatsReader
         return ClaudeStatsReader()
+
+    def health_verdict(self, argv: str) -> Tuple[str, str]:
+        """Hooks reach Claude Code only via the injected --settings payload."""
+        from ..doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        if "--settings" in argv:
+            return VERDICT_OK, "hooks injected via --settings"
+        return VERDICT_MISSING_SETTINGS, (
+            "claude running without --settings — hooks will not fire. "
+            "Relaunch via `overcode restart` to re-inject."
+        )
 
 
 _backend: Optional[AgentBackend] = None

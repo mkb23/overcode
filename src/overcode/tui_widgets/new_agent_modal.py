@@ -84,6 +84,7 @@ class NewAgentModal(ModalBase):
             agent_teams: bool,
             claude_agent: Optional[str],
             provider: str,
+            backend: str,
             wrapper: Optional[str],
             extra_claude_args: List[str],
         ) -> None:
@@ -96,6 +97,7 @@ class NewAgentModal(ModalBase):
             self.agent_teams = agent_teams
             self.claude_agent = claude_agent
             self.provider = provider
+            self.backend = backend
             self.wrapper = wrapper
             self.extra_claude_args = extra_claude_args
 
@@ -148,6 +150,19 @@ class NewAgentModal(ModalBase):
         agent_options = ["(none)"] + agents
         wrapper_default = defaults.get("wrapper", "") or ""
 
+        # Agent CLI picker. The configured default leads the cycle so the
+        # common case is one keypress away from launch.
+        from ..backends import DEFAULT_BACKEND, list_backends
+        backend_options = list_backends()
+        backend_default = defaults.get("backend") or DEFAULT_BACKEND
+        if backend_default in backend_options:
+            backend_options = (
+                [backend_default]
+                + [b for b in backend_options if b != backend_default]
+            )
+        else:
+            backend_default = backend_options[0]
+
         # Build host options: local first, then sisters
         host_options = [local_hostname] if local_hostname else ["local"]
         if sister_names:
@@ -161,6 +176,7 @@ class NewAgentModal(ModalBase):
             FormField("perms",     "Perms",     "toggle", value="bypass" if defaults.get("bypass_permissions") else "normal", options=["normal", "bypass"]),
             FormField("teams",     "Teams",     "toggle", value="on" if defaults.get("agent_teams") else "off", options=["off", "on"]),
             FormField("provider",  "Provider",  "toggle", value=defaults.get("provider", "web"), options=["web", "bedrock"]),
+            FormField("backend",   "Backend",   "toggle", value=backend_default, options=backend_options),
             FormField("wrapper",   "Wrapper",   "text",   value=wrapper_default),
             FormField("claude_args", "Claude args", "text", value=""),
         ]
@@ -289,6 +305,7 @@ class NewAgentModal(ModalBase):
             agent_teams=(d["teams"] == "on"),
             claude_agent=agent,
             provider=d["provider"],
+            backend=d["backend"],
             wrapper=wrapper,
             extra_claude_args=extra_claude_args,
         ))
