@@ -144,6 +144,12 @@ class TestRealisticCorpus:
         status, _activity, _content = detect(load_pane("exited_shell"))
         assert status == STATUS_TERMINATED
 
+    def test_interrupted_turn_is_waiting_user(self):
+        # Double-Escape mid-generation abandons the turn; the pane is back at
+        # the input box, so polling must not keep the agent green.
+        status, _activity, _content = detect(load_pane("interrupted"))
+        assert status == STATUS_WAITING_USER
+
 
 class TestPatternPredicates:
     """Unit-level checks on the pieces the phases lean on."""
@@ -211,6 +217,23 @@ class TestPatternPredicates:
 
     def test_no_autocomplete_hint_analogue(self):
         assert not OPENCODE_PATTERNS.is_autocomplete_hint("↵ to send")
+
+    def test_interrupt_marker_matches_the_captured_pane(self):
+        # Feeds the hook detector's "stuck RUNNING but the user interrupted"
+        # downgrade — captured live in Phase 6, not guessed.
+        assert OPENCODE_PATTERNS.shows_interrupt_prompt(load_pane("interrupted"))
+
+    @pytest.mark.parametrize("pane", [
+        "busy", "idle_fresh", "idle_after_response", "tool_execution",
+        "permission_required", "command_menu", "error_api_key",
+    ])
+    def test_interrupt_marker_does_not_fire_on_other_panes(self, pane):
+        # "esc again to interrupt" is the busy hint, not an interrupt report.
+        assert not OPENCODE_PATTERNS.shows_interrupt_prompt(load_pane(pane))
+
+    def test_claude_interrupt_markers_are_not_opencode_s(self):
+        assert OPENCODE_PATTERNS.interrupt_prompt_markers == ["· interrupted"]
+        assert not DEFAULT_PATTERNS.shows_interrupt_prompt(load_pane("interrupted"))
 
 
 class TestVersionChecks:

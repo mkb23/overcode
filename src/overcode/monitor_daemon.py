@@ -5,7 +5,7 @@ Monitor Daemon - Single source of truth for all session metrics.
 This daemon handles all monitoring responsibilities:
 - Agent status detection (via StatusDetector)
 - Time tracking (green_time_seconds, non_green_time_seconds)
-- Claude Code stats sync (tokens, interactions)
+- Agent stats sync (tokens, interactions)
 - Presence tracking (graceful degradation on non-macOS)
 - Status history logging (CSV)
 
@@ -30,7 +30,12 @@ from typing import Dict, List, Optional
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
-from .backends import BackendCapability, session_supports
+from .backends import (
+    BackendCapability,
+    capability_names,
+    session_capabilities,
+    session_supports,
+)
 from .claude_pid import is_session_id_owned_by_others
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 from .monitor_daemon_state import (
@@ -250,7 +255,7 @@ class MonitorDaemon:
     Responsibilities:
     - Status detection for all sessions
     - Time tracking (green/non-green)
-    - Claude Code stats sync
+    - Agent stats sync
     - Presence tracking (optional)
     - Status history logging
     - Publishing MonitorDaemonState
@@ -326,7 +331,7 @@ class MonitorDaemon:
         self._last_sandbox_sync: Optional[datetime] = None
         self._sandbox_sync_interval = 15  # seconds
 
-        # Per-agent CPU / RSS sampling (from `ps`, summed over claude process tree).
+        # Per-agent CPU / RSS sampling (from `ps`, summed over the agent process tree).
         # Slow enough to avoid adding load, fast enough to flag runaway agents
         # that are dominating the machine.
         self._last_resources_sync: Optional[datetime] = None
@@ -485,6 +490,7 @@ class MonitorDaemon:
             model=session.model,
             provider=session.provider,
             backend=getattr(session, 'backend', None) or 'claude-code',
+            backend_capabilities=capability_names(session_capabilities(session)),
             # Tags (#356)
             tags=list(session.tags),
             # Focal repo (#170)
@@ -508,7 +514,7 @@ class MonitorDaemon:
             # Wrapper/sandbox badges (#437, #451)
             wrapper=session.wrapper,
             sandbox_enabled=session.sandbox_enabled,
-            # Resource usage (summed over claude process tree)
+            # Resource usage (summed over the agent process tree)
             cpu_percent=session.cpu_percent,
             rss_bytes=session.rss_bytes,
         )
@@ -677,14 +683,14 @@ class MonitorDaemon:
                     if s.tmux_session == self.tmux_session
                 ]
                 if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
-                    self.session_manager.add_claude_session_id(session.id, current_id)
-                    self.session_manager.set_active_claude_session_id(session.id, current_id)
+                    self.session_manager.add_agent_session_id(session.id, current_id)
+                    self.session_manager.set_active_agent_session_id(session.id, current_id)
 
             # Slow path: if the agent has owned session IDs but they produced
             # zero tokens in the last stats sync, scan history.jsonl for ALL
             # unowned sessionIds in this directory and adopt them.  This
             # recovers from --session-id not being honored by Claude Code.
-            owned_ids = session.claude_session_ids or []
+            owned_ids = session.agent_session_ids or []
             stats = session.stats
             has_zero_tokens = (
                 owned_ids
@@ -716,11 +722,11 @@ class MonitorDaemon:
         discovered = reader.discover_session_ids(session, session_start, all_sessions)
 
         for sid in discovered.ids:
-            self.session_manager.add_claude_session_id(session.id, sid)
+            self.session_manager.add_agent_session_id(session.id, sid)
             self.log.info(f"[{session.name}] Discovered unowned sessionId: {sid[:8]}...")
 
         if discovered.latest:
-            self.session_manager.set_active_claude_session_id(
+            self.session_manager.set_active_agent_session_id(
                 session.id, discovered.latest
             )
 
@@ -1080,7 +1086,7 @@ class MonitorDaemon:
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).
 
-        Ensures active_claude_session_id updates promptly after /clear.
+        Ensures active_agent_session_id updates promptly after /clear.
         """
         if should_sync_stats(self._last_session_id_sync, now, self._session_id_sync_interval):
             for session in sessions:

@@ -132,26 +132,34 @@ class SessionKillError(SessionError):
 
 
 # =============================================================================
-# Claude Errors
+# Agent CLI Errors
 # =============================================================================
 
 
-class ClaudeError(OvercodeError):
-    """Error related to Claude Code operations."""
+class AgentCliError(OvercodeError):
+    """Error related to an agent CLI (Claude Code, opencode, …)."""
 
     pass
 
 
-class ClaudeNotFoundError(ClaudeError):
-    """Claude Code is not installed or not found."""
+class AgentCliNotFoundError(AgentCliError):
+    """The agent CLI binary is not installed or not found."""
 
     pass
 
 
-class ClaudeStartupError(ClaudeError):
-    """Error starting Claude Code process."""
+class AgentCliStartupError(AgentCliError):
+    """Error starting the agent CLI process."""
 
     pass
+
+
+# Pre-backend names, kept so existing ``except ClaudeNotFoundError`` clauses
+# (and third-party callers) keep catching the same exceptions. Aliases rather
+# than subclasses so isinstance relationships are unchanged in both directions.
+ClaudeError = AgentCliError
+ClaudeNotFoundError = AgentCliNotFoundError
+ClaudeStartupError = AgentCliStartupError
 
 
 # =============================================================================

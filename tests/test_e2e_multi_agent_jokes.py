@@ -58,7 +58,7 @@ except ImportError:
 # Add src to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from overcode.launcher import ClaudeLauncher
+from overcode.launcher import AgentLauncher
 from overcode.session_manager import SessionManager
 from overcode.status_detector import StatusDetector
 from overcode.tmux_manager import TmuxManager
@@ -307,7 +307,7 @@ class E2ETestHelper:
 
         try:
             # Kill all registered sessions
-            launcher = ClaudeLauncher(self.tmux_session)
+            launcher = AgentLauncher(self.tmux_session)
             sessions = launcher.list_sessions(detect_terminated=False, kill_untracked=False)
 
             for session in sessions:
@@ -370,7 +370,7 @@ class E2ETestHelper:
         start_time = time.time()
 
         # Get the session to find its window
-        sessions = ClaudeLauncher(self.tmux_session).list_sessions(
+        sessions = AgentLauncher(self.tmux_session).list_sessions(
             detect_terminated=False, kill_untracked=False
         )
         session = next((s for s in sessions if s.name == session_name), None)
@@ -399,7 +399,7 @@ class E2ETestHelper:
         print(f"  Sending to session '{session_name}': {text[:50]}...")
 
         # Get the session window
-        sessions = ClaudeLauncher(self.tmux_session).list_sessions(
+        sessions = AgentLauncher(self.tmux_session).list_sessions(
             detect_terminated=False, kill_untracked=False
         )
         session = next((s for s in sessions if s.name == session_name), None)
@@ -444,7 +444,7 @@ class E2ETestHelper:
         """
         print(f"  Accepting bypass permissions dialog for '{session_name}'...")
 
-        sessions = ClaudeLauncher(self.tmux_session).list_sessions(
+        sessions = AgentLauncher(self.tmux_session).list_sessions(
             detect_terminated=False, kill_untracked=False
         )
         session = next((s for s in sessions if s.name == session_name), None)
@@ -566,7 +566,7 @@ def test_e2e_multi_agent_jokes_with_feedback(test_helper: E2ETestHelper):
     print("E2E TEST: Multi-Agent Joke Writing with Feedback")
     print("="*70)
 
-    launcher = ClaudeLauncher(TEST_TMUX_SESSION)
+    launcher = AgentLauncher(TEST_TMUX_SESSION)
 
     # Step 1: Verify clean slate (only check sessions in our test tmux session)
     print("\n[Step 1] Verifying clean slate...")

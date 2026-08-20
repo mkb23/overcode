@@ -14,12 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
-from .history_reader import ClaudeSessionStats
-
-# Neutral name for the stats payload. The class keeps its Claude-era name
-# (and field names) until the Phase 6 rename; callers outside the Claude
-# backend should refer to it through this alias.
-AgentSessionStats = ClaudeSessionStats
+from .history_reader import AgentSessionStats
 
 WINDOW_TOKEN_KEYS = (
     "input_tokens",
@@ -162,7 +157,7 @@ class ClaudeStatsReader:
         hf = HistoryFile()
         session_dir = str(Path(session.start_directory).resolve())
         session_start_ms = int(since.timestamp() * 1000)
-        owned_ids = set(session.claude_session_ids or [])
+        owned_ids = set(session.agent_session_ids or [])
 
         discovered: List[str] = []
         latest_id = None
@@ -211,9 +206,9 @@ class ClaudeStatsReader:
             return None
 
         container_name = f"overcode-{session.name}"
-        active_sid = session.active_claude_session_id
-        if not active_sid and session.claude_session_ids:
-            active_sid = session.claude_session_ids[-1]
+        active_sid = session.active_agent_session_id
+        if not active_sid and session.agent_session_ids:
+            active_sid = session.agent_session_ids[-1]
         if not active_sid:
             return None
 
@@ -238,7 +233,7 @@ class ClaudeStatsReader:
         detected_provider = None
         all_work_times: List[float] = []
 
-        for sid in (session.claude_session_ids or [active_sid]):
+        for sid in (session.agent_session_ids or [active_sid]):
             # Claude encodes /workspace as -workspace inside the container
             session_path = f"{container_home}/.claude/projects/-workspace/{sid}.jsonl"
             try:

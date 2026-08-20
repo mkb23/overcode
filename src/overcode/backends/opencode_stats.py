@@ -401,8 +401,8 @@ class OpencodeStatsReader:
 
     @staticmethod
     def _owned_ids(session: Any) -> List[str]:
-        ids = list(getattr(session, "claude_session_ids", None) or [])
-        active = getattr(session, "active_claude_session_id", None)
+        ids = list(getattr(session, "agent_session_ids", None) or [])
+        active = getattr(session, "active_agent_session_id", None)
         if active and active not in ids:
             ids.append(active)
         return [sid for sid in ids if isinstance(sid, str) and sid]

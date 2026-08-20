@@ -23,7 +23,7 @@ STATUS_CAPTURE_LINES = 100   # Reduced capture for status detection only (non-fo
 
 STATUS_RUNNING = "running"
 STATUS_WAITING_USER = "waiting_user"
-STATUS_TERMINATED = "terminated"  # Claude Code exited, shell prompt showing
+STATUS_TERMINATED = "terminated"  # Agent CLI exited, shell prompt showing
 STATUS_ASLEEP = "asleep"  # Human marked agent as paused/snoozed (excluded from stats)
 STATUS_RUNNING_HEARTBEAT = "running_heartbeat"  # Running from automated heartbeat (#171)
 STATUS_WAITING_APPROVAL = "waiting_approval"  # Waiting on approval/plan/decision (#22)

@@ -481,7 +481,7 @@ def get_analytics_sessions(
     # Get active sessions
     for s in sessions_mgr.list_sessions():
         record = _session_to_analytics_record(s, is_archived=False)
-        # Get detailed stats from Claude Code history
+        # Get detailed stats from the backend's transcripts
         stats = stats_reader_for_session(s).get_stats(s)
         if stats:
             record["work_times"] = stats.work_times

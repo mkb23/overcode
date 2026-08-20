@@ -709,12 +709,12 @@ class HookStatusDetector:
         lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
 
         if not lines:
-            return STATUS_TERMINATED, "Claude exited", pane_content
+            return STATUS_TERMINATED, "Agent exited", pane_content
 
         last_line = lines[-1]
 
         if is_shell_prompt(last_line):
-            return STATUS_TERMINATED, "Claude exited - shell prompt", pane_content
+            return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
 
         # No shell prompt → likely /clear, agent is waiting for input
         return STATUS_WAITING_USER, "Waiting for user input", pane_content
@@ -789,7 +789,7 @@ class HookStatusDetector:
             return "Permission: approval required"
 
         if event == "SessionEnd":
-            return "Claude exited"
+            return "Agent exited"
 
         return "Unknown state"
 

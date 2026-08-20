@@ -1,5 +1,5 @@
 """
-Unit tests for ClaudeLauncher.
+Unit tests for AgentLauncher.
 
 These tests use MockTmux and a temp directory SessionManager to test
 all launcher operations without requiring real tmux or Claude.
@@ -13,7 +13,7 @@ from unittest.mock import ANY, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.launcher import ClaudeLauncher
+from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
 from overcode.interfaces import MockTmux
@@ -46,7 +46,7 @@ class TestLauncherBasics:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -64,7 +64,7 @@ class TestLauncherBasics:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -80,7 +80,7 @@ class TestLauncherBasics:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -101,7 +101,7 @@ class TestLauncherBasics:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -119,7 +119,7 @@ class TestLauncherBasics:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -144,7 +144,7 @@ class TestLauncherDuplicates:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -166,7 +166,7 @@ class TestLauncherListSessions:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -182,7 +182,7 @@ class TestLauncherListSessions:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -207,7 +207,7 @@ class TestLauncherKillSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -228,7 +228,7 @@ class TestLauncherKillSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -244,7 +244,7 @@ class TestLauncherKillSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -279,7 +279,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -303,7 +303,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -326,7 +326,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -358,7 +358,7 @@ class TestLauncherSendToSession:
             session_manager = SessionManager(
                 state_dir=tmp_path, skip_git_detection=True
             )
-            launcher = ClaudeLauncher(
+            launcher = AgentLauncher(
                 tmux_session="agents",
                 tmux_manager=TmuxManager("agents", tmux=MockTmux()),
                 session_manager=session_manager,
@@ -382,7 +382,7 @@ class TestLauncherSendToSession:
         from unittest.mock import MagicMock
 
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=TmuxManager("agents", tmux=MockTmux()),
             session_manager=session_manager,
@@ -403,7 +403,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -419,7 +419,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -446,7 +446,7 @@ class TestLauncherSendToSession:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -471,7 +471,7 @@ class TestLauncherCleanup:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -497,7 +497,7 @@ class TestLauncherCleanup:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -530,7 +530,7 @@ class TestSessionNameValidation:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -548,7 +548,7 @@ class TestSessionNameValidation:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -578,7 +578,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch("overcode.launcher.get_tmux_pane_content", return_value="some banner\n❯ \n"):
@@ -591,7 +591,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch("overcode.launcher.get_tmux_pane_content", return_value="banner\n>\n"):
@@ -604,7 +604,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch("overcode.launcher.get_tmux_pane_content", return_value="loading..."):
@@ -618,7 +618,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch("overcode.launcher.get_tmux_pane_content", return_value=None):
@@ -632,7 +632,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         # First two calls: loading, third call: prompt ready
@@ -648,7 +648,7 @@ class TestWaitForPrompt:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         # Prompt wrapped in ANSI codes
@@ -668,7 +668,7 @@ class TestSendPromptToWindow:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -698,7 +698,7 @@ class TestSendPromptToWindow:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -720,7 +720,7 @@ class TestSendPromptToWindow:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch.object(launcher, "_wait_for_prompt", return_value=False):
@@ -738,7 +738,7 @@ class TestSendPromptToWindow:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
         session = launcher.launch(name="test-agent")
 
         with patch.object(launcher, "_wait_for_prompt", return_value=True):
@@ -761,7 +761,7 @@ class TestListSessionsKillUntracked:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -786,7 +786,7 @@ class TestGetSessionOutput:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -814,7 +814,7 @@ class TestGetSessionOutput:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -835,7 +835,7 @@ class TestGetSessionOutput:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -853,7 +853,7 @@ class TestGetSessionOutput:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -878,7 +878,7 @@ class TestAttach:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -897,7 +897,7 @@ class TestAttach:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -922,7 +922,7 @@ class TestAttach:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -940,7 +940,7 @@ class TestAttach:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -970,7 +970,7 @@ class TestLauncherHierarchy:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -989,7 +989,7 @@ class TestLauncherHierarchy:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1006,7 +1006,7 @@ class TestLauncherHierarchy:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1026,7 +1026,7 @@ class TestLauncherHierarchy:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1034,7 +1034,7 @@ class TestLauncherHierarchy:
 
         # Build chain up to max depth
         prev = launcher.launch(name="level-0")
-        for i in range(1, ClaudeLauncher.MAX_HIERARCHY_DEPTH):
+        for i in range(1, AgentLauncher.MAX_HIERARCHY_DEPTH):
             child = launcher.launch(name=f"level-{i}", parent_name=f"level-{i-1}")
             assert child is not None, f"Should succeed at depth {i}"
             prev = child
@@ -1042,7 +1042,7 @@ class TestLauncherHierarchy:
         # One more should fail
         too_deep = launcher.launch(
             name="too-deep",
-            parent_name=f"level-{ClaudeLauncher.MAX_HIERARCHY_DEPTH - 1}",
+            parent_name=f"level-{AgentLauncher.MAX_HIERARCHY_DEPTH - 1}",
         )
         assert too_deep is None
         captured = capsys.readouterr()
@@ -1054,7 +1054,7 @@ class TestLauncherHierarchy:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1078,7 +1078,7 @@ class TestParentSettingsInheritance:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1203,7 +1203,7 @@ class TestCascadeKill:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1227,7 +1227,7 @@ class TestCascadeKill:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1251,7 +1251,7 @@ class TestCascadeKill:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1284,7 +1284,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1302,7 +1302,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1310,7 +1310,7 @@ class TestCLIFlagPassthrough:
 
         session = launcher.launch(
             name="custom",
-            extra_claude_args=["--model haiku", "--effort low"],
+            extra_cli_args=["--model haiku", "--effort low"],
         )
 
         assert session is not None
@@ -1324,7 +1324,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1333,7 +1333,7 @@ class TestCLIFlagPassthrough:
         session = launcher.launch(
             name="both",
             allowed_tools="Read,Write",
-            extra_claude_args=["--model haiku"],
+            extra_cli_args=["--model haiku"],
         )
 
         assert session is not None
@@ -1342,12 +1342,12 @@ class TestCLIFlagPassthrough:
         assert any("--model" in cmd and "haiku" in cmd for cmd in sent_commands)
 
     def test_session_stores_allowed_tools(self, tmp_path):
-        """allowed_tools and extra_claude_args are persisted in session state."""
+        """allowed_tools and extra_cli_args are persisted in session state."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1356,13 +1356,13 @@ class TestCLIFlagPassthrough:
         session = launcher.launch(
             name="persist",
             allowed_tools="Read,Glob",
-            extra_claude_args=["--model haiku"],
+            extra_cli_args=["--model haiku"],
         )
 
         # Reload from state to verify persistence
         reloaded = session_manager.get_session(session.id)
         assert reloaded.allowed_tools == "Read,Glob"
-        assert reloaded.extra_claude_args == ["--model haiku"]
+        assert reloaded.extra_cli_args == ["--model haiku"]
 
     def test_session_without_flags_has_defaults(self, tmp_path):
         """Sessions without flags have None/empty defaults."""
@@ -1370,7 +1370,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1380,7 +1380,7 @@ class TestCLIFlagPassthrough:
 
         reloaded = session_manager.get_session(session.id)
         assert reloaded.allowed_tools is None
-        assert reloaded.extra_claude_args == []
+        assert reloaded.extra_cli_args == []
 
     def test_launch_with_agent_teams(self, tmp_path):
         """--teams sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in the env prefix and persists on session."""
@@ -1388,7 +1388,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1412,7 +1412,7 @@ class TestCLIFlagPassthrough:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1430,14 +1430,14 @@ class TestCLIFlagPassthrough:
 # =============================================================================
 
 class TestBudgetAtLaunch:
-    """Test budget_usd parameter on ClaudeLauncher.launch()."""
+    """Test budget_usd parameter on AgentLauncher.launch()."""
 
     def test_budget_no_parent_sets_directly(self, tmp_path):
         """Budget without parent sets cost_budget_usd directly."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1454,7 +1454,7 @@ class TestBudgetAtLaunch:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1477,7 +1477,7 @@ class TestBudgetAtLaunch:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1498,7 +1498,7 @@ class TestBudgetAtLaunch:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1520,7 +1520,7 @@ class TestBudgetAtLaunch:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1536,7 +1536,7 @@ class TestBudgetAtLaunch:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1557,7 +1557,7 @@ class TestLaunchFork:
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager
@@ -1566,7 +1566,7 @@ class TestLaunchFork:
         # Launch source agent
         source = launcher.launch(name="source-agent", start_directory="/tmp/project")
         # Simulate monitor daemon detecting the active claude session ID
-        session_manager.set_active_claude_session_id(source.id, "claude-session-abc123")
+        session_manager.set_active_agent_session_id(source.id, "claude-session-abc123")
         source = session_manager.get_session(source.id)  # reload
 
         return launcher, source, mock_tmux
@@ -1600,10 +1600,10 @@ class TestLaunchFork:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         source = launcher.launch(name="source", dangerously_skip_permissions=True)
-        session_manager.set_active_claude_session_id(source.id, "sess-123")
+        session_manager.set_active_agent_session_id(source.id, "sess-123")
         source = session_manager.get_session(source.id)
 
         forked = launcher.launch_fork(name="fork-bypass", source_session=source)
@@ -1614,18 +1614,18 @@ class TestLaunchFork:
         assert "--dangerously-skip-permissions" in fork_cmd
 
     def test_fork_requires_active_session_id(self, tmp_path):
-        """Fork fails if source has no active_claude_session_id.
+        """Fork fails if source has no active_agent_session_id.
 
-        launch() prescribes an active_claude_session_id up front (#373), so
+        launch() prescribes an active_agent_session_id up front (#373), so
         we clear it explicitly to simulate a legacy/corrupted source session.
         """
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         source = launcher.launch(name="source")
-        session_manager.update_session(source.id, active_claude_session_id=None)
+        session_manager.update_session(source.id, active_agent_session_id=None)
         source = session_manager.get_session(source.id)
 
         forked = launcher.launch_fork(name="fork-fail", source_session=source)
@@ -1650,19 +1650,19 @@ class TestLaunchFork:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         # Create a chain up to depth limit
         parent = launcher.launch(name="root")
-        session_manager.set_active_claude_session_id(parent.id, "sess-root")
+        session_manager.set_active_agent_session_id(parent.id, "sess-root")
 
         for i in range(launcher.MAX_HIERARCHY_DEPTH - 1):
             child = launcher.launch(name=f"child-{i}", parent_name="root" if i == 0 else f"child-{i-1}")
-            session_manager.set_active_claude_session_id(child.id, f"sess-{i}")
+            session_manager.set_active_agent_session_id(child.id, f"sess-{i}")
 
         # Try to fork the deepest child — should fail
         deepest = session_manager.get_session_by_name(f"child-{launcher.MAX_HIERARCHY_DEPTH - 2}")
-        deepest = session_manager.get_session(deepest.id)  # reload with active_claude_session_id
+        deepest = session_manager.get_session(deepest.id)  # reload with active_agent_session_id
         forked = launcher.launch_fork(name="too-deep", source_session=deepest)
         assert forked is None
 
@@ -1695,7 +1695,7 @@ class TestSessionIdPrescribing:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1708,11 +1708,11 @@ class TestSessionIdPrescribing:
         assert any("--session-id" in cmd for cmd in sent_commands)
 
     def test_launch_binds_claude_session_id_immediately(self, tmp_path):
-        """Claude session ID is in claude_session_ids right after launch."""
+        """Claude session ID is in agent_session_ids right after launch."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1722,15 +1722,15 @@ class TestSessionIdPrescribing:
         assert session is not None
 
         reloaded = session_manager.get_session(session.id)
-        assert len(reloaded.claude_session_ids) == 1
-        assert reloaded.active_claude_session_id == reloaded.claude_session_ids[0]
+        assert len(reloaded.agent_session_ids) == 1
+        assert reloaded.active_agent_session_id == reloaded.agent_session_ids[0]
 
     def test_two_agents_same_dir_get_different_session_ids(self, tmp_path):
         """Two agents in the same directory get distinct Claude session IDs."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1742,7 +1742,7 @@ class TestSessionIdPrescribing:
 
         r1 = session_manager.get_session(s1.id)
         r2 = session_manager.get_session(s2.id)
-        assert r1.claude_session_ids[0] != r2.claude_session_ids[0]
+        assert r1.agent_session_ids[0] != r2.agent_session_ids[0]
 
     def test_session_id_is_valid_uuid(self, tmp_path):
         """Prescribed session ID is a valid UUID."""
@@ -1751,7 +1751,7 @@ class TestSessionIdPrescribing:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=tmux_manager,
             session_manager=session_manager,
@@ -1760,7 +1760,7 @@ class TestSessionIdPrescribing:
         session = launcher.launch(name="test-agent")
         reloaded = session_manager.get_session(session.id)
         # Should not raise
-        uuid_mod.UUID(reloaded.claude_session_ids[0])
+        uuid_mod.UUID(reloaded.agent_session_ids[0])
 
 
 # =============================================================================
@@ -1775,7 +1775,7 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         launcher.launch(name="test-agent")
 
@@ -1790,7 +1790,7 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         launcher.launch(name="test-agent")
 
@@ -1811,7 +1811,7 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         launcher.launch(name="test-agent")
 
@@ -1829,7 +1829,7 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         launcher.launch(name="test-agent")
 
@@ -1845,7 +1845,7 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         launcher.launch(name="test-agent")
 
@@ -1864,10 +1864,10 @@ class TestSettingsInjection:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         source = launcher.launch(name="source", dangerously_skip_permissions=True)
-        session_manager.set_active_claude_session_id(source.id, "sess-123")
+        session_manager.set_active_agent_session_id(source.id, "sess-123")
         source = session_manager.get_session(source.id)
 
         launcher.launch_fork(name="forked", source_session=source)
@@ -1886,7 +1886,7 @@ class TestLauncherVersionStamp:
         mock_tmux = MockTmux()
         tm = TmuxManager("agents", tmux=mock_tmux)
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tm, sm)
+        launcher = AgentLauncher("agents", tm, sm)
 
         sess = launcher.launch(name="stamped")
         assert sess is not None
@@ -1898,7 +1898,7 @@ class TestLauncherVersionStamp:
         mock_tmux = MockTmux()
         tm = TmuxManager("agents", tmux=mock_tmux)
         sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tm, sm)
+        launcher = AgentLauncher("agents", tm, sm)
 
         sess = launcher.launch(name="restarted")
         # Clear the stamp so we can prove restart re-populates it
@@ -1969,17 +1969,17 @@ class TestBuildLaunchSettings:
 
 
 class TestLauncherRestart:
-    """Test ClaudeLauncher.restart — restart preserves full launch context (#XXX)."""
+    """Test AgentLauncher.restart — restart preserves full launch context (#XXX)."""
 
     def _launch_and_bind_claude_sid(self, tmp_path, *, claude_sid="claude-abc", **launch_kwargs):
-        """Helper: launch an agent and bind a known active_claude_session_id."""
+        """Helper: launch an agent and bind a known active_agent_session_id."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         session = launcher.launch(**launch_kwargs)
-        session_manager.set_active_claude_session_id(session.id, claude_sid)
+        session_manager.set_active_agent_session_id(session.id, claude_sid)
         session = session_manager.get_session(session.id)
 
         # Clear launch-time send_keys so restart assertions only see restart traffic.
@@ -1994,7 +1994,7 @@ class TestLauncherRestart:
         return cmds[-1]
 
     def test_restart_default_resumes_prior_claude_session(self, tmp_path):
-        """Default restart uses --resume <active_claude_session_id>."""
+        """Default restart uses --resume <active_agent_session_id>."""
         launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
             tmp_path, claude_sid="sess-resume-me", name="agent"
         )
@@ -2023,19 +2023,19 @@ class TestLauncherRestart:
         assert "sess-old" not in cmd
 
         reloaded = launcher.sessions.get_session(session.id)
-        assert reloaded.active_claude_session_id is not None
-        assert reloaded.active_claude_session_id != "sess-old"
-        assert reloaded.active_claude_session_id in cmd
+        assert reloaded.active_agent_session_id is not None
+        assert reloaded.active_agent_session_id != "sess-old"
+        assert reloaded.active_agent_session_id in cmd
 
     def test_restart_without_prior_session_degrades_to_fresh(self, tmp_path):
-        """If no active_claude_session_id is known, restart can't --resume — it prescribes fresh."""
+        """If no active_agent_session_id is known, restart can't --resume — it prescribes fresh."""
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         session = launcher.launch(name="agent")
-        session_manager.set_active_claude_session_id(session.id, None)
+        session_manager.set_active_agent_session_id(session.id, None)
         session = session_manager.get_session(session.id)
         mock_tmux.sent_keys.clear()
 
@@ -2076,13 +2076,13 @@ class TestLauncherRestart:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         parent = launcher.launch(name="parent")
-        session_manager.set_active_claude_session_id(parent.id, "p-sess")
+        session_manager.set_active_agent_session_id(parent.id, "p-sess")
 
         child = launcher.launch(name="child", parent_name="parent")
-        session_manager.set_active_claude_session_id(child.id, "c-sess")
+        session_manager.set_active_agent_session_id(child.id, "c-sess")
         child = session_manager.get_session(child.id)
         mock_tmux.sent_keys.clear()
 
@@ -2121,7 +2121,7 @@ class TestLauncherRestart:
     def test_restart_includes_model_and_agent_flags(self, tmp_path):
         """Restart replays --model and --agent from the stored Session."""
         launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
-            tmp_path, name="agent", model="opus", claude_agent="reviewer"
+            tmp_path, name="agent", model="opus", agent_persona="reviewer"
         )
 
         with patch("overcode.launcher.time.sleep"):
@@ -2137,7 +2137,7 @@ class TestLauncherRestart:
             tmp_path,
             name="agent",
             allowed_tools="Read,Grep",
-            extra_claude_args=["--debug"],
+            extra_cli_args=["--debug"],
         )
 
         with patch("overcode.launcher.time.sleep"):
@@ -2170,7 +2170,7 @@ class TestLauncherRestart:
 
 
 class TestLauncherRevive:
-    """Test ClaudeLauncher.revive — revival preserves full launch context."""
+    """Test AgentLauncher.revive — revival preserves full launch context."""
 
     def _launch_and_kill_window(self, tmp_path, *, claude_sid="claude-abc", **launch_kwargs):
         """Helper: launch, bind an active Claude session ID, then kill the window
@@ -2178,11 +2178,11 @@ class TestLauncherRevive:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         session = launcher.launch(**launch_kwargs)
         if claude_sid is not None:
-            session_manager.set_active_claude_session_id(session.id, claude_sid)
+            session_manager.set_active_agent_session_id(session.id, claude_sid)
         session = session_manager.get_session(session.id)
 
         launcher.tmux.kill_window(session.tmux_window)
@@ -2235,9 +2235,9 @@ class TestLauncherRevive:
             name="myagent",
             claude_sid="sess-ctx",
             model="opus",
-            claude_agent="reviewer",
+            agent_persona="reviewer",
             allowed_tools="Read,Grep",
-            extra_claude_args=["--debug"],
+            extra_cli_args=["--debug"],
             agent_teams=True,
             provider="bedrock",
         )
@@ -2260,10 +2260,10 @@ class TestLauncherRevive:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         session = launcher.launch(name="agent")
-        session_manager.set_active_claude_session_id(session.id, "sess-still-up")
+        session_manager.set_active_agent_session_id(session.id, "sess-still-up")
         session = session_manager.get_session(session.id)
         mock_tmux.sent_keys.clear()
 
@@ -2304,20 +2304,20 @@ class TestLaunchRestartDivergence:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         session = launcher.launch(
             name="divergence-check",
             skip_permissions=True,
             model="haiku",
-            claude_agent="rev",
+            agent_persona="rev",
             allowed_tools="Read,Write",
-            extra_claude_args=["--debug", "--verbose"],
+            extra_cli_args=["--debug", "--verbose"],
             agent_teams=True,
             provider="bedrock",
         )
         assert session is not None
-        session_manager.set_active_claude_session_id(session.id, "sess-div")
+        session_manager.set_active_agent_session_id(session.id, "sess-div")
         session = session_manager.get_session(session.id)
 
         launch_cmd = [k[2] for k in mock_tmux.sent_keys if "claude" in k[2]][-1]
@@ -2352,7 +2352,7 @@ class TestLaunchRestartDivergence:
             assert token in restart_cmd, (
                 f"{token!r} is on launch but missing from restart — "
                 "a launch-time knob isn't being replayed on restart. "
-                "See ClaudeLauncher._send_launch_for_session."
+                "See AgentLauncher._send_launch_for_session."
             )
 
     def test_all_launch_flags_survive_fork(self, tmp_path):
@@ -2362,7 +2362,7 @@ class TestLaunchRestartDivergence:
         mock_tmux = MockTmux()
         tmux_manager = TmuxManager("agents", tmux=mock_tmux)
         session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        launcher = ClaudeLauncher("agents", tmux_manager, session_manager)
+        launcher = AgentLauncher("agents", tmux_manager, session_manager)
 
         # Make an executable wrapper so wrapper resolution succeeds.
         wrapper_path = tmp_path / "wrap.sh"
@@ -2373,9 +2373,9 @@ class TestLaunchRestartDivergence:
             name="fork-src",
             skip_permissions=True,
             model="haiku",
-            claude_agent="rev",
+            agent_persona="rev",
             allowed_tools="Read,Write",
-            extra_claude_args=["--debug"],
+            extra_cli_args=["--debug"],
             agent_teams=True,
             provider="bedrock",
             wrapper=str(wrapper_path),
@@ -2407,7 +2407,7 @@ class TestLaunchRestartDivergence:
         for token in expected_tokens:
             assert token in fork_cmd, (
                 f"{token!r} missing from fork cmd — a launch-time knob isn't "
-                "being propagated to launch_fork. See ClaudeLauncher._send_launch_for_session."
+                "being propagated to launch_fork. See AgentLauncher._send_launch_for_session."
             )
 
 

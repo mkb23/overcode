@@ -149,7 +149,7 @@ class ColumnContext:
     # Session and stats
     session: object  # Session
     stats: object  # SessionStats
-    claude_stats: object  # Optional[ClaudeSessionStats]
+    claude_stats: object  # Optional[AgentSessionStats]
     git_diff_stats: Optional[tuple]  # (files, insertions, deletions) or None
 
     # Pre-computed values
@@ -222,7 +222,7 @@ class ColumnContext:
     any_has_pr: bool = False
 
     # Model
-    model: str = ""  # Claude model short name or full name
+    model: str = ""  # Model short name or full name
     any_has_model: bool = False  # True if any agent has a model set
 
     # Provider

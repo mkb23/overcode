@@ -133,8 +133,8 @@ def provider_from_message_id(msg_id: Optional[str]) -> Optional[str]:
 
 
 @dataclass
-class ClaudeSessionStats:
-    """Statistics for a Claude Code session."""
+class AgentSessionStats:
+    """Statistics for one agent session (tokens, context, work times)."""
     interaction_count: int
     input_tokens: int
     output_tokens: int
@@ -177,8 +177,12 @@ class ClaudeSessionStats:
         return sorted_times[n // 2]
 
 
-def synthesize_remote_stats(session) -> "ClaudeSessionStats":
-    """Synthesize ClaudeSessionStats for a remote session from daemon_state.
+# Pre-backend name, kept for callers that still import it.
+ClaudeSessionStats = AgentSessionStats
+
+
+def synthesize_remote_stats(session) -> "AgentSessionStats":
+    """Synthesize AgentSessionStats for a remote session from daemon_state.
 
     Remote sessions carry a remote_daemon_state dict with all
     SessionDaemonState fields. Extract what we need so that render
@@ -187,7 +191,7 @@ def synthesize_remote_stats(session) -> "ClaudeSessionStats":
     rds = getattr(session, 'remote_daemon_state', None) or {}
     stats = session.stats
     mwt = getattr(session, 'remote_median_work_time', None) or rds.get('median_work_time', 0.0)
-    return ClaudeSessionStats(
+    return AgentSessionStats(
         interaction_count=stats.interaction_count,
         input_tokens=rds.get('input_tokens', stats.total_tokens),
         output_tokens=rds.get('output_tokens', 0),
@@ -283,7 +287,7 @@ class HistoryFile:
     ) -> List[HistoryEntry]:
         """Get history entries matching a session's directory and time window.
 
-        When the session has known claude_session_ids, filters by sessionId
+        When the session has known agent_session_ids, filters by sessionId
         to avoid cross-contamination between agents sharing a directory (#264).
         Falls back to directory+timestamp matching for older sessions without
         tracked sessionIds.
@@ -298,7 +302,7 @@ class HistoryFile:
             return []
 
         # Use owned sessionIds when available for precise matching (#264)
-        owned_ids = set(getattr(session, 'claude_session_ids', None) or [])
+        owned_ids = set(getattr(session, 'agent_session_ids', None) or [])
 
         session_dir = str(Path(session.start_directory).resolve())
         matching = []
@@ -791,17 +795,17 @@ def get_session_stats(
     history_path: Path = CLAUDE_HISTORY_PATH,
     projects_path: Path = CLAUDE_PROJECTS_PATH,
     history_file: Optional["HistoryFile"] = None,
-) -> Optional[ClaudeSessionStats]:
+) -> Optional[AgentSessionStats]:
     """Get comprehensive stats for an overcode session.
 
     Combines interaction counting with token usage from session files.
 
     Session scoping: get_interactions_for_session() is the single source of
     truth for which Claude Code sessions belong to this overcode session.
-    When claude_session_ids are tracked, it filters precisely by sessionId;
+    When agent_session_ids are tracked, it filters precisely by sessionId;
     otherwise falls back to directory+timestamp matching (#119, #264).
 
-    Context window uses active_claude_session_id after /clear (#116),
+    Context window uses active_agent_session_id after /clear (#116),
     falling back to MAX across all matched sessions.
 
     Args:
@@ -811,7 +815,7 @@ def get_session_stats(
         history_file: Optional HistoryFile for cached access (avoids re-parsing)
 
     Returns:
-        ClaudeSessionStats if session has start_directory, None otherwise
+        AgentSessionStats if session has start_directory, None otherwise
     """
     if not session.start_directory:
         return None
@@ -826,7 +830,7 @@ def get_session_stats(
         return None
 
     # get_interactions_for_session is the single gate for session scoping:
-    # uses claude_session_ids when available, else directory+timestamp fallback
+    # uses agent_session_ids when available, else directory+timestamp fallback
     hf = history_file or (
         _default_history if history_path == CLAUDE_HISTORY_PATH
         else HistoryFile(history_path)
@@ -845,7 +849,7 @@ def get_session_stats(
             sid_to_project[e.session_id] = e.project
 
     # Active session ID for context window after /clear (#116)
-    active_session_id = getattr(session, 'active_claude_session_id', None)
+    active_session_id = getattr(session, 'active_agent_session_id', None)
 
     # Sum token usage and work times across session files
     total_input = 0
@@ -937,7 +941,7 @@ def get_session_stats(
         if last_entry.display:
             last_command = last_entry.display
 
-    return ClaudeSessionStats(
+    return AgentSessionStats(
         interaction_count=interaction_count,
         input_tokens=total_input,
         output_tokens=total_output,
@@ -1044,7 +1048,7 @@ def get_session_window_token_usage(
     if not session.start_directory:
         return totals
 
-    sids = list(getattr(session, 'claude_session_ids', None) or [])
+    sids = list(getattr(session, 'agent_session_ids', None) or [])
     if not sids:
         return totals
 

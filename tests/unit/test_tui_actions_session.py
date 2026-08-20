@@ -954,7 +954,7 @@ class TestExecuteRemoteRestart:
 class TestExecuteTransportAll:
     """Test _execute_transport_all method."""
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_mixed_local_and_remote(self, MockLauncher):
         """Should send to both local and remote agents."""
         from overcode.tui_actions.session import SessionActionsMixin
@@ -1002,7 +1002,7 @@ class TestExecuteTransportAll:
         assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_partial_failures(self, MockLauncher):
         """Should report partial failures when some sends fail."""
         from overcode.tui_actions.session import SessionActionsMixin
@@ -1034,7 +1034,7 @@ class TestExecuteTransportAll:
         assert "failed 1" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "warning"
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_all_local_success(self, MockLauncher):
         """Should report success when all local agents are transported."""
         from overcode.tui_actions.session import SessionActionsMixin
@@ -1065,7 +1065,7 @@ class TestExecuteTransportAll:
         assert "2 agent(s)" in mock_tui.notify.call_args[0][0]
         assert mock_tui.notify.call_args[1]["severity"] == "information"
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_remote_failure(self, MockLauncher):
         """Should count remote failure in partial failure report."""
         from overcode.tui_actions.session import SessionActionsMixin

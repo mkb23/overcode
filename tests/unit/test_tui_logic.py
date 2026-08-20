@@ -1406,7 +1406,7 @@ class TestComputeWindowBurn:
         sess = Mock()
         sess.id = session_id
         sess.start_directory = str(project_dir)
-        sess.claude_session_ids = [claude_sid]
+        sess.agent_session_ids = [claude_sid]
         sess.model = model
         sess.provider = "web"
         sess.is_asleep = False

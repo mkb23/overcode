@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from typing import Callable, Optional, Tuple, Type
 
-from .exceptions import TmuxNotFoundError, ClaudeNotFoundError
+from .exceptions import TmuxNotFoundError, AgentCliNotFoundError
 
 
 def find_executable(name: str) -> Optional[str]:
@@ -195,6 +195,6 @@ def require_claude() -> str:
         Path to claude executable
 
     Raises:
-        ClaudeNotFoundError: If claude is not found
+        AgentCliNotFoundError: If claude is not found
     """
     return require_agent_cli("claude-code")

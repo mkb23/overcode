@@ -20,6 +20,14 @@ drifts, re-capture these files and the pattern tests will tell you what broke.
 | `error_api_key.txt` | provider auth failure rendered in a red box | `waiting_user` |
 | `tool_execution.txt` | `→ Read` / `✱ Glob` tool blocks, turn finished | `waiting_user` |
 | `exited_shell.txt` | after `/exit` — farewell block + shell prompt | `terminated` |
+| `interrupted.txt` | double-Escape mid-generation, turn abandoned | `waiting_user` |
+
+`interrupted.txt` was captured in Phase 6 (same opencode version, wider pane)
+to fill the one gap Phase 4 left: the pane opencode renders *after* a
+keyboard interrupt. The load-bearing detail is that the finished-turn footer
+pill gains a suffix — `▣  Build · GPT-4o mini · interrupted` — which is what
+`OPENCODE_PATTERNS.interrupt_prompt_markers` matches. The partial response
+stays on screen unmarked, and the marker persists indefinitely.
 
 `exited_shell.txt` is the only hand-edited file: the real capture carried an
 unexpanded `%n@%m` zsh prompt from the scratch harness, replaced here with a

@@ -1,9 +1,11 @@
 """
-Diagnose agents whose running claude process is missing overcode's hook
+Diagnose agents whose running agent process is missing overcode's hook
 injection (#435). Used by `overcode doctor`.
 
-An agent is "healthy" when its claude process was launched with --settings
-(which contains the overcode hook commands). Agents whose claude process was
+An agent is "healthy" when its backend says its observability is wired up —
+for Claude Code, that the process was launched with --settings (which carries
+the overcode hook commands); for opencode, that the telemetry plugin is
+staged in the project. Agents whose process was
 started manually in the tmux window — or whose last relaunch predates the
 --settings injection commit (#435, 40d1376) — carry no hooks, so the monitor
 daemon sees no state changes.
@@ -17,12 +19,13 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 from .session_manager import Session
 
 if TYPE_CHECKING:
-    from .history_reader import ClaudeSessionStats
+    from .history_reader import AgentSessionStats
 
 
 VERDICT_OK = "ok"
 VERDICT_MISSING_SETTINGS = "missing-settings"
-VERDICT_NO_CLAUDE = "no-claude-process"
+VERDICT_NO_AGENT_PROCESS = "no-claude-process"  # wire value kept for compat
+VERDICT_NO_CLAUDE = VERDICT_NO_AGENT_PROCESS  # pre-Phase-6 name
 VERDICT_WINDOW_GONE = "window-gone"
 VERDICT_REMOTE = "remote"
 VERDICT_UNKNOWN = "unknown"
@@ -202,7 +205,7 @@ def session_process_basenames(session) -> Sequence[str]:
 
 def gather_data_findings(
     session: Session,
-    live_stats: Optional["ClaudeSessionStats"] = None,
+    live_stats: Optional["AgentSessionStats"] = None,
     *,
     daemon_running: bool = True,
     now: Optional[datetime] = None,
@@ -212,7 +215,7 @@ def gather_data_findings(
 
     These checks catch "the monitor isn't wiring data through" bugs that
     a clean hook verdict alone would miss — e.g. a zeroed token count
-    despite visible interactions, an orphaned active_claude_session_id,
+    despite visible interactions, an orphaned active_agent_session_id,
     or a dead monitor daemon starving all agents at once.
 
     Checks are self-gating: the function is safe to call on any session
@@ -232,14 +235,14 @@ def gather_data_findings(
             ),
         ))
 
-    active = session.active_claude_session_id
-    if active and active not in session.claude_session_ids:
+    active = session.active_agent_session_id
+    if active and active not in session.agent_session_ids:
         findings.append(Finding(
             code=FINDING_SID_ORPHAN,
             severity=SEVERITY_WARNING,
             message=(
-                f"active_claude_session_id {active[:8]}… not in tracked "
-                f"claude_session_ids — context window may be miscalculated"
+                f"active_agent_session_id {active[:8]}… not in tracked "
+                f"agent_session_ids — context window may be miscalculated"
             ),
         ))
 
@@ -369,14 +372,14 @@ def gather_data_findings(
             ),
         ))
 
-    # claude_session_ids should accumulate one sid per Claude Code session
+    # agent_session_ids should accumulate one sid per Claude Code session
     # owned by this agent. If we see interactions via directory+timestamp
     # fallback matching but none are tracked, the SessionStart hook likely
     # never wired this agent to its sid — context window calc is then wrong.
     if (
         live_stats is not None
         and live_stats.interaction_count > 0
-        and not session.claude_session_ids
+        and not session.agent_session_ids
         and session.status == "running"
     ):
         findings.append(Finding(
@@ -384,7 +387,7 @@ def gather_data_findings(
             severity=SEVERITY_WARNING,
             message=(
                 f"{live_stats.interaction_count} interactions detected but "
-                f"claude_session_ids is empty — falling back to directory matching"
+                f"agent_session_ids is empty — falling back to directory matching"
             ),
         ))
 
@@ -412,7 +415,7 @@ def inspect_agent(
     children: Dict[int, List[int]],
     argv_by_pid: Dict[int, str],
     *,
-    live_stats: Optional["ClaudeSessionStats"] = None,
+    live_stats: Optional["AgentSessionStats"] = None,
     daemon_running: bool = True,
     now: Optional[datetime] = None,
 ) -> AgentHealth:

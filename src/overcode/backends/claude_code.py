@@ -7,7 +7,7 @@ import shutil
 import sys
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
-from ..exceptions import ClaudeNotFoundError
+from ..exceptions import AgentCliNotFoundError
 from .base import (
     AgentBackend,
     BackendCapability,
@@ -77,7 +77,7 @@ class ClaudeCodeBackend:
         "Install it from: https://claude.ai/claude-code"
     )
     process_basenames = ("claude",)
-    not_found_error = ClaudeNotFoundError
+    not_found_error = AgentCliNotFoundError
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK

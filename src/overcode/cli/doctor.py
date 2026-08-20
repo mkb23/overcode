@@ -1,8 +1,8 @@
 """
 `overcode doctor` — diagnose agents with broken hook configuration (#435).
 
-Identifies agents whose claude process was started without the --settings
-injection (most commonly because the user manually relaunched claude inside
+Identifies agents whose agent-CLI process was started without overcode's
+telemetry injection (most commonly because the user manually relaunched inside
 the tmux window, bypassing `overcode restart`). Optionally auto-relaunches
 broken agents to reinject hooks.
 """
@@ -21,24 +21,25 @@ def doctor(
     session: SessionOption = "agents",
     fix: Annotated[
         bool,
-        typer.Option("--fix", help="Restart agents whose claude process is missing --settings"),
+        typer.Option("--fix", help="Restart agents whose process is missing overcode telemetry"),
     ] = False,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", "-v", help="Show full claude argv for each agent"),
+        typer.Option("--verbose", "-v", help="Show the full agent argv for each agent"),
     ] = False,
 ):
     """Diagnose which agents have broken hook configuration.
 
     An agent only emits hook-based state changes (PostToolUse, Stop, etc.)
-    if its claude process was launched with `--settings`. This command
-    inspects each live agent's claude process and flags ones that are
+    if its process carries overcode's telemetry injection (Claude Code:
+    `--settings`; opencode: the bundled plugin). This command
+    inspects each live agent's process and flags ones that are
     missing the injection — typically because they were relaunched
     manually in the tmux pane.
 
     Use --fix to `overcode restart` broken agents, which re-injects --settings.
     """
-    from ..launcher import ClaudeLauncher
+    from ..launcher import AgentLauncher
     from ..doctor import (
         inspect_agent,
         snapshot_process_table,
@@ -53,7 +54,7 @@ def doctor(
     from ..stats_reader import stats_reader_for_session
     from ..monitor_daemon import is_monitor_daemon_running
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     # detect_terminated=False — doctor inspects running state, doesn't mutate
     sessions = [s for s in launcher.list_sessions(detect_terminated=False)
                 if s.status != "terminated"]
@@ -94,7 +95,7 @@ def doctor(
     verdict_style = {
         VERDICT_OK: "[green]✓ ok[/green]",
         VERDICT_MISSING_SETTINGS: "[red]✗ no --settings[/red]",
-        VERDICT_NO_CLAUDE: "[yellow]? no claude[/yellow]",
+        VERDICT_NO_CLAUDE: "[yellow]? no process[/yellow]",
         VERDICT_WINDOW_GONE: "[dim]window gone[/dim]",
         VERDICT_REMOTE: "[dim]remote[/dim]",
     }
@@ -195,7 +196,7 @@ def doctor(
             if sess is None:
                 rprint(f"  [yellow]skip {r.name} — session vanished[/yellow]")
                 continue
-            # fresh=False → resume the existing Claude session so history is preserved;
+            # fresh=False → resume the existing agent session so history is preserved;
             # the new shell line rebuilt by the launcher will include --settings.
             if launcher.restart(sess, fresh=False):
                 rprint(f"  [green]✓[/green] restarted {r.name}")

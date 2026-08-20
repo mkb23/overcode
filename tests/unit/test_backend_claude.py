@@ -1,7 +1,7 @@
 """Golden-argv tests for the Claude Code backend.
 
 The expected strings below were captured from the pre-refactor
-`ClaudeLauncher._build_claude_command` / `_build_launch_cmd_str`. They are
+`AgentLauncher._build_claude_command` / `_build_launch_cmd_str`. They are
 frozen on purpose: any diff here is a change to what overcode actually
 execs, not a cosmetic refactor.
 """
@@ -27,7 +27,7 @@ from overcode.backends import (
     unregister_backend,
 )
 from overcode.backends.claude_code import ClaudeCodeBackend
-from overcode.launcher import ClaudeLauncher
+from overcode.launcher import AgentLauncher
 from overcode.session_manager import Session, SessionManager
 
 
@@ -246,7 +246,7 @@ class TestLaunchCmdStr:
         from overcode.interfaces import MockTmux
         from overcode.tmux_manager import TmuxManager
 
-        return ClaudeLauncher(
+        return AgentLauncher(
             tmux_session="agents",
             tmux_manager=TmuxManager("agents", tmux=MockTmux()),
             session_manager=SessionManager(state_dir=tmp_path, skip_git_detection=True),
@@ -323,6 +323,26 @@ class TestLaunchCmdStr:
             "OVERCODE_TMUX_SESSION=agents OVERCODE_WRAPPER_DIR=/tmp/proj "
             "python /tmp/mock_claude.py"
         )
+
+    def test_claude_code_does_not_export_overcode_backend(self, tmp_path, backend):
+        # The default backend's launch line must stay byte-identical, and
+        # wrappers read "unset" as claude-code.
+        launcher = self._launcher(tmp_path)
+        spec = LaunchSpec(name="a", session_id="s", tmux_session="agents")
+        assert "OVERCODE_BACKEND" not in launcher._build_launch_cmd_str(
+            backend, spec, ["claude"]
+        )
+
+    def test_non_default_backend_exports_overcode_backend(self, tmp_path):
+        # The devcontainer wrapper keys its agent-install step off this.
+        from overcode.backends import get_backend
+
+        launcher = self._launcher(tmp_path)
+        spec = LaunchSpec(name="a", session_id="s", tmux_session="agents")
+        cmd = launcher._build_launch_cmd_str(
+            get_backend("opencode"), spec, ["opencode"]
+        )
+        assert "OVERCODE_BACKEND=opencode" in cmd
 
 
 class TestGestures:
@@ -468,7 +488,7 @@ class TestLauncherDispatch:
         from overcode.interfaces import MockTmux
         from overcode.tmux_manager import TmuxManager
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=TmuxManager("agents", tmux=MockTmux()),
             session_manager=SessionManager(state_dir=tmp_path, skip_git_detection=True),
@@ -480,7 +500,7 @@ class TestLauncherDispatch:
         from overcode.interfaces import MockTmux
         from overcode.tmux_manager import TmuxManager
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session="agents",
             tmux_manager=TmuxManager("agents", tmux=MockTmux()),
             session_manager=SessionManager(state_dir=tmp_path, skip_git_detection=True),

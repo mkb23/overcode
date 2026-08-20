@@ -59,7 +59,7 @@ def _patch_doctor(sessions=None, health_by_name=None, daemon_running=True,
         return health_by_name[sess.name]
 
     return [
-        patch("overcode.launcher.ClaudeLauncher", return_value=mock_launcher),
+        patch("overcode.launcher.AgentLauncher", return_value=mock_launcher),
         patch("overcode.doctor.snapshot_process_table", return_value=({}, {})),
         patch("overcode.doctor.inspect_agent", side_effect=fake_inspect),
         patch("overcode.monitor_daemon.is_monitor_daemon_running",

@@ -70,8 +70,8 @@ def _make_session(backend="claude-code", **overrides):
     session.wrapper = None
     session.model = None
     session.provider = "web"
-    session.claude_session_ids = []
-    session.active_claude_session_id = None
+    session.agent_session_ids = []
+    session.active_agent_session_id = None
     for key, value in overrides.items():
         setattr(session, key, value)
     return session
@@ -93,8 +93,9 @@ def _make_stats(**overrides):
 
 class TestAlias:
     def test_agent_session_stats_is_claude_session_stats(self):
-        # Field renames are Phase 6; for now the alias is the neutral name.
+        # Phase 6 flipped which name is canonical; both still resolve.
         assert AgentSessionStats is ClaudeSessionStats
+        assert AgentSessionStats.__name__ == "AgentSessionStats"
 
 
 class TestClaudeStatsReader:
@@ -146,10 +147,10 @@ class TestClaudeStatsReader:
 
     def test_discover_session_ids_skips_owned_and_reports_latest(self, monkeypatch):
         reader = ClaudeStatsReader()
-        session = _make_session(claude_session_ids=["mine"])
+        session = _make_session(agent_session_ids=["mine"])
         other = Mock()
         other.id = "sess-2"
-        other.claude_session_ids = ["theirs"]
+        other.agent_session_ids = ["theirs"]
 
         def _entry(sid, ts):
             e = Mock()
@@ -197,8 +198,8 @@ class TestClaudeStatsReader:
         reader = ClaudeStatsReader()
         session = _make_session(
             wrapper="devcontainer.sh",
-            claude_session_ids=["sid-1"],
-            active_claude_session_id="sid-1",
+            agent_session_ids=["sid-1"],
+            active_agent_session_id="sid-1",
         )
 
         def fake_run(cmd, **kwargs):
@@ -330,8 +331,8 @@ class TestDaemonWithStatslessBackend:
 
         claude_stats.assert_not_called()
         daemon.session_manager.update_stats.assert_not_called()
-        daemon.session_manager.add_claude_session_id.assert_not_called()
-        daemon.session_manager.set_active_claude_session_id.assert_not_called()
+        daemon.session_manager.add_agent_session_id.assert_not_called()
+        daemon.session_manager.set_active_agent_session_id.assert_not_called()
 
     def test_sync_session_id_writes_nothing(self, tmp_path, monkeypatch, statsless_backend):
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -340,8 +341,8 @@ class TestDaemonWithStatslessBackend:
 
         daemon.sync_session_id(session)
 
-        daemon.session_manager.add_claude_session_id.assert_not_called()
-        daemon.session_manager.set_active_claude_session_id.assert_not_called()
+        daemon.session_manager.add_agent_session_id.assert_not_called()
+        daemon.session_manager.set_active_agent_session_id.assert_not_called()
 
     def test_container_path_is_not_probed(self, tmp_path, monkeypatch, statsless_backend):
         daemon = self._make_daemon(tmp_path, monkeypatch)

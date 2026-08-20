@@ -10,10 +10,10 @@ from overcode.claude_pid import is_session_id_owned_by_others
 class TestIsSessionIdOwnedByOthers:
     """Test exclusive ownership check."""
 
-    def _make_session(self, agent_id, claude_session_ids=None):
+    def _make_session(self, agent_id, agent_session_ids=None):
         s = Mock()
         s.id = agent_id
-        s.claude_session_ids = claude_session_ids or []
+        s.agent_session_ids = agent_session_ids or []
         return s
 
     def test_not_owned_by_anyone(self):
@@ -40,7 +40,7 @@ class TestIsSessionIdOwnedByOthers:
     def test_handles_missing_claude_session_ids(self):
         s = Mock()
         s.id = "a2"
-        s.claude_session_ids = None
+        s.agent_session_ids = None
         sessions = [self._make_session("a1", ["sid-1"]), s]
         assert not is_session_id_owned_by_others("sid-1", "a1", sessions)
 
@@ -86,7 +86,7 @@ class TestSyncSessionIdIntegration:
         session.tmux_window = "agent-ab12"
         session.start_time = "2026-01-01T00:00:00"
         session.tmux_session = "test"
-        session.claude_session_ids = []
+        session.agent_session_ids = []
 
         monkeypatch.setattr(
             'overcode.history_reader.get_current_session_id_for_directory',
@@ -96,10 +96,10 @@ class TestSyncSessionIdIntegration:
 
         daemon.sync_session_id(session)
 
-        daemon.session_manager.add_claude_session_id.assert_called_once_with(
+        daemon.session_manager.add_agent_session_id.assert_called_once_with(
             "agent-1", "history-session-id"
         )
-        daemon.session_manager.set_active_claude_session_id.assert_called_once_with(
+        daemon.session_manager.set_active_agent_session_id.assert_called_once_with(
             "agent-1", "history-session-id"
         )
 
@@ -113,12 +113,12 @@ class TestSyncSessionIdIntegration:
         session_a.tmux_window = "agent-a-ab12"
         session_a.start_time = "2026-01-01T00:00:00"
         session_a.tmux_session = "test"
-        session_a.claude_session_ids = []
+        session_a.agent_session_ids = []
 
         session_b = Mock()
         session_b.id = "agent-b"
         session_b.tmux_session = "test"
-        session_b.claude_session_ids = ["shared-session-id"]
+        session_b.agent_session_ids = ["shared-session-id"]
 
         monkeypatch.setattr(
             'overcode.history_reader.get_current_session_id_for_directory',
@@ -129,7 +129,7 @@ class TestSyncSessionIdIntegration:
         daemon.sync_session_id(session_a)
 
         # Should NOT add the sessionId since agent-b owns it
-        daemon.session_manager.add_claude_session_id.assert_not_called()
+        daemon.session_manager.add_agent_session_id.assert_not_called()
 
     def test_skips_when_no_start_directory(self, tmp_path, monkeypatch):
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -139,7 +139,7 @@ class TestSyncSessionIdIntegration:
 
         daemon.sync_session_id(session)
 
-        daemon.session_manager.add_claude_session_id.assert_not_called()
+        daemon.session_manager.add_agent_session_id.assert_not_called()
 
     def test_skips_when_history_returns_none(self, tmp_path, monkeypatch):
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -156,4 +156,4 @@ class TestSyncSessionIdIntegration:
 
         daemon.sync_session_id(session)
 
-        daemon.session_manager.add_claude_session_id.assert_not_called()
+        daemon.session_manager.add_agent_session_id.assert_not_called()

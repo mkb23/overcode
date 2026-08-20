@@ -236,18 +236,18 @@ class TestGatherDataFindings:
 
     def test_sid_orphan_when_active_not_in_list(self):
         sess = _make_session(
-            active_claude_session_id="abc12345-deadbeef",
-            claude_session_ids=["ff000000-other"],
+            active_agent_session_id="abc12345-deadbeef",
+            agent_session_ids=["ff000000-other"],
         )
         assert FINDING_SID_ORPHAN in _codes(gather_data_findings(sess))
 
     def test_sid_orphan_suppressed_when_active_is_in_list(self):
         sid = "abc12345-deadbeef"
-        sess = _make_session(active_claude_session_id=sid, claude_session_ids=[sid])
+        sess = _make_session(active_agent_session_id=sid, agent_session_ids=[sid])
         assert FINDING_SID_ORPHAN not in _codes(gather_data_findings(sess))
 
     def test_sid_orphan_suppressed_when_no_active_sid(self):
-        sess = _make_session(active_claude_session_id=None, claude_session_ids=[])
+        sess = _make_session(active_agent_session_id=None, agent_session_ids=[])
         assert FINDING_SID_ORPHAN not in _codes(gather_data_findings(sess))
 
     def test_stale_activity_on_running_agent(self):
@@ -448,18 +448,18 @@ class TestGatherDataFindings:
     # ---- sids_empty_with_interactions -----------------------------------
 
     def test_sids_empty_with_interactions(self):
-        sess = _make_session(claude_session_ids=[])
+        sess = _make_session(agent_session_ids=[])
         stats = _FakeStats(interaction_count=3, input_tokens=100, output_tokens=50)
         assert FINDING_SIDS_EMPTY in _codes(gather_data_findings(sess, stats))
 
     def test_sids_empty_suppressed_when_sids_tracked(self):
-        sess = _make_session(claude_session_ids=["abc-123"])
+        sess = _make_session(agent_session_ids=["abc-123"])
         stats = _FakeStats(interaction_count=3, input_tokens=100, output_tokens=50)
         assert FINDING_SIDS_EMPTY not in _codes(gather_data_findings(sess, stats))
 
     def test_sids_empty_suppressed_without_interactions(self):
         """No interactions = no expectation of sid tracking yet."""
-        sess = _make_session(claude_session_ids=[])
+        sess = _make_session(agent_session_ids=[])
         stats = _FakeStats(interaction_count=0)
         assert FINDING_SIDS_EMPTY not in _codes(gather_data_findings(sess, stats))
 

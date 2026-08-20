@@ -183,8 +183,8 @@ def make_session(**over):
         id="agent-1",
         name="oc-agent",
         tmux_session="agents",
-        claude_session_ids=[SID],
-        active_claude_session_id=SID,
+        agent_session_ids=[SID],
+        active_agent_session_id=SID,
         start_directory=PROJECT_DIR,
         start_time=LAUNCH.isoformat(),
         wrapper=None,
@@ -257,20 +257,20 @@ class TestGetStats:
         conn.commit()
         conn.close()
         reader = OpencodeStatsReader(db_path=db)
-        stats = reader.get_stats(make_session(claude_session_ids=[SID, OTHER_SID]))
+        stats = reader.get_stats(make_session(agent_session_ids=[SID, OTHER_SID]))
         assert stats.input_tokens == 8000
 
     def test_unknown_session_falls_back_to_directory_match(self, reader):
         stats = reader.get_stats(
-            make_session(claude_session_ids=[], active_claude_session_id=None)
+            make_session(agent_session_ids=[], active_agent_session_id=None)
         )
         assert stats is not None and stats.input_tokens == 7000
 
     def test_directory_fallback_respects_the_launch_window(self, reader):
         stats = reader.get_stats(
             make_session(
-                claude_session_ids=[],
-                active_claude_session_id=None,
+                agent_session_ids=[],
+                active_agent_session_id=None,
                 start_time=(LAUNCH + timedelta(days=1)).isoformat(),
             )
         )
@@ -283,14 +283,14 @@ class TestGetStats:
         conn.close()
         reader = OpencodeStatsReader(db_path=db)
         stats = reader.get_stats(
-            make_session(claude_session_ids=[], active_claude_session_id=None)
+            make_session(agent_session_ids=[], active_agent_session_id=None)
         )
         assert stats.input_tokens == 7000
 
     def test_no_matching_row_is_unknown_not_zero(self, reader):
         stats = reader.get_stats(make_session(start_directory="/somewhere/else",
-                                              claude_session_ids=[],
-                                              active_claude_session_id=None))
+                                              agent_session_ids=[],
+                                              active_agent_session_id=None))
         assert stats is None
 
 
@@ -333,7 +333,7 @@ class TestSessionIdDiscovery:
     def test_discovers_unowned_ids(self, reader, tmp_path, monkeypatch):
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "empty"))
         found = reader.discover_session_ids(
-            make_session(claude_session_ids=[], active_claude_session_id=None), LAUNCH, []
+            make_session(agent_session_ids=[], active_agent_session_id=None), LAUNCH, []
         )
         assert found.ids == [SID]
         assert found.latest == SID
@@ -342,7 +342,7 @@ class TestSessionIdDiscovery:
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "empty"))
         other_agent = make_session(id="agent-2", name="other")
         found = reader.discover_session_ids(
-            make_session(claude_session_ids=[], active_claude_session_id=None),
+            make_session(agent_session_ids=[], active_agent_session_id=None),
             LAUNCH,
             [other_agent],
         )
@@ -359,7 +359,7 @@ class TestSessionIdDiscovery:
                         "agent_session_id": "3f8a-not-an-opencode-id"})
         )
         found = reader.discover_session_ids(
-            make_session(claude_session_ids=[], active_claude_session_id=None), LAUNCH, []
+            make_session(agent_session_ids=[], active_agent_session_id=None), LAUNCH, []
         )
         assert "3f8a-not-an-opencode-id" not in found.ids
         assert found.latest != "3f8a-not-an-opencode-id"
@@ -450,7 +450,7 @@ class TestFailureIsolation:
 
     def test_session_without_a_directory(self, reader):
         session = make_session(
-            start_directory=None, claude_session_ids=[], active_claude_session_id=None
+            start_directory=None, agent_session_ids=[], active_agent_session_id=None
         )
         assert reader.get_stats(session) is None
         assert reader.get_current_session_id(session, LAUNCH) is None
@@ -458,8 +458,8 @@ class TestFailureIsolation:
     def test_unparseable_start_time(self, reader):
         session = make_session(
             start_time="not-a-timestamp",
-            claude_session_ids=[],
-            active_claude_session_id=None,
+            agent_session_ids=[],
+            active_agent_session_id=None,
         )
         assert reader.get_stats(session) is None
 

@@ -1,5 +1,8 @@
 """
-Status detection for Claude sessions in tmux.
+Status detection for agent sessions in tmux.
+
+Backend-neutral: every glyph and marker comes from the session's
+``StatusPatterns`` set; the defaults describe Claude Code.
 """
 
 from typing import Optional, Tuple, TYPE_CHECKING
@@ -38,7 +41,7 @@ import re as _re
 
 
 class PollingStatusDetector:
-    """Detects the current status of a Claude session via tmux pane scraping."""
+    """Detects the current status of an agent session via tmux pane scraping."""
 
 
     def __init__(
@@ -106,7 +109,7 @@ class PollingStatusDetector:
         Runs detection phases in priority order, returning on first match:
         1. Terminated (window gone, empty pane)
         2. Spawn failure
-        3. Shell prompt (Claude exited)
+        3. Shell prompt (agent exited)
         4. Permission request
         5. Content changing (active work)
         6. Error output
@@ -153,9 +156,9 @@ class PollingStatusDetector:
         if spawn_error:
             return STATUS_WAITING_USER, spawn_error, content
 
-        # Phase 3: Shell prompt (Claude exited)
+        # Phase 3: Shell prompt (agent exited)
         if self._is_shell_prompt(last_lines):
-            return STATUS_TERMINATED, "Claude exited - shell prompt", content
+            return STATUS_TERMINATED, "Agent exited - shell prompt", content
 
         # Prepare filtered lines for remaining phases
         content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
@@ -526,7 +529,7 @@ class PollingStatusDetector:
                     if len(error_msg) > 80:
                         error_msg = error_msg[:77] + "..."
                     return f"Spawn failed: {error_msg}"
-            return "Spawn failed: claude command not found - is Claude CLI installed?"
+            return "Spawn failed: agent command not found - is the agent CLI installed?"
 
         return None
 

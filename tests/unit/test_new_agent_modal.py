@@ -89,7 +89,7 @@ class TestNewAgentModalState:
                       value=defaults.get("backend", "claude-code"),
                       options=["claude-code", "opencode"]),
             FormField("wrapper", "Wrapper", "text", value=wrapper_default),
-            FormField("claude_args", "Claude args", "text", value=""),
+            FormField("backend_args", "CLI args", "text", value=""),
         ]
         modal.selected_index = 2
         return modal

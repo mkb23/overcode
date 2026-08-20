@@ -2,6 +2,7 @@
 Session state management for Overcode.
 """
 
+import functools
 import json
 import os
 from datetime import datetime
@@ -24,7 +25,7 @@ except ImportError:
 
 @dataclass
 class SessionStats:
-    """Runtime statistics for a Claude session"""
+    """Runtime statistics for an agent session"""
     interaction_count: int = 0
     estimated_cost_usd: float = 0.0
     total_tokens: int = 0
@@ -33,7 +34,7 @@ class SessionStats:
     last_activity: Optional[str] = None  # ISO timestamp
     current_task: str = "Initializing..."  # one-sentence description
 
-    # Token breakdown (persisted from Claude Code history)
+    # Token breakdown (persisted from the backend's transcripts)
     input_tokens: int = 0
     output_tokens: int = 0
     cache_creation_tokens: int = 0
@@ -66,9 +67,24 @@ class SessionStats:
             return cls()
 
 
+# Phase 6 rename map: canonical field name → pre-Phase-6 (Claude-flavoured)
+# name. Drives the ``Session`` constructor/attribute aliases, the ``to_dict``
+# dual-write and the ``from_dict`` read migration, plus the equivalent
+# aliasing in ``SessionManager.update_session``.
+LEGACY_SESSION_KEYS = {
+    "agent_session_ids": "claude_session_ids",
+    "active_agent_session_id": "active_claude_session_id",
+    "extra_cli_args": "extra_claude_args",
+    "agent_persona": "claude_agent",
+}
+
+# Reverse lookup: old name → canonical name.
+CANONICAL_SESSION_KEYS = {old: new for new, old in LEGACY_SESSION_KEYS.items()}
+
+
 @dataclass
 class Session:
-    """Represents a Claude session"""
+    """Represents one agent session (Claude Code, opencode, …)"""
     id: str
     name: str
     tmux_session: str
@@ -106,14 +122,14 @@ class Session:
     # Human annotation - user's notes about this agent (#74)
     human_annotation: str = ""
 
-    # Claude sessionIds owned by this overcode session (#119)
+    # Backend session ids owned by this overcode session (#119)
     # Used to accurately calculate context window for this specific agent
-    claude_session_ids: List[str] = field(default_factory=list)
+    agent_session_ids: List[str] = field(default_factory=list)
 
-    # The currently active Claude session ID (#116)
+    # The currently active backend session ID (#116)
     # Replaced (not appended) when /clear creates a new session.
     # Used for context window calculation — only the active session matters.
-    active_claude_session_id: Optional[str] = None
+    active_agent_session_id: Optional[str] = None
 
     # Heartbeat configuration (#171)
     heartbeat_enabled: bool = False
@@ -137,12 +153,12 @@ class Session:
     loaded_skills: List[str] = field(default_factory=list)
     available_skills: List[str] = field(default_factory=list)
 
-    # Claude CLI flag passthrough (#290)
+    # Agent CLI flag passthrough (#290)
     allowed_tools: Optional[str] = None  # Comma-separated tool list for --allowedTools
-    extra_claude_args: List[str] = field(default_factory=list)  # Extra CLI flags via --claude-arg
+    extra_cli_args: List[str] = field(default_factory=list)  # Extra CLI flags via --backend-arg
     agent_teams: bool = False  # Claude Code agent teams mode (#309)
-    claude_agent: Optional[str] = None  # Claude agent persona (from .claude/agents/)
-    model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus", "haiku", or full name)
+    agent_persona: Optional[str] = None  # Agent persona (--agent), e.g. .claude/agents/
+    model: Optional[str] = None  # Model (e.g. "sonnet", "opus", or "openai/gpt-4o-mini")
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
@@ -197,9 +213,51 @@ class Session:
     # through tmux pane history.
     launcher_version: str = ""
 
+    # ---- Pre-Phase-6 attribute names -------------------------------------
+    # The fields were renamed to be backend-neutral; these keep every
+    # existing ``session.claude_session_ids`` reader and writer working.
+
+    @property
+    def claude_session_ids(self) -> List[str]:
+        return self.agent_session_ids
+
+    @claude_session_ids.setter
+    def claude_session_ids(self, value: List[str]) -> None:
+        self.agent_session_ids = value
+
+    @property
+    def active_claude_session_id(self) -> Optional[str]:
+        return self.active_agent_session_id
+
+    @active_claude_session_id.setter
+    def active_claude_session_id(self, value: Optional[str]) -> None:
+        self.active_agent_session_id = value
+
+    @property
+    def extra_claude_args(self) -> List[str]:
+        return self.extra_cli_args
+
+    @extra_claude_args.setter
+    def extra_claude_args(self, value: List[str]) -> None:
+        self.extra_cli_args = value
+
+    @property
+    def claude_agent(self) -> Optional[str]:
+        return self.agent_persona
+
+    @claude_agent.setter
+    def claude_agent(self, value: Optional[str]) -> None:
+        self.agent_persona = value
+
     def to_dict(self) -> dict:
         # asdict() recursively converts nested dataclasses (stats)
-        return asdict(self)
+        data = asdict(self)
+        # Emit the pre-Phase-6 keys alongside the new ones for one release,
+        # so an older overcode (or an older sister) reading this state file
+        # still finds the fields where it expects them.
+        for new_key, old_key in LEGACY_SESSION_KEYS.items():
+            data[old_key] = data[new_key]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> Optional['Session']:
@@ -242,11 +300,35 @@ class Session:
         if 'enhanced_context_enabled' not in filtered and 'time_context_enabled' in data:
             filtered['enhanced_context_enabled'] = data['time_context_enabled']
 
+        # Backward compat: pre-Phase-6 Claude-flavoured field names. A state
+        # file written by an older overcode carries only the old keys; the new
+        # key wins whenever both are present.
+        for new_key, old_key in LEGACY_SESSION_KEYS.items():
+            if new_key not in filtered and old_key in data:
+                filtered[new_key] = data[old_key]
+
         try:
             return cls(**filtered)
         except TypeError:
             # Type mismatch or other issue - session is corrupt
             return None
+
+
+def _accept_legacy_kwargs(init):
+    """Let ``Session(...)`` still be constructed with the pre-Phase-6 names."""
+
+    @functools.wraps(init)
+    def wrapper(self, *args, **kwargs):
+        for old_key, new_key in CANONICAL_SESSION_KEYS.items():
+            if old_key in kwargs:
+                value = kwargs.pop(old_key)
+                kwargs.setdefault(new_key, value)
+        init(self, *args, **kwargs)
+
+    return wrapper
+
+
+Session.__init__ = _accept_legacy_kwargs(Session.__init__)
 
 
 class SessionManager:
@@ -593,15 +675,16 @@ class SessionManager:
                       standing_instructions: str = "",
                       permissiveness_mode: str = "normal",
                       allowed_tools: Optional[str] = None,
-                      extra_claude_args: Optional[List[str]] = None,
+                      extra_cli_args: Optional[List[str]] = None,
                       agent_teams: bool = False,
-                      claude_agent: Optional[str] = None,
+                      agent_persona: Optional[str] = None,
                       model: Optional[str] = None,
                       provider: str = "web",
                       backend: str = "claude-code",
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
-                      launcher_version: str = "") -> Session:
+                      launcher_version: str = "",
+                      **legacy_kwargs) -> Session:
         """Create and register a new session.
 
         Args:
@@ -613,10 +696,29 @@ class SessionManager:
             standing_instructions: Initial standing instructions (e.g., from config)
             permissiveness_mode: Permission mode (normal, permissive, bypass)
             allowed_tools: Comma-separated tool list for --allowedTools
-            extra_claude_args: Extra Claude CLI flags via --claude-arg
+            extra_cli_args: Extra agent-CLI flags via --backend-arg
+            agent_persona: Agent persona name passed as --agent
             backend: Agent CLI backend name (see overcode.backends)
             session_id: Optional pre-generated session ID (used when ID must be known before window creation)
+            **legacy_kwargs: Pre-Phase-6 parameter names (extra_claude_args,
+                claude_agent) are still accepted.
         """
+        # Only the two renamed fields that are actually create_session
+        # parameters are aliased; anything else falls through to the
+        # TypeError below rather than being silently dropped.
+        if "extra_claude_args" in legacy_kwargs:
+            value = legacy_kwargs.pop("extra_claude_args")
+            if extra_cli_args is None:
+                extra_cli_args = value
+        if "claude_agent" in legacy_kwargs:
+            value = legacy_kwargs.pop("claude_agent")
+            if agent_persona is None:
+                agent_persona = value
+        if legacy_kwargs:
+            raise TypeError(
+                f"create_session() got unexpected keyword arguments: "
+                f"{', '.join(sorted(legacy_kwargs))}"
+            )
         if self._skip_git_detection:
             repo_name, branch = None, None
         else:
@@ -635,9 +737,9 @@ class SessionManager:
             standing_instructions=standing_instructions,
             permissiveness_mode=permissiveness_mode,
             allowed_tools=allowed_tools,
-            extra_claude_args=extra_claude_args or [],
+            extra_cli_args=extra_cli_args or [],
             agent_teams=agent_teams,
-            claude_agent=claude_agent,
+            agent_persona=agent_persona,
             model=model,
             provider=provider,
             backend=backend,
@@ -779,7 +881,19 @@ class SessionManager:
         return None
 
     def update_session(self, session_id: str, **kwargs):
-        """Update session fields"""
+        """Update session fields.
+
+        Renamed fields are written under both their canonical and their
+        pre-Phase-6 key so a state file stays readable by an older overcode
+        for one release; either name may be passed in.
+        """
+        for old_key, new_key in CANONICAL_SESSION_KEYS.items():
+            if old_key in kwargs:
+                kwargs.setdefault(new_key, kwargs.pop(old_key))
+                kwargs.pop(old_key, None)
+        for new_key, old_key in LEGACY_SESSION_KEYS.items():
+            if new_key in kwargs:
+                kwargs[old_key] = kwargs[new_key]
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id].update(kwargs)
@@ -842,38 +956,42 @@ class SessionManager:
         """Set human annotation for a session (#74)."""
         self.update_session(session_id, human_annotation=annotation)
 
-    def add_claude_session_id(self, session_id: str, claude_session_id: str) -> bool:
-        """Add a Claude sessionId to a session's owned list if not already present.
+    def add_agent_session_id(self, session_id: str, agent_session_id: str) -> bool:
+        """Add a backend sessionId to a session's owned list if not present.
 
-        This tracks which Claude sessionIds belong to this overcode agent,
+        This tracks which backend sessionIds belong to this overcode agent,
         enabling accurate context window calculation when multiple agents
         run in the same directory (#119).
 
         Args:
             session_id: The overcode session ID
-            claude_session_id: The Claude Code sessionId to add
+            agent_session_id: The backend's own sessionId to add
 
         Returns:
             True if the sessionId was added, False if already present or session not found
         """
         session = self.get_session(session_id)
-        if not session or claude_session_id in session.claude_session_ids:
+        if not session or agent_session_id in session.agent_session_ids:
             return False
 
         with self._locked_state() as state:
             if session_id in state:
-                ids = state[session_id].get('claude_session_ids', [])
-                if claude_session_id not in ids:
-                    ids.append(claude_session_id)
-                    state[session_id]['claude_session_ids'] = ids
+                entry = state[session_id]
+                ids = entry.get('agent_session_ids')
+                if ids is None:
+                    ids = entry.get('claude_session_ids', [])
+                if agent_session_id not in ids:
+                    ids.append(agent_session_id)
+                entry['agent_session_ids'] = ids
+                entry['claude_session_ids'] = ids
         return True
 
-    def set_active_claude_session_id(self, session_id: str, claude_session_id: str):
-        """Set the active Claude session ID for context tracking (#116).
+    def set_active_agent_session_id(self, session_id: str, agent_session_id: str):
+        """Set the active backend session ID for context tracking (#116).
 
-        Unlike add_claude_session_id which accumulates, this replaces the
-        active session. After /clear, Claude creates a new session and only
-        that session's context window is relevant.
+        Unlike add_agent_session_id which accumulates, this replaces the
+        active session. After /clear the backend starts a new session and
+        only that session's context window is relevant.
         """
         session = self.get_session(session_id)
         if not session:
@@ -881,7 +999,12 @@ class SessionManager:
 
         with self._locked_state() as state:
             if session_id in state:
-                state[session_id]['active_claude_session_id'] = claude_session_id
+                state[session_id]['active_agent_session_id'] = agent_session_id
+                state[session_id]['active_claude_session_id'] = agent_session_id
+
+    # Pre-Phase-6 method names.
+    add_claude_session_id = add_agent_session_id
+    set_active_claude_session_id = set_active_agent_session_id
 
     # =========================================================================
     # Agent Hierarchy (#244)

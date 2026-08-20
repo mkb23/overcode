@@ -16,7 +16,7 @@ from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
 from ..status_patterns import extract_from_pane, extract_sleep_duration
-from ..history_reader import ClaudeSessionStats
+from ..history_reader import AgentSessionStats
 from ..stats_reader import stats_reader_for_session
 from ..tui_helpers import (
     calculate_uptime,
@@ -87,7 +87,7 @@ class SessionSummary(Static, can_focus=True):
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
-        self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
+        self.claude_stats: Optional[AgentSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         self.git_untracked_count: Optional[int] = None  # Untracked file count (#455)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
@@ -194,7 +194,7 @@ class SessionSummary(Static, can_focus=True):
         from ..status_patterns import get_patterns
         return get_patterns(session_backend_name(self.session))
 
-    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
+    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[AgentSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
         """Apply pre-fetched status data without triggering refresh.
 
         Used for batched updates where the caller will refresh once at the end.

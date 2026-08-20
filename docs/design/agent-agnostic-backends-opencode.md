@@ -2,8 +2,30 @@
 
 **Document Type:** Design Assessment + Phased Implementation Plan
 **Date:** August 2026
-**Status:** Proposal
+**Status:** Implemented (Phases 1–6, Aug 2026)
 **Scope:** Making overcode *partially* agent-agnostic, with the opencode CLI (opencode.ai) as the second supported backend
+
+> **Shipped.** All six phases landed. User-facing documentation is
+> `docs/backends.md`; the architecture write-up is `docs/architecture.md`
+> (§Agent Backends). Where reality diverged from this plan, the phase
+> sections below carry a dated note and **Appendix A is the authority** on
+> opencode's actual behaviour. The headline divergences:
+>
+> 1. **Three Phase-4 flag/gesture assumptions were wrong** — `--permissions`
+>    does not exist, `ctrl+x q` is unnecessary and a bare `C-c` kills
+>    opencode outright, and opencode draws no prompt glyph at all.
+> 2. **opencode calls every export of a plugin module as a plugin factory**,
+>    so the bundled telemetry plugin has exactly one export (Phase 5).
+> 3. **`--fork` and `--agent` both turned out to be real**, so `FORK` is on
+>    and personas work — better than the plan assumed.
+> 4. **Phase 6 added capability publication to the sister protocol**
+>    (`SessionDaemonState.backend_capabilities`), which §5's item 2 only
+>    sketched. Old sisters report nothing and are read as claude-code-full.
+> 5. **`--claude-arg` became `--backend-arg`** with the old spelling kept as
+>    a hidden alias, and `Session`'s renamed fields are read under both key
+>    sets and written under both for one release — the "on-disk migration is
+>    a non-event" claim held, but `to_dict` dual-writes so a *downgrade* is
+>    also safe.
 
 ---
 
@@ -315,6 +337,20 @@ Ground rules for every phase:
 
 ### Phase 6 — Naming, docs, and hardening
 
+> **Shipped Aug 2026.** Renames landed with aliases on every public surface
+> (`ClaudeLauncher`/`AgentLauncher`, `claude_session_ids`/`agent_session_ids`,
+> `active_claude_session_id`/`active_agent_session_id`, `extra_claude_args`/
+> `extra_cli_args`, `claude_agent`/`agent_persona`, `ClaudeNotFoundError`/
+> `AgentCliNotFoundError`, `ClaudeSessionStats`/`AgentSessionStats`,
+> `--claude-arg`/`--backend-arg`). Two additions beyond the plan:
+> `SessionDaemonState.backend_capabilities` (serialized flag names, published
+> by the monitor daemon and consumed by sister TUIs), and `OVERCODE_BACKEND`
+> in the launch env prefix for non-default backends only, so a Claude Code
+> launch line stays byte-identical while `devcontainer.sh` can pick which CLI
+> to install. The one *removal* from the plan: no allow-failure CI job runs
+> the pattern corpus against latest opencode — the committed corpus plus
+> `doctor`'s version-range check cover drift without a scheduled network job.
+
 **Objective:** pay down naming debt, finish capability-gated UX polish, cross-machine story.
 
 **Key work items:**
@@ -382,7 +418,9 @@ A pragmatic descope if velocity matters: ship Phase 4 with polling-only status a
 | Sandbox probe | loopback-listener heuristic | ✗ | ✅ |
 | Mouse capture under tmux | n/a | Not observed to interfere: `send-keys`/`capture-pane` worked throughout corpus capture without touching TUI config | ⚠️ not stress-tested |
 
-Not verified in Phase 4, deliberately: reasoning/"thinking" chrome (no reasoning-capable model was driven, so `thinking_markers` is left empty rather than guessed) and the pane opencode renders *after* an actual interrupt (that field feeds the hook detector, which opencode does not use yet).
+| Post-interrupt pane | `Interrupted by user` / `Interrupted · What should Claude do instead?` | `▣  Build · GPT-4o mini · interrupted` — a suffix on the finished-turn footer pill, not inline transcript text. Persists indefinitely; the partial response is left unmarked | ✅ new finding (Phase 6) |
+
+Still not verified, deliberately: reasoning/"thinking" chrome — no reasoning-capable model was driven, so `thinking_markers` is left empty rather than guessed.
 
 ## Appendix B — Research provenance
 

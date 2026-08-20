@@ -30,7 +30,7 @@ def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | N
         Returns False (with notification) if no agent is focused.
     """
     from ..tui_widgets import SessionSummary
-    from ..launcher import ClaudeLauncher
+    from ..launcher import AgentLauncher
 
     focused = tui.focused
     if not isinstance(focused, SessionSummary):
@@ -48,7 +48,7 @@ def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | N
     if auto_wake:
         tui._auto_wake_if_sleeping(session, focused)
 
-    launcher = ClaudeLauncher(
+    launcher = AgentLauncher(
         tmux_session=tui.tmux_session,
         session_manager=tui.session_manager
     )

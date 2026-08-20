@@ -78,17 +78,67 @@ def session_backend_name(session: Any) -> str:
     return DEFAULT_BACKEND
 
 
+def capability_names(capabilities: BackendCapability) -> List[str]:
+    """Serialize a capability flag set to sorted member names.
+
+    This is the wire form: ``SessionDaemonState.backend_capabilities`` and
+    therefore the sister protocol carry these strings, so a newer sister can
+    tell an older TUI what its backends can do.
+    """
+    return sorted(
+        member.name
+        for member in BackendCapability
+        if member.name and member.value and (capabilities & member)
+    )
+
+
+def capabilities_from_names(names: Any) -> BackendCapability:
+    """Parse serialized capability names back into a flag set.
+
+    Unknown names are ignored: a sister running a newer overcode may report
+    capabilities this build has never heard of.
+    """
+    result = BackendCapability.NONE
+    if not isinstance(names, (list, tuple, set)):
+        return result
+    for name in names:
+        member = getattr(BackendCapability, name, None) if isinstance(name, str) else None
+        if isinstance(member, BackendCapability):
+            result |= member
+    return result
+
+
+def session_capabilities(session: Any) -> BackendCapability:
+    """Capabilities of the backend behind a session.
+
+    Remote (sister) agents are answered from the capability list their own
+    daemon published, so a sister can run a backend this host doesn't have.
+    Sisters predating Phase 6 report nothing; they are assumed to be
+    claude-code with the full capability set (design §3, consequence 5).
+    """
+    # Strict bool check: callers hand us duck-typed stand-ins whose every
+    # attribute is truthy, and misreading one as remote would silently swap
+    # in another host's capability answer.
+    is_remote = getattr(session, "is_remote", False)
+    if isinstance(is_remote, bool) and is_remote:
+        remote_state = getattr(session, "remote_daemon_state", None)
+        if isinstance(remote_state, dict) and remote_state.get("backend_capabilities"):
+            return capabilities_from_names(remote_state["backend_capabilities"])
+        return get_backend(DEFAULT_BACKEND).capabilities
+    try:
+        backend = get_backend(session_backend_name(session))
+    except UnknownBackendError:
+        return BackendCapability.NONE
+    return backend.capabilities
+
+
 def session_supports(session: Any, capability: BackendCapability) -> bool:
     """True when the session's backend declares ``capability``.
 
     An unknown backend name answers False — an adapter overcode doesn't
     have can't be assumed to support anything.
     """
-    try:
-        backend = get_backend(session_backend_name(session))
-    except UnknownBackendError:
-        return False
-    return supports(backend, capability)
+    return bool(session_capabilities(session) & capability)
 
 
 __all__ = [
@@ -101,10 +151,13 @@ __all__ = [
     "KeyPress",
     "LaunchSpec",
     "UnknownBackendError",
+    "capabilities_from_names",
+    "capability_names",
     "get_backend",
     "list_backends",
     "register_backend",
     "session_backend_name",
+    "session_capabilities",
     "session_supports",
     "unregister_backend",
     "supports",

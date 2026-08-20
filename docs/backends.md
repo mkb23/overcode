@@ -259,10 +259,13 @@ Known rough edges, honestly:
 - **UNVERIFIED: thinking/reasoning chrome.** No reasoning-capable model was
   driven during corpus capture, so the thinking markers are empty rather
   than guessed.
-- **UNVERIFIED: post-interrupt pane.** The prompt opencode shows after an
-  actual interrupt was not captured. That field also feeds the hook detector's
-  "the user hit Escape mid-turn" check, so an interrupted opencode agent stays
-  green until its next event.
+- **Interrupts are detected from a status-pill suffix.** Pressing Escape
+  twice mid-generation rewrites the assistant turn's footer from
+  `▣  Build · GPT-4o mini` to `▣  Build · GPT-4o mini · interrupted`, and
+  leaves it there. `· interrupted` is what the hook detector matches to
+  downgrade a stuck `running` to `waiting_user`; the busy hint
+  (`esc again to interrupt`) never contains it. Captured live in Phase 6 —
+  see `tests/fixtures_opencode_panes/interrupted.txt`.
 
 ---
 
@@ -305,6 +308,60 @@ its permission dialog wants. Prefer them over the raw `overcode send <name>
 enter` / `escape`, which still exist and still send literal keys. Supervisor
 context lines name a non-default backend (`Backend: opencode`) so the
 supervisor knows not to send Claude slash commands at it.
+
+---
+
+## Containers: the devcontainer wrapper
+
+`--wrapper devcontainer` works for either backend. The launcher exports
+`OVERCODE_BACKEND` into the wrapper's environment for any non-default
+backend (Claude Code leaves it unset, so the wrapper's behaviour there is
+byte-for-byte what it was before), and the wrapper keys its install step
+off it:
+
+| `OVERCODE_BACKEND` | installs | `overcode hooks install` |
+|---|---|---|
+| unset / `claude-code` | `npm i -g @anthropic-ai/claude-code` | yes |
+| `opencode` | `npm i -g opencode-ai@latest` | skipped — no settings.json hook protocol |
+
+opencode's telemetry still reaches the host: the plugin is staged into the
+project directory, which is bind-mounted as `/workspace`, and the hook-state
+exchange directory is already mounted at `/overcode-state`. Provider
+credentials present in your shell (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`) are forwarded into the container.
+
+---
+
+## Mixed fleets across machines
+
+Sisters publish each agent's backend **and** its serialized capability list
+in `SessionDaemonState` (`backend`, `backend_capabilities`), which rides the
+existing raw daemon-state passthrough. A TUI therefore gates remote actions
+on what the *remote* backend can do — including backends the local build has
+never heard of — and grays out, for example, fork on a backend without it.
+
+A sister running a version older than this reports neither field. Those
+agents are read as `claude-code` with the full capability set, which is what
+they effectively were.
+
+---
+
+## Naming
+
+The launch flag for passing raw CLI arguments through is `--backend-arg`.
+`--claude-arg` is still accepted as a hidden deprecated alias.
+
+Internally the Claude-flavoured names were renamed in Phase 6 with
+backward-compatible aliases on every public surface — `ClaudeLauncher` →
+`AgentLauncher`, `Session.claude_session_ids` → `agent_session_ids`,
+`Session.active_claude_session_id` → `active_agent_session_id`,
+`Session.extra_claude_args` → `extra_cli_args`, `Session.claude_agent` →
+`agent_persona`, `ClaudeNotFoundError` → `AgentCliNotFoundError`,
+`ClaudeSessionStats` → `AgentSessionStats`. Persisted `sessions.json` is read
+under both key sets and written under both for one release, so downgrading is
+safe. Deliberately *not* renamed: hook-state file keys, `OVERCODE_*` env vars,
+`CLAUDE_COMMAND` (the mock-harness contract), supervisor-daemon internals, and
+web API response keys.
 
 ---
 

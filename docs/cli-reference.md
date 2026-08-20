@@ -23,8 +23,9 @@ overcode launch --name <name> [options]
 | `--follow` | `-f` | Stream child output, block until report or timeout |
 | `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail`, `timeout:DURATION` |
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
-| `--allowed-tools` | | Comma-separated tools for Claude (e.g., `Read,Glob,Grep,Edit`). Maps to `--allowedTools` |
-| `--claude-arg` | | Extra Claude CLI flag (repeatable). Each value is a space-separated flag+value string |
+| `--allowed-tools` | | Comma-separated tools to allow (e.g., `Read,Glob,Grep,Edit`). Claude Code only — maps to `--allowedTools`; ignored for opencode, which has no such flag |
+| `--backend-arg` | | Extra agent-CLI flag (repeatable). Each value is a space-separated flag+value string. `--claude-arg` is a deprecated alias |
+| `--backend` | `-B` | Agent CLI backend: `claude-code` (default) or `opencode`. See [Backends](backends.md) |
 | `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
@@ -52,13 +53,13 @@ overcode launch -n subtask --follow --oversight-timeout 5m -p "Fix the bug. When
 # Restrict agent to read-only tools
 overcode launch -n reviewer -d ~/project --allowed-tools "Read,Glob,Grep" --skip-permissions
 
-# Pass extra Claude CLI flags
-overcode launch -n fast -d ~/project --claude-arg "--model haiku" --claude-arg "--effort low"
+# Pass extra agent-CLI flags
+overcode launch -n fast -d ~/project --backend-arg "--model haiku" --backend-arg "--effort low"
 
 # Enable Claude-in-Chrome integration (requires the Claude for Chrome extension
 # and a claude.ai Pro/Max/Team/Enterprise subscription — NOT supported with
 # --provider bedrock as of 2026-04; see anthropics/claude-code#16128)
-overcode launch -n web -d ~/project --claude-arg --chrome
+overcode launch -n web -d ~/project --backend-arg --chrome
 
 # Launch with a cost budget (auto-deducted from parent if parent has budget)
 overcode launch -n task --budget 2.00 -p "Fix the bug. When done: overcode report --status success"

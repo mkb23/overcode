@@ -1,7 +1,7 @@
 """
 Agent selection modal for TUI.
 
-Keyboard-navigable list to pick a Claude agent persona before launching.
+Keyboard-navigable list to pick an agent persona before launching.
 """
 
 from typing import List, Optional, Any
@@ -14,10 +14,10 @@ from .modal_base import ModalBase
 
 
 class AgentSelectModal(ModalBase):
-    """Modal dialog for selecting a Claude agent.
+    """Modal dialog for selecting an agent persona.
 
     Navigate with j/k or up/down arrows.
-    Press Enter to select, q/Esc to skip (default Claude).
+    Press Enter to select, q/Esc to skip (the backend's default agent).
     """
 
     class AgentSelected(Message):
@@ -40,8 +40,8 @@ class AgentSelectModal(ModalBase):
         text.append("Select Agent\n", style="bold cyan")
         text.append("j/k:move  enter:select  q:skip\n\n", style="dim")
 
-        # First option is always "(none) — default Claude"
-        options = ["(none) \u2014 default Claude"] + self._agents
+        # First option is always "(none) — backend default"
+        options = ["(none) \u2014 backend default"] + self._agents
 
         for i, label in enumerate(options):
             is_selected = i == self.selected_index

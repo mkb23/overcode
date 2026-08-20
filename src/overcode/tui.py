@@ -26,10 +26,10 @@ from . import __version__, get_dev_version_suffix
 from .session_manager import SessionManager, Session
 from .job_manager import Job, JobManager
 from .job_launcher import JobLauncher
-from .launcher import ClaudeLauncher
+from .launcher import AgentLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import ClaudeSessionStats, HistoryFile, synthesize_remote_stats
+from .history_reader import AgentSessionStats, HistoryFile, synthesize_remote_stats
 from .stats_reader import stats_reader_for_session
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
@@ -279,7 +279,7 @@ class SupervisorTUI(
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
-        self.launcher = ClaudeLauncher(tmux_session)
+        self.launcher = AgentLauncher(tmux_session)
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
@@ -2936,7 +2936,7 @@ class SupervisorTUI(
                     break
             self.notify(f"Woke agent '{message.session_name}' to send command", severity="information")
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3185,8 +3185,8 @@ class SupervisorTUI(
                     return
 
             permissions = "bypass" if message.bypass_permissions else "normal"
-            if message.extra_claude_args:
-                self.notify("Claude args are not yet supported for remote launches — ignored", severity="warning")
+            if message.extra_cli_args:
+                self.notify("Backend args are not yet supported for remote launches — ignored", severity="warning")
             from .backends import DEFAULT_BACKEND
             if message.backend and message.backend != DEFAULT_BACKEND:
                 self.notify(
@@ -3215,7 +3215,7 @@ class SupervisorTUI(
                 self.notify(f"Remote launch failed: {result.error}", severity="error")
         else:
             # Launch locally
-            launcher = ClaudeLauncher(
+            launcher = AgentLauncher(
                 tmux_session=self.tmux_session,
                 session_manager=self.session_manager,
             )
@@ -3225,11 +3225,11 @@ class SupervisorTUI(
                     start_directory=message.directory,
                     dangerously_skip_permissions=message.bypass_permissions,
                     agent_teams=message.agent_teams,
-                    claude_agent=message.claude_agent,
+                    agent_persona=message.agent_persona,
                     provider=message.provider,
                     backend=message.backend,
                     wrapper=message.wrapper,
-                    extra_claude_args=message.extra_claude_args or None,
+                    extra_cli_args=message.extra_cli_args or None,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:
@@ -3276,7 +3276,7 @@ class SupervisorTUI(
                 self.notify(f"Failed to fork remote agent: {e}", severity="error")
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3401,7 +3401,7 @@ class SupervisorTUI(
         terminated_session = replace(session_copy, status="terminated")
 
         # Use launcher to kill the session
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3467,7 +3467,7 @@ class SupervisorTUI(
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).
 
-        Delegates to ClaudeLauncher.restart, which rebuilds the full launch
+        Delegates to AgentLauncher.restart, which rebuilds the full launch
         environment (hooks/permissions --settings, wrapper, env prefix,
         model, persona, allowed tools, extra args) from the stored Session
         and relaunches in the existing tmux window, resuming the prior
@@ -3476,7 +3476,7 @@ class SupervisorTUI(
         If the tmux window is gone (terminated agent), delegates to
         _execute_revive.
         """
-        from .launcher import ClaudeLauncher
+        from .launcher import AgentLauncher
         from .tmux_manager import TmuxManager
         session = focused.session
         session_name = session.name
@@ -3486,7 +3486,7 @@ class SupervisorTUI(
             self._execute_revive(focused, tmux)
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             self.tmux_session,
             tmux_manager=tmux,
             session_manager=self.session_manager,
@@ -3499,16 +3499,16 @@ class SupervisorTUI(
     def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
         """Revive a terminated agent by creating a new tmux window and relaunching.
 
-        Delegates to ClaudeLauncher.revive, which rebuilds the full launch
+        Delegates to AgentLauncher.revive, which rebuilds the full launch
         environment from the stored Session (hooks/permissions --settings,
         wrapper, env prefix, model, persona, allowed tools, extra args) and
         resumes the prior Claude conversation when available.
         """
-        from .launcher import ClaudeLauncher
+        from .launcher import AgentLauncher
         session = focused.session
         session_name = session.name
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             self.tmux_session,
             tmux_manager=tmux,
             session_manager=self.session_manager,
@@ -3522,7 +3522,7 @@ class SupervisorTUI(
             del self._terminated_sessions[session.id]
         self._terminated_times.pop(session.id, None)
 
-        resume_info = " (resuming session)" if session.active_claude_session_id else ""
+        resume_info = " (resuming session)" if session.active_agent_session_id else ""
         self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
         self.refresh_sessions()
 
@@ -3769,7 +3769,7 @@ class SupervisorTUI(
             self._dialog_did_close()
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )

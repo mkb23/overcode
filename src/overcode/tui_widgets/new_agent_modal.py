@@ -6,7 +6,7 @@ defaults.  The user can review, tweak individual fields, and press 'a'
 to launch — locally or on a remote sister.
 
 Field types:
-  text   — inline editable (directory, name, wrapper, claude_args)
+  text   — inline editable (directory, name, wrapper, backend_args)
   toggle — space/enter cycles through options (host, perms, teams, provider)
   select — space/enter cycles through a dynamic list (agent persona)
 """
@@ -82,11 +82,11 @@ class NewAgentModal(ModalBase):
             name: str,
             bypass_permissions: bool,
             agent_teams: bool,
-            claude_agent: Optional[str],
+            agent_persona: Optional[str],
             provider: str,
             backend: str,
             wrapper: Optional[str],
-            extra_claude_args: List[str],
+            extra_cli_args: List[str],
         ) -> None:
             super().__init__()
             self.host = host
@@ -95,11 +95,11 @@ class NewAgentModal(ModalBase):
             self.name = name
             self.bypass_permissions = bypass_permissions
             self.agent_teams = agent_teams
-            self.claude_agent = claude_agent
+            self.agent_persona = agent_persona
             self.provider = provider
             self.backend = backend
             self.wrapper = wrapper
-            self.extra_claude_args = extra_claude_args
+            self.extra_cli_args = extra_cli_args
 
     class Cancelled(Message):
         pass
@@ -134,7 +134,7 @@ class NewAgentModal(ModalBase):
         Args:
             directory: Initial working directory (usually cwd).
             defaults: Dict from get_new_agent_defaults().
-            agents: Available Claude agent personas (from scan_agents).
+            agents: Available agent personas (from scan_agents).
             existing_names: Names already in use (for uniqueness check).
             local_hostname: Name of the local machine.
             sister_names: Names of available remote sisters (omit if none).
@@ -178,7 +178,7 @@ class NewAgentModal(ModalBase):
             FormField("provider",  "Provider",  "toggle", value=defaults.get("provider", "web"), options=["web", "bedrock"]),
             FormField("backend",   "Backend",   "toggle", value=backend_default, options=backend_options),
             FormField("wrapper",   "Wrapper",   "text",   value=wrapper_default),
-            FormField("claude_args", "Claude args", "text", value=""),
+            FormField("backend_args", "CLI args", "text", value=""),
         ]
 
         self._editing = False
@@ -286,16 +286,16 @@ class NewAgentModal(ModalBase):
                 )
                 return
             d["directory"] = str(local_dir)
-        raw_args = d.get("claude_args", "").strip()
+        raw_args = d.get("backend_args", "").strip()
         if raw_args:
             try:
                 shlex.split(raw_args)  # syntax-check (balanced quotes etc)
             except ValueError as e:
-                self.notify(f"Invalid Claude args: {e}", severity="error")
+                self.notify(f"Invalid CLI args: {e}", severity="error")
                 return
-            extra_claude_args = [raw_args]
+            extra_cli_args = [raw_args]
         else:
-            extra_claude_args = []
+            extra_cli_args = []
         self.post_message(self.LaunchRequested(
             host=host,
             is_remote=is_remote,
@@ -303,11 +303,11 @@ class NewAgentModal(ModalBase):
             name=d["name"],
             bypass_permissions=(d["perms"] == "bypass"),
             agent_teams=(d["teams"] == "on"),
-            claude_agent=agent,
+            agent_persona=agent,
             provider=d["provider"],
             backend=d["backend"],
             wrapper=wrapper,
-            extra_claude_args=extra_claude_args,
+            extra_cli_args=extra_cli_args,
         ))
         self._hide()
 

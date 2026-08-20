@@ -36,7 +36,7 @@ from overcode.web_control_api import (
 
 # Patch targets at source modules (lazy imports inside functions)
 SM_PATH = "overcode.session_manager.SessionManager"
-LAUNCHER_PATH = "overcode.launcher.ClaudeLauncher"
+LAUNCHER_PATH = "overcode.launcher.AgentLauncher"
 TMUX_PATH = "overcode.tmux_manager.TmuxManager"
 
 
@@ -153,7 +153,7 @@ class TestSendKeyToAgent:
         assert exc_info.value.status == 400
 
     @pytest.mark.parametrize("gesture", ["approve", "reject"])
-    @patch("overcode.launcher.ClaudeLauncher")
+    @patch("overcode.launcher.AgentLauncher")
     @patch(SM_PATH)
     def test_gestures_go_through_the_backend_aware_launcher(
         self, MockSM, MockLauncher, gesture

@@ -372,7 +372,7 @@ class TestSendEscapeToFocused:
 
         mock_tui._send_remote_key.assert_called_once_with(mock_session, "escape")
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_sends_escape_to_local_agent(self, MockLauncher):
         """Should send escape to local agent via launcher (async, post notify via call_from_thread)."""
         from overcode.tui_actions.input import InputActionsMixin
@@ -405,7 +405,7 @@ class TestSendEscapeToFocused:
         assert "Sent Escape" in args[0][1]
         assert args[1]["severity"] == "information"
 
-    @patch("overcode.launcher.ClaudeLauncher", autospec=True)
+    @patch("overcode.launcher.AgentLauncher", autospec=True)
     def test_notifies_error_on_failed_send(self, MockLauncher):
         """Should notify error when send fails (async, posted via call_from_thread)."""
         from overcode.tui_actions.input import InputActionsMixin

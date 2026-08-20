@@ -24,7 +24,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
-from ..exceptions import ClaudeNotFoundError
+from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import StatusPatterns
 from .base import (
     BackendCapability,
@@ -37,11 +37,12 @@ if TYPE_CHECKING:
     from ..stats_reader import StatsReader
 
 
-class OpencodeNotFoundError(ClaudeNotFoundError):
+class OpencodeNotFoundError(AgentCliNotFoundError):
     """Raised when the opencode CLI isn't on PATH.
 
-    Subclasses ``ClaudeNotFoundError`` so the launcher's existing
-    "agent CLI missing" handling catches it without a new except clause.
+    Subclasses ``AgentCliNotFoundError`` (aka ``ClaudeNotFoundError``) so the
+    launcher's existing "agent CLI missing" handling catches it without a new
+    except clause.
     """
 
 
@@ -342,10 +343,12 @@ OPENCODE_PATTERNS = OpencodeStatusPatterns(
 
     # Hook-detector-only field: it downgrades a stuck RUNNING to waiting_user
     # when the user has interrupted the turn from the keyboard.
-    # UNVERIFIED: the post-interrupt pane was never captured, so this is left
-    # empty rather than guessed — an interrupted opencode agent stays green
-    # until its next bus event.
-    interrupt_prompt_markers=[],
+    # Captured live in Phase 6 (v1.18.19): a double-Escape mid-generation
+    # rewrites the assistant turn's footer pill from "▣  Build · GPT-4o mini"
+    # to "▣  Build · GPT-4o mini · interrupted" and leaves it there. The model
+    # name varies, so the stable part is the trailing "· interrupted"; the
+    # busy hint ("esc again to interrupt") never contains it.
+    interrupt_prompt_markers=["· interrupted"],
 
     tool_execution_pattern=(
         r'^\w+\s+'

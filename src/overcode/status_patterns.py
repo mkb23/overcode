@@ -2,7 +2,8 @@
 Centralized status detection patterns.
 
 This module contains all the pattern lists used by StatusDetector to identify
-Claude's current state. Centralizing these makes them:
+an agent's current state. One ``StatusPatterns`` instance per backend; the
+defaults describe Claude Code. Centralizing these makes them:
 - Easier to maintain and extend
 - Testable in isolation
 - Potentially configurable via config file in the future
@@ -18,7 +19,7 @@ from typing import Dict, List, Optional, Tuple
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 # Shell prompt patterns — shared between PollingStatusDetector and HookStatusDetector
-# These detect when Claude Code has exited and the user is back at a shell prompt.
+# These detect when the agent CLI has exited and the user is back at a shell prompt.
 SHELL_PROMPT_PATTERNS = [
     re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
     re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%

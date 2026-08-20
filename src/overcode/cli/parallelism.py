@@ -63,9 +63,9 @@ def parallelism(
     is safe. Use it as a quick sanity-check before launching more
     children from a parent agent.
     """
-    from ..launcher import ClaudeLauncher
+    from ..launcher import AgentLauncher
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     sessions = [
         s for s in launcher.list_sessions(detect_terminated=False)
         if s.status not in ("terminated", "done")
