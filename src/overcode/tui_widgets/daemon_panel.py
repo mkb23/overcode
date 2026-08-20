@@ -13,6 +13,7 @@ from textual.widgets import Static
 from textual import work
 from rich.text import Text
 
+from ..daemon_logging import tail_file_lines
 from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from ..settings import get_session_dir
 from ..tui_helpers import (
@@ -58,14 +59,13 @@ class DaemonPanel(Static):
 
         if log_file.exists():
             try:
-                with open(log_file, 'r') as f:
-                    if not self.log_lines:
-                        # First read: get last 100 lines
-                        all_lines = f.readlines()
-                        new_log_lines = [l.rstrip() for l in all_lines[-100:]]
-                        new_file_pos = f.tell()
-                    else:
-                        # Subsequent reads: only new content
+                # Re-tail from scratch on first read or after rotation shrinks
+                # the file below our saved offset; bounded so a huge log never
+                # gets slurped whole.
+                if not self.log_lines or log_file.stat().st_size < self._log_file_pos:
+                    new_log_lines, new_file_pos = tail_file_lines(log_file, max_lines=100)
+                else:
+                    with open(log_file, 'r') as f:
                         f.seek(self._log_file_pos)
                         new_content = f.read()
                         new_file_pos = f.tell()

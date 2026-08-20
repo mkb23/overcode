@@ -444,13 +444,33 @@ class HookStatusDetector:
     def _read_recent_events(self, session_name: str, limit: int = _RECENT_EVENTS_LIMIT) -> list:
         """Return recent event records from the append-only log (#448).
 
-        Events are oldest→newest. Partial/corrupt tail lines are skipped
-        silently — rotation or a mid-write read can leave one such line.
+        Events are oldest→newest. Only the tail of the file is read — a bounded
+        window large enough to cover the last ``limit`` lines — so a long-lived
+        agent's multi-MB hook-event log is not slurped whole on every detection
+        cycle (that read was pinning a CPU core). Partial/corrupt tail lines are
+        skipped silently — rotation, a mid-write read, or seeking into the
+        middle of a line can leave one such line.
         """
         path = self._hook_event_log_path(session_name)
+        # Read a bounded tail and grow it until it actually holds `limit` lines,
+        # so the result is identical to reading the whole file while normally
+        # staying O(window). Hook-event lines are usually a few hundred bytes,
+        # but some carry large payloads, so the initial window can fall short —
+        # doubling handles those without ever slurping a multi-MB log up front.
+        window = max(limit * 4096, 128 * 1024)
         try:
-            with open(path) as f:
-                lines = f.readlines()
+            with open(path, "rb") as f:
+                size = f.seek(0, os.SEEK_END)
+                while True:
+                    start = max(0, size - window)
+                    f.seek(start)
+                    lines = f.read().decode("utf-8", errors="replace").splitlines()
+                    if start > 0 and lines:
+                        # Seeked into the middle of a line — drop the partial head.
+                        lines = lines[1:]
+                    if len(lines) >= limit or start == 0:
+                        break
+                    window *= 2
         except (FileNotFoundError, OSError):
             return []
 

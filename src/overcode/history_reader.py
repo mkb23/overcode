@@ -649,6 +649,17 @@ def _parse_session_lines(
     return totals, work_times
 
 
+# Cache for read_session_file_stats: {path: (mtime, size, since, result)}.
+# A long-lived agent accumulates many session files (100+ MB total), but only
+# the active one changes between polls — without this cache _update_stats_async
+# re-parsed every static file every 5s, pinning a CPU core. Keyed by path and
+# invalidated on mtime/size/since change, so results stay identical to an
+# uncached read. Mirrors the mtime+size caching HistoryFile already does.
+_session_stats_cache: Dict[str, Tuple[float, int, Optional[datetime], Tuple[dict, List[float]]]] = {}
+_session_stats_cache_lock = threading.Lock()
+_SESSION_STATS_CACHE_MAX = 512
+
+
 def read_session_file_stats(
     session_file: Path,
     since: Optional[datetime] = None,
@@ -658,6 +669,10 @@ def read_session_file_stats(
     Combines the work of read_token_usage_from_session_file and
     read_work_times_from_session_file so the file is only read once.
 
+    Results are cached per path and reused while the file's mtime and size (and
+    the ``since`` filter) are unchanged, so a static multi-MB session file is
+    parsed at most once rather than on every polling cycle.
+
     Args:
         session_file: Path to the session JSONL file
         since: Only count data from messages after this time
@@ -665,24 +680,42 @@ def read_session_file_stats(
     Returns:
         (token_usage_dict, work_times_list)
     """
-    if not session_file.exists():
-        defaults = {
+    def _empty() -> Tuple[dict, List[float]]:
+        return {
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
             "current_context_tokens": 0, "model": None, "provider": None,
-        }
-        return defaults, []
+        }, []
+
+    try:
+        stat = session_file.stat()
+    except OSError:
+        # Missing/unreadable file — matches the old exists() short-circuit.
+        return _empty()
+
+    key = str(session_file)
+    with _session_stats_cache_lock:
+        cached = _session_stats_cache.get(key)
+        if (cached is not None
+                and cached[0] == stat.st_mtime
+                and cached[1] == stat.st_size
+                and cached[2] == since):
+            return cached[3]
 
     try:
         with open(session_file, 'r') as f:
-            return _parse_session_lines(f, since=since)
+            result = _parse_session_lines(f, since=since)
     except IOError:
-        defaults = {
-            "input_tokens": 0, "output_tokens": 0,
-            "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None, "provider": None,
-        }
-        return defaults, []
+        return _empty()
+
+    with _session_stats_cache_lock:
+        if len(_session_stats_cache) >= _SESSION_STATS_CACHE_MAX:
+            # Bound growth: drop the oldest half (dicts preserve insertion order).
+            for stale in list(_session_stats_cache)[:_SESSION_STATS_CACHE_MAX // 2]:
+                del _session_stats_cache[stale]
+        _session_stats_cache[key] = (stat.st_mtime, stat.st_size, since, result)
+
+    return result
 
 
 def read_session_stats_from_content(

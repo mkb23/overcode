@@ -39,6 +39,12 @@ fi
 
 ARTIFACTS="$ROOT/artifacts/e2e"
 mkdir -p "$ARTIFACTS"
+# The container runs as the unprivileged `overcode` user, but this bind-mounted
+# host dir is owned by whoever ran the script (in CI, the runner UID differs
+# from the container's). Make it world-writable so pytest inside the container
+# can write junit XML and screenshots to /artifacts — otherwise every tier
+# fails at sessionfinish with "Permission denied: /artifacts/junit-*.xml".
+chmod 777 "$ARTIFACTS"
 
 RUN_ARGS=(
     --rm
