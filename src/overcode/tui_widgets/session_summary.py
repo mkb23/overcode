@@ -187,6 +187,12 @@ class SessionSummary(Static, can_focus=True):
         )
         self.refresh()
 
+    def _status_patterns(self):
+        """Pane chrome for this agent's backend."""
+        from ..backends import session_backend_name
+        from ..status_patterns import get_patterns
+        return get_patterns(session_backend_name(self.session))
+
     def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
         """Apply pre-fetched status data without triggering refresh.
 
@@ -207,7 +213,7 @@ class SessionSummary(Static, can_focus=True):
             lines = content.rstrip().split('\n')
             new_pane = lines if lines else []
             # Pure extraction — results stored as widget vars, never on session
-            extracted = extract_from_pane(content)
+            extracted = extract_from_pane(content, self._status_patterns())
             if self.pane_content != new_pane:
                 self.pane_content = new_pane
                 changed = True

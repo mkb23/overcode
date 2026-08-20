@@ -452,12 +452,20 @@ def set_enhanced_context(tmux_session: str, name: str, enabled: bool) -> dict:
 
 
 def set_hook_detection(tmux_session: str, name: str, enabled: bool) -> dict:
-    """Toggle hook-based status detection."""
+    """Toggle hook-based status detection for one agent.
+
+    Writes both the legacy boolean and the per-agent detection-mode override
+    so this endpoint and the TUI's K hotkey stay in agreement.
+    """
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
-    sm.update_session(session.id, hook_status_detection=enabled)
+    sm.update_session(
+        session.id,
+        hook_status_detection=enabled,
+        detection_mode_override="hooks" if enabled else "polling",
+    )
     return {"ok": True}
 
 

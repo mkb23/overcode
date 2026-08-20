@@ -125,8 +125,13 @@ class Session:
     # Cost budget (#173) - 0.0 means no budget/unlimited
     cost_budget_usd: float = 0.0
 
-    # Hook-based status detection - per-agent toggle (#5)
+    # Hook-based status detection - per-agent toggle (#5).
+    # False = never use hooks for this agent (web API's hook-detection switch).
     hook_status_detection: bool = True
+    # Per-agent detection mode override: "hooks", "polling", or None to
+    # follow the fleet default. Written by the TUI's K hotkey; resolved by
+    # status_detector_factory.resolve_session_detection_mode.
+    detection_mode_override: Optional[str] = None
 
     # Skills loaded during this session (#252)
     loaded_skills: List[str] = field(default_factory=list)

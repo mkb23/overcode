@@ -63,7 +63,9 @@ def unregister_backend(name: str) -> None:
 def _invalidate_derived_caches() -> None:
     """Drop per-backend objects other modules cache by backend name."""
     from ..stats_reader import clear_reader_cache
+    from ..status_patterns import clear_patterns_cache
     clear_reader_cache()
+    clear_patterns_cache()
 
 
 def session_backend_name(session: Any) -> str:

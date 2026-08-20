@@ -18,6 +18,7 @@ from .base import (
 
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
+    from ..status_patterns import StatusPatterns
 
 
 PROMPT_READY_CHARS = {">", "›", "❯"}
@@ -203,6 +204,11 @@ class ClaudeCodeBackend:
 
     def prompt_ready_chars(self) -> Set[str]:
         return PROMPT_READY_CHARS
+
+    def status_patterns(self) -> "StatusPatterns":
+        """The pane-polling pattern set — overcode's defaults are Claude's."""
+        from ..status_patterns import DEFAULT_PATTERNS
+        return DEFAULT_PATTERNS
 
     def make_stats_reader(self) -> "StatsReader":
         from ..stats_reader import ClaudeStatsReader

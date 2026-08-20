@@ -721,42 +721,130 @@ class TestToggleEnhancedContext:
 
 
 class TestToggleHookDetection:
-    """Test action_toggle_hook_detection — global mode toggle."""
+    """Test action_toggle_hook_detection — per-agent mode toggle."""
 
-    def test_toggle_from_polling_to_hooks(self, tmp_path):
-        """Should switch global mode from polling to hooks."""
+    def _make_tui(self, fleet_mode="polling", session=None):
         from overcode.tui_actions.session import SessionActionsMixin
+        from overcode.tui_widgets import SessionSummary
+
+        mock_widget = MagicMock(spec=SessionSummary)
+        mock_widget.session = session
 
         mock_tui = MagicMock()
+        mock_tui.focused = mock_widget
         mock_tui.detector = MagicMock()
-        mock_tui.detector.mode = "polling"
+        mock_tui.detector.mode = fleet_mode
         mock_tui.tmux_session = "agents"
+        mock_tui._is_remote = SessionActionsMixin._is_remote.__get__(mock_tui)
+        return mock_tui
 
-        with patch("overcode.settings.write_detection_mode") as mock_write, \
-             patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=True):
+    def _make_session(self, **kwargs):
+        session = MagicMock()
+        session.id = "sess-1"
+        session.name = "agent-1"
+        session.is_remote = False
+        session.backend = "claude-code"
+        session.hook_status_detection = True
+        session.detection_mode_override = None
+        for key, value in kwargs.items():
+            setattr(session, key, value)
+        return session
+
+    def test_toggle_from_polling_to_hooks(self):
+        """Should record a hooks override on the focused agent only."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session = self._make_session(detection_mode_override="polling")
+        mock_tui = self._make_tui(fleet_mode="polling", session=session)
+
+        with patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=True):
             SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
-        assert mock_tui.detector.mode == "hooks"
-        mock_write.assert_called_once_with("agents", "hooks")
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "sess-1", detection_mode_override="hooks", hook_status_detection=True,
+        )
+        assert session.detection_mode_override == "hooks"
+        # Fleet default is untouched — this is a per-agent switch
+        assert mock_tui.detector.mode == "polling"
         mock_tui.notify.assert_called_once()
         assert "hooks" in mock_tui.notify.call_args[0][0]
+        assert "agent-1" in mock_tui.notify.call_args[0][0]
 
-    def test_toggle_from_hooks_to_polling(self, tmp_path):
-        """Should switch global mode from hooks to polling."""
+    def test_toggle_from_hooks_to_polling(self):
+        """Should record a polling override on the focused agent only."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session = self._make_session()
+        mock_tui = self._make_tui(fleet_mode="hooks", session=session)
+
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_called_once_with(
+            "sess-1", detection_mode_override="polling", hook_status_detection=False,
+        )
+        assert session.detection_mode_override == "polling"
+        assert mock_tui.detector.mode == "hooks"
+        mock_tui.notify.assert_called_once()
+        assert "polling" in mock_tui.notify.call_args[0][0]
+
+    def test_toggle_round_trips_for_one_agent(self):
+        """Two presses return the agent to its starting mode."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session = self._make_session()
+        mock_tui = self._make_tui(fleet_mode="hooks", session=session)
+
+        with patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=True):
+            SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+            assert session.detection_mode_override == "polling"
+            SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        assert session.detection_mode_override == "hooks"
+        assert session.hook_status_detection is True
+
+    def test_no_focused_agent_warns(self):
+        """Without a focused agent the toggle is a no-op warning."""
         from overcode.tui_actions.session import SessionActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.detector = MagicMock()
-        mock_tui.detector.mode = "hooks"
-        mock_tui.tmux_session = "agents"
+        mock_tui.focused = None
 
-        with patch("overcode.settings.write_detection_mode") as mock_write:
+        SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+
+        mock_tui.session_manager.update_session.assert_not_called()
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    def test_hooks_blocked_without_hook_activity(self):
+        """Switching to hooks needs evidence hooks are firing."""
+        from overcode.tui_actions.session import SessionActionsMixin
+
+        session = self._make_session(detection_mode_override="polling")
+        mock_tui = self._make_tui(fleet_mode="polling", session=session)
+
+        with patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=False), \
+             patch("overcode.settings._session_has_recent_hook_activity", return_value=False):
             SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
-        assert mock_tui.detector.mode == "polling"
-        mock_write.assert_called_once_with("agents", "polling")
-        mock_tui.notify.assert_called_once()
-        assert "polling" in mock_tui.notify.call_args[0][0]
+        mock_tui.session_manager.update_session.assert_not_called()
+        assert session.detection_mode_override == "polling"
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
+
+    def test_hooks_blocked_for_backend_without_hook_events(self):
+        """A backend with no HOOK_EVENTS capability can't be switched to hooks."""
+        from overcode.backends import register_backend, unregister_backend
+        from overcode.tui_actions.session import SessionActionsMixin
+        from tests.unit.backend_doubles import PollingOnlyBackend
+
+        register_backend(PollingOnlyBackend())
+        try:
+            session = self._make_session(backend=PollingOnlyBackend.name)
+            mock_tui = self._make_tui(fleet_mode="hooks", session=session)
+            SessionActionsMixin.action_toggle_hook_detection(mock_tui)
+        finally:
+            unregister_backend(PollingOnlyBackend.name)
+
+        mock_tui.session_manager.update_session.assert_not_called()
+        assert mock_tui.notify.call_args[1]["severity"] == "warning"
 
 
 class TestExecuteRemoteKill:

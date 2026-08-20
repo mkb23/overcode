@@ -64,10 +64,12 @@ def _check_skill_staleness() -> None:
 def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     """Gather claude_stats, git_diff, bg_bash_count, live_sub_count for a session."""
     from ..stats_reader import stats_reader_for_session
+    from ..backends import session_backend_name
     from ..status_patterns import (
         extract_background_bash_count,
         extract_live_subagent_count,
         extract_auto_accept_mode,
+        get_patterns,
     )
     from ..tui_helpers import (
         get_git_diff_stats,
@@ -75,9 +77,10 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         effective_git_directory,
     )
 
-    bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
-    live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
-    auto_accept = extract_auto_accept_mode(pane_content_raw) if pane_content_raw else False
+    patterns = get_patterns(session_backend_name(sess))
+    bg_bash_count = extract_background_bash_count(pane_content_raw, patterns) if pane_content_raw else 0
+    live_sub_count = extract_live_subagent_count(pane_content_raw, patterns) if pane_content_raw else 0
+    auto_accept = extract_auto_accept_mode(pane_content_raw, patterns) if pane_content_raw else False
 
     claude_stats = None
     try:
@@ -1124,11 +1127,19 @@ def show(
         activity = daemon_session.current_activity
     else:
         # Daemon not running — fall back to direct detection
-        from ..status_detector_factory import create_status_detector
+        from ..status_detector_factory import (
+            create_status_detector,
+            resolve_session_detection_mode,
+        )
+        from ..status_patterns import get_patterns
+        from ..backends import session_backend_name
         from ..settings import resolve_detection_mode
         detector = create_status_detector(
             session,
-            strategy=resolve_detection_mode(session),
+            strategy=resolve_session_detection_mode(
+                sess, resolve_detection_mode(session)
+            ),
+            patterns=get_patterns(session_backend_name(sess)),
         )
         status, activity, pane_content_raw = detector.detect_status(sess)
 

@@ -21,6 +21,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
+    from ..status_patterns import StatusPatterns
 
 
 class BackendCapability(Flag):
@@ -131,6 +132,8 @@ class AgentBackend(Protocol):
     def startup_dialog_rules(self) -> List[DialogRule]: ...
 
     def prompt_ready_chars(self) -> Set[str]: ...
+
+    def status_patterns(self) -> "StatusPatterns": ...
 
     def make_stats_reader(self) -> "StatsReader": ...
 

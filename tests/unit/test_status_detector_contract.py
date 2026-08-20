@@ -14,12 +14,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from overcode.backends import register_backend, unregister_backend
 from overcode.status_detector import PollingStatusDetector
 from overcode.hook_status_detector import HookStatusDetector
 from overcode.protocols import StatusDetectorProtocol
 from overcode.status_constants import ALL_STATUSES
+from overcode.status_patterns import get_patterns
 from overcode.interfaces import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
+from tests.unit.backend_doubles import HookedTestBackend
 
 
 class ContractTests:
@@ -143,6 +146,47 @@ class TestHookContract(ContractTests):
         state_dir = tmp_path / "sessions" / tmux_session
         state_dir.mkdir(parents=True, exist_ok=True)
         return HookStatusDetector(tmux_session, tmux=mock_tmux, state_dir=state_dir)
+
+
+class AltBackendMixin:
+    """Runs the contract against a registered backend with its own patterns.
+
+    Proves the detectors carry no Claude-only assumptions that would break
+    when a second backend supplies a different pattern set.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _alt_backend(self):
+        register_backend(HookedTestBackend())
+        try:
+            yield
+        finally:
+            unregister_backend(HookedTestBackend.name)
+
+    def alt_patterns(self):
+        return get_patterns(HookedTestBackend.name)
+
+
+class TestPollingContractAltBackend(AltBackendMixin, ContractTests):
+    """PollingStatusDetector satisfies the contract with a second backend."""
+
+    def create_detector(self, tmux_session, mock_tmux, **kwargs):
+        return PollingStatusDetector(
+            tmux_session, tmux=mock_tmux, patterns=self.alt_patterns()
+        )
+
+
+class TestHookContractAltBackend(AltBackendMixin, ContractTests):
+    """HookStatusDetector satisfies the contract with a second backend."""
+
+    def create_detector(self, tmux_session, mock_tmux, **kwargs):
+        tmp_path = kwargs.get("tmp_path")
+        state_dir = tmp_path / "sessions" / tmux_session
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return HookStatusDetector(
+            tmux_session, tmux=mock_tmux, patterns=self.alt_patterns(),
+            state_dir=state_dir,
+        )
 
 
 class TestHookContractWithState(ContractTests):

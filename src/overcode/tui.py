@@ -226,7 +226,7 @@ class SupervisorTUI(
         # Enhanced context toggle - per-agent context injection hook
         ("ctrl+t", "toggle_enhanced_context", "Enhanced context"),
         # Hook-based status detection toggle (#5)
-        ("K", "toggle_hook_detection", "Hook detection"),
+        ("K", "toggle_hook_detection", "Agent detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
         # Column headers toggle

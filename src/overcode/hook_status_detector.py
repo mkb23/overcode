@@ -41,6 +41,7 @@ from .status_constants import (
 )
 from .status_patterns import (
     extract_active_monitor_count,
+    get_patterns,
     is_sleep_command,
     extract_sleep_duration,
     strip_ansi,
@@ -54,24 +55,24 @@ if TYPE_CHECKING:
     from .session_manager import Session
 
 
-# Escape-interrupt prompt that Claude Code prints when the user hits
-# Escape to interrupt an in-flight turn (#431). When we see this text
-# in the pane, the agent is effectively waiting for user input even
-# though no Stop hook fires.
-_INTERRUPT_PROMPT_MARKERS = (
-    "Interrupted · What should Claude do instead?",
-    "Interrupted by user",
-)
+def _pane_shows_interrupt_prompt(
+    pane_content: str, patterns: "StatusPatterns" = None
+) -> bool:
+    """Return True if the pane shows the escape-interrupt prompt (#431).
 
-
-def _pane_shows_interrupt_prompt(pane_content: str) -> bool:
-    """Return True if the pane looks like Claude is showing the interrupt prompt (#431)."""
+    The markers live on the backend's StatusPatterns
+    (``interrupt_prompt_markers``) — Claude Code prints this text when the
+    user hits Escape mid-turn, and no Stop hook fires for it, so status
+    would otherwise stay stuck as RUNNING.
+    """
     if not pane_content:
         return False
+    if patterns is None:
+        patterns = get_patterns()
     clean = strip_ansi(pane_content)
     # Only look at the tail — older interrupt prompts may linger in scrollback
     tail = "\n".join(clean.splitlines()[-40:])
-    return any(marker in tail for marker in _INTERRUPT_PROMPT_MARKERS)
+    return patterns.shows_interrupt_prompt(tail)
 
 
 # Events that mean Claude is in the middle of an active turn — drives the
@@ -413,7 +414,9 @@ class HookStatusDetector:
         self.tmux_session = tmux_session
         self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
-        self._patterns = patterns
+        # Pane-scraping side signals (interrupt prompt, monitor count) are
+        # backend-specific, so the detector always holds a pattern set.
+        self._patterns = patterns or get_patterns()
         # Diagnostic phase tracking (same interface as PollingStatusDetector)
         self._last_detect_phase: Dict[str, str] = {}
         self._content_changed: Dict[str, bool] = {}
@@ -618,7 +621,9 @@ class HookStatusDetector:
         # RUNNING indefinitely. Detect the interrupt prompt that Claude
         # Code prints ("Interrupted · What should Claude do instead?") in
         # the pane and downgrade to waiting_user in that case (#431).
-        has_interrupt = bool(pane_content) and _pane_shows_interrupt_prompt(pane_content)
+        has_interrupt = bool(pane_content) and _pane_shows_interrupt_prompt(
+            pane_content, self._patterns
+        )
         if status == STATUS_RUNNING and has_interrupt:
             status = STATUS_WAITING_USER
             self._last_detect_phase[session.id] = f"hook:{event}+interrupt"
@@ -646,7 +651,9 @@ class HookStatusDetector:
         # after Stop/SessionEnd has fired. Treat that as STATUS_BUSY_SLEEPING
         # — same "idle but externally trigger-able" category as a bash sleep
         # (#441 reuses the #289 state instead of minting a new one).
-        monitor_count = extract_active_monitor_count(pane_content) if pane_content else 0
+        monitor_count = (
+            extract_active_monitor_count(pane_content, self._patterns) if pane_content else 0
+        )
         if monitor_count > 0 and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT):
             status = STATUS_BUSY_SLEEPING
             self._last_detect_phase[session.id] = f"hook:{event}+monitors={monitor_count}"

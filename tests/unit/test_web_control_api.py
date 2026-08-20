@@ -550,7 +550,21 @@ class TestFeatureToggles:
         result = set_hook_detection("agents", "test-agent", enabled=False)
 
         assert result == {"ok": True}
-        sm.update_session.assert_called_once_with("sess-1", hook_status_detection=False)
+        sm.update_session.assert_called_once_with(
+            "sess-1", hook_status_detection=False, detection_mode_override="polling",
+        )
+
+    @patch(SM_PATH)
+    def test_enables_hook_detection(self, MockSM):
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+
+        result = set_hook_detection("agents", "test-agent", enabled=True)
+
+        assert result == {"ok": True}
+        sm.update_session.assert_called_once_with(
+            "sess-1", hook_status_detection=True, detection_mode_override="hooks",
+        )
 
 
 class TestTransportAll:
