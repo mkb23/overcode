@@ -1055,7 +1055,8 @@ def annotate(
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],
     text: Annotated[
-        Optional[List[str]], typer.Argument(help="Text to send (or special key: enter, escape)")
+        Optional[List[str]],
+        typer.Argument(help="Text to send (or a gesture: approve, reject, enter, escape)"),
     ] = None,
     no_enter: Annotated[
         bool, typer.Option("--no-enter", help="Don't press Enter after text")
@@ -1065,12 +1066,16 @@ def send(
     """
     Send input to an agent.
 
-    Special keys: enter, escape, tab, up, down, left, right
+    Gestures: approve, reject -- resolved via the agent's backend, so the
+    right keys go to a Claude Code prompt or an opencode one.
+
+    Special keys (raw): enter, escape, tab, up, down, left, right
 
     Examples:
         overcode send my-agent "yes"           # Send "yes" + Enter
-        overcode send my-agent enter           # Just press Enter (approve)
-        overcode send my-agent escape          # Press Escape (reject)
+        overcode send my-agent approve         # Approve a permission prompt
+        overcode send my-agent reject          # Reject a permission prompt
+        overcode send my-agent enter           # Just press Enter (raw)
         overcode send my-agent --no-enter "y"  # Send "y" without Enter
     """
     from ..session_manager import SessionManager
@@ -1089,7 +1094,7 @@ def send(
     enter = not no_enter
 
     if launcher.send_to_session(name, text_str, enter=enter):
-        if text_str.lower() in ("enter", "escape", "esc"):
+        if text_str.lower() in ("enter", "escape", "esc", "approve", "reject"):
             rprint(f"[green]✓[/green] Sent {text_str.upper()} to '[bold]{name}[/bold]'")
         elif enter:
             display = text_str[:50] + "..." if len(text_str) > 50 else text_str

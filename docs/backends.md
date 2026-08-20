@@ -10,10 +10,12 @@ backends ship today:
 | `claude-code` (default) | [Claude Code](https://claude.ai/claude-code) | `CLAUDE_COMMAND` |
 | `opencode` | [opencode](https://opencode.ai) | `OPENCODE_COMMAND` |
 
-Everything below opencode's row is honest about maturity: opencode support
-is an **observability-lite tier**. You get the dashboard, live status,
-previews, AI summaries, send-instruction, restart, kill, resume and fork.
-You do not yet get token/cost columns or hook-grade status detail.
+Everything below opencode's row is honest about maturity. opencode support
+now covers the dashboard, hook-grade live status, previews, AI summaries,
+send-instruction, restart, kill, resume, fork, and token/cost/context
+columns. What it does not cover is the Claude-only subsystems — skills, the
+sandbox badge, the subscription-usage widget, and agent teams — which stay
+capability-gated and render as dashes or hidden controls.
 
 ---
 
@@ -68,8 +70,8 @@ overcode gates UI actions and telemetry off them.
 | `RESUME` | ✅ | ✅ | opencode: `--session <id>` |
 | `FORK` | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session |
 | `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | opencode mints its own `ses_…` ids; overcode must discover, not prescribe |
-| `HOOK_EVENTS` | ✅ | ❌ | Phase 5 (bundled opencode plugin). Until then: pane polling |
-| `TRANSCRIPT_STATS` | ✅ | ❌ | Phase 5 (SQLite `session` table). Until then: dashes, never zeros |
+| `HOOK_EVENTS` | ✅ | ✅ | opencode: bundled telemetry plugin (below); pane polling remains the fallback |
+| `TRANSCRIPT_STATS` | ✅ | ✅ | opencode: SQLite `session` table (below) |
 | `PERMISSION_INJECTION` | ✅ | ❌ | opencode v1.18.19 has no per-launch tool allowlist flag |
 | `SKILLS` | ✅ | ❌ | opencode *does* have a `/skills` command, but no overcode integration |
 | `SANDBOX_PROBE` | ✅ | ❌ | Claude-only loopback heuristic |
@@ -89,8 +91,8 @@ overcode gates UI actions and telemetry off them.
 | Prescribe session id | `--session-id <uuid>` | ✗ |
 | Resume | `--resume <id>` | `--session <id>` |
 | Fork | `--resume <id> --fork-session` | `--session <id> --fork` |
-| Telemetry injection | `--settings '<json>'` hooks | ✗ (Phase 5 plugin) |
-| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` (unread today) |
+| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` |
+| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` |
 | Graceful exit | `C-c`, then `/exit` | `Escape` ×2, then `/exit` |
 | Clear conversation | `/clear` | `/new` |
 | Approve | `Enter` | `Enter` (confirms the preselected *Allow once*) |
@@ -122,10 +124,107 @@ it would fail the launch outright.
 
 ---
 
-## Status detection
+## Telemetry: the bundled opencode plugin
 
-opencode has no hook channel yet, so status comes from **pane polling** —
-overcode reads the rendered TUI. The pattern set lives in
+Claude Code lets overcode inject hooks on the command line (`--settings`).
+opencode has no such flag, but it does have a plugin system, so overcode
+ships one:
+
+```
+src/overcode/opencode_plugin/overcode-telemetry.js
+```
+
+At launch (and on every restart/revive/fork) the opencode backend copies
+that file to:
+
+```
+<start_directory>/.opencode/plugins/overcode-telemetry.js
+```
+
+The plugin subscribes to opencode's event bus and writes the *same*
+`hook_state_<agent>.json` / `hook_events_<agent>.jsonl` files Claude Code's
+hooks produce, so `HookStatusDetector` — obligation badges, foreground
+classification, the status-detail column — works unchanged.
+
+| opencode signal | overcode hook event | Status |
+|---|---|---|
+| `chat.message` (user) / `message.updated` role=user | `UserPromptSubmit` | running |
+| `tool.execute.before` | `PreToolUse` | running |
+| `permission.asked` | `PermissionRequest` | **waiting_approval** |
+| `permission.replied` (allow) | `PreToolUse` | running |
+| `permission.replied` (reject) | `PostToolUse` | running |
+| `tool.execute.after` | `PostToolUse` | running |
+| `session.idle` | `Stop` | waiting_user |
+| `session.error` | `StopFailure` | error |
+| `session.deleted` | `SessionEnd` | terminated |
+
+opencode's lowercase tool names (`bash`, `read`, `webfetch`) are mapped onto
+Claude's taxonomy (`Bash`, `Read`, `WebFetch`) so the detector's Bash-command
+activity strings and sleep detection keep working.
+
+### Things worth knowing about the footprint
+
+- **The plugin file is visible to git.** It lands in your project as an
+  untracked `.opencode/plugins/overcode-telemetry.js`. Overcode does **not**
+  edit your `.gitignore` or `.git/info/exclude` — that is your repository's
+  business. Add `.opencode/plugins/overcode-telemetry.js` to either one if
+  you want it hidden. Committing it is also fine.
+- **It is inert outside overcode.** The plugin registers *no hooks at all*
+  unless `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` are both in the
+  environment. Your own `opencode` runs in that directory are unaffected.
+- **Your own file is never clobbered.** Overcode only rewrites the file if it
+  still carries the `OVERCODE-PLUGIN-MARKER` line. Replace the contents and
+  overcode leaves it alone permanently.
+- **It is not removed when the agent dies.** Re-ensuring on the next launch is
+  cheaper and safer than a teardown race. Delete it whenever you like;
+  overcode recreates it.
+- **Project-local, never global.** Registering the plugin in
+  `~/.config/opencode/` would load overcode's telemetry into every opencode
+  session you ever run. A project copy is scoped to the directory overcode
+  launched in.
+- **A plugin module may export only its factory.** opencode calls *every*
+  export as a plugin factory; an exported helper crashes the whole opencode
+  process at load time. If you fork the plugin, keep the single-export shape.
+
+`overcode doctor` reports `missing-settings` for an opencode agent whose
+project directory has no plugin — that agent is running on pane polling.
+
+---
+
+## Stats: the SQLite session store
+
+`OpencodeStatsReader` (`src/overcode/backends/opencode_stats.py`) reads
+opencode's store read-only (`file:…?mode=ro`, short busy timeout — it never
+writes, and never blocks the daemon tick). The path comes from `OPENCODE_DB`,
+then `OPENCODE_DATA_DIR`, then `$XDG_DATA_HOME/opencode/opencode.db`, then
+`~/.local/share/opencode/opencode.db`.
+
+| overcode column | opencode source |
+|---|---|
+| input tokens | `session.tokens_input` |
+| output tokens | `session.tokens_output` + `session.tokens_reasoning` |
+| cache write / read | `session.tokens_cache_write` / `tokens_cache_read` |
+| cost | `session.cost` (what the provider actually charged); recomputed from `pricing.py` when it is 0, which is the subscription-auth case |
+| model | `session.model` JSON, rendered back as `provider/model` |
+| context | newest assistant `message.data.tokens.total` |
+| interactions | count of `message.data.role == "user"` |
+
+Rows are located by the opencode session ids the plugin recorded into the
+hook state (`agent_session_id` / `agent_session_ids`) — the exact analogue of
+Claude's prescribed `--session-id`. Without the plugin it falls back to
+matching `session.directory` against the agent's working directory within its
+launch-time window, ignoring child (`task`) sessions.
+
+Any failure — no database, a lock, a renamed column — returns "unknown", so
+the columns render dashes rather than misleading zeros. Schema drift also
+raises an `overcode doctor` warning naming the missing columns.
+
+---
+
+## Status detection (polling fallback)
+
+When the plugin is absent, status comes from **pane polling** — overcode
+reads the rendered TUI. The pattern set lives in
 `src/overcode/backends/opencode.py` (`OPENCODE_PATTERNS`) and is grounded in
 a committed corpus of real captures at
 `tests/fixtures_opencode_panes/`, replayed by
@@ -161,14 +260,15 @@ Known rough edges, honestly:
   driven during corpus capture, so the thinking markers are empty rather
   than guessed.
 - **UNVERIFIED: post-interrupt pane.** The prompt opencode shows after an
-  actual interrupt was not captured; that field feeds the hook detector,
-  which opencode does not use yet.
+  actual interrupt was not captured. That field also feeds the hook detector's
+  "the user hit Escape mid-turn" check, so an interrupted opencode agent stays
+  green until its next event.
 
 ---
 
 ## Doctor checks
 
-`overcode doctor` adds two opencode-specific checks, and only when the
+`overcode doctor` adds three opencode-specific checks, and only when the
 fleet actually contains an opencode agent:
 
 1. **Version range.** opencode ships every 2-3 days and overcode reads its
@@ -179,27 +279,32 @@ fleet actually contains an opencode agent:
    `"autoupdate": true`, overcode warns — an unattended upgrade can move the
    TUI out from under the pattern set. Silent when there is no config or it
    doesn't mention the setting.
+3. **Schema drift.** A renamed column in opencode's SQLite store blanks the
+   token/cost columns; doctor names the missing columns rather than leaving
+   you to guess.
 
-Per-agent, the health verdict for an opencode session is simply "is there a
-live `opencode` process under the pane?". There is no `--settings` analogue
-to inspect; once the Phase 5 plugin lands, "plugin loaded" becomes the real
-check.
+Per-agent, the health verdict for an opencode session is "is there a live
+`opencode` process under the pane, and is the telemetry plugin in its project
+directory?". A missing plugin reports `missing-settings`, the same verdict
+Claude Code gets when it is running without injected hooks.
 
 ---
 
-## What is coming (Phase 5)
+## Supervising an opencode agent
 
-- A bundled opencode plugin translating the bus events (`session.idle`,
-  `permission.asked`, `tool.execute.*`, `session.error`) into overcode's
-  existing hook-state files — which buys hook-grade status, obligation
-  badges, and the status-detail column for free.
-- An `OpencodeStatsReader` over the SQLite `session` table for token, cost,
-  and context columns, which in turn unlocks budgets.
-- Supervisor recipes for opencode's permission dialog.
+The supervisor's own meta-agent stays Claude Code, but its gestures are
+backend-resolved:
 
-Useful detail already observed for that work: opencode prints
-`Continue  opencode -s ses_…` in its farewell block on `/exit`, which is the
-cheapest place to learn a session ID without touching SQLite.
+```bash
+overcode send <name> approve   # confirms the preselected "Allow once"
+overcode send <name> reject    # Escape — dismisses, abandoning the tool call
+```
+
+These are *gestures*, not keys: overcode asks the agent's backend which keys
+its permission dialog wants. Prefer them over the raw `overcode send <name>
+enter` / `escape`, which still exist and still send literal keys. Supervisor
+context lines name a non-default backend (`Backend: opencode`) so the
+supervisor knows not to send Claude slash commands at it.
 
 ---
 

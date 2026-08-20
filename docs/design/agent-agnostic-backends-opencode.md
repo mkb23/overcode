@@ -285,6 +285,22 @@ Ground rules for every phase:
 
 ### Phase 5 — opencode telemetry: plugin + SQLite stats
 
+> **Shipped Aug 2026.** Built and driven against a live opencode v1.18.19.
+> Two things the plan did not anticipate, both load-bearing:
+> 1. **opencode calls *every* export of a plugin module as a plugin factory.**
+>    An exported helper is invoked with the plugin context and throws during
+>    load, taking the opencode process down with it. The bundled plugin
+>    therefore has exactly one export; test seams hang off it as properties.
+> 2. **`message.updated` re-fires for the same user message after the turn
+>    ends**, so a naive "role == user → UserPromptSubmit" mapping pins the
+>    agent green forever. The plugin de-duplicates by message id and prefers
+>    the `chat.message` hook, which fires exactly once per prompt.
+>
+> Also new: `session.status {type: busy|idle}` and `permission.replied
+> {reply: once|always|reject}` are real events; `permission.replied` is what
+> clears `waiting_approval`, in both the allow and the reject case.
+> User-facing documentation is `docs/backends.md`.
+
 **Objective:** parity-grade status detection (hooks-equivalent) and cost/token columns for opencode.
 
 **Key work items:**
@@ -345,8 +361,8 @@ A pragmatic descope if velocity matters: ship Phase 4 with polling-only status a
 | Prescribe session id | `--session-id <uuid>` | ✗ — opencode mints `ses_<random>` ids. Confirmed via `opencode session list`. The launcher now skips prescription for backends without `SESSION_ID_PRESCRIPTION` so a bogus UUID is never bound | ✅ |
 | Resume | `--resume <id>` | `--session <id>` — replays history in the TUI | ✅ |
 | Fork | `--resume <id> --fork-session` | `--session <id> --fork` — creates a new session titled `… (fork #1)`; verified in `opencode session list` | ✅ confirmed → capability `FORK` **on** |
-| Hook/telemetry injection | `--settings '<json>'` hooks → `overcode hook-handler` | bundled plugin writing hook-state files | ⚠️ Phase 5, unbuilt |
-| Transcripts/stats | `~/.claude/projects/<enc>/<sid>.jsonl` | SQLite `~/.local/share/opencode/opencode.db` (`session` table). Directory confirmed present, with `-wal`/`-shm`, plus `log/`, `repos/`, `snapshot/` | ⚠️ path confirmed, schema unread (Phase 5) |
+| Hook/telemetry injection | `--settings '<json>'` hooks → `overcode hook-handler` | bundled plugin at `<project>/.opencode/plugins/overcode-telemetry.js` writing hook-state files | ✅ built + driven live (Phase 5) |
+| Transcripts/stats | `~/.claude/projects/<enc>/<sid>.jsonl` | SQLite `~/.local/share/opencode/opencode.db` (`session` table). Schema read live in Phase 5 and **matches the researched column list exactly** (`cost`, `tokens_input/output/reasoning/cache_read/cache_write`, `model` JSON, `directory`, `parent_id`, `time_created/updated`); per-turn tokens live in `message.data` JSON | ✅ confirmed |
 | Graceful exit | C-c, `/exit` | ❌ **`ctrl+x q` unneeded and `C-c` is dangerous**: a single Ctrl-C kills opencode outright (no confirmation). `/exit` is a real slash command ("Exit the app") and works mid-turn. overcode sends `Escape`, `Escape`, `/exit`⏎ — the first Escape only *arms* the interrupt (`esc interrupt` → `esc again to interrupt`), the second cancels the turn | ❌ refuted / replaced |
 | Clear conversation | `/clear` | `/new` ("New session") — verified to reset the pane to the banner | ✅ |
 | Permission prompt text | "Do you want to proceed", `❯ 1. Yes` | `△ Permission required` / `# Shell command` / `Allow once   Allow always   Reject` / `ctrl+f fullscreen  ⇆ select  enter confirm`. The dialog *replaces* the input box — no info bar while it is up | ✅ |

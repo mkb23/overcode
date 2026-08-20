@@ -69,6 +69,15 @@ class StatsReader(Protocol):
 
     def get_container_stats(self, session: Any) -> Optional[AgentSessionStats]: ...
 
+    def get_stored_cost(self, session: Any) -> Optional[float]:
+        """The backend's own cost figure for this agent, if it keeps one.
+
+        Optional: callers use ``getattr(reader, "get_stored_cost", None)`` and
+        fall back to recomputing from tokens via ``pricing.py``. Claude Code
+        transcripts carry no cost, so only opencode implements it.
+        """
+        ...
+
 
 class NullStatsReader:
     """Reader for backends with no readable transcripts.

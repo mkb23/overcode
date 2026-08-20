@@ -9,7 +9,7 @@ import os
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -336,6 +336,66 @@ class TestLauncherSendToSession:
 
         result = launcher.send_to_session("test-agent", "escape")
         assert result is True
+
+    def test_approve_and_reject_resolve_via_the_backend(self, tmp_path):
+        """`approve`/`reject` are gestures, not keys — the backend picks them."""
+        from unittest.mock import MagicMock
+
+        from overcode.backends import KeyPress, register_backend, unregister_backend
+        from overcode.backends.claude_code import ClaudeCodeBackend
+
+        class GestureBackend(ClaudeCodeBackend):
+            name = "gesture-test"
+
+            def approve_keys(self):
+                return [KeyPress("y", enter=True)]
+
+            def reject_keys(self):
+                return [KeyPress("n", enter=True)]
+
+        register_backend(GestureBackend())
+        try:
+            session_manager = SessionManager(
+                state_dir=tmp_path, skip_git_detection=True
+            )
+            launcher = ClaudeLauncher(
+                tmux_session="agents",
+                tmux_manager=TmuxManager("agents", tmux=MockTmux()),
+                session_manager=session_manager,
+            )
+            launcher.launch(name="test-agent")
+            session = session_manager.get_session_by_name("test-agent")
+            session_manager.update_session(session.id, backend="gesture-test")
+
+            launcher.tmux = MagicMock()
+            launcher.tmux.send_keys.return_value = True
+
+            assert launcher.send_to_session("test-agent", "approve") is True
+            assert launcher.tmux.send_keys.call_args[0][1] == "y"
+
+            assert launcher.send_to_session("test-agent", "reject") is True
+            assert launcher.tmux.send_keys.call_args[0][1] == "n"
+        finally:
+            unregister_backend("gesture-test")
+
+    def test_approve_on_claude_is_still_enter(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = ClaudeLauncher(
+            tmux_session="agents",
+            tmux_manager=TmuxManager("agents", tmux=MockTmux()),
+            session_manager=session_manager,
+        )
+        launcher.launch(name="test-agent")
+        launcher.tmux = MagicMock()
+        launcher.tmux.send_keys.return_value = True
+
+        launcher.send_to_session("test-agent", "approve")
+        launcher.tmux.send_keys.assert_called_with(ANY, "", enter=True)
+
+        launcher.send_to_session("test-agent", "reject")
+        launcher.tmux.send_keys.assert_called_with(ANY, "Escape", enter=False)
 
     def test_send_to_nonexistent_session(self, tmp_path):
         """Sending to nonexistent session returns False"""

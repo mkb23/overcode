@@ -154,6 +154,10 @@ class ClaudeCodeBackend:
 
         return cmd
 
+    def prepare_launch(self, spec: LaunchSpec) -> None:
+        """Nothing to stage — hooks and permissions ride on ``--settings``."""
+        return None
+
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
         """Claude-specific env vars for the launch shell line."""
         env: Dict[str, str] = {}

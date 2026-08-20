@@ -8,6 +8,7 @@ They are used by SupervisorDaemon but can be tested independently.
 from dataclasses import dataclass
 from typing import List, Optional
 
+from .backends import DEFAULT_BACKEND
 from .status_constants import get_status_emoji, is_green_status
 
 
@@ -22,7 +23,8 @@ def build_daemon_claude_context(
     Args:
         tmux_session: Name of the tmux session
         non_green_sessions: List of session dicts with 'name', 'tmux_window',
-                           'standing_instructions', 'current_status', 'repo_name'
+                           'standing_instructions', 'current_status', 'repo_name',
+                           'backend'
 
     Returns:
         Multi-line context string for daemon claude
@@ -42,6 +44,13 @@ def build_daemon_claude_context(
         name = session.get("name", "unknown")
         window = session.get("tmux_window", "?")
         context_parts.append(f"{emoji} {name} (window {window})")
+
+        # Only non-default backends are named. A Claude-only fleet reads
+        # exactly as it did before opencode support, and a mixed one tells the
+        # supervisor which agent speaks which dialect.
+        backend = session.get("backend")
+        if backend and backend != DEFAULT_BACKEND:
+            context_parts.append(f"   Backend: {backend}")
 
         instructions = session.get("standing_instructions")
         if instructions:

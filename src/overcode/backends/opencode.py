@@ -1,10 +1,15 @@
-"""opencode backend — launch + pane-polling status for the opencode CLI.
+"""opencode backend — launch, telemetry and stats for the opencode CLI.
 
-Phase 4 of ``docs/design/agent-agnostic-backends-opencode.md``: opencode
-agents launch, monitor, instruct, restart, kill and resume. There is no
-plugin channel and no transcript stats yet (Phase 5), so the backend
-declares neither ``HOOK_EVENTS`` nor ``TRANSCRIPT_STATS`` — the detection
-stack falls back to polling and the stats columns render dashes.
+Phases 4-5 of ``docs/design/agent-agnostic-backends-opencode.md``: opencode
+agents launch, monitor, instruct, restart, kill and resume (Phase 4), and
+report hooks-grade status plus token/cost columns (Phase 5).
+
+Telemetry arrives through a bundled opencode plugin
+(``src/overcode/opencode_plugin/overcode-telemetry.js``) that overcode copies
+into ``<start_directory>/.opencode/plugins/`` at launch. The plugin writes the
+same ``hook_state_<agent>.json`` / ``hook_events_<agent>.jsonl`` files Claude
+Code's hooks produce, so ``HookStatusDetector`` works unchanged. Pane polling
+remains the fallback for a launch where the plugin could not be installed.
 
 Everything below the flag table was captured from a real opencode
 v1.18.19 session; the pane corpus lives in
@@ -50,6 +55,15 @@ TESTED_OPENCODE_RANGE = (TESTED_OPENCODE_MIN, TESTED_OPENCODE_MAX)
 # Where opencode keeps its global config. Both spellings are real: the
 # installer writes .jsonc, the docs describe .json.
 OPENCODE_GLOBAL_CONFIG_NAMES = ("opencode.jsonc", "opencode.json")
+
+# The bundled telemetry plugin, and where opencode looks for project plugins.
+# Both `.opencode/plugin/` and `.opencode/plugins/` are honoured by v1.18.19;
+# the plural is what the docs use.
+PLUGIN_FILENAME = "overcode-telemetry.js"
+PLUGIN_DIR_PARTS = (".opencode", "plugins")
+# A line inside the bundled file that identifies it as overcode's. A file
+# without it is the user's own and is never touched.
+PLUGIN_MARKER = "OVERCODE-PLUGIN-MARKER: overcode-telemetry"
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -113,6 +127,81 @@ def autoupdate_enabled() -> Optional[bool]:
     if not isinstance(config, dict) or "autoupdate" not in config:
         return None
     return bool(config["autoupdate"])
+
+
+def bundled_plugin_path() -> Path:
+    """Path to the telemetry plugin shipped inside the overcode package."""
+    return Path(__file__).parent.parent / "opencode_plugin" / PLUGIN_FILENAME
+
+
+def project_plugin_path(start_directory: str) -> Path:
+    """Where the plugin has to live for a project-scoped opencode launch."""
+    return Path(start_directory).joinpath(*PLUGIN_DIR_PARTS) / PLUGIN_FILENAME
+
+
+def ensure_plugin_installed(start_directory: Optional[str]) -> Optional[Path]:
+    """Copy the telemetry plugin into ``<start_directory>/.opencode/plugins/``.
+
+    Chosen over registering the plugin in the user's global opencode config
+    because a global entry would load overcode's telemetry into *every*
+    opencode session the user ever runs. A project-local copy is scoped to the
+    directory overcode launched in, and the plugin itself no-ops without the
+    ``OVERCODE_*`` env vars anyway, so even a stray copy is inert.
+
+    Idempotent and non-destructive:
+
+    * missing            → written
+    * present, ours      → rewritten when the bundled version has moved on
+    * present, ours, same→ left alone
+    * present, not ours  → left alone (the user replaced it deliberately)
+
+    The file is *not* removed when the agent dies: the next launch in that
+    directory needs it, and re-ensuring is cheaper than a teardown race. It is
+    visible to ``git status`` as an untracked file; overcode deliberately does
+    not edit the user's ``.gitignore`` (see ``docs/backends.md``).
+
+    Returns the installed path, or None when nothing could be installed.
+    """
+    if not start_directory:
+        return None
+    source = bundled_plugin_path()
+    try:
+        content = source.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    target = project_plugin_path(start_directory)
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except OSError:
+        existing = None
+
+    if existing is not None:
+        if PLUGIN_MARKER not in existing:
+            return None
+        if existing == content:
+            return target
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        return None
+    return target
+
+
+def plugin_installed(start_directory: Optional[str]) -> bool:
+    """True when this project directory carries overcode's telemetry plugin."""
+    if not start_directory:
+        return False
+    try:
+        return PLUGIN_MARKER in project_plugin_path(start_directory).read_text(
+            encoding="utf-8"
+        )
+    except OSError:
+        return False
 
 
 class OpencodeStatusPatterns(StatusPatterns):
@@ -251,8 +340,11 @@ OPENCODE_PATTERNS = OpencodeStatusPatterns(
     autocomplete_hint_symbol=_NEVER_SUBSTRING,
     autocomplete_hint_word=_NEVER_SUBSTRING,
 
-    # Hook-detector-only field, and opencode has no hook channel until
-    # Phase 5. UNVERIFIED: the post-interrupt pane was not captured.
+    # Hook-detector-only field: it downgrades a stuck RUNNING to waiting_user
+    # when the user has interrupted the turn from the keyboard.
+    # UNVERIFIED: the post-interrupt pane was never captured, so this is left
+    # empty rather than guessed — an interrupted opencode agent stays green
+    # until its next bus event.
     interrupt_prompt_markers=[],
 
     tool_execution_pattern=(
@@ -296,11 +388,17 @@ class OpencodeBackend:
     not_found_error = OpencodeNotFoundError
     # Verified against v1.18.19: `--session <id>` resumes and
     # `--session <id> --fork` branches into a new "(fork #1)" session.
+    # HOOK_EVENTS comes from the bundled telemetry plugin, TRANSCRIPT_STATS
+    # from the SQLite session store.
     # Deliberately absent: SESSION_ID_PRESCRIPTION (opencode mints its own
-    # `ses_…` ids), HOOK_EVENTS / TRANSCRIPT_STATS (Phase 5),
-    # PERMISSION_INJECTION (no per-launch allowlist flag exists),
-    # SKILLS / SANDBOX_PROBE / SUBSCRIPTION_USAGE / AGENT_TEAMS.
-    capabilities = BackendCapability.RESUME | BackendCapability.FORK
+    # `ses_…` ids), PERMISSION_INJECTION (no per-launch allowlist flag
+    # exists), SKILLS / SANDBOX_PROBE / SUBSCRIPTION_USAGE / AGENT_TEAMS.
+    capabilities = (
+        BackendCapability.RESUME
+        | BackendCapability.FORK
+        | BackendCapability.HOOK_EVENTS
+        | BackendCapability.TRANSCRIPT_STATS
+    )
 
     def executable(self) -> str:
         """The binary to invoke, honouring the OPENCODE_COMMAND override.
@@ -360,9 +458,28 @@ class OpencodeBackend:
 
         return cmd
 
+    def prepare_launch(self, spec: LaunchSpec) -> None:
+        """Put the telemetry plugin where the launched process will find it.
+
+        Runs on every launch/restart/revive/fork so an upgraded overcode
+        refreshes a stale copy. Failure is silent by design — a missing
+        plugin costs hooks-grade status, not the launch, and the detection
+        dispatcher falls back to pane polling on its own.
+        """
+        ensure_plugin_installed(spec.start_directory)
+
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
-        """opencode reads provider credentials from the ambient environment."""
-        return {}
+        """opencode reads provider credentials from the ambient environment.
+
+        The one thing that must be forwarded is ``OVERCODE_STATE_DIR``: the
+        plugin runs inside the opencode process and has to write hook state
+        where this overcode instance reads it. ``OVERCODE_SESSION_NAME`` and
+        ``OVERCODE_TMUX_SESSION`` are already in the launcher's shared prefix.
+        """
+        state_dir = os.environ.get("OVERCODE_STATE_DIR")
+        if not state_dir:
+            return {}
+        return {"OVERCODE_STATE_DIR": shlex.quote(state_dir)}
 
     def graceful_exit_keys(self) -> List[KeyPress]:
         # Ctrl-C kills opencode outright (verified), so the interrupt step
@@ -401,18 +518,44 @@ class OpencodeBackend:
         return OPENCODE_PATTERNS
 
     def make_stats_reader(self) -> "StatsReader":
-        # No TRANSCRIPT_STATS until Phase 5's SQLite reader — dashes, not zeros.
-        from ..stats_reader import NullStatsReader
-        return NullStatsReader()
+        from .opencode_stats import OpencodeStatsReader
+        return OpencodeStatsReader()
 
     def health_verdict(self, argv: str) -> Optional[Tuple[str, str]]:
-        """A live opencode process is all overcode can check today.
+        """A live opencode process is all argv alone can tell us.
 
-        There is no ``--settings`` analogue to inspect; once Phase 5 lands
-        the bundled plugin, "plugin loaded" becomes the real check.
+        Unlike Claude Code there is no ``--settings`` payload on the command
+        line to inspect — telemetry is injected through a file in the
+        project's ``.opencode/plugins/``, which argv never mentions. The
+        per-agent plugin check lives in ``doctor`` where the session's
+        ``start_directory`` is in hand.
         """
         from ..doctor import VERDICT_OK
-        return VERDICT_OK, "opencode process running (no telemetry injection yet)"
+        return VERDICT_OK, "opencode process running"
+
+    def refine_health_verdict(
+        self, session, verdict: str, details: str
+    ) -> Tuple[str, str]:
+        """Second pass with the session in hand: is the telemetry plugin there?
+
+        This is opencode's equivalent of Claude Code's ``--settings`` check.
+        Without the plugin the agent still runs, but its status comes from
+        pane scraping rather than hook events, which is worth flagging.
+        """
+        from ..doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        if verdict != VERDICT_OK:
+            return verdict, details
+        start_directory = getattr(session, "start_directory", None)
+        if not start_directory:
+            return verdict, details
+        if plugin_installed(start_directory):
+            return VERDICT_OK, "opencode process running, telemetry plugin installed"
+        return VERDICT_MISSING_SETTINGS, (
+            "opencode running without overcode's telemetry plugin in "
+            f"{Path(start_directory).joinpath(*PLUGIN_DIR_PARTS)} — status falls "
+            "back to pane polling. Relaunch via `overcode restart` to install it."
+        )
 
     def check_binary(self):
         from ..dependency_check import check_agent_cli
@@ -482,12 +625,23 @@ def version_findings(version: Optional[str] = None) -> List[str]:
             'consider setting "autoupdate": false'
         )
 
+    # Schema drift in the SQLite store is the other way an opencode upgrade
+    # silently blanks a column, so it rides the same doctor pass.
+    try:
+        from .opencode_stats import schema_findings
+        findings.extend(schema_findings())
+    except Exception:
+        pass
+
     return findings
 
 
 __all__ = [
     "OPENCODE_GLOBAL_CONFIG_NAMES",
     "OPENCODE_PATTERNS",
+    "PLUGIN_DIR_PARTS",
+    "PLUGIN_FILENAME",
+    "PLUGIN_MARKER",
     "OpencodeBackend",
     "OpencodeNotFoundError",
     "OpencodeStatusPatterns",
@@ -495,10 +649,14 @@ __all__ = [
     "TESTED_OPENCODE_MIN",
     "TESTED_OPENCODE_RANGE",
     "autoupdate_enabled",
+    "bundled_plugin_path",
+    "ensure_plugin_installed",
     "get_opencode_backend",
     "global_config_path",
     "installed_version",
     "parse_version",
+    "plugin_installed",
+    "project_plugin_path",
     "version_findings",
     "version_in_tested_range",
 ]

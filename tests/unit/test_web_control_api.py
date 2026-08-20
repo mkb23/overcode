@@ -152,6 +152,32 @@ class TestSendKeyToAgent:
             send_key_to_agent("agents", "test-agent", "ctrl-c")
         assert exc_info.value.status == 400
 
+    @pytest.mark.parametrize("gesture", ["approve", "reject"])
+    @patch("overcode.launcher.ClaudeLauncher")
+    @patch(SM_PATH)
+    def test_gestures_go_through_the_backend_aware_launcher(
+        self, MockSM, MockLauncher, gesture
+    ):
+        # A remote/web caller shouldn't have to know whether the agent is
+        # Claude Code or opencode to answer its permission prompt.
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+        MockLauncher.return_value.send_to_session.return_value = True
+
+        assert send_key_to_agent("agents", "test-agent", gesture) == {"ok": True}
+        MockLauncher.return_value.send_to_session.assert_called_once_with(
+            "test-agent", gesture
+        )
+
+    @patch(SM_PATH)
+    def test_gestures_are_listed_in_the_error_message(self, MockSM):
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+
+        with pytest.raises(ControlError) as exc_info:
+            send_key_to_agent("agents", "test-agent", "nope")
+        assert "approve" in str(exc_info.value) and "reject" in str(exc_info.value)
+
 
 class TestKillAgent:
     """Tests for kill_agent handler."""

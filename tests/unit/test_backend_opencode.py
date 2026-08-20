@@ -9,6 +9,7 @@ does not have.
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -22,10 +23,17 @@ from overcode.backends import (
     list_backends,
     supports,
 )
-from overcode.backends.opencode import OpencodeBackend, OpencodeNotFoundError
+from overcode.backends.opencode import (
+    PLUGIN_FILENAME,
+    PLUGIN_MARKER,
+    OpencodeBackend,
+    OpencodeNotFoundError,
+    bundled_plugin_path,
+    ensure_plugin_installed,
+    plugin_installed,
+)
 from overcode.doctor import VERDICT_OK
 from overcode.exceptions import ClaudeNotFoundError
-from overcode.stats_reader import NullStatsReader
 
 
 @pytest.fixture
@@ -61,10 +69,14 @@ class TestCapabilities:
         assert supports(backend, BackendCapability.RESUME)
         assert supports(backend, BackendCapability.FORK)
 
+    def test_telemetry_and_stats(self, backend):
+        # Phase 5: the bundled plugin writes hook-state files, and the SQLite
+        # session store backs the token/cost columns.
+        assert supports(backend, BackendCapability.HOOK_EVENTS)
+        assert supports(backend, BackendCapability.TRANSCRIPT_STATS)
+
     @pytest.mark.parametrize("capability", [
         BackendCapability.SESSION_ID_PRESCRIPTION,
-        BackendCapability.HOOK_EVENTS,
-        BackendCapability.TRANSCRIPT_STATS,
         BackendCapability.PERMISSION_INJECTION,
         BackendCapability.SKILLS,
         BackendCapability.SANDBOX_PROBE,
@@ -74,8 +86,10 @@ class TestCapabilities:
     def test_unsupported(self, backend, capability):
         assert not supports(backend, capability)
 
-    def test_stats_degrade_to_dashes(self, backend):
-        assert isinstance(backend.make_stats_reader(), NullStatsReader)
+    def test_stats_come_from_sqlite(self, backend):
+        from overcode.backends.opencode_stats import OpencodeStatsReader
+
+        assert isinstance(backend.make_stats_reader(), OpencodeStatsReader)
 
 
 class TestBuildCommand:
@@ -163,10 +177,15 @@ class TestBuildCommand:
             "--pure",
         ]
 
-    def test_no_env_prefix(self, backend):
-        # opencode reads provider credentials from the ambient environment;
-        # nothing extra is exported onto the launch line.
-        assert backend.env_prefix(LaunchSpec(agent_teams=True, provider="bedrock")) == {}
+    def test_no_claude_env_prefix(self, backend):
+        # opencode reads provider credentials from the ambient environment, and
+        # has no analogue of the teams/bedrock switches.
+        env = dict(os.environ)
+        env.pop("OVERCODE_STATE_DIR", None)
+        with patch.dict(os.environ, env, clear=True):
+            assert backend.env_prefix(
+                LaunchSpec(agent_teams=True, provider="bedrock")
+            ) == {}
 
 
 class TestGestures:
@@ -206,5 +225,171 @@ class TestHealthVerdict:
         assert "opencode process running" in details
 
     def test_verdict_does_not_depend_on_settings_flag(self, backend):
-        # There is nothing to inject until Phase 5's plugin.
+        # Telemetry is injected as a file in .opencode/plugins/, so argv can
+        # never carry evidence of it the way Claude's --settings does.
         assert backend.health_verdict("opencode")[0] == VERDICT_OK
+
+
+class TestPluginInstallation:
+    """The launcher stages the telemetry plugin into the project directory.
+
+    A project-local copy is used instead of a global config entry so overcode's
+    telemetry never loads into opencode sessions the user runs themselves.
+    """
+
+    def test_prepare_launch_writes_the_plugin(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        installed = tmp_path / ".opencode" / "plugins" / PLUGIN_FILENAME
+        assert installed.is_file()
+        assert PLUGIN_MARKER in installed.read_text()
+
+    def test_installed_copy_matches_the_bundled_file(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        installed = tmp_path / ".opencode" / "plugins" / PLUGIN_FILENAME
+        assert installed.read_text() == bundled_plugin_path().read_text()
+
+    def test_is_idempotent(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        first = ensure_plugin_installed(str(tmp_path))
+        second = ensure_plugin_installed(str(tmp_path))
+        assert first == second
+        assert plugin_installed(str(tmp_path))
+
+    def test_stale_overcode_copy_is_refreshed(self, tmp_path):
+        target = tmp_path / ".opencode" / "plugins" / PLUGIN_FILENAME
+        target.parent.mkdir(parents=True)
+        target.write_text(f"// old build\n// {PLUGIN_MARKER}\n")
+        ensure_plugin_installed(str(tmp_path))
+        assert target.read_text() == bundled_plugin_path().read_text()
+
+    def test_user_owned_file_is_never_clobbered(self, tmp_path):
+        target = tmp_path / ".opencode" / "plugins" / PLUGIN_FILENAME
+        target.parent.mkdir(parents=True)
+        target.write_text("export const Mine = async () => ({})\n")
+        assert ensure_plugin_installed(str(tmp_path)) is None
+        assert target.read_text() == "export const Mine = async () => ({})\n"
+
+    def test_no_start_directory_is_a_no_op(self, backend):
+        assert ensure_plugin_installed(None) is None
+        backend.prepare_launch(LaunchSpec())  # must not raise
+
+    def test_unwritable_directory_is_survivable(self, backend, tmp_path):
+        blocked = tmp_path / "ro"
+        blocked.mkdir(mode=0o500)
+        try:
+            assert ensure_plugin_installed(str(blocked)) is None
+        finally:
+            blocked.chmod(0o700)
+
+    def test_leaves_no_temp_files(self, backend, tmp_path):
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        assert list((tmp_path / ".opencode" / "plugins").glob("*.tmp")) == []
+
+    def test_claude_backend_stages_nothing(self, tmp_path):
+        get_backend("claude-code").prepare_launch(
+            LaunchSpec(start_directory=str(tmp_path))
+        )
+        assert not (tmp_path / ".opencode").exists()
+
+
+class TestEnvPrefix:
+    def test_forwards_the_state_dir(self, backend):
+        # The plugin runs inside the opencode process and must write hook state
+        # where this overcode instance reads it.
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": "/tmp/state dir"}):
+            assert backend.env_prefix(LaunchSpec()) == {
+                "OVERCODE_STATE_DIR": "'/tmp/state dir'"
+            }
+
+    def test_empty_without_a_state_dir_override(self, backend):
+        env = dict(os.environ)
+        env.pop("OVERCODE_STATE_DIR", None)
+        with patch.dict(os.environ, env, clear=True):
+            assert backend.env_prefix(LaunchSpec()) == {}
+
+
+class TestDetectionMode:
+    def test_opencode_sessions_resolve_to_hooks(self):
+        from overcode.status_detector_factory import resolve_session_detection_mode
+
+        class S:
+            backend = "opencode"
+
+        # HOOK_EVENTS is what lets the dispatcher pick the hook detector; the
+        # fleet default decides, exactly as for Claude Code.
+        assert resolve_session_detection_mode(S(), "hooks") == "hooks"
+
+    def test_per_agent_opt_out_still_wins(self):
+        from overcode.status_detector_factory import resolve_session_detection_mode
+
+        class S:
+            backend = "opencode"
+            hook_status_detection = False
+
+        assert resolve_session_detection_mode(S(), "hooks") == "polling"
+
+    def test_dispatcher_uses_the_hook_detector(self, tmp_path, monkeypatch):
+        from overcode.hook_status_detector import HookStatusDetector
+        from overcode.status_detector_factory import StatusDetectorDispatcher
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+
+        class S:
+            id = "sid"
+            name = "oc"
+            backend = "opencode"
+            tmux_window = "w"
+            parent_session_id = None
+
+        dispatcher = StatusDetectorDispatcher("agents", mode="hooks")
+        polling, hooks = dispatcher._pair_for("opencode")
+        assert isinstance(hooks, HookStatusDetector)
+        assert dispatcher.resolve_mode(S()) == "hooks"
+
+
+class TestPluginHealthVerdict:
+    """opencode's stand-in for Claude Code's `--settings` check."""
+
+    def test_plugin_present_is_ok(self, backend, tmp_path):
+        from overcode.doctor import VERDICT_OK
+
+        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
+        session = SimpleNamespace(start_directory=str(tmp_path))
+        verdict, details = backend.refine_health_verdict(
+            session, VERDICT_OK, "opencode process running"
+        )
+        assert verdict == VERDICT_OK
+        assert "telemetry plugin installed" in details
+
+    def test_plugin_absent_is_flagged(self, backend, tmp_path):
+        from overcode.doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        session = SimpleNamespace(start_directory=str(tmp_path))
+        verdict, details = backend.refine_health_verdict(
+            session, VERDICT_OK, "opencode process running"
+        )
+        assert verdict == VERDICT_MISSING_SETTINGS
+        assert "pane polling" in details
+
+    def test_a_worse_verdict_is_left_alone(self, backend, tmp_path):
+        from overcode.doctor import VERDICT_NO_CLAUDE
+
+        session = SimpleNamespace(start_directory=str(tmp_path))
+        assert backend.refine_health_verdict(session, VERDICT_NO_CLAUDE, "gone") == (
+            VERDICT_NO_CLAUDE,
+            "gone",
+        )
+
+    def test_no_directory_leaves_the_verdict_unchanged(self, backend):
+        from overcode.doctor import VERDICT_OK
+
+        session = SimpleNamespace(start_directory=None)
+        assert backend.refine_health_verdict(session, VERDICT_OK, "running") == (
+            VERDICT_OK,
+            "running",
+        )
+
+    def test_claude_backend_has_no_refinement(self):
+        # The hook is optional; doctor uses getattr so Claude Code opts out by
+        # simply not defining it.
+        assert not hasattr(get_backend("claude-code"), "refine_health_verdict")

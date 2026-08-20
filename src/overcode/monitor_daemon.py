@@ -829,6 +829,15 @@ class MonitorDaemon:
                 price_cache_read=mp.cache_read,
             )
 
+            # Some backends record what the provider actually charged (opencode
+            # keeps a per-session `cost`). That beats a pricing-table estimate,
+            # so it wins when present; a zero/absent figure falls back above.
+            stored_cost_reader = getattr(reader, "get_stored_cost", None)
+            if stored_cost_reader is not None:
+                stored_cost = stored_cost_reader(session)
+                if stored_cost:
+                    cost_estimate = stored_cost
+
             self.session_manager.update_stats(
                 session.id,
                 interaction_count=stats.interaction_count,

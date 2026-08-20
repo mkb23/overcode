@@ -71,14 +71,26 @@ def send_key_to_agent(tmux_session: str, name: str, key: str) -> dict:
         "5": ("5", False),
     }
 
+    # Backend-resolved gestures, so a remote/web caller can approve an opencode
+    # prompt without knowing which keys it wants.
+    gesture_keys = {"approve": "approve_keys", "reject": "reject_keys"}
+
     key_lower = key.lower().strip()
-    if key_lower not in allowed_keys:
+    if key_lower not in allowed_keys and key_lower not in gesture_keys:
         raise ControlError(
-            f"Invalid key: '{key}'. Allowed: {', '.join(sorted(allowed_keys))}"
+            f"Invalid key: '{key}'. Allowed: "
+            f"{', '.join(sorted({*allowed_keys, *gesture_keys}))}"
         )
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
+
+    if key_lower in gesture_keys:
+        from .launcher import ClaudeLauncher
+        launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+        if launcher.send_to_session(name, key_lower):
+            return {"ok": True}
+        raise ControlError("Failed to send key to agent", status=500)
 
     tmux = TmuxManager(tmux_session)
     send_text, send_enter = allowed_keys[key_lower]
@@ -140,6 +152,18 @@ def restart_agent(tmux_session: str, name: str) -> dict:
     # Use the launcher's public builder so backend dispatch applies here too
     launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
     backend = launcher.backend_for(session)
+    # Same pre-launch staging the launcher does (opencode's telemetry plugin);
+    # this path builds its own shell line, so it has to ask for it explicitly.
+    try:
+        from .backends import LaunchSpec
+        backend.prepare_launch(LaunchSpec(
+            name=session.name,
+            session_id=session.id,
+            tmux_session=tmux_session,
+            start_directory=session.start_directory,
+        ))
+    except Exception:
+        pass
     cmd_str = " ".join(launcher.build_relaunch_command(session))
 
     tmux = TmuxManager(tmux_session)

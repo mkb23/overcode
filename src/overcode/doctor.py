@@ -473,10 +473,18 @@ def inspect_agent(
         )
 
     # Each backend answers "was observability wired into this process?" its
-    # own way — Claude Code inspects --settings; opencode has nothing to
-    # inject until Phase 5's plugin, so a live process is a pass.
+    # own way — Claude Code inspects --settings; opencode's telemetry plugin
+    # leaves no trace on the command line, so it gets a second look with the
+    # session (and therefore its project directory) in hand.
     from .backends import get_backend, session_backend_name
-    verdict, details = get_backend(session_backend_name(session)).health_verdict(argv)
+    backend = get_backend(session_backend_name(session))
+    verdict, details = backend.health_verdict(argv)
+    refine = getattr(backend, "refine_health_verdict", None)
+    if refine is not None:
+        try:
+            verdict, details = refine(session, verdict, details)
+        except Exception:
+            pass
 
     return AgentHealth(
         **base,

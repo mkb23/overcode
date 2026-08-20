@@ -118,6 +118,17 @@ class AgentBackend(Protocol):
 
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 
+    def prepare_launch(self, spec: LaunchSpec) -> None:
+        """Side effects the CLI needs in place before the process starts.
+
+        Called once per launch/restart/revive/fork, after the binary check and
+        before the shell line is sent. Claude Code needs nothing here — its
+        telemetry rides on ``--settings`` — but opencode installs its
+        telemetry plugin into the project directory. Must be idempotent and
+        must never raise: a failure costs telemetry, not the launch.
+        """
+        ...
+
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]: ...
 
     def resume_args(self, session_id: str, fork: bool) -> List[str]: ...
@@ -143,6 +154,12 @@ class AgentBackend(Protocol):
 
         Returns ``(verdict, details)`` from the ``doctor.VERDICT_*``
         vocabulary, given the agent process's full argv.
+
+        A backend whose telemetry leaves no trace on the command line may
+        also define an *optional* ``refine_health_verdict(session, verdict,
+        details) -> (verdict, details)``. ``doctor`` calls it via ``getattr``
+        with the session in hand — opencode uses it to check for its
+        telemetry plugin in the project directory.
         """
         ...
 

@@ -695,6 +695,14 @@ class ClaudeLauncher:
             mock_scenario=os.environ.get("MOCK_SCENARIO"),
         )
 
+        # Stage anything the CLI needs on disk before it starts — for opencode,
+        # the telemetry plugin in the project's .opencode/plugins/. Failure here
+        # costs telemetry, never the launch.
+        try:
+            backend.prepare_launch(spec)
+        except Exception:
+            pass
+
         claude_cmd = backend.build_command(spec)
         cmd_str = self._build_launch_cmd_str(backend, spec, claude_cmd)
 
@@ -1040,10 +1048,30 @@ class ClaudeLauncher:
             "right": "Right",
         }
 
+        # Backend-resolved gestures. "enter"/"escape" are raw keys and stay
+        # raw; "approve"/"reject" ask the session's backend what its permission
+        # dialog wants, so a supervisor recipe can stay backend-neutral.
+        gesture_keys = {
+            "approve": "approve_keys",
+            "reject": "reject_keys",
+        }
+
         # Check if it's a special key
         text_lower = text.lower().strip()
         success = False
-        if text_lower in special_keys:
+        if text_lower in gesture_keys:
+            backend = self.backend_for(session)
+            presses = getattr(backend, gesture_keys[text_lower])()
+            success = bool(presses)
+            for press in presses:
+                if not self.tmux.send_keys(
+                    session.tmux_window, press.keys, enter=press.enter
+                ):
+                    success = False
+                    break
+                if press.delay_after:
+                    time.sleep(press.delay_after)
+        elif text_lower in special_keys:
             key = special_keys[text_lower]
             if key == "":
                 # Just press Enter

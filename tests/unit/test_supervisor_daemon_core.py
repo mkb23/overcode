@@ -59,6 +59,31 @@ class TestBuildDaemonClaudeContext:
 
         assert "No autopilot instructions set" in result
 
+    def test_non_default_backend_is_named(self):
+        """A mixed fleet tells the supervisor which dialect each agent speaks."""
+        sessions = [{
+            "name": "oc-agent",
+            "tmux_window": 4,
+            "current_status": "waiting_approval",
+            "backend": "opencode",
+        }]
+
+        result = build_daemon_claude_context("agents", sessions)
+
+        assert "Backend: opencode" in result
+
+    @pytest.mark.parametrize("backend", ["claude-code", None])
+    def test_default_backend_is_not_named(self, backend):
+        """A Claude-only fleet reads exactly as it did before opencode."""
+        sessions = [{
+            "name": "agent-1",
+            "tmux_window": 1,
+            "current_status": "waiting_user",
+            "backend": backend,
+        }]
+
+        assert "Backend:" not in build_daemon_claude_context("agents", sessions)
+
     def test_multiple_sessions(self):
         """Should include all sessions."""
         sessions = [
