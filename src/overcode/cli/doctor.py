@@ -189,6 +189,20 @@ def doctor(
         except Exception:
             pass
 
+    # Same idea for grok: no fast release cadence found in Phase 0, but the
+    # version-range guardrail still applies, plus a subscription-auth check
+    # codex/opencode don't need (grok requires SuperGrok/X Premium+ and a
+    # `grok login` the binary's own presence says nothing about). Only runs
+    # when the fleet actually has a grok agent.
+    from ..backends.grok import GrokBackend
+    if any(session_backend_name(s) == GrokBackend.name for s in sessions):
+        try:
+            from ..backends.grok import version_findings as grok_version_findings
+            for finding in grok_version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
     # Global (not per-agent): bundled skills drifted from what's installed.
     # Affects every agent, so it's surfaced once rather than duplicated per row.
     try:

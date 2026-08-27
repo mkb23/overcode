@@ -16,6 +16,7 @@ from .base import (
 )
 from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
+from .grok import GrokBackend
 from .opencode import OpencodeBackend
 
 DEFAULT_BACKEND = "claude-code"
@@ -24,6 +25,7 @@ _BACKENDS: Dict[str, AgentBackend] = {
     ClaudeCodeBackend.name: ClaudeCodeBackend(),
     OpencodeBackend.name: OpencodeBackend(),
     CodexBackend.name: CodexBackend(),
+    GrokBackend.name: GrokBackend(),
 }
 
 
@@ -148,6 +150,7 @@ __all__ = [
     "BackendCapability",
     "ClaudeCodeBackend",
     "CodexBackend",
+    "GrokBackend",
     "OpencodeBackend",
     "DEFAULT_BACKEND",
     "DialogRule",

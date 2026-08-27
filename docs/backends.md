@@ -2,7 +2,7 @@
 
 Overcode was built around Claude Code, but the pieces that know *which* CLI
 is running now live behind one seam — an `AgentBackend` adapter that owns
-that CLI's argv grammar, key gestures, pane chrome, and telemetry. Three
+that CLI's argv grammar, key gestures, pane chrome, and telemetry. Four
 backends ship today:
 
 | Backend name | CLI | Binary override |
@@ -10,6 +10,7 @@ backends ship today:
 | `claude-code` (default) | [Claude Code](https://claude.ai/claude-code) | `CLAUDE_COMMAND` |
 | `opencode` | [opencode](https://opencode.ai) | `OPENCODE_COMMAND` |
 | `codex` | [Codex CLI](https://github.com/openai/codex) | `CODEX_COMMAND` |
+| `grok` | [Grok Build](https://x.ai) | `GROK_COMMAND` |
 
 Everything below opencode's row is honest about maturity. opencode support
 now covers the dashboard, hook-grade live status, previews, AI summaries,
@@ -37,35 +38,46 @@ a real codex price lands in `MODEL_PRICING`. Devcontainer support is still
 Phase 5 — that is the one thing left this document says "not yet" about for
 codex.
 
+**grok is Phase 3: launch, pane-polling status, resume, fork — plus session-id
+prescription and a permission allowlist from day one**, since both are
+launch-flag-shaped for grok (`-s/--session-id` for a new conversation,
+`--allow <rule>` for the allowlist). Unlike codex/opencode, hooks-grade
+status and the token/cost/context columns are **not yet wired** — that is
+Phase 4. Every grok agent runs on pane polling only for now, honestly marked
+throughout this document; `overcode show` and the token/cost/context columns
+render dashes for a grok agent until Phase 4 lands `GrokStatsReader`. grok
+also requires a SuperGrok or X Premium+ subscription, which `overcode doctor`
+checks for (below) rather than assuming.
+
 ## Feature support at a glance
 
 The user-facing view: which overcode features work on which backend, with
 the TUI key where one exists. Unsupported actions are grayed out or answer
 with a clean "backend X does not support …" — never a crash.
 
-| Feature | TUI key | claude-code | opencode | codex | Notes |
-|---|---|---|---|---|---|
-| Launch / new-agent modal | `n` | ✅ | ✅ | ✅ | Backend toggle in the modal; `-B opencode` / `-B codex` from the CLI |
-| Kill | `x` | ✅ | ✅ | ✅ | |
-| Restart (same conversation) | `R` | ✅ | ✅ | ✅ | opencode resumes via `--session <id>`; codex via `codex resume <id>` |
-| Revive a terminated agent | — | ✅ | ✅ | ✅ | |
-| Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live) |
-| Send instruction | `i` / `:` | ✅ | ✅ | ✅ | |
-| Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | Key gestures are backend-resolved |
-| Live hook-grade status | — | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval` |
-| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
-| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate |
-| AI summaries | `A` | ✅ | ✅ | ✅ | |
-| Preview pane | `m` | ✅ | ✅ | ✅ | |
-| Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | |
-| Remote agents via sisters | `N` | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
-| Devcontainer wrapper | — | ✅ | ✅ | ❌ Phase 5 | codex devcontainer install step not wired yet |
-| Permission modes | — | ✅ full | ⚠️ approximate | ✅ full | codex: distinct flags for bypass/permissive/normal (see below) |
-| `--allowed-tools` allowlist | — | ✅ | ❌ | ❌ | No opencode or codex flag exists; silently ignored |
-| Skills | — | ✅ | ❌ | ❌ | |
-| Sandbox badge | — | ✅ | ❌ | ❌ | Claude-only loopback probe |
-| Subscription-usage widget | — | ✅ | ❌ | ❌ | Anthropic-only usage API |
-| Agent teams | — | ✅ | ❌ | ❌ | Claude Code experimental feature |
+| Feature | TUI key | claude-code | opencode | codex | grok | Notes |
+|---|---|---|---|---|---|---|
+| Launch / new-agent modal | `n` | ✅ | ✅ | ✅ | ✅ | Backend toggle in the modal; `-B opencode` / `-B codex` / `-B grok` from the CLI |
+| Kill | `x` | ✅ | ✅ | ✅ | ✅ | |
+| Restart (same conversation) | `R` | ✅ | ✅ | ✅ | ✅ | opencode resumes via `--session <id>`; codex via `codex resume <id>`; grok via `--resume <id>` |
+| Revive a terminated agent | — | ✅ | ✅ | ✅ | ✅ | |
+| Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live); grok: `--resume <id> --fork-session --session-id <new-uuid>` — grok prescribes the fork's id too, verified live |
+| Send instruction | `i` / `:` | ✅ | ✅ | ✅ | ✅ | |
+| Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter |
+| Live hook-grade status | — | ✅ | ✅ | ✅ | ❌ Phase 4 | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: pane polling only for now — no `waiting_approval` distinction yet |
+| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ⚠️ polling only | Per-session dispatch picks hooks mode automatically when state files are fresh; grok has no hook state to switch to yet |
+| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | ❌ Phase 4 | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate. grok: dashes until `GrokStatsReader` lands (Phase 4), even though a full local token/cost split exists on disk in `updates.jsonl` — it's just not read yet |
+| AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | |
+| Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | |
+| Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | |
+| Remote agents via sisters | `N` | ✅ | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
+| Devcontainer wrapper | — | ✅ | ✅ | ❌ Phase 5 | ❌ Phase 5 | codex/grok devcontainer install step not wired yet |
+| Permission modes | — | ✅ full | ⚠️ approximate | ✅ full | ✅ full | codex: distinct flags for bypass/permissive/normal (see below); grok: same, plus flag-vs-config precedence confirmed live (see below) |
+| `--allowed-tools` allowlist | — | ✅ | ❌ | ❌ | ✅ | No opencode or codex flag exists, silently ignored; grok: repeated `--allow <rule>` per tool, confirmed to actually suppress the dialog live |
+| Skills | — | ✅ | ❌ | ❌ | ❌ | grok has skills + a marketplace, unintegrated |
+| Sandbox badge | — | ✅ | ❌ | ❌ | ❌ | Claude-only loopback probe |
+| Subscription-usage widget | — | ✅ | ❌ | ❌ | ❌ | Anthropic-only usage API |
+| Agent teams | — | ✅ | ❌ | ❌ | ❌ | Claude Code experimental feature |
 
 ---
 
@@ -135,46 +147,102 @@ No provider prefix — that is opencode's grammar, not codex's.
 
 ---
 
+## Launching a grok agent
+
+```bash
+overcode launch -n my-agent --backend grok -d ~/code/myproject
+overcode launch -n my-agent -B grok --model grok-4.6
+```
+
+Same `-B` short form, same new-agent-modal toggle, same `overcode show`
+backend line as opencode/codex. grok is Phase 3: launch, resume, fork, kill,
+restart, and the permission allowlist all work; status is pane-polling only
+and the token/cost/context columns are dashes until Phase 4 — see the
+honesty note at the top of this document.
+
+grok requires a SuperGrok or X Premium+ subscription and a `grok login` run
+once outside overcode. If `~/.grok/auth.json` is missing or empty,
+`overcode doctor` names `grok login` explicitly rather than letting the
+launch fail with no explanation.
+
+### Models
+
+grok expects a bare model id and overcode passes `-m` through verbatim:
+
+```bash
+overcode launch -n gk -B grok --model grok-4.6
+```
+
+No provider prefix — same grammar as codex's, unlike opencode's
+`provider/model` form. Phase 0 found `-m`/`--model` fails asymmetrically: an
+unknown id is silently ignored by the interactive TUI (it just falls back to
+the account default with no visible error) but rejected loudly by headless
+`-p` mode. overcode does not currently pre-validate against `grok models`.
+
+### Session id prescription and the permission allowlist
+
+grok is the first non-Claude backend to use both of these overcode
+capabilities:
+
+- **`SESSION_ID_PRESCRIPTION`**: overcode mints a uuid and passes
+  `-s/--session-id <uuid>` on every fresh launch (and on every fork — see
+  below), so `overcode show <name>` displays the session id immediately
+  instead of waiting for discovery. The session lands at
+  `~/.grok/sessions/<percent-encoded-abs-cwd>/<uuid>/` (`/` → `%2F`,
+  including the leading slash) — confirmed live, round-trip verified.
+- **`PERMISSION_INJECTION`**: `--allowed-tools Bash,Read` becomes
+  `--allow Bash --allow Read` — one repeated flag per tool, using the same
+  `Tool(glob)` rule grammar Claude's `--allowedTools` speaks. A bare tool
+  name means "allow every invocation of that tool," confirmed to actually
+  suppress the approval dialog live for a matching command.
+- **Fork prescribes a new id too**: `overcode launch-fork` mints a *second*
+  fresh uuid for the forked agent (`--resume <source-id> --fork-session
+  --session-id <new-uuid>`) — grok is the only backend where fork produces
+  a distinct, overcode-chosen id rather than one the CLI generates on its
+  own or one discovery has to find later.
+
+---
+
 ## Support matrix
 
 Capabilities are the `BackendCapability` flags each adapter declares;
 overcode gates UI actions and telemetry off them.
 
-| Capability | claude-code | opencode | codex | Notes |
-|---|---|---|---|---|
-| `RESUME` | ✅ | ✅ | ✅ | opencode: `--session <id>`; codex: `codex resume <id>` (subcommand) |
-| `FORK` | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session; codex: `codex fork <id>` — **verified live** |
-| `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | ❌ | opencode mints its own `ses_…` ids; codex has no `--session-id`-shaped flag for fresh launches. Both require discovery, not prescription |
-| `HOOK_EVENTS` | ✅ | ✅ | ✅ | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below) |
-| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry) |
-| `PERMISSION_INJECTION` | ✅ | ❌ | ❌ | opencode v1.18.19 has no per-launch tool allowlist flag; codex's nearest concept is sandbox modes + `-c` config, not a tool allowlist |
-| `SKILLS` | ✅ | ❌ | ❌ | opencode *does* have a `/skills` command, codex too — neither has overcode integration |
-| `SANDBOX_PROBE` | ✅ | ❌ | ❌ | Claude-only loopback heuristic; codex has its own (unrelated) sandbox |
-| `SUBSCRIPTION_USAGE` | ✅ | ❌ | ❌ | Anthropic-only usage API |
-| `AGENT_TEAMS` | ✅ | ❌ | ❌ | Claude Code experimental feature |
+| Capability | claude-code | opencode | codex | grok | Notes |
+|---|---|---|---|---|---|
+| `RESUME` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id>`; codex: `codex resume <id>` (subcommand); grok: `--resume <id>` |
+| `FORK` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session; codex: `codex fork <id>` — **verified live**; grok: `--resume <id> --fork-session --session-id <new-uuid>` — **verified live**, and unlike the others grok prescribes the fork's own id too |
+| `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | ❌ | ✅ | opencode mints its own `ses_…` ids; codex has no `--session-id`-shaped flag for fresh launches; grok's `-s/--session-id` requires a *new* conversation and round-tripped live to `~/.grok/sessions/<enc-cwd>/<uuid>/` |
+| `HOOK_EVENTS` | ✅ | ✅ | ✅ | ❌ Phase 4 | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below); grok has a Claude-compatible, camelCase-dialect hooks system, confirmed live in Phase 0 — not wired until Phase 4 |
+| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | ❌ Phase 4 | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry). grok's `updates.jsonl` carries a *full* local input/output/cost split (confirmed live, Phase 0) — a fuller story than codex's, but `GrokStatsReader` doesn't exist until Phase 4, so it's `NullStatsReader`/dashes for now |
+| `PERMISSION_INJECTION` | ✅ | ❌ | ❌ | ✅ | opencode v1.18.19 has no per-launch tool allowlist flag; codex's nearest concept is sandbox modes + `-c` config, not a tool allowlist; grok's `--allow <rule>` (repeatable) confirmed live to actually suppress the dialog, not just parse cleanly |
+| `SKILLS` | ✅ | ❌ | ❌ | ❌ | opencode *does* have a `/skills` command, codex and grok too — none has overcode integration |
+| `SANDBOX_PROBE` | ✅ | ❌ | ❌ | ❌ | Claude-only loopback heuristic; codex has its own (unrelated) sandbox |
+| `SUBSCRIPTION_USAGE` | ✅ | ❌ | ❌ | ❌ | Anthropic-only usage API |
+| `AGENT_TEAMS` | ✅ | ❌ | ❌ | ❌ | Claude Code experimental feature |
 
 ## Flag mapping
 
-| overcode concept | claude-code | opencode (v1.18.19) | codex (v0.150.1) |
-|---|---|---|---|
-| Binary | `claude` | `opencode` | `codex` |
-| Bypass permissions | `--dangerously-skip-permissions` | `--auto` | `--dangerously-bypass-approvals-and-sandbox` |
-| Permissive | `--permission-mode dontAsk` | `--auto` (approximate — see below) | `-a never --sandbox workspace-write` |
-| Normal | (default) | opencode's own `permission` config | (default: `on-request` approval) |
-| Allowed tools | `--allowedTools a,b` | ✗ no flag exists | ✗ no flag exists |
-| Model | `--model sonnet` | `--model provider/model` | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) |
-| Persona | `--agent name` | `--agent name` | ✗ (`-p/--profile` is a config-layer override, not a persona flag) |
-| Prescribe session id | `--session-id <uuid>` | ✗ | ✗ |
-| Resume | `--resume <id>` | `--session <id>` | `codex resume <id>` (subcommand, options after) |
-| Fork | `--resume <id> --fork-session` | `--session <id> --fork` | `codex fork <id>` (subcommand, options after) |
-| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | `-c 'hooks.<Event>=[...]'` × 8 + `--dangerously-bypass-hook-trust` |
-| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
-| Graceful exit | `C-c`, then `/exit` | `Escape` ×2, then `/exit` | `Escape`, then `/quit` |
-| Bare `C-c` | safe | kills the process | **kills the process instantly, no confirmation** |
-| Clear conversation | `/clear` | `/new` | `/new` |
-| Approve | `Enter` | `Enter` (confirms the preselected *Allow once*) | `Enter` (confirms the preselected *Yes, proceed*) |
-| Reject | `Escape` | `Escape` | `Escape` (no literal reject key) |
-| Trust-folder dialog | "I trust this folder" | none | "Do you trust the contents of this directory?" — `Enter` accepts |
+| overcode concept | claude-code | opencode (v1.18.19) | codex (v0.150.1) | grok (v1.0.5) |
+|---|---|---|---|---|
+| Binary | `claude` | `opencode` | `codex` | `grok` |
+| Bypass permissions | `--dangerously-skip-permissions` | `--auto` | `--dangerously-bypass-approvals-and-sandbox` | `--permission-mode bypassPermissions` |
+| Permissive | `--permission-mode dontAsk` | `--auto` (approximate — see below) | `-a never --sandbox workspace-write` | `--permission-mode auto` (**not** `dontAsk` — see below) |
+| Normal | (default) | opencode's own `permission` config | (default: `on-request` approval) | `--permission-mode default`, passed **explicitly on every launch** (see below) |
+| Allowed tools | `--allowedTools a,b` | ✗ no flag exists | ✗ no flag exists | `--allow <rule>` repeated once per tool |
+| Model | `--model sonnet` | `--model provider/model` | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) | `-m <model>` (bare id, e.g. `grok-4.6`) |
+| Persona | `--agent name` | `--agent name` | ✗ (`-p/--profile` is a config-layer override, not a persona flag) | `--agent name` |
+| Prescribe session id | `--session-id <uuid>` | ✗ | ✗ | `--session-id <uuid>` (new conversations only) |
+| Resume | `--resume <id>` | `--session <id>` | `codex resume <id>` (subcommand, options after) | `--resume <id>` |
+| Fork | `--resume <id> --fork-session` | `--session <id> --fork` | `codex fork <id>` (subcommand, options after) | `--resume <id> --fork-session --session-id <new-uuid>` |
+| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | `-c 'hooks.<Event>=[...]'` × 8 + `--dangerously-bypass-hook-trust` | none yet — Phase 4 |
+| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | none yet — Phase 4 will read `~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl` |
+| Graceful exit | `C-c`, then `/exit` | `Escape` ×2, then `/exit` | `Escape`, then `/quit` | `Escape`, then `/quit` |
+| Bare `C-c` | safe | kills the process | **kills the process instantly, no confirmation** | **safe** — interrupts only, same as Escape (opposite of codex/opencode) |
+| Clear conversation | `/clear` | `/new` | `/new` | `/new` |
+| Approve | `Enter` | `Enter` (confirms the preselected *Allow once*) | `Enter` (confirms the preselected *Yes, proceed*) | `2` (no Enter — digit alone executes; option `1` is *always-approve*, not a one-time approve) |
+| Reject | `Escape` | `Escape` | `Escape` (no literal reject key) | `3` (no Enter) |
+| Trust-folder dialog | "I trust this folder" | none | "Do you trust the contents of this directory?" — `Enter` accepts | none — confirmed absent even in a never-before-visited directory |
 
 ### Permission modes are approximate
 
@@ -216,6 +284,38 @@ modes:
 `--allowed-tools` is silently ignored for codex too: there is no
 `--allowedTools`-shaped flag, and the nearest concepts (sandbox modes, `-c
 key=value` config overrides) are not a tool allowlist.
+
+### grok's permission modes are exact, and explicit on every launch
+
+Like codex, grok has a distinct flag for each of overcode's three modes —
+but grok adds a wrinkle codex and opencode don't have: **the user's own
+config can silently override what overcode asks for**, so overcode never
+omits the flag, even for "normal" mode.
+
+- **normal** → `--permission-mode default`. Approval dialog for every tool
+  call, same look as `permission_required.txt`.
+- **permissive** → `--permission-mode auto`. **Not** `dontAsk` — Phase 0
+  found `dontAsk` shows the *identical* approval dialog as `default`; only
+  `auto` actually skips it (confirmed live: same test command, `auto`
+  produced no dialog at all, `dontAsk` produced the full dialog).
+- **bypass** → `--permission-mode bypassPermissions`.
+
+**Why every launch passes `--permission-mode` explicitly, never relying on
+the default:** grok's own `~/.grok/config.toml` can set
+`[ui] permission_mode = "always-approve"` — a real setting on the machine
+this was verified against. Phase 0 confirmed live that the launch flag
+overrides it (`--permission-mode default` produced a real dialog despite the
+config's always-approve; omitting the flag reproduced silent auto-approve).
+If overcode ever omitted the flag for "normal" mode, a user with that config
+line would get silent auto-approval regardless of what overcode's UI showed
+them the mode as — so `build_command()` always emits `--permission-mode`,
+never treats "normal" as "say nothing."
+
+`--allowed-tools` **is** honored for grok, unlike opencode/codex: each
+comma-separated tool name becomes its own `--allow <name>` flag, confirmed
+live to both parse cleanly and actually suppress the dialog for a matching
+command (`--allow 'Bash(echo *)'` was the exact rule-syntax probe; a bare
+tool name is the parent case of that grammar — allow every invocation).
 
 ---
 
@@ -431,6 +531,48 @@ rollout file rather than every session ever recorded.
 
 ---
 
+## Telemetry and stats: grok, not yet wired
+
+grok is Phase 3 only — no hooks, no stats reader. `GrokBackend.capabilities`
+does not include `HOOK_EVENTS` or `TRANSCRIPT_STATS`, so `make_stats_reader()`
+is never even called (`stats_reader_for_session()` gates on the capability
+and hands back `NullStatsReader` instead); every token/cost/context column
+renders a dash for a grok agent, and status comes from pane polling only.
+
+This is not a research gap: Phase 0 already confirmed grok's story is
+unusually good on both fronts, which is exactly what makes Phase 4 low-risk
+rather than speculative —
+
+- **Hooks**: grok ships a hooks system that is *explicitly* Claude Code
+  compatible (grok's own bundled docs describe it that way) — same event
+  names (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`,
+  `StopFailure`, `SessionEnd`), same exit-code-2 semantics, plus a
+  grok-only `StopCancelled` event and `Notification` events with
+  `idle_prompt`/`permission_prompt` matchers that map directly onto
+  overcode's `PermissionRequest`/idle-backstop vocabulary. The one real
+  difference: grok's hook stdin is **camelCase** (`hookEventName`,
+  `sessionId`, `promptId`) where Claude's is snake_case — confirmed live,
+  exact JSON captured during Phase 0 — so `overcode hook-handler` will need
+  a dialect-normalization pass, the same mechanism codex's snake_case stdin
+  turned out *not* to need.
+- **Stats**: `~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl` carries a
+  `turn_completed.usage` object with a full local split —
+  `inputTokens`/`outputTokens`/`cachedReadTokens`/`cacheCreationTokens`/
+  `reasoningTokens`/`costUsdTicks`, per-model breakdown included — confirmed
+  live against a real session. That's a *fuller* local story than codex's
+  (which has no local cost figure at all), contradicting the design
+  research's original assumption that grok's token split was unavailable.
+  The `costUsdTicks` unit scale (nano-dollars, provisionally) was not
+  cross-checked against a real billed amount as of Phase 3, so treat any
+  future cost column as still-to-be-verified even once Phase 4 lands it.
+
+Because `SESSION_ID_PRESCRIPTION` is already wired (unlike codex/opencode,
+which both need discovery), Phase 4's stats reader will have a trivial
+lookup key from day one: the uuid overcode itself minted at launch, straight
+into `sessions/<enc-cwd>/<uuid>/`, no directory+time fallback needed.
+
+---
+
 ## Status detection (polling fallback)
 
 When the plugin is absent, status comes from **pane polling** — overcode
@@ -528,6 +670,67 @@ have these — permission dialogs distinguish `waiting_approval` there):
 
 ---
 
+## grok: pane polling only (Phase 4 pending)
+
+grok has no hooks-grade status yet — every grok agent runs on pane polling
+for its entire Phase 3 lifetime. The pattern set lives in
+`src/overcode/backends/grok.py` (`GROK_PATTERNS`), grounded in a committed
+corpus of real Grok Build v1.0.5 captures at `tests/fixtures_grok_panes/`,
+replayed by `tests/unit/test_status_detector_grok.py`.
+
+The signals that matter:
+
+| overcode status | grok chrome |
+|---|---|
+| `running` | `Esc:cancel` in the footer hint bar (`Shift+Tab:mode │ Esc:cancel │ Ctrl+x:shortcuts`) — the spinner line itself (`⠼ Waiting for response…`) is a secondary signal, since it can scroll out of the detector's trailing window on a longer turn, but the footer hint is fixed UI chrome and never does |
+| `waiting_user` (permission) | `Yes, and don't ask again for anything` / `No, reject` / `1/3:select` — the dialog replaces the input box entirely |
+| `waiting_user` (idle) | the input box's empty-input shape (`│ ❯` ... `│`) — matched as a shape, not a fixed string, since grok's box border width depends on the terminal and there's no bare prompt glyph the way Claude Code draws one |
+| `terminated` | shell prompt, none of the above |
+
+Known rough edges, honestly:
+
+- **No `waiting_approval` under polling.** Same as codex: permission
+  dialogs read as `waiting_user`. `overcode send <name> approve` still
+  works — it sends grok's digit-2 gesture regardless of which status label
+  got it there.
+- **The input box has no fixed-width idle marker.** Unlike codex's single
+  literal placeholder string ("Ask Codex to do anything"), grok's box
+  border is drawn at the terminal's width, so `GrokStatusPatterns` matches
+  the *shape* of an empty input line (`│ ❯` with only whitespace between the
+  glyph and the closing border) rather than one fixed string. The same
+  constraint means `prompt_ready_chars()` — used once, right after launch,
+  to know when it's safe to send the first prompt — can't use the box
+  either; it uses the one width-invariant string actually captured live: the
+  right-aligned `[stable]` release-channel tag that appears alone on a
+  fresh, pre-interaction launch. If a different channel ever renders a
+  different tag there, this degrades to the launcher's existing
+  30-second-timeout-then-send-anyway fallback, not a crash.
+- **Headless bad-model errors read as `waiting_user`, with the raw error
+  text as the activity string — not `terminated`.** `error_bad_model.txt`
+  was captured from a *headless* (`-p`) run, not the interactive TUI —
+  Phase 0 found the interactive TUI silently swallows a bad `--model` id
+  instead of erroring, so there is no live TUI error chrome to key a
+  pattern on. The headless error text itself doesn't match any grok-
+  specific or shell-prompt pattern, so the detector's default phase reports
+  `waiting_user` with the cleaned error line as the activity — a documented
+  correction to this corpus's own README, which had annotated the fixture
+  "terminated" before the detector's actual phase ordering was traced
+  through by hand (see `tests/unit/test_status_detector_grok.py`'s
+  `test_error_bad_model_reads_as_waiting_user_not_terminated`).
+- **Finished tool/status lines are not treated as work.** `◆ Thought for
+  Ns` and `◆ Run ...` stay on screen after they happen, so tool-execution
+  detection is disabled the same way it is for opencode/codex; the footer
+  hint's `Esc:cancel` covers the in-flight case.
+- **UNVERIFIED: thinking/reasoning chrome.** No reasoning-capable model
+  rendered visible "still thinking" chrome during Phase 0 corpus capture —
+  the `◆ Thought for Ns` line is a settled summary, not a live spinner.
+- **Bare `C-c` is safe on grok** — the opposite of codex/opencode. overcode
+  still prefers `/quit` (after a settling `Escape`) over sending `C-c`
+  directly, per Appendix B's recommendation, for consistency with the other
+  three backends' graceful-exit shape.
+
+---
+
 ## Doctor checks
 
 `overcode doctor` adds three opencode-specific checks, and only when the
@@ -572,25 +775,52 @@ reads `ok`; absent reports `missing-settings`, the same verdict Claude Code
 gets when it is running without `--settings` and opencode gets when its
 telemetry plugin is missing. `overcode restart` re-injects it.
 
+grok gets two checks of its own, gated on the fleet containing a grok agent:
+
+1. **Version range.** No fast release cadence was found in Phase 0 (unlike
+   codex/opencode, `grok update --help` and `~/.grok/config.toml` show no
+   auto-update toggle, and no background update chatter was observed during
+   probing), but the guardrail still applies as the corpus ages. The range
+   lives in `TESTED_GROK_RANGE` in `src/overcode/backends/grok.py`
+   (currently `>=1.0.5, <2.0.0`).
+2. **Missing or empty `~/.grok/auth.json`.** grok needs a SuperGrok or X
+   Premium+ subscription and a `grok login` run once outside overcode — a
+   binary that's installed but never logged in fails every launch with no
+   overcode-side explanation otherwise. This check only fires once the
+   version check itself succeeds (proof the binary runs at all), and names
+   `grok login` explicitly.
+
+Per-agent, the health verdict for a grok session is "is there a live `grok`
+process under the pane?" — Phase 3 has no injected-telemetry artifact to
+inspect yet (no `--settings`-equivalent flag, no plugin file), so a running
+process always reads `ok`. Phase 4 tightens this to check for the hooks
+file `~/.grok/hooks/overcode.json`, the same way codex's verdict checks
+argv and opencode's checks the project's plugin file.
+
 ---
 
-## Supervising an opencode or codex agent
+## Supervising an opencode, codex, or grok agent
 
 The supervisor's own meta-agent stays Claude Code, but its gestures are
 backend-resolved:
 
 ```bash
-overcode send <name> approve   # opencode: confirms "Allow once"; codex: confirms "Yes, proceed"
-overcode send <name> reject    # Escape — dismisses, abandoning the tool call
+overcode send <name> approve   # opencode: confirms "Allow once"; codex: confirms "Yes, proceed"; grok: digit "2" (Yes, proceed — not the default-selected always-approve option)
+overcode send <name> reject    # Escape — dismisses, abandoning the tool call (grok: digit "3", no Escape needed)
 ```
 
 These are *gestures*, not keys: overcode asks the agent's backend which keys
 its permission dialog wants. Prefer them over the raw `overcode send <name>
 enter` / `escape`, which still exist and still send literal keys. Supervisor
 context lines name a non-default backend (`Backend: opencode` /
-`Backend: codex`) so the supervisor knows not to send Claude slash commands
-at it — codex's clear-conversation gesture is `/new`, not `/clear`, and its
-graceful exit is `/quit`, not `/exit`.
+`Backend: codex` / `Backend: grok`) so the supervisor knows not to send
+Claude slash commands or Enter-based approval gestures at it — codex's
+clear-conversation gesture is `/new`, not `/clear`, its graceful exit is
+`/quit`, not `/exit`; grok's approve/reject gestures are bare digit keys
+(`2`/`3`) with no Enter at all, and its default-selected dialog option is
+*always-approve*, not a one-time approval — sending a bare Enter at a grok
+permission dialog would silently switch the session into always-approve
+mode rather than approving just the one tool call.
 
 ---
 
@@ -607,6 +837,7 @@ step off it:
 | unset / `claude-code` | `npm i -g @anthropic-ai/claude-code` | yes |
 | `opencode` | `npm i -g opencode-ai@latest` | skipped — no settings.json hook protocol |
 | `codex` | ❌ not wired yet (Phase 5) | — |
+| `grok` | ❌ not wired yet (Phase 5) | — |
 
 opencode's telemetry still reaches the host: the plugin is staged into the
 project directory, which is bind-mounted as `/workspace`, and the hook-state
@@ -614,7 +845,12 @@ exchange directory is already mounted at `/overcode-state`. Provider
 credentials present in your shell (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, `GEMINI_API_KEY`) are forwarded into the container.
 codex's devcontainer install case (`npm i -g @openai/codex`) and its
-`~/.codex/auth.json` mounting story land in Phase 5.
+`~/.codex/auth.json` mounting story land in Phase 5, alongside grok's (`curl
+-fsSL https://x.ai/cli/install.sh | bash` and a `~/.grok/auth.json` mounting
+story of its own — a subscription-gated login, unlike codex/opencode's
+API-key-friendly auth, so container support may turn out unsupported rather
+than merely unwired; that verdict is deferred to Phase 5's single container
+smoke test).
 
 ---
 
@@ -663,3 +899,12 @@ opencode's for a second telemetry-injection shape: it started with only
 `RESUME` and `FORK` declared (Phase 1) and added `HOOK_EVENTS` +
 `TRANSCRIPT_STATS` once its hook injection and `codex_stats.py` landed
 (Phase 2) — a capability set is a launch-time floor, not a permanent one.
+The grok backend (`src/overcode/backends/grok.py`) is a third data point on
+the same pattern, from the opposite direction: it started (Phase 3) with
+`SESSION_ID_PRESCRIPTION` and `PERMISSION_INJECTION` declared *alongside*
+`RESUME`/`FORK` — both are launch-flag-shaped for grok, so there was no
+reason to defer them the way codex deferred its (flag-shaped)
+`HOOK_EVENTS` — while still deferring `HOOK_EVENTS`/`TRANSCRIPT_STATS` to
+Phase 4, exactly the axis codex's Phase 1→2 split was on. Declare whatever a
+phase actually verified, in whatever order the underlying CLI's own launch
+grammar makes cheap.

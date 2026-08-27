@@ -1245,6 +1245,7 @@ BACKEND_BADGES = {
     "claude-code": "cc",
     "opencode": "oc",
     "codex": "cx",
+    "grok": "gk",
 }
 
 

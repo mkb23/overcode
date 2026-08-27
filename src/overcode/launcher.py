@@ -610,9 +610,12 @@ class AgentLauncher:
         self.sessions.update_session(session.id, parent_session_id=source_session.id)
         session = self.sessions.get_session(session.id)
 
-        # fork_from → helper emits --resume <id> --fork-session. No prescribed
-        # session_id; Claude generates the fork's new ID and the monitor daemon
-        # discovers it.
+        # fork_from → helper emits --resume <id> --fork-session. For most
+        # backends (Claude Code included) no session id is prescribed here;
+        # the CLI generates the fork's new ID and the monitor daemon
+        # discovers it. Backends with fork_prescribes_new_session_id=True
+        # (grok) are the exception — _send_launch_for_session mints and
+        # eagerly binds a fresh uuid for those instead.
         if not self._send_launch_for_session(
             session, window_name,
             fork_from=source_session.active_agent_session_id,
@@ -651,8 +654,18 @@ class AgentLauncher:
         transition produces an identical shell line modulo session resumption.
 
         Session-selection mode (mutually exclusive in practice):
-          * fork_from set: --resume <fork_from> --fork-session. Claude generates
-            a new session ID; monitor daemon discovers it.
+          * fork_from set: --resume <fork_from> --fork-session. Claude
+            generates its own new session ID; monitor daemon discovers it.
+            Backends that declare both SESSION_ID_PRESCRIPTION and
+            ``fork_prescribes_new_session_id`` (grok) instead get a freshly
+            minted uuid bound eagerly, same as the fresh-launch case, since
+            their fork grammar takes an explicit new id that's authoritative.
+            Claude Code declares SESSION_ID_PRESCRIPTION too but mints its
+            own different id on fork, so it must NOT get eager binding here
+            — that was a real regression caught in review: minting
+            unconditionally left Claude fork sessions tracking a phantom id
+            no process would ever report, until/unless discovery overwrote
+            it.
           * fresh=True or no active_agent_session_id: prescribe a new
             --session-id, bind it on the Session eagerly (no PID discovery).
           * otherwise: --resume <active_agent_session_id> preserves history.
@@ -668,7 +681,22 @@ class AgentLauncher:
 
         if fork_from:
             resume_sid = fork_from
-            new_claude_sid = None
+            # Mint only for backends whose fork grammar takes an explicit,
+            # authoritative new session id (grok: `--resume <id>
+            # --fork-session --session-id <new-uuid>`). Gating on
+            # SESSION_ID_PRESCRIPTION alone is not enough — Claude Code also
+            # declares that capability (for fresh launches) but mints its
+            # own different id on fork, so it needs
+            # fork_prescribes_new_session_id=False to keep leaving this
+            # unset for discovery to fill in, exactly as before this flag
+            # existed.
+            if (
+                supports(backend, BackendCapability.SESSION_ID_PRESCRIPTION)
+                and getattr(backend, "fork_prescribes_new_session_id", False)
+            ):
+                new_claude_sid = str(uuid.uuid4())
+            else:
+                new_claude_sid = None
             use_fork = True
         elif fresh or not session.active_agent_session_id:
             resume_sid = None

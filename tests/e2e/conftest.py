@@ -23,6 +23,7 @@ TESTS_DIR = Path(__file__).parent.parent
 MOCK_CLAUDE = TESTS_DIR / "mock_claude.py"
 MOCK_OPENCODE = TESTS_DIR / "mock_opencode.py"
 MOCK_CODEX = TESTS_DIR / "mock_codex.py"
+MOCK_GROK = TESTS_DIR / "mock_grok.py"
 PROJECT_ROOT = TESTS_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
@@ -102,10 +103,11 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     # (e.g., TUI's _ensure_monitor_daemon)
     env = os.environ.copy()
     env["CLAUDE_COMMAND"] = str(MOCK_CLAUDE)
-    # Same swap for the opencode/codex backends, so a mixed-backend test
-    # never reaches a real `opencode`/`codex` binary on the host.
+    # Same swap for the opencode/codex/grok backends, so a mixed-backend test
+    # never reaches a real `opencode`/`codex`/`grok` binary on the host.
     env["OPENCODE_COMMAND"] = str(MOCK_OPENCODE)
     env["CODEX_COMMAND"] = str(MOCK_CODEX)
+    env["GROK_COMMAND"] = str(MOCK_GROK)
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(SRC_DIR)

@@ -116,6 +116,19 @@ class AgentBackend(Protocol):
     not_found_error: Type[Exception]
     capabilities: BackendCapability
 
+    # True when the backend's fork grammar takes an explicit new session id
+    # (--session-id alongside --fork-session) AND the prescribed id is
+    # authoritative for the forked session; False when the CLI mints its own
+    # fork id and discovery must fill it in. Only meaningful alongside
+    # SESSION_ID_PRESCRIPTION — launcher.py's fork branch mints a fresh uuid
+    # to bind eagerly only when both are true (grok); Claude Code also
+    # declares SESSION_ID_PRESCRIPTION but mints its own id on fork, so it
+    # must stay False there (the default backends don't literally inherit
+    # this Protocol, so launcher.py reads it via
+    # ``getattr(backend, "fork_prescribes_new_session_id", False)`` — this
+    # default documents the fallback, it isn't inherited automatically).
+    fork_prescribes_new_session_id: bool = False
+
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 
     def prepare_launch(self, spec: LaunchSpec) -> None:

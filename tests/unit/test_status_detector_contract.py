@@ -225,6 +225,42 @@ class TestHookContractCodex(CodexPatternsMixin, ContractTests):
         )
 
 
+class GrokPatternsMixin:
+    """Runs the contract against grok's real StatusPatterns, not a double.
+
+    grok is already registered (unlike HookedTestBackend, which is
+    registered/unregistered per test), so this just resolves the live
+    pattern set — proving GROK_PATTERNS carries no assumption that would
+    break either detector implementation.
+    """
+
+    def alt_patterns(self):
+        from overcode.backends.grok import GROK_PATTERNS
+        return GROK_PATTERNS
+
+
+class TestPollingContractGrok(GrokPatternsMixin, ContractTests):
+    """PollingStatusDetector satisfies the contract with grok's patterns."""
+
+    def create_detector(self, tmux_session, mock_tmux, **kwargs):
+        return PollingStatusDetector(
+            tmux_session, tmux=mock_tmux, patterns=self.alt_patterns()
+        )
+
+
+class TestHookContractGrok(GrokPatternsMixin, ContractTests):
+    """HookStatusDetector satisfies the contract with grok's patterns."""
+
+    def create_detector(self, tmux_session, mock_tmux, **kwargs):
+        tmp_path = kwargs.get("tmp_path")
+        state_dir = tmp_path / "sessions" / tmux_session
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return HookStatusDetector(
+            tmux_session, tmux=mock_tmux, patterns=self.alt_patterns(),
+            state_dir=state_dir,
+        )
+
+
 class TestHookContractWithState(ContractTests):
     """HookStatusDetector with active hook state must also satisfy contract."""
 
