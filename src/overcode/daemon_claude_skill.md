@@ -40,6 +40,18 @@ dialogs and slash commands differ, so stick to `overcode show`, `overcode send
 <name> approve|reject`, and plain-text instructions -- do not send Claude
 slash commands (`/clear`, `/exit`) to it.
 
+A session line reading `Backend: codex` is a Codex CLI agent. Its permission
+dialog is `1. Yes, proceed (y)` / `2. Yes, and don't ask again for commands
+that start with ... (p)` / `3. No, and tell Codex what to do differently
+(esc)`, option 1 pre-selected -- `overcode send <name> approve` sends `Enter`
+(takes option 1), `overcode send <name> reject` sends `Escape` (option 3,
+there is no literal `n`). `2`/`p` is codex's own "approve and don't ask again
+for this command prefix" gesture; only reach for it deliberately, not as a
+default approve. Never send raw `C-c` to a codex session -- it kills the
+process outright, no confirmation; the safe interrupt is `Escape`. Use
+`overcode send <name> approve|reject` and plain-text instructions, not Claude
+slash commands (`/clear`, `/exit`) -- codex's own are `/new` and `/quit`.
+
 ## Approval Rules
 
 Follow the session's **standing instructions** first. Then apply these defaults:

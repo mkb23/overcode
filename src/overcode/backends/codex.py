@@ -1,11 +1,16 @@
-"""codex backend — launch and polling status for the Codex CLI (Phase 1 MVP).
+"""codex backend — launch, hooks telemetry and stats for the Codex CLI.
 
 Phase 1 of ``docs/design/agent-backends-codex-grok.md``: codex agents
 launch, monitor via pane polling, instruct, restart, kill, resume and fork.
-Hooks-grade status and token/cost/context stats are Phase 2 — this backend
-deliberately does not declare ``HOOK_EVENTS`` or ``TRANSCRIPT_STATS`` yet, so
-``prepare_launch()`` is a no-op and ``make_stats_reader()`` answers "unknown"
-everywhere.
+
+Phase 2 adds hooks-grade status and token/cost/context stats: every launch
+registers ``overcode hook-handler`` for codex's hook events via per-launch
+``-c 'hooks.<Event>=[...]'`` config overrides plus
+``--dangerously-bypass-hook-trust`` (Route 1 of the design doc's Phase 0
+injection research — the route that writes zero global config files, unlike
+the interactive hook-trust dialog's ``t`` gesture). No files are staged, so
+``prepare_launch()`` stays a no-op; the injection lives entirely in
+``build_command()``.
 
 Everything below the flag table was captured from a real Codex CLI v0.150.1
 session during Phase 0 live verification; the pane corpus lives in
@@ -17,10 +22,12 @@ the authority for every gesture and flag asserted here.
 import os
 import re
 import shlex
-from pathlib import Path
+import shutil
+import sys
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
+from ..hook_handler import CODEX_HOOK_EVENTS
 from ..status_patterns import StatusPatterns
 from .base import (
     BackendCapability,
@@ -31,6 +38,36 @@ from .base import (
 
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
+
+
+def _resolve_overcode_bin() -> str:
+    """Resolve the absolute path to the overcode binary.
+
+    Identical to claude_code.py's helper of the same name — codex's hook
+    command needs the exact same "how does the hook subprocess find
+    overcode" answer Claude's ``--settings`` injection already relies on
+    (covers global/pipx installs via ``shutil.which``, falls back to
+    ``python -m overcode.cli`` for uv-run/venv-only installs). Not imported
+    from ``claude_code`` to avoid a cross-backend import for one helper;
+    kept byte-identical instead so the two never drift apart silently.
+    """
+    which = shutil.which("overcode")
+    if which:
+        return which
+    return f"{sys.executable} -m overcode.cli"
+
+
+def _codex_hook_toml_array(command: str) -> str:
+    """Render one event's hook array as codex's TOML-value ``-c`` syntax.
+
+    Per Appendix A: ``HookHandlerConfig::Command`` is a bare string, not an
+    array like Claude's ``command: [str, ...]`` — the array form fails to
+    parse (``invalid type: sequence, expected a string in 'hooks'``).
+    ``command`` becomes a double-quoted TOML string, so its own backslashes
+    and quotes need escaping before they're embedded.
+    """
+    escaped = command.replace("\\", "\\\\").replace('"', '\\"')
+    return f'[{{hooks=[{{type="command",command="{escaped}"}}]}}]'
 
 
 class CodexNotFoundError(AgentCliNotFoundError):
@@ -260,12 +297,12 @@ CODEX_PATTERNS = CodexStatusPatterns(
 class CodexBackend:
     """Codex CLI adapter (verified against v0.150.1, Phase 0 of the design doc).
 
-    Phase 1 MVP: RESUME and FORK only. No HOOK_EVENTS (the ``-c
-    'hooks.<Event>=[...]'`` + ``--dangerously-bypass-hook-trust`` injection
-    route Phase 0 resolved is Phase 2 work), no TRANSCRIPT_STATS (the
-    rollout-JSONL reader is Phase 2 work), no SESSION_ID_PRESCRIPTION (codex
-    has no such flag), no PERMISSION_INJECTION (``--allowed-tools`` has no
-    codex analogue — sandbox modes + ``-c`` config only), no SKILLS /
+    RESUME, FORK, HOOK_EVENTS and TRANSCRIPT_STATS as of Phase 2: every
+    launch injects ``overcode hook-handler`` via ``-c 'hooks.<Event>=...'``
+    overrides (``build_command()``), and ``CodexStatsReader`` reads the
+    rollout JSONL. Still no SESSION_ID_PRESCRIPTION (codex has no such
+    flag), no PERMISSION_INJECTION (``--allowed-tools`` has no codex
+    analogue — sandbox modes + ``-c`` config only), no SKILLS /
     SANDBOX_PROBE / SUBSCRIPTION_USAGE / AGENT_TEAMS.
     """
 
@@ -289,6 +326,8 @@ class CodexBackend:
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK
+        | BackendCapability.HOOK_EVENTS
+        | BackendCapability.TRANSCRIPT_STATS
     )
 
     def executable(self) -> str:
@@ -324,6 +363,13 @@ class CodexBackend:
         silently ignored, same posture as opencode.
         ``prescribed_session_id`` is also ignored: codex has no
         ``--session-id``-shaped flag for fresh launches.
+
+        Every launch also injects ``overcode hook-handler`` for codex's hook
+        events (§2.3 of the design doc) via one ``-c 'hooks.<Event>=[...]'``
+        override per event plus ``--dangerously-bypass-hook-trust`` —
+        unconditionally, the same posture Claude's ``--settings`` injection
+        takes (never gated on a launch flag; the mock harness tolerates the
+        extra argv unconditionally, see tests/mock_codex.py).
         """
         cmd = [self.executable()]
 
@@ -337,6 +383,12 @@ class CodexBackend:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         elif spec.skip_permissions or spec.permissiveness_mode == "permissive":
             cmd.extend(["-a", "never", "--sandbox", "workspace-write"])
+
+        overcode_bin = _resolve_overcode_bin()
+        hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler")
+        for hook_event in CODEX_HOOK_EVENTS:
+            cmd.extend(["-c", f"hooks.{hook_event}={hook_array}"])
+        cmd.append("--dangerously-bypass-hook-trust")
 
         if spec.extra_args:
             for arg in spec.extra_args:
@@ -409,20 +461,26 @@ class CodexBackend:
         return CODEX_PATTERNS
 
     def make_stats_reader(self) -> "StatsReader":
-        # No TRANSCRIPT_STATS capability this phase, so stats_reader_for_
-        # session() never actually calls this — provided anyway to satisfy
-        # the AgentBackend protocol without a None-shaped special case.
-        from ..stats_reader import NullStatsReader
-        return NullStatsReader(self.name)
+        from .codex_stats import CodexStatsReader
+        return CodexStatsReader()
 
     def health_verdict(self, argv: str) -> Optional[Tuple[str, str]]:
-        """A live codex process is all Phase 1 can tell us.
+        """Hooks reach codex only via the injected ``-c`` overrides.
 
-        No telemetry artifact exists yet to check for (Phase 2 adds the
-        hook-injection route), so any live process reads as healthy.
+        ``--dangerously-bypass-hook-trust`` is the one flag build_command()
+        never omits when hooks are injected and never emits otherwise, so —
+        exactly like Claude's ``"--settings" in argv`` check — its presence
+        alone is enough to know the hook route is live, without parsing the
+        ``-c hooks.<Event>=...`` overrides themselves.
         """
-        from ..doctor import VERDICT_OK
-        return VERDICT_OK, "codex process running"
+        from ..doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        if "--dangerously-bypass-hook-trust" in argv:
+            return VERDICT_OK, "hooks injected via -c overrides + --dangerously-bypass-hook-trust"
+        return VERDICT_MISSING_SETTINGS, (
+            "codex running without the hook-injection overrides — hooks will "
+            "not fire. Relaunch via `overcode restart` to re-inject."
+        )
 
     def check_binary(self):
         from ..dependency_check import check_agent_cli
@@ -494,6 +552,15 @@ def version_findings(version: Optional[str] = None) -> List[str]:
         "move the TUI chrome out from under this pattern set; no config "
         "toggle to disable it was found during Phase 0 verification"
     )
+
+    # Rollout JSONL shape drift is the other way a codex upgrade silently
+    # blanks the stats columns, so it rides the same doctor pass (mirrors
+    # opencode's SQLite schema_findings() call here).
+    try:
+        from .codex_stats import schema_findings
+        findings.extend(schema_findings())
+    except Exception:
+        pass
 
     return findings
 

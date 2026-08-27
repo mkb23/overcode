@@ -18,12 +18,24 @@ columns. What it does not cover is the Claude-only subsystems — skills, the
 sandbox badge, the subscription-usage widget, and agent teams — which stay
 capability-gated and render as dashes or hidden controls.
 
-**codex is Phase 1 (MVP): launch, polling status, resume and fork.** Hooks
-and stats are Phase 2 work — a codex agent's token/cost/context columns show
-dashes today, and status comes entirely from pane polling (no
-`waiting_approval` distinction yet; permission dialogs read as `waiting_user`,
-same as an idle prompt). Everything else in this document that says "Phase 2"
-next to codex is honest about what has not landed.
+**codex is Phase 2: launch, hook-grade live status (including
+`waiting_approval`), resume, fork, and token/context columns.** Every
+launch injects `overcode hook-handler` via per-launch `-c
+'hooks.<Event>=[...]'` config overrides plus
+`--dangerously-bypass-hook-trust` — no files written, nothing to install.
+Cost is honest **only about its ceiling, not its number**: codex is
+subscription/API billed with no local per-turn charge recorded, and there is
+no codex-specific entry in `pricing.py`'s `MODEL_PRICING` table yet (no
+reliable current price to put there) — but the cost column does not fall
+back to a dash for an unpriced model anywhere in overcode, codex included.
+`monitor_daemon.py`'s cost estimator (`settings.get_model_pricing`) falls
+back to your configured *default* per-token price for any model it doesn't
+recognize, so a codex agent's cost column shows a real, non-zero dollar
+figure priced as if it were your default model — live-verified during Phase
+2 smoke testing, and worth knowing rather than trusting at face value until
+a real codex price lands in `MODEL_PRICING`. Devcontainer support is still
+Phase 5 — that is the one thing left this document says "not yet" about for
+codex.
 
 ## Feature support at a glance
 
@@ -40,9 +52,9 @@ with a clean "backend X does not support …" — never a crash.
 | Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live) |
 | Send instruction | `i` / `:` | ✅ | ✅ | ✅ | |
 | Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | Key gestures are backend-resolved |
-| Live hook-grade status | — | ✅ | ✅ | ❌ Phase 2 | codex: pane polling only for now — no `waiting_approval` distinction yet |
-| Detection-mode toggle | `K` | ✅ | ✅ | ⚠️ polling-only | codex has no hook mode to toggle to yet |
-| Token / cost / context columns | — | ✅ | ✅ | ❌ Phase 2 | codex: dashes until the rollout-JSONL reader lands |
+| Live hook-grade status | — | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval` |
+| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
+| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate |
 | AI summaries | `A` | ✅ | ✅ | ✅ | |
 | Preview pane | `m` | ✅ | ✅ | ✅ | |
 | Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | |
@@ -106,9 +118,10 @@ overcode launch -n my-agent -B codex --model gpt-5.6-sol
 ```
 
 Same `-B` short form, same new-agent-modal toggle, same `overcode show`
-backend line as opencode. codex is Phase 1: launch, resume, fork, kill,
-restart and pane-polling status all work; hooks-grade status and stats
-columns are Phase 2 (see the honesty note at the top of this document).
+backend line as opencode. codex is Phase 2: launch, resume, fork, kill,
+restart, hooks-grade status (including `waiting_approval`), and
+token/context columns all work; cost is a rough estimate, not dashes — see
+the honesty note at the top of this document.
 
 ### Models
 
@@ -132,8 +145,8 @@ overcode gates UI actions and telemetry off them.
 | `RESUME` | ✅ | ✅ | ✅ | opencode: `--session <id>`; codex: `codex resume <id>` (subcommand) |
 | `FORK` | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session; codex: `codex fork <id>` — **verified live** |
 | `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | ❌ | opencode mints its own `ses_…` ids; codex has no `--session-id`-shaped flag for fresh launches. Both require discovery, not prescription |
-| `HOOK_EVENTS` | ✅ | ✅ | ❌ Phase 2 | opencode: bundled telemetry plugin (below); codex's injection route (`-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust`) is verified live but not yet wired |
-| `TRANSCRIPT_STATS` | ✅ | ✅ | ❌ Phase 2 | opencode: SQLite `session` table (below); codex's rollout-JSONL reader is not yet wired |
+| `HOOK_EVENTS` | ✅ | ✅ | ✅ | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below) |
+| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry) |
 | `PERMISSION_INJECTION` | ✅ | ❌ | ❌ | opencode v1.18.19 has no per-launch tool allowlist flag; codex's nearest concept is sandbox modes + `-c` config, not a tool allowlist |
 | `SKILLS` | ✅ | ❌ | ❌ | opencode *does* have a `/skills` command, codex too — neither has overcode integration |
 | `SANDBOX_PROBE` | ✅ | ❌ | ❌ | Claude-only loopback heuristic; codex has its own (unrelated) sandbox |
@@ -154,8 +167,8 @@ overcode gates UI actions and telemetry off them.
 | Prescribe session id | `--session-id <uuid>` | ✗ | ✗ |
 | Resume | `--resume <id>` | `--session <id>` | `codex resume <id>` (subcommand, options after) |
 | Fork | `--resume <id> --fork-session` | `--session <id> --fork` | `codex fork <id>` (subcommand, options after) |
-| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | not wired yet (Phase 2) |
-| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | not wired yet (Phase 2) |
+| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | `-c 'hooks.<Event>=[...]'` × 8 + `--dangerously-bypass-hook-trust` |
+| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
 | Graceful exit | `C-c`, then `/exit` | `Escape` ×2, then `/exit` | `Escape`, then `/quit` |
 | Bare `C-c` | safe | kills the process | **kills the process instantly, no confirmation** |
 | Clear conversation | `/clear` | `/new` | `/new` |
@@ -273,6 +286,85 @@ project directory has no plugin — that agent is running on pane polling.
 
 ---
 
+## Telemetry: codex hook injection
+
+Codex CLI ships a stable, enabled-by-default hooks system with 12 events,
+resolved by openai/codex source + a live-verified Phase 0 probe
+(`docs/design/agent-backends-codex-grok.md` Appendix A). Unlike opencode,
+codex needs no plugin file and no project-directory write at all: every
+launch passes one `-c` config override per event plus a trust-bypass flag:
+
+```
+-c 'hooks.UserPromptSubmit=[{hooks=[{type="command",command="<overcode-bin> hook-handler"}]}]'
+-c 'hooks.PreToolUse=[...]'
+-c 'hooks.PostToolUse=[...]'
+-c 'hooks.PermissionRequest=[...]'
+-c 'hooks.Stop=[...]'
+-c 'hooks.Interrupt=[...]'
+-c 'hooks.SessionStart=[...]'
+-c 'hooks.SessionEnd=[...]'
+--dangerously-bypass-hook-trust
+```
+
+`<overcode-bin>` is resolved the same way Claude Code's `--settings`
+injection resolves it (`shutil.which("overcode")`, falling back to `python -m
+overcode.cli`), so the hook subprocess finds overcode regardless of how it
+was installed. `command` is a **bare shell string**, not an array — codex's
+`HookHandlerConfig::Command` type differs from Claude's `command: [str,
+...]` here, and the array form fails to parse.
+
+**Why `--dangerously-bypass-hook-trust` is safe here.** Without it, an
+identical `-c 'hooks...'` override fires zero hooks, silently — codex's hook
+trust model normally requires a one-time interactive review (`t` to trust in
+the TUI), which durably writes a `[hooks.state...]` entry into your *global*
+`~/.codex/config.toml`. The bypass flag skips that review for the process
+overcode itself launches, with **zero file writes anywhere** — cleaner than
+the interactive-trust alternative, not just faster. The command it registers
+is `overcode hook-handler` (or the venv-qualified equivalent) — a command
+overcode wrote and vets itself, on a process overcode itself started; the
+flag never touches a codex session you launch by hand outside overcode.
+
+`overcode doctor` reports `missing-settings` for a codex agent whose argv
+lacks `--dangerously-bypass-hook-trust` — see the doctor section below.
+
+### Event mapping and the Interrupt/SessionStart additions
+
+Codex's hook stdin is snake_case and Claude-shaped already
+(`hook_event_name`, `session_id`, `tool_name`, `permission_mode`, ...), so
+`overcode hook-handler` needs no dialect translation for it — see
+`hook_handler._normalize_hook_payload()`, the same call site Grok's
+camelCase dialect will extend later.
+
+| codex event | overcode hook event | Status |
+|---|---|---|
+| `UserPromptSubmit` | `UserPromptSubmit` | running |
+| `PreToolUse` / `PostToolUse` | `PreToolUse` / `PostToolUse` | running |
+| `PermissionRequest` | `PermissionRequest` | **waiting_approval** |
+| `Stop` | `Stop` | waiting_user |
+| `Interrupt` | `Interrupt` | waiting_user |
+| `SessionStart` | `SessionStart` (+ records `session_id`) | waiting_user |
+| `SessionEnd` | `SessionEnd` | terminated |
+
+Two events here have no Claude Code analogue and are registered only for
+codex (`hook_handler.CODEX_HOOK_EVENTS`, never added to `OVERCODE_HOOKS`,
+which is what Claude's `--settings` injection reads — Claude never sends
+either one):
+
+- **`Interrupt`** fires when the user hits Escape mid-turn. Claude Code
+  prints no Stop/SessionEnd hook on interrupt at all, so overcode has to
+  scrape the pane for an "interrupted" marker to downgrade a stuck
+  `running`; codex's hook stdin says so directly, so the event→status map
+  alone does the downgrade — no pane read needed.
+- **`SessionStart`** is how overcode learns the codex session id. Codex has
+  no `--session-id`-shaped flag, so — unlike Claude, which prescribes the id
+  up front — this hook event is the *only* channel; its `session_id` field
+  is folded into `hook_state_<agent>.json`'s `agent_session_ids` /
+  `agent_session_id`, which is what makes restart-resume and fork target the
+  right conversation and is also `CodexStatsReader`'s primary lookup key
+  (below).
+
+---
+
 ## Stats: the SQLite session store
 
 `OpencodeStatsReader` (`src/overcode/backends/opencode_stats.py`) reads
@@ -300,6 +392,42 @@ launch-time window, ignoring child (`task`) sessions.
 Any failure — no database, a lock, a renamed column — returns "unknown", so
 the columns render dashes rather than misleading zeros. Schema drift also
 raises an `overcode doctor` warning naming the missing columns.
+
+---
+
+## Stats: the rollout JSONL (codex)
+
+`CodexStatsReader` (`src/overcode/backends/codex_stats.py`) reads codex's
+own transcript format — one append-only JSONL file per conversation at
+`~/.codex/sessions/YYYY/MM/DD/rollout-<ISO-ts>-<uuid>.jsonl` (`CODEX_HOME`
+honoured, defaulting to `~/.codex`) — read-only, one pass per lookup, never
+writing.
+
+| overcode column | codex source |
+|---|---|
+| input tokens | latest `event_msg` (`payload.type=="token_count"`) `info.total_token_usage.input_tokens` |
+| output tokens | same event's `output_tokens` + `reasoning_output_tokens` |
+| cache write / read | same event's `cache_write_input_tokens` / `cached_input_tokens` |
+| context | same event's `total_tokens` (a running total — latest event wins, not summed) |
+| model | latest `turn_context.payload.model` (one line per turn) |
+| interactions | `response_item` messages where `role=="user"` **and** `internal_chat_message_metadata_passthrough.content_item_kinds` contains `"user.text"` — excludes injected `<environment_context>`/skills/permissions scaffolding, which carries its own kind tags instead |
+| cost | **not a dash — a rough, possibly-wrong estimate.** codex is subscription/API billed with no local per-turn charge (matches Claude's transcript, which also carries none), and `pricing.py`'s `MODEL_PRICING` table has no codex-specific entry (no current price overcode trusts). Recomputation is still the normal fallback for *every* backend when a model isn't in `MODEL_PRICING`, and — live-verified during Phase 2 smoke testing — that fallback is your configured *default* per-token price (`settings.get_model_pricing`), not zero/None. A codex agent's cost column therefore shows a real dollar figure, priced as if its tokens cost what your default model costs; treat it as a placeholder until a real codex price is added, not as billing-accurate |
+
+Rows are located by the codex session id `SessionStart`'s hook recorded into
+`hook_state_<agent>.json` (`agent_session_id` / `agent_session_ids` — the
+exact field names and mechanism opencode's plugin also writes, since both
+ride the same `hook_handler.write_hook_state()` code path). Without a
+recorded id — hooks never fired, or the state file predates this phase — it
+falls back to matching `session_meta.cwd` against the agent's working
+directory within a few calendar days of its launch time, the same
+directory+time fallback shape `OpencodeStatsReader` uses, bounded so it never
+scans the user's entire session history.
+
+Any failure — missing directory, a corrupt line, an unreadable file —
+returns "unknown", so the columns render dashes rather than misleading
+zeros. A `token_count` event missing expected keys raises an `overcode
+doctor` warning naming them, checked against the most recently modified
+rollout file rather than every session ever recorded.
 
 ---
 
@@ -351,18 +479,22 @@ Known rough edges, honestly:
 
 ---
 
-## codex: pane polling only (Phase 1)
+## codex: hooks-grade status, pane polling as fallback
 
-codex has no telemetry wiring yet — Phase 2 adds the hook-injection route
-Phase 0 verified live (`-c 'hooks.<Event>=[...]'` +
-`--dangerously-bypass-hook-trust`, zero global-file writes). Every codex
-agent runs on **pane polling** today. The pattern set lives in
-`src/overcode/backends/codex.py` (`CODEX_PATTERNS`), grounded in a committed
-corpus of real Codex CLI v0.150.1 captures at
-`tests/fixtures_codex_panes/`, replayed by
+As of Phase 2, a codex agent whose hook injection fired gets the same
+hooks-grade status Claude Code and opencode get — including the
+`waiting_approval` distinction pane polling cannot make. Per-session
+dispatch (`status_detector_factory.py`) picks hooks mode automatically once
+`hook_state_<agent>.json` exists and is fresh; nothing to configure. **Pane
+polling is still the fallback** for the gap between process start and the
+first hook firing, and for a codex agent whose hook injection was stripped
+out of its argv some other way (a manual relaunch outside overcode, for
+instance). The pattern set lives in `src/overcode/backends/codex.py`
+(`CODEX_PATTERNS`), grounded in a committed corpus of real Codex CLI
+v0.150.1 captures at `tests/fixtures_codex_panes/`, replayed by
 `tests/unit/test_status_detector_codex.py`.
 
-The signals that matter:
+The polling-mode signals that matter:
 
 | overcode status | codex chrome |
 |---|---|
@@ -371,13 +503,13 @@ The signals that matter:
 | `waiting_user` (idle) | `› Ask Codex to do anything` placeholder — codex never draws a bare prompt glyph, so idle detection matches this literal placeholder text rather than an empty gutter |
 | `terminated` | shell prompt, none of the above |
 
-Known rough edges, honestly:
+Known rough edges of the **polling fallback**, honestly (hooks mode does not
+have these — permission dialogs distinguish `waiting_approval` there):
 
-- **No `waiting_approval` yet.** Permission dialogs read as `waiting_user`,
-  identically to an idle prompt — Phase 1 has no hook-fed distinction. The
-  `overcode send <name> approve` gesture still works; the badge just doesn't
-  distinguish "needs your decision" from "waiting for your next instruction"
-  until Phase 2.
+- **No `waiting_approval` under polling.** Permission dialogs read as
+  `waiting_user`, identically to an idle prompt, when a codex agent is
+  running on the polling fallback rather than hooks. The `overcode send
+  <name> approve` gesture still works either way.
 - **Bad-model errors read as `waiting_user`, not `error`.** codex recovers a
   turn-level failure (e.g. an unsupported model id) on its own, settling
   right back at the ready prompt in the same frame it shows the error JSON —
@@ -429,11 +561,16 @@ agent:
    `in_app_updates stable true` (enabled by default) with no config toggle
    found to disable it during Phase 0 verification, so this warning is
    always surfaced rather than read from a config file that doesn't exist.
+3. **Rollout JSONL schema drift.** A codex upgrade that renames a
+   `token_count` usage field blanks the token/cost/context columns; doctor
+   names the missing keys (checked against the most recently modified
+   rollout file) rather than leaving you to guess.
 
-Per-agent, the Phase 1 health verdict for a codex session is just "is there
-a live `codex` process under the pane?" — there is no telemetry artifact yet
-to check for, so it never reports `missing-settings`. Phase 2 tightens this
-once the hook-injection route lands.
+Per-agent, the health verdict for a codex session checks argv for
+`--dangerously-bypass-hook-trust` — present means hooks are injected and
+reads `ok`; absent reports `missing-settings`, the same verdict Claude Code
+gets when it is running without `--settings` and opencode gets when its
+telemetry plugin is missing. `overcode restart` re-injects it.
 
 ---
 
@@ -521,7 +658,8 @@ register it in `src/overcode/backends/__init__.py`, and supply a
 `StatusPatterns` instance built from a captured pane corpus. Declare only
 the capabilities you actually support — every gated feature degrades to a
 dash or a clean "backend X does not support fork" rather than a crash. The
-codex backend (`src/overcode/backends/codex.py`) is a small-capability
-example worth reading alongside opencode's: it ships with only `RESUME` and
-`FORK` declared, everything else added in a later phase once its telemetry
-is wired up.
+codex backend (`src/overcode/backends/codex.py`) is worth reading alongside
+opencode's for a second telemetry-injection shape: it started with only
+`RESUME` and `FORK` declared (Phase 1) and added `HOOK_EVENTS` +
+`TRANSCRIPT_STATS` once its hook injection and `codex_stats.py` landed
+(Phase 2) — a capability set is a launch-time floor, not a permanent one.

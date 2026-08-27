@@ -8,9 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from overcode.hook_handler import (
+    CODEX_HOOK_EVENTS,
     OVERCODE_HOOKS,
     _get_hook_state_path,
     _get_hook_event_log_path,
+    _normalize_hook_payload,
     append_hook_event,
     write_hook_state,
     handle_hook_event,
@@ -589,3 +591,172 @@ class TestForegroundClassification:
         assert "foreground" not in self._state(tmp_path)
         self._write(tmp_path, monkeypatch, "PostToolUse", tool_name="Bash")
         assert "foreground" not in self._state(tmp_path)
+
+
+class TestCodexHookEvents:
+    """Codex needs two events Claude never registers — see hook_handler.py's
+    module docstring on CODEX_HOOK_EVENTS."""
+
+    def test_includes_session_start_and_interrupt(self):
+        assert "SessionStart" in CODEX_HOOK_EVENTS
+        assert "Interrupt" in CODEX_HOOK_EVENTS
+
+    def test_matches_the_design_doc_s_event_list(self):
+        # design doc §2.3/§5 Phase 2 brief: UserPromptSubmit, PreToolUse,
+        # PostToolUse, PermissionRequest, Stop, Interrupt, SessionStart,
+        # SessionEnd — codex's PreCompact/PostCompact/SubagentStart/
+        # SubagentStop exist but have no overcode-side meaning yet.
+        assert CODEX_HOOK_EVENTS == (
+            "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
+            "Stop", "Interrupt", "SessionStart", "SessionEnd",
+        )
+
+    def test_does_not_leak_into_claudes_own_hook_list(self):
+        # OVERCODE_HOOKS is what claude_code.py's --settings injection reads
+        # — codex-only events must never end up registered for Claude.
+        claude_events = {event for event, _cmd in OVERCODE_HOOKS}
+        assert "SessionStart" not in claude_events
+        assert "Interrupt" not in claude_events
+
+
+class TestDialectNormalization:
+    """_normalize_hook_payload — one call site for every stdin dialect.
+
+    Codex's stdin is already snake_case/Claude-shaped (Appendix A of the
+    design doc — hook_event_name/session_id/turn_id/transcript_path/cwd/
+    model/permission_mode/prompt captured live), so it is a pure pass-
+    through today; the camelCase branch is exercised directly since grok
+    (Phase 4) isn't wired to a real stdin yet.
+    """
+
+    # Verbatim payload captured live in Phase 0 (design doc §2.3) —
+    # confirms codex needs no translation at all.
+    CODEX_USER_PROMPT_SUBMIT = {
+        "session_id": "01a043a2-f2fc-7f72-ac4a-6af740fcd4dc",
+        "turn_id": "01a043a3-05d4-7072-b885-22e30a6454e5",
+        "transcript_path": (
+            "/Users/mike/.codex/sessions/2026/08/27/"
+            "rollout-2026-08-27T15-32-27-01a043a2-f2fc-7f72-ac4a-6af740fcd4dc.jsonl"
+        ),
+        "cwd": "/Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-codex",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "prompt": "Reply with exactly: hook-tui-test",
+    }
+
+    def test_codex_payload_passes_through_unchanged(self):
+        assert _normalize_hook_payload(self.CODEX_USER_PROMPT_SUBMIT) == self.CODEX_USER_PROMPT_SUBMIT
+
+    def test_claude_payload_passes_through_unchanged(self):
+        payload = {"hook_event_name": "Stop", "session_id": "abc"}
+        assert _normalize_hook_payload(payload) == payload
+
+    def test_camel_case_dialect_is_translated(self):
+        # Shape grok is documented to send (design doc §3.3) — not wired to
+        # a real backend yet, but the normalization mechanism is shared.
+        payload = {
+            "hookEventName": "user_prompt_submit",
+            "sessionId": "01a043a2-...",
+            "toolName": "Bash",
+            "toolInput": {"command": "echo hi"},
+            "toolUseId": "call_1",
+            "permissionMode": "default",
+        }
+        normalized = _normalize_hook_payload(payload)
+        assert normalized["hook_event_name"] == "user_prompt_submit"
+        assert normalized["session_id"] == "01a043a2-..."
+        assert normalized["tool_name"] == "Bash"
+        assert normalized["tool_input"] == {"command": "echo hi"}
+        assert normalized["tool_use_id"] == "call_1"
+        assert normalized["permission_mode"] == "default"
+        # Originals are kept alongside the translated keys, not replaced.
+        assert normalized["hookEventName"] == "user_prompt_submit"
+
+    def test_non_dict_input_is_returned_as_is(self):
+        assert _normalize_hook_payload(None) is None  # type: ignore[arg-type]
+
+    def test_existing_snake_case_key_wins_over_camel_case(self):
+        # Defensive: if a payload somehow carries both, the explicit
+        # snake_case value is never clobbered by the camelCase translation.
+        payload = {
+            "hookEventName": "user_prompt_submit",
+            "hook_event_name": "UserPromptSubmit",
+        }
+        assert _normalize_hook_payload(payload)["hook_event_name"] == "UserPromptSubmit"
+
+
+class TestSessionStartRecordsSessionId:
+    """codex has no --session-id flag, so SessionStart's stdin session_id is
+    the only way overcode learns which rollout file is this agent's own."""
+
+    def _state(self, tmp_path, agent="test-agent"):
+        return json.loads((tmp_path / "agents" / f"hook_state_{agent}.json").read_text())
+
+    def _send(self, tmp_path, monkeypatch, payload):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps(payload)
+            handle_hook_event()
+
+    def test_session_start_records_agent_session_id(self, monkeypatch, tmp_path):
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart",
+            "session_id": "01a0439d-63b8-71d0-bf11-38fb10d0f551",
+        })
+        data = self._state(tmp_path)
+        assert data["agent_session_id"] == "01a0439d-63b8-71d0-bf11-38fb10d0f551"
+        assert data["agent_session_ids"] == ["01a0439d-63b8-71d0-bf11-38fb10d0f551"]
+
+    def test_session_id_persists_across_later_events(self, monkeypatch, tmp_path):
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "session_id": "sid-1",
+        })
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "UserPromptSubmit", "session_id": "sid-1",
+            "prompt": "hello",
+        })
+        data = self._state(tmp_path)
+        assert data["event"] == "UserPromptSubmit"
+        assert data["agent_session_id"] == "sid-1"
+
+    def test_non_session_start_events_never_record_session_id(self, monkeypatch, tmp_path):
+        # Claude's stdin also carries session_id — must never leak into
+        # agent_session_ids for any event other than SessionStart, or every
+        # existing Claude Code hook state file would gain a new field.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "should-not-be-recorded",
+        })
+        data = self._state(tmp_path)
+        assert "agent_session_id" not in data
+        assert "agent_session_ids" not in data
+
+    def test_a_second_session_start_appends_without_duplicating(self, monkeypatch, tmp_path):
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "session_id": "sid-1",
+        })
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "session_id": "sid-2",
+        })
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "session_id": "sid-1",  # repeat
+        })
+        data = self._state(tmp_path)
+        assert data["agent_session_ids"] == ["sid-1", "sid-2"]
+        assert data["agent_session_id"] == "sid-1"
+
+
+class TestInterruptEvent:
+    def test_interrupt_writes_state(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "Interrupt", "session_id": "sid-1",
+            })
+            handle_hook_event()
+        data = json.loads((tmp_path / "agents" / "hook_state_test-agent.json").read_text())
+        assert data["event"] == "Interrupt"

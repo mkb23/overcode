@@ -676,6 +676,25 @@ mock suite green.
 
 ### Phase 2 — Codex telemetry: hooks + stats
 
+> **Shipped Aug 27, 2026 — one live-smoke correction to this brief's "full
+> token/cost/context columns" framing.** Tokens and context populate exactly
+> as planned. Cost does not render as dashes when no codex `pricing.py`
+> entry exists, as the original brief assumed (and as `CodexStatsReader`
+> itself correctly does — it always returns cost as unrecoverable/omitted).
+> The dash never reaches the UI because `monitor_daemon.py`'s cost
+> estimator (`settings.get_model_pricing` → `_get_list_pricing`) was
+> already, app-wide, falling back to the user's *configured default*
+> per-token price for any unrecognized model on any backend — live-verified
+> during Phase 2 smoke testing, where a codex agent's cost column showed a
+> real, non-zero dollar figure priced at the account's default (Sonnet-rate)
+> model rather than a placeholder. This is pre-existing, backend-generic
+> behavior, not a Phase 2 defect, and out of this phase's scope to change
+> (no codex-specific model prices were added to `MODEL_PRICING`, per the
+> brief's own "if unsure of a price, omit the entry" instruction — omitting
+> the entry just means the *fallback* price applies, not that the column
+> goes blank). `docs/backends.md` was corrected to describe this accurately
+> rather than repeat the "shows dashes" assumption.
+
 **Objective:** hooks-grade status (incl. `waiting_approval`) and full
 token/cost/context columns for codex agents.
 
