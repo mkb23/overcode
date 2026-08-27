@@ -1,0 +1,39 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.150.1)                         │
+│                                                    │
+│ model:     gpt-5.6-sol high   /model to change     │
+│ directory: ~/.claude/jobs/f6bc7dbe/tmp/probe-codex │
+╰────────────────────────────────────────────────────╯
+
+  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+› count from 1 to 20 slowly explaining each number
+
+
+• Working (1s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  gpt-5.6-sol high · ~/.claude/jobs/f6bc7dbe/tmp/probe-codex
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

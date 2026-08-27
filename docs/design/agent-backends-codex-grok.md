@@ -2,7 +2,7 @@
 
 **Document Type:** Design Assessment + Phased Implementation Plan
 **Date:** August 2026
-**Status:** Planned (Phases 0–5)
+**Status:** Phase 0 complete (live-verified Aug 27, 2026); Phases 1–5 planned
 **Scope:** Adding OpenAI Codex CLI and xAI Grok Build as overcode's third and fourth agent backends, on the `AgentBackend` seam shipped in 0.5.0
 **Predecessor:** `docs/design/agent-agnostic-backends-opencode.md` — read its §2 (architecture) and its shipped-notes first; this plan assumes that seam and does not re-explain it.
 
@@ -16,6 +16,38 @@
 > but must be confirmed live in Phase 0 before any phase builds on it.
 > Phase 0 exists to convert every [VERIFY-P0] into a verdict, and its appendix
 > becomes the authority the way Appendix A did for opencode.
+
+> **Phase 0 shipped Aug 27, 2026.** Every `[VERIFY-P0]` tag below is now a
+> verdict; **Appendix A (Codex) and Appendix B (Grok) are the authority**,
+> citing `tests/fixtures_codex_panes/` and `tests/fixtures_grok_panes/`. The
+> headline divergences from the pre-verification plan:
+>
+> 1. **`C-c` kills codex outright** (no confirmation, confirmed on an idle
+>    session) — the same opencode lesson, repeating on a second backend.
+>    **`C-c` is safe on grok** — the opposite result, confirmed live on both.
+>    Codex's safe interrupt is `Escape`.
+> 2. **Codex's hook-injection crux is resolved**: `-c 'hooks.<Event>=[...]'`
+>    + `--dangerously-bypass-hook-trust` genuinely fires hooks, with zero
+>    global-file writes — the plan's single biggest open risk. One correction:
+>    `HookHandlerConfig::Command` takes a **bare string**, not an array like
+>    Claude's `command: [str, ...]`.
+> 3. **Codex hook stdin is snake_case**, Claude-shaped
+>    (`hook_event_name`/`session_id`/`permission_mode`) — likely little to no
+>    dialect translation needed, unlike grok's confirmed camelCase.
+> 4. **Grok's stats are not partial** — a full local input/output/cost split
+>    exists in `updates.jsonl`'s `turn_completed.usage`
+>    (`inputTokens`/`outputTokens`/`cachedReadTokens`/`reasoningTokens`/
+>    `costUsdTicks`), contradicting §3.4's original "no split found" research.
+> 5. **Grok's `--permission-mode dontAsk` is NOT an alias for `auto`** — it
+>    shows the identical approval dialog as `default`. Only `auto` actually
+>    skips it; the "permissive" mode mapping in §3.2 targeted the wrong value.
+> 6. **Grok's flag-vs-config precedence confirmed**: `--permission-mode
+>    default` overrides the user's `always-approve` config setting.
+> 7. **The opencode Ancillary section's core question is answered**: opencode
+>    honors `OPENCODE_CONFIG` (merges, doesn't replace) and, better still, a
+>    dedicated `OPENCODE_PERMISSION` env var (JSON, merged last) that
+>    empirically **overrides project-level deny rules** — a clean, file-free
+>    per-process bypass route, live-verified via `opencode debug config`.
 
 ---
 
@@ -44,7 +76,8 @@ nothing but time.
   `Interrupt`, `UserPromptSubmit`, `SessionStart/End` [VERIFIED from
   openai/codex source: `codex-rs/config/src/hook_config.rs`]. This is
   Claude-shaped enough that overcode's existing `hook-handler` protocol maps
-  almost 1:1. Injection route is the open question ([VERIFY-P0] §2.3).
+  almost 1:1. Injection route was the open question — **resolved in Phase 0,
+  see §2.3**: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust`.
 - **Transcript stats are a JSONL scan**, very close to Claude's:
   `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` with `session_meta`
   (id, cwd, cli_version) and `token_count` events carrying full usage splits
@@ -69,11 +102,13 @@ nothing but time.
   (`hookEventName` not `hook_event_name`), `toolResult` not `tool_response`,
   a grok-only `StopCancelled` event, and `Notification` events with
   `idle_prompt`/`permission_prompt` matchers.
-- Stats are the weak spot: session files carry a running `totalTokens` per
-  event (context proxy) but **no local input/output split was found**
-  [VERIFIED absent from `summary.json`/`chat_history.jsonl` of a real 413-message
-  session]; the split is exported via OpenTelemetry only. `TRANSCRIPT_STATS`
-  will be partial unless Phase 0 finds a local source.
+- Stats are **not** the weak spot after all: session files carry a running
+  `totalTokens` per event (context proxy), and **Phase 0 found the full
+  input/output/cost split** on a different event than originally checked —
+  `updates.jsonl`'s `turn_completed.usage` object
+  (`inputTokens`/`outputTokens`/`cachedReadTokens`/`reasoningTokens`/
+  `costUsdTicks`, per-model breakdown). `TRANSCRIPT_STATS` can be close to
+  full, not partial-with-dashes as originally planned; see §3.4.
 
 **Recommended shape:** five implementation phases after a verification phase.
 Codex first (richer stats, explicitly requested first), then Grok, then
@@ -118,9 +153,13 @@ The full member list a backend supplies: `name`, `display_name`, `binary`,
   (already done on this machine). `codex doctor` validates install/auth/state.
 - Binary override env for the mock harness: introduce `CODEX_COMMAND`
   (mirroring `CLAUDE_COMMAND`/`OPENCODE_COMMAND`).
-- Process basename: `codex` (napi wrapper resolves to a vendored
-  `codex-*-darwin-arm64` binary; confirm the `ps` basename in Phase 0
-  [VERIFY-P0]).
+- Process basename **[VERIFY-P0 → ✅ confirmed]**: the top-level process is
+  `node /opt/homebrew/bin/codex …` (the npm wrapper); it execs a vendored
+  binary whose basename is `codex` (`.../codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`)
+  — this child is the one running the actual TUI. `process_basenames` should
+  match `codex` against the child; matching only the parent's argv would miss
+  it if `ps` reports the wrapper. Confirmed via `ps aux`/`pgrep -fl codex`
+  during corpus capture (Phase 0 probe log).
 - Auth: shared `~/.codex/auth.json` (ChatGPT subscription or API key). The
   macOS "Codex app" lives *inside ChatGPT.app* and stages its own alpha CLI at
   `~/.codex/plugins/.plugin-appserver/codex` — ignore it; same `~/.codex`
@@ -135,26 +174,29 @@ The full member list a backend supplies: `name`, `display_name`, `binary`,
 | Fresh launch | `claude [prompt]` | `codex [prompt]` |
 | Model | `--model sonnet` | `-m/--model <model>` (e.g. `gpt-5.2-codex`; bare names — no provider prefix) |
 | Bypass permissions | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
-| Permissive | `--permission-mode dontAsk` | `-a never --sandbox workspace-write` — auto-approve but still sandboxed [VERIFY-P0: `-a` accepted values beyond `on-request`/`never`; also evaluate `--approve-for-me`] |
+| Permissive | `--permission-mode dontAsk` | `-a never --sandbox workspace-write` — auto-approve but still sandboxed. **[VERIFY-P0 → ✅ confirmed]** `-a` accepts only `on-request`/`never` (`-a always` errors with the exact possible-values list); no dialog appears under `never`, but the sandbox itself still blocks out-of-workspace writes (silent failure reported back to the model, not a dialog). `--approve-for-me` is a genuine **third tier**: auto-reviews and silently approves (transient `Reviewing approval request (1s • esc to interrupt)` status line, no y/n dialog) — worth its own capability tier rather than folding into "permissive" |
 | Normal | (default) | (default: `on-request` approval, sandbox per config) |
 | Allowed tools | `--allowedTools a,b` | none — nearest is sandbox modes + `-c` config; ignore `--allowed-tools` like opencode does |
-| Persona | `--agent name` | none observed [VERIFY-P0: profiles via `-p/--profile` are config layers, not personas] |
+| Persona | `--agent name` | none observed. **[VERIFY-P0 → ✅ confirmed]** `-p/--profile` is documented as "Layer `$CODEX_HOME/<name>.config.toml` on top of the base user config" — a config-layer override, not a persona-by-name flag |
 | Prescribe session id | `--session-id <uuid>` | ✗ — no flag exists |
 | Resume | `--resume <id>` | `codex resume <SESSION_ID>` (subcommand; `--last` also exists) |
 | Fork | `--resume <id> --fork-session` | `codex fork <SESSION_ID>` (subcommand) |
 | Extra dirs / cwd | n/a | `-C/--cd <dir>`, `--add-dir` |
-| Headless | `claude -p` | `codex exec [msg]` (`--json`, `--output-schema`) |
-| Graceful exit | `C-c`, `/exit` | [VERIFY-P0] — expect `/quit` or `/exit` slash command; do NOT assume `C-c` is safe (opencode lesson) |
-| Clear conversation | `/clear` | [VERIFY-P0] — expect `/new` |
-| Approve / reject | `Enter` / `Escape` | [VERIFY-P0] from corpus — codex approval dialog keys |
-| Trust dialog | "I trust this folder" | [VERIFY-P0] — codex prompts for folder trust on first run in a directory; capture exact chrome |
+| Headless | `claude -p` | `codex exec [msg]` (`--json`, `--output-schema`). **New finding**: `codex exec` does **not** accept `-a` at all (`error: unexpected argument '-a' found`) — it always runs as `approval: never`; `build_command()` must never pass `-a` on the headless path |
+| Graceful exit | `C-c`, `/exit` | **[VERIFY-P0 → ✅ confirmed]** both `/quit` and `/exit` exist in the `/` command menu (both labelled "exit Codex") and cleanly return to the shell. **`C-c` is confirmed UNSAFE** — a single bare `C-c` sent to an idle (non-generating) session killed the process instantly, no confirmation, tmux session destroyed within 2s. Never use it as codex's interrupt/exit gesture. The safe interrupt is **`Escape`** (`■ Conversation interrupted - tell the model what to do differently…`, process stays alive) |
+| Clear conversation | `/clear` | **[VERIFY-P0 → ✅ confirmed]** `/new` ("start a new chat during a conversation") is present in the `/` menu |
+| Approve / reject | `Enter` / `Escape` | **[VERIFY-P0 → ✅ confirmed]** from `permission_required.txt`: options are `1. Yes, proceed (y)` / `2. Yes, and don't ask again for commands that start with … (p)` / `3. No, and tell Codex what to do differently (esc)`; footer `Press enter to confirm or esc to cancel`. Approve = `y` or `Enter` (option 1 default-selected); reject = `Escape` (no literal `n` key) |
+| Trust dialog | "I trust this folder" | **[VERIFY-P0 → ✅ confirmed]** `Do you trust the contents of this directory? › 1. Yes, continue / 2. No, quit`, footer `Press enter to continue` — `Enter` accepts. Trust persists per absolute path as `[projects."<path>"] trust_level = "trusted"` in `~/.codex/config.toml`; revisiting a trusted dir shows no dialog. Captured in `trust_dialog.txt` |
 
 `build_command()` note: resume/fork produce `["codex", "resume", <id>, *common]`
 — subcommand-first argv. `resume_args()` should return `["resume", <id>]` /
 `["fork", <id>]` and `build_command()` must splice them **before** the shared
-options, unlike claude/opencode where order is flag-appending. Verify that
-top-level options (`-m`, `-s`, `-a`, `-c`) are accepted after the subcommand
-[VERIFY-P0]; if not, build the full argv inside `build_command()` per shape.
+options, unlike claude/opencode where order is flag-appending. **[VERIFY-P0 →
+✅ confirmed]** top-level options are accepted after the subcommand: live-ran
+`codex resume 01a0439d-63b8-71d0-bf11-38fb10d0f551 -a never -m gpt-5.6-sol`
+(a real session id from a probe run) and it launched cleanly with no
+argument-parsing error, replaying the prior transcript. (Note: `-a` is
+subcommand/top-level-only — `codex exec` rejects it, see §2.2.)
 
 ### 2.3 Telemetry: hooks first, notify fallback
 
@@ -168,26 +210,66 @@ top-level options (`-m`, `-s`, `-a`, `-c`) are accepted after the subcommand
   `SubagentStop`, `Stop`, `Interrupt`.
 - Config sources: `hooks.json` in a layer's config folder, or `[hooks]` TOML
   in config layers (user `~/.codex/config.toml`, project, managed,
-  requirements). Command hooks receive JSON input (per generated
-  `*.command.input.schema.json` schemas — fetch these in Phase 0 for exact
-  stdin shapes [VERIFY-P0]).
+  requirements). Command hooks receive JSON input. **[VERIFY-P0 → ✅
+  confirmed, exact shape captured live]**: stdin is a single JSON object,
+  **snake_case** (Claude-shaped, not camelCase):
+  ```json
+  {"session_id":"01a043a2-f2fc-7f72-ac4a-6af740fcd4dc","turn_id":"01a043a3-05d4-7072-b885-22e30a6454e5","transcript_path":"/Users/mike/.codex/sessions/2026/08/27/rollout-2026-08-27T15-32-27-01a043a2-f2fc-7f72-ac4a-6af740fcd4dc.jsonl","cwd":"/Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-codex","hook_event_name":"UserPromptSubmit","model":"gpt-5.6-sol","permission_mode":"default","prompt":"Reply with exactly: hook-tui-test"}
+  ```
+  `permission_mode` was also observed as `"bypassPermissions"` under
+  `--dangerously-bypass-approvals-and-sandbox`. Since the keys are already
+  Claude's vocabulary (`hook_event_name`, `session_id`, `permission_mode`),
+  `overcode hook-handler` likely needs **little to no dialect translation**
+  for codex — a smaller lift than the plan assumed, unlike grok's confirmed
+  camelCase (§3.3).
 - **Trust model:** per-hook `state` entries with `trusted_hash`;
   `--dangerously-bypass-hook-trust` "runs enabled hooks without requiring
   persisted hook trust … for automation that already vets hook sources".
 
-**The injection question (the crux) [VERIFY-P0], in preference order:**
+**The injection question (the crux) [VERIFY-P0 → ✅ RESOLVED — Route 1
+works], evidence below:**
 
-1. `codex -c 'hooks.UserPromptSubmit=[...]'` per-launch override +
-   `--dangerously-bypass-hook-trust`. If `-c` reaches hook config, this is the
-   exact analogue of Claude's `--settings` — per-launch, no files, no global
-   pollution. Test first.
-2. Project-layer `.codex/hooks.json` written by `prepare_launch()` (the
-   opencode-plugin pattern: marker line, idempotent, never clobber user
-   files) + whatever trust step it needs.
-3. User-layer `~/.codex/hooks.json` with an env guard (hook script no-ops
-   unless `OVERCODE_SESSION_NAME` is set — hook processes inherit the session
-   env [VERIFY-P0]). Global but inert outside overcode, like the opencode
-   plugin's guard.
+1. **`codex -c 'hooks.UserPromptSubmit=[...]'` per-launch override +
+   `--dangerously-bypass-hook-trust` — ✅ confirmed working.** Working
+   invocation (both `codex exec` and the interactive TUI):
+   ```
+   OVERCODE_PROBE=1 codex -c 'hooks.UserPromptSubmit=[{hooks=[{type="command",command="cat >> WITNESS; echo ENV=$OVERCODE_PROBE >> WITNESS"}]}]' --dangerously-bypass-hook-trust
+   ```
+   **One shape correction to the plan**: `HookHandlerConfig::Command` in
+   `codex-rs/config/src/hook_config.rs` defines `command: String` — a single
+   shell command-line string, **not** an array like Claude's
+   `command: [str, ...]`. The array form fails: `Error loading config.toml:
+   invalid type: sequence, expected a string in 'hooks'`. Once fixed to a
+   plain string, it fired immediately, on the first prompt, in both `exec`
+   and the TUI. `--dangerously-bypass-hook-trust` is **required** — the
+   identical `-c` config with the flag omitted produced zero hook firings,
+   silently (tested twice). Env inheritance confirmed: the witness file's
+   second line read `ENV=1`, proving `OVERCODE_PROBE=1` set before launch
+   was visible inside the hook subprocess.
+2. **Project-layer `.codex/hooks.json` — ✅ also works**, same trust
+   semantics (silent no-op without the bypass flag, fires with it). Without
+   any `-c`/bypass flag but with a `.codex/hooks.json` present, the
+   **interactive** TUI shows an explicit hook-trust review dialog (not
+   silently skipped, unlike `exec`):
+   ```
+     Hooks
+     Lifecycle hooks from config and enabled plugins.
+     ⚠ 1 hook needs review before it can run.
+     Event ... UserPromptSubmit  1  0  1  When the user submits a prompt ...
+     Press t to trust all; enter to review hooks; esc to close
+   ```
+   `t` trusts, but durably writes a
+   `[hooks.state."<abs-path-to-hooks.json>:user_prompt_submit:0:0"]
+   trusted_hash = "sha256:…"` entry into the user's **global**
+   `~/.codex/config.toml` — i.e. the interactive-trust gesture pollutes
+   global config, whereas Route 1's `--dangerously-bypass-hook-trust` does
+   not. **Route 1 is therefore the cleaner mechanism** (zero global-file
+   writes), exactly as the plan's preference order anticipated.
+3. User-layer `~/.codex/hooks.json` — attempted once (per the "2-3 attempts
+   max" discipline) with `--dangerously-bypass-hook-trust`; it did not fire
+   (empty witness) and was not further diagnosed since Routes 1 and 2 already
+   fully answer the injection question. **⚠️ inconclusive, deprioritized —
+   not needed**: Route 1 is the implementation target.
 
 Event mapping (overcode vocabulary is already neutral):
 
@@ -218,9 +300,32 @@ hooks injection fails entirely, combined with pane polling.
   `reasoning_output_tokens`, matching the opencode convention); cache read →
   `cached_input_tokens`; cache write → `cache_write_input_tokens`; context →
   latest `total_token_usage.total_tokens` vs `model_context_window`;
-  interactions → count of user `response_item` messages (excluding
-  `<environment_context>`/`<user_instructions>` scaffolding [VERIFY-P0: exact
-  filter]). Model: [VERIFY-P0] locate in `turn_context` or `session_meta`.
+  interactions → count of user `response_item` messages excluding
+  scaffolding. **[VERIFY-P0 → ✅ confirmed, better signal than proposed]**:
+  every `response_item` of `type: "message"` carries
+  `payload.internal_chat_message_metadata_passthrough.content_item_kinds`, an
+  array tagging the item's origin precisely — real user turns carry
+  `["user.text"]`; injected `<environment_context>` scaffolding carries
+  `["environments.environment_context"]`; injected system/skills scaffolding
+  (role `"developer"`) carries `["host_skills.instructions",
+  "permissions.instructions", "collaboration_mode.instructions", …]`. Real
+  example (verbatim):
+  ```json
+  {"type":"response_item","payload":{"type":"message","id":"msg_01a0439d-8b4d-7b30-a8c0-71886681910d","role":"user","content":[{"type":"input_text","text":"count from 1 to 20 slowly explaining each number"}],"internal_chat_message_metadata_passthrough":{"turn_id":"01a0439d-8994-7550-a1b5-42182d032a57","create_time":1787840793.421791,"content_item_kinds":["user.text"]}}}
+  ```
+  Recommended filter: `type=="response_item" AND payload.type=="message" AND
+  payload.role=="user" AND "user.text" in
+  payload.internal_chat_message_metadata_passthrough.content_item_kinds` —
+  more robust than string-matching the `<environment_context>`/
+  `<user_instructions>` wrapper text, since it doesn't depend on that
+  XML-ish scaffolding staying textually stable across codex releases.
+  Model: **[VERIFY-P0 → ✅ confirmed]** lives in the `turn_context` event's
+  payload, at `turn_context.payload.model` (duplicated at
+  `turn_context.payload.collaboration_mode.settings.model`) — **not**
+  reliably in `session_meta` (which only carries it indirectly, inside a
+  free-text `base_instructions.provenance.model` field not meant for
+  programmatic reads). One `turn_context` line exists per turn; take the
+  latest for "current model."
 - Cost: not stored (subscription); recompute via `pricing.py` (needs current
   OpenAI codex-model entries).
 - Discovery: primary — the `SessionStart` hook records the session id into
@@ -233,7 +338,8 @@ hooks injection fails entirely, combined with pane polling.
 
 ### 2.5 Capability forecast (declare only what Phase 0 confirms)
 
-`RESUME` ✅ · `FORK` ✅ · `HOOK_EVENTS` ✅ (pending injection route) ·
+`RESUME` ✅ · `FORK` ✅ · `HOOK_EVENTS` ✅ (injection route resolved — `-c
+'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust`, §2.3) ·
 `TRANSCRIPT_STATS` ✅ · `SESSION_ID_PRESCRIPTION` ❌ · `PERMISSION_INJECTION` ❌ ·
 `SKILLS` ❌ (codex has skills; no overcode integration — same stance as opencode) ·
 `SANDBOX_PROBE` ❌ (n.b. codex has *its own* sandbox — the Claude loopback probe
@@ -250,11 +356,18 @@ widget stays gated) · `AGENT_TEAMS` ❌.
 - Already installed: `~/.grok/bin/grok` (on PATH), stable channel, auth in
   `~/.grok/auth.json`. Fresh installs: `curl -fsSL https://x.ai/cli/install.sh | bash`;
   requires SuperGrok or X Premium+.
-- Binary override env: introduce `GROK_COMMAND`. Process basename: `grok`
-  [VERIFY-P0 via `ps` during corpus capture].
+- Binary override env: introduce `GROK_COMMAND`. Process basename: `grok`.
+  **[VERIFY-P0 → ✅ confirmed]** via `pgrep -fl grok` while a probe session
+  was alive (pid running `grok -m grok-4.5`) — no wrapper/child split like
+  codex's, `grok` is the process basename directly.
 - Config: `~/.grok/config.toml`. Note the user's config sets
   `[ui] permission_mode = "always-approve"` — launch flags must override
-  config for overcode's modes to mean anything [VERIFY-P0: flag-beats-config].
+  config for overcode's modes to mean anything. **[VERIFY-P0 → ✅ confirmed
+  definitively]**: launched with `--permission-mode default` and a live
+  approval dialog appeared for `Run the command: echo hello`; launched
+  without the flag (relying on the config's `always-approve`) and the same
+  command ran silently, no dialog, footer showed the `always-approve` tag.
+  The flag beats the config.
 - Bundled offline docs at `~/.grok/docs/user-guide/` (hooks, sessions,
   headless, sandbox, permissions) — cite these, they version with the binary.
 
@@ -265,18 +378,18 @@ widget stays gated) · `AGENT_TEAMS` ❌.
 | Fresh launch | `claude [prompt]` | `grok [prompt]` |
 | Model | `--model sonnet` | `-m/--model <id>` (bare ids: `grok-4.6`, `grok-4.5`; `grok models` lists) |
 | Bypass permissions | `--dangerously-skip-permissions` | `--permission-mode bypassPermissions` |
-| Permissive | `--permission-mode dontAsk` | `--permission-mode dontAsk` (accepted for compat; grok treats `auto` as nearest [VERIFY-P0: accepted vs aliased]) |
+| Permissive | `--permission-mode dontAsk` | `--permission-mode dontAsk` (accepted for compat). **[VERIFY-P0 → ❌ REFUTED]**: `dontAsk` is **not** aliased to `auto` — it shows the exact same full approval dialog as `default` (confirmed live, both produced identical `permission_required.txt`-style chrome). Only `--permission-mode auto` actually skips the dialog (footer shows bare `· auto`, no prompt for the same command). **`GrokBackend`'s permissive-mode mapping must target `auto`, not `dontAsk`.** |
 | Normal | (default) | `--permission-mode default` |
-| Allowed tools | `--allowedTools a,b` | `--allow <RULE>` repeatable — help says "compat alias: --allowedTools" → `PERMISSION_INJECTION` ✅ [VERIFY-P0: rule syntax matches Claude's `Bash(x *)` grammar] |
+| Allowed tools | `--allowedTools a,b` | `--allow <RULE>` repeatable — help says "compat alias: --allowedTools" → `PERMISSION_INJECTION` ✅. **[VERIFY-P0 → ✅ confirmed]**: `--allow 'Bash(echo *)'` (Claude-style `Tool(glob)` grammar) accepted with no parse error and **actually suppressed** the approval dialog live for a matching command under `--permission-mode default` — full round-trip verified, not just argument-parsing |
 | Persona | `--agent name` | `--agent <name-or-file>` |
-| Prescribe session id | `--session-id <uuid>` | `-s/--session-id <uuid>` — "for a **new** conversation; must not already exist" → `SESSION_ID_PRESCRIPTION` ✅ |
+| Prescribe session id | `--session-id <uuid>` | `-s/--session-id <uuid>` — "for a **new** conversation; must not already exist" → `SESSION_ID_PRESCRIPTION` ✅. Round-trip confirmed live: minted uuid → `~/.grok/sessions/<percent-encoded-abs-cwd>/<uuid>/` appeared (encoding: full absolute path percent-encoded including the leading slash, `/`→`%2F`, e.g. `/Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-grok` → `%2FUsers%2Fmike%2F.claude%2Fjobs%2Ff6bc7dbe%2Ftmp%2Fprobe-grok`) |
 | Resume | `--resume <id>` | `-r/--resume <id-or-title>` |
 | Fork | `--resume <id> --fork-session` | `--resume <id> --fork-session` (identical; `--session-id` names the forked session — better than Claude) |
 | Headless | `claude -p` | `-p/--single` or `grok agent`; `--output-format streaming-messages-json` is literally "the Anthropic Messages API wire format" |
-| Graceful exit | `C-c`, `/exit` | [VERIFY-P0] — expect `/exit` or `/quit`; test interrupt semantics before trusting Escape/C-c |
-| Clear conversation | `/clear` | [VERIFY-P0] |
-| Approve / reject | `Enter` / `Escape` | [VERIFY-P0] from corpus |
-| Trust dialog | "I trust this folder" | folder-trust exists for hooks/MCP (`--trust` flag, `/hooks-trust`) [VERIFIED]; whether a startup dialog appears [VERIFY-P0] |
+| Graceful exit | `C-c`, `/exit` | **[VERIFY-P0 → ✅ confirmed]**: `/quit` cleanly exits, printing a `grok --resume <uuid>` hint. **`C-c` is confirmed SAFE** — sent bare `C-c` mid-generation in a disposable session: interrupts only, process and session stayed alive, a follow-up prompt in the same session got a normal response. The opposite result from codex/opencode. Interrupt via `Escape`: a single press fully interrupts and settles the turn (`Turn cancelled by user in 4.3s.`); no second Escape needed |
+| Clear conversation | `/clear` | **[VERIFY-P0 → ✅ confirmed]**: `/new` ("start new session") — there is no literal `/clear`, confirmed via the `/` command menu (`command_menu.txt`) |
+| Approve / reject | `Enter` / `Escape` | **[VERIFY-P0 → ✅ confirmed]** from `permission_required.txt`: hint line `1/3:select │ Tab:next option │ Ctrl+o:always-approve │ Ctrl+c:cancel │ Esc:scrollback`; options `1` = "Yes, and don't ask again for anything (always-approve mode)", `2` = "Yes, proceed", `3` = "No, reject". Pressing the digit alone (no Enter) executes the choice immediately — confirmed `2` approved instantly |
+| Trust dialog | "I trust this folder" | folder-trust exists for hooks/MCP (`--trust` flag, `/hooks-trust`) [VERIFIED]; whether a startup dialog appears. **[VERIFY-P0 → ✅ confirmed absent]**: launched plain `grok` in a brand-new, never-visited, git-initialized scratch dir with no hooks/MCP configured — chrome was byte-identical to `idle_fresh.txt`, no dialog at all (`trust_dialog.txt`). Folder trust silently gates hooks/MCP/LSP without an interactive startup prompt |
 
 Watch out: grok has its own `--worktree` feature and its own background
 tasks/subagents — overcode should not fight them; pass nothing and let users
@@ -332,10 +445,41 @@ opt in via `--backend-arg`.
 - Keep observe-hook timeouts short (grok default 5s); never register a
   blocking `Stop` gate.
 
-### 3.4 Stats: partial, honestly
+**Live hook-firing verification [VERIFY-P0 → ✅ confirmed, exact camelCase
+stdin captured]:** a witness hook (`~/.grok/hooks/overcode-probe.json`,
+registering `UserPromptSubmit`/`Stop`/`Notification`) was run through one
+full turn with `OVERCODE_PROBE=1` exported before launch, then deleted.
+Confirmed camelCase, env inheritance (`OVERCODE_PROBE=1` visible in every
+witness line), and the doc's `reason`-filter prescription (bold below):
 
-[VERIFIED from a real 413-message session under
-`~/.grok/sessions/<url-encoded-cwd>/<session-uuid>/`.]
+```json
+// UserPromptSubmit
+{"hookEventName":"user_prompt_submit","sessionId":"01a043a2-...","cwd":"/Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-grok","workspaceRoot":"...","timestamp":"2026-08-27T14:32:25.782754+00:00","promptId":"1f28e0e5-...","permissionMode":"default","prompt":"<user_query>\nRun the command: echo hookprobe\n</user_query>"}
+
+// Notification, matcher permission_prompt (fired from a real live dialog)
+{"hookEventName":"notification","sessionId":"01a043a2-...","cwd":"...","workspaceRoot":"...","timestamp":"...","transcriptPath":".../updates.jsonl","permissionMode":"default","notificationType":"permission_prompt","message":"Tool permission requested","level":"info"}
+
+// Stop, genuine turn end
+{"hookEventName":"stop","sessionId":"01a043a2-...","cwd":"...","workspaceRoot":"...","timestamp":"...","transcriptPath":"...updates.jsonl","promptId":"1f28e0e5-...","permissionMode":"default","reason":"end_turn","stopHookActive":false,"lastAssistantMessage":"`hookprobe`","backgroundTasks":[],"sessionCrons":[]}
+
+// Stop, session-teardown fire (bonus finding, triggered by killing the tmux session)
+{"hookEventName":"stop","sessionId":"01a043a2-...","cwd":"...","workspaceRoot":"...","timestamp":"...","permissionMode":"default","reason":"shutdown","stopHookActive":false}
+```
+
+The last example **confirms the doc's own filter prescription is load-bearing,
+not theoretical**: session teardown fires a second `Stop` with
+`reason:"shutdown"` (not `"end_turn"`) — any hook handler that doesn't check
+`reason == "end_turn"` will double-settle/mis-settle on every session end.
+`toolName`/`toolInput`/`toolResult` were not independently re-verified live
+(only `UserPromptSubmit`/`Stop`/`Notification` were registered this pass);
+the tool-name alias table above is taken directly from the bundled docs,
+which the design doc already cites correctly.
+
+### 3.4 Stats: fuller than expected [VERIFY-P0 → ❌ REFUTED (in grok's favor)]
+
+[Originally verified from a real 413-message session under
+`~/.grok/sessions/<url-encoded-cwd>/<session-uuid>/`; **Phase 0 live probe
+corrects the headline finding below.**]
 
 - Per-session dir contents: `chat_history.jsonl`, `events.jsonl` (phases,
   `tool_started/completed`, `permission_requested/resolved`,
@@ -344,21 +488,45 @@ opt in via `--backend-arg`.
   running total per update), `summary.json` (`current_model_id`,
   `num_messages`, timestamps, git info — **no token fields**),
   `prompt_history.jsonl` (per-project prompt log with session ids).
+- **Correction: a full input/output/cost split DOES exist locally.** The
+  original research found only a running `totalTokens` per update and
+  concluded no split was available; a live probe of `updates.jsonl` found
+  that its `turn_completed` update carries a full `usage` object:
+  `{inputTokens, outputTokens, totalTokens, cachedReadTokens,
+  cacheCreationTokens, reasoningTokens, modelCalls, apiDurationMs,
+  costUsdTicks, modelUsage: {<model>: {...same fields per model...}}}`. This
+  directly contradicts the original "no local input/output split was found"
+  claim — the split was simply on a different event (`turn_completed`, not
+  the running per-update `_meta.totalTokens`) than the original research
+  read. **`costUsdTicks`'s unit scale was not cross-checked against a priced
+  invoice** — one sample turn (~13.6k input, 31 output, high reasoning
+  effort) showed `costUsdTicks: 113440000`, consistent with nano-dollars
+  (≈$0.113) but treat that scale as ⚠️ unconfirmed until Phase 4 verifies it
+  against a real billed amount.
 - `GrokStatsReader` therefore: interactions ← `prompt_history.jsonl` count for
   the session id; context ← latest `_meta.totalTokens` from `updates.jsonl`;
-  model ← `summary.json.current_model_id`; input/output/cost ← None (dashes)
-  unless Phase 0 finds a split (check `grok trace export` and newer-file
-  formats before conceding [VERIFY-P0]). Declare `TRANSCRIPT_STATS` only if
-  the columns we can fill render honestly; the seam already handles partial
-  `AgentSessionStats` fields as dashes.
+  model ← `summary.json.current_model_id`; **input/output/cost ← the
+  `turn_completed.usage` object above, summed across turns for the session
+  — not None/dashes as originally planned.** Re-scope Phase 4's
+  `TRANSCRIPT_STATS` declaration from "⚠️ partial" toward "✅ full" pending
+  the `costUsdTicks` scale confirmation. Declare `TRANSCRIPT_STATS` only once
+  the columns actually fill honestly; the seam already handles any remaining
+  partial `AgentSessionStats` fields as dashes.
+- `grok trace --help` and `grok export --help` were checked as the doc
+  prescribed but are not needed now that `updates.jsonl` itself has the
+  split; no further token-split hunting required.
 - Session location is trivially prescribable: overcode mints the uuid via
   `--session-id`, so the reader keys straight into
-  `sessions/<encoded-cwd>/<uuid>/` — no discovery problem at all.
+  `sessions/<percent-encoded-abs-cwd>/<uuid>/` (see §3.2 for the exact
+  encoding) — no discovery problem at all.
 
 ### 3.5 Capability forecast
 
 `RESUME` ✅ · `FORK` ✅ · `SESSION_ID_PRESCRIPTION` ✅ · `PERMISSION_INJECTION` ✅
-(pending rule-syntax check) · `HOOK_EVENTS` ✅ · `TRANSCRIPT_STATS` ⚠️ partial ·
+(rule-syntax confirmed live, §3.2) · `HOOK_EVENTS` ✅ (stdin shapes confirmed
+live, §3.3) · `TRANSCRIPT_STATS` ✅ **upgraded from ⚠️ partial** — §3.4's
+Phase-0 correction found a full local input/output/cost split, pending only
+the `costUsdTicks` unit-scale confirmation ·
 `SKILLS` ❌ (grok has skills + a marketplace; unintegrated) · `SANDBOX_PROBE` ❌ ·
 `SUBSCRIPTION_USAGE` ❌ · `AGENT_TEAMS` ❌.
 
@@ -366,28 +534,39 @@ opt in via `--backend-arg`.
 
 ## 4. Risks
 
-1. **Codex hook injection may need `--dangerously-bypass-hook-trust`.** The
-   flag is designed for exactly this ("automation that already vets hook
-   sources") but the name is radioactive; if it proves required, surface it in
-   `overcode show`/docs plainly. If `-c` cannot reach hooks at all, fall back
-   to file-based injection or notify+polling; the phase gates on Phase 0's
-   verdict. (Mitigated: capability honesty means worst case is polling-only
-   status, the opencode Phase-4 tier.)
+1. **Codex hook injection needs `--dangerously-bypass-hook-trust`. [Phase 0 →
+   ✅ RESOLVED, risk realized but contained.]** Confirmed live: without the
+   flag, the identical `-c 'hooks...'` config produces zero hook firings,
+   silently. With it, Route 1 (`-c` override + the flag, no files written)
+   works cleanly on the first prompt, in both `exec` and the TUI, with
+   confirmed env inheritance. The flag's name is still radioactive — surface
+   it plainly in `overcode show`/docs as planned. (The file-based fallback,
+   Route 2, also works but durably writes a trust entry to the user's
+   *global* `~/.codex/config.toml` on manual accept — Route 1 avoids that
+   entirely and is the implementation target.)
 2. **Codex release cadence.** npm shows multiple releases/week (0.148→0.150 in
    days). Same mitigations as opencode: `TESTED_CODEX_RANGE`, doctor version
    check, committed pane corpus, polling fallback.
 3. **Grok subscription gating.** Grok Build needs SuperGrok/X Premium+; CI and
    other machines cannot assume it. All tests must run against the mock; live
    verification is a manual Phase 0 step on this machine.
-4. **Grok config-vs-flag precedence.** The user's config sets
-   `permission_mode = "always-approve"`; if flags don't beat config, overcode's
-   "normal" mode silently becomes bypass. Phase 0 must verify precedence and,
-   if needed, pass the mode explicitly on every launch.
+4. **Grok config-vs-flag precedence. [Phase 0 → ✅ RESOLVED, flag wins.]**
+   Confirmed live: with `--permission-mode default` passed explicitly, a real
+   approval dialog appeared for a test command despite the config's
+   `always-approve`; omitting the flag reproduced the silent auto-approve.
+   `GrokBackend.build_command()` must still pass the mode explicitly on every
+   launch (never rely on the config default) — that discipline is now a
+   confirmed requirement, not a hedge.
 5. **Four TUIs' chrome to track.** Each corpus is a snapshot; doctor version
-   ranges + the `autoupdate`-style warnings are the containment. Grok's
-   `update` subcommand and codex's `codex update` both auto-move; check
-   whether either auto-updates by default [VERIFY-P0] and add doctor warnings
-   if so.
+   ranges + the `autoupdate`-style warnings are the containment. **[Phase 0 →
+   partially resolved]** Codex: `codex features list` shows `in_app_updates
+   stable true` — an in-app update mechanism is **enabled by default**
+   (⚠️ exact trigger cadence not directly observed; treat as "on" for a
+   doctor warning). Grok: no auto-update toggle found in `grok update --help`
+   or `~/.grok/config.toml`, and no background update chatter was observed
+   during probing (⚠️ inferred no, not exhaustively watched over a long
+   session). Add a codex doctor warning; grok's warning is lower priority
+   pending stronger evidence either way.
 6. **Shared-file merge conflicts if phases run in parallel.** Codex and Grok
    phases both touch `backends/__init__.py`, docs, the feature table, and
    e2e conftest. Run backend tracks sequentially, or in worktrees with the
@@ -653,39 +832,151 @@ tiers honest by construction.
 
 ## Ancillary (post-Phase-5): true bypass-permissions for opencode
 
+> **Verified Aug 27, 2026 (Phase 0 pass, opencode v1.18.23).** All three
+> verify-first items below are resolved, and the answer is better than the
+> "if only a project-file route exists…" fallback anticipated: a clean,
+> file-free, per-process env-var route exists and was live-verified via
+> `opencode debug config` (a resolved-configuration dump command not
+> mentioned in the original research).
+
 Shipped opencode behavior collapses both `permissive` and `bypass` onto
 `--auto`, under which opencode's own `"deny"` rules still win — there is no
 real `--dangerously-skip-permissions` analogue. Requested improvement: in
 **bypass** mode only, have `prepare_launch()` materialize an allow-everything
 permission config for the launched process so deny rules cannot block it.
 
-Verify-first items (same discipline as Phase 0):
-- Whether opencode honors an `OPENCODE_CONFIG` env var or another per-process
-  config injection point, and how it merges with the project's
-  `opencode.json` (override vs replace — replacing the user's project config
-  wholesale is unacceptable).
-- The exact permission grammar for "allow everything" (e.g.
-  `{"permission": {"*": "allow"}}` or per-tool keys) in the tested opencode
-  range.
-- That a per-process route leaves the user's own `opencode` sessions and
-  files untouched (the plugin-footprint standard: project files only with
-  marker + never-clobber, or better, no files at all via env).
+**Verify-first items — verdicts:**
+- **`OPENCODE_CONFIG=/path/to/file.json` is honored** ✅ — confirmed live: a
+  scratch project with no `permission` key in its `opencode.json`, launched
+  with `OPENCODE_CONFIG` pointing at a file setting `permission.bash: allow`,
+  showed that key in `opencode debug config`'s resolved output. It **merges,
+  does not replace**: in the load order it is applied *before* the project's
+  `opencode.json`/`.jsonc` files, so project-file keys win on conflict but
+  keys the project file doesn't set do come through from the env file
+  (confirmed: setting a conflicting `username` in the env-config file did
+  **not** override the project's `username`, but the non-conflicting
+  `permission.bash` key did come through). Two siblings, same semantics:
+  `OPENCODE_CONFIG_CONTENT` (inline JSON string instead of a file path,
+  applied even later — after project files) and `OPENCODE_CONFIG_DIR` (an
+  additional directory scanned for `opencode.json`/`.jsonc`, like a project
+  `.opencode` dir).
+- **A dedicated, better-fit env var exists: `OPENCODE_PERMISSION`** ✅ new
+  finding, not anticipated by the original research. It's a JSON blob merged
+  into the `permission` config at the very *end* of the resolution pipeline —
+  after project config, not before — and empirically **does override
+  project-level deny rules**, unlike `OPENCODE_CONFIG`. Live proof: with a
+  scratch project's `opencode.json` setting `{"permission":{"bash":"deny",
+  "edit":"deny"}}`, launching with `OPENCODE_PERMISSION='{"bash":"allow",
+  "edit":"allow"}'` produced a resolved config (`opencode debug config`)
+  showing `bash: allow, edit: allow` — the project's deny rules did not win.
+  This is exactly the "allow-everything for bypass mode" mechanism the
+  ancillary item was hunting for, and it needs **zero file writes** —
+  `prepare_launch()`/`env_prefix()` can set it per-process for bypass-mode
+  launches only, with no marker file, no project pollution, nothing to clean
+  up.
+- **Permission grammar**: per-tool keys with values `allow`/`deny`/`ask`
+  (confirmed keys observed in the binary: `bash`, `edit`, `webfetch`, …,
+  `PermissionLevel` enum). `opencode debug config` did not reject an
+  unrecognized `"*"` wildcard key either (echoed back verbatim), but its
+  semantic meaning as a true "allow everything" catch-all was not separately
+  confirmed against the schema — **explicit per-tool keys are the
+  Phase-0-verified-safe grammar**; treat `"*"` as unconfirmed shorthand.
+- **Footprint**: fully env-based, so the "leaves the user's own sessions and
+  files untouched" bar is trivially met — no files are written or read
+  beyond what `OPENCODE_CONFIG`/`OPENCODE_PERMISSION` themselves point at,
+  and neither is set unless overcode launches the process itself.
 
-If only a project-file route exists, follow the telemetry plugin's rules
-(marker line, idempotent, never clobber user content) and document the
-footprint in `docs/backends.md`; if no clean route exists, keep `--auto` and
-document the limitation — do not silently edit user configs.
+**Recommendation**: implement the ancillary improvement via `env_prefix()`
+setting `OPENCODE_PERMISSION` to an allow-everything JSON blob (built from
+the tool-key set opencode's schema recognizes) for **bypass** mode launches
+only — no `OPENCODE_CONFIG` file needed, no project `.opencode` writes, no
+marker/never-clobber ceremony required at all.
 
 ---
 
-## Appendix A — Codex CLI verified mapping (Phase 0 fills this)
+## Appendix A — Codex CLI verified mapping (Phase 0)
 
-Placeholder: Phase 0 records the per-row verdict table here, opencode
-Appendix-A style, citing fixtures and command output.
+**Status: verified against a live Codex CLI 0.150.1 during Phase 0 (Aug 27,
+2026, macOS/arm64, npm install, model `gpt-5.6-sol` — the account default;
+`gpt-5.1-codex-mini` was rejected under this machine's ChatGPT-subscription
+auth with an inline `invalid_request_error`, not an argv error). Every row
+below is marked ✅ confirmed, ❌ refuted, or ⚠️ partially/inconclusively
+verified. The pane corpus the behavioural rows were read from is committed
+at `tests/fixtures_codex_panes/`.
 
-## Appendix B — Grok Build verified mapping (Phase 0 fills this)
+| overcode concept | Claude Code | Codex CLI | Verdict |
+|---|---|---|---|
+| Binary | `claude` (`CLAUDE_COMMAND`) | `codex` (`CODEX_COMMAND`, new) | ✅ |
+| Process basename in `ps` | `claude` | parent is `node /opt/homebrew/bin/codex`; it execs a vendored binary whose basename is `codex` (the one actually running the TUI) | ✅ confirmed via `ps`/`pgrep` |
+| Model | `--model sonnet` | `-m/--model <model>` — account default is `gpt-5.6-sol`, not `gpt-5.2-codex` as originally guessed; `gpt-5.1-codex-mini` rejected under ChatGPT-subscription auth | ✅ (model id corrected) |
+| Bypass permissions | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | ✅ confirmed: banner showed `sandbox: danger-full-access`, zero prompts for a test command |
+| Permissive (sandboxed) | `--permission-mode dontAsk` | `-a never --sandbox workspace-write` | ✅ confirmed: no approval dialog, but the sandbox itself still blocks out-of-workspace writes (silent failure reported back to the model, no dialog) |
+| Auto-review tier (new, not in Claude) | n/a | `--approve-for-me` | ✅ confirmed a genuine third tier: auto-reviews and silently approves (transient `Reviewing approval request (1s • esc to interrupt)` status, no y/n dialog ever shown) |
+| `-a` accepted values | n/a | `on-request` / `never` only | ✅ confirmed — `-a always` errors with the exact possible-values list |
+| `-a` on `codex exec` | n/a | ❌ not accepted at all (`error: unexpected argument '-a' found`); `exec` always behaves as `never` | ❌ new finding — headless `build_command()` path must never pass `-a` |
+| Allowed tools | `--allowedTools a,b` | none — sandbox modes + `-c` config only | ✅ (absent from `--help`, no live test needed) |
+| Persona | `--agent name` | none — `-p/--profile` layers `$CODEX_HOME/<name>.config.toml`, a config layer, not a persona | ✅ confirmed from `--help` text |
+| Prescribe session id | `--session-id <uuid>` | ✗ no flag | ✅ (unchanged from prior research) |
+| Resume | `--resume <id>` | `codex resume <id>` (subcommand); top-level options (`-m`, `-a`, `-s`, `-c`, …) accepted **after** the subcommand | ✅ confirmed live: `codex resume <real-id> -a never -m gpt-5.6-sol` launched cleanly |
+| Fork | `--resume <id> --fork-session` | `codex fork <id>` (subcommand, same grammar as resume) | ✅ (unchanged) |
+| Graceful exit | `C-c`, `/exit` | `/quit` or `/exit` (both in the `/` menu, both labelled "exit Codex") | ✅ confirmed |
+| Bare `C-c` | safe in Claude | ❌ **kills the process instantly, no confirmation** — confirmed on an idle (non-generating) session, tmux session destroyed within 2s | ❌ refuted — never use as codex's interrupt/exit gesture |
+| Interrupt (safe gesture) | n/a | `Escape` — `■ Conversation interrupted - tell the model what to do differently…`, process stays alive | ✅ confirmed, this is the safe gesture |
+| Clear conversation | `/clear` | `/new` ("start a new chat during a conversation") | ✅ confirmed present in `/` menu |
+| Approve / reject keys | `Enter` / `Escape` | approve = `y` or `Enter` (option 1, default-selected); reject = `Escape` (option 3; **no literal `n` key**) | ✅ confirmed, exact hint text captured in `permission_required.txt` |
+| Trust dialog | "I trust this folder" | `Do you trust the contents of this directory? › 1. Yes, continue / 2. No, quit` — `Enter` accepts; persists per-path as `[projects."<path>"] trust_level="trusted"` in `~/.codex/config.toml` | ✅ confirmed, captured in `trust_dialog.txt` |
+| Hook stdin dialect | snake_case | snake_case (`hook_event_name`, `session_id`, `turn_id`, `transcript_path`, `cwd`, `model`, `permission_mode`, `prompt`) | ✅ confirmed Claude-shaped — little/no dialect translation likely needed, unlike grok |
+| Hook injection route | `--settings '<json>'` | `-c 'hooks.<Event>=[{hooks=[{type="command",command="<single-string-shell-cmd>"}]}]' --dangerously-bypass-hook-trust` | ✅ **works** — resolves the plan's single biggest open risk; `command` is a bare string per `HookHandlerConfig::Command` (`codex-rs/config/src/hook_config.rs`), not an array like Claude's |
+| Hook trust-bypass necessity | n/a | without `--dangerously-bypass-hook-trust`, the identical `-c hooks...` config fires zero hooks, silently | ✅ confirmed required |
+| Alternative: project `.codex/hooks.json` | n/a | also works with the bypass flag; without it, the interactive TUI shows a hook-trust review dialog (`t` to trust) that durably writes a `[hooks.state...]` entry to the **global** `~/.codex/config.toml` | ⚠️ works, but pollutes global config on manual accept — the `-c`+bypass-flag route is cleaner (no global writes) |
+| Alternative: `~/.codex/hooks.json` | n/a | attempted once with the bypass flag; did not fire, not further diagnosed (Routes 1/2 already answer the question) | ⚠️ inconclusive, deprioritized — not the implementation target |
+| Hook env inheritance | n/a | `OVERCODE_PROBE=1` set before launch was visible inside the hook subprocess | ✅ confirmed |
+| User-turn/scaffolding filter | n/a | `response_item.payload.internal_chat_message_metadata_passthrough.content_item_kinds` contains `"user.text"` for real turns vs `"environments.environment_context"`/`"host_skills.instructions"` etc. for scaffolding | ✅ new finding — more robust than string-matching the XML-ish wrapper tags originally proposed |
+| Model field in rollout JSONL | n/a | `turn_context.payload.model` (duplicated at `.collaboration_mode.settings.model`); **not** reliably in `session_meta` | ✅ confirmed with real JSON quoted in §2.4 |
+| Auto-update default | n/a | `codex features list` → `in_app_updates  stable  true` | ⚠️ enabled by default per feature flag; exact trigger cadence not directly observed |
 
-Placeholder: as Appendix A.
+Still not verified, deliberately: `codex exec --json`/`--output-schema`
+output shape (headless mode wasn't a Phase 0 checklist item); `mcp`/plugin
+subsystems; behavior under API-key (non-ChatGPT-subscription) auth, which
+may accept `gpt-5.1-codex-mini` where subscription auth rejected it.
+
+## Appendix B — Grok Build verified mapping (Phase 0)
+
+**Status: verified against a live Grok Build 1.0.5 during Phase 0 (Aug 27,
+2026, macOS/arm64, model `grok-4.5` where accepted — note below, otherwise
+account default). Every row below is marked ✅ confirmed, ❌ refuted, or ⚠️
+partially verified. The pane corpus is committed at
+`tests/fixtures_grok_panes/`.**
+
+| overcode concept | Claude Code | Grok Build | Verdict |
+|---|---|---|---|
+| Binary | `claude` (`CLAUDE_COMMAND`) | `grok` (`GROK_COMMAND`, new) | ✅ |
+| Process basename in `ps` | `claude` | `grok` — no wrapper/child split like codex | ✅ confirmed via `pgrep -fl grok` |
+| Model | `--model sonnet` | `-m/--model <id>` — `grok-4.5` no longer exists (`grok models` lists only `grok-4.6`); the **interactive TUI silently falls back to default** on a bad id with zero visible error, while **headless `-p` fails loudly** (`Invalid params: "unknown model id"`, exit 1) | ⚠️ confirmed asymmetric — a doctor/pre-launch check against `grok models` is worth adding since the TUI itself won't surface a bad `--model` |
+| Bypass permissions | `--dangerously-skip-permissions` | `--permission-mode bypassPermissions` | ✅ (unchanged; not separately re-tested this pass, `auto` was the tested skip-dialog path — see next row) |
+| Permissive | `--permission-mode dontAsk` | ❌ **`dontAsk` is NOT aliased to `auto`** — shows the identical full approval dialog as `default`. Only `--permission-mode auto` skips the dialog | ❌ refuted — `GrokBackend`'s permissive-mode mapping must target `auto`, not `dontAsk` |
+| Normal | (default) | `--permission-mode default` | ✅ confirmed — dialog appears |
+| Flag-vs-config precedence | n/a | user's `~/.grok/config.toml` sets `[ui] permission_mode = "always-approve"`; `--permission-mode default` **does** override it live (dialog appears with the flag; silent auto-approve without it) | ✅ confirmed definitively — flag beats config |
+| Allowed tools | `--allowedTools a,b` | `--allow 'Bash(echo *)'` (Claude-style `Tool(glob)` grammar) | ✅ confirmed — accepted with no parse error and **actually suppressed** the dialog live, full round-trip verified |
+| Prescribe session id | `--session-id <uuid>` | `-s/--session-id <uuid>`; session dir = `~/.grok/sessions/<percent-encoded-abs-cwd>/<uuid>/` (`/`→`%2F`, including the leading slash) | ✅ confirmed round-trip live with a minted uuid |
+| Graceful exit | `C-c`, `/exit` | `/quit` (clean exit, prints a `grok --resume <uuid>` hint) | ✅ confirmed |
+| Bare `C-c` | safe in Claude | ✅ **safe** — interrupts only; process and session stay alive; a follow-up prompt in the same session works normally | ✅ confirmed — opposite of the codex/opencode result |
+| Interrupt (Escape) | n/a | single `Esc` fully interrupts and settles the turn (`Turn cancelled by user in 4.3s.`); no second Escape needed | ✅ confirmed |
+| Clear conversation | `/clear` | `/new` — there is no literal `/clear` | ✅ confirmed via `/` command menu (`command_menu.txt`) |
+| Approve / reject keys | `Enter` / `Escape` | digit keys, no Enter required: `1`=always-approve, `2`=approve once, `3`=reject; hint `1/3:select │ Tab:next option │ Ctrl+o:always-approve │ Ctrl+c:cancel │ Esc:scrollback` | ✅ confirmed, captured in `permission_required.txt` |
+| Trust dialog | "I trust this folder" | ✅ confirmed **absent** at plain startup, even in a brand-new never-visited directory — folder trust silently gates hooks/MCP/LSP with no interactive startup prompt | ✅ confirmed absent (matches bundled docs) |
+| UI mode (default vs `--fullscreen`) | n/a | byte-identical chrome on this account (no `[ui] screen_mode = "minimal"` override present); recommend passing `--fullscreen` explicitly anyway for determinism against future config drift | ✅ recommendation: standardize on `--fullscreen` |
+| Hook stdin dialect | snake_case | camelCase (`hookEventName`, `sessionId`, `promptId`, `permissionMode`, `notificationType`, `reason`, …) | ✅ confirmed live, exact JSON captured in §3.3 |
+| Hook env inheritance | n/a | `OVERCODE_PROBE=1` set before launch was visible inside the hook subprocess | ✅ confirmed |
+| Session-end double-`Stop` | n/a | real turn-end `Stop` fires `reason:"end_turn"`; session teardown fires a **second** `Stop` with `reason:"shutdown"` | ✅ confirmed live — hook handler must filter on `reason=="end_turn"` |
+| Token/cost split | assumed absent (original research) | ❌ **refuted — a full split exists**: `updates.jsonl`'s `turn_completed.usage` carries `inputTokens`/`outputTokens`/`cachedReadTokens`/`cacheCreationTokens`/`reasoningTokens`/`costUsdTicks`/per-model breakdown | ❌ refuted, in grok's favor — `TRANSCRIPT_STATS` can be closer to full than "partial, dashes for tokens/cost" (⚠️ `costUsdTicks` unit scale not cross-checked against a billed amount) |
+| Auto-update default | n/a | no auto-update toggle found in `grok update --help` or `config.toml`; no background update chatter observed | ⚠️ inferred no, not exhaustively watched over a long session |
+
+Still not verified, deliberately: `PreToolUse`/`PostToolUse` stdin shapes and
+the grok→Claude tool-name alias table (taken from bundled docs, not
+independently re-fired live this pass — only `UserPromptSubmit`/`Stop`/
+`Notification` were registered); behavior of `--worktree` and background
+subagent tasks interacting with overcode's launch model.
 
 ## Appendix C — Research provenance (Aug 27, 2026)
 

@@ -1,0 +1,39 @@
+
+  4 — Four. Two pairs make four.
+
+  5 — Five. The number of fingers on one hand.
+
+  6 — Six. Three pairs make six.
+
+  7 — Seven. One week has seven days.
+
+  8 — Eight. Two groups of four.
+
+  9 — Nine. Three groups of three.
+
+  10 — Ten. The number of fingers on both hands.
+
+  11 — Eleven. Ten plus one.
+
+  12 — Twelve. A dozen.
+
+  13 — Thirteen. Twelve plus one.
+
+  14 — Fourteen. Two groups of seven.
+
+  15 — Fifteen. Three groups of five.
+
+  16 — Sixteen. Four groups of four.
+
+  17 — Seventeen. Sixteen plus one.
+
+  18 — Eighteen. Two groups of nine.
+
+  19 — Nineteen. One less than twenty.
+
+  20 — Twenty. Two groups of ten.
+
+
+› Ask Codex to do anything
+
+  gpt-5.6-sol high · ~/.claude/jobs/f6bc7dbe/tmp/probe-codex
