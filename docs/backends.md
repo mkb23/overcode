@@ -17,6 +17,36 @@ columns. What it does not cover is the Claude-only subsystems — skills, the
 sandbox badge, the subscription-usage widget, and agent teams — which stay
 capability-gated and render as dashes or hidden controls.
 
+## Feature support at a glance
+
+The user-facing view: which overcode features work on which backend, with
+the TUI key where one exists. Unsupported actions are grayed out or answer
+with a clean "backend X does not support …" — never a crash.
+
+| Feature | TUI key | claude-code | opencode | Notes |
+|---|---|---|---|---|
+| Launch / new-agent modal | `n` | ✅ | ✅ | Backend toggle in the modal; `-B opencode` from the CLI |
+| Kill | `x` | ✅ | ✅ | |
+| Restart (same conversation) | `R` | ✅ | ✅ | opencode resumes via `--session <id>` |
+| Revive a terminated agent | — | ✅ | ✅ | |
+| Fork (branch conversation) | `F` | ✅ | ✅ | Verified on opencode: `--session <id> --fork` creates a `(fork #1)` session |
+| Send instruction | `i` / `:` | ✅ | ✅ | |
+| Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | Key gestures are backend-resolved |
+| Live hook-grade status | — | ✅ | ✅ | opencode: bundled telemetry plugin; pane polling as fallback |
+| Detection-mode toggle | `K` | ✅ | ✅ | |
+| Token / cost / context columns | — | ✅ | ✅ | opencode: read from its SQLite session store |
+| AI summaries | `A` | ✅ | ✅ | |
+| Preview pane | `m` | ✅ | ✅ | |
+| Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | |
+| Remote agents via sisters | `N` | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
+| Devcontainer wrapper | — | ✅ | ✅ | `--wrapper devcontainer` installs the right CLI |
+| Permission modes | — | ✅ full | ⚠️ approximate | permissive and bypass both map to `--auto` (see below) |
+| `--allowed-tools` allowlist | — | ✅ | ❌ | No opencode flag exists; silently ignored |
+| Skills | — | ✅ | ❌ | |
+| Sandbox badge | — | ✅ | ❌ | Claude-only loopback probe |
+| Subscription-usage widget | — | ✅ | ❌ | Anthropic-only usage API |
+| Agent teams | — | ✅ | ❌ | Claude Code experimental feature |
+
 ---
 
 ## Launching an opencode agent

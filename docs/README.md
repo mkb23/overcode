@@ -1,6 +1,6 @@
 # Overcode Documentation
 
-Welcome to the overcode documentation. Overcode is a TUI supervisor for managing multiple Claude Code agents in tmux.
+Welcome to the overcode documentation. Overcode is a TUI supervisor for managing multiple coding agents (Claude Code, opencode) in tmux.
 
 ## Guides
 
