@@ -538,16 +538,16 @@ def compute_window_burn(
 ) -> WindowBurnStats:
     """Aggregate token burn across sessions over the past ``hours`` window (#174).
 
-    Re-parses each session's Claude JSONL files filtered by the window's start
+    Re-parses each session's transcript files filtered by the window's start
     timestamp, sums tokens, and computes cost using each session's per-model
     pricing. Skips asleep sessions and sessions without start_directory or
-    claude_session_ids.
+    agent_session_ids.
 
     Designed to run on a worker thread — does file I/O proportional to
-    `(active sessions) × (claude_session_ids per session)`. Safe for the
+    `(active sessions) × (agent_session_ids per session)`. Safe for the
     typical 5-15 session range; cache externally if you have hundreds.
     """
-    from .history_reader import get_session_window_token_usage
+    from .stats_reader import stats_reader_for_session
     from .pricing import calculate_cost_estimate
     from .settings import get_user_config, get_model_pricing
 
@@ -568,7 +568,7 @@ def compute_window_burn(
         if session.id in asleep_session_ids:
             continue
 
-        u = get_session_window_token_usage(session, since)
+        u = stats_reader_for_session(session).get_window_token_usage(session, since)
         if not (u["input_tokens"] or u["output_tokens"]
                 or u["cache_creation_tokens"] or u["cache_read_tokens"]):
             continue

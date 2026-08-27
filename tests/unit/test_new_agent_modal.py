@@ -85,15 +85,18 @@ class TestNewAgentModalState:
             FormField("provider", "Provider", "toggle",
                       value=defaults.get("provider", "web"),
                       options=["web", "bedrock"]),
+            FormField("backend", "Backend", "toggle",
+                      value=defaults.get("backend", "claude-code"),
+                      options=["claude-code", "opencode"]),
             FormField("wrapper", "Wrapper", "text", value=wrapper_default),
-            FormField("claude_args", "Claude args", "text", value=""),
+            FormField("backend_args", "CLI args", "text", value=""),
         ]
         modal.selected_index = 2
         return modal
 
     def test_fields_populated(self):
         modal = self._make_modal_with_fields()
-        assert len(modal.fields) == 9
+        assert len(modal.fields) == 10
         assert modal._field("host").value == "macbook"
         assert modal._field("directory").value == "/Users/mike/Code/myproject"
         assert modal._field("name").value == "myproject"

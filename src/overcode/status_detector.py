@@ -1,5 +1,8 @@
 """
-Status detection for Claude sessions in tmux.
+Status detection for agent sessions in tmux.
+
+Backend-neutral: every glyph and marker comes from the session's
+``StatusPatterns`` set; the defaults describe Claude Code.
 """
 
 from typing import Optional, Tuple, TYPE_CHECKING
@@ -38,7 +41,7 @@ import re as _re
 
 
 class PollingStatusDetector:
-    """Detects the current status of a Claude session via tmux pane scraping."""
+    """Detects the current status of an agent session via tmux pane scraping."""
 
 
     def __init__(
@@ -106,7 +109,7 @@ class PollingStatusDetector:
         Runs detection phases in priority order, returning on first match:
         1. Terminated (window gone, empty pane)
         2. Spawn failure
-        3. Shell prompt (Claude exited)
+        3. Shell prompt (agent exited)
         4. Permission request
         5. Content changing (active work)
         6. Error output
@@ -153,9 +156,9 @@ class PollingStatusDetector:
         if spawn_error:
             return STATUS_WAITING_USER, spawn_error, content
 
-        # Phase 3: Shell prompt (Claude exited)
+        # Phase 3: Shell prompt (agent exited)
         if self._is_shell_prompt(last_lines):
-            return STATUS_TERMINATED, "Claude exited - shell prompt", content
+            return STATUS_TERMINATED, "Agent exited - shell prompt", content
 
         # Prepare filtered lines for remaining phases
         content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
@@ -179,11 +182,7 @@ class PollingStatusDetector:
         # thinking output (✻ Twisting…, ⎿ Running…) persists in scrollback
         # above the prompt and would false-match general active indicators.
         if content_changed:
-            status_bar_active = any(
-                "esc to interrupt" in line.lower()
-                for line in last_lines[-2:]
-            )
-            if not status_bar_active:
+            if not self.patterns.is_busy(last_lines):
                 prompt_result = self._detect_user_prompt(last_lines, content)
                 if prompt_result is not None:
                     self._last_detect_phase[session.id] = "P5+P12:prompt_override"
@@ -223,7 +222,7 @@ class PollingStatusDetector:
             return result
 
         # Phase 11: Thinking
-        if any("thinking" in line.lower() for line in last_lines):
+        if self.patterns.is_thinking(last_lines):
             self._last_detect_phase[session.id] = "P11:thinking"
             return STATUS_RUNNING, "Thinking...", content
 
@@ -308,10 +307,10 @@ class PollingStatusDetector:
 
         Only reached when content is NOT changing, so plan mode correctly shows
         orange only when Claude has stopped and is waiting for approval (#214).
-        Guard: require Claude output (⏺) in content.
+        Guard: require agent tool output (⏺ for Claude Code) in content.
         """
-        has_claude_output = any(line.strip().startswith('⏺') for line in lines)
-        if has_claude_output and self._matches_approval_patterns(last_few):
+        has_agent_output = any(self.patterns.is_tool_output_line(line) for line in lines)
+        if has_agent_output and self._matches_approval_patterns(last_few):
             return STATUS_WAITING_APPROVAL, "Waiting for plan/decision approval", content
         return None
 
@@ -340,7 +339,8 @@ class PollingStatusDetector:
         occurrences like 'Running the tests revealed...' (#359).
         """
         matching_line = line_starts_with_any(
-            last_lines, self.patterns.execution_indicators, case_sensitive=True, reverse=True
+            last_lines, self.patterns.execution_indicators,
+            case_sensitive=True, reverse=True, status_patterns=self.patterns,
         )
         if matching_line:
             # Check if the executing tool is a sleep command (#289)
@@ -362,24 +362,16 @@ class PollingStatusDetector:
         actively working (#393). When active indicators are present in the
         last lines, the prompt is just decoration — skip prompt detection.
         """
-        # If "esc to interrupt" appears at the bottom of the pane, Claude
-        # is actively working — the prompt and user input are just UI chrome.
-        # Only check the last 2 lines to avoid matching historical thinking
-        # output (✻, Running…) that persists in scrollback (#393).
-        if any(
-            "esc to interrupt" in line.lower()
-            for line in last_lines[-2:]
-        ):
+        # If a busy marker ("esc to interrupt") appears at the bottom of the
+        # pane, Claude is actively working — the prompt and user input are
+        # just UI chrome. Only the last 2 lines count, to avoid matching
+        # historical thinking output (✻, Running…) in scrollback (#393).
+        if self.patterns.is_busy(last_lines):
             return None
 
         # Check for empty prompt or autocomplete suggestion
-        for line in last_lines[-4:]:
-            stripped = line.strip()
-            if stripped in self.patterns.prompt_chars:
-                return STATUS_WAITING_USER, "Waiting for user input", content
-            if any(stripped.startswith(c) for c in self.patterns.prompt_chars):
-                if '↵' in stripped and 'send' in stripped.lower():
-                    return STATUS_WAITING_USER, "Waiting for user input", content
+        if self.patterns.is_input_ready(last_lines):
+            return STATUS_WAITING_USER, "Waiting for user input", content
 
         # Check for user input with no Claude response (stalled)
         # Note: ⏺ is Claude's output indicator, ⏵⏵ in status bar is just UI chrome
@@ -387,19 +379,13 @@ class PollingStatusDetector:
         found_user_input = False
         found_claude_response = False
         for line in last_lines:
-            stripped = line.strip()
             # Skip autocomplete suggestion lines
-            if '↵' in stripped and 'send' in stripped.lower():
+            if self.patterns.is_autocomplete_hint(line):
                 continue
-            is_user_input = (
-                stripped.startswith('> ') or stripped.startswith('>\xa0') or
-                stripped.startswith('› ') or stripped.startswith('›\xa0') or
-                stripped.startswith('❯ ') or stripped.startswith('❯\xa0')
-            )
-            if is_user_input and len(stripped) > 2:
+            if self.patterns.is_user_input_line(line):
                 found_user_input = True
                 found_claude_response = False
-            elif stripped.startswith('⏺'):
+            elif self.patterns.is_tool_output_line(line):
                 found_claude_response = True
 
         if found_user_input and not found_claude_response:
@@ -430,8 +416,8 @@ class PollingStatusDetector:
         relevant_lines = []
         for line in reversed(lines):
             line_lower = line.lower()
-            # Stop when we hit the confirmation line
-            if "enter to confirm" in line_lower or "esc to reject" in line_lower:
+            # Skip the dialog's keybinding chrome
+            if any(m in line_lower for m in self.patterns.permission_chrome_markers):
                 continue
             # Stop at empty lines
             if not line.strip():
@@ -481,7 +467,11 @@ class PollingStatusDetector:
             if is_status_bar_line(line, self.patterns):
                 return False
             cleaned = clean_line(line, self.patterns)
-            return len(cleaned) > 10 and not cleaned.startswith('›')
+            if len(cleaned) <= 10:
+                return False
+            # A leftover prompt char means this is the user's input line,
+            # not the agent's activity.
+            return not any(cleaned.startswith(c) for c in self.patterns.prompt_chars)
 
         match = self._scan_from_bottom(lines, is_activity)
         if match:
@@ -539,7 +529,7 @@ class PollingStatusDetector:
                     if len(error_msg) > 80:
                         error_msg = error_msg[:77] + "..."
                     return f"Spawn failed: {error_msg}"
-            return "Spawn failed: claude command not found - is Claude CLI installed?"
+            return "Spawn failed: agent command not found - is the agent CLI installed?"
 
         return None
 
@@ -565,7 +555,7 @@ class PollingStatusDetector:
             # Previous indicators (⏺, ⏵, ⎿, ›) persist in pane scrollback
             # after exit and caused false negatives.
             recent_text = ' '.join(lines[-3:])
-            if '? for shortcuts' not in recent_text:
+            if not self.patterns.shows_input_hint(recent_text):
                 return True
 
         return False

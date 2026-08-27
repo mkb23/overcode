@@ -149,7 +149,7 @@ class ColumnContext:
     # Session and stats
     session: object  # Session
     stats: object  # SessionStats
-    claude_stats: object  # Optional[ClaudeSessionStats]
+    claude_stats: object  # Optional[AgentSessionStats]
     git_diff_stats: Optional[tuple]  # (files, insertions, deletions) or None
 
     # Pre-computed values
@@ -222,11 +222,15 @@ class ColumnContext:
     any_has_pr: bool = False
 
     # Model
-    model: str = ""  # Claude model short name or full name
+    model: str = ""  # Model short name or full name
     any_has_model: bool = False  # True if any agent has a model set
 
     # Provider
     any_has_provider: bool = False  # True if any agent uses non-web provider
+
+    # Agent CLI backend. The column only appears once a fleet is mixed —
+    # a Claude-only user should see no change from opencode support landing.
+    mixed_backends: bool = False
 
     # Resource usage (set when at least one agent has a non-zero reading)
     any_has_cpu: bool = False
@@ -756,7 +760,14 @@ def render_pr_number_plain(ctx: ColumnContext) -> Optional[str]:
     return None
 
 
-render_median_work_time = _make_simple_render("median_work", format_duration, " ⏱{v:>5}", "bold blue")
+def render_median_work_time(ctx: ColumnContext) -> ColumnOutput:
+    """Median work-cycle time. Dashed when the backend reports no stats."""
+    if ctx.claude_stats is None:
+        return [(f" ⏱{'-':>5}", ctx.mono(f"dim blue{ctx.bg}", "dim"))]
+    return [(
+        f" ⏱{format_duration(ctx.median_work):>5}",
+        ctx.mono(f"bold blue{ctx.bg}", "bold"),
+    )]
 
 
 def _format_rss(rss_bytes: int) -> str:
@@ -1228,6 +1239,37 @@ def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
     return provider
 
 
+# Short badges for the backend column — keeps the row width at 3 chars
+# regardless of how long a backend's name is.
+BACKEND_BADGES = {
+    "claude-code": "cc",
+    "opencode": "oc",
+}
+
+
+def _backend_badge(name: str) -> str:
+    return BACKEND_BADGES.get(name, (name or "?")[:2])
+
+
+def render_backend(ctx: ColumnContext) -> ColumnOutput:
+    """Agent CLI badge (cc / oc). Hidden unless the fleet is mixed."""
+    from .backends import DEFAULT_BACKEND, session_backend_name
+    name = session_backend_name(ctx.session)
+    badge = _backend_badge(name)
+    if name == DEFAULT_BACKEND:
+        return [(f" {badge}", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    return [(f" {badge}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+
+
+def render_backend_plain(ctx: ColumnContext) -> Optional[str]:
+    # Mirrors the widget gate: silent for a single-backend fleet. `overcode
+    # show` prints the backend unconditionally via its own line instead.
+    if not ctx.mixed_backends:
+        return None
+    from .backends import session_backend_name
+    return session_backend_name(ctx.session)
+
+
 def render_host(ctx: ColumnContext) -> ColumnOutput:
     """Render host column — hidden when no sisters are configured."""
     if not ctx.has_sisters:
@@ -1332,6 +1374,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Provider", render_plain=render_provider_plain,
                   visible=lambda ctx: ctx.any_has_provider,
                   placeholder_width=3, header="PRV", name="Provider"),
+    SummaryColumn(id="backend", group="context", detail_levels=ALL, render=render_backend,
+                  label="Backend", render_plain=render_backend_plain,
+                  visible=lambda ctx: ctx.mixed_backends,
+                  placeholder_width=3, header="BKD", name="Agent Backend"),
 
     # Performance group — median work, CPU, RAM
     SummaryColumn(id="median_work_time", group="performance", detail_levels=MED_PLUS, render=render_median_work_time,
@@ -1406,6 +1452,7 @@ def build_cli_context(
     pr_number: Optional[int] = None, any_has_pr: bool = False,
     any_has_model: bool = False,
     any_has_provider: bool = False,
+    mixed_backends: bool = False,
     any_has_cpu: bool = False, any_has_ram: bool = False,
     monochrome: bool = True, emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
@@ -1492,6 +1539,7 @@ def build_cli_context(
         model=getattr(session, 'model', '') or '',
         any_has_model=any_has_model,
         any_has_provider=any_has_provider,
+        mixed_backends=mixed_backends,
         any_has_cpu=any_has_cpu,
         any_has_ram=any_has_ram,
         source_host=getattr(session, 'source_host', ''),

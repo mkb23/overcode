@@ -92,10 +92,15 @@ class SessionActionsMixin:
     def action_fork_focused(self) -> None:
         """Fork the focused agent's context into a new child agent.
 
-        Uses Claude's --resume --fork-session to create a new agent with
-        the source agent's full conversation history. The forked agent is
-        registered as a child of the source.
+        Branches the conversation using whatever the agent's backend offers
+        (Claude Code: ``--resume --fork-session``; opencode: ``--session
+        --fork``). The forked agent is registered as a child of the source.
         """
+        from ..backends import (
+            BackendCapability,
+            session_backend_name,
+            session_supports,
+        )
         from ..tui_widgets import CommandBar
 
         focused = _get_focused_session(self)
@@ -109,8 +114,18 @@ class SessionActionsMixin:
             self.notify("Cannot fork a terminated agent", severity="warning")
             return
 
-        if not session.active_claude_session_id:
-            self.notify("No Claude session ID detected yet — try again shortly", severity="warning")
+        # Remote agents answer from the capabilities their own daemon
+        # published, so a sister running a fork-less backend is refused here
+        # instead of failing on the far side.
+        if not session_supports(session, BackendCapability.FORK):
+            self.notify(
+                f"Backend '{session_backend_name(session)}' does not support fork",
+                severity="warning",
+            )
+            return
+
+        if not session.is_remote and not session.active_agent_session_id:
+            self.notify("No agent session ID detected yet — try again shortly", severity="warning")
             return
 
         try:
@@ -301,19 +316,48 @@ class SessionActionsMixin:
         focused.refresh()
 
     def action_toggle_hook_detection(self) -> None:
-        """Toggle global detection mode between hooks and polling.
+        """Toggle detection mode between hooks and polling for the focused agent.
 
-        Switches ALL agents between hook-based and polling-based status
-        detection. The mode is persisted and shared with the monitor daemon.
+        The choice is persisted per-agent (``Session.detection_mode_override``)
+        and read back by the monitor daemon's dispatcher, so a mixed fleet can
+        run some agents on hooks and others on polling. The legacy fleet-wide
+        `detection_mode` file still supplies the default for agents with no
+        override (see settings.resolve_detection_mode).
 
         Overcode-launched agents inject hooks inline via --settings, so the
         user-level Claude config check is not a reliable signal that hooks
         are firing. Recent hook_state files in the session directory are
         the authoritative check (#TBD).
         """
-        from ..settings import write_detection_mode, _session_has_recent_hook_activity
-        new_mode = "polling" if self.detector.mode == "hooks" else "hooks"
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+
+        session = focused.session
+        from ..status_detector_factory import resolve_session_detection_mode
+        current = resolve_session_detection_mode(session, self.detector.mode)
+        new_mode = "polling" if current == "hooks" else "hooks"
+
+        if self._is_remote(session):
+            if self._guard_remote(session):
+                return
+            result = self._sister_controller.set_hook_detection(
+                session.source_url, session.source_api_key,
+                session.name, enabled=new_mode == "hooks",
+            )
+            self._remote_notify(result, f"Detection mode: {new_mode} for '{session.name}'")
+            return
+
         if new_mode == "hooks":
+            from ..backends import BackendCapability, session_supports
+            if not session_supports(session, BackendCapability.HOOK_EVENTS):
+                self.notify(
+                    f"'{session.name}' runs on a backend without hook events.",
+                    severity="warning",
+                )
+                return
+            from ..settings import _session_has_recent_hook_activity
             from ..claude_config import ClaudeConfigEditor
             user_level = ClaudeConfigEditor.are_overcode_hooks_installed()
             session_active = _session_has_recent_hook_activity(self.tmux_session)
@@ -324,9 +368,19 @@ class SessionActionsMixin:
                     severity="warning",
                 )
                 return
-        self.detector.mode = new_mode
-        write_detection_mode(self.tmux_session, new_mode)
-        self.notify(f"Detection mode: {new_mode} (all agents)", severity="information")
+
+        self.session_manager.update_session(
+            session.id,
+            detection_mode_override=new_mode,
+            hook_status_detection=new_mode == "hooks",
+        )
+        session.detection_mode_override = new_mode
+        session.hook_status_detection = new_mode == "hooks"
+
+        self.notify(
+            f"Detection mode: {new_mode} for '{session.name}'", severity="information"
+        )
+        focused.refresh()
 
     def action_kill_focused(self) -> None:
         """Kill or clean up the currently focused agent/job (requires confirmation).
@@ -386,7 +440,7 @@ class SessionActionsMixin:
     def action_restart_focused(self) -> None:
         """Restart the currently focused agent (requires confirmation).
 
-        Sends Ctrl-C to kill the current Claude process, then restarts it
+        Sends the backend's graceful-exit gesture, then restarts the agent
         with the same configuration (directory, permissions).
         """
         focused = _get_focused_session(self)
@@ -663,12 +717,12 @@ class SessionActionsMixin:
 
     def _execute_transport_all(self, sessions: List["Session"]) -> None:
         """Execute transport/handover instructions to all sessions."""
-        from ..launcher import ClaudeLauncher
+        from ..launcher import AgentLauncher
 
         from ..standing_instructions import HANDOVER_INSTRUCTION
         handover_instruction = HANDOVER_INSTRUCTION
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )

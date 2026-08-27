@@ -1,5 +1,5 @@
 """
-Overcode - A supervisor for managing multiple Claude Code instances.
+Overcode - A supervisor for managing multiple coding agents (Claude Code, opencode).
 """
 
 from pathlib import Path

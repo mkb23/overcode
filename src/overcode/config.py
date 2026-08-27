@@ -457,16 +457,21 @@ def get_new_agent_defaults() -> dict:
         new_agent_defaults:
           bypass_permissions: false
           agent_teams: false
+          backend: claude-code
 
     Returns:
-        Dict with bypass_permissions (bool) and agent_teams (bool).
+        Dict with bypass_permissions (bool), agent_teams (bool), provider,
+        wrapper, and backend (agent CLI name).
     """
+    from .backends import DEFAULT_BACKEND
+
     defaults = _get_config_value("new_agent_defaults", {})
     return {
         "bypass_permissions": bool(defaults.get("bypass_permissions", False)),
         "agent_teams": bool(defaults.get("agent_teams", False)),
         "provider": defaults.get("provider", "web"),
         "wrapper": defaults.get("wrapper", ""),
+        "backend": defaults.get("backend") or DEFAULT_BACKEND,
     }
 
 

@@ -73,7 +73,7 @@ def monitor_daemon_start(
     The Monitor Daemon tracks session state and metrics:
     - Status detection (running, waiting, etc.)
     - Time accumulation (green_time, non_green_time)
-    - Claude Code stats (tokens, interactions)
+    - Agent stats (tokens, interactions)
     - User presence state
     """
     from ..monitor_daemon import MonitorDaemon, is_monitor_daemon_running, get_monitor_daemon_pid

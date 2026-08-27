@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "overcode"
-version = "0.4.2"
+version = "0.5.0"
 description = "A supervisor for managing multiple Claude Code instances in tmux"
 authors = [
     {name = "Mike Bond"}
@@ -68,7 +68,15 @@ tui-eye = "overcode.testing.tui_eye:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-overcode = ["*.md", "*.sh", "*.tcss", "web/templates/*.html"]
+overcode = [
+    "*.md",
+    "*.sh",
+    "*.tcss",
+    "web/templates/*.html",
+    # Bundled opencode telemetry plugin — copied into a project's
+    # .opencode/plugins/ at launch, so it has to ship with the wheel.
+    "opencode_plugin/*.js",
+]
 
 [tool.black]
 line-length = 100

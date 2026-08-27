@@ -56,6 +56,10 @@ When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy wi
 
 ### Agent Control
 
+Some actions depend on what the agent's backend supports — see the
+[feature support table](backends.md#feature-support-at-a-glance) in the
+Backends guide. Unsupported actions are grayed out for that agent.
+
 | Key | Action |
 |-----|--------|
 | `i` / `:` | Open command bar to send instruction |

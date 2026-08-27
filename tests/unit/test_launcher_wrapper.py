@@ -1,5 +1,5 @@
 """
-Unit tests for ClaudeLauncher wrapper support.
+Unit tests for AgentLauncher wrapper support.
 
 Tests that wrappers are correctly resolved, stored in session metadata,
 and prepended to the command sent to tmux.
@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.launcher import ClaudeLauncher
+from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
 from overcode.interfaces import MockTmux
@@ -24,7 +24,7 @@ from overcode.interfaces import MockTmux
 def mock_dependency_checks():
     """Mock dependency checks and strip OVERCODE_* env vars."""
     with patch("overcode.launcher.require_tmux"), \
-         patch("overcode.launcher.require_claude"), \
+         patch("overcode.launcher.require_agent_cli"), \
          patch.dict(os.environ, {}, clear=False) as patched_env:
         for key in ["OVERCODE_SESSION_NAME", "OVERCODE_TMUX_SESSION",
                      "OVERCODE_PARENT_SESSION_ID", "OVERCODE_PARENT_NAME"]:
@@ -36,7 +36,7 @@ def _make_launcher(tmp_path):
     mock_tmux = MockTmux()
     tmux_manager = TmuxManager("agents", tmux=mock_tmux)
     session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-    launcher = ClaudeLauncher(
+    launcher = AgentLauncher(
         tmux_session="agents",
         tmux_manager=tmux_manager,
         session_manager=session_manager,

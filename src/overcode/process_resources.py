@@ -4,8 +4,8 @@ Per-session CPU and RSS sampling from `ps`.
 Used by the monitor daemon to populate cpu_percent and rss_bytes on each
 session so the TUI can surface runaway agents (#451 follow-up). One
 batched `ps -eo pid,ppid,%cpu,rss,args` call per tick walks every
-process; we then BFS each claude process tree and sum across descendants
-so e.g. a `tsc --watch` spawned under a claude bash tool counts toward
+process; we then BFS each agent process tree and sum across descendants
+so e.g. a `tsc --watch` spawned under an agent's bash tool counts toward
 its parent agent.
 
 Keeping this separate from doctor._snapshot_process_table because that

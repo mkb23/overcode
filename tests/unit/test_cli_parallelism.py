@@ -37,7 +37,7 @@ class TestParallelismCommand:
         assert "max-children" in result.output
 
     def test_json_output_shape(self):
-        with patch("overcode.launcher.ClaudeLauncher") as ML:
+        with patch("overcode.launcher.AgentLauncher") as ML:
             ML.return_value.list_sessions.return_value = []
             result = runner.invoke(app, ["parallelism", "--json"])
         assert result.exit_code == 0

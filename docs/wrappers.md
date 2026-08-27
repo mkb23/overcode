@@ -1,6 +1,6 @@
 # Wrappers
 
-Wrappers let you run Claude agents in custom environments — Docker containers, VMs, remote machines, or any setup your project needs. A wrapper is a shell script that sits between overcode and the `claude` CLI, receiving the full claude command as arguments and executing it however you choose.
+Wrappers let you run agents in custom environments — Docker containers, VMs, remote machines, or any setup your project needs. A wrapper is a shell script that sits between overcode and the agent CLI (`claude` or `opencode`), receiving the full agent command as arguments and executing it however you choose.
 
 All existing overcode features (attach, send, pane capture, status detection, TUI) work transparently because the wrapper runs in the foreground in the tmux pane.
 
@@ -16,10 +16,10 @@ That's it. On first use, overcode auto-installs the bundled `devcontainer` wrapp
 
 1. Pulls the [Microsoft Node.js devcontainer image](https://github.com/devcontainers/images/tree/main/src/javascript-node) (Node 22 on Debian Bookworm, multi-arch: Intel + Apple Silicon)
 2. Starts a container with your project mounted at `/workspace`
-3. Installs the Claude Code CLI inside the container
-4. Runs claude interactively via `docker exec -it`
+3. Installs the agent CLI inside the container — Claude Code by default, or opencode when `OVERCODE_BACKEND=opencode`
+4. Runs it interactively via `docker exec -it`
 
-**Prerequisites:** Docker must be running. `ANTHROPIC_API_KEY` must be in your environment.
+**Prerequisites:** Docker must be running, and the provider credential your agent CLI needs (`ANTHROPIC_API_KEY` for Claude Code, `OPENAI_API_KEY` and friends for opencode) must be in your environment.
 
 ### Step-by-step: Your first containerised agent
 
@@ -84,14 +84,15 @@ A wrapper is an executable script that receives:
 
 | Input | Description |
 |-------|-------------|
-| `$@` | The full claude command (e.g., `claude --session-id xyz --model sonnet`) |
+| `$@` | The full agent command (e.g., `claude --session-id xyz --model sonnet`) |
 | `OVERCODE_WRAPPER_DIR` | The agent's working directory on the host |
 | `OVERCODE_SESSION_NAME` | Agent name |
 | `OVERCODE_SESSION_ID` | Agent UUID |
 | `OVERCODE_TMUX_SESSION` | Tmux session name |
+| `OVERCODE_BACKEND` | Agent CLI backend name — set only for non-default backends, so unset means `claude-code` |
 | All other `OVERCODE_*` vars | Parent info, etc. |
 
-The wrapper must execute claude interactively in the foreground. The simplest possible wrapper:
+The wrapper must execute the agent CLI interactively in the foreground. It should not assume *which* CLI it is wrapping — `$@` already carries the right argv, and `OVERCODE_BACKEND` names the backend if you need to branch. The simplest possible wrapper:
 
 ```bash
 #!/usr/bin/env bash
@@ -171,6 +172,8 @@ The bundled `devcontainer.sh` wrapper supports these environment variables for c
 | `DEVCONTAINER_IMAGE` | Override the Docker image (skips `.devcontainer/` detection) | - |
 | `DEVCONTAINER_NAME` | Override the container name | `overcode-<agent-name>` |
 | `DEVCONTAINER_SHELL` | Shell inside the container | `/bin/bash` |
-| `ANTHROPIC_API_KEY` | Forwarded into the container for claude authentication | - |
+| `ANTHROPIC_API_KEY` | Forwarded into the container for Claude Code authentication | - |
+| `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY` | Forwarded into the container for opencode providers | - |
+| `OVERCODE_BACKEND` | Which agent CLI to install (`claude-code` / `opencode`); set by the launcher | `claude-code` |
 
 The container is named `overcode-<agent-name>` and is automatically removed when the wrapper exits (via `trap EXIT`). If a container with the same name already exists (e.g., from a crashed session), it's removed before starting a new one.

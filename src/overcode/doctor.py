@@ -1,9 +1,11 @@
 """
-Diagnose agents whose running claude process is missing overcode's hook
+Diagnose agents whose running agent process is missing overcode's hook
 injection (#435). Used by `overcode doctor`.
 
-An agent is "healthy" when its claude process was launched with --settings
-(which contains the overcode hook commands). Agents whose claude process was
+An agent is "healthy" when its backend says its observability is wired up —
+for Claude Code, that the process was launched with --settings (which carries
+the overcode hook commands); for opencode, that the telemetry plugin is
+staged in the project. Agents whose process was
 started manually in the tmux window — or whose last relaunch predates the
 --settings injection commit (#435, 40d1376) — carry no hooks, so the monitor
 daemon sees no state changes.
@@ -12,17 +14,18 @@ daemon sees no state changes.
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 from .session_manager import Session
 
 if TYPE_CHECKING:
-    from .history_reader import ClaudeSessionStats
+    from .history_reader import AgentSessionStats
 
 
 VERDICT_OK = "ok"
 VERDICT_MISSING_SETTINGS = "missing-settings"
-VERDICT_NO_CLAUDE = "no-claude-process"
+VERDICT_NO_AGENT_PROCESS = "no-claude-process"  # wire value kept for compat
+VERDICT_NO_CLAUDE = VERDICT_NO_AGENT_PROCESS  # pre-Phase-6 name
 VERDICT_WINDOW_GONE = "window-gone"
 VERDICT_REMOTE = "remote"
 VERDICT_UNKNOWN = "unknown"
@@ -158,35 +161,51 @@ def get_descendant_pids(
     return descendants
 
 
-def find_claude_process(
+def find_agent_process(
     pane_pid: int,
     children: Dict[int, List[int]],
     argv_by_pid: Dict[int, str],
+    expected_basenames: Optional[Sequence[str]] = None,
 ) -> tuple[Optional[int], str]:
-    """Find the claude process in the tmux pane's process tree.
+    """Find the agent CLI process in the tmux pane's process tree.
 
     Returns (pid, argv) of the first descendant whose argv's first token
-    is `claude` (or an absolute path ending in `/claude`). Returns
-    (None, '') if no claude process is found under pane_pid.
+    basename is one of `expected_basenames` (defaulting to the default
+    backend's, i.e. `claude`). Returns (None, '') if none is found under
+    pane_pid.
 
     We search by argv rather than by stored PID because the user may have
-    manually relaunched claude, in which case any PID we recorded at launch
-    is stale — and that's precisely the case we want to diagnose.
+    manually relaunched the agent, in which case any PID we recorded at
+    launch is stale — and that's precisely the case we want to diagnose.
     """
+    if expected_basenames is None:
+        from .backends import get_backend
+        expected_basenames = get_backend().process_basenames
+    wanted = set(expected_basenames)
     for pid in get_descendant_pids(pane_pid, children):
         argv = argv_by_pid.get(pid, "")
         if not argv:
             continue
         first_token = argv.split(None, 1)[0]
         basename = first_token.rsplit("/", 1)[-1]
-        if basename == "claude":
+        if basename in wanted:
             return pid, argv
     return None, ""
 
 
+# Compat alias — callers that only ever look for Claude.
+find_claude_process = find_agent_process
+
+
+def session_process_basenames(session) -> Sequence[str]:
+    """Process basenames to look for under an agent's pane."""
+    from .backends import get_backend
+    return get_backend(getattr(session, "backend", None)).process_basenames
+
+
 def gather_data_findings(
     session: Session,
-    live_stats: Optional["ClaudeSessionStats"] = None,
+    live_stats: Optional["AgentSessionStats"] = None,
     *,
     daemon_running: bool = True,
     now: Optional[datetime] = None,
@@ -196,7 +215,7 @@ def gather_data_findings(
 
     These checks catch "the monitor isn't wiring data through" bugs that
     a clean hook verdict alone would miss — e.g. a zeroed token count
-    despite visible interactions, an orphaned active_claude_session_id,
+    despite visible interactions, an orphaned active_agent_session_id,
     or a dead monitor daemon starving all agents at once.
 
     Checks are self-gating: the function is safe to call on any session
@@ -216,18 +235,23 @@ def gather_data_findings(
             ),
         ))
 
-    active = session.active_claude_session_id
-    if active and active not in session.claude_session_ids:
+    active = session.active_agent_session_id
+    if active and active not in session.agent_session_ids:
         findings.append(Finding(
             code=FINDING_SID_ORPHAN,
             severity=SEVERITY_WARNING,
             message=(
-                f"active_claude_session_id {active[:8]}… not in tracked "
-                f"claude_session_ids — context window may be miscalculated"
+                f"active_agent_session_id {active[:8]}… not in tracked "
+                f"agent_session_ids — context window may be miscalculated"
             ),
         ))
 
-    if live_stats is not None:
+    # Token/context/cost checks assume the backend writes readable
+    # transcripts; without them "0" means unknown, not broken.
+    from .backends import BackendCapability, session_supports
+    has_transcripts = session_supports(session, BackendCapability.TRANSCRIPT_STATS)
+
+    if live_stats is not None and has_transcripts:
         if live_stats.interaction_count >= 2 and live_stats.total_tokens == 0:
             findings.append(Finding(
                 code=FINDING_TOKENS_ZERO,
@@ -348,14 +372,14 @@ def gather_data_findings(
             ),
         ))
 
-    # claude_session_ids should accumulate one sid per Claude Code session
+    # agent_session_ids should accumulate one sid per Claude Code session
     # owned by this agent. If we see interactions via directory+timestamp
     # fallback matching but none are tracked, the SessionStart hook likely
     # never wired this agent to its sid — context window calc is then wrong.
     if (
         live_stats is not None
         and live_stats.interaction_count > 0
-        and not session.claude_session_ids
+        and not session.agent_session_ids
         and session.status == "running"
     ):
         findings.append(Finding(
@@ -363,7 +387,7 @@ def gather_data_findings(
             severity=SEVERITY_WARNING,
             message=(
                 f"{live_stats.interaction_count} interactions detected but "
-                f"claude_session_ids is empty — falling back to directory matching"
+                f"agent_session_ids is empty — falling back to directory matching"
             ),
         ))
 
@@ -391,7 +415,7 @@ def inspect_agent(
     children: Dict[int, List[int]],
     argv_by_pid: Dict[int, str],
     *,
-    live_stats: Optional["ClaudeSessionStats"] = None,
+    live_stats: Optional["AgentSessionStats"] = None,
     daemon_running: bool = True,
     now: Optional[datetime] = None,
 ) -> AgentHealth:
@@ -435,36 +459,42 @@ def inspect_agent(
             data_findings=findings,
         )
 
-    claude_pid, argv = find_claude_process(pane_pid, children, argv_by_pid)
+    claude_pid, argv = find_agent_process(
+        pane_pid, children, argv_by_pid, session_process_basenames(session)
+    )
     if claude_pid is None:
         return AgentHealth(
             **base,
             claude_pid=None,
             claude_argv="",
             verdict=VERDICT_NO_CLAUDE,
-            details="no claude process under pane — agent may have exited",
+            details=(
+                f"no {session_process_basenames(session)[0]} process under pane "
+                "— agent may have exited"
+            ),
             data_findings=findings,
         )
 
-    if "--settings" in argv:
-        return AgentHealth(
-            **base,
-            claude_pid=claude_pid,
-            claude_argv=argv,
-            verdict=VERDICT_OK,
-            details="hooks injected via --settings",
-            data_findings=findings,
-        )
+    # Each backend answers "was observability wired into this process?" its
+    # own way — Claude Code inspects --settings; opencode's telemetry plugin
+    # leaves no trace on the command line, so it gets a second look with the
+    # session (and therefore its project directory) in hand.
+    from .backends import get_backend, session_backend_name
+    backend = get_backend(session_backend_name(session))
+    verdict, details = backend.health_verdict(argv)
+    refine = getattr(backend, "refine_health_verdict", None)
+    if refine is not None:
+        try:
+            verdict, details = refine(session, verdict, details)
+        except Exception:
+            pass
 
     return AgentHealth(
         **base,
         claude_pid=claude_pid,
         claude_argv=argv,
-        verdict=VERDICT_MISSING_SETTINGS,
-        details=(
-            "claude running without --settings — hooks will not fire. "
-            "Relaunch via `overcode restart` to re-inject."
-        ),
+        verdict=verdict,
+        details=details,
         data_findings=findings,
     )
 

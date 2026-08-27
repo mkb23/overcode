@@ -1,12 +1,12 @@
 # overcode
 
-A TUI supervisor for managing multiple Claude Code agents in tmux.
+A TUI supervisor for managing multiple coding agents (Claude Code, opencode) in tmux.
 
 Launch autonomous coding agents, monitor their progress in real-time, track costs and activity, and coordinate work across your projects—all from a single dashboard.
 
 ## Why overcode?
 
-Running multiple Claude Code agents is powerful, but managing them gets chaotic fast. Overcode solves this by giving you:
+Running multiple coding agents is powerful, but managing them gets chaotic fast. Overcode solves this by giving you:
 
 - **Unified visibility** - See all agents at a glance: what they're working on, whether they need input, and how much they're costing you
 - **Native tmux integration** - A split layout with your dashboard on top and the focused agent's live terminal below—full speed, full color, full scrollback
@@ -39,7 +39,7 @@ overcode tmux
 
 This creates a split layout: the overcode dashboard on top, the focused agent's live terminal on the bottom. Navigate agents with `j/k` — the bottom pane follows automatically. Press `Tab` to toggle focus between panes.
 
-**Requirements:** Python 3.12+, tmux, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+**Requirements:** Python 3.12+, tmux, and an agent CLI — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [opencode](https://opencode.ai)
 
 See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 
@@ -85,6 +85,17 @@ Run agents in custom environments — containers, VMs, or any setup your project
 - Set per-agent (`--wrapper devcontainer`) or as default in config
 
 See the [Wrappers Guide](docs/wrappers.md) for setup and customisation.
+
+### Agent Backends
+Overcode is not Claude-Code-only. Launch an [opencode](https://opencode.ai) agent with
+`overcode launch -n my-agent --backend opencode` and it appears in the same dashboard with
+live hook-grade status, previews, AI summaries, send-instruction, restart, kill, resume,
+fork, and token/cost/context columns. Backends declare their capabilities, so the
+Claude-only subsystems — skills, the sandbox badge, the subscription-usage widget, agent
+teams — are hidden rather than shown as misleading zeros. A backend badge column appears
+only when your fleet actually mixes backends, so a Claude-only setup looks exactly as it
+did. See the [Backends Guide](docs/backends.md) for the full support matrix, flag mapping,
+and current limitations.
 
 ### Sister Integration
 Aggregate agents from multiple machines into one dashboard:

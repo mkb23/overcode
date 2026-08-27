@@ -37,7 +37,7 @@ def send_to_agent(
     tmux_session: str, name: str, text: str, enter: bool = True
 ) -> dict:
     """Send instruction or text to an agent. Auto-wakes sleeping agents."""
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
     sm = SessionManager()
@@ -47,7 +47,7 @@ def send_to_agent(
     if session.is_asleep:
         sm.update_session(session.id, is_asleep=False)
 
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
     if launcher.send_to_session(name, text, enter=enter):
         return {"ok": True}
     raise ControlError("Failed to send to agent", status=500)
@@ -71,14 +71,26 @@ def send_key_to_agent(tmux_session: str, name: str, key: str) -> dict:
         "5": ("5", False),
     }
 
+    # Backend-resolved gestures, so a remote/web caller can approve an opencode
+    # prompt without knowing which keys it wants.
+    gesture_keys = {"approve": "approve_keys", "reject": "reject_keys"}
+
     key_lower = key.lower().strip()
-    if key_lower not in allowed_keys:
+    if key_lower not in allowed_keys and key_lower not in gesture_keys:
         raise ControlError(
-            f"Invalid key: '{key}'. Allowed: {', '.join(sorted(allowed_keys))}"
+            f"Invalid key: '{key}'. Allowed: "
+            f"{', '.join(sorted({*allowed_keys, *gesture_keys}))}"
         )
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
+
+    if key_lower in gesture_keys:
+        from .launcher import AgentLauncher
+        launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
+        if launcher.send_to_session(name, key_lower):
+            return {"ok": True}
+        raise ControlError("Failed to send key to agent", status=500)
 
     tmux = TmuxManager(tmux_session)
     send_text, send_enter = allowed_keys[key_lower]
@@ -116,13 +128,13 @@ def resize_agent_window(tmux_session: str, name: str, width: int, height: int) -
 
 def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
     """Kill an agent (and children by default)."""
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
     sm = SessionManager()
     _get_session_or_error(sm, name)
 
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
     if launcher.kill_session(name, cascade=cascade):
         return {"ok": True}
     raise ControlError("Failed to kill agent", status=500)
@@ -130,28 +142,39 @@ def kill_agent(tmux_session: str, name: str, cascade: bool = True) -> dict:
 
 def restart_agent(tmux_session: str, name: str) -> dict:
     """Ctrl-C + relaunch with same permissions."""
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .tmux_manager import TmuxManager
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
 
-    # Use shared command builder to get the full claude command with all flags
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
-    cmd_parts = launcher._build_claude_command(
-        permissiveness_mode=session.permissiveness_mode,
-    )
-    cmd_str = " ".join(cmd_parts)
+    # Use the launcher's public builder so backend dispatch applies here too
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
+    backend = launcher.backend_for(session)
+    # Same pre-launch staging the launcher does (opencode's telemetry plugin);
+    # this path builds its own shell line, so it has to ask for it explicitly.
+    try:
+        from .backends import LaunchSpec
+        backend.prepare_launch(LaunchSpec(
+            name=session.name,
+            session_id=session.id,
+            tmux_session=tmux_session,
+            start_directory=session.start_directory,
+        ))
+    except Exception:
+        pass
+    cmd_str = " ".join(launcher.build_relaunch_command(session))
 
     tmux = TmuxManager(tmux_session)
 
-    # Gracefully exit Claude: Ctrl-C to cancel any in-flight operation,
-    # then /exit to reliably terminate the process.
+    # Gracefully exit the agent (Claude: Ctrl-C to cancel any in-flight
+    # operation, then /exit to reliably terminate the process).
     import time
-    tmux.send_keys(session.tmux_window, "C-c", enter=False)
-    time.sleep(0.5)
-    tmux.send_keys(session.tmux_window, "/exit", enter=True)
+    for press in backend.graceful_exit_keys():
+        tmux.send_keys(session.tmux_window, press.keys, enter=press.enter)
+        if press.delay_after:
+            time.sleep(press.delay_after)
     time.sleep(3.0)
 
     env_prefix = f"OVERCODE_SESSION_NAME={session.name} OVERCODE_TMUX_SESSION={tmux_session}"
@@ -173,7 +196,7 @@ def launch_agent(
     """Launch a new agent."""
     import io
     import contextlib
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
     perm_map = {
@@ -202,7 +225,7 @@ def launch_agent(
     directory = str(dir_path)
 
     sm = SessionManager()
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
 
     # Capture print() output from launcher so failure reasons propagate to caller
     capture = io.StringIO()
@@ -227,20 +250,28 @@ def fork_agent(
     tmux_session: str, name: str, fork_name: str, prompt: Optional[str] = None
 ) -> dict:
     """Fork an agent into a new child with the same conversation context."""
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .session_manager import SessionManager
+
+    from .backends import BackendCapability, get_backend, supports
 
     sm = SessionManager()
     source = _get_session_or_error(sm, name)
 
-    if source.status in ("terminated", "done"):
-        raise ControlError("Cannot fork a terminated agent", status=409)
-    if not source.active_claude_session_id:
+    backend = get_backend(getattr(source, "backend", None))
+    if not supports(backend, BackendCapability.FORK):
         raise ControlError(
-            f"Agent '{name}' has no active Claude session ID yet", status=409
+            f"Backend '{backend.name}' does not support fork", status=400
         )
 
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    if source.status in ("terminated", "done"):
+        raise ControlError("Cannot fork a terminated agent", status=409)
+    if not source.active_agent_session_id:
+        raise ControlError(
+            f"Agent '{name}' has no active agent session ID yet", status=409
+        )
+
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
     session = launcher.launch_fork(fork_name, source, initial_prompt=prompt)
     if session:
         return {"ok": True, "session_id": session.id}
@@ -445,12 +476,20 @@ def set_enhanced_context(tmux_session: str, name: str, enabled: bool) -> dict:
 
 
 def set_hook_detection(tmux_session: str, name: str, enabled: bool) -> dict:
-    """Toggle hook-based status detection."""
+    """Toggle hook-based status detection for one agent.
+
+    Writes both the legacy boolean and the per-agent detection-mode override
+    so this endpoint and the TUI's K hotkey stay in agreement.
+    """
     from .session_manager import SessionManager
 
     sm = SessionManager()
     session = _get_session_or_error(sm, name)
-    sm.update_session(session.id, hook_status_detection=enabled)
+    sm.update_session(
+        session.id,
+        hook_status_detection=enabled,
+        detection_mode_override="hooks" if enabled else "polling",
+    )
     return {"ok": True}
 
 
@@ -461,11 +500,11 @@ def set_hook_detection(tmux_session: str, name: str, enabled: bool) -> dict:
 
 def transport_all(tmux_session: str) -> dict:
     """Send handover instructions to all active agents."""
-    from .launcher import ClaudeLauncher
+    from .launcher import AgentLauncher
     from .session_manager import SessionManager
 
     sm = SessionManager()
-    launcher = ClaudeLauncher(tmux_session=tmux_session, session_manager=sm)
+    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
 
     sessions = sm.list_sessions()
     active = [

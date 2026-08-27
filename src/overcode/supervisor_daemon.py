@@ -565,6 +565,7 @@ class SupervisorDaemon:
                 "current_status": s.current_status,
                 "standing_instructions": s.standing_instructions,
                 "repo_name": s.repo_name,
+                "backend": getattr(s, "backend", None),
             }
             for s in non_green_sessions
         ]

@@ -2,15 +2,16 @@
 
 **Date:** 2026-03-11
 **Scope:** All `.py` files in `src/overcode/`, `src/overcode/cli/`, `src/overcode/tui_actions/`, `src/overcode/tui_widgets/`
-**Issues found:** 213 (77 active, 106 completed, 27 deferred, 3 informational)
+**Issues found:** 213 (74 active, 109 completed, 27 deferred, 3 informational)
+**Last updated:** 2026-08-20 — Batch 13 (agent-agnostic backends) closed issues 5, 150, 198.
 
 ## Summary by Category
 
-### Active — Pure Refactoring & Behaviour-Tightening (77 issues)
+### Active — Pure Refactoring & Behaviour-Tightening (74 issues)
 
 | Category | Count |
 |----------|-------|
-| DRY / Duplicated Logic | 28 |
+| DRY / Duplicated Logic | 25 |
 | Extract-When-Complex (inline blocks → named functions) | 14 |
 | Silent Exception Swallowing | 1 |
 | Separation of Concerns | 12 |
@@ -19,9 +20,9 @@
 | Conditional Mapping Smell | 3 |
 | Miscellaneous / Dead Code | 7 |
 
-### Completed — Fixed in Refactoring PR (106 issues)
+### Completed — Fixed in Refactoring PR (109 issues)
 
-Fixed across 12 batches addressing duration centralization, exception handling, TUI action extraction, pid/tmux utilities, status constants, web layer, config/settings, CLI decomposition, launcher/session_manager, detectors, and miscellaneous cleanup.
+Fixed across 13 batches addressing duration centralization, exception handling, TUI action extraction, pid/tmux utilities, status constants, web layer, config/settings, CLI decomposition, launcher/session_manager, detectors, miscellaneous cleanup, and the agent-agnostic backend seam.
 
 ### Deferred — Algorithmic / Behavioural Changes (27 issues)
 
@@ -54,8 +55,6 @@ Fixed across 12 batches addressing duration centralization, exception handling, 
 ## Active Issues by File
 
 ### `src/overcode/web_control_api.py`
-
-**5.** `web_control_api.py:109-147` — `restart_agent` rebuilds the claude command inline. This command-building logic also exists in `launcher.py`. **[DRY]**
 
 **6.** `web_control_api.py` — `transport_all` contains a ~20-line handover instruction string literal that is duplicated from `tui_actions/session.py`. **[DRY]**
 
@@ -209,8 +208,6 @@ Fixed across 12 batches addressing duration centralization, exception handling, 
 
 **149.** `session.py` — `action_kill_agent` has inline cascade kill logic that duplicates `cli/agent.py:kill_cmd`. **[DRY]**
 
-**150.** `session.py` — `action_restart_agent` rebuilds claude command inline. Same logic as `launcher.py` and `web_control_api.py`. **[DRY]**
-
 ### `src/overcode/tui_actions/input.py`
 
 **151.** `input.py` — `action_send_instruction` and `action_send_standing_order` are nearly identical methods for sending text to an agent, differing only in the prompt prefix. **[DRY]**
@@ -276,8 +273,6 @@ Fixed across 12 batches addressing duration centralization, exception handling, 
 **196.** PID file management (write PID, read PID, check if alive, kill) is spread across `pid_utils.py`, `daemon_utils.py`, and `web_server.py`. Should be consolidated into `pid_utils.py`. **[DRY]**
 
 **197.** Session→dict mapping for JSON serialization appears in `session_manager.py:Session.to_dict`, `data_export.py:_session_to_record`, `web_api.py:_session_to_analytics_record`, `web_api.py:_build_agent_info`. Each has slightly different field selections. **[DRY]**
-
-**198.** Claude command argument construction appears in `launcher.py:launch()`, `launcher.py:launch_fork()`, `web_control_api.py:restart_agent`, and `tui_actions/session.py:action_restart_agent`. **[DRY]**
 
 **199.** `SessionManager()` instantiation (with default tmux_session) appears inline in `web_api.py`, `web_control_api.py`, `cli/agent.py`, `cli/budget.py`, and `follow_mode.py`. None of these accept a pre-built SessionManager. **[Testability]**
 
@@ -458,6 +453,28 @@ The following 104 issues were addressed in the refactoring PR, organized by batc
 - ~~**21.** `tmux_manager.py:132-183` — `send_keys` duplicated in `implementations.py`. **[DRY]**~~ → Extracted `send_keys_to_pane` into tmux_utils
 - ~~**9.** `implementations.py:266-293` — `RealTmux._attach_bare` is a near-copy of `TmuxManager._attach_bare`. **[DRY]**~~ → Extracted `attach_bare` into tmux_utils
 - ~~**22.** `tmux_manager.py:309-341` — `window_exists` reimplements `_get_window` fallback logic. **[DRY]**~~ → Simplified to delegate to `_get_window`
+
+### Batch 13 — Agent-Agnostic Backends (Phases 1–6, Aug 2026)
+
+Landed as `docs/design/agent-agnostic-backends-opencode.md`. Argv construction, telemetry
+reading and status chrome now live behind the `AgentBackend` seam in `src/overcode/backends/`,
+which closed the long-standing "claude command rebuilt inline in four places" family:
+
+- ~~**5.** `web_control_api.py:109-147` — `restart_agent` rebuilds the claude command inline. **[DRY]**~~ → Goes through `AgentLauncher.build_relaunch_command` / `backend.build_command`
+- ~~**150.** `session.py` — `action_restart_agent` rebuilds claude command inline. **[DRY]**~~ → Method removed; restart routes through the launcher
+- ~~**198.** Claude command argument construction appears in `launcher.py:launch()`, `launcher.py:launch_fork()`, `web_control_api.py:restart_agent`, and `tui_actions/session.py:action_restart_agent`. **[DRY]**~~ → Single render point: `backend.build_command(LaunchSpec)`
+
+Phase 6 additionally paid down the naming debt these issues grew out of, with
+backward-compatible aliases on every public name (`ClaudeLauncher` → `AgentLauncher`,
+`Session.claude_session_ids` → `agent_session_ids`, `Session.extra_claude_args` →
+`extra_cli_args`, `Session.claude_agent` → `agent_persona`, `ClaudeNotFoundError` →
+`AgentCliNotFoundError`, `ClaudeSessionStats` → `AgentSessionStats`, `--claude-arg` →
+`--backend-arg`). Persisted session JSON is read under both key sets and written under
+both for one release.
+
+Still open and now scoped by the seam:
+
+- **197.** Session→dict mapping duplication (`Session.to_dict`, `data_export`, `web_api`) — `to_dict` now also dual-writes the pre-Phase-6 keys, so the divergence between these four mappings is worth collapsing before the aliases are dropped.
 
 ---
 ---

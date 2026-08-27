@@ -388,15 +388,15 @@ class TestEdgeCases:
 
 
 class TestClaudeLauncherSendPath:
-    """Test the full ClaudeLauncher send path."""
+    """Test the full AgentLauncher send path."""
 
     def test_launcher_send_to_session(self, clean_test_env):
-        """Test ClaudeLauncher.send_to_session() full path."""
+        """Test AgentLauncher.send_to_session() full path."""
         tmux_socket = clean_test_env["tmux_socket"]
         tmux_session = clean_test_env["session_name"]
         state_dir = clean_test_env["state_dir"]
 
-        from overcode.launcher import ClaudeLauncher
+        from overcode.launcher import AgentLauncher
         from overcode.tmux_manager import TmuxManager
         from overcode.session_manager import SessionManager
 
@@ -424,7 +424,7 @@ class TestClaudeLauncherSendPath:
         time.sleep(0.3)
 
         # Create launcher and send
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=tmux_session,
             tmux_manager=tmux_mgr,
             session_manager=session_mgr

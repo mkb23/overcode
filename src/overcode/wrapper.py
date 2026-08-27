@@ -50,20 +50,23 @@ exec "$@"
 set -euo pipefail
 # Wrapper: devcontainer
 #
-# Launches claude inside a devcontainer-compatible Docker container.
+# Launches the agent CLI inside a devcontainer-compatible Docker container.
 # The container is built from the project's .devcontainer/ directory
-# (or a sensible default), the workspace is bind-mounted, and claude
+# (or a sensible default), the workspace is bind-mounted, and the agent
 # runs interactively via `docker exec -it` so the tmux pane sees it
 # directly -- all overcode operations (attach, send, capture) work
 # transparently.
 #
 # Interface:
-#   $@                    — the full claude command
+#   $@                    — the full agent command
 #   OVERCODE_WRAPPER_DIR  — host directory to mount as /workspace
 #   OVERCODE_SESSION_NAME — agent name (used for container naming)
+#   OVERCODE_BACKEND      — agent CLI to install: claude-code (default)
+#                           or opencode
 #
 # Environment forwarded into the container:
 #   ANTHROPIC_API_KEY     — required for claude authentication
+#   OPENAI_API_KEY etc.   — provider credentials for opencode
 #   OVERCODE_*            — all overcode env vars
 #
 # Optional env vars for customisation:
@@ -81,6 +84,23 @@ set -euo pipefail
 WORK_DIR="${OVERCODE_WRAPPER_DIR:-.}"
 CONTAINER_NAME="${DEVCONTAINER_NAME:-overcode-${OVERCODE_SESSION_NAME:-agent}}"
 CONTAINER_SHELL="${DEVCONTAINER_SHELL:-/bin/bash}"
+
+# Which agent CLI to install inside the container. The launcher exports
+# OVERCODE_BACKEND only for non-default backends, so an unset value means
+# Claude Code and the install step below is unchanged from before.
+AGENT_BACKEND="${OVERCODE_BACKEND:-claude-code}"
+case "$AGENT_BACKEND" in
+    opencode)
+        AGENT_BINARY="opencode"
+        AGENT_NPM_PACKAGE="opencode-ai@latest"
+        AGENT_LABEL="opencode"
+        ;;
+    *)
+        AGENT_BINARY="claude"
+        AGENT_NPM_PACKAGE="@anthropic-ai/claude-code"
+        AGENT_LABEL="Claude Code"
+        ;;
+esac
 
 # Default image: Microsoft devcontainer with Node.js (required by Claude
 # Code) on a Debian Bookworm base.  Multi-arch (amd64 + arm64) so it
@@ -172,17 +192,17 @@ if [[ -n "$CONTAINER_USER" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Auth: if ANTHROPIC_API_KEY is set it will be forwarded via env vars below.
-# Otherwise claude will prompt for login in the tmux pane on first use —
-# visit the URL it shows and paste the code.  The session persists inside
-# the container for subsequent runs.
+# Auth: provider API keys present in the environment are forwarded via env
+# vars below.  Otherwise the agent CLI will prompt for login in the tmux pane
+# on first use — visit the URL it shows and paste the code.  The session
+# persists inside the container for subsequent runs.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Install claude CLI if not present
+# Install the agent CLI if not present
 # ---------------------------------------------------------------------------
-if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which claude >/dev/null 2>&1; then
-    echo "[devcontainer] Installing Claude Code CLI inside container ..."
+if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which "$AGENT_BINARY" >/dev/null 2>&1; then
+    echo "[devcontainer] Installing ${AGENT_LABEL} CLI inside container ..."
     # Ensure npm is available (node images have it; others may not)
     if ! docker exec "$CONTAINER_NAME" which npm >/dev/null 2>&1; then
         echo "[devcontainer] npm not found -- installing Node.js ..."
@@ -192,7 +212,7 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which claude >/dev/null 2>&
             exit 1
         }
     fi
-    docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" npm install -g @anthropic-ai/claude-code 2>&1
+    docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" npm install -g "$AGENT_NPM_PACKAGE" 2>&1
 fi
 
 # ---------------------------------------------------------------------------
@@ -214,8 +234,13 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2
         echo "[devcontainer] Warning: Could not install overcode — hooks will be degraded"
 fi
 
-# Install overcode hooks into Claude Code settings inside the container
-if docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2>&1; then
+# Install overcode hooks into Claude Code settings inside the container.
+# opencode has no settings.json hook protocol: its telemetry comes from the
+# bundled plugin the launcher stages into <project>/.opencode/plugins/, which
+# rides in on the /workspace mount, and it writes hook-state files straight
+# into the mounted state-exchange dir below.
+if [[ "$AGENT_BACKEND" != "opencode" ]] && \\
+   docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2>&1; then
     docker exec "${USER_FLAG[@]}" \\
         -e "OVERCODE_STATE_DIR=${CONTAINER_STATE_DIR}" \\
         "$CONTAINER_NAME" overcode hooks install 2>/dev/null || true
@@ -226,10 +251,12 @@ fi
 # ---------------------------------------------------------------------------
 EXEC_ARGS=()
 
-# Forward ANTHROPIC_API_KEY
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-    EXEC_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
-fi
+# Forward provider credentials the agent CLI may need
+for cred in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY; do
+    if [[ -n "${!cred:-}" ]]; then
+        EXEC_ARGS+=(-e "${cred}=${!cred}")
+    fi
+done
 
 # Forward all OVERCODE_* env vars
 while IFS='=' read -r key value; do
@@ -240,9 +267,9 @@ done < <(env | grep '^OVERCODE_' || true)
 EXEC_ARGS+=(-e "OVERCODE_STATE_DIR=${CONTAINER_STATE_DIR}")
 
 # ---------------------------------------------------------------------------
-# Exec claude inside the container
+# Exec the agent inside the container
 # ---------------------------------------------------------------------------
-echo "[devcontainer] Launching claude inside container${CONTAINER_USER:+ (user: $CONTAINER_USER)} ..."
+echo "[devcontainer] Launching ${AGENT_BINARY} inside container${CONTAINER_USER:+ (user: $CONTAINER_USER)} ..."
 exec docker exec -it \\
     "${USER_FLAG[@]}" \\
     "${EXEC_ARGS[@]}" \\

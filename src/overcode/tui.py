@@ -26,10 +26,11 @@ from . import __version__, get_dev_version_suffix
 from .session_manager import SessionManager, Session
 from .job_manager import Job, JobManager
 from .job_launcher import JobLauncher
-from .launcher import ClaudeLauncher
+from .launcher import AgentLauncher
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import get_session_stats, ClaudeSessionStats, HistoryFile, synthesize_remote_stats
+from .history_reader import AgentSessionStats, HistoryFile, synthesize_remote_stats
+from .stats_reader import stats_reader_for_session
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from .monitor_daemon import (
@@ -225,7 +226,7 @@ class SupervisorTUI(
         # Enhanced context toggle - per-agent context injection hook
         ("ctrl+t", "toggle_enhanced_context", "Enhanced context"),
         # Hook-based status detection toggle (#5)
-        ("K", "toggle_hook_detection", "Hook detection"),
+        ("K", "toggle_hook_detection", "Agent detection"),
         # Column configuration modal (#178)
         ("C", "open_column_config", "Columns"),
         # Column headers toggle
@@ -278,7 +279,7 @@ class SupervisorTUI(
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
-        self.launcher = ClaudeLauncher(tmux_session)
+        self.launcher = AgentLauncher(tmux_session)
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
@@ -616,8 +617,13 @@ class SupervisorTUI(
             return
 
         # All I/O happens here in the worker thread
-        self._usage_monitor.fetch()  # Internally throttled to 5min
         monitor_state = get_monitor_daemon_state(self.tmux_session)
+        # Subscription usage is fleet-level, not per-agent: the widget shows
+        # the user's own Claude limits, which stay true for a mixed fleet as
+        # long as one agent is on a subscription-metered backend. Skip the
+        # API call entirely when none is.
+        if self._fleet_has_subscription_usage(monitor_state):
+            self._usage_monitor.fetch()  # Internally throttled to 5min
         from .settings import get_monitor_daemon_pid_path
         daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
 
@@ -650,6 +656,21 @@ class SupervisorTUI(
         # Apply results on main thread
         self.call_from_thread(
             self._apply_daemon_status, daemon_bar, monitor_state, daemon_lock_held, asleep_ids
+        )
+
+    def _fleet_has_subscription_usage(self, monitor_state) -> bool:
+        """True when any agent runs on a subscription-metered backend.
+
+        An empty fleet counts as yes — the widget is about the user's
+        account, and hiding it on an idle dashboard would read as a bug.
+        """
+        from .backends import BackendCapability, session_supports
+        sessions = getattr(monitor_state, "sessions", None) if monitor_state else None
+        if not sessions:
+            return True
+        return any(
+            session_supports(s, BackendCapability.SUBSCRIPTION_USAGE)
+            for s in sessions
         )
 
     def _apply_daemon_status(
@@ -1407,7 +1428,9 @@ class SupervisorTUI(
                             session.remote_git_diff,
                             session.remote_git_untracked,
                         )
-                    claude_stats = get_session_stats(session, history_file=history_file)
+                    claude_stats = stats_reader_for_session(session).get_stats(
+                        session, history_file=history_file
+                    )
                     git_diff = None
                     git_untracked = None
                     from .tui_helpers import effective_git_directory
@@ -1888,6 +1911,13 @@ class SupervisorTUI(
             for s in self.sessions
         )
 
+        # Backend badge only earns a column once the fleet is mixed — a
+        # Claude-only dashboard looks exactly as it did before opencode.
+        from .backends import session_backend_name
+        mixed_backends = len({
+            session_backend_name(s) for s in self.sessions
+        }) > 1
+
         # Check if any agent has a non-zero CPU / RAM reading
         any_has_cpu = any(
             (getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0
@@ -1969,6 +1999,7 @@ class SupervisorTUI(
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
                     widget.any_has_provider = any_has_provider
+                    widget.mixed_backends = mixed_backends
                     widget.any_has_cpu = any_has_cpu
                     widget.any_has_ram = any_has_ram
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
@@ -2035,6 +2066,7 @@ class SupervisorTUI(
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
                 widget.any_has_provider = any_has_provider
+                widget.mixed_backends = mixed_backends
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
                 widget.any_has_subtree_cost = any_has_subtree_cost
@@ -2904,7 +2936,7 @@ class SupervisorTUI(
                     break
             self.notify(f"Woke agent '{message.session_name}' to send command", severity="information")
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3153,8 +3185,15 @@ class SupervisorTUI(
                     return
 
             permissions = "bypass" if message.bypass_permissions else "normal"
-            if message.extra_claude_args:
-                self.notify("Claude args are not yet supported for remote launches — ignored", severity="warning")
+            if message.extra_cli_args:
+                self.notify("Backend args are not yet supported for remote launches — ignored", severity="warning")
+            from .backends import DEFAULT_BACKEND
+            if message.backend and message.backend != DEFAULT_BACKEND:
+                self.notify(
+                    f"Backend '{message.backend}' is not yet supported for remote "
+                    f"launches — the sister will use {DEFAULT_BACKEND}",
+                    severity="warning",
+                )
             try:
                 result = self._sister_controller.launch_agent(
                     sister_url=sister_config["url"],
@@ -3176,7 +3215,7 @@ class SupervisorTUI(
                 self.notify(f"Remote launch failed: {result.error}", severity="error")
         else:
             # Launch locally
-            launcher = ClaudeLauncher(
+            launcher = AgentLauncher(
                 tmux_session=self.tmux_session,
                 session_manager=self.session_manager,
             )
@@ -3186,10 +3225,11 @@ class SupervisorTUI(
                     start_directory=message.directory,
                     dangerously_skip_permissions=message.bypass_permissions,
                     agent_teams=message.agent_teams,
-                    claude_agent=message.claude_agent,
+                    agent_persona=message.agent_persona,
                     provider=message.provider,
+                    backend=message.backend,
                     wrapper=message.wrapper,
-                    extra_claude_args=message.extra_claude_args or None,
+                    extra_cli_args=message.extra_cli_args or None,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:
@@ -3236,7 +3276,7 @@ class SupervisorTUI(
                 self.notify(f"Failed to fork remote agent: {e}", severity="error")
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3361,7 +3401,7 @@ class SupervisorTUI(
         terminated_session = replace(session_copy, status="terminated")
 
         # Use launcher to kill the session
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )
@@ -3427,7 +3467,7 @@ class SupervisorTUI(
     def _execute_restart(self, focused: "SessionSummary") -> None:
         """Execute the actual restart operation after confirmation (#133).
 
-        Delegates to ClaudeLauncher.restart, which rebuilds the full launch
+        Delegates to AgentLauncher.restart, which rebuilds the full launch
         environment (hooks/permissions --settings, wrapper, env prefix,
         model, persona, allowed tools, extra args) from the stored Session
         and relaunches in the existing tmux window, resuming the prior
@@ -3436,7 +3476,7 @@ class SupervisorTUI(
         If the tmux window is gone (terminated agent), delegates to
         _execute_revive.
         """
-        from .launcher import ClaudeLauncher
+        from .launcher import AgentLauncher
         from .tmux_manager import TmuxManager
         session = focused.session
         session_name = session.name
@@ -3446,7 +3486,7 @@ class SupervisorTUI(
             self._execute_revive(focused, tmux)
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             self.tmux_session,
             tmux_manager=tmux,
             session_manager=self.session_manager,
@@ -3459,16 +3499,16 @@ class SupervisorTUI(
     def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
         """Revive a terminated agent by creating a new tmux window and relaunching.
 
-        Delegates to ClaudeLauncher.revive, which rebuilds the full launch
+        Delegates to AgentLauncher.revive, which rebuilds the full launch
         environment from the stored Session (hooks/permissions --settings,
         wrapper, env prefix, model, persona, allowed tools, extra args) and
         resumes the prior Claude conversation when available.
         """
-        from .launcher import ClaudeLauncher
+        from .launcher import AgentLauncher
         session = focused.session
         session_name = session.name
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             self.tmux_session,
             tmux_manager=tmux,
             session_manager=self.session_manager,
@@ -3482,7 +3522,7 @@ class SupervisorTUI(
             del self._terminated_sessions[session.id]
         self._terminated_times.pop(session.id, None)
 
-        resume_info = " (resuming session)" if session.active_claude_session_id else ""
+        resume_info = " (resuming session)" if session.active_agent_session_id else ""
         self.notify(f"Revived agent: {session_name}{resume_info}", severity="information")
         self.refresh_sessions()
 
@@ -3729,7 +3769,7 @@ class SupervisorTUI(
             self._dialog_did_close()
             return
 
-        launcher = ClaudeLauncher(
+        launcher = AgentLauncher(
             tmux_session=self.tmux_session,
             session_manager=self.session_manager
         )

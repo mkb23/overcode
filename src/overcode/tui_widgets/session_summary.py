@@ -16,7 +16,8 @@ from ..session_manager import Session
 from ..protocols import StatusDetectorProtocol
 from ..status_constants import get_status_color
 from ..status_patterns import extract_from_pane, extract_sleep_duration
-from ..history_reader import get_session_stats, ClaudeSessionStats
+from ..history_reader import AgentSessionStats
+from ..stats_reader import stats_reader_for_session
 from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
@@ -80,12 +81,13 @@ class SessionSummary(Static, can_focus=True):
         self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
+        self.mixed_backends: bool = False  # True if the fleet spans >1 agent CLI
         self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
         self.any_has_ram: bool = False      # True if any agent has a non-zero RAM reading
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
-        self.claude_stats: Optional[ClaudeSessionStats] = None  # Token/interaction stats
+        self.claude_stats: Optional[AgentSessionStats] = None  # Token/interaction stats
         self.git_diff_stats: Optional[tuple] = None  # (files, insertions, deletions)
         self.git_untracked_count: Optional[int] = None  # Untracked file count (#455)
         self.background_bash_count: int = 0  # Live count from status bar (#177)
@@ -169,7 +171,7 @@ class SessionSummary(Static, can_focus=True):
         Note: This still fetches claude_stats synchronously - used for single widget updates.
         """
         # Fetch claude stats (only for standalone update_status calls)
-        claude_stats = get_session_stats(self.session)
+        claude_stats = stats_reader_for_session(self.session).get_stats(self.session)
         # Fetch git diff stats — remote agents already have this from the sister API
         git_diff = None
         git_untracked = None
@@ -186,7 +188,13 @@ class SessionSummary(Static, can_focus=True):
         )
         self.refresh()
 
-    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[ClaudeSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
+    def _status_patterns(self):
+        """Pane chrome for this agent's backend."""
+        from ..backends import session_backend_name
+        from ..status_patterns import get_patterns
+        return get_patterns(session_backend_name(self.session))
+
+    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[AgentSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
         """Apply pre-fetched status data without triggering refresh.
 
         Used for batched updates where the caller will refresh once at the end.
@@ -206,7 +214,7 @@ class SessionSummary(Static, can_focus=True):
             lines = content.rstrip().split('\n')
             new_pane = lines if lines else []
             # Pure extraction — results stored as widget vars, never on session
-            extracted = extract_from_pane(content)
+            extracted = extract_from_pane(content, self._status_patterns())
             if self.pane_content != new_pane:
                 self.pane_content = new_pane
                 changed = True
@@ -411,6 +419,8 @@ class SessionSummary(Static, can_focus=True):
             any_has_model=self.any_has_model,
             # Provider
             any_has_provider=self.any_has_provider,
+            # Agent CLI backend
+            mixed_backends=self.mixed_backends,
             # Resource usage (CPU / RAM)
             any_has_cpu=self.any_has_cpu,
             any_has_ram=self.any_has_ram,

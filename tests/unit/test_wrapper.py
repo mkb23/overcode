@@ -4,6 +4,7 @@ Unit tests for wrapper resolution.
 
 import os
 import stat
+import subprocess
 import sys
 import pytest
 from pathlib import Path
@@ -305,6 +306,74 @@ class TestInstallAllBundled:
         statuses = {name: s for name, s in results}
         assert statuses["devcontainer.sh"] == "updated"
         assert statuses["passthrough.sh"] == "unchanged"
+
+
+class TestDevcontainerBackendSelection:
+    """The devcontainer wrapper installs whichever agent CLI it is told to.
+
+    ``OVERCODE_BACKEND`` is exported by the launcher only for non-default
+    backends, so an unset value must keep the Claude Code behaviour exactly
+    as it was before Phase 6.
+    """
+
+    SCRIPT = BUNDLED_WRAPPERS["devcontainer.sh"]
+
+    def _resolve(self, env=None):
+        """Run just the wrapper's backend-selection block and read it back."""
+        head = self.SCRIPT.split("# Default image")[0]
+        prelude = "\n".join(
+            line for line in head.splitlines() if not line.startswith("#")
+        )
+        script = prelude + '\necho "$AGENT_BACKEND|$AGENT_BINARY|$AGENT_NPM_PACKAGE"\n'
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True,
+            env={"PATH": os.environ["PATH"], **(env or {})},
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip().split("|")
+
+    def test_script_is_valid_bash(self, tmp_path):
+        script = tmp_path / "devcontainer.sh"
+        script.write_text(self.SCRIPT)
+        assert subprocess.run(["bash", "-n", str(script)]).returncode == 0
+
+    def test_unset_backend_installs_claude_code(self):
+        backend, binary, package = self._resolve()
+        assert backend == "claude-code"
+        assert binary == "claude"
+        assert package == "@anthropic-ai/claude-code"
+
+    def test_explicit_claude_code_is_identical(self):
+        assert self._resolve({"OVERCODE_BACKEND": "claude-code"}) == self._resolve()
+
+    def test_opencode_installs_the_opencode_package(self):
+        backend, binary, package = self._resolve({"OVERCODE_BACKEND": "opencode"})
+        assert backend == "opencode"
+        assert binary == "opencode"
+        assert package == "opencode-ai@latest"
+
+    def test_unknown_backend_falls_back_to_claude(self):
+        _backend, binary, package = self._resolve({"OVERCODE_BACKEND": "future-cli"})
+        assert binary == "claude"
+        assert package == "@anthropic-ai/claude-code"
+
+    def test_hooks_install_is_skipped_for_opencode(self):
+        # opencode has no settings.json hook protocol; its telemetry comes
+        # from the plugin staged into the mounted project directory.
+        assert '[[ "$AGENT_BACKEND" != "opencode" ]] && \\' in self.SCRIPT
+        assert "overcode hooks install" in self.SCRIPT
+
+    def test_provider_credentials_are_forwarded(self):
+        assert "OPENAI_API_KEY" in self.SCRIPT
+        assert "ANTHROPIC_API_KEY" in self.SCRIPT
+
+    def test_repo_copy_matches_the_bundled_source(self):
+        # wrappers/ holds reference copies; drift there means users who
+        # hand-install from the repo get a different script.
+        repo_copy = Path(__file__).parent.parent.parent / "wrappers" / "devcontainer.sh"
+        if repo_copy.exists():
+            assert repo_copy.read_text() == self.SCRIPT
 
 
 class TestResetWrapper:

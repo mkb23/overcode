@@ -283,6 +283,11 @@ def _agent_to_session(
         # Model and provider
         model=agent.get("model") or None,
         provider=agent.get("provider", "web") or "web",
+        # Agent CLI backend. Pre-backend sisters report nothing, so the
+        # default stands in — see design §3, consequence 5. Serialized
+        # capabilities ride along inside remote_daemon_state and are read
+        # back by backends.session_capabilities().
+        backend=_remote_backend_name(agent),
         # Skills (#252)
         available_skills=agent.get("available_skills", []),
         loaded_skills=agent.get("loaded_skills", []),
@@ -315,6 +320,25 @@ def _agent_to_session(
         source_ssh=source_ssh,
         source_tmux_session=source_tmux_session,
     )
+
+
+def _remote_backend_name(agent: dict) -> str:
+    """Backend name a sister reported for one agent, tolerant of old sisters.
+
+    The name may arrive as a top-level key or inside the raw daemon_state
+    passthrough; anything missing or non-string means "pre-backend sister",
+    which was always claude-code.
+    """
+    from .backends import DEFAULT_BACKEND
+
+    candidates = [agent.get("backend")]
+    daemon_state = agent.get("daemon_state")
+    if isinstance(daemon_state, dict):
+        candidates.append(daemon_state.get("backend"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return DEFAULT_BACKEND
 
 
 def _parse_git_diff(agent: dict) -> tuple | None:

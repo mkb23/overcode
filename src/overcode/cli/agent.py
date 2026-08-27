@@ -8,7 +8,7 @@ from typing import Annotated, Optional, List
 import typer
 from rich import print as rprint
 
-from ..launcher import ClaudeLauncher
+from ..launcher import AgentLauncher
 from ._shared import app, SessionOption, _parse_duration
 
 
@@ -63,11 +63,13 @@ def _check_skill_staleness() -> None:
 
 def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     """Gather claude_stats, git_diff, bg_bash_count, live_sub_count for a session."""
-    from ..history_reader import get_session_stats
+    from ..stats_reader import stats_reader_for_session
+    from ..backends import session_backend_name
     from ..status_patterns import (
         extract_background_bash_count,
         extract_live_subagent_count,
         extract_auto_accept_mode,
+        get_patterns,
     )
     from ..tui_helpers import (
         get_git_diff_stats,
@@ -75,13 +77,14 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
         effective_git_directory,
     )
 
-    bg_bash_count = extract_background_bash_count(pane_content_raw) if pane_content_raw else 0
-    live_sub_count = extract_live_subagent_count(pane_content_raw) if pane_content_raw else 0
-    auto_accept = extract_auto_accept_mode(pane_content_raw) if pane_content_raw else False
+    patterns = get_patterns(session_backend_name(sess))
+    bg_bash_count = extract_background_bash_count(pane_content_raw, patterns) if pane_content_raw else 0
+    live_sub_count = extract_live_subagent_count(pane_content_raw, patterns) if pane_content_raw else 0
+    auto_accept = extract_auto_accept_mode(pane_content_raw, patterns) if pane_content_raw else False
 
     claude_stats = None
     try:
-        claude_stats = get_session_stats(sess)
+        claude_stats = stats_reader_for_session(sess).get_stats(sess)
         if claude_stats:
             live_sub_count = max(live_sub_count, claude_stats.live_subagent_count)
     except Exception:
@@ -204,15 +207,26 @@ def launch(
     ] = None,
     allowed_tools: Annotated[
         Optional[str],
-        typer.Option("--allowed-tools", help="Comma-separated tools for Claude (e.g. 'Bash,Read,Write,Edit')"),
+        typer.Option("--allowed-tools", help="Comma-separated tools to allow (e.g. 'Bash,Read,Write,Edit')"),
     ] = None,
     model: Annotated[
         Optional[str],
-        typer.Option("--model", "-m", help="Claude model (e.g. sonnet, opus, haiku, or full name)"),
+        typer.Option("--model", "-m", help="Model (e.g. sonnet, opus, or openai/gpt-4o-mini for opencode)"),
+    ] = None,
+    backend_args: Annotated[
+        Optional[List[str]],
+        typer.Option(
+            "--backend-arg",
+            help="Extra agent-CLI flag (repeatable, e.g. '--model haiku')",
+        ),
     ] = None,
     claude_args: Annotated[
         Optional[List[str]],
-        typer.Option("--claude-arg", help="Extra Claude CLI flag (repeatable, e.g. '--model haiku')"),
+        typer.Option(
+            "--claude-arg",
+            hidden=True,
+            help="Deprecated alias for --backend-arg.",
+        ),
     ] = None,
     budget: Annotated[
         Optional[float],
@@ -220,7 +234,7 @@ def launch(
     ] = None,
     agent: Annotated[
         Optional[str],
-        typer.Option("--agent", "-a", help="Claude agent to run as (from .claude/agents/)"),
+        typer.Option("--agent", "-a", help="Agent persona to run as (Claude Code: .claude/agents/)"),
     ] = None,
     teams: Annotated[
         bool,
@@ -229,6 +243,11 @@ def launch(
     provider: Annotated[
         Optional[str],
         typer.Option("--provider", "-P", help="API provider: 'web' (Claude.ai OAuth) or 'bedrock' (AWS Bedrock)"),
+    ] = None,
+    backend: Annotated[
+        Optional[str],
+        # -b is already --budget, so the backend picker takes -B.
+        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default) or opencode"),
     ] = None,
     wrapper: Annotated[
         Optional[str],
@@ -247,8 +266,13 @@ def launch(
     ] = None,
     session: SessionOption = "agents",
 ):
-    """Launch a new Claude agent."""
+    """Launch a new agent."""
     import os
+
+    # --claude-arg is the pre-Phase-6 spelling of --backend-arg; both fold
+    # into one list so a mixed invocation still works.
+    if claude_args:
+        backend_args = list(backend_args or []) + list(claude_args)
 
     # Remote launch via sister
     if sister:
@@ -306,10 +330,19 @@ def launch(
         rprint(f"[red]Error: Invalid provider '{provider}'. Use: web, bedrock[/red]")
         raise typer.Exit(code=1)
 
+    # Backend resolution (flag > parent > config default) happens in the
+    # launcher; validate the explicit flag here for a clean error message.
+    if backend is not None:
+        from ..backends import list_backends
+        if backend not in list_backends():
+            known = ", ".join(list_backends())
+            rprint(f"[red]Error: Unknown backend '{backend}'. Use: {known}[/red]")
+            raise typer.Exit(code=1)
+
     # Default to current directory if not specified
     working_dir = directory if directory else os.getcwd()
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
 
     result = launcher.launch(
         name=name,
@@ -319,12 +352,13 @@ def launch(
         dangerously_skip_permissions=bypass_permissions,
         parent_name=parent,
         allowed_tools=allowed_tools,
-        extra_claude_args=claude_args,
+        extra_cli_args=backend_args,
         agent_teams=teams,
         budget_usd=budget,
-        claude_agent=agent,
+        agent_persona=agent,
         model=model,
         provider=provider,
+        backend=backend,
         wrapper=wrapper,
         inherit_parent_settings=not no_inherit,
     )
@@ -337,8 +371,8 @@ def launch(
             rprint("  Initial prompt sent")
         if allowed_tools:
             rprint(f"  Allowed tools: {allowed_tools}")
-        if claude_args:
-            rprint(f"  Extra Claude args: {' '.join(claude_args)}")
+        if backend_args:
+            rprint(f"  Extra CLI args: {' '.join(backend_args)}")
         if agent:
             rprint(f"  Agent: {agent}")
         if teams:
@@ -347,6 +381,9 @@ def launch(
             rprint(f"  Wrapper: {result.wrapper}")
         if result.provider != "web":
             rprint(f"  Provider: {result.provider}")
+        from ..backends import DEFAULT_BACKEND, session_backend_name
+        if session_backend_name(result) != DEFAULT_BACKEND:
+            rprint(f"  Backend: {session_backend_name(result)}")
         if result.model and not model:
             rprint(f"  Model: {result.model} (inherited)")
         if budget is not None and budget > 0:
@@ -376,9 +413,10 @@ def fork(
 ):
     """Fork an agent, creating a child with the source's conversation context.
 
-    Uses Claude's --resume --fork-session to branch the conversation history
-    into a new independent agent. The forked agent inherits the source's
-    directory, permissions, agent persona, and CLI flags.
+    Uses the backend's fork gesture (Claude Code: --resume --fork-session;
+    opencode: --session --fork) to branch the conversation history into a new
+    independent agent. The forked agent inherits the source's directory,
+    permissions, agent persona, and CLI flags.
 
     Examples:
         overcode fork my-agent                          # Fork as my-agent-fork
@@ -386,6 +424,7 @@ def fork(
         overcode fork my-agent -p "analyze test failures"  # Fork with initial prompt
     """
     from ..session_manager import SessionManager
+    from ..backends import BackendCapability, get_backend, supports
 
     sm = SessionManager()
     source_session = sm.get_session_by_name(source)
@@ -393,8 +432,13 @@ def fork(
         rprint(f"[red]Error: Agent '{source}' not found[/red]")
         raise typer.Exit(code=1)
 
-    if not source_session.active_claude_session_id:
-        rprint(f"[red]Error: Agent '{source}' has no active Claude session ID yet[/red]")
+    backend = get_backend(getattr(source_session, "backend", None))
+    if not supports(backend, BackendCapability.FORK):
+        rprint(f"[red]Error: backend '{backend.name}' does not support fork[/red]")
+        raise typer.Exit(code=1)
+
+    if not source_session.active_agent_session_id:
+        rprint(f"[red]Error: Agent '{source}' has no active agent session ID yet[/red]")
         rprint("[dim]The monitor daemon detects session IDs periodically — try again shortly[/dim]")
         raise typer.Exit(code=1)
 
@@ -405,7 +449,7 @@ def fork(
     # Default fork name
     fork_name = name if name else f"{source}-fork"
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     result = launcher.launch_fork(
         name=fork_name,
         source_session=source_session,
@@ -415,8 +459,8 @@ def fork(
     if result:
         rprint(f"\n[green]✓[/green] Forked '[bold]{source}[/bold]' → '[bold]{fork_name}[/bold]'")
         rprint(f"  Directory: {result.start_directory}")
-        if result.claude_agent:
-            rprint(f"  Agent: {result.claude_agent}")
+        if result.agent_persona:
+            rprint(f"  Agent: {result.agent_persona}")
         if prompt:
             rprint("  Initial prompt sent")
         rprint(f"\nTo view: [bold]overcode attach {fork_name}[/bold]")
@@ -464,7 +508,7 @@ def list_agents(
     With no arguments, shows all agents with depth-based indentation.
     With a name, shows that agent + all its descendants.
     """
-    from ..history_reader import get_session_stats
+    from ..stats_reader import stats_reader_for_session
     from ..tui_helpers import (
         get_status_symbol, get_git_diff_stats, get_git_untracked_count, effective_git_directory,
     )
@@ -481,7 +525,7 @@ def list_agents(
     else:
         detail = "full"
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     sessions = launcher.list_sessions()
 
     # Merge sister sessions if --sisters flag
@@ -525,6 +569,8 @@ def list_agents(
     # Pre-compute: any agent with budget, column alignment widths
     any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
     any_has_provider = any(getattr(s, 'provider', 'web') not in ('web', None, '') for s in sessions)
+    from ..backends import session_backend_name
+    mixed_backends = len({session_backend_name(s) for s in sessions}) > 1
     any_has_model = any(getattr(s, 'model', None) for s in sessions)
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
@@ -585,7 +631,7 @@ def list_agents(
 
         claude_stats = None
         try:
-            claude_stats = get_session_stats(sess)
+            claude_stats = stats_reader_for_session(sess).get_stats(sess)
         except Exception:
             pass
         if claude_stats is None and getattr(sess, 'is_remote', False):
@@ -664,6 +710,7 @@ def list_agents(
             any_has_pr=any_has_pr,
             any_has_model=any_has_model,
             any_has_provider=any_has_provider,
+            mixed_backends=mixed_backends,
             monochrome=False,
             summary_detail=detail,
             has_sisters=has_sisters,
@@ -736,7 +783,7 @@ def attach(
     Optionally specify an agent name to jump directly to that agent's window.
     Use --bare for embedding in VSCode or other terminals (hides tmux chrome).
     """
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     if bare:
         if not name:
             rprint("[red]Error:[/red] --bare requires an agent name")
@@ -765,7 +812,7 @@ def kill(
     By default, also kills all descendant (child) agents.
     Use --no-cascade to only kill the named agent and orphan its children.
     """
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     launcher.kill_session(name, cascade=not no_cascade)
 
 
@@ -776,25 +823,25 @@ def restart(
         bool,
         typer.Option(
             "--fresh",
-            help="Start a brand-new Claude session instead of resuming the prior conversation.",
+            help="Start a brand-new agent session instead of resuming the prior conversation.",
         ),
     ] = False,
     session: SessionOption = "agents",
 ):
     """Restart a running agent with the same configuration.
 
-    Gracefully exits Claude (Ctrl-C + /exit), then relaunches with the same
-    full launch environment as a fresh `overcode launch` — hooks/permissions
-    via --settings, wrapper script, env prefix, model, persona, allowed tools,
+    Gracefully exits the agent CLI, then relaunches with the same full launch
+    environment as a fresh `overcode launch` — telemetry injection,
+    permissions, wrapper script, env prefix, model, persona, allowed tools,
     and extra CLI args.
 
-    By default, resumes the agent's prior Claude session so conversation
+    By default, resumes the agent's prior session so conversation
     history is preserved. Pass --fresh to start a brand-new session (useful
     when the old session is stuck or MCP configs have changed).
     """
-    from ..launcher import ClaudeLauncher
+    from ..launcher import AgentLauncher
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     sess = launcher.sessions.get_session_by_name(name)
     if not sess:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
@@ -912,7 +959,7 @@ def cleanup(
     Use --done to also archive done child agents (kill tmux window, move to archive).
     Use --untracked to kill tmux windows that exist but aren't tracked by any agent.
     """
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
     count, done_count = _get_sessions_to_cleanup(launcher, done)
 
     # Kill untracked tmux windows (#344)
@@ -1025,7 +1072,8 @@ def annotate(
 def send(
     name: Annotated[str, typer.Argument(help="Name of agent")],
     text: Annotated[
-        Optional[List[str]], typer.Argument(help="Text to send (or special key: enter, escape)")
+        Optional[List[str]],
+        typer.Argument(help="Text to send (or a gesture: approve, reject, enter, escape)"),
     ] = None,
     no_enter: Annotated[
         bool, typer.Option("--no-enter", help="Don't press Enter after text")
@@ -1035,12 +1083,16 @@ def send(
     """
     Send input to an agent.
 
-    Special keys: enter, escape, tab, up, down, left, right
+    Gestures: approve, reject -- resolved via the agent's backend, so the
+    right keys go to a Claude Code prompt or an opencode one.
+
+    Special keys (raw): enter, escape, tab, up, down, left, right
 
     Examples:
         overcode send my-agent "yes"           # Send "yes" + Enter
-        overcode send my-agent enter           # Just press Enter (approve)
-        overcode send my-agent escape          # Press Escape (reject)
+        overcode send my-agent approve         # Approve a permission prompt
+        overcode send my-agent reject          # Reject a permission prompt
+        overcode send my-agent enter           # Just press Enter (raw)
         overcode send my-agent --no-enter "y"  # Send "y" without Enter
     """
     from ..session_manager import SessionManager
@@ -1052,14 +1104,14 @@ def send(
         sm.update_session(agent_session.id, is_asleep=False)
         rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
 
     # Join all text parts if multiple were given
     text_str = " ".join(text) if text else ""
     enter = not no_enter
 
     if launcher.send_to_session(name, text_str, enter=enter):
-        if text_str.lower() in ("enter", "escape", "esc"):
+        if text_str.lower() in ("enter", "escape", "esc", "approve", "reject"):
             rprint(f"[green]✓[/green] Sent {text_str.upper()} to '[bold]{name}[/bold]'")
         elif enter:
             display = text_str[:50] + "..." if len(text_str) > 50 else text_str
@@ -1094,7 +1146,7 @@ def show(
     from ..summary_columns import build_cli_context, render_cli_stats
     from ..monitor_daemon_state import get_monitor_daemon_state
 
-    launcher = ClaudeLauncher(session)
+    launcher = AgentLauncher(session)
 
     # Get the Session object
     sess = launcher.sessions.get_session_by_name(name)
@@ -1118,11 +1170,19 @@ def show(
         activity = daemon_session.current_activity
     else:
         # Daemon not running — fall back to direct detection
-        from ..status_detector_factory import create_status_detector
+        from ..status_detector_factory import (
+            create_status_detector,
+            resolve_session_detection_mode,
+        )
+        from ..status_patterns import get_patterns
+        from ..backends import session_backend_name
         from ..settings import resolve_detection_mode
         detector = create_status_detector(
             session,
-            strategy=resolve_detection_mode(session),
+            strategy=resolve_session_detection_mode(
+                sess, resolve_detection_mode(session)
+            ),
+            patterns=get_patterns(session_backend_name(sess)),
         )
         status, activity, pane_content_raw = detector.detect_status(sess)
 
@@ -1183,17 +1243,24 @@ def show(
         if activity:
             print(f"{'Activity:':<{label_width + 1}} {activity[:100]}")
 
-        # Claude CLI flag passthrough (#290)
+        # Agent CLI flag passthrough (#290)
         if sess.allowed_tools:
             print(f"{'Tools:':<{label_width + 1}} {sess.allowed_tools}")
-        if sess.extra_claude_args:
-            print(f"{'Claude args:':<{label_width + 1}} {' '.join(sess.extra_claude_args)}")
-        if sess.claude_agent:
-            print(f"{'Agent:':<{label_width + 1}} {sess.claude_agent}")
+        if sess.extra_cli_args:
+            print(f"{'CLI args:':<{label_width + 1}} {' '.join(sess.extra_cli_args)}")
+        if sess.agent_persona:
+            print(f"{'Agent:':<{label_width + 1}} {sess.agent_persona}")
         if sess.agent_teams:
             print(f"{'Teams:':<{label_width + 1}} enabled")
         if sess.wrapper:
             print(f"{'Wrapper:':<{label_width + 1}} {sess.wrapper}")
+        from ..backends import get_backend, session_backend_name
+        backend_name = session_backend_name(sess)
+        try:
+            backend_label = get_backend(backend_name).display_name
+        except Exception:
+            backend_label = backend_name
+        print(f"{'Backend:':<{label_width + 1}} {backend_label} ({backend_name})")
         if sess.launcher_version:
             print(f"{'Launcher:':<{label_width + 1}} {sess.launcher_version}")
 

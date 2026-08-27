@@ -32,7 +32,7 @@ def is_session_id_owned_by_others(
     for session in all_sessions:
         if session.id == own_agent_id:
             continue
-        owned_ids = getattr(session, 'claude_session_ids', None) or []
+        owned_ids = getattr(session, 'agent_session_ids', None) or []
         if session_id in owned_ids:
             return True
     return False

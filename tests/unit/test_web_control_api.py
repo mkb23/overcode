@@ -36,7 +36,7 @@ from overcode.web_control_api import (
 
 # Patch targets at source modules (lazy imports inside functions)
 SM_PATH = "overcode.session_manager.SessionManager"
-LAUNCHER_PATH = "overcode.launcher.ClaudeLauncher"
+LAUNCHER_PATH = "overcode.launcher.AgentLauncher"
 TMUX_PATH = "overcode.tmux_manager.TmuxManager"
 
 
@@ -52,6 +52,7 @@ def _mock_session(**kwargs):
         heartbeat_enabled=False,
         heartbeat_paused=False,
         permissiveness_mode="normal",
+        backend="claude-code",
         parent_session_id=None,
         stats=MagicMock(current_state="running"),
     )
@@ -150,6 +151,32 @@ class TestSendKeyToAgent:
         with pytest.raises(ControlError) as exc_info:
             send_key_to_agent("agents", "test-agent", "ctrl-c")
         assert exc_info.value.status == 400
+
+    @pytest.mark.parametrize("gesture", ["approve", "reject"])
+    @patch("overcode.launcher.AgentLauncher")
+    @patch(SM_PATH)
+    def test_gestures_go_through_the_backend_aware_launcher(
+        self, MockSM, MockLauncher, gesture
+    ):
+        # A remote/web caller shouldn't have to know whether the agent is
+        # Claude Code or opencode to answer its permission prompt.
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+        MockLauncher.return_value.send_to_session.return_value = True
+
+        assert send_key_to_agent("agents", "test-agent", gesture) == {"ok": True}
+        MockLauncher.return_value.send_to_session.assert_called_once_with(
+            "test-agent", gesture
+        )
+
+    @patch(SM_PATH)
+    def test_gestures_are_listed_in_the_error_message(self, MockSM):
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+
+        with pytest.raises(ControlError) as exc_info:
+            send_key_to_agent("agents", "test-agent", "nope")
+        assert "approve" in str(exc_info.value) and "reject" in str(exc_info.value)
 
 
 class TestKillAgent:
@@ -549,7 +576,21 @@ class TestFeatureToggles:
         result = set_hook_detection("agents", "test-agent", enabled=False)
 
         assert result == {"ok": True}
-        sm.update_session.assert_called_once_with("sess-1", hook_status_detection=False)
+        sm.update_session.assert_called_once_with(
+            "sess-1", hook_status_detection=False, detection_mode_override="polling",
+        )
+
+    @patch(SM_PATH)
+    def test_enables_hook_detection(self, MockSM):
+        sm = MockSM.return_value
+        sm.get_session_by_name.return_value = _mock_session()
+
+        result = set_hook_detection("agents", "test-agent", enabled=True)
+
+        assert result == {"ok": True}
+        sm.update_session.assert_called_once_with(
+            "sess-1", hook_status_detection=True, detection_mode_override="hooks",
+        )
 
 
 class TestTransportAll:

@@ -10,10 +10,6 @@
 #   OVERCODE_SESSION_NAME — agent name
 #   OVERCODE_SESSION_ID   — agent UUID
 #
-# To install:
-#   cp wrappers/passthrough.sh ~/.overcode/wrappers/passthrough.sh
-#   chmod +x ~/.overcode/wrappers/passthrough.sh
-#
 # Usage:
 #   overcode launch -n my-agent --wrapper passthrough
 

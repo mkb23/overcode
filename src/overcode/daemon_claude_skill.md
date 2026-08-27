@@ -16,19 +16,29 @@ You have LIMITED TIME. Do NOT waste it on `overcode list` or reading sessions.js
 **For each non-green session in order:**
 
 1. Run `overcode show <name>` to see what it's stuck on
-2. Immediately act: `overcode send <name> enter` (approve) or `overcode send <name> escape` (reject)
+2. Immediately act: `overcode send <name> approve` or `overcode send <name> reject`
 3. Move to the next session -- do NOT check if it worked
 
 ## How to Unblock
 
     # Approve a permission request (ORANGE sessions)
-    overcode send my-agent enter
+    overcode send my-agent approve
 
     # Reject a permission request
-    overcode send my-agent escape
+    overcode send my-agent reject
 
     # Send text response (RED sessions with instructions)
     overcode send my-agent "your guidance here"
+
+`approve` and `reject` are **gestures, not keys** -- overcode resolves them
+against the agent's backend, so they drive a Claude Code prompt and an opencode
+`Allow once / Allow always / Reject` dialog correctly. Always prefer them over
+the raw `enter` / `escape` keys.
+
+A session line reading `Backend: opencode` is not a Claude Code agent. Its
+dialogs and slash commands differ, so stick to `overcode show`, `overcode send
+<name> approve|reject`, and plain-text instructions -- do not send Claude
+slash commands (`/clear`, `/exit`) to it.
 
 ## Approval Rules
 

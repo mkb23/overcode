@@ -1,0 +1,40 @@
+
+  ┃
+  ┃  list five prime numbers with a one line note on each
+  ┃
+
+     Here are five prime numbers along with a brief note on each:
+
+     1. 2: The only even prime number, it is the smallest prime number and serves as the foundation for many
+        mathematical concepts.
+
+     2. 3: The second smallest prime, it is the first odd prime number and is often considered in number theory due
+        to its unique properties.
+
+     3. 5: The first prime that ends with a 5, it is also the only prime factor of 10 and plays a significant role in
+        various mathematical sequences.
+
+     4. 7: Known for its prevalence in many cultures as a lucky number, 7 is the fourth prime and frequently appears
+        in various mathematical relationships.
+
+     5. 11: The smallest two-digit prime number, 11 is notable for being the first palindromic prime, meaning it
+        reads the same forwards and backwards.
+
+     ▣  Build · GPT-4o mini · 5.5s
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GPT-4o mini OpenAI
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /Users/dev/code/demo-proj                       7.4K (6%) · $0.00  ctrl+p commands
+

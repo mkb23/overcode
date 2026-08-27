@@ -123,12 +123,12 @@ class DaemonPanel(Static):
                 except ValueError:
                     pass
 
-        # Detection mode
+        # Fleet default detection mode (per-agent overrides win over this)
         from ..settings import resolve_detection_mode
         mode = resolve_detection_mode(self.tmux_session)
         mode_style = "green" if mode == "hooks" else "yellow"
         content.append("  ")
-        content.append(f"detect:{mode}", style=mode_style)
+        content.append(f"detect:{mode}(fleet)", style=mode_style)
 
         # Controls
         content.append("  ", style="dim")
@@ -139,7 +139,7 @@ class DaemonPanel(Static):
         content.append("\\", style="bold yellow")
         content.append(" restart  ", style="dim")
         content.append("K", style="bold cyan")
-        content.append(" mode", style="dim")
+        content.append(" agent mode", style="dim")
 
         content.append("\n")
 

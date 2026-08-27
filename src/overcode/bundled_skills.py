@@ -41,8 +41,8 @@ overcode follow <name>
 
 # Control
 overcode send <name> "message"       # Send text + Enter
-overcode send <name> enter           # Approve permission
-overcode send <name> escape          # Reject permission
+overcode send <name> approve         # Approve permission (backend-aware)
+overcode send <name> reject          # Reject permission (backend-aware)
 overcode kill <name> [--no-cascade]
 overcode instruct <name> "instructions"
 
@@ -77,8 +77,8 @@ overcode attach [--name <agent>]
 
 ```bash
 overcode show my-agent -n 100   # See what it's stuck on
-overcode send my-agent enter     # Approve permission
-overcode send my-agent escape    # Reject permission
+overcode send my-agent approve   # Approve permission (backend-aware)
+overcode send my-agent reject    # Reject permission (backend-aware)
 overcode send my-agent "yes"     # Send text response
 ```
 

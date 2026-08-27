@@ -7,7 +7,7 @@ and its consumers (TUI, Supervisor Daemon).
 The Monitor Daemon is the single source of truth for:
 - Agent status detection
 - Time tracking (green_time_seconds, non_green_time_seconds)
-- Claude Code stats (tokens, interactions)
+- Agent stats (tokens, interactions)
 - User presence state
 """
 
@@ -36,7 +36,7 @@ class SessionDaemonState:
 
     This is the authoritative source for session metrics.
     The TUI and Supervisor Daemon should read from here,
-    not from Claude Code files directly.
+    not from the agent CLI's own files directly.
     """
 
     # Session identity
@@ -54,7 +54,7 @@ class SessionDaemonState:
     non_green_time_seconds: float = 0.0
     sleep_time_seconds: float = 0.0
 
-    # Claude Code stats (synced from ~/.claude/projects/)
+    # Agent stats (synced through the backend's StatsReader)
     interaction_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -109,8 +109,15 @@ class SessionDaemonState:
     children_count: int = 0  # Computed by daemon each cycle
 
     # Model and provider
-    model: Optional[str] = None  # Claude model (e.g. "sonnet", "opus")
+    model: Optional[str] = None  # Model (e.g. "sonnet", "openai/gpt-4o-mini")
     provider: str = "web"  # API provider: "web" or "bedrock"
+    backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
+    # Serialized BackendCapability member names for ``backend``. Published so
+    # a sister's TUI can gate actions (fork, skills, sandbox…) on what the
+    # *remote* backend can do, even for a backend it doesn't have locally.
+    # Empty means "not reported" — consumers fall back to claude-code-full,
+    # which is what pre-Phase-6 sisters effectively were.
+    backend_capabilities: List[str] = field(default_factory=list)
 
     # User-applied tags for grouping/filtering (#356).
     tags: List[str] = field(default_factory=list)
@@ -136,7 +143,7 @@ class SessionDaemonState:
     wrapper: Optional[str] = None          # Wrapper script path, or None
     sandbox_enabled: Optional[bool] = None  # /sandbox live state, None = unknown
 
-    # Resource usage (summed across the claude process tree)
+    # Resource usage (summed across the agent process tree)
     cpu_percent: float = 0.0
     rss_bytes: int = 0
 

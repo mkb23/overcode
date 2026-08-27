@@ -1236,8 +1236,8 @@ class TestGetSessionStatsOwnership:
             start_directory="/test/project",
             start_time=session_start.isoformat()
         )
-        # Simulate session.claude_session_ids = ["owned-session"]
-        session.claude_session_ids = ["owned-session"]
+        # Simulate session.agent_session_ids = ["owned-session"]
+        session.agent_session_ids = ["owned-session"]
 
         stats = get_session_stats(
             session,
@@ -1254,7 +1254,7 @@ class TestGetSessionStatsOwnership:
 
 
 class TestActiveSessionContext:
-    """Test that context uses active_claude_session_id after /clear (#116)."""
+    """Test that context uses active_agent_session_id after /clear (#116)."""
 
     def test_uses_active_session_not_max(self, tmp_path):
         """After /clear, context should use active session, not MAX of all owned."""
@@ -1297,8 +1297,8 @@ class TestActiveSessionContext:
             start_directory="/test/project",
             start_time=session_start.isoformat()
         )
-        session.claude_session_ids = ["old-session", "new-session"]
-        session.active_claude_session_id = "new-session"
+        session.agent_session_ids = ["old-session", "new-session"]
+        session.active_agent_session_id = "new-session"
 
         stats = get_session_stats(
             session,
@@ -1313,7 +1313,7 @@ class TestActiveSessionContext:
         assert stats.input_tokens == 5000 + 100
 
     def test_falls_back_to_max_owned_when_no_active(self, tmp_path):
-        """Without active_claude_session_id, fall back to MAX of owned (old behavior)."""
+        """Without active_agent_session_id, fall back to MAX of owned (old behavior)."""
         from overcode.history_reader import get_session_stats, encode_project_path
 
         history_file = tmp_path / "history.jsonl"
@@ -1349,8 +1349,8 @@ class TestActiveSessionContext:
             start_directory="/test/project",
             start_time=session_start.isoformat()
         )
-        session.claude_session_ids = ["session-a", "session-b"]
-        # No active_claude_session_id set
+        session.agent_session_ids = ["session-a", "session-b"]
+        # No active_agent_session_id set
 
         stats = get_session_stats(
             session,

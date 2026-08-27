@@ -2,7 +2,8 @@
 Centralized status detection patterns.
 
 This module contains all the pattern lists used by StatusDetector to identify
-Claude's current state. Centralizing these makes them:
+an agent's current state. One ``StatusPatterns`` instance per backend; the
+defaults describe Claude Code. Centralizing these makes them:
 - Easier to maintain and extend
 - Testable in isolation
 - Potentially configurable via config file in the future
@@ -12,13 +13,13 @@ Each pattern set includes documentation about when it's used and what it matches
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Regex to match ANSI escape sequences (colors, cursor movement, etc.)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 # Shell prompt patterns — shared between PollingStatusDetector and HookStatusDetector
-# These detect when Claude Code has exited and the user is back at a shell prompt.
+# These detect when the agent CLI has exited and the user is back at a shell prompt.
 SHELL_PROMPT_PATTERNS = [
     re.compile(r'\w+@\w+.*[%$]\s*$'),       # user@hostname ... $ or %
     re.compile(r'\[.*\][%$#]\s*$'),          # [prompt]$ or [prompt]%
@@ -62,6 +63,12 @@ class StatusPatterns:
     """All patterns used for status detection.
 
     Patterns are case-insensitive unless noted otherwise.
+
+    One instance per agent backend — the defaults describe Claude Code.
+    A second backend supplies its own instance via
+    ``AgentBackend.status_patterns()``; every field below must be filled
+    with that CLI's equivalent chrome (or left at the default when the
+    concept doesn't exist there).
     """
 
     # Permission/confirmation prompts - HIGHEST priority
@@ -233,21 +240,200 @@ class StatusPatterns:
         r"Retrying in.*seconds.*attempt",  # Retry indicator (any format)
     ])
 
+    # Permission-dialog chrome — the keybinding hints inside a permission
+    # prompt. Skipped when summarising what approval is being asked for.
+    permission_chrome_markers: List[str] = field(default_factory=lambda: [
+        "enter to confirm",
+        "esc to reject",
+    ])
 
-# Default patterns instance
+    # Tool-output prefixes — a line starting with one of these is definitely
+    # the agent's own tool output rather than prose it wrote or the user typed.
+    tool_output_prefixes: List[str] = field(default_factory=lambda: ["⏺ ", "⏺  "])
+
+    # Bare tool-output marker, used where only the glyph matters (a line that
+    # starts with it counts as an agent response).
+    tool_output_marker: str = "⏺"
+
+    # Busy markers — present at the bottom of the pane while a turn is in
+    # flight. Claude Code renders its prompt as chrome even while working, so
+    # these are what distinguish "working" from "waiting" (#393).
+    busy_markers: List[str] = field(default_factory=lambda: ["esc to interrupt"])
+
+    # Input-hint markers — appear only in the live input prompt, never in
+    # scrollback after the CLI exits. Used to rule out a shell prompt match.
+    input_hint_markers: List[str] = field(default_factory=lambda: ["? for shortcuts"])
+
+    # Thinking markers — extended-reasoning indicator lines.
+    thinking_markers: List[str] = field(default_factory=lambda: ["thinking"])
+
+    # Characters that may follow a prompt char when the user has typed text.
+    # Claude Code renders a non-breaking space after the prompt, not a plain one.
+    prompt_continuation_chars: List[str] = field(default_factory=lambda: [" ", "\xa0"])
+
+    # Autocomplete hint shown on the prompt line ("↵ to send") — the line
+    # carries a prompt char but means "waiting", not "user typed something".
+    autocomplete_hint_symbol: str = "↵"
+    autocomplete_hint_word: str = "send"
+
+    # Interrupt prompt — printed when the user hits Escape mid-turn. No Stop
+    # hook fires for it, so the hook detector scrapes the pane for it (#431).
+    interrupt_prompt_markers: List[str] = field(default_factory=lambda: [
+        "Interrupted · What should Claude do instead?",
+        "Interrupted by user",
+    ])
+
+    # Tool-execution shape: a verb followed by a tool call, a quoted argument,
+    # or a path. Separates "Running Bash(...)" from "Running the tests…" (#359).
+    tool_execution_pattern: str = (
+        r'^\w+\s+'           # The verb + space
+        r'(?:'
+        r'\w+\('             # ToolName( — e.g., Bash(, Read(
+        r'|"'                # Quoted argument
+        r"|'"                # Single-quoted argument
+        r'|\S+\.\w{1,10}'    # File path with extension — e.g., config.json
+        r'|\S+/'             # Path with slash — e.g., src/foo
+        r')'
+    )
+
+    # Status-bar extraction — background bash tasks. "N bashes" is
+    # unambiguous; a lone "(running)" could be a bash or a subagent (#259).
+    background_bash_count_pattern: str = r'(\d+)\s+bashes'
+    background_bash_marker: str = "bashes"
+    single_task_running_marker: str = "(running)"
+
+    # Status-bar extraction — live subagents (#256).
+    subagent_count_pattern: str = r'(\d+)\s+local\s+agents?'
+
+    # Status-bar extraction — live Monitor-tool streams (#441).
+    monitor_count_pattern: str = r'(\d+)\s+monitors?\b'
+
+    # Status-bar extraction — in-session auto-accept-edits mode (#444).
+    auto_accept_pattern: str = r"⏵⏵\s+auto-?(accept|approve)"
+
+    def __post_init__(self) -> None:
+        self._compile()
+
+    def _compile(self) -> None:
+        """Compile the regex-shaped fields once per instance (hot paths)."""
+        self.command_menu_re = re.compile(self.command_menu_pattern)
+        self.tool_execution_re = re.compile(self.tool_execution_pattern)
+        self.background_bash_count_re = re.compile(self.background_bash_count_pattern)
+        self.subagent_count_re = re.compile(self.subagent_count_pattern)
+        self.monitor_count_re = re.compile(self.monitor_count_pattern)
+        self.auto_accept_re = re.compile(self.auto_accept_pattern, re.IGNORECASE)
+
+    # --- Pattern-driven predicates ----------------------------------------
+    # Phase-level variance between backends lives here, so the polling
+    # detector's phase ordering stays backend-neutral.
+
+    def is_busy(self, lines: List[str], tail: int = 2) -> bool:
+        """True when the pane bottom shows an in-flight turn.
+
+        Only the last ``tail`` lines are checked — historical thinking output
+        persists in scrollback above the prompt and would false-match (#393).
+        """
+        for line in lines[-tail:] if tail else lines:
+            lowered = line.lower()
+            if any(marker in lowered for marker in self.busy_markers):
+                return True
+        return False
+
+    def is_thinking(self, lines: List[str]) -> bool:
+        """True when any line shows an extended-reasoning indicator."""
+        return any(
+            marker in line.lower()
+            for line in lines
+            for marker in self.thinking_markers
+        )
+
+    def shows_input_hint(self, text: str) -> bool:
+        """True when text contains the live input prompt's hint line."""
+        return any(marker in text for marker in self.input_hint_markers)
+
+    def shows_interrupt_prompt(self, text: str) -> bool:
+        """True when text contains the escape-interrupt prompt (#431)."""
+        return any(marker in text for marker in self.interrupt_prompt_markers)
+
+    def is_prompt_char_line(self, line: str) -> bool:
+        """True when the line is a bare prompt char (empty input)."""
+        return line.strip() in self.prompt_chars
+
+    def is_autocomplete_hint(self, line: str) -> bool:
+        """True when the line is the '↵ to send' autocomplete hint."""
+        return (
+            self.autocomplete_hint_symbol in line
+            and self.autocomplete_hint_word in line.lower()
+        )
+
+    def is_tool_output_line(self, line: str) -> bool:
+        """True when the line is the agent's own tool/response output."""
+        return line.strip().startswith(self.tool_output_marker)
+
+    def is_user_input_line(self, line: str) -> bool:
+        """True when the line is a prompt carrying user-typed text."""
+        stripped = line.strip()
+        for char in self.prompt_chars:
+            for cont in self.prompt_continuation_chars:
+                if stripped.startswith(f"{char}{cont}"):
+                    return len(stripped) > 2
+        return False
+
+    def is_input_ready(self, lines: List[str], tail: int = 4) -> bool:
+        """True when the pane bottom shows an input prompt awaiting the user."""
+        for line in lines[-tail:] if tail else lines:
+            stripped = line.strip()
+            if self.is_prompt_char_line(stripped):
+                return True
+            if any(stripped.startswith(c) for c in self.prompt_chars):
+                if self.is_autocomplete_hint(stripped):
+                    return True
+        return False
+
+
+# Default patterns instance — Claude Code's chrome.
 DEFAULT_PATTERNS = StatusPatterns()
 
+# Patterns keyed by backend name. Invalidated by
+# backends.register_backend via _invalidate_derived_caches().
+_PATTERNS_BY_BACKEND: Dict[str, StatusPatterns] = {}
 
-def get_patterns() -> StatusPatterns:
-    """Get the status detection patterns.
 
-    Returns the default patterns. In the future, this could be
-    extended to load from a config file.
+def get_patterns(backend_name: str = None) -> StatusPatterns:
+    """Get the status detection patterns for an agent backend.
+
+    The backend is the source of truth (``AgentBackend.status_patterns()``);
+    a backend that doesn't supply a set, or a name overcode doesn't know,
+    falls back to the Claude Code defaults.
+
+    Args:
+        backend_name: Backend name; None/empty resolves to the default backend.
 
     Returns:
         StatusPatterns instance with all pattern lists
     """
-    return DEFAULT_PATTERNS
+    from .backends import DEFAULT_BACKEND, UnknownBackendError, get_backend
+
+    name = backend_name or DEFAULT_BACKEND
+    cached = _PATTERNS_BY_BACKEND.get(name)
+    if cached is not None:
+        return cached
+
+    try:
+        backend = get_backend(name)
+    except UnknownBackendError:
+        patterns = DEFAULT_PATTERNS
+    else:
+        getter = getattr(backend, "status_patterns", None)
+        patterns = getter() if getter is not None else DEFAULT_PATTERNS
+
+    _PATTERNS_BY_BACKEND[name] = patterns
+    return patterns
+
+
+def clear_patterns_cache() -> None:
+    """Drop cached pattern sets. Used by tests that register backend doubles."""
+    _PATTERNS_BY_BACKEND.clear()
 
 
 def matches_any(text: str, patterns: List[str], case_sensitive: bool = False) -> bool:
@@ -295,13 +481,14 @@ def line_starts_with_any(
     lines: List[str],
     patterns: List[str],
     case_sensitive: bool = False,
-    reverse: bool = True
+    reverse: bool = True,
+    status_patterns: StatusPatterns = None,
 ) -> str | None:
     """Find the first line that starts with any pattern in a tool-execution context.
 
     Like find_matching_line but designed to reduce false positives from
     mid-sentence occurrences (#359). A line matches if:
-    - It has a ⏺ prefix followed by a pattern (definite tool output), OR
+    - It has a tool-output prefix followed by a pattern (definite tool output), OR
     - It starts with a pattern AND the next word looks like a tool name
       (contains parens, quotes, or is a known tool like Bash/Read/etc.)
 
@@ -313,21 +500,23 @@ def line_starts_with_any(
         patterns: Patterns to match
         case_sensitive: Whether matching is case-sensitive
         reverse: Search from end to beginning
+        status_patterns: StatusPatterns supplying the backend's tool-output
+            prefixes and tool-execution shape (defaults to DEFAULT_PATTERNS)
 
     Returns:
         The matching line, or None if no match
     """
-    # Prefixes that indicate definite Claude Code tool output
-    _tool_prefixes = ("⏺ ", "⏺  ")
+    status_patterns = status_patterns or DEFAULT_PATTERNS
+    tool_prefixes = status_patterns.tool_output_prefixes
 
     search_lines = reversed(lines) if reverse else lines
     for line in search_lines:
         stripped = line.strip()
 
-        # Path 1: ⏺ prefix = definite tool output — just check pattern starts
+        # Path 1: tool-output prefix = definite tool output — just check pattern starts
         has_tool_prefix = False
         check_str = stripped
-        for prefix in _tool_prefixes:
+        for prefix in tool_prefixes:
             if stripped.startswith(prefix):
                 check_str = stripped[len(prefix):]
                 has_tool_prefix = True
@@ -344,34 +533,21 @@ def line_starts_with_any(
         if has_tool_prefix:
             return line
 
-        # Path 2: No ⏺ prefix — require the line looks like tool execution.
+        # Path 2: No tool prefix — require the line looks like tool execution.
         # Real tool lines look like: "Running Bash(...)" or "Reading file.py..."
         # Prose looks like: "Running the tests revealed..."
         # Heuristic: after the verb, check for tool-like tokens (parens, quotes,
         # file extensions, or known tool names).
-        if _looks_like_tool_execution(check_str):
+        if _looks_like_tool_execution(check_str, status_patterns):
             return line
 
     return None
 
 
-# Pattern for lines that look like actual tool execution rather than prose.
-# Matches: Verb followed by a tool name with parens, a quoted string, or a file path.
-_TOOL_EXECUTION_RE = re.compile(
-    r'^\w+\s+'           # The verb + space
-    r'(?:'
-    r'\w+\('             # ToolName( — e.g., Bash(, Read(
-    r'|"'                # Quoted argument
-    r"|'"                # Single-quoted argument
-    r'|\S+\.\w{1,10}'   # File path with extension — e.g., config.json
-    r'|\S+/'             # Path with slash — e.g., src/foo
-    r')'
-)
-
-
-def _looks_like_tool_execution(line: str) -> bool:
+def _looks_like_tool_execution(line: str, patterns: StatusPatterns = None) -> bool:
     """Check if a line looks like tool execution rather than prose."""
-    return bool(_TOOL_EXECUTION_RE.match(line))
+    patterns = patterns or DEFAULT_PATTERNS
+    return bool(patterns.tool_execution_re.match(line))
 
 
 def is_prompt_line(line: str, patterns: StatusPatterns = None) -> bool:
@@ -404,9 +580,6 @@ def is_status_bar_line(line: str, patterns: StatusPatterns = None) -> bool:
     return any(stripped.startswith(prefix) for prefix in patterns.status_bar_prefixes)
 
 
-_COMMAND_MENU_RE = re.compile(r"^\s*/[\w-]+\s{2,}\S")
-
-
 def is_command_menu_line(line: str, patterns: StatusPatterns = None) -> bool:
     """Check if a line is part of a slash command menu.
 
@@ -421,10 +594,7 @@ def is_command_menu_line(line: str, patterns: StatusPatterns = None) -> bool:
         True if line is a command menu entry
     """
     patterns = patterns or DEFAULT_PATTERNS
-    # Use pre-compiled regex for the default pattern, fall back to re.match for custom
-    if patterns.command_menu_pattern == DEFAULT_PATTERNS.command_menu_pattern:
-        return bool(_COMMAND_MENU_RE.match(line))
-    return bool(re.match(patterns.command_menu_pattern, line))
+    return bool(patterns.command_menu_re.match(line))
 
 
 def count_command_menu_lines(lines: List[str], patterns: StatusPatterns = None) -> int:
@@ -504,17 +674,21 @@ def _extract_bash_count_and_ambiguity(
     "(running)" status with no "bashes" or "local agents" disambiguator,
     meaning the token could actually be a subagent.
     """
+    patterns = patterns or DEFAULT_PATTERNS
     stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
         return 0, False
 
     # Pattern 1: "N bashes" for 2+ background tasks — unambiguous
-    match = re.search(r'(\d+)\s+bashes', stripped)
+    match = patterns.background_bash_count_re.search(stripped)
     if match:
         return int(match.group(1)), False
 
     # Pattern 2: "(running)" without "bashes" — ambiguous (could be 1 bash or 1 subagent)
-    if '(running)' in stripped and 'bashes' not in stripped:
+    if (
+        patterns.single_task_running_marker in stripped
+        and patterns.background_bash_marker not in stripped
+    ):
         return 1, True
 
     return 0, False
@@ -535,12 +709,13 @@ def extract_live_subagent_count(content: str, patterns: StatusPatterns = None, *
     Returns:
         Number of active subagents (0 if none detected)
     """
+    patterns = patterns or DEFAULT_PATTERNS
     stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
         return 0
 
     # Pattern: "N local agents" for running subagents
-    match = re.search(r'(\d+)\s+local\s+agents?', stripped)
+    match = patterns.subagent_count_re.search(stripped)
     if match:
         return int(match.group(1))
 
@@ -567,11 +742,12 @@ def extract_active_monitor_count(content: str, patterns: StatusPatterns = None, 
     Returns:
         Number of active monitor streams (0 if none detected)
     """
+    patterns = patterns or DEFAULT_PATTERNS
     stripped = _find_status_bar_line(content, patterns, clean_content=clean_content)
     if stripped is None:
         return 0
 
-    match = re.search(r'(\d+)\s+monitors?\b', stripped)
+    match = patterns.monitor_count_re.search(stripped)
     if match:
         return int(match.group(1))
 
@@ -681,10 +857,9 @@ def extract_pr_number(content: str, *, clean_content: str = None) -> int | None:
     return None
 
 
-_AUTO_ACCEPT_PATTERN = re.compile(r"⏵⏵\s+auto-?(accept|approve)", re.IGNORECASE)
-
-
-def extract_auto_accept_mode(content: str, *, clean_content: str = None) -> bool:
+def extract_auto_accept_mode(
+    content: str, patterns: StatusPatterns = None, *, clean_content: str = None
+) -> bool:
     """Detect Claude Code's in-session auto-accept-edits mode (#444).
 
     The mode is toggled with shift+tab and surfaces in the status bar as
@@ -693,8 +868,9 @@ def extract_auto_accept_mode(content: str, *, clean_content: str = None) -> bool
 
     Returns True when the indicator is present in the visible status bar.
     """
+    patterns = patterns or DEFAULT_PATTERNS
     cleaned = clean_content if clean_content is not None else strip_ansi(content)
-    return bool(_AUTO_ACCEPT_PATTERN.search(cleaned))
+    return bool(patterns.auto_accept_re.search(cleaned))
 
 
 def is_sleep_command(text: str) -> bool:
@@ -732,7 +908,7 @@ class PaneExtraction:
     auto_accept_mode: bool = False
 
 
-def extract_from_pane(content: str) -> PaneExtraction:
+def extract_from_pane(content: str, patterns: StatusPatterns = None) -> PaneExtraction:
     """Pure function: extract all display-relevant data from pane content.
 
     Returns a PaneExtraction dataclass. Results should be stored as widget
@@ -747,13 +923,16 @@ def extract_from_pane(content: str) -> PaneExtraction:
     Returns:
         PaneExtraction with all extracted values
     """
+    patterns = patterns or DEFAULT_PATTERNS
     clean = strip_ansi(content)
-    bash_count, bash_ambiguous = _extract_bash_count_and_ambiguity(content, clean_content=clean)
+    bash_count, bash_ambiguous = _extract_bash_count_and_ambiguity(
+        content, patterns, clean_content=clean
+    )
     return PaneExtraction(
         background_bash_count=bash_count,
-        live_subagent_count=extract_live_subagent_count(content, clean_content=clean),
-        active_monitor_count=extract_active_monitor_count(content, clean_content=clean),
+        live_subagent_count=extract_live_subagent_count(content, patterns, clean_content=clean),
+        active_monitor_count=extract_active_monitor_count(content, patterns, clean_content=clean),
         pr_number=extract_pr_number(content, clean_content=clean),
         bash_count_ambiguous=bash_ambiguous,
-        auto_accept_mode=extract_auto_accept_mode(content, clean_content=clean),
+        auto_accept_mode=extract_auto_accept_mode(content, patterns, clean_content=clean),
     )

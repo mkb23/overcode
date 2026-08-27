@@ -1,18 +1,17 @@
 """
-Launcher for interactive Claude Code sessions in tmux windows.
+Launcher for interactive agent-CLI sessions in tmux windows.
 
-All Claude sessions launched by overcode are interactive - users can
-take over at any time. Initial prompts are sent as keystrokes after
-Claude starts, not as CLI arguments.
+All sessions launched by overcode are interactive - users can take over at
+any time. Initial prompts are sent as keystrokes after the agent starts,
+not as CLI arguments.
 
+Which CLI gets launched, and with what argv, comes from the session's
+``AgentBackend`` (see ``overcode.backends``).
 """
 
-import json
 import shlex
-import shutil
 import subprocess
 import os
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -21,12 +20,25 @@ from typing import List, Optional
 import re
 
 from . import get_full_version
+from .backends import (
+    DEFAULT_BACKEND,
+    AgentBackend,
+    BackendCapability,
+    LaunchSpec,
+    UnknownBackendError,
+    get_backend,
+    supports,
+)
+from .backends.claude_code import (  # noqa: F401  (compat re-export)
+    _build_launch_settings,
+    _resolve_overcode_bin,
+)
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .tmux_utils import send_text_to_tmux_window, get_tmux_pane_content, tmux_window_target
 from .session_manager import SessionManager, Session
 from .config import get_default_standing_instructions
-from .dependency_check import require_tmux, require_claude
-from .exceptions import TmuxNotFoundError, ClaudeNotFoundError, InvalidSessionNameError
+from .dependency_check import require_tmux, require_agent_cli
+from .exceptions import TmuxNotFoundError, AgentCliNotFoundError, InvalidSessionNameError
 
 
 # Valid session name pattern
@@ -47,49 +59,13 @@ def validate_session_name(name: str) -> None:
     if not SESSION_NAME_PATTERN.match(name):
         raise InvalidSessionNameError(name)
 
-def _resolve_overcode_bin() -> str:
-    """Resolve absolute path to the overcode binary.
 
-    Tries shutil.which first (covers global/pipx installs), then falls
-    back to invoking via the current Python interpreter (covers uv run,
-    venv-only installs, etc.).
-    """
-    which = shutil.which("overcode")
-    if which:
-        return which
-    return f"{sys.executable} -m overcode.cli"
+class AgentLauncher:
+    """Launches interactive agent-CLI sessions in tmux windows.
 
-
-def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False) -> dict:
-    """Build the --settings JSON for overcode-launched agents.
-
-    Includes all overcode hooks (with absolute-path commands) and
-    permissions so agents don't depend on user-level settings.json
-    containing these entries.
-    """
-    from .hook_handler import OVERCODE_HOOKS
-    from .cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
-
-    # Build hooks dict: event -> [matcher group]
-    hooks: dict[str, list] = {}
-    for event, _bare_command in OVERCODE_HOOKS:
-        hooks.setdefault(event, []).append({
-            "matcher": "",
-            "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
-        })
-
-    perms = list(OVERCODE_SAFE_PERMS)
-    if include_punchy_perms:
-        perms.extend(OVERCODE_PUNCHY_PERMS)
-
-    return {
-        "hooks": hooks,
-        "permissions": {"allow": perms},
-    }
-
-
-class ClaudeLauncher:
-    """Launches interactive Claude Code sessions in tmux windows.
+    Backend-neutral: the argv grammar, gestures and startup handshake for
+    each agent CLI live in ``overcode.backends``; this class owns the tmux
+    orchestration around them.
 
     All sessions are interactive - this is the only supported mode.
     Users can take over any session at any time via tmux.
@@ -114,69 +90,27 @@ class ClaudeLauncher:
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
 
-    def _build_claude_command(
-        self,
-        *,
-        skip_permissions: bool = False,
-        dangerously_skip_permissions: bool = False,
-        permissiveness_mode: Optional[str] = None,
-        claude_agent: Optional[str] = None,
-        allowed_tools: Optional[str] = None,
-        extra_claude_args: Optional[List[str]] = None,
-        resume_session_id: Optional[str] = None,
-        fork: bool = False,
-        claude_session_id: Optional[str] = None,
-        model: Optional[str] = None,
-        include_punchy_perms: bool = False,
-    ) -> List[str]:
-        """Construct the claude CLI argument list.
+    def backend_for(self, session: Session) -> AgentBackend:
+        """Resolve the agent backend that owns a session's CLI grammar."""
+        return get_backend(getattr(session, "backend", DEFAULT_BACKEND))
 
-        For new launches, pass skip_permissions/dangerously_skip_permissions
-        and claude_session_id to prescribe the Claude session ID upfront.
-        For forks, pass permissiveness_mode (inherited from source) and
-        resume_session_id with fork=True.
+    def build_relaunch_command(self, session: Session) -> List[str]:
+        """Public argv builder for out-of-module relaunchers (web control API).
+
+        Renders only the session's permission mode — callers that need the
+        full launch context should use `restart`/`revive` instead.
         """
-        claude_command = os.environ.get("CLAUDE_COMMAND", "claude")
+        backend = self.backend_for(session)
+        return backend.build_command(
+            LaunchSpec(permissiveness_mode=session.permissiveness_mode)
+        )
 
-        if resume_session_id:
-            cmd = (
-                ["claude", "--resume", resume_session_id]
-                if claude_command == "claude"
-                else [claude_command, "--resume", resume_session_id]
-            )
-            if fork:
-                cmd.append("--fork-session")
-        else:
-            cmd = [claude_command]
-
-        # Prescribe session ID so we know which session file belongs to
-        # this agent without needing PID-based discovery (#373).
-        if claude_session_id and not resume_session_id:
-            cmd.extend(["--session-id", claude_session_id])
-
-        # Inject overcode hooks and permissions via --settings so launched
-        # agents don't depend on user-level settings.json (#435).
-        overcode_bin = _resolve_overcode_bin()
-        settings = _build_launch_settings(overcode_bin, include_punchy_perms=include_punchy_perms)
-        cmd.extend(["--settings", json.dumps(settings)])
-
-        # Permission flags — from explicit args or inherited mode
-        if dangerously_skip_permissions or permissiveness_mode == "bypass":
-            cmd.append("--dangerously-skip-permissions")
-        elif skip_permissions or permissiveness_mode == "permissive":
-            cmd.extend(["--permission-mode", "dontAsk"])
-
-        if model:
-            cmd.extend(["--model", model])
-        if claude_agent:
-            cmd.extend(["--agent", claude_agent])
-        if allowed_tools:
-            cmd.extend(["--allowedTools", allowed_tools])
-        if extra_claude_args:
-            for arg in extra_claude_args:
-                cmd.extend(shlex.split(arg))
-
-        return cmd
+    def _send_graceful_exit(self, backend: AgentBackend, window_name: str) -> None:
+        """Send the backend's shutdown gesture to a window."""
+        for press in backend.graceful_exit_keys():
+            self.tmux.send_keys(window_name, press.keys, enter=press.enter)
+            if press.delay_after:
+                time.sleep(press.delay_after)
 
     def _build_session_metadata(
         self,
@@ -189,12 +123,13 @@ class ClaudeLauncher:
         standing_instructions: str = "",
         permissiveness_mode: str = "normal",
         allowed_tools: Optional[str] = None,
-        extra_claude_args: Optional[List[str]] = None,
+        extra_cli_args: Optional[List[str]] = None,
         agent_teams: bool = False,
-        claude_agent: Optional[str] = None,
+        agent_persona: Optional[str] = None,
         model: Optional[str] = None,
         provider: str = "web",
         wrapper: Optional[str] = None,
+        backend: str = DEFAULT_BACKEND,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -210,57 +145,58 @@ class ClaudeLauncher:
             standing_instructions=standing_instructions,
             permissiveness_mode=permissiveness_mode,
             allowed_tools=allowed_tools,
-            extra_claude_args=extra_claude_args,
+            extra_cli_args=extra_cli_args,
             agent_teams=agent_teams,
-            claude_agent=claude_agent,
+            agent_persona=agent_persona,
             model=model,
             provider=provider,
             session_id=session_id,
             wrapper=wrapper,
+            backend=backend,
             launcher_version=get_full_version(),
         )
 
     def _build_launch_cmd_str(
         self,
-        *,
-        name: str,
-        session_id: str,
-        claude_cmd: List[str],
-        metadata: dict,
-        parent_session: Optional[Session] = None,
+        backend: AgentBackend,
+        spec: LaunchSpec,
+        agent_cmd: List[str],
     ) -> str:
-        """Build the full shell command string (env prefix + wrapper + claude args).
+        """Build the full shell command string (env prefix + wrapper + agent args).
 
         This is the single source of truth for the launch/restart shell line,
         so an agent relaunched via restart gets the same env vars, wrapper
         invocation, and mock handling as a fresh launch.
         """
-        env_prefix = f"OVERCODE_SESSION_NAME={name} OVERCODE_SESSION_ID={session_id} OVERCODE_TMUX_SESSION={self.tmux.session_name}"
+        env = {
+            "OVERCODE_SESSION_NAME": spec.name,
+            "OVERCODE_SESSION_ID": spec.session_id,
+            "OVERCODE_TMUX_SESSION": spec.tmux_session,
+        }
 
-        if parent_session:
-            env_prefix += f" OVERCODE_PARENT_SESSION_ID={parent_session.id} OVERCODE_PARENT_NAME={parent_session.name}"
+        if spec.parent_session_id:
+            env["OVERCODE_PARENT_SESSION_ID"] = spec.parent_session_id
+            env["OVERCODE_PARENT_NAME"] = spec.parent_name
 
-        if metadata.get('agent_teams'):
-            env_prefix += " CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+        # Tell wrappers which agent CLI they are wrapping. Only emitted for
+        # non-default backends so a Claude Code launch line stays byte-identical
+        # and wrappers keep their "unset means claude-code" default.
+        if backend.name != DEFAULT_BACKEND:
+            env["OVERCODE_BACKEND"] = backend.name
 
-        if metadata.get('provider') == 'bedrock':
-            env_prefix += " CLAUDE_CODE_USE_BEDROCK=1"
-            from .config import get_bedrock_config
-            bedrock_cfg = get_bedrock_config()
-            env_prefix += f" AWS_REGION={bedrock_cfg['region']}"
+        env.update(backend.env_prefix(spec))
 
-        wrapper = metadata.get('wrapper')
-        if wrapper:
-            wrapper_dir = metadata.get('start_directory', '.')
-            env_prefix += f" OVERCODE_WRAPPER_DIR={shlex.quote(wrapper_dir)}"
+        if spec.wrapper:
+            env["OVERCODE_WRAPPER_DIR"] = shlex.quote(spec.start_directory)
 
-        mock_scenario = os.environ.get("MOCK_SCENARIO")
-        if mock_scenario:
-            return f"MOCK_SCENARIO={mock_scenario} {env_prefix} python {shlex.join(claude_cmd)}"
-        elif wrapper:
-            return f"{env_prefix} {shlex.quote(wrapper)} {shlex.join(claude_cmd)}"
+        env_prefix = " ".join(f"{k}={v}" for k, v in env.items())
+
+        if spec.mock_scenario:
+            return f"MOCK_SCENARIO={spec.mock_scenario} {env_prefix} python {shlex.join(agent_cmd)}"
+        elif spec.wrapper:
+            return f"{env_prefix} {shlex.quote(spec.wrapper)} {shlex.join(agent_cmd)}"
         else:
-            return f"{env_prefix} {shlex.join(claude_cmd)}"
+            return f"{env_prefix} {shlex.join(agent_cmd)}"
 
     def launch(
         self,
@@ -271,14 +207,15 @@ class ClaudeLauncher:
         dangerously_skip_permissions: bool = False,
         parent_name: Optional[str] = None,
         allowed_tools: Optional[str] = None,
-        extra_claude_args: Optional[List[str]] = None,
+        extra_cli_args: Optional[List[str]] = None,
         agent_teams: bool = False,
         budget_usd: Optional[float] = None,
-        claude_agent: Optional[str] = None,
+        agent_persona: Optional[str] = None,
         model: Optional[str] = None,
         provider: Optional[str] = None,
         wrapper: Optional[str] = None,
         inherit_parent_settings: bool = True,
+        backend: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -293,7 +230,7 @@ class ClaudeLauncher:
             parent_name: Optional parent agent name for hierarchy (#244).
                 If not set, auto-detects from OVERCODE_SESSION_NAME env var.
             allowed_tools: Comma-separated tool list for --allowedTools
-            extra_claude_args: Extra Claude CLI flags (each a space-separated string)
+            extra_cli_args: Extra Claude CLI flags (each a space-separated string)
             provider: API provider — "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock).
                 None resolves via parent inheritance, then config defaults, then "web".
             wrapper: Optional wrapper script path. The wrapper receives the claude
@@ -301,6 +238,8 @@ class ClaudeLauncher:
             inherit_parent_settings: If True (default), provider/model/wrapper/
                 agent_teams/permission mode not explicitly set are inherited from
                 the parent agent (#433).
+            backend: Agent CLI backend name. None resolves via parent
+                inheritance, then the built-in default.
 
         Returns:
             Session object if successful, None otherwise
@@ -312,11 +251,9 @@ class ClaudeLauncher:
             print(f"Cannot launch: {e}")
             return None
 
-        # Check dependencies before attempting to launch
         try:
             require_tmux()
-            require_claude()
-        except (TmuxNotFoundError, ClaudeNotFoundError) as e:
+        except TmuxNotFoundError as e:
             print(f"Cannot launch: {e}")
             return None
 
@@ -345,6 +282,8 @@ class ClaudeLauncher:
         # or model-constrained parent doesn't spawn children on different
         # infrastructure. Opt out with inherit_parent_settings=False.
         if parent_session and inherit_parent_settings:
+            if backend is None:
+                backend = getattr(parent_session, "backend", None) or None
             if provider is None:
                 provider = parent_session.provider
             if model is None:
@@ -365,6 +304,23 @@ class ClaudeLauncher:
             provider = agent_defaults.get("provider") or "web"
         if wrapper is None:
             wrapper = agent_defaults.get("wrapper") or None
+        if backend is None:
+            backend = agent_defaults.get("backend") or DEFAULT_BACKEND
+
+        # Backend resolution is complete (explicit > parent > config >
+        # built-in), so the CLI dependency check can finally target the
+        # right binary rather than always probing `claude`.
+        try:
+            agent_backend = get_backend(backend)
+        except UnknownBackendError as e:
+            print(f"Cannot launch: {e}")
+            return None
+
+        try:
+            require_agent_cli(agent_backend)
+        except (AgentCliNotFoundError, agent_backend.not_found_error) as e:
+            print(f"Cannot launch: {e}")
+            return None
 
         if provider not in ("web", "bedrock"):
             print(f"Cannot launch: invalid provider '{provider}'. Use: web, bedrock")
@@ -425,9 +381,9 @@ class ClaudeLauncher:
             start_directory=start_directory, session_id=session_id,
             standing_instructions=default_instructions,
             permissiveness_mode=perm_mode, allowed_tools=allowed_tools,
-            extra_claude_args=extra_claude_args, agent_teams=agent_teams,
-            claude_agent=claude_agent, model=model, provider=provider,
-            wrapper=resolved_wrapper,
+            extra_cli_args=extra_cli_args, agent_teams=agent_teams,
+            agent_persona=agent_persona, model=model, provider=provider,
+            wrapper=resolved_wrapper, backend=agent_backend.name,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -443,7 +399,7 @@ class ClaudeLauncher:
             self.sessions.delete_session(session.id, archive=False)
             return None
 
-        # Reload so caller sees the active_claude_session_id / command set by the helper.
+        # Reload so caller sees the active_agent_session_id / command set by the helper.
         session = self.sessions.get_session(session.id)
 
         # Apply budget at launch time
@@ -463,34 +419,36 @@ class ClaudeLauncher:
 
         # Send initial prompt if provided (after Claude starts)
         if initial_prompt:
-            self._send_prompt_to_window(window_name, initial_prompt)
+            self._send_prompt_to_window(window_name, initial_prompt, backend=agent_backend)
 
         return session
 
-    # Characters that indicate Claude's input prompt is ready
-    PROMPT_READY_CHARS = {">", "›", "❯"}
+    # Characters that indicate the agent's input prompt is ready
+    PROMPT_READY_CHARS = get_backend().prompt_ready_chars()
 
     def _wait_for_prompt(
         self,
         window_name: str,
         timeout: float = 30.0,
         poll_interval: float = 0.5,
+        backend: Optional[AgentBackend] = None,
     ) -> bool:
-        """Poll pane content until Claude's input prompt appears.
+        """Poll pane content until the agent's input prompt appears.
 
-        Automatically handles startup dialogs:
-        1. Workspace trust dialog -- presses Enter to accept default
-        2. Bypass permissions warning -- selects "Yes, I accept" (Down + Enter)
+        Dismisses the backend's startup dialogs on the way (for Claude:
+        the workspace trust dialog and the bypass-permissions warning).
 
         Returns True if prompt detected, False on timeout.
         """
         from .status_patterns import strip_ansi
         from .tmux_utils import _build_tmux_cmd
 
+        backend = backend or get_backend()
         target = tmux_window_target(self.tmux.session_name, window_name)
         tmux_cmd = _build_tmux_cmd()
-        trust_accepted = False
-        perms_accepted = False
+        prompt_chars = backend.prompt_ready_chars()
+        rules = backend.startup_dialog_rules()
+        handled: set[str] = set()
 
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -498,25 +456,25 @@ class ClaudeLauncher:
                 self.tmux.session_name, window_name, lines=20
             )
             if content:
-                # Trust prompt: default is accept, just Enter
-                if not trust_accepted and "I trust this folder" in content:
-                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
-                    trust_accepted = True
-                    time.sleep(1.5)
-                    continue
-
-                # Permissions warning: navigate Down to "Yes, I accept", then Enter
-                if not perms_accepted and "Yes, I accept" in content:
-                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, 'Down'], timeout=5)
-                    time.sleep(0.3)
-                    subprocess.run(tmux_cmd + ['send-keys', '-t', target, '', 'Enter'], timeout=5)
-                    perms_accepted = True
-                    time.sleep(2.0)
+                dismissed = False
+                for rule in rules:
+                    if rule.marker in handled or rule.marker not in content:
+                        continue
+                    for press in rule.presses:
+                        keys = [press.keys, 'Enter'] if press.enter else [press.keys]
+                        subprocess.run(tmux_cmd + ['send-keys', '-t', target] + keys, timeout=5)
+                        if press.delay_after:
+                            time.sleep(press.delay_after)
+                    handled.add(rule.marker)
+                    time.sleep(rule.settle_seconds)
+                    dismissed = True
+                    break
+                if dismissed:
                     continue
 
                 for line in content.split('\n'):
                     cleaned = strip_ansi(line).strip()
-                    if cleaned in self.PROMPT_READY_CHARS:
+                    if cleaned in prompt_chars:
                         return True
             time.sleep(poll_interval)
         return False
@@ -526,13 +484,14 @@ class ClaudeLauncher:
         window_name: str,
         prompt: str,
         startup_delay: float = 3.0,
+        backend: Optional[AgentBackend] = None,
     ) -> bool:
-        """Send a prompt to a Claude session via tmux load-buffer/paste-buffer.
+        """Send a prompt to an agent session via tmux load-buffer/paste-buffer.
 
-        Polls for Claude's input prompt before sending. Falls back to
+        Polls for the agent's input prompt before sending. Falls back to
         startup_delay if the prompt is not detected within 30 seconds.
         """
-        if self._wait_for_prompt(window_name):
+        if self._wait_for_prompt(window_name, backend=backend):
             # Prompt detected — send immediately, no delay needed
             return send_text_to_tmux_window(
                 self.tmux.session_name,
@@ -568,7 +527,7 @@ class ClaudeLauncher:
 
         Args:
             name: Name for the forked agent
-            source_session: The session to fork from (must have active_claude_session_id)
+            source_session: The session to fork from (must have active_agent_session_id)
             initial_prompt: Optional prompt to send after the fork starts
 
         Returns:
@@ -582,14 +541,24 @@ class ClaudeLauncher:
             return None
 
         try:
-            require_tmux()
-            require_claude()
-        except (TmuxNotFoundError, ClaudeNotFoundError) as e:
+            agent_backend = self.backend_for(source_session)
+        except UnknownBackendError as e:
             print(f"Cannot fork: {e}")
             return None
 
-        if not source_session.active_claude_session_id:
-            print(f"Cannot fork: source agent '{source_session.name}' has no active Claude session ID")
+        if not supports(agent_backend, BackendCapability.FORK):
+            print(f"Cannot fork: backend '{agent_backend.name}' does not support fork")
+            return None
+
+        try:
+            require_tmux()
+            require_agent_cli(agent_backend)
+        except (TmuxNotFoundError, AgentCliNotFoundError, agent_backend.not_found_error) as e:
+            print(f"Cannot fork: {e}")
+            return None
+
+        if not source_session.active_agent_session_id:
+            print(f"Cannot fork: source agent '{source_session.name}' has no active agent session ID")
             return None
 
         # Enforce depth limit
@@ -631,10 +600,10 @@ class ClaudeLauncher:
             start_directory=source_session.start_directory, session_id=session_id,
             standing_instructions=source_session.standing_instructions,
             permissiveness_mode=perm_mode, allowed_tools=source_session.allowed_tools,
-            extra_claude_args=source_session.extra_claude_args,
-            agent_teams=source_session.agent_teams, claude_agent=source_session.claude_agent,
+            extra_cli_args=source_session.extra_cli_args,
+            agent_teams=source_session.agent_teams, agent_persona=source_session.agent_persona,
             model=source_session.model, provider=source_session.provider,
-            wrapper=source_session.wrapper,
+            wrapper=source_session.wrapper, backend=agent_backend.name,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -646,7 +615,7 @@ class ClaudeLauncher:
         # discovers it.
         if not self._send_launch_for_session(
             session, window_name,
-            fork_from=source_session.active_claude_session_id,
+            fork_from=source_session.active_agent_session_id,
         ):
             print(f"Failed to send command to window {window_name}")
             self.tmux.kill_window(window_name)
@@ -659,7 +628,7 @@ class ClaudeLauncher:
 
         # Send initial prompt if provided
         if initial_prompt:
-            self._send_prompt_to_window(window_name, initial_prompt)
+            self._send_prompt_to_window(window_name, initial_prompt, backend=agent_backend)
 
         return session
 
@@ -684,9 +653,9 @@ class ClaudeLauncher:
         Session-selection mode (mutually exclusive in practice):
           * fork_from set: --resume <fork_from> --fork-session. Claude generates
             a new session ID; monitor daemon discovers it.
-          * fresh=True or no active_claude_session_id: prescribe a new
+          * fresh=True or no active_agent_session_id: prescribe a new
             --session-id, bind it on the Session eagerly (no PID discovery).
-          * otherwise: --resume <active_claude_session_id> preserves history.
+          * otherwise: --resume <active_agent_session_id> preserves history.
 
         Does NOT create windows, send graceful-exit keys, or touch session
         stats — callers own those concerns.
@@ -695,44 +664,59 @@ class ClaudeLauncher:
         if session.parent_session_id:
             parent_session = self.sessions.get_session(session.parent_session_id)
 
+        backend = self.backend_for(session)
+
         if fork_from:
             resume_sid = fork_from
             new_claude_sid = None
             use_fork = True
-        elif fresh or not session.active_claude_session_id:
+        elif fresh or not session.active_agent_session_id:
             resume_sid = None
             new_claude_sid = str(uuid.uuid4())
             use_fork = False
         else:
-            resume_sid = session.active_claude_session_id
+            resume_sid = session.active_agent_session_id
             new_claude_sid = None
             use_fork = False
 
-        claude_cmd = self._build_claude_command(
-            permissiveness_mode=session.permissiveness_mode,
-            claude_agent=session.claude_agent,
-            allowed_tools=session.allowed_tools,
-            extra_claude_args=session.extra_claude_args,
-            resume_session_id=resume_sid,
-            fork=use_fork,
-            claude_session_id=new_claude_sid,
-            model=session.model,
-        )
+        # Only backends that let overcode choose the conversation ID get one
+        # bound eagerly. opencode mints its own `ses_…` ids, so recording a
+        # prescribed UUID would make the next resume pass a nonexistent
+        # session; leave it unset and let Phase 5's discovery fill it in.
+        if not supports(backend, BackendCapability.SESSION_ID_PRESCRIPTION):
+            new_claude_sid = None
 
-        metadata = {
-            "agent_teams": session.agent_teams,
-            "provider": session.provider,
-            "wrapper": session.wrapper,
-            "start_directory": session.start_directory,
-        }
-
-        cmd_str = self._build_launch_cmd_str(
+        spec = LaunchSpec(
             name=session.name,
             session_id=session.id,
-            claude_cmd=claude_cmd,
-            metadata=metadata,
-            parent_session=parent_session,
+            tmux_session=self.tmux.session_name,
+            parent_session_id=parent_session.id if parent_session else None,
+            parent_name=parent_session.name if parent_session else None,
+            resume_session_id=resume_sid,
+            fork=use_fork,
+            prescribed_session_id=new_claude_sid,
+            permissiveness_mode=session.permissiveness_mode,
+            model=session.model,
+            agent=session.agent_persona,
+            allowed_tools=session.allowed_tools,
+            extra_args=session.extra_cli_args,
+            agent_teams=session.agent_teams,
+            provider=session.provider,
+            start_directory=session.start_directory,
+            wrapper=session.wrapper,
+            mock_scenario=os.environ.get("MOCK_SCENARIO"),
         )
+
+        # Stage anything the CLI needs on disk before it starts — for opencode,
+        # the telemetry plugin in the project's .opencode/plugins/. Failure here
+        # costs telemetry, never the launch.
+        try:
+            backend.prepare_launch(spec)
+        except Exception:
+            pass
+
+        claude_cmd = backend.build_command(spec)
+        cmd_str = self._build_launch_cmd_str(backend, spec, claude_cmd)
 
         if not self.tmux.send_keys(window_name, cmd_str, enter=True):
             return False
@@ -746,8 +730,8 @@ class ClaudeLauncher:
         )
 
         if new_claude_sid:
-            self.sessions.update_session(session.id, claude_session_ids=[new_claude_sid])
-            self.sessions.set_active_claude_session_id(session.id, new_claude_sid)
+            self.sessions.update_session(session.id, agent_session_ids=[new_claude_sid])
+            self.sessions.set_active_agent_session_id(session.id, new_claude_sid)
 
         return True
 
@@ -762,7 +746,7 @@ class ClaudeLauncher:
         Args:
             session: The Session to restart (must have an existing tmux window).
             fresh: If False (default), resume the prior Claude session with
-                --resume <active_claude_session_id> so conversation history is
+                --resume <active_agent_session_id> so conversation history is
                 preserved. If True, prescribe a brand-new --session-id.
             graceful_exit_wait: Seconds to wait after /exit before relaunching.
 
@@ -773,11 +757,7 @@ class ClaudeLauncher:
         if not self.tmux.window_exists(session.tmux_window):
             return False
 
-        # Ctrl-C cancels any in-flight tool call, then /exit reliably
-        # terminates the claude process.
-        self.tmux.send_keys(session.tmux_window, "C-c", enter=False)
-        time.sleep(0.5)
-        self.tmux.send_keys(session.tmux_window, "/exit", enter=True)
+        self._send_graceful_exit(self.backend_for(session), session.tmux_window)
         time.sleep(graceful_exit_wait)
 
         if not self._send_launch_for_session(session, session.tmux_window, fresh=fresh):
@@ -1080,10 +1060,30 @@ class ClaudeLauncher:
             "right": "Right",
         }
 
+        # Backend-resolved gestures. "enter"/"escape" are raw keys and stay
+        # raw; "approve"/"reject" ask the session's backend what its permission
+        # dialog wants, so a supervisor recipe can stay backend-neutral.
+        gesture_keys = {
+            "approve": "approve_keys",
+            "reject": "reject_keys",
+        }
+
         # Check if it's a special key
         text_lower = text.lower().strip()
         success = False
-        if text_lower in special_keys:
+        if text_lower in gesture_keys:
+            backend = self.backend_for(session)
+            presses = getattr(backend, gesture_keys[text_lower])()
+            success = bool(presses)
+            for press in presses:
+                if not self.tmux.send_keys(
+                    session.tmux_window, press.keys, enter=press.enter
+                ):
+                    success = False
+                    break
+                if press.delay_after:
+                    time.sleep(press.delay_after)
+        elif text_lower in special_keys:
             key = special_keys[text_lower]
             if key == "":
                 # Just press Enter
@@ -1164,3 +1164,8 @@ class ClaudeLauncher:
             return None
         except subprocess.SubprocessError:
             return None
+
+
+# Pre-Phase-6 name. Kept so `from overcode.launcher import ClaudeLauncher`
+# — and mock.patch targets naming it — keep working.
+ClaudeLauncher = AgentLauncher
