@@ -1244,6 +1244,7 @@ def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
 BACKEND_BADGES = {
     "claude-code": "cc",
     "opencode": "oc",
+    "codex": "cx",
 }
 
 

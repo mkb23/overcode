@@ -32,7 +32,8 @@ def doctor(
 
     An agent only emits hook-based state changes (PostToolUse, Stop, etc.)
     if its process carries overcode's telemetry injection (Claude Code:
-    `--settings`; opencode: the bundled plugin). This command
+    `--settings`; opencode: the bundled plugin; codex: pane polling only in
+    Phase 1, so codex agents always read as healthy here for now). This command
     inspects each live agent's process and flags ones that are
     missing the injection — typically because they were relaunched
     manually in the tmux pane.
@@ -172,6 +173,18 @@ def doctor(
         try:
             from ..backends.opencode import version_findings
             for finding in version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
+    # Same idea for codex: it ships even faster (multiple releases/week) and
+    # auto-updates by default with no config toggle found to disable it.
+    # Only runs when the fleet actually has a codex agent.
+    from ..backends.codex import CodexBackend
+    if any(session_backend_name(s) == CodexBackend.name for s in sessions):
+        try:
+            from ..backends.codex import version_findings as codex_version_findings
+            for finding in codex_version_findings():
                 rprint(f"[yellow]⚠[/yellow] {finding}")
         except Exception:
             pass
