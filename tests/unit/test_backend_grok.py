@@ -74,31 +74,29 @@ class TestCapabilities:
         assert supports(backend, BackendCapability.SESSION_ID_PRESCRIPTION)
         assert supports(backend, BackendCapability.PERMISSION_INJECTION)
 
+    def test_hook_events_and_transcript_stats_since_phase_4(self, backend):
+        assert supports(backend, BackendCapability.HOOK_EVENTS)
+        assert supports(backend, BackendCapability.TRANSCRIPT_STATS)
+
     @pytest.mark.parametrize("capability", [
-        BackendCapability.HOOK_EVENTS,
-        BackendCapability.TRANSCRIPT_STATS,
         BackendCapability.SKILLS,
         BackendCapability.SANDBOX_PROBE,
         BackendCapability.SUBSCRIPTION_USAGE,
         BackendCapability.AGENT_TEAMS,
     ])
-    def test_unsupported_until_phase_4(self, backend, capability):
-        # Phase 4 adds HOOK_EVENTS/TRANSCRIPT_STATS; the rest have no grok
-        # analogue at all — see GrokBackend's class docstring.
+    def test_unsupported(self, backend, capability):
+        # No grok analogue at all — see GrokBackend's class docstring.
         assert not supports(backend, capability)
 
-    def test_stats_reader_is_null_until_phase_4(self, backend):
-        from overcode.stats_reader import NullStatsReader
+    def test_stats_reader_is_the_real_reader(self, backend):
+        from overcode.backends.grok_stats import GrokStatsReader
 
         reader = backend.make_stats_reader()
-        assert isinstance(reader, NullStatsReader)
+        assert isinstance(reader, GrokStatsReader)
 
-    def test_stats_reader_for_session_falls_back_to_null(self):
-        # TRANSCRIPT_STATS isn't declared yet, so the seam must not resolve
-        # to a real reader for grok sessions.
-        from overcode.stats_reader import (
-            NullStatsReader, clear_reader_cache, stats_reader_for_session,
-        )
+    def test_stats_reader_for_session_resolves_to_grok_reader(self):
+        from overcode.backends.grok_stats import GrokStatsReader
+        from overcode.stats_reader import clear_reader_cache, stats_reader_for_session
         from overcode.session_manager import Session
 
         clear_reader_cache()
@@ -108,7 +106,7 @@ class TestCapabilities:
             backend="grok",
         )
         try:
-            assert isinstance(stats_reader_for_session(session), NullStatsReader)
+            assert isinstance(stats_reader_for_session(session), GrokStatsReader)
         finally:
             clear_reader_cache()
 
@@ -274,9 +272,17 @@ class TestBuildCommand:
             "--pure",
         ]
 
-    def test_env_prefix_is_always_empty_this_phase(self, backend):
+    def test_env_prefix_is_empty_without_state_dir_override(self, backend, monkeypatch):
+        monkeypatch.delenv("OVERCODE_STATE_DIR", raising=False)
         assert backend.env_prefix(LaunchSpec()) == {}
         assert backend.env_prefix(LaunchSpec(agent_teams=True, provider="bedrock")) == {}
+
+    def test_env_prefix_forwards_state_dir_for_hook_subprocesses(self, backend, monkeypatch):
+        # The hooks file's command runs `overcode hook-handler` as a
+        # subprocess of grok itself, which needs OVERCODE_STATE_DIR when
+        # test-isolated — exact analogue of OpencodeBackend.env_prefix.
+        monkeypatch.setenv("OVERCODE_STATE_DIR", "/tmp/oc-state")
+        assert backend.env_prefix(LaunchSpec()) == {"OVERCODE_STATE_DIR": "/tmp/oc-state"}
 
 
 class TestGestures:
@@ -309,7 +315,7 @@ class TestGestures:
 
 
 class TestHealthVerdict:
-    def test_any_live_process_is_ok_this_phase(self, backend):
+    def test_any_live_process_is_ok_first_pass(self, backend):
         verdict, details = backend.health_verdict("/opt/homebrew/bin/grok -m grok-4.6")
         assert verdict == VERDICT_OK
         assert "grok process running" in details
@@ -318,7 +324,47 @@ class TestHealthVerdict:
         assert backend.health_verdict("grok")[0] == VERDICT_OK
 
 
+class TestRefineHealthVerdict:
+    @pytest.fixture(autouse=True)
+    def grok_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+
+    def test_hooks_installed_stays_ok(self, backend):
+        from overcode.backends.grok import ensure_hooks_installed
+        from overcode.doctor import VERDICT_OK
+
+        ensure_hooks_installed()
+        verdict, details = backend.refine_health_verdict(None, VERDICT_OK, "grok process running")
+        assert verdict == VERDICT_OK
+        assert "overcode hooks installed" in details
+
+    def test_missing_hooks_file_degrades(self, backend):
+        from overcode.doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        verdict, details = backend.refine_health_verdict(None, VERDICT_OK, "grok process running")
+        assert verdict == VERDICT_MISSING_SETTINGS
+        assert "overcode restart" in details
+
+    def test_non_ok_verdict_passes_through_unchanged(self, backend):
+        verdict, details = backend.refine_health_verdict(None, "no_process", "gone")
+        assert (verdict, details) == ("no_process", "gone")
+
+
 class TestPrepareLaunch:
-    def test_is_a_no_op(self, backend, tmp_path):
-        backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
-        assert list(tmp_path.iterdir()) == []
+    @pytest.fixture(autouse=True)
+    def grok_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home" / ".grok"))
+
+    def test_installs_the_global_hooks_file(self, backend, tmp_path):
+        from overcode.backends.grok import hooks_file_path, hooks_installed
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # Phase 4: no longer a no-op — installs the global (not
+        # start_directory-scoped) hooks file.
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        assert hooks_installed() is True
+        assert hooks_file_path().exists()
+        # Never writes into the launched agent's own project directory.
+        assert list(project_dir.iterdir()) == []

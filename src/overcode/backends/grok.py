@@ -19,13 +19,17 @@ session during Phase 0 live verification; the pane corpus lives in
 the authority for every gesture and flag asserted here.
 """
 
+import json
 import os
 import re
 import shlex
+import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
+from ..hook_handler import GROK_HOOK_EVENTS, GROK_NOTIFICATION_MATCHERS
 from ..status_patterns import StatusPatterns
 from .base import (
     BackendCapability,
@@ -36,6 +40,47 @@ from .base import (
 
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
+
+
+def _resolve_overcode_bin() -> str:
+    """Resolve the absolute path to the overcode binary.
+
+    Byte-identical in spirit to codex.py's helper of the same name (itself
+    kept identical-but-separate from claude_code.py's): the hook command
+    grok spawns needs the exact same "how does the hook subprocess find
+    overcode" answer every other backend's telemetry injection relies on.
+    Not shared via import so the three call sites never drift apart
+    silently when one is edited.
+    """
+    which = shutil.which("overcode")
+    if which:
+        return which
+    return f"{sys.executable} -m overcode.cli"
+
+
+# Where grok's global (always-trusted) hooks live, and the file overcode
+# writes there. Global, not project-scoped: project hooks require --trust,
+# which grants MCP+LSP+hook trust to the whole folder — too big a side
+# effect for overcode to take silently (design doc §3.3).
+GROK_HOOKS_FILENAME = "overcode.json"
+# Lives in the JSON's top-level "description" field — grok's own hook loader
+# already tolerates unrecognized top-level keys (it scans ~/.claude/
+# settings.json for hook compat, and that file carries many keys hooks.json
+# never defines), so an extra marker field alongside "hooks" is safe.
+GROK_HOOKS_MARKER = "OVERCODE-HOOKS-MARKER"
+# Hook subprocesses inherit the grok process env (live-verified, design doc
+# §3.3), so guarding on OVERCODE_SESSION_NAME makes every registration inert
+# for any grok session overcode didn't launch — identical inertness contract
+# to the opencode plugin's OVERCODE_* guard.
+_INERTNESS_GUARD = '[ -n "$OVERCODE_SESSION_NAME" ] || exit 0'
+# grok defaults observe hooks to 5s but Stop/StopFailure/StopCancelled/
+# SubagentStop gates default to 600s (matching Claude Code) — since none of
+# overcode's Stop-family registrations ever return a block/deny decision,
+# this is only a safety cap against a hung hook-handler process blocking the
+# TUI's stop resolution, but the design brief calls for short timeouts
+# explicitly, so every registration gets one instead of relying on the
+# per-event default.
+_HOOK_TIMEOUT_SECONDS = 5
 
 
 class GrokNotFoundError(AgentCliNotFoundError):
@@ -114,6 +159,127 @@ def auth_missing() -> bool:
         return (not path.exists()) or path.stat().st_size == 0
     except OSError:
         return True
+
+
+def grok_home() -> Path:
+    """grok's config/state root, honouring ``GROK_HOME`` (grok's own env var,
+    documented in ~/.grok/docs/user-guide/10-hooks.md for managed_config.toml
+    discovery) — the same override pattern as ``codex_stats.codex_home()``,
+    and what keeps this module's global-file writes out of a real
+    ``~/.grok`` during tests.
+    """
+    override = os.environ.get("GROK_HOME")
+    return Path(override) if override else Path.home() / ".grok"
+
+
+def hooks_file_path() -> Path:
+    """Where overcode's global grok hooks file lives."""
+    return grok_home() / "hooks" / GROK_HOOKS_FILENAME
+
+
+def _hook_command() -> str:
+    """The inert-outside-overcode shell command every registration runs."""
+    overcode_bin = _resolve_overcode_bin()
+    return f"sh -c '{_INERTNESS_GUARD}; exec {overcode_bin} hook-handler'"
+
+
+def _hook_entry(matcher: Optional[str] = None) -> dict:
+    entry: dict = {
+        "hooks": [{
+            "type": "command",
+            "command": _hook_command(),
+            "timeout": _HOOK_TIMEOUT_SECONDS,
+        }],
+    }
+    if matcher is not None:
+        entry["matcher"] = matcher
+    return entry
+
+
+def build_hooks_file_content() -> dict:
+    """The full ``~/.grok/hooks/overcode.json`` document.
+
+    Registers the five events grok's own hooks doc says a "complete busy and
+    idle indicator" needs (UserPromptSubmit + Stop + StopFailure +
+    StopCancelled + the idle_prompt Notification backstop), plus SessionEnd
+    (teardown) and SessionStart (session-id parity with the other backends,
+    even though grok's id is already prescribed at launch) and PreToolUse/
+    PostToolUse for the running-state detail. Every registration shares one
+    inert, short-timeout command — see ``_hook_command``/``_HOOK_TIMEOUT_SECONDS``.
+    """
+    hooks: dict = {event: [_hook_entry()] for event in GROK_HOOK_EVENTS}
+    hooks["Notification"] = [
+        _hook_entry(matcher=matcher) for matcher in GROK_NOTIFICATION_MATCHERS
+    ]
+    return {
+        "description": (
+            f"{GROK_HOOKS_MARKER}: managed by overcode — inert unless "
+            "OVERCODE_SESSION_NAME is set, safe to delete, recreated on the "
+            "next overcode launch."
+        ),
+        "hooks": hooks,
+    }
+
+
+def _is_ours(existing: object) -> bool:
+    return (
+        isinstance(existing, dict)
+        and GROK_HOOKS_MARKER in str(existing.get("description", ""))
+    )
+
+
+def ensure_hooks_installed() -> Optional[Path]:
+    """Write/refresh ``~/.grok/hooks/overcode.json``, global scope.
+
+    Idempotent and non-destructive — same footprint contract as the opencode
+    plugin (``opencode.ensure_plugin_installed``):
+
+    * missing            -> written
+    * present, ours      -> rewritten when the content has moved on
+    * present, ours, same-> left alone
+    * present, not ours  -> left alone (the user's own file)
+
+    Never removed on agent death: the file is global (not per-project), so
+    the next grok launch anywhere needs it, and re-ensuring is cheaper than
+    a teardown race. Global rather than project-scoped specifically so
+    overcode never has to call ``--trust``/``/hooks-trust`` on the user's
+    behalf (design doc §3.3 — project hook trust cascades to MCP+LSP too).
+    """
+    target = hooks_file_path()
+    content = build_hooks_file_content()
+
+    try:
+        existing_text = target.read_text(encoding="utf-8")
+    except OSError:
+        existing_text = None
+
+    if existing_text is not None:
+        try:
+            existing = json.loads(existing_text)
+        except (ValueError, TypeError):
+            existing = None
+        if not _is_ours(existing):
+            return None
+        if existing == content:
+            return target
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(content, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        return None
+    return target
+
+
+def hooks_installed() -> bool:
+    """True when the global hooks file exists and still carries our marker."""
+    try:
+        existing = json.loads(hooks_file_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return _is_ours(existing)
 
 
 class GrokStatusPatterns(StatusPatterns):
@@ -313,13 +479,15 @@ GROK_PATTERNS = GrokStatusPatterns(
 class GrokBackend:
     """Grok Build CLI adapter (verified against v1.0.5, Phase 0 of the design doc).
 
-    RESUME, FORK, SESSION_ID_PRESCRIPTION and PERMISSION_INJECTION as of
+    RESUME, FORK, SESSION_ID_PRESCRIPTION and PERMISSION_INJECTION since
     Phase 3 — all four are launch-flag-shaped for grok, unlike codex (which
     has neither) or opencode (which mints its own session ids and has no
-    tool-allowlist flag). Still no HOOK_EVENTS / TRANSCRIPT_STATS (Phase 4
-    adds grok's Claude-compatible, camelCase-dialect hooks and the
-    ``updates.jsonl`` token/cost split), no SKILLS / SANDBOX_PROBE /
-    SUBSCRIPTION_USAGE / AGENT_TEAMS.
+    tool-allowlist flag). Phase 4 adds HOOK_EVENTS and TRANSCRIPT_STATS:
+    ``prepare_launch()`` installs a global, inert-outside-overcode hooks file
+    (grok's Claude-compatible, camelCase-dialect hooks system — see
+    ``hook_handler.py``'s grok dialect handling) and ``GrokStatsReader``
+    reads the ``updates.jsonl``/``summary.json``/``prompt_history.jsonl``
+    split. Still no SKILLS / SANDBOX_PROBE / SUBSCRIPTION_USAGE / AGENT_TEAMS.
     """
 
     name = "grok"
@@ -340,6 +508,8 @@ class GrokBackend:
         | BackendCapability.FORK
         | BackendCapability.SESSION_ID_PRESCRIPTION
         | BackendCapability.PERMISSION_INJECTION
+        | BackendCapability.HOOK_EVENTS
+        | BackendCapability.TRANSCRIPT_STATS
     )
     # grok's fork grammar takes an explicit new --session-id alongside
     # --fork-session, and that id is authoritative (verified live — the
@@ -445,16 +615,33 @@ class GrokBackend:
         return cmd
 
     def prepare_launch(self, spec: LaunchSpec) -> None:
-        """No side effects this phase — telemetry injection is Phase 4."""
-        return None
+        """Install/refresh the global overcode hooks file.
+
+        Runs on every launch/restart/revive/fork so an upgraded overcode
+        refreshes a stale copy — same posture as
+        ``opencode.ensure_plugin_installed``. Failure is silent by design: a
+        missing hooks file costs hooks-grade status, not the launch, and the
+        detection dispatcher falls back to pane polling on its own.
+        """
+        ensure_hooks_installed()
 
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
         """grok reads its x.ai auth (~/.grok/auth.json) ambiently.
 
-        Nothing to forward this phase — Phase 4 adds the hook-injection
-        env/config wiring.
+        ``OVERCODE_STATE_DIR`` is the one thing that must be forwarded: the
+        hooks file's command runs ``overcode hook-handler`` as a subprocess
+        of the launched grok process and has to write hook state where this
+        overcode instance reads it (test isolation only — the real default
+        needs no override). ``OVERCODE_SESSION_NAME``/``OVERCODE_TMUX_SESSION``
+        are already in the launcher's shared prefix, and hook subprocesses
+        inherit the whole grok process env (design doc §3.3), so nothing
+        else needs forwarding here. Exact analogue of
+        ``OpencodeBackend.env_prefix``.
         """
-        return {}
+        state_dir = os.environ.get("OVERCODE_STATE_DIR")
+        if not state_dir:
+            return {}
+        return {"OVERCODE_STATE_DIR": shlex.quote(state_dir)}
 
     def graceful_exit_keys(self) -> List[KeyPress]:
         # Bare C-c is confirmed SAFE on grok (interrupts only, process and
@@ -515,23 +702,42 @@ class GrokBackend:
         return GROK_PATTERNS
 
     def make_stats_reader(self) -> "StatsReader":
-        # TRANSCRIPT_STATS isn't declared yet (Phase 4), so this is never
-        # actually called by stats_reader_for_session() — defined anyway for
-        # protocol completeness, same posture Claude/codex/opencode take.
-        from ..stats_reader import NullStatsReader
-        return NullStatsReader(self.name)
+        from .grok_stats import GrokStatsReader
+        return GrokStatsReader()
 
     def health_verdict(self, argv: str) -> Optional[Tuple[str, str]]:
-        """A live grok process is all argv alone can tell us this phase.
+        """A live grok process is all argv alone can tell us.
 
-        Phase 4 adds the hooks-injection artifact this will actually
-        inspect (grok's ``~/.grok/hooks/overcode.json``, the way codex's
-        verdict inspects ``--dangerously-bypass-hook-trust`` in argv and
-        opencode's ``refine_health_verdict`` inspects the project's plugin
-        file). Until then, a running process is healthy by construction.
+        Unlike Claude Code there is no ``--settings``-shaped payload on the
+        command line — telemetry is injected through a global file argv
+        never mentions (grok's own argv carries no telemetry trace, same
+        posture as opencode's plugin). The hooks-file check lives in
+        ``refine_health_verdict`` below, mirroring
+        ``OpencodeBackend.refine_health_verdict``.
         """
         from ..doctor import VERDICT_OK
         return VERDICT_OK, "grok process running"
+
+    def refine_health_verdict(
+        self, session, verdict: str, details: str
+    ) -> Tuple[str, str]:
+        """Second pass: is the global overcode hooks file still there?
+
+        The file is global (not per-project), so this doesn't need anything
+        from ``session`` beyond an already-OK first pass — but the signature
+        matches ``OpencodeBackend.refine_health_verdict`` for consistency.
+        """
+        from ..doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
+
+        if verdict != VERDICT_OK:
+            return verdict, details
+        if hooks_installed():
+            return VERDICT_OK, "grok process running, overcode hooks installed"
+        return VERDICT_MISSING_SETTINGS, (
+            f"grok running without overcode's hooks file in {hooks_file_path()} "
+            "— status falls back to pane polling. Relaunch via `overcode "
+            "restart` to install it."
+        )
 
     def check_binary(self):
         from ..dependency_check import check_agent_cli
@@ -604,10 +810,21 @@ def version_findings(version: Optional[str] = None) -> List[str]:
             "(requires a SuperGrok or X Premium+ subscription)"
         )
 
+    # updates.jsonl schema drift is the other way a grok upgrade silently
+    # blanks the stats columns, so it rides the same doctor pass (mirrors
+    # opencode's SQLite / codex's rollout-JSONL schema_findings() calls here).
+    try:
+        from .grok_stats import schema_findings
+        findings.extend(schema_findings())
+    except Exception:
+        pass
+
     return findings
 
 
 __all__ = [
+    "GROK_HOOKS_FILENAME",
+    "GROK_HOOKS_MARKER",
     "GROK_PATTERNS",
     "GrokBackend",
     "GrokNotFoundError",
@@ -617,7 +834,12 @@ __all__ = [
     "TESTED_GROK_RANGE",
     "auth_file_path",
     "auth_missing",
+    "build_hooks_file_content",
+    "ensure_hooks_installed",
     "get_grok_backend",
+    "grok_home",
+    "hooks_file_path",
+    "hooks_installed",
     "installed_version",
     "parse_version",
     "version_findings",

@@ -38,16 +38,19 @@ a real codex price lands in `MODEL_PRICING`. Devcontainer support is still
 Phase 5 — that is the one thing left this document says "not yet" about for
 codex.
 
-**grok is Phase 3: launch, pane-polling status, resume, fork — plus session-id
-prescription and a permission allowlist from day one**, since both are
-launch-flag-shaped for grok (`-s/--session-id` for a new conversation,
-`--allow <rule>` for the allowlist). Unlike codex/opencode, hooks-grade
-status and the token/cost/context columns are **not yet wired** — that is
-Phase 4. Every grok agent runs on pane polling only for now, honestly marked
-throughout this document; `overcode show` and the token/cost/context columns
-render dashes for a grok agent until Phase 4 lands `GrokStatsReader`. grok
-also requires a SuperGrok or X Premium+ subscription, which `overcode doctor`
-checks for (below) rather than assuming.
+**grok is Phase 4: launch, hook-grade live status (including
+`waiting_approval`), resume, fork, session-id prescription, a permission
+allowlist, and token/cost/context columns.** Session-id prescription and the
+allowlist have been wired since Phase 3, since both are launch-flag-shaped
+for grok (`-s/--session-id` for a new conversation, `--allow <rule>` for the
+allowlist). Phase 4 adds a global, inert-outside-overcode hooks file
+(`~/.grok/hooks/overcode.json`) for hook-grade status, and `GrokStatsReader`
+for a genuinely billing-accurate token/cost/context split read from
+`updates.jsonl` — unlike codex's cost column, grok's is not an estimate.
+grok also requires a SuperGrok or X Premium+ subscription, which `overcode
+doctor` checks for (below) rather than assuming. Devcontainer support is
+still Phase 5 — that is the one thing left this document says "not yet"
+about for grok.
 
 ## Feature support at a glance
 
@@ -64,9 +67,9 @@ with a clean "backend X does not support …" — never a crash.
 | Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live); grok: `--resume <id> --fork-session --session-id <new-uuid>` — grok prescribes the fork's id too, verified live |
 | Send instruction | `i` / `:` | ✅ | ✅ | ✅ | ✅ | |
 | Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter |
-| Live hook-grade status | — | ✅ | ✅ | ✅ | ❌ Phase 4 | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: pane polling only for now — no `waiting_approval` distinction yet |
-| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ⚠️ polling only | Per-session dispatch picks hooks mode automatically when state files are fresh; grok has no hook state to switch to yet |
-| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | ❌ Phase 4 | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate. grok: dashes until `GrokStatsReader` lands (Phase 4), even though a full local token/cost split exists on disk in `updates.jsonl` — it's just not read yet |
+| Live hook-grade status | — | ✅ | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: global `~/.grok/hooks/overcode.json`, camelCase dialect, incl. `waiting_approval` |
+| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
+| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | ✅ | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate |
 | AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | |
 | Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | |
 | Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | |
@@ -155,9 +158,9 @@ overcode launch -n my-agent -B grok --model grok-4.6
 ```
 
 Same `-B` short form, same new-agent-modal toggle, same `overcode show`
-backend line as opencode/codex. grok is Phase 3: launch, resume, fork, kill,
-restart, and the permission allowlist all work; status is pane-polling only
-and the token/cost/context columns are dashes until Phase 4 — see the
+backend line as opencode/codex. grok is Phase 4: launch, resume, fork, kill,
+restart, the permission allowlist, hook-grade live status (including
+`waiting_approval`), and the token/cost/context columns all work — see the
 honesty note at the top of this document.
 
 grok requires a SuperGrok or X Premium+ subscription and a `grok login` run
@@ -213,8 +216,8 @@ overcode gates UI actions and telemetry off them.
 | `RESUME` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id>`; codex: `codex resume <id>` (subcommand); grok: `--resume <id>` |
 | `FORK` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session; codex: `codex fork <id>` — **verified live**; grok: `--resume <id> --fork-session --session-id <new-uuid>` — **verified live**, and unlike the others grok prescribes the fork's own id too |
 | `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | ❌ | ✅ | opencode mints its own `ses_…` ids; codex has no `--session-id`-shaped flag for fresh launches; grok's `-s/--session-id` requires a *new* conversation and round-tripped live to `~/.grok/sessions/<enc-cwd>/<uuid>/` |
-| `HOOK_EVENTS` | ✅ | ✅ | ✅ | ❌ Phase 4 | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below); grok has a Claude-compatible, camelCase-dialect hooks system, confirmed live in Phase 0 — not wired until Phase 4 |
-| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | ❌ Phase 4 | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry). grok's `updates.jsonl` carries a *full* local input/output/cost split (confirmed live, Phase 0) — a fuller story than codex's, but `GrokStatsReader` doesn't exist until Phase 4, so it's `NullStatsReader`/dashes for now |
+| `HOOK_EVENTS` | ✅ | ✅ | ✅ | ✅ | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below); grok: global `~/.grok/hooks/overcode.json`, a Claude-compatible, camelCase-dialect hooks system (below) |
+| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | ✅ | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry). grok's `GrokStatsReader` (below) reads a *full* local input/output/cost split from `updates.jsonl` — genuinely billing-accurate, unlike codex's estimate |
 | `PERMISSION_INJECTION` | ✅ | ❌ | ❌ | ✅ | opencode v1.18.19 has no per-launch tool allowlist flag; codex's nearest concept is sandbox modes + `-c` config, not a tool allowlist; grok's `--allow <rule>` (repeatable) confirmed live to actually suppress the dialog, not just parse cleanly |
 | `SKILLS` | ✅ | ❌ | ❌ | ❌ | opencode *does* have a `/skills` command, codex and grok too — none has overcode integration |
 | `SANDBOX_PROBE` | ✅ | ❌ | ❌ | ❌ | Claude-only loopback heuristic; codex has its own (unrelated) sandbox |
@@ -235,8 +238,8 @@ overcode gates UI actions and telemetry off them.
 | Prescribe session id | `--session-id <uuid>` | ✗ | ✗ | `--session-id <uuid>` (new conversations only) |
 | Resume | `--resume <id>` | `--session <id>` | `codex resume <id>` (subcommand, options after) | `--resume <id>` |
 | Fork | `--resume <id> --fork-session` | `--session <id> --fork` | `codex fork <id>` (subcommand, options after) | `--resume <id> --fork-session --session-id <new-uuid>` |
-| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | `-c 'hooks.<Event>=[...]'` × 8 + `--dangerously-bypass-hook-trust` | none yet — Phase 4 |
-| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | none yet — Phase 4 will read `~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl` |
+| Telemetry injection | `--settings '<json>'` hooks | `.opencode/plugins/overcode-telemetry.js` | `-c 'hooks.<Event>=[...]'` × 8 + `--dangerously-bypass-hook-trust` | global `~/.grok/hooks/overcode.json` (marker + inertness-guarded) |
+| Stats source | `~/.claude/projects/**.jsonl` | SQLite `~/.local/share/opencode/opencode.db` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl` + `summary.json` + `prompt_history.jsonl` |
 | Graceful exit | `C-c`, then `/exit` | `Escape` ×2, then `/exit` | `Escape`, then `/quit` | `Escape`, then `/quit` |
 | Bare `C-c` | safe | kills the process | **kills the process instantly, no confirmation** | **safe** — interrupts only, same as Escape (opposite of codex/opencode) |
 | Clear conversation | `/clear` | `/new` | `/new` | `/new` |
@@ -531,45 +534,170 @@ rollout file rather than every session ever recorded.
 
 ---
 
-## Telemetry and stats: grok, not yet wired
+## Telemetry: grok's global hooks file
 
-grok is Phase 3 only — no hooks, no stats reader. `GrokBackend.capabilities`
-does not include `HOOK_EVENTS` or `TRANSCRIPT_STATS`, so `make_stats_reader()`
-is never even called (`stats_reader_for_session()` gates on the capability
-and hands back `NullStatsReader` instead); every token/cost/context column
-renders a dash for a grok agent, and status comes from pane polling only.
+grok ships a hooks system that is *explicitly* Claude Code compatible
+(grok's own bundled docs describe it that way) — same event names
+(`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`,
+`SessionEnd`), same exit-code-2 semantics, plus a grok-only `StopCancelled`
+event and `Notification` events with `idle_prompt`/`permission_prompt`
+matchers. Unlike Claude Code (`--settings` on the command line) or codex
+(`-c` config overrides), grok has no per-launch injection flag, so overcode
+ships a small JSON file instead:
 
-This is not a research gap: Phase 0 already confirmed grok's story is
-unusually good on both fronts, which is exactly what makes Phase 4 low-risk
-rather than speculative —
+```
+~/.grok/hooks/overcode.json
+```
 
-- **Hooks**: grok ships a hooks system that is *explicitly* Claude Code
-  compatible (grok's own bundled docs describe it that way) — same event
-  names (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`,
-  `StopFailure`, `SessionEnd`), same exit-code-2 semantics, plus a
-  grok-only `StopCancelled` event and `Notification` events with
-  `idle_prompt`/`permission_prompt` matchers that map directly onto
-  overcode's `PermissionRequest`/idle-backstop vocabulary. The one real
-  difference: grok's hook stdin is **camelCase** (`hookEventName`,
-  `sessionId`, `promptId`) where Claude's is snake_case — confirmed live,
-  exact JSON captured during Phase 0 — so `overcode hook-handler` will need
-  a dialect-normalization pass, the same mechanism codex's snake_case stdin
-  turned out *not* to need.
-- **Stats**: `~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl` carries a
-  `turn_completed.usage` object with a full local split —
-  `inputTokens`/`outputTokens`/`cachedReadTokens`/`cacheCreationTokens`/
-  `reasoningTokens`/`costUsdTicks`, per-model breakdown included — confirmed
-  live against a real session. That's a *fuller* local story than codex's
-  (which has no local cost figure at all), contradicting the design
-  research's original assumption that grok's token split was unavailable.
-  The `costUsdTicks` unit scale (nano-dollars, provisionally) was not
-  cross-checked against a real billed amount as of Phase 3, so treat any
-  future cost column as still-to-be-verified even once Phase 4 lands it.
+written by `GrokBackend.prepare_launch()` (`ensure_hooks_installed()` in
+`src/overcode/backends/grok.py`) on every launch/restart/revive/fork. It
+registers:
 
-Because `SESSION_ID_PRESCRIPTION` is already wired (unlike codex/opencode,
-which both need discovery), Phase 4's stats reader will have a trivial
-lookup key from day one: the uuid overcode itself minted at launch, straight
-into `sessions/<enc-cwd>/<uuid>/`, no directory+time fallback needed.
+```
+UserPromptSubmit, PreToolUse, PostToolUse,
+Stop, StopFailure, StopCancelled,
+SessionStart, SessionEnd,
+Notification (matcher: permission_prompt),
+Notification (matcher: idle_prompt)
+```
+
+— the five registrations grok's own hooks doc says a "complete busy and idle
+indicator" needs (`UserPromptSubmit` + `Stop` + `StopFailure` +
+`StopCancelled` + the `idle_prompt` backstop), plus `SessionStart`/
+`SessionEnd` for parity with the other backends and `PreToolUse`/
+`PostToolUse` for the running-state detail. Every registration shares one
+command, with a 5-second timeout (grok defaults `Stop`-family gates to 600s;
+overcode never needs that long since none of these ever return a block
+decision):
+
+```
+sh -c '[ -n "$OVERCODE_SESSION_NAME" ] || exit 0; exec <overcode-bin> hook-handler'
+```
+
+### Why global, not project-scoped
+
+grok's project-local hooks (`.grok/hooks/*.json`) require folder trust
+(`--trust`/`/hooks-trust`), which grants MCP+LSP+hook trust to the *whole
+directory* — too big a side effect for overcode to grant silently on your
+behalf. `~/.grok/hooks/*.json` is **always trusted**, no matter which
+project you launch grok in, so overcode writes there instead — inertness
+(below) is what keeps that safe.
+
+### Things worth knowing about the footprint
+
+- **The file is visible outside your project.** It lives in your home
+  directory, not any repository, so there's nothing to `.gitignore`.
+- **It is inert outside overcode.** The command guards on
+  `OVERCODE_SESSION_NAME` being set — hook subprocesses inherit the grok
+  process's environment, so any `grok` session you launch by hand, in any
+  directory, on any machine, runs the exact same registered hooks and exits
+  immediately without touching your filesystem.
+- **Your own file is never clobbered.** Overcode only rewrites the file if
+  its `description` field still carries the `OVERCODE-HOOKS-MARKER` string.
+  Replace the contents (or the marker) and overcode leaves it alone
+  permanently.
+- **It is not removed when the last agent dies.** It's global, not
+  per-project — every future grok launch anywhere needs it. Delete it
+  whenever you like; overcode recreates it on the next launch.
+
+`overcode doctor` reports `missing-settings` for a grok agent whose global
+hooks file is missing or de-markered — see the doctor section below.
+
+### Dialect and event mapping
+
+grok's hook stdin is **camelCase** (`hookEventName`, `sessionId`,
+`promptId`, `toolName`, `toolInput`, `toolResult`, …) where Claude's/codex's
+is snake_case — confirmed live, exact JSON captured during Phase 0.
+`hook_handler._normalize_hook_payload()` translates keys (grok's `toolResult`
+maps to Claude's `tool_response` — a genuine rename, not just casing); a
+second pass, `_apply_grok_semantics()`, handles the parts that aren't just
+casing:
+
+| grok event | overcode hook event | Status |
+|---|---|---|
+| `UserPromptSubmit` | `UserPromptSubmit` | running |
+| `PreToolUse` / `PostToolUse` | `PreToolUse` / `PostToolUse` | running |
+| `Notification` (matcher `permission_prompt`) | `PermissionRequest` | **waiting_approval** |
+| `Stop` (`reason == "end_turn"`) | `Stop` | waiting_user |
+| `StopCancelled` | `Stop` | waiting_user |
+| `StopFailure` | `StopFailure` | error |
+| `Notification` (matcher `idle_prompt`) | `Stop` | waiting_user (idle backstop) |
+| `SessionEnd` | `SessionEnd` | terminated |
+| `SessionStart` | (records `session_id`) | — |
+
+grok's own lowercase tool names are mapped onto Claude's taxonomy so the
+detector's Bash-command activity strings and obligation tracking keep
+working: `run_terminal_command`→`Bash`, `read_file`→`Read`,
+`search_replace`→`Edit`, `grep`→`Grep`, `list_dir`→`Glob`,
+`web_search`→`WebSearch`, `spawn_subagent`→`Task`. An unaliased tool name
+passes through unchanged.
+
+Three filtering rules, all load-bearing (verified live during Phase 0 and
+Phase 4 smoke testing):
+
+- **Session-teardown `Stop` is dropped.** grok fires a *second* `Stop` at
+  session end with `reason` set to `"shutdown"`/`"channel_closed"` instead of
+  `"end_turn"` — a handler that doesn't filter on `reason` double-settles on
+  every exit. `SessionEnd` is the event that owns teardown.
+- **Subagent events never touch the session's own status.** Any event
+  carrying `subagentType` is dropped entirely — "a subagent's stop is not
+  the session's" (grok's own hooks doc).
+- **Stale turn-end reports are ignored.** A `StopCancelled`/`Stop`/
+  `StopFailure` report can be dispatched after the *next* turn's
+  `UserPromptSubmit` already started (grok's own command loop, not
+  overcode's). `hook_handler` tracks the newest `promptId` seen on
+  `UserPromptSubmit` (`active_prompt_id` in `hook_state_<agent>.json`) and
+  drops a turn-end report whose `promptId` doesn't match it. Events with no
+  `promptId` at all (the `idle_prompt` backstop, the session-end `Stop`)
+  always settle unconditionally — that's grok reporting on the *session*,
+  not a turn.
+
+---
+
+## Stats: grok's updates.jsonl / summary.json / prompt_history.jsonl
+
+`GrokStatsReader` (`src/overcode/backends/grok_stats.py`) needs no discovery
+at all: `SESSION_ID_PRESCRIPTION` means overcode always minted the session
+id itself, so it keys straight into
+`~/.grok/sessions/<percent-encoded-abs-cwd>/<uuid>/` (`GROK_HOME` honoured,
+defaulting to `~/.grok`; the cwd encoding is a full absolute-path
+percent-encode, `/`→`%2F`, including the leading slash).
+
+| overcode column | grok source |
+|---|---|
+| input tokens | every `turn_completed` update's `usage.inputTokens`, **summed** across the session |
+| output tokens | same, `usage.outputTokens` + `usage.reasoningTokens`, summed |
+| cache read / write | same, `usage.cachedReadTokens` / `usage.cacheCreationTokens`, summed |
+| cost | same, `usage.costUsdTicks` summed, divided by 1e9 (nano-dollars — see below) |
+| context | latest `params._meta.totalTokens` seen across `updates.jsonl`, in file order |
+| model | `summary.json`'s `current_model_id` |
+| interactions | count of `prompt_history.jsonl` lines (one per project, not per session) whose `session_id` matches |
+
+Two things the original design research got wrong, corrected empirically
+against a real 413-message session before this reader was written (see
+`grok_stats.py`'s module docstring for the full account):
+
+- **`turn_completed.usage` is per-turn, not cumulative.** A real session's
+  consecutive `usage` objects are *not* monotonically increasing (observed
+  `inputTokens` sequence: 4,130,868 → 89,480 → 452,829 → …) — each one
+  covers only the turns since the previous report. `GrokStatsReader`
+  therefore **sums** every `turn_completed.usage` object rather than taking
+  "the latest one" the way codex's genuinely-cumulative `token_count` events
+  are read.
+- **`costUsdTicks` is nano-dollars** (1e9 ticks per USD), not the millionths
+  the design doc's single early sample hadn't ruled out. Cross-checked
+  against the same real session: a small turn (~13.6k input tokens, heavy
+  reasoning) priced at 113,440,000 ticks → $0.11, and a much larger batch
+  (4.1M input, 3.3M of it cached, 137k output/reasoning) priced at
+  7,295,125,400 ticks → $7.30 — both land in a plausible dollar-per-token
+  range; the millionths reading would have put the second figure at $7,295,
+  which is not plausible for the token counts involved.
+
+Any failure — missing directory, a corrupt line, an unreadable file —
+returns "unknown", so the columns render dashes rather than misleading
+zeros. A `turn_completed.usage` object missing expected keys raises an
+`overcode doctor` warning naming them, checked against the most recently
+modified session directory rather than every session ever recorded.
 
 ---
 
@@ -670,15 +798,22 @@ have these — permission dialogs distinguish `waiting_approval` there):
 
 ---
 
-## grok: pane polling only (Phase 4 pending)
+## grok: hooks-grade status, pane polling as fallback
 
-grok has no hooks-grade status yet — every grok agent runs on pane polling
-for its entire Phase 3 lifetime. The pattern set lives in
-`src/overcode/backends/grok.py` (`GROK_PATTERNS`), grounded in a committed
-corpus of real Grok Build v1.0.5 captures at `tests/fixtures_grok_panes/`,
-replayed by `tests/unit/test_status_detector_grok.py`.
+As of Phase 4, a grok agent whose global hooks file is installed and firing
+gets the same hooks-grade status Claude Code, opencode and codex get —
+including the `waiting_approval` distinction pane polling cannot make.
+Per-session dispatch (`status_detector_factory.py`) picks hooks mode
+automatically once `hook_state_<agent>.json` exists and is fresh; nothing to
+configure. **Pane polling is still the fallback** for the gap between
+process start and the first hook firing, and for a grok agent whose global
+hooks file was deleted or de-markered some other way. The pattern set lives
+in `src/overcode/backends/grok.py` (`GROK_PATTERNS`), grounded in a
+committed corpus of real Grok Build v1.0.5 captures at
+`tests/fixtures_grok_panes/`, replayed by
+`tests/unit/test_status_detector_grok.py`.
 
-The signals that matter:
+The polling-mode signals that matter:
 
 | overcode status | grok chrome |
 |---|---|
@@ -687,7 +822,8 @@ The signals that matter:
 | `waiting_user` (idle) | the input box's empty-input shape (`│ ❯` ... `│`) — matched as a shape, not a fixed string, since grok's box border width depends on the terminal and there's no bare prompt glyph the way Claude Code draws one |
 | `terminated` | shell prompt, none of the above |
 
-Known rough edges, honestly:
+Known rough edges of the **polling fallback**, honestly (hooks mode does not
+have these — permission dialogs distinguish `waiting_approval` there):
 
 - **No `waiting_approval` under polling.** Same as codex: permission
   dialogs read as `waiting_user`. `overcode send <name> approve` still
@@ -790,12 +926,21 @@ grok gets two checks of its own, gated on the fleet containing a grok agent:
    version check itself succeeds (proof the binary runs at all), and names
    `grok login` explicitly.
 
-Per-agent, the health verdict for a grok session is "is there a live `grok`
-process under the pane?" — Phase 3 has no injected-telemetry artifact to
-inspect yet (no `--settings`-equivalent flag, no plugin file), so a running
-process always reads `ok`. Phase 4 tightens this to check for the hooks
-file `~/.grok/hooks/overcode.json`, the same way codex's verdict checks
-argv and opencode's checks the project's plugin file.
+3. **`updates.jsonl` schema drift.** A grok upgrade that renames a
+   `turn_completed.usage` field blanks the token/cost/context columns;
+   doctor names the missing keys (checked against the most recently
+   modified session directory across the whole sessions root) rather than
+   leaving you to guess.
+
+Per-agent, the health verdict for a grok session is a two-pass check, the
+same shape opencode's plugin check takes: a live `grok` process under the
+pane reads `ok` on the first pass (grok's own argv carries no telemetry
+trace to inspect, unlike codex's `--dangerously-bypass-hook-trust`), then
+`refine_health_verdict` looks for the global hooks file
+(`~/.grok/hooks/overcode.json`) still carrying the `OVERCODE-HOOKS-MARKER`.
+Missing or de-markered reports `missing-settings`, the same verdict Claude
+Code gets when it is running without `--settings` and opencode gets when its
+telemetry plugin is missing. `overcode restart` re-installs it.
 
 ---
 

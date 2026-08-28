@@ -520,6 +520,46 @@ corrects the headline finding below.**]
   `sessions/<percent-encoded-abs-cwd>/<uuid>/` (see §3.2 for the exact
   encoding) — no discovery problem at all.
 
+> **Phase 4 shipped-notes (Aug 28, 2026).** The two items §3.4 above left
+> unconfirmed were determined empirically against a real 413-message session
+> (`01a015cb-...` under the xway project's `~/.grok/sessions/` directory)
+> before `GrokStatsReader` was written, per this phase's brief:
+>
+> 1. **Per-turn, not cumulative.** The original phrasing ("determine
+>    empirically whether usage is per-turn or cumulative") is now resolved:
+>    `turn_completed.usage` objects in a real multi-turn `updates.jsonl` are
+>    **not** monotonically increasing across the file — the observed
+>    `inputTokens` sequence for that session's seven `turn_completed` events
+>    was 4,130,868 → 89,480 → 452,829 → 557,890 → 743,659 → 230,282 →
+>    116,561, tracking `numTurns`/`modelCalls` the same non-monotonic way.
+>    A "latest wins" reader (the codex convention, correct there because
+>    codex's `token_count` events genuinely are cumulative) would have badly
+>    undercounted grok's totals. `GrokStatsReader` therefore **sums** every
+>    `turn_completed.usage` object in the session.
+> 2. **`costUsdTicks` is nano-dollars** (1e9 ticks per USD), not the
+>    millionths (1e6) the single sample in §3.4 above was consistent with but
+>    hadn't ruled out. Cross-checked against the same real session: a small
+>    batch (~13.6k input tokens, heavy reasoning effort) priced at
+>    113,440,000 ticks → $0.11, and the session's largest batch (4.13M input
+>    tokens, 3.34M of it cached, 137k output+reasoning tokens) priced at
+>    7,295,125,400 ticks → $7.30 — both land in a plausible dollar-per-token
+>    range for grok's published pricing. The millionths reading would have
+>    put the second figure at $7,295 for one batch of turns, which is not
+>    plausible for the token counts involved.
+>
+> One more correction, not previously flagged as uncertain: `_meta.totalTokens`
+> (the running context-size proxy) is **not** at the envelope's top level —
+> it lives at `params._meta.totalTokens`, nested inside `params` alongside
+> `update`. An initial read of the same real session (recursive key search
+> across the whole line) misattributed a match to the top level; a direct
+> check found zero top-level `_meta` keys and 333 `params._meta.totalTokens`
+> occurrences in the same file. `GrokStatsReader` reads the latter.
+>
+> Full detail, including the reader's SQL-free per-file scan and the doctor
+> schema-drift check, lives in `src/overcode/backends/grok_stats.py`'s module
+> docstring and `docs/backends.md`'s "Stats: grok's updates.jsonl /
+> summary.json / prompt_history.jsonl" section.
+
 ### 3.5 Capability forecast
 
 `RESUME` ✅ · `FORK` ✅ · `SESSION_ID_PRESCRIPTION` ✅ · `PERMISSION_INJECTION` ✅
