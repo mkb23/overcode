@@ -2,9 +2,89 @@
 
 **Document Type:** Design Assessment + Phased Implementation Plan
 **Date:** August 2026
-**Status:** Phase 0 complete (live-verified Aug 27, 2026); Phases 1–5 planned
+**Status:** Implemented (Phases 0–5 + Ancillary, Aug 2026)
 **Scope:** Adding OpenAI Codex CLI and xAI Grok Build as overcode's third and fourth agent backends, on the `AgentBackend` seam shipped in 0.5.0
 **Predecessor:** `docs/design/agent-agnostic-backends-opencode.md` — read its §2 (architecture) and its shipped-notes first; this plan assumes that seam and does not re-explain it.
+
+> **Shipped, 0.6.0.** All five phases plus the opencode Ancillary item
+> landed. User-facing documentation is `docs/backends.md`; the architecture
+> write-up is `docs/architecture.md` (§Agent Backends); release notes are
+> `docs/release-notes-0.6.0.md`. Where reality diverged from this plan, the
+> phase sections and Appendices A/B below carry dated notes and remain the
+> authority on codex's and grok's actual behaviour. The headline
+> divergences, collected from each phase's own shipped-notes:
+>
+> 1. **`C-c` kills codex outright, but is safe on grok** — the opposite
+>    result on two backends verified in the same pass (Phase 0, §2.2/§3.2).
+>    Codex's safe interrupt is `Escape`; grok's `Escape` also works but isn't
+>    required.
+> 2. **Codex's hook-injection crux resolved cleanly**: `-c
+>    'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` fires hooks
+>    with zero global-file writes, and codex's hook stdin is already
+>    snake_case/Claude-shaped, needing no dialect translation (Phase 0/2).
+>    One shape correction: `HookHandlerConfig::Command` is a bare string, not
+>    an array like Claude's.
+> 3. **Grok's stats turned out fuller than planned, but needed two empirical
+>    corrections before `GrokStatsReader` could trust them** (Phase 4): (a)
+>    `turn_completed.usage` is **per-turn, not cumulative** — a real
+>    session's consecutive `usage` objects are not monotonically
+>    increasing, so the reader **sums** every object rather than taking
+>    "latest wins" the way codex's genuinely-cumulative `token_count` events
+>    are read; (b) `costUsdTicks` is **nano-dollars** (1e9/USD), not the
+>    millionths an early single sample hadn't ruled out — confirmed against
+>    a real session where the millionths reading would have implied an
+>    implausible $7,295 for one batch of turns. A third, smaller correction:
+>    the context-size proxy lives at `params._meta.totalTokens`, nested
+>    inside `params`, not at the update envelope's top level.
+> 4. **Grok's `--permission-mode dontAsk` is NOT an alias for `auto`** — it
+>    shows the identical approval dialog as `default`; only `auto` actually
+>    skips it. `GrokBackend`'s permissive-mode mapping targets `auto` (Phase
+>    0/3), and the mode is passed explicitly on *every* launch — Phase 0
+>    found the user's own `~/.grok/config.toml` can set
+>    `permission_mode = "always-approve"`, and only an explicit flag beats it.
+> 5. **Grok is the only backend where fork mints a brand-new prescribed
+>    session id** (`fork_prescribes_new_session_id = True`, Phase 3) — unlike
+>    Claude Code (also `SESSION_ID_PRESCRIPTION`, but keeps the CLI's own
+>    forked id) or codex/opencode (no prescription at all).
+> 6. **Codex's cost column was never a dash, and by 0.6.0 it's a sourced
+>    estimate, not a placeholder.** Phase 2 found `monitor_daemon.py`'s cost
+>    estimator already, app-wide, falls back to the user's *configured
+>    default* per-token price for any unrecognized model — so an unpriced
+>    codex agent showed a real dollar figure priced as if it were the
+>    default model, not a dash. This phase (5) added a `gpt-5.6-sol` entry to
+>    `pricing.py` (codex's account-default model — Appendix A), sourced from
+>    OpenAI's own pricing docs, so that fallback now only applies to a codex
+>    turn on some other model.
+> 7. **This phase also added `grok-4.6`/`grok-4.5` entries to `pricing.py`**
+>    as the fallback path for when `GrokStatsReader`'s real local
+>    `costUsdTicks` figure is unavailable, sourced from xAI's own docs and
+>    cross-checked against Phase 4's real stored-cost sample: pricing that
+>    session's largest batch at the long-context tier landed within ~12% of
+>    the real billed $7.30, consistent with a session whose per-call context
+>    had grown past the long-context threshold.
+> 8. **The opencode Ancillary item shipped alongside Phase 5, not before
+>    it**: `OpencodeBackend.env_prefix()` sets `OPENCODE_PERMISSION` to an
+>    allow-everything blob for **bypass** mode only, live-verified via
+>    `opencode debug config` to override project-level deny rules — the
+>    verify-first work below (§Ancillary) found this route in Phase 0, but
+>    the key set implemented is the *full* 15-key set from opencode's
+>    published `config.json` schema (`read`, `edit`, `glob`, `grep`, `list`,
+>    `bash`, `task`, `external_directory`, `lsp`, `skill`, `todowrite`,
+>    `question`, `webfetch`, `websearch`, `doom_loop`), re-derived rather
+>    than the partial list ("`bash`, `edit`, `webfetch`, …") Phase 0's probe
+>    had observed. A `"*"` wildcard key was also re-tested and confirmed
+>    **not** to work as an override — it's accepted (schema tolerates
+>    unknown keys) but inert alongside explicit deny keys, not a substitute
+>    for them.
+> 9. **Devcontainer support (Phase 5) treats grok's install and its
+>    container-auth story as two separate verdicts.** codex installs inside
+>    a container exactly like Claude Code (`npm i -g @openai/codex`); grok
+>    has **no npm package** and uses x.ai's curl installer instead
+>    (`curl -fsSL https://x.ai/cli/install.sh | bash`), and `XAI_API_KEY` is
+>    forwarded alongside the other provider credentials. Per this phase's
+>    explicit scope fence (no live docker build), grok's subscription-gated
+>    container **auth** story is documented as *unverified*, not confirmed
+>    unsupported — a real container smoke test is still outstanding.
 
 > **Ground truth discipline.** The opencode effort's biggest lesson: three of its
 > pre-verification flag assumptions were wrong, one dangerously so (`C-c` kills
@@ -707,7 +787,9 @@ verdicts); `tests/unit/test_status_detector_codex.py` replaying
    auto-update on by default) an update-channel warning, gated on fleet
    containing a codex agent.
 5. `docs/backends.md`: add codex column stub to both tables, marked
-   "polling-tier (Phase 2 pending)" so docs never overstate.
+   as pane-polling-only with hooks not yet landing until the next phase, so
+   docs never overstate. (Shipped by Phase 2, since superseded — see that
+   phase's brief below and `docs/backends.md`'s current codex sections.)
 
 **Acceptance:** live smoke on this machine: launch, watch status turn
 green→idle correctly, send instruction, approve a permission prompt via
@@ -890,6 +972,31 @@ tiers honest by construction.
 ---
 
 ## Ancillary (post-Phase-5): true bypass-permissions for opencode
+
+> **Shipped Aug 28, 2026.** `OpencodeBackend.env_prefix()` now sets
+> `OPENCODE_PERMISSION` to an allow-everything JSON blob for **bypass** mode
+> only (`dangerously_skip_permissions` or `permissiveness_mode == "bypass"`);
+> permissive stays `--auto` alone, unchanged. The allow-everything blob's key
+> set was re-derived from opencode's own published schema
+> (`https://opencode.ai/config.json`, `$defs.PermissionConfig`) rather than
+> the partial list ("`bash`, `edit`, `webfetch`, …") the Phase 0 pass below
+> had observed: the real schema has 15 keys (`read`, `edit`, `glob`, `grep`,
+> `list`, `bash`, `task`, `external_directory`, `lsp`, `skill`, `todowrite`,
+> `question`, `webfetch`, `websearch`, `doom_loop`), all forced to `"allow"`.
+> Re-verified live (opencode v1.18.23, a fresh scratch project distinct from
+> Phase 0's) via `opencode debug config`: a project `opencode.json` denying
+> `bash`/`edit`/`webfetch` still showed those three as `"deny"` in the
+> resolved config until `OPENCODE_PERMISSION` was set, at which point all
+> three flipped to `"allow"`. One correction to the paragraph below's
+> "`"*"` treat as unconfirmed shorthand": it's now confirmed **not** to work
+> as a wildcard override — `OPENCODE_PERMISSION='{"*":"allow"}'` against the
+> same deny-rule project left `bash`/`edit`/`webfetch` at `"deny"` and simply
+> added a literal `"*": "allow"` key alongside them; the schema's per-key
+> `additionalProperties` acceptance is why it doesn't error, not evidence it
+> means "everything." Explicit per-tool keys remain the only implementation
+> target. See `docs/backends.md`'s "Permission modes" section for the
+> user-facing writeup and `tests/unit/test_backend_opencode.py::TestEnvPrefix`
+> for the golden env matrix (bypass gets the var, permissive/normal don't).
 
 > **Verified Aug 27, 2026 (Phase 0 pass, opencode v1.18.23).** All three
 > verify-first items below are resolved, and the answer is better than the

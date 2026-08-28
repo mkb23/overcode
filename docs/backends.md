@@ -19,38 +19,34 @@ columns. What it does not cover is the Claude-only subsystems — skills, the
 sandbox badge, the subscription-usage widget, and agent teams — which stay
 capability-gated and render as dashes or hidden controls.
 
-**codex is Phase 2: launch, hook-grade live status (including
-`waiting_approval`), resume, fork, and token/context columns.** Every
+**codex: launch, hook-grade live status (including `waiting_approval`),
+resume, fork, devcontainer support, and token/context columns.** Every
 launch injects `overcode hook-handler` via per-launch `-c
 'hooks.<Event>=[...]'` config overrides plus
 `--dangerously-bypass-hook-trust` — no files written, nothing to install.
-Cost is honest **only about its ceiling, not its number**: codex is
-subscription/API billed with no local per-turn charge recorded, and there is
-no codex-specific entry in `pricing.py`'s `MODEL_PRICING` table yet (no
-reliable current price to put there) — but the cost column does not fall
-back to a dash for an unpriced model anywhere in overcode, codex included.
-`monitor_daemon.py`'s cost estimator (`settings.get_model_pricing`) falls
-back to your configured *default* per-token price for any model it doesn't
-recognize, so a codex agent's cost column shows a real, non-zero dollar
-figure priced as if it were your default model — live-verified during Phase
-2 smoke testing, and worth knowing rather than trusting at face value until
-a real codex price lands in `MODEL_PRICING`. Devcontainer support is still
-Phase 5 — that is the one thing left this document says "not yet" about for
-codex.
+Cost is honest **about both its ceiling and, now, a real list-price
+estimate**: codex is subscription/API billed with no local per-turn charge
+recorded (matching Claude's own transcript, which also carries none), but
+`pricing.py`'s `MODEL_PRICING` table now has a `gpt-5.6-sol` entry (codex's
+account-default model — see the pricing section below for sourcing and
+caveats), so the cost column prices real codex token counts at that model's
+actual published rate rather than falling back to your configured *default*
+model's rate the way it did before that entry existed. It is still an
+estimate, not a billed figure — codex has no local per-turn charge to
+compare against, unlike grok.
 
-**grok is Phase 4: launch, hook-grade live status (including
-`waiting_approval`), resume, fork, session-id prescription, a permission
-allowlist, and token/cost/context columns.** Session-id prescription and the
-allowlist have been wired since Phase 3, since both are launch-flag-shaped
-for grok (`-s/--session-id` for a new conversation, `--allow <rule>` for the
-allowlist). Phase 4 adds a global, inert-outside-overcode hooks file
-(`~/.grok/hooks/overcode.json`) for hook-grade status, and `GrokStatsReader`
-for a genuinely billing-accurate token/cost/context split read from
-`updates.jsonl` — unlike codex's cost column, grok's is not an estimate.
-grok also requires a SuperGrok or X Premium+ subscription, which `overcode
-doctor` checks for (below) rather than assuming. Devcontainer support is
-still Phase 5 — that is the one thing left this document says "not yet"
-about for grok.
+**grok: launch, hook-grade live status (including `waiting_approval`),
+resume, fork, session-id prescription, a permission allowlist,
+devcontainer support (install only — see the containers section for the
+auth caveat), and token/cost/context columns.** A global,
+inert-outside-overcode hooks file (`~/.grok/hooks/overcode.json`) delivers
+hook-grade status, and `GrokStatsReader` reads a genuinely billing-accurate
+token/cost/context split from `updates.jsonl` — unlike codex's cost column,
+grok's is not an estimate; `pricing.py` now also carries `grok-4.6`/
+`grok-4.5` entries as the *fallback* path for when that local figure is
+unavailable (see the pricing section below). grok also requires a SuperGrok
+or X Premium+ subscription, which `overcode doctor` checks for (below)
+rather than assuming.
 
 ## Feature support at a glance
 
@@ -69,13 +65,13 @@ with a clean "backend X does not support …" — never a crash.
 | Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter |
 | Live hook-grade status | — | ✅ | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: global `~/.grok/hooks/overcode.json`, camelCase dialect, incl. `waiting_approval` |
 | Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
-| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate only | ✅ | codex: rollout-JSONL reader; cost has no local figure and no codex-specific `pricing.py` entry, so it shows your configured *default* model's rate applied to codex's real token counts — not a dash, but not to be trusted as accurate. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate |
+| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate | ✅ | codex: rollout-JSONL reader; cost has no local figure, but `pricing.py` now carries a `gpt-5.6-sol` entry (codex's account-default model), so it shows that model's real published rate applied to codex's real token counts — a list-price estimate, not a billed figure. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate |
 | AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | |
 | Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | |
 | Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | |
 | Remote agents via sisters | `N` | ✅ | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
-| Devcontainer wrapper | — | ✅ | ✅ | ❌ Phase 5 | ❌ Phase 5 | codex/grok devcontainer install step not wired yet |
-| Permission modes | — | ✅ full | ⚠️ approximate | ✅ full | ✅ full | codex: distinct flags for bypass/permissive/normal (see below); grok: same, plus flag-vs-config precedence confirmed live (see below) |
+| Devcontainer wrapper | — | ✅ | ✅ | ✅ | ⚠️ installs, auth unverified | codex installs via npm like Claude; grok has no npm package (curl installer) and its container auth story is untested (see below) |
+| Permission modes | — | ✅ full | ⚠️ bypass full, permissive approximate | ✅ full | ✅ full | opencode: bypass genuinely overrides deny rules via `OPENCODE_PERMISSION`, permissive (`--auto` alone) still lets deny rules win (see below); codex: distinct flags for bypass/permissive/normal (see below); grok: same, plus flag-vs-config precedence confirmed live (see below) |
 | `--allowed-tools` allowlist | — | ✅ | ❌ | ❌ | ✅ | No opencode or codex flag exists, silently ignored; grok: repeated `--allow <rule>` per tool, confirmed to actually suppress the dialog live |
 | Skills | — | ✅ | ❌ | ❌ | ❌ | grok has skills + a marketplace, unintegrated |
 | Sandbox badge | — | ✅ | ❌ | ❌ | ❌ | Claude-only loopback probe |
@@ -133,10 +129,10 @@ overcode launch -n my-agent -B codex --model gpt-5.6-sol
 ```
 
 Same `-B` short form, same new-agent-modal toggle, same `overcode show`
-backend line as opencode. codex is Phase 2: launch, resume, fork, kill,
-restart, hooks-grade status (including `waiting_approval`), and
-token/context columns all work; cost is a rough estimate, not dashes — see
-the honesty note at the top of this document.
+backend line as opencode. Launch, resume, fork, kill, restart, hooks-grade
+status (including `waiting_approval`), devcontainer support, and
+token/context columns all work; cost is a list-price estimate, not a billed
+figure — see the honesty note at the top of this document.
 
 ### Models
 
@@ -158,10 +154,11 @@ overcode launch -n my-agent -B grok --model grok-4.6
 ```
 
 Same `-B` short form, same new-agent-modal toggle, same `overcode show`
-backend line as opencode/codex. grok is Phase 4: launch, resume, fork, kill,
-restart, the permission allowlist, hook-grade live status (including
-`waiting_approval`), and the token/cost/context columns all work — see the
-honesty note at the top of this document.
+backend line as opencode/codex. Launch, resume, fork, kill, restart, the
+permission allowlist, hook-grade live status (including `waiting_approval`),
+devcontainer support (install only — see the containers section for the
+auth caveat), and the token/cost/context columns all work — see the honesty
+note at the top of this document.
 
 grok requires a SuperGrok or X Premium+ subscription and a `grok login` run
 once outside overcode. If `~/.grok/auth.json` is missing or empty,
@@ -217,7 +214,7 @@ overcode gates UI actions and telemetry off them.
 | `FORK` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` — **verified**, creates a `(fork #1)` session; codex: `codex fork <id>` — **verified live**; grok: `--resume <id> --fork-session --session-id <new-uuid>` — **verified live**, and unlike the others grok prescribes the fork's own id too |
 | `SESSION_ID_PRESCRIPTION` | ✅ | ❌ | ❌ | ✅ | opencode mints its own `ses_…` ids; codex has no `--session-id`-shaped flag for fresh launches; grok's `-s/--session-id` requires a *new* conversation and round-tripped live to `~/.grok/sessions/<enc-cwd>/<uuid>/` |
 | `HOOK_EVENTS` | ✅ | ✅ | ✅ | ✅ | opencode: bundled telemetry plugin (below); codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injected on every launch (below); grok: global `~/.grok/hooks/overcode.json`, a Claude-compatible, camelCase-dialect hooks system (below) |
-| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | ✅ | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a rough estimate priced at your configured default model's rate (no local figure, no codex-specific `pricing.py` entry). grok's `GrokStatsReader` (below) reads a *full* local input/output/cost split from `updates.jsonl` — genuinely billing-accurate, unlike codex's estimate |
+| `TRANSCRIPT_STATS` | ✅ | ✅ | ✅ | ✅ | opencode: SQLite `session` table (below); codex: rollout-JSONL reader (below) — tokens/context populate accurately, cost is a list-price estimate from `pricing.py`'s `gpt-5.6-sol` entry (no local figure to bill against). grok's `GrokStatsReader` (below) reads a *full* local input/output/cost split from `updates.jsonl` — genuinely billing-accurate, unlike codex's estimate |
 | `PERMISSION_INJECTION` | ✅ | ❌ | ❌ | ✅ | opencode v1.18.19 has no per-launch tool allowlist flag; codex's nearest concept is sandbox modes + `-c` config, not a tool allowlist; grok's `--allow <rule>` (repeatable) confirmed live to actually suppress the dialog, not just parse cleanly |
 | `SKILLS` | ✅ | ❌ | ❌ | ❌ | opencode *does* have a `/skills` command, codex and grok too — none has overcode integration |
 | `SANDBOX_PROBE` | ✅ | ❌ | ❌ | ❌ | Claude-only loopback heuristic; codex has its own (unrelated) sandbox |
@@ -229,8 +226,8 @@ overcode gates UI actions and telemetry off them.
 | overcode concept | claude-code | opencode (v1.18.19) | codex (v0.150.1) | grok (v1.0.5) |
 |---|---|---|---|---|
 | Binary | `claude` | `opencode` | `codex` | `grok` |
-| Bypass permissions | `--dangerously-skip-permissions` | `--auto` | `--dangerously-bypass-approvals-and-sandbox` | `--permission-mode bypassPermissions` |
-| Permissive | `--permission-mode dontAsk` | `--auto` (approximate — see below) | `-a never --sandbox workspace-write` | `--permission-mode auto` (**not** `dontAsk` — see below) |
+| Bypass permissions | `--dangerously-skip-permissions` | `--auto` + `OPENCODE_PERMISSION=<allow-everything>` (genuinely overrides deny rules — see below) | `--dangerously-bypass-approvals-and-sandbox` | `--permission-mode bypassPermissions` |
+| Permissive | `--permission-mode dontAsk` | `--auto` alone (approximate — deny rules still win, see below) | `-a never --sandbox workspace-write` | `--permission-mode auto` (**not** `dontAsk` — see below) |
 | Normal | (default) | opencode's own `permission` config | (default: `on-request` approval) | `--permission-mode default`, passed **explicitly on every launch** (see below) |
 | Allowed tools | `--allowedTools a,b` | ✗ no flag exists | ✗ no flag exists | `--allow <rule>` repeated once per tool |
 | Model | `--model sonnet` | `--model provider/model` | `-m <model>` (bare id, e.g. `gpt-5.6-sol`) | `-m <model>` (bare id, e.g. `grok-4.6`) |
@@ -247,28 +244,43 @@ overcode gates UI actions and telemetry off them.
 | Reject | `Escape` | `Escape` | `Escape` (no literal reject key) | `3` (no Enter) |
 | Trust-folder dialog | "I trust this folder" | none | "Do you trust the contents of this directory?" — `Enter` accepts | none — confirmed absent even in a never-before-visited directory |
 
-### Permission modes are approximate
+### Permission modes: permissive and bypass no longer collapse
 
-overcode has three modes; opencode has one flag.
+overcode has three modes; opencode has one command-line flag (`--auto`) plus,
+as of the Ancillary item shipped alongside 0.6.0, one env var
+(`OPENCODE_PERMISSION`) that a genuinely stronger mode can use.
 
 - **normal** → no flag. opencode asks according to its own `permission`
   config in `opencode.json` / `~/.config/opencode/opencode.jsonc`.
-- **permissive** → `--auto`.
-- **bypass** → `--auto`.
+- **permissive** → `--auto`, and nothing else. `--auto` auto-approves
+  anything not explicitly *denied*, so opencode's own `"deny"` rules still
+  win — this is honestly closer to Claude's `dontAsk` than to
+  `--dangerously-skip-permissions`, and stays that way for permissive.
+- **bypass** → `--auto` **plus** `OPENCODE_PERMISSION` set to an
+  allow-everything JSON blob (`OpencodeBackend.env_prefix()`, every key from
+  opencode's own published config schema forced to `"allow"`). Unlike
+  `--auto` alone, `OPENCODE_PERMISSION` is merged into opencode's resolved
+  config *after* project config — live-verified via `opencode debug config`
+  (Ancillary section of `docs/design/agent-backends-codex-grok.md`) that it
+  genuinely **overrides** a project's `"deny"` rules, not just the ones
+  `--auto` leaves alone. No file is written and nothing needs cleanup: the
+  var is process-scoped, set only for the launched opencode process, gone
+  the moment it exits.
 
-`--auto` auto-approves anything not explicitly *denied*, so opencode's
-`"deny"` rules still win — it is closer to Claude's `dontAsk` than to
-`--dangerously-skip-permissions`. Both overcode modes collapse onto it,
-which means **permissive and bypass behave identically on opencode**. If
-you need finer control, put it in the project's `opencode.json`:
+If you need finer control than these three modes offer, put it in the
+project's `opencode.json`:
 
 ```json
 { "permission": { "bash": "ask", "edit": "allow" } }
 ```
 
+— note that in **bypass** mode, `OPENCODE_PERMISSION` overrides this file's
+`deny`/`ask` rules too; use **permissive** if you want the project's own
+rules to still apply.
+
 `--allowed-tools` is silently ignored for opencode: the `--permissions`
-flag the design research expected does not exist in v1.18.19, and emitting
-it would fail the launch outright.
+flag the design research expected does not exist, and emitting it would
+fail the launch outright.
 
 ### codex's permission modes are exact, not approximate
 
@@ -514,7 +526,7 @@ writing.
 | context | same event's `total_tokens` (a running total — latest event wins, not summed) |
 | model | latest `turn_context.payload.model` (one line per turn) |
 | interactions | `response_item` messages where `role=="user"` **and** `internal_chat_message_metadata_passthrough.content_item_kinds` contains `"user.text"` — excludes injected `<environment_context>`/skills/permissions scaffolding, which carries its own kind tags instead |
-| cost | **not a dash — a rough, possibly-wrong estimate.** codex is subscription/API billed with no local per-turn charge (matches Claude's transcript, which also carries none), and `pricing.py`'s `MODEL_PRICING` table has no codex-specific entry (no current price overcode trusts). Recomputation is still the normal fallback for *every* backend when a model isn't in `MODEL_PRICING`, and — live-verified during Phase 2 smoke testing — that fallback is your configured *default* per-token price (`settings.get_model_pricing`), not zero/None. A codex agent's cost column therefore shows a real dollar figure, priced as if its tokens cost what your default model costs; treat it as a placeholder until a real codex price is added, not as billing-accurate |
+| cost | **not a dash — a list-price estimate, not a billed figure.** codex is subscription/API billed with no local per-turn charge (matches Claude's transcript, which also carries none), so there is nothing to compare an estimate against. `pricing.py`'s `MODEL_PRICING` table carries a `gpt-5.6-sol` entry (codex's account-default model — Appendix A), sourced from OpenAI's own pricing docs and standard-tier/short-context only (batch/flex/fast-mode and long-context tiers aren't modelled, since overcode has no signal for which tier a turn ran under). A codex turn on a different model than `gpt-5.6-sol` still falls back to your configured *default* per-token price (`settings.get_model_pricing`), the same behaviour every backend gets for an unrecognized model — live-verified during Phase 2 smoke testing. Either way the column always shows a real dollar figure, never a dash; treat it as informative, not as billing-accurate |
 
 Rows are located by the codex session id `SessionStart`'s hook recorded into
 `hook_state_<agent>.json` (`agent_session_id` / `agent_session_ids` — the
@@ -698,6 +710,17 @@ returns "unknown", so the columns render dashes rather than misleading
 zeros. A `turn_completed.usage` object missing expected keys raises an
 `overcode doctor` warning naming them, checked against the most recently
 modified session directory rather than every session ever recorded.
+
+`pricing.py`'s `grok-4.6`/`grok-4.5` entries (standard-tier, short-context,
+sourced from xAI's own docs) exist only as the generic cost-estimate
+fallback every backend gets when the real per-turn figure above is
+unavailable — `GrokStatsReader`'s `costUsdTicks` read is the number that
+actually reaches the cost column in the normal case. The `grok-4.6` entry
+was cross-checked against the real session above: pricing its largest batch
+(790,868 non-cached + 3.34M cached input tokens, 137k output/reasoning) at
+the long-context tier (≥200k tokens, the whole request billed at the higher
+rate) gives ≈$8.15, within ~12% of the real billed $7.30 — consistent with
+a session whose per-call context had grown past the long-context threshold.
 
 ---
 
@@ -971,31 +994,42 @@ mode rather than approving just the one tool call.
 
 ## Containers: the devcontainer wrapper
 
-`--wrapper devcontainer` works for claude-code and opencode today. The
-launcher exports `OVERCODE_BACKEND` into the wrapper's environment for any
-non-default backend (Claude Code leaves it unset, so the wrapper's behaviour
-there is byte-for-byte what it was before), and the wrapper keys its install
-step off it:
+`--wrapper devcontainer` works for all four backends. The launcher exports
+`OVERCODE_BACKEND` into the wrapper's environment for any non-default
+backend (Claude Code leaves it unset, so the wrapper's behaviour there is
+byte-for-byte what it was before), and the wrapper keys its install step off
+it:
 
 | `OVERCODE_BACKEND` | installs | `overcode hooks install` |
 |---|---|---|
 | unset / `claude-code` | `npm i -g @anthropic-ai/claude-code` | yes |
 | `opencode` | `npm i -g opencode-ai@latest` | skipped — no settings.json hook protocol |
-| `codex` | ❌ not wired yet (Phase 5) | — |
-| `grok` | ❌ not wired yet (Phase 5) | — |
+| `codex` | `npm i -g @openai/codex` | skipped — hooks are per-launch `-c hooks...` argv, not a settings file |
+| `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` (no npm package) | skipped — hooks are the global `~/.grok/hooks/overcode.json` file |
 
-opencode's telemetry still reaches the host: the plugin is staged into the
-project directory, which is bind-mounted as `/workspace`, and the hook-state
-exchange directory is already mounted at `/overcode-state`. Provider
-credentials present in your shell (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`OPENROUTER_API_KEY`, `GEMINI_API_KEY`) are forwarded into the container.
-codex's devcontainer install case (`npm i -g @openai/codex`) and its
-`~/.codex/auth.json` mounting story land in Phase 5, alongside grok's (`curl
--fsSL https://x.ai/cli/install.sh | bash` and a `~/.grok/auth.json` mounting
-story of its own — a subscription-gated login, unlike codex/opencode's
-API-key-friendly auth, so container support may turn out unsupported rather
-than merely unwired; that verdict is deferred to Phase 5's single container
-smoke test).
+opencode's and codex's telemetry reach the host without any extra mount:
+opencode's plugin is staged into the project directory, which is
+bind-mounted as `/workspace`; codex's hooks are injected via argv on every
+launch, same as outside a container. grok's global hooks file
+(`~/.grok/hooks/overcode.json`) is written to the *host's* home directory by
+`GrokBackend.prepare_launch()`, not inside the container — it has no effect
+on a grok process running inside the container's own filesystem unless you
+mount it in yourself. All backends' hook-state exchange directory is already
+mounted at `/overcode-state`. Provider credentials present in your shell
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+`GEMINI_API_KEY`, `XAI_API_KEY`) are forwarded into the container.
+
+**grok's container auth story is unverified, not confirmed unsupported.**
+Unlike codex/opencode's API-key-friendly auth, grok's normal path is a
+SuperGrok/X Premium+ subscription login that writes `~/.grok/auth.json` on
+the host. `XAI_API_KEY` is forwarded if set, but whether grok's interactive
+browser login flow even works from inside a container's tmux pane has not
+been tested with a live docker build (out of scope for this pass — see
+`wrappers/README.md`). If you need grok to skip that login, mount your host
+`~/.grok` into the container at the same path yourself; the wrapper does not
+do this automatically, and doing so also would not install the global hooks
+file (which the host-side launch already staged at `~/.grok/hooks/` on the
+host, not the container).
 
 ---
 

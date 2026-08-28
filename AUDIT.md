@@ -3,7 +3,7 @@
 **Date:** 2026-03-11
 **Scope:** All `.py` files in `src/overcode/`, `src/overcode/cli/`, `src/overcode/tui_actions/`, `src/overcode/tui_widgets/`
 **Issues found:** 213 (74 active, 109 completed, 27 deferred, 3 informational)
-**Last updated:** 2026-08-20 — Batch 13 (agent-agnostic backends) closed issues 5, 150, 198.
+**Last updated:** 2026-08-28 — Batch 14 (codex + grok backends, 0.6.0) — no numbered issues closed, documented for continuity with Batch 13.
 
 ## Summary by Category
 
@@ -475,6 +475,28 @@ both for one release.
 Still open and now scoped by the seam:
 
 - **197.** Session→dict mapping duplication (`Session.to_dict`, `data_export`, `web_api`) — `to_dict` now also dual-writes the pre-Phase-6 keys, so the divergence between these four mappings is worth collapsing before the aliases are dropped.
+
+### Batch 14 — Codex + Grok Backends (0.6.0, Aug 2026)
+
+Landed as `docs/design/agent-backends-codex-grok.md`. Two more `AgentBackend`
+adapters (`backends/codex.py`, `backends/grok.py`) on the seam Batch 13 built,
+proving it out on a second pair of CLIs — codex's subcommand-first argv
+(`codex resume <id>` vs everyone else's flag-shaped resume) and grok's
+session-id prescription/permission-allowlist/fork-prescribes-a-new-id were
+the two genuinely new shapes the seam had to absorb without a protocol
+change. No numbered issues from the Active list above were closed by this
+batch (it is new adapters and docs, not a refactor of existing code), but it
+is worth recording for continuity with Batch 13's "claude command rebuilt
+inline" family: codex/grok both go through the same
+`backend.build_command(LaunchSpec)` render point from day one, so none of
+that duplication family reopened for the third/fourth backend.
+
+Also in this batch: opencode's Ancillary true-bypass item (`OPENCODE_PERMISSION`
+in `env_prefix()`), `codex`/`grok` `pricing.py` entries, devcontainer wrapper
+cases for both, and a cross-backend sweep test
+(`tests/unit/test_cross_backend_sweep.py`) asserting the registry, BKD
+badges, new-agent modal, and `overcode doctor` all handle a fleet mixing
+all four backends without a crash.
 
 ---
 ---

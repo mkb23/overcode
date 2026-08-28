@@ -50,6 +50,38 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "gpt-4o":      ModelPricing(input=2.50, output=10.0),
     "gpt-4-turbo": ModelPricing(input=10.0, output=30.0),
     "gpt-3.5":     ModelPricing(input=0.50, output=1.50),
+    # Codex CLI's account-default model (Appendix A of
+    # docs/design/agent-backends-codex-grok.md — the bare id codex's `-m`
+    # flag takes). Standard-tier, short-context (<128k) API pricing, sourced
+    # from OpenAI's own pricing docs (developers.openai.com/api/docs/pricing,
+    # verified Aug 28, 2026): $4.00 / $20.00 per million input/output tokens,
+    # $0.40 cached-input. This is promotional pricing OpenAI has said runs
+    # through ~Nov 21, 2026 (a 20%+ cut from the July list price); it may
+    # revert afterward. codex is subscription/ChatGPT-billed with no local
+    # per-turn cost recorded (see codex_stats.py), so this entry only feeds
+    # the cost *estimate* `CodexStatsReader`'s caller falls back to — not a
+    # verified-against-a-real-invoice figure the way the Claude table is.
+    # Batch/Flex/Fast-mode and long-context (>=128k) tiers are cheaper/pricier
+    # respectively and are not modelled here — overcode has no signal for
+    # which tier a given codex turn ran under.
+    "gpt-5.6-sol": ModelPricing(input=4.0, output=20.0, cache_read=0.40),
+    # Grok Build's account-default models (Appendix B of the same design
+    # doc). Standard-tier, short-context (<200k) API pricing, sourced from
+    # xAI's own docs (docs.x.ai/docs/models, verified Aug 28, 2026). Unlike
+    # codex, grok's `GrokStatsReader` reads a real local `costUsdTicks`
+    # figure per turn (billing-accurate, not an estimate) — these entries are
+    # the *fallback* pricing.py path uses only when that figure is
+    # unavailable, and were cross-checked against Phase 4's real stored-cost
+    # sample (a ~4.13M-input-token/3.34M-cached/137k-output batch billed at
+    # 7,295,125,400 costUsdTicks = $7.295): the long-context tier below
+    # ($4.00/$1.00 cached/$12.00) prices that same batch at ~$8.15, within
+    # ~12% of the real billed figure — consistent with a session whose
+    # per-call context had grown past the 200k long-context threshold.
+    # Long-context tiers (>=200k tokens, billed on the *whole* request) and
+    # the grok-4.6-vs-4.5 cached-input difference are not modelled here;
+    # standard-tier short-context rates are the representative value.
+    "grok-4.6":    ModelPricing(input=2.0, output=6.0, cache_read=0.50),
+    "grok-4.5":    ModelPricing(input=2.0, output=6.0, cache_read=0.30),
 }
 
 

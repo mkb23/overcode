@@ -74,6 +74,26 @@ _NEVER = r"(?!)"
 # Same idea for substring fields — NUL never appears in captured pane text.
 _NEVER_SUBSTRING = "\x00"
 
+# Ancillary (post-Phase-5) true bypass: every per-tool key opencode's own
+# published config schema (https://opencode.ai/config.json,
+# `$defs.PermissionConfig`) recognizes, each forced to "allow". Live-verified
+# Aug 28, 2026 (opencode v1.18.23) via `opencode debug config`: a scratch
+# project's `opencode.json` setting `{"bash":"deny","edit":"deny",
+# "webfetch":"deny"}`, launched with `OPENCODE_PERMISSION` carrying this exact
+# key set at "allow", produced a resolved config with every key "allow" —
+# project-level deny rules did not win. A `"*"` wildcard key was also tried
+# and did **not** override the explicit deny keys (it was merged in
+# alongside them, inert) — confirming the design doc's caution that only
+# explicit per-tool keys are the verified-safe grammar.
+OPENCODE_ALLOW_EVERYTHING_PERMISSION: Dict[str, str] = {
+    key: "allow"
+    for key in (
+        "read", "edit", "glob", "grep", "list", "bash", "task",
+        "external_directory", "lsp", "skill", "todowrite", "question",
+        "webfetch", "websearch", "doom_loop",
+    )
+}
+
 
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
     """Extract a (major, minor, patch) tuple from `opencode --version` output.
@@ -474,15 +494,37 @@ class OpencodeBackend:
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
         """opencode reads provider credentials from the ambient environment.
 
-        The one thing that must be forwarded is ``OVERCODE_STATE_DIR``: the
-        plugin runs inside the opencode process and has to write hook state
-        where this overcode instance reads it. ``OVERCODE_SESSION_NAME`` and
-        ``OVERCODE_TMUX_SESSION`` are already in the launcher's shared prefix.
+        The one thing that must be forwarded unconditionally is
+        ``OVERCODE_STATE_DIR``: the plugin runs inside the opencode process
+        and has to write hook state where this overcode instance reads it.
+        ``OVERCODE_SESSION_NAME`` and ``OVERCODE_TMUX_SESSION`` are already in
+        the launcher's shared prefix.
+
+        In **bypass** mode only (never permissive — see
+        ``docs/backends.md``'s "Permission modes" section), also sets
+        ``OPENCODE_PERMISSION`` to an allow-everything JSON blob. Both
+        overcode modes still pass ``--auto`` on the command line (opencode
+        has no second, stronger flag the way Claude/codex/grok do), but
+        `--auto` alone leaves the project's own ``"deny"`` rules in force —
+        closer to Claude's `dontAsk` than to
+        `--dangerously-skip-permissions`. ``OPENCODE_PERMISSION`` is merged
+        into opencode's resolved config *after* project config (live-verified
+        via `opencode debug config`, Ancillary section of the design doc), so
+        it genuinely overrides deny rules a `--auto`-only launch could not —
+        no file written, nothing to clean up, gone the moment the process
+        that set it exits.
         """
+        env: Dict[str, str] = {}
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
-        if not state_dir:
-            return {}
-        return {"OVERCODE_STATE_DIR": shlex.quote(state_dir)}
+        if state_dir:
+            env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)
+
+        if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
+            env["OPENCODE_PERMISSION"] = shlex.quote(
+                json.dumps(OPENCODE_ALLOW_EVERYTHING_PERMISSION)
+            )
+
+        return env
 
     def graceful_exit_keys(self) -> List[KeyPress]:
         # Ctrl-C kills opencode outright (verified), so the interrupt step
@@ -640,6 +682,7 @@ def version_findings(version: Optional[str] = None) -> List[str]:
 
 
 __all__ = [
+    "OPENCODE_ALLOW_EVERYTHING_PERMISSION",
     "OPENCODE_GLOBAL_CONFIG_NAMES",
     "OPENCODE_PATTERNS",
     "PLUGIN_DIR_PARTS",

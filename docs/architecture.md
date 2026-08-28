@@ -54,13 +54,13 @@ The core data pipeline is simple: tmux panes are scraped for status, the monitor
 
 1. **Status Detection** — Two detectors scrape each agent's state:
    - `PollingStatusDetector`: regex-matches captured tmux pane content against the session's backend `StatusPatterns`
-   - `HookStatusDetector`: reads hook-state files (Claude Code's hook system, or opencode's bundled plugin) — authoritative when fresh
+   - `HookStatusDetector`: reads hook-state files (Claude Code's hook system, opencode's bundled plugin, codex's per-launch `-c hooks...` injection, or grok's global hooks file) — authoritative when fresh
    - `StatusDetectorDispatcher`: picks hooks-vs-polling **per session**, from the backend's `HOOK_EVENTS` capability plus any per-agent override
 
 2. **Monitor Daemon** (~2s loop) — The single source of truth:
    - Runs status detection for all registered sessions
    - Accumulates green/non-green time via pure `monitor_daemon_core` functions
-   - Syncs token/cost data through the session's `StatsReader` (Claude Code transcripts, opencode's SQLite store, or "unknown")
+   - Syncs token/cost data through the session's `StatsReader` (Claude Code transcripts, opencode's SQLite store, codex's rollout JSONL, grok's `updates.jsonl`, or "unknown")
    - Manages heartbeat delivery, presence tracking, status history logging
    - Publishes `MonitorDaemonState` to `monitor_daemon_state.json` every iteration
 
@@ -127,25 +127,32 @@ Four modules implementing a dual-strategy pattern:
 - `settings.py` (493 lines): all path resolution, dataclasses for daemon/TUI/presence settings
 - `config.py` (300 lines): `~/.overcode/config.yaml` reader/writer
 
-## Agent Backends — 1,880 lines + 481 lines of JS
+## Agent Backends — 4,253 lines + 481 lines of JS
 
-Overcode drives two agent CLIs, Claude Code and opencode. Everything that
-differs between them lives behind one seam, `src/overcode/backends/`:
+Overcode drives four agent CLIs: Claude Code, opencode, Codex CLI, and Grok
+Build. Everything that differs between them lives behind one seam,
+`src/overcode/backends/`:
 
 | Module | Lines | Role |
 |--------|-------|------|
-| `base.py` | 169 | `AgentBackend` protocol, `BackendCapability` flags, `LaunchSpec`, `KeyPress`/`DialogRule` |
-| `__init__.py` | 164 | Registry (`get_backend`), capability resolution and (de)serialization |
+| `base.py` | 182 | `AgentBackend` protocol, `BackendCapability` flags, `LaunchSpec`, `KeyPress`/`DialogRule` |
+| `__init__.py` | 170 | Registry (`get_backend`), capability resolution and (de)serialization |
 | `claude_code.py` | 241 | Claude Code adapter — argv grammar, `--settings` hook injection, gestures |
-| `opencode.py` | 665 | opencode adapter, its `StatusPatterns` set, version guardrails |
+| `opencode.py` | 708 | opencode adapter, its `StatusPatterns` set, version guardrails, bypass-mode `OPENCODE_PERMISSION` |
 | `opencode_stats.py` | 641 | Read-only SQLite reader over opencode's session store |
 | `opencode_plugin/overcode-telemetry.js` | 481 | Bundled opencode plugin; translates bus events into overcode's hook-state files |
+| `codex.py` | 581 | Codex adapter — subcommand-first argv (`resume`/`fork`), per-launch `-c 'hooks.<Event>=...'` injection |
+| `codex_stats.py` | 483 | Read-only rollout-JSONL reader over codex's own transcript files |
+| `grok.py` | 847 | Grok adapter — session-id prescription, permission allowlist, global hooks file |
+| `grok_stats.py` | 400 | Read-only reader over grok's `updates.jsonl`/`summary.json`/`prompt_history.jsonl` |
 
 **The seam.** A `Session.backend` discriminator (default `"claude-code"`)
 resolves to an adapter. `launcher._send_launch_for_session` is the single
 render point for launch, restart, revive and fork, so one `build_command(spec)`
 call covers every path. `backend.prepare_launch()` runs the side effects a CLI
-needs before it starts — nothing for Claude Code, plugin staging for opencode.
+needs before it starts — nothing for Claude Code or codex (codex's telemetry
+is pure argv, injected in `build_command()` itself), plugin staging for
+opencode, a global hooks-file write for grok.
 
 **Capability model.** `BackendCapability` is a `Flag` (`RESUME`, `FORK`,
 `SESSION_ID_PRESCRIPTION`, `HOOK_EVENTS`, `TRANSCRIPT_STATS`,
@@ -160,21 +167,33 @@ predates this reports nothing and is read as claude-code with everything on.
 **Where the per-backend knowledge lives.**
 
 - *Chrome / patterns* — `StatusPatterns` instances (`DEFAULT_PATTERNS` for
-  Claude Code, `OPENCODE_PATTERNS` in `backends/opencode.py`), selected per
-  session by `get_patterns(backend_name)`. Grounded in committed pane corpora
-  (`tests/fixtures_realistic.py`, `tests/fixtures_opencode_panes/`), which
-  double as drift tripwires.
+  Claude Code, `OPENCODE_PATTERNS`/`CODEX_PATTERNS`/`GROK_PATTERNS` in their
+  respective adapter modules), selected per session by
+  `get_patterns(backend_name)`. Grounded in committed pane corpora
+  (`tests/fixtures_realistic.py`, `tests/fixtures_opencode_panes/`,
+  `tests/fixtures_codex_panes/`, `tests/fixtures_grok_panes/`), which double
+  as drift tripwires.
 - *Stats* — the `StatsReader` protocol in `stats_reader.py`.
   `ClaudeStatsReader` wraps `history_reader`; `OpencodeStatsReader` queries
-  SQLite; `NullStatsReader` answers "unknown" for backends with neither.
+  SQLite; `CodexStatsReader` scans the rollout JSONL (tokens/context accurate,
+  cost a list-price estimate — no local per-turn charge to bill against);
+  `GrokStatsReader` reads a full, genuinely billing-accurate token/cost split
+  from `updates.jsonl`; `NullStatsReader` answers "unknown" for backends with
+  neither.
 - *Telemetry* — the hook-state file format (`hook_state_<agent>.json`,
   `hook_events_<agent>.jsonl`) is overcode's own neutral schema. Claude Code
   fills it via `--settings` hooks calling `overcode hook-handler`; opencode
-  fills it from the bundled plugin. Any backend that can write those files
-  gets the full `HookStatusDetector` experience for free.
+  fills it from the bundled plugin; codex fills it from per-launch `-c
+  'hooks.<Event>=[...]'` config overrides plus
+  `--dangerously-bypass-hook-trust` (snake_case stdin, close enough to
+  Claude's own that little dialect translation is needed); grok fills it from
+  a global, inert-outside-overcode `~/.grok/hooks/overcode.json` file
+  (camelCase stdin, translated by `hook_handler._normalize_hook_payload()`).
+  Any backend that can write those files gets the full `HookStatusDetector`
+  experience for free.
 
 Design and support matrix: `docs/design/agent-agnostic-backends-opencode.md`,
-`docs/backends.md`.
+`docs/design/agent-backends-codex-grok.md`, `docs/backends.md`.
 
 ## Agent Integration — 1,498 lines
 

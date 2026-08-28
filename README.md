@@ -1,6 +1,6 @@
 # overcode
 
-A TUI supervisor for managing multiple coding agents (Claude Code, opencode) in tmux.
+A TUI supervisor for managing multiple coding agents (Claude Code, opencode, Codex, Grok) in tmux.
 
 Launch autonomous coding agents, monitor their progress in real-time, track costs and activity, and coordinate work across your projects—all from a single dashboard.
 
@@ -39,7 +39,7 @@ overcode tmux
 
 This creates a split layout: the overcode dashboard on top, the focused agent's live terminal on the bottom. Navigate agents with `j/k` — the bottom pane follows automatically. Press `Tab` to toggle focus between panes.
 
-**Requirements:** Python 3.12+, tmux, and an agent CLI — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [opencode](https://opencode.ai)
+**Requirements:** Python 3.12+, tmux, and an agent CLI — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [opencode](https://opencode.ai), [Codex CLI](https://github.com/openai/codex), or [Grok Build](https://x.ai)
 
 See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 
@@ -87,15 +87,16 @@ Run agents in custom environments — containers, VMs, or any setup your project
 See the [Wrappers Guide](docs/wrappers.md) for setup and customisation.
 
 ### Agent Backends
-Overcode is not Claude-Code-only. Launch an [opencode](https://opencode.ai) agent with
-`overcode launch -n my-agent --backend opencode` and it appears in the same dashboard with
-live hook-grade status, previews, AI summaries, send-instruction, restart, kill, resume,
-fork, and token/cost/context columns. Backends declare their capabilities, so the
-Claude-only subsystems — skills, the sandbox badge, the subscription-usage widget, agent
-teams — are hidden rather than shown as misleading zeros. A backend badge column appears
-only when your fleet actually mixes backends, so a Claude-only setup looks exactly as it
-did. See the [Backends Guide](docs/backends.md) for the full support matrix, flag mapping,
-and current limitations.
+Overcode is not Claude-Code-only. It supports four agent CLIs today: Claude Code, opencode,
+Codex, and Grok. Launch a non-default one with `overcode launch -n my-agent --backend
+opencode` (or `codex` / `grok`) and it appears in the same dashboard with live hook-grade
+status, previews, AI summaries, send-instruction, restart, kill, resume, fork, and
+token/cost/context columns. Backends declare their capabilities, so the Claude-only
+subsystems — skills, the sandbox badge, the subscription-usage widget, agent teams — are
+hidden rather than shown as misleading zeros. A backend badge column appears only when your
+fleet actually mixes backends, so a Claude-only setup looks exactly as it did. See the
+[Backends Guide](docs/backends.md) for the full support matrix, flag mapping, and current
+limitations.
 
 ### Sister Integration
 Aggregate agents from multiple machines into one dashboard:

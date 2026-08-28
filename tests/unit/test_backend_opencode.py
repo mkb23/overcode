@@ -6,7 +6,9 @@ absent: `--permissions`, which the design research expected and v1.18.19
 does not have.
 """
 
+import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +26,7 @@ from overcode.backends import (
     supports,
 )
 from overcode.backends.opencode import (
+    OPENCODE_ALLOW_EVERYTHING_PERMISSION,
     PLUGIN_FILENAME,
     PLUGIN_MARKER,
     OpencodeBackend,
@@ -306,6 +309,43 @@ class TestEnvPrefix:
         env.pop("OVERCODE_STATE_DIR", None)
         with patch.dict(os.environ, env, clear=True):
             assert backend.env_prefix(LaunchSpec()) == {}
+
+    # Ancillary — true bypass-permissions. bypass gets OPENCODE_PERMISSION;
+    # permissive and normal must not, since --auto (which both still get on
+    # the command line) already covers their honest, deny-rules-still-win
+    # behaviour — only bypass claims to actually override deny rules.
+    @pytest.mark.parametrize("spec_kwargs", [
+        {"permissiveness_mode": "bypass"},
+        {"dangerously_skip_permissions": True},
+    ])
+    def test_bypass_mode_sets_opencode_permission(self, backend, spec_kwargs):
+        env = dict(os.environ)
+        env.pop("OVERCODE_STATE_DIR", None)
+        with patch.dict(os.environ, env, clear=True):
+            result = backend.env_prefix(LaunchSpec(**spec_kwargs))
+        assert "OPENCODE_PERMISSION" in result
+        decoded = json.loads(shlex.split(result["OPENCODE_PERMISSION"])[0])
+        assert decoded == OPENCODE_ALLOW_EVERYTHING_PERMISSION
+        assert all(value == "allow" for value in decoded.values())
+
+    @pytest.mark.parametrize("spec_kwargs", [
+        {"permissiveness_mode": "permissive"},
+        {"skip_permissions": True},
+        {"permissiveness_mode": "normal"},
+        {},
+    ])
+    def test_non_bypass_modes_do_not_set_opencode_permission(self, backend, spec_kwargs):
+        env = dict(os.environ)
+        env.pop("OVERCODE_STATE_DIR", None)
+        with patch.dict(os.environ, env, clear=True):
+            result = backend.env_prefix(LaunchSpec(**spec_kwargs))
+        assert "OPENCODE_PERMISSION" not in result
+
+    def test_bypass_mode_still_forwards_state_dir(self, backend):
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": "/tmp/state dir"}):
+            result = backend.env_prefix(LaunchSpec(permissiveness_mode="bypass"))
+        assert result["OVERCODE_STATE_DIR"] == "'/tmp/state dir'"
+        assert "OPENCODE_PERMISSION" in result
 
 
 class TestDetectionMode:
