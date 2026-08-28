@@ -403,22 +403,40 @@ class TestModelShortName:
     def test_known_models_get_short_names(self):
         from overcode.history_reader import model_short_name
         assert model_short_name("claude-opus-4-6") == "Op4.6"
-        assert model_short_name("gpt-5.6-sol") == "5.6Sol"
-        assert len(model_short_name("gpt-5.6-sol")) <= 6
+        assert model_short_name("gpt-5.6-sol") == "G5.6Sol"
         assert model_short_name("grok-4.6") == "Gk4.6"
         assert model_short_name("glm-4.6") == "GLM4.6"
         assert model_short_name("kimi-k2.6") == "K2.6"
 
+    def test_every_table_entry_fits_the_mdl_column(self):
+        """The whole point of the table: nothing it emits gets truncated."""
+        from overcode.history_reader import MODEL_SHORT_NAMES, MODEL_SHORT_NAME_MAX_LEN
+        over = {k: v for k, v in MODEL_SHORT_NAMES.items()
+                if len(v) > MODEL_SHORT_NAME_MAX_LEN}
+        assert over == {}
+
     def test_opencode_qualified_id_uses_bare_short_name(self):
         """Without qualifier-stripping this used to render as the literal
-        provider name ("openai") once truncated to the MDL column's 6-char
-        budget — a second, cosmetic symptom of the same #469 root cause."""
+        provider name ("openai") once truncated to the MDL column budget —
+        a second, cosmetic symptom of the same #469 root cause."""
         from overcode.history_reader import model_short_name
-        assert model_short_name("openai/gpt-5.6-sol") == "5.6Sol"
+        assert model_short_name("openai/gpt-5.6-sol") == "G5.6Sol"
 
-    def test_unrecognized_model_shows_bare_id_not_qualified(self):
+    def test_unknown_models_get_rule_based_short_names(self):
+        """Ids outside the table degrade via family rules, not a prefix
+        chop — 'claude-3-7-sonnet-20250219' used to render as 'claude'."""
         from overcode.history_reader import model_short_name
-        assert model_short_name("openai/some-brand-new-model") == "some-brand-new-model"
+        assert model_short_name("claude-3-7-sonnet-20250219") == "Sn3.7"
+        assert model_short_name("gpt-4o") == "G4o"
+        assert model_short_name("gpt-4.1-mini") == "G4.1Mn"
+        assert model_short_name("o4-mini") == "o4Mn"
+        assert model_short_name("gemini-2.5-pro") == "Gm2.5P"
+        assert model_short_name("deepseek-v3.2") == "DSV3.2"
+        assert model_short_name("claude") == "Claude"
+
+    def test_unrecognized_family_condenses_and_never_shows_qualifier(self):
+        from overcode.history_reader import model_short_name
+        assert model_short_name("openai/some-brand-new-model") == "SomeBrandNewModel"
 
     def test_none_or_empty(self):
         from overcode.history_reader import model_short_name

@@ -113,6 +113,14 @@ DEFAULT_CONTEXT_WINDOW = 200_000  # Retained for callers predating #469; no
                                    # model_context_window() itself.
 
 # Model ID → human-readable short name for display (MDL column).
+#
+# Style contract: every value is at most MODEL_SHORT_NAME_MAX_LEN chars and
+# starts with a family tag (Fb/Op/Sn/Hk for Claude, G for GPT, Gk for Grok,
+# GLM, K for Kimi) so mixed fleets read consistently. Ids not listed here
+# fall back to the rule-based shortener below — this table is only for
+# spellings the rules can't derive.
+MODEL_SHORT_NAME_MAX_LEN = 7
+
 MODEL_SHORT_NAMES: Dict[str, str] = {
     "claude-fable-5": "Fb5",
     "claude-opus-4-8": "Op4.8",
@@ -127,13 +135,13 @@ MODEL_SHORT_NAMES: Dict[str, str] = {
     "claude-3-sonnet-20240229": "Sn3",
     "claude-3-haiku-20240307": "Hk3",
 
-    # OpenAI / codex (#469) — "gpt-" prefix stripped, suffix abbreviated.
-    "gpt-5-codex": "5Cdx",
-    "gpt-5.1-codex-max": "5.1Max",
-    "gpt-5.1-codex-mini": "5.1Mn",
-    "gpt-5.4": "GPT5.4",
-    "gpt-5.6-sol": "5.6Sol",
-    "gpt-5.6-terra": "5.6Ter",
+    # OpenAI / codex (#469) — G + version + abbreviated variant.
+    "gpt-5-codex": "G5Cdx",
+    "gpt-5.1-codex-max": "G5.1Max",
+    "gpt-5.1-codex-mini": "G5.1Mn",
+    "gpt-5.4": "G5.4",
+    "gpt-5.6-sol": "G5.6Sol",
+    "gpt-5.6-terra": "G5.6Ter",
 
     # xAI Grok (#469).
     "grok-4.6": "Gk4.6",
@@ -147,6 +155,91 @@ MODEL_SHORT_NAMES: Dict[str, str] = {
     "kimi-k2.5": "K2.5",
     "kimi-k2-thinking": "K2Thk",
 }
+
+# Variant suffixes the rule-based shortener abbreviates ("-mini" → "Mn"…).
+_VARIANT_ABBREVIATIONS: Dict[str, str] = {
+    "mini": "Mn",
+    "nano": "Nn",
+    "max": "Max",
+    "codex": "Cdx",
+    "turbo": "T",
+    "pro": "P",
+    "flash": "F",
+    "lite": "L",
+    "thinking": "Thk",
+    "instruct": "In",
+    "chat": "",
+    "latest": "",
+    "preview": "",
+}
+
+_CLAUDE_FAMILY_TAGS: Dict[str, str] = {
+    "fable": "Fb",
+    "opus": "Op",
+    "sonnet": "Sn",
+    "haiku": "Hk",
+}
+
+_FAMILY_PREFIX_TAGS = [
+    # (id prefix, display tag) — longest-match order.
+    ("gpt-", "G"),
+    ("grok-", "Gk"),
+    ("glm-", "GLM"),
+    ("gemini-", "Gm"),
+    ("kimi-", "K"),
+    ("deepseek-", "DS"),
+    ("qwen", "Qw"),
+    ("llama-", "Lm"),
+    ("mistral-", "Ms"),
+]
+
+_DATE_SUFFIX_RE = re.compile(r"-20\d{6}$")
+
+
+def _heuristic_short_name(bare: str) -> str:
+    """Rule-based fallback for model ids not in MODEL_SHORT_NAMES.
+
+    Aims for the same family-tag + version style as the table so an
+    unfamiliar id degrades to something like ``Sn3.7`` or ``G4.1Mn``
+    rather than a blunt prefix chop ("claude", "gpt-4o"). Never raises;
+    the worst case is the cleaned id itself (renderers still truncate).
+    """
+    bare = _DATE_SUFFIX_RE.sub("", bare.strip().lower())
+    if not bare:
+        return ""
+
+    # Claude ids carry family + digits in either order (claude-opus-4-8,
+    # claude-3-7-sonnet). Find the family word, then join every digit
+    # group with dots: Sn3.7, Op4.8, Fb5.
+    if bare.startswith("claude"):
+        for family, tag in _CLAUDE_FAMILY_TAGS.items():
+            if family in bare:
+                digits = re.findall(r"\d+", bare)
+                return tag + ".".join(digits)
+        return "Claude"
+
+    # o-series reasoning models are already short (o3, o4-mini).
+    if re.match(r"^o\d", bare):
+        head, _, variant = bare.partition("-")
+        return head + _VARIANT_ABBREVIATIONS.get(variant, variant.title())
+
+    for prefix, tag in _FAMILY_PREFIX_TAGS:
+        if bare.startswith(prefix):
+            rest = bare[len(prefix):]
+            parts = [p for p in rest.split("-") if p]
+            out = tag
+            for part in parts:
+                if part in _VARIANT_ABBREVIATIONS:
+                    out += _VARIANT_ABBREVIATIONS[part]
+                elif re.fullmatch(r"[\d.]+", part):
+                    out += part
+                else:
+                    out += part[:1].upper() + part[1:]
+            return out
+
+    # Unknown family: drop hyphens, title-case the chunks, let the
+    # renderer truncate to its column width.
+    return "".join(p[:1].upper() + p[1:] for p in bare.split("-") if p)
 
 
 def _bare_model_id(model: str) -> str:
@@ -180,7 +273,10 @@ def model_short_name(model: Optional[str]) -> str:
     if not model:
         return ""
     bare = _bare_model_id(model)
-    return MODEL_SHORT_NAMES.get(bare, bare)
+    known = MODEL_SHORT_NAMES.get(bare)
+    if known is not None:
+        return known
+    return _heuristic_short_name(bare) or bare
 
 
 def model_context_window(model: Optional[str]) -> Optional[int]:

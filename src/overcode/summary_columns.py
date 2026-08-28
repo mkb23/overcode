@@ -547,12 +547,17 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_model(ctx: ColumnContext) -> ColumnOutput:
-    """Model name. Only visible when any agent has a model set."""
+    """Model name. Only visible when any agent has a model set.
+
+    Width 8 (space + 7): sized so every MODEL_SHORT_NAMES entry and the
+    rule-based fallback's common shapes (Sn3.7, G5.6Sol, GLM4.6) fit
+    untruncated across a four-backend fleet.
+    """
     if not ctx.model:
-        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("       -", ctx.mono(f"dim{ctx.bg}", "dim"))]
     from .history_reader import model_short_name
-    display = model_short_name(ctx.model)[:6]
-    return [(f" {display:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+    display = model_short_name(ctx.model)[:7]
+    return [(f" {display:>7}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
 
 
 def render_model_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1384,7 +1389,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
                   label="Model", render_plain=render_model_plain,
                   visible=lambda ctx: ctx.any_has_model,
-                  placeholder_width=6, header="MDL", name="Model"),
+                  placeholder_width=8, header="MDL", name="Model"),
     SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
                   label="Provider", render_plain=render_provider_plain,
                   visible=lambda ctx: ctx.any_has_provider,
