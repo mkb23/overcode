@@ -1,4 +1,4 @@
-"""Cross-backend sweep — 0.6.0 hardening pass.
+"""Cross-backend sweep — 0.5.1 hardening pass.
 
 Phase 5 of docs/design/agent-backends-codex-grok.md asks for one place that
 proves the four backends (claude-code, opencode, codex, grok) behave
@@ -195,7 +195,7 @@ class TestDoctorOverAFourBackendFleet:
             sess.name: AgentHealth(
                 name=sess.name,
                 tmux_window=sess.tmux_window,
-                launcher_version="0.6.0",
+                launcher_version="0.5.1",
                 claude_pid=1000,
                 claude_argv=f"{get_backend(sess.backend).binary} --settings x",
                 verdict=VERDICT_OK,
@@ -221,7 +221,7 @@ class TestDoctorOverAFourBackendFleet:
             sess.name: AgentHealth(
                 name=sess.name,
                 tmux_window=sess.tmux_window,
-                launcher_version="0.6.0",
+                launcher_version="0.5.1",
                 claude_pid=1000,
                 claude_argv=get_backend(sess.backend).binary,
                 verdict=VERDICT_MISSING_SETTINGS,

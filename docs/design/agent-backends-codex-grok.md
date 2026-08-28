@@ -6,10 +6,10 @@
 **Scope:** Adding OpenAI Codex CLI and xAI Grok Build as overcode's third and fourth agent backends, on the `AgentBackend` seam shipped in 0.5.0
 **Predecessor:** `docs/design/agent-agnostic-backends-opencode.md` — read its §2 (architecture) and its shipped-notes first; this plan assumes that seam and does not re-explain it.
 
-> **Shipped, 0.6.0.** All five phases plus the opencode Ancillary item
+> **Shipped, 0.5.1.** All five phases plus the opencode Ancillary item
 > landed. User-facing documentation is `docs/backends.md`; the architecture
 > write-up is `docs/architecture.md` (§Agent Backends); release notes are
-> `docs/release-notes-0.6.0.md`. Where reality diverged from this plan, the
+> `docs/release-notes-0.5.1.md`. Where reality diverged from this plan, the
 > phase sections and Appendices A/B below carry dated notes and remain the
 > authority on codex's and grok's actual behaviour. The headline
 > divergences, collected from each phase's own shipped-notes:
@@ -46,7 +46,7 @@
 >    session id** (`fork_prescribes_new_session_id = True`, Phase 3) — unlike
 >    Claude Code (also `SESSION_ID_PRESCRIPTION`, but keeps the CLI's own
 >    forked id) or codex/opencode (no prescription at all).
-> 6. **Codex's cost column was never a dash, and by 0.6.0 it's a sourced
+> 6. **Codex's cost column was never a dash, and by 0.5.1 it's a sourced
 >    estimate, not a placeholder.** Phase 2 found `monitor_daemon.py`'s cost
 >    estimator already, app-wide, falls back to the user's *configured
 >    default* per-token price for any unrecognized model — so an unpriced
@@ -193,7 +193,7 @@ nothing but time.
 **Recommended shape:** five implementation phases after a verification phase.
 Codex first (richer stats, explicitly requested first), then Grok, then
 hardening. Each phase is sized for one agent session and leaves `main`
-shippable. Target release: **0.6.0**.
+shippable. Target release: **0.5.1**.
 
 ---
 
@@ -922,7 +922,7 @@ running; a second, non-overcode `grok` session in another terminal fires no
 overcode hooks (inertness proof); stats columns show exactly the declared
 subset, dashes elsewhere; suite green.
 
-### Phase 5 — Hardening, docs, release 0.6.0
+### Phase 5 — Hardening, docs, release 0.5.1
 
 **Objective:** four-backend polish; nothing new, everything honest.
 
@@ -941,12 +941,12 @@ subset, dashes elsewhere; suite green.
    badges distinct; new-agent modal cycles all four; supervisor context lines
    name each backend; `overcode send approve/reject` resolves per backend.
 4. Update this doc's status header to Shipped + divergence notes (the
-   opencode doc's convention); release notes `docs/release-notes-0.6.0.md`;
-   `AUDIT.md` entry; bump `pyproject.toml` to 0.6.0.
+   opencode doc's convention); release notes `docs/release-notes-0.5.1.md`;
+   `AUDIT.md` entry; bump `pyproject.toml` to 0.5.1.
 5. E2e: one mixed-fleet scenario with all four mocks alive in one dashboard.
 
 **Acceptance:** suite + e2e green; docs tables complete and each ✅ traceable
-to a phase acceptance run; 0.6.0 tagged notes drafted (not pushed until
+to a phase acceptance run; 0.5.1 tagged notes drafted (not pushed until
 review).
 
 ---
@@ -960,7 +960,7 @@ review).
 | 2 Codex telemetry | M-L | Medium-high (injection route) | Hooks-grade live acceptance |
 | 3 Grok MVP | M | Low-medium (grammar is Claude-shaped) | Prescription round-trip + smoke |
 | 4 Grok telemetry | M | Medium (dialect + event subtleties) | Inertness + waiting_approval live |
-| 5 Hardening + 0.6.0 | M | Low | Mixed-fleet e2e + docs audit |
+| 5 Hardening + 0.5.1 | M | Low | Mixed-fleet e2e + docs audit |
 
 Strict order: 0 → 1 → 2 and 0 → 3 → 4 (grok track depends only on Phase 0 +
 the shared dialect mechanism, which Phase 2 builds first — if tracks run in
@@ -1162,7 +1162,7 @@ its staged alpha CLI (`~/.codex/plugins/.plugin-appserver/codex`,
 
 ---
 
-## Post-0.6.0 hardening (Aug 28, 2026)
+## Post-0.5.1 hardening (Aug 28, 2026)
 
 Three small, surgical follow-ups landed after the phased plan above shipped,
 none touching the launch/status/stats seam itself:
@@ -1219,7 +1219,7 @@ none touching the launch/status/stats seam itself:
    `build_command()` emits `--session-id` alongside `--resume
    --fork-session` for forks specifically (never for a plain resume) —
    Claude forks get the same eager-binding treatment grok already had, no
-   discovery needed. See `docs/release-notes-0.6.0.md`'s Fixes section and
+   discovery needed. See `docs/release-notes-0.5.1.md`'s Fixes section and
    `tests/unit/test_launcher.py::TestForkSessionIdPrescriptionByBackend`.
 5. **Issue #469 — opencode context-window metadata.** Two independent bugs
    in the same code path: (a) `history_reader.model_context_window()`

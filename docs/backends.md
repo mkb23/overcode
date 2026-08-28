@@ -247,7 +247,7 @@ overcode gates UI actions and telemetry off them.
 ### Permission modes: permissive and bypass no longer collapse
 
 overcode has three modes; opencode has one command-line flag (`--auto`) plus,
-as of the Ancillary item shipped alongside 0.6.0, one env var
+as of the Ancillary item shipped alongside 0.5.1, one env var
 (`OPENCODE_PERMISSION`) that a genuinely stronger mode can use.
 
 - **normal** → no flag. opencode asks according to its own `permission`

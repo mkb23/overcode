@@ -3,7 +3,7 @@
 **Date:** 2026-03-11
 **Scope:** All `.py` files in `src/overcode/`, `src/overcode/cli/`, `src/overcode/tui_actions/`, `src/overcode/tui_widgets/`
 **Issues found:** 213 (74 active, 109 completed, 27 deferred, 3 informational)
-**Last updated:** 2026-08-28 — Batch 14 (codex + grok backends, 0.6.0) — no numbered issues closed, documented for continuity with Batch 13.
+**Last updated:** 2026-08-28 — Batch 14 (codex + grok backends, 0.5.1) — no numbered issues closed, documented for continuity with Batch 13.
 
 ## Summary by Category
 
@@ -476,7 +476,7 @@ Still open and now scoped by the seam:
 
 - **197.** Session→dict mapping duplication (`Session.to_dict`, `data_export`, `web_api`) — `to_dict` now also dual-writes the pre-Phase-6 keys, so the divergence between these four mappings is worth collapsing before the aliases are dropped.
 
-### Batch 14 — Codex + Grok Backends (0.6.0, Aug 2026)
+### Batch 14 — Codex + Grok Backends (0.5.1, Aug 2026)
 
 Landed as `docs/design/agent-backends-codex-grok.md`. Two more `AgentBackend`
 adapters (`backends/codex.py`, `backends/grok.py`) on the seam Batch 13 built,
