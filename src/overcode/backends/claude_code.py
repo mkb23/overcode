@@ -78,6 +78,20 @@ class ClaudeCodeBackend:
     )
     process_basenames = ("claude",)
     not_found_error = AgentCliNotFoundError
+
+    # Live-verified 2026-08-28 (#466): `claude --resume <id> --fork-session
+    # --session-id <new-uuid>` honors the prescribed id — the fork's
+    # transcript is written to `~/.claude/projects/<enc>/<new-uuid>.jsonl`
+    # (a full replay of the parent conversation plus the new turn), not a
+    # CLI-minted id. This corrects the launcher's prior assumption (see
+    # `launcher.py::_send_launch_for_session`) that Claude mints its own,
+    # different fork id and must rely on directory+time discovery — that
+    # discovery was the root cause of #466 (forking in a shared
+    # start_directory bound the wrong sibling's session id). Prescribing
+    # and eagerly binding the fork's id, the same treatment grok already
+    # gets, sidesteps discovery entirely for Claude forks too.
+    fork_prescribes_new_session_id = True
+
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK
@@ -124,8 +138,16 @@ class ClaudeCodeBackend:
             cmd = [claude_command]
 
         # Prescribe session ID so we know which session file belongs to
-        # this agent without needing PID-based discovery (#373).
-        if spec.prescribed_session_id and not spec.resume_session_id:
+        # this agent without needing PID-based discovery (#373). Forks are
+        # the one case where a prescribed id rides alongside --resume: the
+        # CLI honors --session-id together with --resume/--fork-session
+        # (live-verified #466), so a forking launch also gets eager binding
+        # instead of ambiguous directory+time discovery. A plain (non-fork)
+        # resume ignores any prescribed_session_id — you cannot rename an
+        # existing conversation, so build_command must not emit a spurious
+        # --session-id there even if the caller passed one (defense in
+        # depth; launcher.py never does in practice).
+        if spec.prescribed_session_id and (not spec.resume_session_id or spec.fork):
             cmd.extend(["--session-id", spec.prescribed_session_id])
 
         # Inject overcode hooks and permissions via --settings so launched

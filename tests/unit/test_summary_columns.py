@@ -735,6 +735,17 @@ class TestRenderContextUsage:
         assert result is not None
         assert "📚" in result[0][0]
 
+    def test_unrecognized_model_shows_dash_not_a_wrong_pct(self):
+        """#469: an unrecognized model's window is None — must render a
+        dash, never a percentage computed against some other model's
+        window. (Real tokens are known: current_context_tokens=11822,
+        mirroring the issue's own reported figures — only the window is
+        unknown.)"""
+        stats = _make_claude_stats(current_context_tokens=11822, max_context_tokens=None)
+        ctx = _make_ctx(claude_stats=stats)
+        result = render_context_usage(ctx)
+        assert "📚  -%" in result[0][0]
+
 
 class TestRenderCost:
     def test_renders_regardless_of_show_cost(self):
@@ -1238,6 +1249,12 @@ class TestRenderContextUsagePlain:
 
     def test_zero_context_returns_none(self):
         stats = _make_claude_stats(current_context_tokens=0)
+        ctx = _make_ctx(claude_stats=stats)
+        assert render_context_usage_plain(ctx) is None
+
+    def test_unrecognized_model_returns_none(self):
+        """#469: unknown window → None, not a percentage against a default."""
+        stats = _make_claude_stats(current_context_tokens=11822, max_context_tokens=None)
         ctx = _make_ctx(claude_stats=stats)
         assert render_context_usage_plain(ctx) is None
 

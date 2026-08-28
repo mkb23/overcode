@@ -563,11 +563,19 @@ def render_model_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
-    """Context window usage (📚XX%). Always visible."""
+    """Context window usage (📚XX%). Always visible.
+
+    Renders a dash when the model's context window is unknown (#469) —
+    never assumes a default window size, since that produces a plausible-
+    looking but wrong percentage (the original bug: an unrecognized model
+    silently priced against a 200K default that had nothing to do with the
+    real model in use).
+    """
     if ctx.claude_stats is not None and ctx.claude_stats.current_context_tokens > 0:
         max_context = ctx.claude_stats.max_context_tokens
-        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-        return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+        if max_context:
+            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
+            return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
     return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
@@ -1128,13 +1136,18 @@ def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
-    """Context window usage for CLI."""
+    """Context window usage for CLI.
+
+    None when the model's context window is unknown (#469) — same "assume
+    nothing" rule as render_context_usage above.
+    """
     if ctx.claude_stats is None:
         return None
     if ctx.claude_stats.current_context_tokens > 0:
         max_context = ctx.claude_stats.max_context_tokens
-        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-        return f"context {ctx_pct:.0f}%"
+        if max_context:
+            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
+            return f"context {ctx_pct:.0f}%"
     return None
 
 

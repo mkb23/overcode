@@ -166,6 +166,7 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
         "current_context_tokens": 0,
         "model": None,
         "interaction_count": 0,
+        "model_context_window": None,
     }
     for entry in _iter_jsonl(path):
         if not isinstance(entry, dict):
@@ -189,6 +190,16 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
                 out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
                 out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
                 out["current_context_tokens"] = _as_int(usage.get("total_tokens"))
+            # model_context_window is a sibling of total_token_usage inside
+            # `info`, not nested inside it (#469) — codex's own CLI reports
+            # this per token_count event; a running total like the usage
+            # fields, so "latest wins" here too. Preferred by
+            # AgentSessionStats.max_context_tokens over the static
+            # history_reader.MODEL_CONTEXT_WINDOWS table when present.
+            if isinstance(info, dict):
+                window = _as_int(info.get("model_context_window"))
+                if window > 0:
+                    out["model_context_window"] = window
             continue
 
         if etype == "turn_context":
@@ -392,6 +403,7 @@ class CodexStatsReader:
             # comment: `provider` is overcode's API-transport discriminator,
             # not the model's vendor.
             provider=None,
+            reported_context_window=scan["model_context_window"],
         )
 
     def get_stored_cost(self, session: Any) -> Optional[float]:

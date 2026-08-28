@@ -1763,20 +1763,34 @@ class TestLaunchFork:
 
 
 class TestForkSessionIdPrescriptionByBackend:
-    """Regression coverage for a fork-id-minting bug caught in review.
+    """Regression coverage for fork-id binding across backends.
 
-    An earlier version of the grok-fork-prescription fix minted a fresh
-    session id on *every* fork whose backend declared
-    SESSION_ID_PRESCRIPTION — but Claude Code declares that capability too
-    (for fresh launches) while minting its *own*, different id when it
-    forks. Binding the phantom minted uuid onto the Session left Claude
-    fork sessions tracking an id no real claude process would ever report,
-    corrupting stats/restart-resume until discovery happened to overwrite
-    it. The fix is `AgentBackend.fork_prescribes_new_session_id`
-    (`backends/base.py`): only a backend whose fork grammar takes an
-    explicit, authoritative new id (grok) gets eager binding here; Claude
-    Code — SESSION_ID_PRESCRIPTION but no eager fork binding — must be
-    byte-and-state-identical to pre-regression behavior.
+    History: an earlier version of the grok-fork-prescription fix minted a
+    fresh session id on *every* fork whose backend declared
+    SESSION_ID_PRESCRIPTION. At the time, Claude Code was believed to mint
+    its *own*, different id when it forks (discovery would have to find it
+    later), so unconditional minting would have bound Claude forks to a
+    phantom uuid no real claude process would ever report. The fix was
+    `AgentBackend.fork_prescribes_new_session_id` (`backends/base.py`):
+    only a backend whose fork grammar takes an explicit, authoritative new
+    id gets eager binding.
+
+    That belief about Claude Code turned out to be wrong, and being wrong
+    was the root cause of #466 (2026-08-28): leaving Claude forks unbound
+    forced the monitor daemon to discover the fork's real id via
+    directory+time matching, which is ambiguous whenever a sibling agent
+    shares the fork's start_directory — the fork could end up bound to a
+    sibling's id instead of its own, and its tmux window would then show
+    that sibling's conversation. A live check confirmed `claude --resume
+    <id> --fork-session --session-id <new>` DOES honor the prescribed id
+    (the fork's transcript file is written under the new uuid). Claude Code
+    now sets `fork_prescribes_new_session_id = True` too, and gets the same
+    eager-binding treatment as grok — see
+    `test_claude_fork_binds_a_freshly_prescribed_id` below (this test used
+    to assert the opposite, pre-#466, behavior) plus
+    `test_claude_plain_resume_never_gets_prescribed_session_id`, which
+    covers the one case that must still never emit a prescribed id: a
+    non-fork resume.
     """
 
     def _make_launcher_and_source(self, tmp_path, *, backend=None):
@@ -1799,10 +1813,16 @@ class TestForkSessionIdPrescriptionByBackend:
 
         return launcher, source, mock_tmux
 
-    def test_claude_fork_does_not_bind_a_phantom_prescribed_id(self, tmp_path):
-        """Claude Code forks must NOT get eager id binding — discovery fills
-        agent_session_ids/active_agent_session_id in later, exactly as
-        before fork_prescribes_new_session_id existed."""
+    def test_claude_fork_binds_a_freshly_prescribed_id(self, tmp_path):
+        """#466: Claude Code forks now get eager id binding too.
+
+        Live-verified the CLI honors --session-id alongside --resume
+        --fork-session, so launcher.py mints a fresh uuid and binds it
+        eagerly instead of leaving it for ambiguous directory+time
+        discovery to fill in later — the same treatment grok already got.
+        """
+        import uuid as uuid_mod
+
         launcher, source, mock_tmux = self._make_launcher_and_source(
             tmp_path, backend="claude-code"
         )
@@ -1811,13 +1831,48 @@ class TestForkSessionIdPrescriptionByBackend:
         assert forked is not None
 
         reloaded = launcher.sessions.get_session(forked.id)
-        assert reloaded.agent_session_ids == []
-        assert reloaded.active_agent_session_id is None
+        assert len(reloaded.agent_session_ids) == 1
+        assert reloaded.active_agent_session_id == reloaded.agent_session_ids[0]
 
-        # And no --session-id was ever prescribed on the fork's argv either.
+        new_id = reloaded.active_agent_session_id
+        assert new_id != "prior-session-abc123"
+        uuid_mod.UUID(new_id)  # a genuine uuid, does not raise
+
         sent_commands = [k[2] for k in mock_tmux.sent_keys]
         fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
-        assert "--session-id" not in fork_cmd
+        assert "--resume" in fork_cmd and "prior-session-abc123" in fork_cmd
+        assert "--session-id" in fork_cmd and new_id in fork_cmd
+
+    def test_claude_plain_resume_never_gets_prescribed_session_id(self, tmp_path):
+        """A non-fork resume (restart) must never emit a spurious
+        --session-id, even though Claude Code declares
+        SESSION_ID_PRESCRIPTION and fork_prescribes_new_session_id.
+
+        launcher.py structurally never mints a prescribed id for a plain
+        resume (only the fresh-launch and fork branches do), and
+        build_command() independently refuses to emit --session-id when
+        resume_session_id is set and fork is False (see
+        test_backend_claude.py::test_resume_wins_over_prescribed_id) — this
+        test exercises that guarantee end-to-end through the launcher.
+        """
+        launcher, source, mock_tmux = self._make_launcher_and_source(
+            tmp_path, backend="claude-code"
+        )
+
+        ok = launcher.restart(source, graceful_exit_wait=0)
+        assert ok is True
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        resume_cmd = [
+            c for c in sent_commands
+            if "--resume" in c and "prior-session-abc123" in c
+        ][0]
+        assert "--fork-session" not in resume_cmd
+        assert "--session-id" not in resume_cmd
+
+        # The session's active id is unchanged — no fresh binding happened.
+        reloaded = launcher.sessions.get_session(source.id)
+        assert reloaded.active_agent_session_id == "prior-session-abc123"
 
     def test_grok_fork_binds_a_freshly_prescribed_id(self, tmp_path):
         """grok's fork grammar takes an explicit, authoritative new
@@ -1845,6 +1900,75 @@ class TestForkSessionIdPrescriptionByBackend:
         fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
         assert "--resume" in fork_cmd and "prior-session-abc123" in fork_cmd
         assert "--session-id" in fork_cmd and new_id in fork_cmd
+
+    def test_fork_in_shared_directory_binds_forks_own_id_not_a_siblings(self, tmp_path):
+        """#466 reproduction: forking in a directory shared with another
+        agent must bind the fork's OWN session id, never a sibling's.
+
+        Before the fix, a fork's id was left null at launch and discovered
+        later via directory+time matching in `history.jsonl` — ambiguous
+        the moment a sibling agent (parent, or any other agent) shares the
+        fork's start_directory, since the "most recent session in this
+        directory" is not reliably the fork's own. Eager binding (this fix)
+        sidesteps discovery for the fork case entirely: the fork's id is
+        minted and bound at launch time, before any sibling could possibly
+        write a newer history line in the shared directory.
+        """
+        import uuid as uuid_mod
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        shared_dir = "/tmp/shared-repo"
+
+        # alpha: the fork source.
+        alpha = launcher.launch(name="alpha", start_directory=shared_dir, backend="claude-code")
+        session_manager.set_active_agent_session_id(alpha.id, "alpha-session-id")
+        alpha = session_manager.get_session(alpha.id)
+
+        # beta: a sibling in the SAME directory, whose session id is the
+        # kind of value a naive "most recent in this directory" discovery
+        # could wrongly bind to the fork instead of the fork's own id.
+        beta = launcher.launch(name="beta", start_directory=shared_dir, backend="claude-code")
+        session_manager.set_active_agent_session_id(beta.id, "beta-session-id")
+        beta = session_manager.get_session(beta.id)
+
+        forked = launcher.launch_fork(name="alpha-fork", source_session=alpha)
+        assert forked is not None
+        # Same shared directory as alpha/beta, per the issue (macOS resolves
+        # /tmp to /private/tmp, so compare against alpha's own resolved
+        # start_directory rather than the literal shared_dir string).
+        assert forked.start_directory == alpha.start_directory == beta.start_directory
+
+        reloaded_fork = session_manager.get_session(forked.id)
+        fork_id = reloaded_fork.active_agent_session_id
+
+        # The fork must have its own, freshly-minted id...
+        assert fork_id is not None
+        uuid_mod.UUID(fork_id)  # a genuine uuid, does not raise
+        # ...and it must be neither the parent's nor the sibling's id —
+        # the exact wrong-binding failure mode #466 reported.
+        assert fork_id != "alpha-session-id"
+        assert fork_id != "beta-session-id"
+        assert reloaded_fork.agent_session_ids == [fork_id]
+
+        # Siblings are untouched.
+        reloaded_alpha = session_manager.get_session(alpha.id)
+        reloaded_beta = session_manager.get_session(beta.id)
+        assert reloaded_alpha.active_agent_session_id == "alpha-session-id"
+        assert reloaded_beta.active_agent_session_id == "beta-session-id"
+
+        # The fork's argv resumed the correct parent and prescribed its own id.
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        fork_cmd = [c for c in sent_commands if "--fork-session" in c][0]
+        assert "--resume" in fork_cmd and "alpha-session-id" in fork_cmd
+        assert "--session-id" in fork_cmd and fork_id in fork_cmd
 
 
 # =============================================================================

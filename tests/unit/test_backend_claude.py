@@ -110,7 +110,39 @@ class TestGoldenArgv:
             "--settings", SAFE_SETTINGS,
         ]
 
+    def test_fork_with_prescribed_session_id(self, backend):
+        """#466, 2026-08-28 — intentional behavior change.
+
+        Live-verified: `claude --resume <id> --fork-session --session-id
+        <new>` honors the prescribed id (the fork's transcript is written
+        under the new uuid, a full replay of the parent conversation plus
+        the new turn — not a CLI-minted id). Previously build_command()
+        suppressed --session-id whenever resume_session_id was set, fork or
+        not, which forced discovery to find the fork's real id — ambiguous,
+        and the root cause of #466, whenever a sibling agent shared the
+        fork's start_directory. Forks now get a prescribed id emitted
+        alongside --resume/--fork-session, same as launcher.py's other
+        SESSION_ID_PRESCRIPTION backends with fork_prescribes_new_session_id
+        set. See ClaudeCodeBackend.fork_prescribes_new_session_id and
+        launcher.py's `_send_launch_for_session` docstring.
+        """
+        spec = LaunchSpec(
+            resume_session_id="abc-123", fork=True, prescribed_session_id="new-uuid",
+        )
+        assert backend.build_command(spec) == [
+            "claude", "--resume", "abc-123", "--fork-session",
+            "--session-id", "new-uuid",
+            "--settings", SAFE_SETTINGS,
+        ]
+
     def test_resume_wins_over_prescribed_id(self, backend):
+        """A plain (non-fork) resume never emits a spurious --session-id.
+
+        You cannot rename an existing conversation, so a prescribed id is
+        ignored unless the resume is also a fork (see
+        test_fork_with_prescribed_session_id above) — this guard is
+        independent of the #466 fork fix.
+        """
         spec = LaunchSpec(resume_session_id="abc-123", prescribed_session_id="ignored")
         assert "--session-id" not in backend.build_command(spec)
 

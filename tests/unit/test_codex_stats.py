@@ -216,6 +216,64 @@ class TestGetStats:
         assert stats.input_tokens == 9000
         assert stats.current_context_tokens == 9500
 
+    def test_reported_context_window_is_surfaced(self, reader):
+        """#469: codex's own rollout JSONL reports the real context window
+        per token_count event (`payload.info.model_context_window`) — the
+        fixture's default is 272000 (see token_count_event's default arg).
+        """
+        stats = reader.get_stats(make_session())
+        assert stats.reported_context_window == 272000
+
+    def test_reported_context_window_preferred_over_static_table(self, sessions_dir):
+        """max_context_tokens must use codex's own reported figure even
+        when it disagrees with overcode's static gpt-5.6-sol table entry
+        (258400) — the CLI's live number is more authoritative than a
+        table snapshot."""
+        write_rollout(
+            rollout_path(sessions_dir, SID),
+            [
+                session_meta_line(),
+                turn_context_event(model="gpt-5.6-sol"),
+                user_turn_item(),
+                token_count_event(context_window=999999),
+            ],
+        )
+        reader = CodexStatsReader(sessions_dir=sessions_dir)
+        stats = reader.get_stats(make_session())
+        assert stats.reported_context_window == 999999
+        assert stats.max_context_tokens == 999999
+
+    def test_latest_reported_context_window_wins(self, sessions_dir):
+        """A running-total field like the usage counters — later events
+        overwrite earlier ones, same convention as token_count itself."""
+        write_rollout(
+            rollout_path(sessions_dir, SID),
+            [
+                session_meta_line(),
+                turn_context_event(),
+                user_turn_item(),
+                token_count_event(context_window=200000),
+                token_count_event(context_window=258400),
+            ],
+        )
+        reader = CodexStatsReader(sessions_dir=sessions_dir)
+        assert reader.get_stats(make_session()).reported_context_window == 258400
+
+    def test_missing_reported_window_falls_back_to_static_table(self, sessions_dir):
+        """A rollout event with no model_context_window field at all (older
+        codex CLI, or schema drift) must not crash — max_context_tokens
+        falls back to the static table for a recognized model."""
+        entry = token_count_event()
+        del entry["payload"]["info"]["model_context_window"]
+        write_rollout(
+            rollout_path(sessions_dir, SID),
+            [session_meta_line(), turn_context_event(model="gpt-5.6-sol"), user_turn_item(), entry],
+        )
+        reader = CodexStatsReader(sessions_dir=sessions_dir)
+        stats = reader.get_stats(make_session())
+        assert stats.reported_context_window is None
+        assert stats.max_context_tokens == 258_400
+
     def test_unknown_session_falls_back_to_cwd_match(self, reader):
         stats = reader.get_stats(
             make_session(agent_session_ids=[], active_agent_session_id=None)

@@ -337,6 +337,131 @@ class TestProviderFromModel:
         assert provider_from_model("") is None
 
 
+class TestModelContextWindow:
+    """#469 — model_context_window() assumes nothing for unrecognized models."""
+
+    def test_unknown_model_returns_none(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("some-model-nobody-has-heard-of") is None
+
+    def test_none_model_returns_none(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window(None) is None
+
+    def test_known_claude_model_returns_correct_window(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("claude-opus-4-6") == 1_000_000
+        assert model_context_window("claude-haiku-4-5-20251001") == 200_000
+
+    def test_known_codex_model_returns_correct_window(self):
+        """gpt-5.6-sol: sourced from this machine's own real codex rollout
+        JSONL (payload.info.model_context_window), not a docs estimate."""
+        from overcode.history_reader import model_context_window
+        assert model_context_window("gpt-5.6-sol") == 258_400
+        assert model_context_window("gpt-5-codex") == 272_000  # older model, different window
+
+    def test_known_grok_model_returns_correct_window(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("grok-4.6") == 500_000
+        assert model_context_window("grok-4.5") == 500_000
+
+    def test_known_glm_model_returns_correct_window(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("glm-4.6") == 200_000
+
+    def test_known_kimi_model_returns_correct_window(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("kimi-k2.6") == 256_000
+
+    def test_discontinued_bare_kimi_k2_id_returns_none(self):
+        """The bare "kimi-k2" id the issue named is confirmed discontinued
+        (platform.kimi.ai) — deliberately not in the table, so it must not
+        silently borrow its replacement's window."""
+        from overcode.history_reader import model_context_window
+        assert model_context_window("kimi-k2") is None
+
+    def test_opencode_qualified_model_id_still_matches(self):
+        """opencode stores 'provider/model' (e.g. "openai/gpt-5.6-sol") —
+        the qualifier must be stripped before lookup, or every opencode
+        session (including ones routed to models this table knows) would
+        wrongly read as unrecognized. This was very likely the actual
+        mechanism behind #469's report."""
+        from overcode.history_reader import model_context_window
+        assert model_context_window("openai/gpt-5.6-sol") == 258_400
+        assert model_context_window("anthropic/claude-opus-4-6") == 1_000_000
+        assert model_context_window("zhipuai/glm-4.6") == 200_000
+
+    def test_opencode_qualified_unknown_model_returns_none(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("openai/some-brand-new-model") is None
+
+
+class TestModelShortName:
+    """#469 — model_short_name() for the new model families and opencode's
+    provider-qualified ids."""
+
+    def test_known_models_get_short_names(self):
+        from overcode.history_reader import model_short_name
+        assert model_short_name("claude-opus-4-6") == "Op4.6"
+        assert model_short_name("gpt-5.6-sol") == "5.6Sol"
+        assert len(model_short_name("gpt-5.6-sol")) <= 6
+        assert model_short_name("grok-4.6") == "Gk4.6"
+        assert model_short_name("glm-4.6") == "GLM4.6"
+        assert model_short_name("kimi-k2.6") == "K2.6"
+
+    def test_opencode_qualified_id_uses_bare_short_name(self):
+        """Without qualifier-stripping this used to render as the literal
+        provider name ("openai") once truncated to the MDL column's 6-char
+        budget — a second, cosmetic symptom of the same #469 root cause."""
+        from overcode.history_reader import model_short_name
+        assert model_short_name("openai/gpt-5.6-sol") == "5.6Sol"
+
+    def test_unrecognized_model_shows_bare_id_not_qualified(self):
+        from overcode.history_reader import model_short_name
+        assert model_short_name("openai/some-brand-new-model") == "some-brand-new-model"
+
+    def test_none_or_empty(self):
+        from overcode.history_reader import model_short_name
+        assert model_short_name(None) == ""
+        assert model_short_name("") == ""
+
+
+class TestAgentSessionStatsMaxContextTokens:
+    """#469 — AgentSessionStats.max_context_tokens: reported window wins,
+    unknown model is None (not a default)."""
+
+    def _make_stats(self, **overrides):
+        from overcode.history_reader import AgentSessionStats
+        defaults = dict(
+            interaction_count=1, input_tokens=0, output_tokens=0,
+            cache_creation_tokens=0, cache_read_tokens=0, work_times=[],
+        )
+        defaults.update(overrides)
+        return AgentSessionStats(**defaults)
+
+    def test_unknown_model_is_none(self):
+        stats = self._make_stats(model="some-model-nobody-has-heard-of")
+        assert stats.max_context_tokens is None
+
+    def test_no_model_is_none(self):
+        stats = self._make_stats(model=None)
+        assert stats.max_context_tokens is None
+
+    def test_known_model_uses_static_table(self):
+        stats = self._make_stats(model="claude-opus-4-6")
+        assert stats.max_context_tokens == 1_000_000
+
+    def test_reported_window_wins_over_static_table(self):
+        """codex's rollout JSONL reports the real window per session — that
+        beats the static table even when the table also has an entry."""
+        stats = self._make_stats(model="gpt-5.6-sol", reported_context_window=999_999)
+        assert stats.max_context_tokens == 999_999
+
+    def test_reported_window_used_when_model_unrecognized(self):
+        stats = self._make_stats(model="some-future-codex-model", reported_context_window=321_000)
+        assert stats.max_context_tokens == 321_000
+
+
 class TestProviderFromMessageId:
     """Test provider_from_message_id — the reliable detector for current Bedrock."""
 

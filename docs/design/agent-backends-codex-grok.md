@@ -1205,3 +1205,74 @@ none touching the launch/status/stats seam itself:
    `installed_version()` doctor helper uses, since those must always report
    what's genuinely installed on the machine, never a dev/test override.
    `require_claude()`/`require_agent_cli()` inherit the fix for free.
+4. **Issue #466 — Claude Code fork session-id binding.** Forks in a
+   directory shared with another agent could bind the wrong sibling's
+   session id, because Claude Code forks left their id unset for the
+   monitor daemon to discover afterward via ambiguous directory+time
+   matching. A live check (`claude --resume <id> --fork-session
+   --session-id <new-uuid>`, 2026-08-28) found the CLI does honor a
+   prescribed fork id — the fork's transcript is written under the new
+   uuid — contradicting the assumption behind
+   `fork_prescribes_new_session_id`'s original `False` default for Claude
+   Code (that flag existed already, built for grok in Phase 3).
+   `ClaudeCodeBackend.fork_prescribes_new_session_id = True` now, and
+   `build_command()` emits `--session-id` alongside `--resume
+   --fork-session` for forks specifically (never for a plain resume) —
+   Claude forks get the same eager-binding treatment grok already had, no
+   discovery needed. See `docs/release-notes-0.6.0.md`'s Fixes section and
+   `tests/unit/test_launcher.py::TestForkSessionIdPrescriptionByBackend`.
+5. **Issue #469 — opencode context-window metadata.** Two independent bugs
+   in the same code path: (a) `history_reader.model_context_window()`
+   silently fell back to a 200K default for any unrecognized model, so an
+   agent on an uncited model showed a plausible-looking but wrong CTX
+   percentage instead of "unknown" — fixed by returning `None` instead of a
+   default, with every caller (`summary_columns.render_context_usage[_plain]`)
+   rendering a dash when the window is `None`. (b) opencode's stats reader
+   stores its model id qualified with a provider prefix (e.g.
+   `"openai/gpt-5.6-sol"`, from `opencode_stats._parse_model`), but the
+   lookup tables (`MODEL_CONTEXT_WINDOWS`, `MODEL_SHORT_NAMES`) were keyed
+   on the bare id — an exact-match lookup on the qualified string missed
+   *every* opencode model, including ones the table already covered. Fixed
+   by stripping the qualifier before lookup (`history_reader._bare_model_id`).
+   Root-caused against the issue's own numbers: 11,822 tokens against a
+   200K default is ≈5.9%, matching the reported "TUI says 6% CTX" almost
+   exactly. Metadata was also extended (with citations — see
+   `history_reader.MODEL_CONTEXT_WINDOWS`'s comments) for the current
+   OpenAI/codex family, xAI Grok, Zhipu GLM-4.6, and Moonshot Kimi K2, and
+   `CodexStatsReader` now threads codex's own CLI-reported
+   `model_context_window` (real per-session data, not a table) through
+   `AgentSessionStats.reported_context_window`, which
+   `max_context_tokens` prefers over the static table when present.
+
+**Canonical cross-model metadata: an open recommendation, not implemented.**
+The issue also asked for research into "a good source of this metadata in a
+cross-model way that we can regularly just pull and transcode into our
+internal reference format" instead of hand-maintaining
+`MODEL_CONTEXT_WINDOWS`/`MODEL_PRICING` entries one model at a time as new
+releases ship. Two candidates worth evaluating when this becomes a
+maintenance burden rather than a research question:
+
+- **[models.dev](https://models.dev)'s API** (`https://models.dev/api.json`)
+  — an open, community-maintained JSON catalog of model metadata (context
+  window, max output, modalities, pricing, knowledge cutoff) keyed by
+  provider and model id, explicitly designed for exactly this kind of
+  "pull and transcode" use case. It's also the metadata source opencode
+  itself ships with (`opencode` vendors a models.dev snapshot for its own
+  `/models` picker), which is a nice property: overcode's numbers would
+  tend to agree with what opencode's own UI shows for the same model,
+  narrowing exactly the kind of TUI-vs-CLI mismatch #469 reported.
+- **LiteLLM's `model_prices_and_context_window.json`**
+  (`https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/model_prices_and_context_window_backup.json`)
+  — a large, actively-maintained JSON table (pricing + `max_input_tokens`/
+  `max_output_tokens`/`max_tokens` per model id) that many other agent
+  tools already treat as a de facto standard. Broader coverage than
+  models.dev for long-tail/self-hosted models, but its per-model id
+  strings don't always match a given CLI's own bare id (would need the
+  same `provider/model` normalization this phase added for opencode).
+
+Either would replace hand-curation with a periodic fetch-and-cache step
+(e.g. a `overcode doctor --refresh-model-metadata` command, or a build-time
+snapshot committed alongside the source the way opencode itself does) —
+scoped as a follow-up, not part of this fix, since #469's ask was
+specifically "assume nothing when unrecognized," which does not require a
+live metadata feed to satisfy correctly.
