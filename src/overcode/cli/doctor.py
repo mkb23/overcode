@@ -32,7 +32,8 @@ def doctor(
 
     An agent only emits hook-based state changes (PostToolUse, Stop, etc.)
     if its process carries overcode's telemetry injection (Claude Code:
-    `--settings`; opencode: the bundled plugin). This command
+    `--settings`; opencode: the bundled plugin; codex: pane polling only in
+    Phase 1, so codex agents always read as healthy here for now). This command
     inspects each live agent's process and flags ones that are
     missing the injection — typically because they were relaunched
     manually in the tmux pane.
@@ -50,6 +51,7 @@ def doctor(
         VERDICT_NO_CLAUDE,
         VERDICT_WINDOW_GONE,
         VERDICT_REMOTE,
+        VERDICT_TELEMETRY_DISABLED,
     )
     from ..stats_reader import stats_reader_for_session
     from ..monitor_daemon import is_monitor_daemon_running
@@ -98,6 +100,7 @@ def doctor(
         VERDICT_NO_CLAUDE: "[yellow]? no process[/yellow]",
         VERDICT_WINDOW_GONE: "[dim]window gone[/dim]",
         VERDICT_REMOTE: "[dim]remote[/dim]",
+        VERDICT_TELEMETRY_DISABLED: "[dim]○ telemetry off[/dim]",
     }
 
     def _issues_cell(findings):
@@ -176,6 +179,32 @@ def doctor(
         except Exception:
             pass
 
+    # Same idea for codex: it ships even faster (multiple releases/week) and
+    # auto-updates by default with no config toggle found to disable it.
+    # Only runs when the fleet actually has a codex agent.
+    from ..backends.codex import CodexBackend
+    if any(session_backend_name(s) == CodexBackend.name for s in sessions):
+        try:
+            from ..backends.codex import version_findings as codex_version_findings
+            for finding in codex_version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
+    # Same idea for grok: no fast release cadence found in Phase 0, but the
+    # version-range guardrail still applies, plus a subscription-auth check
+    # codex/opencode don't need (grok requires SuperGrok/X Premium+ and a
+    # `grok login` the binary's own presence says nothing about). Only runs
+    # when the fleet actually has a grok agent.
+    from ..backends.grok import GrokBackend
+    if any(session_backend_name(s) == GrokBackend.name for s in sessions):
+        try:
+            from ..backends.grok import version_findings as grok_version_findings
+            for finding in grok_version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
     # Global (not per-agent): bundled skills drifted from what's installed.
     # Affects every agent, so it's surfaced once rather than duplicated per row.
     try:
@@ -183,6 +212,15 @@ def doctor(
         if any_skills_stale():
             rprint("[yellow]⚠[/yellow] installed skills differ from bundled "
                    "versions — run [bold]overcode skills install[/bold]")
+    except Exception:
+        pass
+
+    # Global (not per-agent): agent_status_history.csv / event_loop_timing.csv
+    # disk usage (#465, #468) — both are shared per-session files, not per-agent.
+    try:
+        from ..status_history import disk_usage_findings
+        for finding in disk_usage_findings(session):
+            rprint(f"[yellow]⚠[/yellow] {finding}")
     except Exception:
         pass
 

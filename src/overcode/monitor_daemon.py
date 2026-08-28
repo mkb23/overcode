@@ -337,6 +337,11 @@ class MonitorDaemon:
         self._last_resources_sync: Optional[datetime] = None
         self._resources_sync_interval = 5  # seconds
 
+        # agent_status_history.csv rotation/retention check (#465, #468) —
+        # a cheap stat()-then-maybe-rewrite, but still only worth doing hourly.
+        self._last_history_rotation_check: Optional[datetime] = None
+        self._history_rotation_check_interval = 3600  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -1082,6 +1087,38 @@ class MonitorDaemon:
         session_states, all_waiting = self._detect_and_enrich(sessions, now)
         self._cleanup_stale(sessions)
         self._publish_and_enforce(sessions, session_states, all_waiting)
+        self._maybe_rotate_history(now)
+
+    def _maybe_rotate_history(self, now: datetime) -> None:
+        """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
+
+        Runs at most hourly — a size/age stat check is cheap, but there's no
+        reason to do even that on every 2-30s tick.
+        """
+        if not should_sync_stats(
+            self._last_history_rotation_check, now, self._history_rotation_check_interval
+        ):
+            return
+        self._last_history_rotation_check = now
+        try:
+            from .config import get_history_retention_config
+            from .status_history import rotate_and_retain
+
+            cfg = get_history_retention_config()
+            result = rotate_and_retain(
+                self.history_path,
+                rotate_mb=cfg["status_history_rotate_mb"],
+                retention_days=cfg["status_history_max_days"],
+                now=now,
+            )
+            if result["archived"]:
+                self.log.info(f"Rotated agent_status_history.csv -> {result['archived'].name}")
+            if result["deleted"]:
+                self.log.info(
+                    f"Pruned {len(result['deleted'])} expired agent_status_history archive(s)"
+                )
+        except Exception as e:
+            self.log.error(f"History rotation check failed: {e}")
 
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).

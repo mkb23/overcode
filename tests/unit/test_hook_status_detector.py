@@ -194,6 +194,35 @@ class TestStatusMapping:
         assert status == STATUS_WAITING_APPROVAL
         assert "Permission" in activity
 
+    def test_interrupt_is_waiting_user(self, tmp_path):
+        """Interrupt (codex-only, design doc §2.3) -> WAITING_USER.
+
+        Downgrades a stuck RUNNING directly via the map, without needing the
+        pane-scraped interrupt_prompt_markers fallback Claude relies on.
+        """
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "Interrupt")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
+    def test_session_start_is_waiting_user(self, tmp_path):
+        """SessionStart (codex-only) -> WAITING_USER, same as the "no hook
+        event yet" default a fresh launch already gets."""
+        state_dir = tmp_path / "sessions" / "agents"
+        _write_hook_state(state_dir, "test-agent", "SessionStart")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "some pane content")
+
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        status, _, _ = detector.detect_status(session)
+
+        assert status == STATUS_WAITING_USER
+
     def test_post_tool_use_is_running(self, tmp_path):
         """PostToolUse → RUNNING."""
         state_dir = tmp_path / "sessions" / "agents"

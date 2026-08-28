@@ -187,6 +187,73 @@ class TestInspectAgent:
         assert health.launcher_version == "0.4.0 (abc123)"
 
 
+class TestInspectAgentTelemetryDisabled:
+    """Deliberately-off backend_telemetry reads as informational, not broken."""
+
+    def test_codex_missing_hooks_becomes_telemetry_disabled_when_configured_off(
+        self, tmp_path, monkeypatch
+    ):
+        from overcode import config
+        from overcode.doctor import VERDICT_TELEMETRY_DISABLED
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  codex: off\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        config._clear_config_cache()
+
+        sess = _make_session(backend="codex", command=["codex"])
+        children = {10: [11]}
+        argv = {11: "codex -m gpt-5.6-sol"}  # no --dangerously-bypass-hook-trust
+        health = inspect_agent(sess, 10, children, argv)
+        assert health.verdict == VERDICT_TELEMETRY_DISABLED
+        assert "telemetry disabled by config" in health.details
+        assert not health.ok
+
+    def test_codex_missing_hooks_stays_missing_settings_by_default(
+        self, tmp_path, monkeypatch
+    ):
+        from overcode import config
+
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        config._clear_config_cache()
+
+        sess = _make_session(backend="codex", command=["codex"])
+        children = {10: [11]}
+        argv = {11: "codex -m gpt-5.6-sol"}
+        health = inspect_agent(sess, 10, children, argv)
+        assert health.verdict == VERDICT_MISSING_SETTINGS
+
+    def test_claude_code_never_downgrades_even_if_configured_off(
+        self, tmp_path, monkeypatch
+    ):
+        from overcode import config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  claude-code: off\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        config._clear_config_cache()
+
+        sess = _make_session()  # default backend = claude-code
+        children = {10: [11]}
+        argv = {11: "claude --dangerously-skip-permissions"}
+        health = inspect_agent(sess, 10, children, argv)
+        assert health.verdict == VERDICT_MISSING_SETTINGS
+
+    def test_ok_verdict_is_unaffected(self, tmp_path, monkeypatch):
+        from overcode import config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  codex: off\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        config._clear_config_cache()
+
+        sess = _make_session(backend="codex", command=["codex"])
+        children = {10: [11]}
+        argv = {11: "codex -m gpt-5.6-sol --dangerously-bypass-hook-trust"}
+        health = inspect_agent(sess, 10, children, argv)
+        assert health.verdict == VERDICT_OK
+
+
 class TestGatherDataFindings:
     def test_no_findings_on_fresh_healthy_session(self):
         sess = _make_session()

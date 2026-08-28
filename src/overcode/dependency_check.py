@@ -129,17 +129,33 @@ def _resolve_backend(backend):
     return backend
 
 
-def check_agent_cli(backend) -> Tuple[bool, Optional[str], Optional[str]]:
+def check_agent_cli(
+    backend, *, respect_override: bool = True
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """Check if a backend's agent CLI is available and get its version.
 
     Args:
         backend: An AgentBackend or a registered backend name
+        respect_override: When True (the default), probes
+            ``resolved.executable()`` — which honors the backend's
+            launch-time override env var (CLAUDE_COMMAND / OPENCODE_COMMAND /
+            CODEX_COMMAND / GROK_COMMAND) when one is set, falling back to
+            ``resolved.binary`` otherwise. This is what a pre-launch check
+            wants: a bad override should fail here with a friendly error
+            instead of dying silently once the pane launches, and the e2e
+            mock harness's override to a mock script is genuinely validated
+            rather than always requiring the real CLI on PATH regardless of
+            the override. Pass False for a "what's actually installed on
+            this machine" probe (e.g. a backend's ``installed_version()``
+            doctor helper), which must never be satisfied by a dev/test
+            override.
 
     Returns:
         Tuple of (is_available, path, version)
     """
     resolved = _resolve_backend(backend)
-    return _check_executable(resolved.binary, list(resolved.version_args), timeout=10)
+    name = resolved.executable() if respect_override else resolved.binary
+    return _check_executable(name, list(resolved.version_args), timeout=10)
 
 
 def require_agent_cli(backend) -> str:

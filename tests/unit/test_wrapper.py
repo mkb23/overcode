@@ -353,20 +353,47 @@ class TestDevcontainerBackendSelection:
         assert binary == "opencode"
         assert package == "opencode-ai@latest"
 
+    def test_codex_installs_the_codex_package(self):
+        backend, binary, package = self._resolve({"OVERCODE_BACKEND": "codex"})
+        assert backend == "codex"
+        assert binary == "codex"
+        assert package == "@openai/codex"
+
+    def test_grok_has_no_npm_package(self):
+        # grok has no npm package — it uses x.ai's curl installer instead,
+        # asserted separately below via AGENT_INSTALL_METHOD.
+        backend, binary, package = self._resolve({"OVERCODE_BACKEND": "grok"})
+        assert backend == "grok"
+        assert binary == "grok"
+        assert package == ""
+
     def test_unknown_backend_falls_back_to_claude(self):
         _backend, binary, package = self._resolve({"OVERCODE_BACKEND": "future-cli"})
         assert binary == "claude"
         assert package == "@anthropic-ai/claude-code"
 
-    def test_hooks_install_is_skipped_for_opencode(self):
-        # opencode has no settings.json hook protocol; its telemetry comes
-        # from the plugin staged into the mounted project directory.
-        assert '[[ "$AGENT_BACKEND" != "opencode" ]] && \\' in self.SCRIPT
+    def test_hooks_install_is_skipped_for_opencode_codex_and_grok(self):
+        # opencode/codex/grok have no settings.json hook protocol: opencode's
+        # telemetry comes from the plugin staged into the mounted project
+        # directory, codex's from per-launch -c hooks.<Event>= argv, grok's
+        # from the global ~/.grok/hooks/overcode.json file.
+        assert (
+            '[[ "$AGENT_BACKEND" != "opencode" && "$AGENT_BACKEND" != "codex"'
+            ' && "$AGENT_BACKEND" != "grok" ]] && \\'
+        ) in self.SCRIPT
         assert "overcode hooks install" in self.SCRIPT
+
+    def test_install_method_selects_npm_or_curl(self):
+        # codex/opencode/claude install via npm; grok has no npm package and
+        # uses x.ai's curl installer instead.
+        assert 'AGENT_INSTALL_METHOD="npm"' in self.SCRIPT
+        assert 'AGENT_INSTALL_METHOD="curl"' in self.SCRIPT
+        assert "curl -fsSL https://x.ai/cli/install.sh | bash" in self.SCRIPT
 
     def test_provider_credentials_are_forwarded(self):
         assert "OPENAI_API_KEY" in self.SCRIPT
         assert "ANTHROPIC_API_KEY" in self.SCRIPT
+        assert "XAI_API_KEY" in self.SCRIPT
 
     def test_repo_copy_matches_the_bundled_source(self):
         # wrappers/ holds reference copies; drift there means users who

@@ -107,7 +107,7 @@ class LaunchSpec:
 class AgentBackend(Protocol):
     """Adapter for one agent CLI."""
 
-    name: str                       # "claude-code" | "opencode"
+    name: str                       # "claude-code" | "opencode" | "codex" | "grok"
     display_name: str
     binary: str                     # for dependency_check + doctor process matching
     version_args: Sequence[str]
@@ -115,6 +115,26 @@ class AgentBackend(Protocol):
     process_basenames: Sequence[str]
     not_found_error: Type[Exception]
     capabilities: BackendCapability
+
+    # True when the backend's fork grammar takes an explicit new session id
+    # (--session-id alongside --fork-session) AND the prescribed id is
+    # authoritative for the forked session; False when the CLI mints its own
+    # fork id and discovery must fill it in. Only meaningful alongside
+    # SESSION_ID_PRESCRIPTION — launcher.py's fork branch mints a fresh uuid
+    # to bind eagerly only when both are true. Both grok (Phase 3) and Claude
+    # Code (#466, 2026-08-28) declare this True: Claude Code was originally
+    # assumed to mint its own, different fork id, but a live check of
+    # `claude --resume <id> --fork-session --session-id <new>` found the
+    # prescribed id IS honored — the CLI writes the fork's transcript under
+    # the prescribed uuid. That wrong assumption was #466's root cause:
+    # without eager binding, a fork's id was discovered via directory+time
+    # matching, which is ambiguous whenever another agent shares the same
+    # start_directory (the fork's record could bind to a sibling's id
+    # instead of its own). (The default backends don't literally inherit
+    # this Protocol, so launcher.py reads it via
+    # ``getattr(backend, "fork_prescribes_new_session_id", False)`` — this
+    # default documents the fallback, it isn't inherited automatically.)
+    fork_prescribes_new_session_id: bool = False
 
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 

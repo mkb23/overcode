@@ -29,6 +29,13 @@ VERDICT_NO_CLAUDE = VERDICT_NO_AGENT_PROCESS  # pre-Phase-6 name
 VERDICT_WINDOW_GONE = "window-gone"
 VERDICT_REMOTE = "remote"
 VERDICT_UNKNOWN = "unknown"
+# A backend whose telemetry a user has deliberately turned off via
+# ``backend_telemetry`` in config.yaml (config.get_backend_telemetry_enabled)
+# reads as this instead of VERDICT_MISSING_SETTINGS — same underlying fact
+# (no hook state, pane polling only) but an intentional, informational one
+# rather than a broken launch. Never emitted for claude-code, which is
+# exempt from that config knob.
+VERDICT_TELEMETRY_DISABLED = "telemetry-disabled"
 
 
 FINDING_TOKENS_ZERO = "tokens_zero"
@@ -480,7 +487,8 @@ def inspect_agent(
     # leaves no trace on the command line, so it gets a second look with the
     # session (and therefore its project directory) in hand.
     from .backends import get_backend, session_backend_name
-    backend = get_backend(session_backend_name(session))
+    backend_name = session_backend_name(session)
+    backend = get_backend(backend_name)
     verdict, details = backend.health_verdict(argv)
     refine = getattr(backend, "refine_health_verdict", None)
     if refine is not None:
@@ -488,6 +496,19 @@ def inspect_agent(
             verdict, details = refine(session, verdict, details)
         except Exception:
             pass
+
+    # A "missing" telemetry footprint is expected, not broken, when the
+    # user turned this backend's telemetry off in config.yaml — say so
+    # instead of implying the launch is unhealthy (claude-code is exempt
+    # from the knob, so it never lands here).
+    if verdict == VERDICT_MISSING_SETTINGS:
+        from .config import get_backend_telemetry_enabled
+        if not get_backend_telemetry_enabled(backend_name):
+            verdict = VERDICT_TELEMETRY_DISABLED
+            details = (
+                f"telemetry disabled by config (backend_telemetry.{backend_name}: "
+                "off) — status falls back to pane polling, this is expected"
+            )
 
     return AgentHealth(
         **base,

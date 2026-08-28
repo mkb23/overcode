@@ -547,12 +547,17 @@ def render_token_count(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_model(ctx: ColumnContext) -> ColumnOutput:
-    """Model name. Only visible when any agent has a model set."""
+    """Model name. Only visible when any agent has a model set.
+
+    Width 8 (space + 7): sized so every MODEL_SHORT_NAMES entry and the
+    rule-based fallback's common shapes (Sn3.7, G5.6Sol, GLM4.6) fit
+    untruncated across a four-backend fleet.
+    """
     if not ctx.model:
-        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+        return [("       -", ctx.mono(f"dim{ctx.bg}", "dim"))]
     from .history_reader import model_short_name
-    display = model_short_name(ctx.model)[:6]
-    return [(f" {display:>5}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
+    display = model_short_name(ctx.model)[:7]
+    return [(f" {display:>7}", ctx.mono(f"bold magenta{ctx.bg}", "bold"))]
 
 
 def render_model_plain(ctx: ColumnContext) -> Optional[str]:
@@ -563,11 +568,19 @@ def render_model_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
-    """Context window usage (📚XX%). Always visible."""
+    """Context window usage (📚XX%). Always visible.
+
+    Renders a dash when the model's context window is unknown (#469) —
+    never assumes a default window size, since that produces a plausible-
+    looking but wrong percentage (the original bug: an unrecognized model
+    silently priced against a 200K default that had nothing to do with the
+    real model in use).
+    """
     if ctx.claude_stats is not None and ctx.claude_stats.current_context_tokens > 0:
         max_context = ctx.claude_stats.max_context_tokens
-        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-        return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
+        if max_context:
+            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
+            return [(f" 📚{ctx_pct:>3.0f}%", ctx.mono(f"bold orange1{ctx.bg}", "bold"))]
     return [(" 📚  -%", ctx.mono(f"dim orange1{ctx.bg}", "dim"))]
 
 
@@ -1128,13 +1141,18 @@ def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
-    """Context window usage for CLI."""
+    """Context window usage for CLI.
+
+    None when the model's context window is unknown (#469) — same "assume
+    nothing" rule as render_context_usage above.
+    """
     if ctx.claude_stats is None:
         return None
     if ctx.claude_stats.current_context_tokens > 0:
         max_context = ctx.claude_stats.max_context_tokens
-        ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-        return f"context {ctx_pct:.0f}%"
+        if max_context:
+            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
+            return f"context {ctx_pct:.0f}%"
     return None
 
 
@@ -1244,6 +1262,8 @@ def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
 BACKEND_BADGES = {
     "claude-code": "cc",
     "opencode": "oc",
+    "codex": "cx",
+    "grok": "gk",
 }
 
 
@@ -1369,7 +1389,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
                   label="Model", render_plain=render_model_plain,
                   visible=lambda ctx: ctx.any_has_model,
-                  placeholder_width=6, header="MDL", name="Model"),
+                  placeholder_width=8, header="MDL", name="Model"),
     SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
                   label="Provider", render_plain=render_provider_plain,
                   visible=lambda ctx: ctx.any_has_provider,

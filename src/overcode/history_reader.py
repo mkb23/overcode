@@ -36,10 +36,17 @@ _NON_ALNUM = re.compile(r"[^a-zA-Z0-9]")
 CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 
 # Model name → context window size in tokens.
-# Default 200K for unknown models.  Update as new models ship.
-# Claude Code with 1M context reports the same model ID — we detect
-# the actual context size from token counts at runtime and update here
-# for the models known to support extended context.
+# No default for unknown models (#469) — an unrecognized model renders a
+# dash in the CTX column rather than being silently priced against some
+# other model's window (the opencode bug report: a real 11,822-token/1%-used
+# session showed 6% in overcode's TUI, because the unrecognized model
+# ("gpt-5.6-sol", at the time not in this table) fell back to a 200K
+# default that had nothing to do with the model actually in use —
+# 11822/200000 ≈ 5.9% ≈ the observed 6%). Every entry below must be cited;
+# add nothing you can't source. Claude Code with 1M context reports the
+# same model ID as its 200K sibling — we detect the actual context size
+# from token counts at runtime and update here for the models known to
+# support extended context.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-fable-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
@@ -53,10 +60,67 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-3-opus-20240229": 200_000,
     "claude-3-sonnet-20240229": 200_000,
     "claude-3-haiku-20240307": 200_000,
-}
-DEFAULT_CONTEXT_WINDOW = 200_000
 
-# Model ID → human-readable short name for display
+    # OpenAI / codex CLI models (#469). Sourced from this machine's own real
+    # codex rollout JSONL (`~/.codex/sessions/**/rollout-*.jsonl`,
+    # `payload.info.model_context_window`, verified 2026-08-28) — codex's own
+    # CLI reports this figure at runtime, so these values are a direct
+    # transcription of many real observed sessions, not a docs estimate.
+    # `gpt-5-codex` is the one outlier (an older, pre-5.1 model, last seen
+    # Nov 2025 on this machine) at a different window than the current 5.x
+    # line. `CodexStatsReader` prefers the CLI-reported figure over this
+    # table when available (see `AgentSessionStats.reported_context_window`)
+    # — this table is codex's fallback/cross-check and opencode's only
+    # source when it routes to one of these models.
+    "gpt-5-codex": 272_000,
+    "gpt-5.1-codex-max": 258_400,
+    "gpt-5.1-codex-mini": 258_400,
+    "gpt-5.4": 258_400,
+    "gpt-5.6-sol": 258_400,
+    "gpt-5.6-terra": 258_400,
+
+    # xAI Grok Build models (#469). Sourced from docs.x.ai/docs/models
+    # (verified 2026-08-28) — the same source Phase 5's `pricing.py` entries
+    # for these two models cite. Grok's own local session files
+    # (`updates.jsonl`) do not report a context-window figure themselves
+    # (only a running token count), so this static table is the only source
+    # available for grok.
+    "grok-4.6": 500_000,
+    "grok-4.5": 500_000,
+
+    # Zhipu GLM-4.6 (#469), reachable via opencode. Sourced from Z.AI's own
+    # developer docs (docs.z.ai/guides/llm/glm-4.6, verified 2026-08-28):
+    # "The context window has been expanded from 128K to 200K tokens."
+    "glm-4.6": 200_000,
+
+    # Moonshot Kimi K2 family (#469), reachable via opencode. Sourced from
+    # platform.kimi.ai's own docs (verified 2026-08-28): kimi-k2.6, kimi-k2.5,
+    # kimi-k2-0905-preview, kimi-k2-turbo-preview, kimi-k2-thinking, and
+    # kimi-k2-thinking-turbo "all provide a 256K context window." The bare
+    # hosted "kimi-k2" id the issue named is confirmed *discontinued* as of
+    # 2026-05-25 per the same docs — deliberately not added here; a stale
+    # session still reporting bare "kimi-k2" renders a dash rather than
+    # borrowing a number from its replacement.
+    "kimi-k2.6": 256_000,
+    "kimi-k2.5": 256_000,
+    "kimi-k2-0905-preview": 256_000,
+    "kimi-k2-turbo-preview": 256_000,
+    "kimi-k2-thinking": 256_000,
+    "kimi-k2-thinking-turbo": 256_000,
+}
+DEFAULT_CONTEXT_WINDOW = 200_000  # Retained for callers predating #469; no
+                                   # longer used as an automatic fallback by
+                                   # model_context_window() itself.
+
+# Model ID → human-readable short name for display (MDL column).
+#
+# Style contract: every value is at most MODEL_SHORT_NAME_MAX_LEN chars and
+# starts with a family tag (Fb/Op/Sn/Hk for Claude, G for GPT, Gk for Grok,
+# GLM, K for Kimi) so mixed fleets read consistently. Ids not listed here
+# fall back to the rule-based shortener below — this table is only for
+# spellings the rules can't derive.
+MODEL_SHORT_NAME_MAX_LEN = 7
+
 MODEL_SHORT_NAMES: Dict[str, str] = {
     "claude-fable-5": "Fb5",
     "claude-opus-4-8": "Op4.8",
@@ -70,7 +134,129 @@ MODEL_SHORT_NAMES: Dict[str, str] = {
     "claude-3-opus-20240229": "Op3",
     "claude-3-sonnet-20240229": "Sn3",
     "claude-3-haiku-20240307": "Hk3",
+
+    # OpenAI / codex (#469) — G + version + abbreviated variant.
+    "gpt-5-codex": "G5Cdx",
+    "gpt-5.1-codex-max": "G5.1Max",
+    "gpt-5.1-codex-mini": "G5.1Mn",
+    "gpt-5.4": "G5.4",
+    "gpt-5.6-sol": "G5.6Sol",
+    "gpt-5.6-terra": "G5.6Ter",
+
+    # xAI Grok (#469).
+    "grok-4.6": "Gk4.6",
+    "grok-4.5": "Gk4.5",
+
+    # Zhipu GLM (#469).
+    "glm-4.6": "GLM4.6",
+
+    # Moonshot Kimi (#469).
+    "kimi-k2.6": "K2.6",
+    "kimi-k2.5": "K2.5",
+    "kimi-k2-thinking": "K2Thk",
 }
+
+# Variant suffixes the rule-based shortener abbreviates ("-mini" → "Mn"…).
+_VARIANT_ABBREVIATIONS: Dict[str, str] = {
+    "mini": "Mn",
+    "nano": "Nn",
+    "max": "Max",
+    "codex": "Cdx",
+    "turbo": "T",
+    "pro": "P",
+    "flash": "F",
+    "lite": "L",
+    "thinking": "Thk",
+    "instruct": "In",
+    "chat": "",
+    "latest": "",
+    "preview": "",
+}
+
+_CLAUDE_FAMILY_TAGS: Dict[str, str] = {
+    "fable": "Fb",
+    "opus": "Op",
+    "sonnet": "Sn",
+    "haiku": "Hk",
+}
+
+_FAMILY_PREFIX_TAGS = [
+    # (id prefix, display tag) — longest-match order.
+    ("gpt-", "G"),
+    ("grok-", "Gk"),
+    ("glm-", "GLM"),
+    ("gemini-", "Gm"),
+    ("kimi-", "K"),
+    ("deepseek-", "DS"),
+    ("qwen", "Qw"),
+    ("llama-", "Lm"),
+    ("mistral-", "Ms"),
+]
+
+_DATE_SUFFIX_RE = re.compile(r"-20\d{6}$")
+
+
+def _heuristic_short_name(bare: str) -> str:
+    """Rule-based fallback for model ids not in MODEL_SHORT_NAMES.
+
+    Aims for the same family-tag + version style as the table so an
+    unfamiliar id degrades to something like ``Sn3.7`` or ``G4.1Mn``
+    rather than a blunt prefix chop ("claude", "gpt-4o"). Never raises;
+    the worst case is the cleaned id itself (renderers still truncate).
+    """
+    bare = _DATE_SUFFIX_RE.sub("", bare.strip().lower())
+    if not bare:
+        return ""
+
+    # Claude ids carry family + digits in either order (claude-opus-4-8,
+    # claude-3-7-sonnet). Find the family word, then join every digit
+    # group with dots: Sn3.7, Op4.8, Fb5.
+    if bare.startswith("claude"):
+        for family, tag in _CLAUDE_FAMILY_TAGS.items():
+            if family in bare:
+                digits = re.findall(r"\d+", bare)
+                return tag + ".".join(digits)
+        return "Claude"
+
+    # o-series reasoning models are already short (o3, o4-mini).
+    if re.match(r"^o\d", bare):
+        head, _, variant = bare.partition("-")
+        return head + _VARIANT_ABBREVIATIONS.get(variant, variant.title())
+
+    for prefix, tag in _FAMILY_PREFIX_TAGS:
+        if bare.startswith(prefix):
+            rest = bare[len(prefix):]
+            parts = [p for p in rest.split("-") if p]
+            out = tag
+            for part in parts:
+                if part in _VARIANT_ABBREVIATIONS:
+                    out += _VARIANT_ABBREVIATIONS[part]
+                elif re.fullmatch(r"[\d.]+", part):
+                    out += part
+                else:
+                    out += part[:1].upper() + part[1:]
+            return out
+
+    # Unknown family: drop hyphens, title-case the chunks, let the
+    # renderer truncate to its column width.
+    return "".join(p[:1].upper() + p[1:] for p in bare.split("-") if p)
+
+
+def _bare_model_id(model: str) -> str:
+    """Strip an opencode-style ``provider/model`` qualifier, if present.
+
+    opencode's stats reader stores the qualified id it launched with (e.g.
+    ``"openai/gpt-5.6-sol"``, ``"anthropic/claude-opus-4-6"`` — see
+    ``opencode_stats._parse_model``), while every other backend and this
+    module's own lookup tables use the bare model id. Without this, EVERY
+    opencode-launched model — including ones this table already knows,
+    like Claude models routed through opencode — missed the table via an
+    exact-match lookup on the qualified string and fell through to
+    "unrecognized." This was very likely the underlying mechanism behind
+    the #469 bug report, independent of which models the table happens to
+    cover at any given time.
+    """
+    return model.rsplit("/", 1)[-1] if "/" in model else model
 
 
 def model_short_name(model: Optional[str]) -> str:
@@ -79,21 +265,30 @@ def model_short_name(model: Optional[str]) -> str:
     Examples:
         "claude-opus-4-6" → "Op4.6"
         "claude-haiku-4-5-20251001" → "Hk4.5"
-        "unknown-model" → "unknown-model"
+        "openai/gpt-5.6-sol" (opencode-qualified) → "5.6Sol"
+        "some-new-model" → "some-new-model" (unrecognized: shown verbatim,
+            provider-qualifier stripped, not a dash — there's no wrong
+            number to avoid here, just an unabbreviated name)
     """
     if not model:
         return ""
-    return MODEL_SHORT_NAMES.get(model, model)
+    bare = _bare_model_id(model)
+    known = MODEL_SHORT_NAMES.get(bare)
+    if known is not None:
+        return known
+    return _heuristic_short_name(bare) or bare
 
 
-def model_context_window(model: Optional[str]) -> int:
+def model_context_window(model: Optional[str]) -> Optional[int]:
     """Return the context window size for a given model name.
 
-    Falls back to DEFAULT_CONTEXT_WINDOW for unknown/None models.
+    Returns None for unknown/None models (#469) — callers must render a
+    dash, never assume some other model's window. Handles opencode's
+    ``provider/model``-qualified ids the same way ``model_short_name`` does.
     """
     if not model:
-        return DEFAULT_CONTEXT_WINDOW
-    return MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+        return None
+    return MODEL_CONTEXT_WINDOWS.get(_bare_model_id(model))
 
 
 def provider_from_model(model: Optional[str]) -> Optional[str]:
@@ -148,10 +343,27 @@ class AgentSessionStats:
     model: Optional[str] = None  # Most recently seen model name (#272)
     provider: Optional[str] = None  # Detected API provider ("web" or "bedrock")
     last_command: Optional[str] = None  # Most recent user prompt text
+    # CLI-self-reported context window size, when a backend's own transcript
+    # carries it (#469) — codex's rollout JSONL reports
+    # `payload.info.model_context_window` per token_count event, a live
+    # figure straight from the CLI rather than overcode's static table.
+    # Preferred over `model_context_window(self.model)` in max_context_tokens
+    # below when present. None for backends with no such signal (Claude,
+    # grok, opencode), which fall through to the static table.
+    reported_context_window: Optional[int] = None
 
     @property
-    def max_context_tokens(self) -> int:
-        """Context window size for the detected model."""
+    def max_context_tokens(self) -> Optional[int]:
+        """Context window size for the detected model.
+
+        None when neither the backend nor overcode's static table knows the
+        model (#469) — callers must render a dash, never assume some other
+        model's window (the original bug: an unrecognized model silently
+        fell back to a 200K default with no relationship to the real model
+        in use).
+        """
+        if self.reported_context_window:
+            return self.reported_context_window
         return model_context_window(self.model)
 
     @property

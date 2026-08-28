@@ -1,0 +1,39 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.150.1)                         │
+│                                                    │
+│ model:     gpt-5.6-sol high   /model to change     │
+│ directory: ~/.claude/jobs/f6bc7dbe/tmp/probe-codex │
+╰────────────────────────────────────────────────────╯
+
+  Tip: See the Codex keymap documentation for supported actions and examples.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+› count from 1 to 40 slowly, one number per line, explaining each
+
+
+■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.
+
+
+› Ask Codex to do anything
+
+  gpt-5.6-sol high · ~/.claude/jobs/f6bc7dbe/tmp/probe-codex
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

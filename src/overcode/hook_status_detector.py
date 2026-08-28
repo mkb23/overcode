@@ -93,6 +93,19 @@ _HOOK_STATUS_MAP = {
     "UserPromptSubmitRejected": STATUS_ERROR,  # Hook blocked prompt e.g. budget exceeded (#428)
     "PermissionRequest": STATUS_WAITING_APPROVAL,
     "SessionEnd": STATUS_TERMINATED,
+    # Codex-only event (design doc §2.3): fires when the user hits Escape
+    # mid-turn. Unlike Claude Code, which prints no Stop/SessionEnd hook on
+    # interrupt and relies entirely on the pane-scraped
+    # `interrupt_prompt_markers` fallback above, codex's hook stdin says so
+    # directly — the map alone downgrades a stuck RUNNING straight to
+    # waiting_user without needing a pane read.
+    "Interrupt": STATUS_WAITING_USER,
+    # Codex-only event: session start. Not itself status-bearing (a
+    # UserPromptSubmit typically follows immediately), so it falls through
+    # to the same STATUS_WAITING_USER default unmapped events get — listed
+    # explicitly here so the mapping is self-documenting rather than
+    # silently relying on the .get() default.
+    "SessionStart": STATUS_WAITING_USER,
 }
 
 

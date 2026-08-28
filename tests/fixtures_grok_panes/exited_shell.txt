@@ -1,0 +1,39 @@
+cd /Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-grok && grok
+mike@shirka overcode-main % cd /Users/mike/.claude/jobs/f6bc7dbe/tmp/probe-grok && grok
+
+Resume this session with:
+  grok --resume 01a0439e-c846-79d0-83ca-5bb48aba631b
+mike@shirka probe-grok %
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

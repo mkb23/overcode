@@ -1,0 +1,39 @@
+╭───────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.150.1)                            │
+│                                                       │
+│ model:     gpt-5.1-codex-mini high   /model to change │
+│ directory: ~/.claude/jobs/f6bc7dbe/tmp/probe-codex    │
+╰───────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+› count from 1 to 20 slowly explaining each number
+
+
+⚠ Model metadata for `gpt-5.1-codex-mini` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.
+
+■ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account."}}
+
+
+› Ask Codex to do anything
+
+  gpt-5.1-codex-mini high · ~/.claude/jobs/f6bc7dbe/tmp/probe-codex
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

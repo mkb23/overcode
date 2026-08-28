@@ -112,6 +112,100 @@ class TestHooksStatus:
         assert result.exit_code == 0
         assert "not installed" in result.output
 
+class TestHooksUninstallBackendClaudeAndCodex:
+    """claude-code and codex install nothing on disk — nothing to remove."""
+
+    def test_claude_code_says_nothing_installed(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "claude-code"])
+        assert result.exit_code == 0
+        assert "nothing installed on disk" in result.output
+
+    def test_codex_says_nothing_installed(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "codex"])
+        assert result.exit_code == 0
+        assert "nothing installed on disk" in result.output
+
+
+class TestHooksUninstallBackendGrok:
+
+    def test_removes_marked_hooks_file(self, tmp_path, monkeypatch):
+        from overcode.backends.grok import ensure_hooks_installed, hooks_file_path
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+
+        ensure_hooks_installed()
+        assert hooks_file_path().exists()
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "grok"])
+        assert result.exit_code == 0
+        assert "Removed" in result.output
+        assert not hooks_file_path().exists()
+
+    def test_missing_file_is_a_clean_no_op(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "grok"])
+        assert result.exit_code == 0
+        assert "No grok hooks file found" in result.output
+
+    def test_refuses_unmarked_file(self, tmp_path, monkeypatch):
+        import json
+        from overcode.backends.grok import hooks_file_path
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+
+        path = hooks_file_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"description": "my own hooks file", "hooks": {}}))
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "grok"])
+        assert result.exit_code != 0
+        assert "not overcode-managed" in " ".join(result.output.split())
+        assert path.exists()
+
+
+class TestHooksUninstallBackendOpencode:
+
+    def test_requires_dir_flag(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode"])
+        assert result.exit_code != 0
+        assert "--dir is required" in result.output
+
+    def test_removes_marked_plugin(self, tmp_path):
+        from overcode.backends.opencode import ensure_plugin_installed, project_plugin_path
+
+        ensure_plugin_installed(str(tmp_path))
+        installed = project_plugin_path(str(tmp_path))
+        assert installed.exists()
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Removed" in result.output
+        assert not installed.exists()
+
+    def test_missing_plugin_is_a_clean_no_op(self, tmp_path):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No opencode telemetry plugin found" in result.output
+
+    def test_refuses_unmarked_file(self, tmp_path):
+        from overcode.backends.opencode import project_plugin_path
+
+        installed = project_plugin_path(str(tmp_path))
+        installed.parent.mkdir(parents=True)
+        installed.write_text("export const Mine = async () => ({})\n")
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode", "--dir", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "not overcode-managed" in " ".join(result.output.split())
+        assert installed.exists()
+
+
+class TestHooksUninstallBackendUnknown:
+    def test_unknown_backend_errors(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "something-else"])
+        assert result.exit_code != 0
+        assert "unknown backend" in result.output.lower()
+
+
 class TestHookHandlerCommand:
 
     def test_help(self):

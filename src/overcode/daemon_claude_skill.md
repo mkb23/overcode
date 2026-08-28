@@ -40,6 +40,33 @@ dialogs and slash commands differ, so stick to `overcode show`, `overcode send
 <name> approve|reject`, and plain-text instructions -- do not send Claude
 slash commands (`/clear`, `/exit`) to it.
 
+A session line reading `Backend: codex` is a Codex CLI agent. Its permission
+dialog is `1. Yes, proceed (y)` / `2. Yes, and don't ask again for commands
+that start with ... (p)` / `3. No, and tell Codex what to do differently
+(esc)`, option 1 pre-selected -- `overcode send <name> approve` sends `Enter`
+(takes option 1), `overcode send <name> reject` sends `Escape` (option 3,
+there is no literal `n`). `2`/`p` is codex's own "approve and don't ask again
+for this command prefix" gesture; only reach for it deliberately, not as a
+default approve. Never send raw `C-c` to a codex session -- it kills the
+process outright, no confirmation; the safe interrupt is `Escape`. Use
+`overcode send <name> approve|reject` and plain-text instructions, not Claude
+slash commands (`/clear`, `/exit`) -- codex's own are `/new` and `/quit`.
+
+A session line reading `Backend: grok` is a Grok Build agent. Its permission
+dialog is digit-key, no Enter required: `1` = "Yes, and don't ask again for
+anything" (always-approve mode -- this silently changes the session's
+permission mode, not a one-time approval), `2` = "Yes, proceed" (the one-time
+approve), `3` = "No, reject". `overcode send <name> approve` sends `2`,
+`overcode send <name> reject` sends `3` -- never assume a bare `Enter`
+approves anything on grok (it doesn't move the selection at all; the digit
+alone executes immediately) and never send `1` as a default approve, since it
+silently flips the session out of asking again for the rest of the
+conversation. Bare `C-c` is safe on grok (interrupts only, process and
+session stay alive -- the opposite of codex/opencode), but `overcode send
+<name> approve|reject` and plain-text instructions are still preferred over
+raw keys. grok's own slash commands are `/new` (not `/clear`) and `/quit`
+(not `/exit`); do not send Claude's.
+
 ## Approval Rules
 
 Follow the session's **standing instructions** first. Then apply these defaults:

@@ -627,8 +627,9 @@ class TestLaunchExtended:
 
     def test_deprecated_claude_arg_is_hidden_from_help(self):
         result = runner.invoke(app, ["launch", "--help"])
-        assert "--backend-arg" in result.output
-        assert "--claude-arg" not in result.output
+        output = strip_ansi(result.output)
+        assert "--backend-arg" in output
+        assert "--claude-arg" not in output
 
     def test_launch_with_parent(self):
         """Launch with --parent sets parent info."""
