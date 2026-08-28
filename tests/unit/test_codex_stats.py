@@ -31,7 +31,7 @@ OTHER_SID = "01a0439d-63b8-71d0-bf11-38fb10d0f552"
 
 def token_count_event(
     input_tokens=7000, cached=512, cache_write=64, output=100, reasoning=20,
-    total=7120, context_window=272000,
+    total=7120, context_window=272000, last_total=None,
 ):
     return {
         "type": "event_msg",
@@ -46,7 +46,9 @@ def token_count_event(
                     "reasoning_output_tokens": reasoning,
                     "total_tokens": total,
                 },
-                "last_token_usage": {},
+                "last_token_usage": (
+                    {} if last_total is None else {"total_tokens": last_total}
+                ),
                 "model_context_window": context_window,
             },
             "rate_limits": {},
@@ -223,6 +225,48 @@ class TestGetStats:
         """
         stats = reader.get_stats(make_session())
         assert stats.reported_context_window == 272000
+
+    def test_context_uses_last_request_not_cumulative_totals(self, sessions_dir):
+        """Live-found: a tiny two-turn session showed 11% CTX in the TUI
+        while codex's own /status said 14.5K used / 258K (~6%). The
+        cumulative total_token_usage re-counts the resent context every
+        turn; occupancy must come from last_token_usage instead. The Σ
+        token columns keep the cumulative figures — that's their job."""
+        write_rollout(
+            rollout_path(sessions_dir, SID),
+            [
+                session_meta_line(),
+                turn_context_event(model="gpt-5.6-sol"),
+                user_turn_item(),
+                token_count_event(
+                    input_tokens=14505, total=14521, last_total=14521
+                ),
+                user_turn_item(),
+                token_count_event(
+                    input_tokens=29035, total=29061, last_total=14540
+                ),
+            ],
+        )
+        reader = CodexStatsReader(sessions_dir=sessions_dir)
+        stats = reader.get_stats(make_session())
+        assert stats.current_context_tokens == 14540
+        assert stats.input_tokens == 29035
+
+    def test_context_falls_back_to_cumulative_when_last_usage_absent(self, sessions_dir):
+        """Older single-turn files (and the Phase 0 corpus) carry an empty
+        last_token_usage — the cumulative figure is identical there."""
+        write_rollout(
+            rollout_path(sessions_dir, SID),
+            [
+                session_meta_line(),
+                turn_context_event(model="gpt-5.6-sol"),
+                user_turn_item(),
+                token_count_event(total=7120),
+            ],
+        )
+        reader = CodexStatsReader(sessions_dir=sessions_dir)
+        stats = reader.get_stats(make_session())
+        assert stats.current_context_tokens == 7120
 
     def test_reported_context_window_preferred_over_static_table(self, sessions_dir):
         """max_context_tokens must use codex's own reported figure even

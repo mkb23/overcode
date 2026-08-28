@@ -189,6 +189,19 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
                 )
                 out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
                 out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
+            # Context occupancy comes from last_token_usage (the latest
+            # request: its input already contains the whole conversation,
+            # plus its output), NOT total_token_usage — the cumulative
+            # totals re-count the resent context every turn, so a tiny
+            # two-turn session read as 2x its real window usage (29.1K vs
+            # codex's own "/status: 14.5K used"). total_token_usage keeps
+            # feeding the Σ token columns above, where cumulative is the
+            # point. Falls back to the cumulative figure only when
+            # last_token_usage is absent (single-turn files: identical).
+            last = info.get("last_token_usage") if isinstance(info, dict) else None
+            if isinstance(last, dict) and last.get("total_tokens") is not None:
+                out["current_context_tokens"] = _as_int(last.get("total_tokens"))
+            elif isinstance(usage, dict):
                 out["current_context_tokens"] = _as_int(usage.get("total_tokens"))
             # model_context_window is a sibling of total_token_usage inside
             # `info`, not nested inside it (#469) — codex's own CLI reports
