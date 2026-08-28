@@ -622,7 +622,15 @@ class GrokBackend:
         ``opencode.ensure_plugin_installed``. Failure is silent by design: a
         missing hooks file costs hooks-grade status, not the launch, and the
         detection dispatcher falls back to pane polling on its own.
+
+        Skipped entirely when ``backend_telemetry.grok`` is turned off in
+        config.yaml (``config.get_backend_telemetry_enabled``) — the global
+        file is never written, and any previously-installed copy is left
+        as-is (see ``overcode hooks uninstall-backend`` to remove it).
         """
+        from ..config import get_backend_telemetry_enabled
+        if not get_backend_telemetry_enabled(self.name):
+            return None
         ensure_hooks_installed()
 
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
@@ -758,12 +766,14 @@ def get_grok_backend() -> GrokBackend:
 def installed_version() -> Optional[str]:
     """Run `grok --version`, returning the trimmed output or None.
 
-    Always probes the real binary, never GROK_COMMAND — a doctor check
-    against the mock harness would be meaningless.
+    Always probes the real binary, never GROK_COMMAND (respect_override=
+    False) — a doctor check against the mock harness would be meaningless.
     """
     from ..dependency_check import check_agent_cli
 
-    available, _path, version = check_agent_cli(get_grok_backend())
+    available, _path, version = check_agent_cli(
+        get_grok_backend(), respect_override=False
+    )
     if not available or not version:
         return None
     return version.strip() or None

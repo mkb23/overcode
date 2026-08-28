@@ -1671,6 +1671,90 @@ class TestCountUntrackedWindows:
             assert result == 0
 
 
+class TestMaybeRotateHistory:
+    """Test _maybe_rotate_history — hourly agent_status_history.csv rotation
+    check (#465, #468)."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_retention_config(self):
+        """Avoid touching the real ~/.overcode/config.yaml during these tests."""
+        with patch('overcode.config.get_history_retention_config', return_value={
+            "status_history_max_days": 90.0,
+            "status_history_rotate_mb": 50.0,
+            "event_loop_timing_cap_mb": 100.0,
+            "event_loop_timing_enabled": True,
+        }):
+            yield
+
+    def _make_daemon(self, tmp_path):
+        from overcode.monitor_daemon import MonitorDaemon
+        with patch.object(MonitorDaemon, '__init__', lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+            daemon.history_path = tmp_path / "agent_status_history.csv"
+            daemon.log = MagicMock()
+            daemon._last_history_rotation_check = None
+            daemon._history_rotation_check_interval = 3600
+            return daemon
+
+    def test_runs_on_first_tick(self, tmp_path):
+        """With no prior check recorded, the rotation pass should run immediately."""
+        daemon = self._make_daemon(tmp_path)
+        now = datetime.now()
+
+        with patch('overcode.status_history.rotate_and_retain',
+                   return_value={"archived": None, "deleted": []}) as mock_rotate:
+            daemon._maybe_rotate_history(now)
+
+        mock_rotate.assert_called_once()
+        assert daemon._last_history_rotation_check == now
+
+    def test_skips_when_interval_not_elapsed(self, tmp_path):
+        """A second call within the hourly interval should be a no-op."""
+        daemon = self._make_daemon(tmp_path)
+        first = datetime.now()
+        daemon._last_history_rotation_check = first
+
+        with patch('overcode.status_history.rotate_and_retain') as mock_rotate:
+            daemon._maybe_rotate_history(first + timedelta(minutes=10))
+
+        mock_rotate.assert_not_called()
+
+    def test_runs_again_after_interval_elapses(self, tmp_path):
+        """Once the interval has passed, the check should run again."""
+        daemon = self._make_daemon(tmp_path)
+        first = datetime.now()
+        daemon._last_history_rotation_check = first
+
+        with patch('overcode.status_history.rotate_and_retain',
+                   return_value={"archived": None, "deleted": []}) as mock_rotate:
+            daemon._maybe_rotate_history(first + timedelta(hours=2))
+
+        mock_rotate.assert_called_once()
+
+    def test_exception_is_caught_and_logged(self, tmp_path):
+        """A rotation failure must not crash the daemon loop."""
+        daemon = self._make_daemon(tmp_path)
+        now = datetime.now()
+
+        with patch('overcode.status_history.rotate_and_retain',
+                   side_effect=RuntimeError("boom")):
+            daemon._maybe_rotate_history(now)  # should not raise
+
+        daemon.log.error.assert_called_once()
+
+    def test_logs_when_archive_created(self, tmp_path):
+        """A successful rotation should be logged at info level."""
+        daemon = self._make_daemon(tmp_path)
+        now = datetime.now()
+        archive_path = tmp_path / "agent_status_history.20200101-000000.csv.gz"
+
+        with patch('overcode.status_history.rotate_and_retain',
+                   return_value={"archived": archive_path, "deleted": []}):
+            daemon._maybe_rotate_history(now)
+
+        daemon.log.info.assert_called()
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

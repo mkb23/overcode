@@ -625,6 +625,48 @@ class TestTUIPreferences:
             assert loaded.summary_detail == "full"
 
 
+class TestCapDiagnosticsCsv:
+    """Tests for cap_diagnostics_csv (#465) — the event_loop_timing.csv backstop."""
+
+    def test_no_truncation_below_cap(self, tmp_path):
+        from overcode.settings import cap_diagnostics_csv
+
+        path = tmp_path / "diag.csv"
+        path.write_text("timestamp,delta_ms,event\n1,2,\n")
+
+        truncated = cap_diagnostics_csv(path, max_mb=100)
+
+        assert truncated is False
+        assert path.read_text() == "timestamp,delta_ms,event\n1,2,\n"
+
+    def test_truncates_when_over_cap(self, tmp_path):
+        from overcode.settings import cap_diagnostics_csv
+
+        path = tmp_path / "diag.csv"
+        header = "timestamp,delta_ms,event\n"
+        # Build many small rows so we can identify "kept" (newest) rows precisely.
+        rows = [f"row{i},1.0,\n" for i in range(10000)]
+        path.write_text(header + "".join(rows))
+        original_size = path.stat().st_size
+
+        truncated = cap_diagnostics_csv(path, max_mb=original_size / (1024 * 1024) * 0.5)
+
+        assert truncated is True
+        new_content = path.read_text()
+        assert new_content.startswith(header)
+        # The newest row must have survived; the very first data row must not.
+        assert "row9999" in new_content
+        assert "row0,1.0" not in new_content
+        assert path.stat().st_size < original_size
+
+    def test_nonexistent_file_returns_false(self, tmp_path):
+        from overcode.settings import cap_diagnostics_csv
+
+        truncated = cap_diagnostics_csv(tmp_path / "missing.csv", max_mb=100)
+
+        assert truncated is False
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

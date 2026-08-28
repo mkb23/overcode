@@ -295,6 +295,56 @@ class TestPluginInstallation:
         assert not (tmp_path / ".opencode").exists()
 
 
+class TestBackendTelemetryOptOut:
+    """``backend_telemetry: {opencode: off}`` skips plugin install entirely."""
+
+    @pytest.fixture
+    def isolated_config(self, tmp_path, monkeypatch):
+        from overcode import config
+        config_dir = tmp_path / "home"
+        config_dir.mkdir()
+        config_path = config_dir / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+        config._clear_config_cache()
+        yield config_path
+        config._clear_config_cache()
+
+    def test_plugin_not_written_when_disabled(self, backend, tmp_path, isolated_config):
+        isolated_config.write_text("backend_telemetry:\n  opencode: off\n")
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        assert not (project_dir / ".opencode").exists()
+
+    def test_plugin_written_when_no_config(self, backend, tmp_path, isolated_config):
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        assert (project_dir / ".opencode" / "plugins" / PLUGIN_FILENAME).is_file()
+
+    def test_plugin_written_when_explicitly_on(self, backend, tmp_path, isolated_config):
+        isolated_config.write_text("backend_telemetry:\n  opencode: on\n")
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        assert (project_dir / ".opencode" / "plugins" / PLUGIN_FILENAME).is_file()
+
+    def test_previously_installed_plugin_is_left_alone_when_disabled(
+        self, backend, tmp_path, isolated_config
+    ):
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        installed = project_dir / ".opencode" / "plugins" / PLUGIN_FILENAME
+        before = installed.read_text()
+
+        isolated_config.write_text("backend_telemetry:\n  opencode: off\n")
+        from overcode import config
+        config._clear_config_cache()
+        backend.prepare_launch(LaunchSpec(start_directory=str(project_dir)))
+        assert installed.read_text() == before
+
+
 class TestEnvPrefix:
     def test_forwards_the_state_dir(self, backend):
         # The plugin runs inside the opencode process and must write hook state

@@ -366,10 +366,15 @@ class CodexBackend:
 
         Every launch also injects ``overcode hook-handler`` for codex's hook
         events (§2.3 of the design doc) via one ``-c 'hooks.<Event>=[...]'``
-        override per event plus ``--dangerously-bypass-hook-trust`` —
-        unconditionally, the same posture Claude's ``--settings`` injection
-        takes (never gated on a launch flag; the mock harness tolerates the
-        extra argv unconditionally, see tests/mock_codex.py).
+        override per event plus ``--dangerously-bypass-hook-trust`` — unless
+        ``backend_telemetry.codex`` is turned off in config.yaml
+        (``config.get_backend_telemetry_enabled``), in which case none of
+        that argv is emitted at all and status detection falls back to pane
+        polling automatically (the same path a codex agent takes whenever
+        its hook state simply isn't fresh). Otherwise unconditional, the
+        same posture Claude's ``--settings`` injection takes (never gated on
+        a launch flag; the mock harness tolerates the extra argv
+        unconditionally, see tests/mock_codex.py).
         """
         cmd = [self.executable()]
 
@@ -384,11 +389,13 @@ class CodexBackend:
         elif spec.skip_permissions or spec.permissiveness_mode == "permissive":
             cmd.extend(["-a", "never", "--sandbox", "workspace-write"])
 
-        overcode_bin = _resolve_overcode_bin()
-        hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler")
-        for hook_event in CODEX_HOOK_EVENTS:
-            cmd.extend(["-c", f"hooks.{hook_event}={hook_array}"])
-        cmd.append("--dangerously-bypass-hook-trust")
+        from ..config import get_backend_telemetry_enabled
+        if get_backend_telemetry_enabled(self.name):
+            overcode_bin = _resolve_overcode_bin()
+            hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler")
+            for hook_event in CODEX_HOOK_EVENTS:
+                cmd.extend(["-c", f"hooks.{hook_event}={hook_array}"])
+            cmd.append("--dangerously-bypass-hook-trust")
 
         if spec.extra_args:
             for arg in spec.extra_args:
@@ -501,12 +508,14 @@ def get_codex_backend() -> CodexBackend:
 def installed_version() -> Optional[str]:
     """Run `codex --version`, returning the trimmed output or None.
 
-    Always probes the real binary, never CODEX_COMMAND — a doctor check
-    against the mock harness would be meaningless.
+    Always probes the real binary, never CODEX_COMMAND (respect_override=
+    False) — a doctor check against the mock harness would be meaningless.
     """
     from ..dependency_check import check_agent_cli
 
-    available, _path, version = check_agent_cli(get_codex_backend())
+    available, _path, version = check_agent_cli(
+        get_codex_backend(), respect_override=False
+    )
     if not available or not version:
         return None
     return version.strip() or None

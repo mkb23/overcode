@@ -155,7 +155,14 @@ class ClaudeCodeBackend:
         return cmd
 
     def prepare_launch(self, spec: LaunchSpec) -> None:
-        """Nothing to stage — hooks and permissions ride on ``--settings``."""
+        """Nothing to stage — hooks and permissions ride on ``--settings``.
+
+        Claude Code is deliberately exempt from ``backend_telemetry`` config
+        (``config.get_backend_telemetry_enabled`` always returns True for
+        it): its hooks are per-launch ``--settings`` flags on the argv of
+        the process overcode itself starts, not a file written to disk, so
+        there is no on-disk footprint to opt out of.
+        """
         return None
 
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:

@@ -302,6 +302,52 @@ class TestHookInjection:
         assert value == '[{hooks=[{type="command",command="C:\\\\path with \\"quotes\\""}]}]'
 
 
+class TestBackendTelemetryOptOut:
+    """``backend_telemetry: {codex: off}`` skips the -c hook argv entirely."""
+
+    @pytest.fixture
+    def isolated_config(self, tmp_path, monkeypatch):
+        from overcode import config
+        config_path = tmp_path / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+        config._clear_config_cache()
+        yield config_path
+        config._clear_config_cache()
+
+    def test_hook_argv_omitted_when_disabled(self, backend, isolated_config):
+        isolated_config.write_text("backend_telemetry:\n  codex: off\n")
+        cmd = backend.build_command(LaunchSpec())
+        assert "-c" not in cmd
+        assert "--dangerously-bypass-hook-trust" not in cmd
+
+    def test_other_flags_still_present_when_disabled(self, backend, isolated_config):
+        isolated_config.write_text("backend_telemetry:\n  codex: off\n")
+        cmd = backend.build_command(LaunchSpec(model="gpt-5.6-sol", permissiveness_mode="bypass"))
+        assert cmd[0] == backend.executable()
+        assert "-m" in cmd and "gpt-5.6-sol" in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+
+    def test_hook_argv_present_when_no_config(self, backend, isolated_config):
+        # No config.yaml at all -> default is "on", unaffected.
+        cmd = backend.build_command(LaunchSpec())
+        assert "--dangerously-bypass-hook-trust" in cmd
+
+    def test_hook_argv_present_when_explicitly_on(self, backend, isolated_config):
+        isolated_config.write_text("backend_telemetry:\n  codex: on\n")
+        cmd = backend.build_command(LaunchSpec())
+        assert "--dangerously-bypass-hook-trust" in cmd
+
+    def test_health_verdict_reads_missing_settings_when_disabled(self, backend, isolated_config):
+        # health_verdict() itself is argv-driven and backend_telemetry-blind
+        # (doctor.py is what re-maps this to VERDICT_TELEMETRY_DISABLED);
+        # confirms the two layers compose correctly end to end.
+        isolated_config.write_text("backend_telemetry:\n  codex: off\n")
+        cmd = backend.build_command(LaunchSpec())
+        argv = " ".join(cmd)
+        verdict, _details = backend.health_verdict(argv)
+        assert verdict == VERDICT_MISSING_SETTINGS
+
+
 class TestGestures:
     def test_graceful_exit_is_escape_then_quit_never_c_c(self, backend):
         presses = backend.graceful_exit_keys()

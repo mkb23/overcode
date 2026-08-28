@@ -1159,3 +1159,49 @@ and x.ai's Grok Build announcement for install/subscription facts. The macOS
 Codex app was traced to `ChatGPT.app`'s embedded `Codex Framework.framework`;
 its staged alpha CLI (`~/.codex/plugins/.plugin-appserver/codex`,
 0.148.0-alpha.21) is deliberately not used.
+
+---
+
+## Post-0.6.0 hardening (Aug 28, 2026)
+
+Three small, surgical follow-ups landed after the phased plan above shipped,
+none touching the launch/status/stats seam itself:
+
+1. **Per-backend telemetry opt-out.** `backend_telemetry` in
+   `~/.overcode/config.yaml` (`config.get_backend_telemetry_enabled()`) lets
+   a user turn off codex's `-c 'hooks.<Event>=...'` argv injection,
+   opencode's plugin install, or grok's global hooks-file install,
+   per-backend, before they're sure about a backend touching their install.
+   Claude Code is exempt — its hooks are core and leave no on-disk
+   footprint either way. `overcode hooks uninstall-backend <backend>
+   [--dir DIR]` removes an already-installed opencode plugin or grok hooks
+   file (marker-gated, same as the existing install-time idempotence).
+   `overcode doctor` reports a backend deliberately opted out as
+   `telemetry-disabled` (informational), distinct from `missing-settings`
+   (broken) — `--fix` does not try to restart a `telemetry-disabled` agent.
+   Status detection needed no changes: per-session dispatch already falls
+   back to pane polling whenever hook state isn't fresh, which is exactly
+   what telemetry-off produces. See `docs/backends.md`'s "Opting out of
+   telemetry" section.
+2. **Issue #470 — default backend, TUI surface.** `new_agent_defaults.backend`
+   already worked from `config.yaml`; the TUI's `G` new-agent-defaults modal
+   now has a **Backend** row (cycles every registered backend plus
+   `(unset)`), persisted the same way the other defaults are. Config exposes
+   a `backend_explicit` bool (raw config had an opinion vs. resolved to the
+   built-in default) so the modal can distinguish `(unset)` from an explicit
+   `claude-code` — both resolve to the same backend name but mean different
+   things to a user re-opening the modal.
+3. **Dependency-check hole: overrides weren't validated.**
+   `dependency_check.check_agent_cli()` used to probe `resolved.binary` (the
+   bare PATH name) unconditionally, ignoring
+   `resolved.executable()` — the function that actually honors
+   CLAUDE_COMMAND/OPENCODE_COMMAND/CODEX_COMMAND/GROK_COMMAND. A bad override
+   used to pass the pre-flight check and then die silently once the pane
+   launched; a mock/test override used to still require the *real* CLI on
+   PATH, a latent CI gap. `check_agent_cli()` now takes a
+   `respect_override: bool = True` parameter and probes
+   `resolved.executable()` by default, falling back to `resolved.binary`
+   only when `respect_override=False` — the escape hatch each backend's
+   `installed_version()` doctor helper uses, since those must always report
+   what's genuinely installed on the machine, never a dev/test override.
+   `require_claude()`/`require_agent_cli()` inherit the fix for free.

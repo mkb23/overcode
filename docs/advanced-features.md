@@ -452,6 +452,12 @@ df.groupby('name')['cost'].sum().sort_values(ascending=False)
 df['efficiency'] = df['green_time'] / (df['green_time'] + df['idle_time'])
 ```
 
+Parquet export and the TUI timeline both read only the last 24h/3h of
+`agent_status_history.csv` — the source CSV itself is rotated to compressed
+`.gz` archives and retained long-term rather than growing unbounded. See
+[History Retention](configuration.md#history-retention) in the configuration
+docs for the rotation/retention knobs.
+
 ## Presence Tracking
 
 Overcode tracks when you're at your computer to correlate with agent activity.

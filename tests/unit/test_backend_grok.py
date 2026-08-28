@@ -368,3 +368,42 @@ class TestPrepareLaunch:
         assert hooks_file_path().exists()
         # Never writes into the launched agent's own project directory.
         assert list(project_dir.iterdir()) == []
+
+
+class TestBackendTelemetryOptOut:
+    """``backend_telemetry: {grok: off}`` skips the global hooks file entirely."""
+
+    @pytest.fixture(autouse=True)
+    def grok_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+
+    @pytest.fixture
+    def isolated_config(self, tmp_path, monkeypatch):
+        from overcode import config
+        config_dir = tmp_path / "home"
+        config_dir.mkdir()
+        config_path = config_dir / "config.yaml"
+        monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+        config._clear_config_cache()
+        yield config_path
+        config._clear_config_cache()
+
+    def test_hooks_file_not_written_when_disabled(self, backend, isolated_config):
+        from overcode.backends.grok import hooks_file_path
+
+        isolated_config.write_text("backend_telemetry:\n  grok: off\n")
+        backend.prepare_launch(LaunchSpec())
+        assert not hooks_file_path().exists()
+
+    def test_hooks_file_written_when_no_config(self, backend, isolated_config):
+        from overcode.backends.grok import hooks_installed
+
+        backend.prepare_launch(LaunchSpec())
+        assert hooks_installed() is True
+
+    def test_hooks_file_written_when_explicitly_on(self, backend, isolated_config):
+        from overcode.backends.grok import hooks_installed
+
+        isolated_config.write_text("backend_telemetry:\n  grok: on\n")
+        backend.prepare_launch(LaunchSpec())
+        assert hooks_installed() is True

@@ -638,6 +638,38 @@ def get_status_changes_path(session: str) -> Path:
     return get_diagnostics_dir(session) / "status_changes.csv"
 
 
+def cap_diagnostics_csv(path: Path, max_mb: float) -> bool:
+    """Hard cap a diagnostic CSV (#465): drop the oldest 90% once it exceeds max_mb.
+
+    Diagnostic CSVs like diagnostics/event_loop_timing.csv are append-only
+    debug output, not archival data — unlike agent_status_history.csv there's
+    no compress-and-retain step, just a backstop truncation so a busy TUI
+    session can't fill the disk. Assumes a single-line CSV header.
+
+    Returns True if truncation occurred.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+    if size <= max_mb * 1024 * 1024:
+        return False
+    try:
+        with open(path, 'rb') as f:
+            header = f.readline()
+            f.seek(int(size * 0.9))
+            f.readline()  # discard partial line at the seek point
+            tail = f.read()
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, 'wb') as f:
+            f.write(header)
+            f.write(tail)
+        os.replace(tmp_path, path)
+        return True
+    except OSError:
+        return False
+
+
 def ensure_session_dir(session: str) -> Path:
     """Ensure session directory exists and return it."""
     session_dir = get_session_dir(session)

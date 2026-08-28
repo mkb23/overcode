@@ -79,6 +79,14 @@ tmux:
 timeline:
   hours: 3.0  # Hours of history to show in timeline
 
+# Rotation/retention for agent_status_history.csv and diagnostics/event_loop_timing.csv
+# See "History Retention" below
+history_retention:
+  status_history_max_days: 540    # delete rotated archives older than this (~18 months)
+  status_history_rotate_mb: 50    # rotate the active CSV past this size
+  event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
+  event_loop_timing_enabled: true # false disables the heartbeat probe entirely
+
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
 sisters:
@@ -143,11 +151,21 @@ new_agent_defaults:
   agent_teams: false          # Enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
   provider: web               # "web" (Claude.ai OAuth) or "bedrock" (AWS)
   wrapper: ""                 # Wrapper script name or path (e.g., "devcontainer")
+  backend: claude-code        # claude-code | opencode | codex | grok — see docs/backends.md
 ```
 
 These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults, and for child agents the parent's settings take precedence over config defaults (#433): explicit flag > parent setting > config default > built-in default. Use `--no-inherit` to skip the parent.
 
 Setting `wrapper: devcontainer` makes all new agents launch inside a Docker container by default. See the [Wrappers Guide](wrappers.md) for details.
+
+Omitting `backend` (or setting it to `null`) leaves new agents on overcode's
+built-in default (`claude-code`) — same effect as not having the key at all.
+There are two surfaces for setting it: editing `config.yaml` directly (as
+above), or the TUI's `G` new-agent-defaults modal, which has a **Backend**
+row that cycles through every registered backend plus `(unset)` (space/enter
+to cycle, `a` to apply). There is no `overcode config set` CLI subcommand —
+`overcode config` only supports `init`/`show`/`path`/`tmux` — so config.yaml
+and the `G` modal are the only two ways to change this default.
 
 ## Passthru Keys
 
@@ -241,14 +259,18 @@ These persist across TUI restarts.
 ### Session Data
 ```
 ~/.overcode/sessions/{session}/
-├── sessions.json              # Active sessions list
-├── {agent-id}.json           # Individual agent state
-├── agent_status_history.csv  # Status timeline
-├── monitor_daemon_state.json # Current metrics
-├── monitor_daemon.pid        # Monitor process ID
-├── supervisor_daemon.pid     # Supervisor process ID
-├── supervisor_stats.json     # Supervisor token tracking
-└── tui_preferences.json      # TUI settings
+├── sessions.json                        # Active sessions list
+├── {agent-id}.json                      # Individual agent state
+├── agent_status_history.csv             # Status timeline (active window)
+├── agent_status_history.<ts>.csv.gz     # Rotated archives (#468)
+├── monitor_daemon_state.json            # Current metrics
+├── monitor_daemon.pid                   # Monitor process ID
+├── supervisor_daemon.pid                # Supervisor process ID
+├── supervisor_stats.json                # Supervisor token tracking
+├── tui_preferences.json                 # TUI settings
+└── diagnostics/
+    ├── event_loop_timing.csv            # TUI heartbeat probe, hard-capped (#465)
+    └── status_changes.csv               # Per-agent status transition log
 ```
 
 ### Global Data
@@ -258,6 +280,45 @@ These persist across TUI restarts.
 ├── presets.json     # Standing instruction presets
 └── presence_log.csv # User presence tracking (macOS)
 ```
+
+## History Retention
+
+`agent_status_history.csv` and `diagnostics/event_loop_timing.csv` are both
+append-only and grow without bound if left unmanaged — on a long-lived host
+they've been observed reaching multiple GB (#465, #468). They're handled
+differently because they serve different purposes:
+
+- **`agent_status_history.csv` is archival.** It backs the timeline views
+  (TUI timeline, parquet export, web analytics), so history is valuable and
+  shouldn't be silently discarded. The monitor daemon checks it at most
+  hourly and, once it exceeds `status_history_rotate_mb` or spans more than
+  7 days, rotates it: rows older than 30 hours (comfortably above the
+  24h widest windowed reader) are moved into a compressed
+  `agent_status_history.<YYYYMMDD-HHMMSS>.csv.gz` archive alongside the
+  active file (gzip typically shrinks this data ~15-20x), while the active
+  file keeps everything the windowed TUI/export readers need (3h/24h).
+  Archives older than `status_history_max_days` are deleted on the same
+  hourly pass. The web dashboard's custom date-range analytics endpoint
+  transparently reads both the active file and any archives it needs — deep
+  history queries keep working after rotation.
+- **`diagnostics/event_loop_timing.csv` is diagnostic.** It's the TUI's
+  event-loop responsiveness probe (records every ~100ms, flushed every 5s)
+  and isn't read by any dashboard — it's a debugging aid. Rather than
+  archiving it, it's just hard-capped: once it exceeds
+  `event_loop_timing_cap_mb`, the TUI truncates it down to its newest ~10%
+  on the next flush. Set `event_loop_timing_enabled: false` to turn the
+  probe off entirely if you don't need it.
+
+```yaml
+history_retention:
+  status_history_max_days: 540    # delete rotated archives older than this (~18 months)
+  status_history_rotate_mb: 50    # rotate the active CSV past this size
+  event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
+  event_loop_timing_enabled: true # false disables the heartbeat probe entirely
+```
+
+`overcode doctor` flags either file (including archives, combined) once it
+exceeds 5GB (sized above an intentional 18-month archive set), naming the path and the config knob to fix it.
 
 ## Pricing Configuration
 

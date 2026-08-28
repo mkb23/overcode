@@ -724,6 +724,69 @@ a session whose per-call context had grown past the long-context threshold.
 
 ---
 
+## Opting out of telemetry
+
+Every non-Claude backend's telemetry has an on-disk footprint of some kind
+(codex is the one exception — its hooks are per-launch argv, not a file).
+If you'd rather not have overcode write anything until you're sure about a
+backend, turn it off per-backend in `~/.overcode/config.yaml`:
+
+```yaml
+backend_telemetry:
+  opencode: off
+  codex: off
+  grok: off
+```
+
+Default is `on` for every backend, so nothing changes until you opt one out.
+Each backend's actual footprint, for reference:
+
+| Backend | Footprint | Scope |
+|---|---|---|
+| `claude-code` | none — hooks ride per-launch `--settings` flags | n/a, and **exempt from this knob** (see below) |
+| `codex` | none — hooks ride per-launch `-c 'hooks.<Event>=...'` + `--dangerously-bypass-hook-trust` flags | n/a |
+| `opencode` | `<project>/.opencode/plugins/overcode-telemetry.js`, written by `prepare_launch()` | per-project |
+| `grok` | `~/.grok/hooks/overcode.json`, written by `prepare_launch()` | global (inert outside overcode — see above) |
+
+**Claude Code is exempt from `backend_telemetry`** — its hooks are core to
+how overcode supervises Claude agents at all, and (like codex) they leave no
+on-disk footprint to opt out of, so the config knob is silently ignored for
+it (`config.get_backend_telemetry_enabled` always returns `True` for
+`claude-code`).
+
+With a backend's telemetry off, `prepare_launch()` writes nothing and
+`build_command()` omits that backend's hook/telemetry argv entirely — codex
+skips all eight `-c 'hooks.<Event>=...'` overrides and
+`--dangerously-bypass-hook-trust`; opencode skips the plugin install; grok
+skips the hooks-file install. Nothing else changes: per-session status
+detection (`status_detector_factory.py`) already falls back to pane polling
+automatically whenever an agent has no fresh hook state, which is exactly
+the condition telemetry-off produces — the same path an opencode agent
+already takes if its plugin install failed for some other reason.
+
+`overcode doctor` knows the difference between "broken" and "opted out": an
+agent on a backend whose telemetry is configured off reads as
+`telemetry-disabled` (dim, informational) rather than `missing-settings`
+(red, implies a broken launch), and `overcode doctor --fix` does not try to
+"fix" it by restarting.
+
+Already have a footprint installed and want it gone? Turning the config knob
+off does **not** retroactively remove an existing file — pair it with:
+
+```bash
+overcode hooks uninstall-backend opencode --dir ~/code/myproject
+overcode hooks uninstall-backend grok
+overcode hooks uninstall-backend codex        # nothing installed on disk for this backend
+overcode hooks uninstall-backend claude-code  # nothing installed on disk for this backend
+```
+
+`--dir` is required for opencode (its plugin is project-scoped); grok's
+hooks file is global, so no `--dir` is needed. Both removals check for
+overcode's own marker first (`OVERCODE-PLUGIN-MARKER` / `OVERCODE-HOOKS-MARKER`)
+and refuse to touch a file you've since edited yourself.
+
+---
+
 ## Status detection (polling fallback)
 
 When the plugin is absent, status comes from **pane polling** — overcode

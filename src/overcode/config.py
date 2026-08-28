@@ -461,7 +461,11 @@ def get_new_agent_defaults() -> dict:
 
     Returns:
         Dict with bypass_permissions (bool), agent_teams (bool), provider,
-        wrapper, and backend (agent CLI name).
+        wrapper, backend (agent CLI name, always resolved — never empty),
+        and backend_explicit (bool: True when config.yaml actually names a
+        backend, False when ``backend`` above is just the built-in default
+        filled in for a config with no opinion — the G modal in the TUI uses
+        this to distinguish "(unset)" from an explicit "claude-code").
     """
     from .backends import DEFAULT_BACKEND
 
@@ -472,6 +476,7 @@ def get_new_agent_defaults() -> dict:
         "provider": defaults.get("provider", "web"),
         "wrapper": defaults.get("wrapper", ""),
         "backend": defaults.get("backend") or DEFAULT_BACKEND,
+        "backend_explicit": bool(defaults.get("backend")),
     }
 
 
@@ -484,6 +489,38 @@ def save_new_agent_defaults(defaults: dict) -> None:
     config = load_config()
     config["new_agent_defaults"] = defaults
     save_config(config)
+
+
+def get_backend_telemetry_enabled(backend_name: str) -> bool:
+    """Whether a backend should install its telemetry footprint at launch.
+
+    Config format in ~/.overcode/config.yaml:
+        backend_telemetry:
+          opencode: off   # skip installing .opencode/plugins/overcode-telemetry.js
+          codex: on       # (default) inject -c hooks.*=... overrides
+          grok: off       # skip installing ~/.grok/hooks/overcode.json
+
+    Default is "on" for every backend, so existing installs are unaffected
+    until a user opts a backend out. ``claude-code`` is exempt and always
+    returns True regardless of config: its hooks ride per-launch
+    ``--settings`` flags and leave no on-disk footprint, so there is nothing
+    to opt out of.
+
+    Returns:
+        True unless config.yaml explicitly turns this backend's telemetry
+        off (accepts "off"/"false"/"0"/"no", case-insensitively, or a
+        literal boolean False).
+    """
+    if backend_name == "claude-code":
+        return True
+    value = _get_config_value(f"backend_telemetry.{backend_name}")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("off", "false", "0", "no")
+    return True
 
 
 def get_sync_branch() -> str:
@@ -527,6 +564,37 @@ def get_jobs_retention_hours() -> float:
         Retention hours (default 24)
     """
     return float(_get_config_value("jobs.retention_hours", 24))
+
+
+def get_history_retention_config() -> dict:
+    """Get rotation/retention settings for status-history and diagnostic CSVs (#465, #468).
+
+    agent_status_history.csv is archival — it's rotated to a compressed
+    .csv.gz alongside the active file and retained for status_history_max_days.
+    diagnostics/event_loop_timing.csv is diagnostic-only — it's hard-capped
+    at event_loop_timing_cap_mb (oldest rows dropped, not archived) and can
+    be disabled outright via event_loop_timing_enabled.
+
+    Config format in ~/.overcode/config.yaml:
+        history_retention:
+          status_history_max_days: 540    # delete rotated archives older than this (~18 months)
+          status_history_rotate_mb: 50    # rotate the active CSV past this size
+          event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
+          event_loop_timing_enabled: true # false disables the heartbeat probe entirely
+
+    Returns:
+        Dict with the four keys above; missing/invalid entries fall back to
+        the defaults shown.
+    """
+    cfg = _get_config_value("history_retention", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "status_history_max_days": float(cfg.get("status_history_max_days", 540)),
+        "status_history_rotate_mb": float(cfg.get("status_history_rotate_mb", 50)),
+        "event_loop_timing_cap_mb": float(cfg.get("event_loop_timing_cap_mb", 100)),
+        "event_loop_timing_enabled": bool(cfg.get("event_loop_timing_enabled", True)),
+    }
 
 
 def get_sisters_config() -> List[dict]:

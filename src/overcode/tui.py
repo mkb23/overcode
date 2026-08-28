@@ -412,10 +412,16 @@ class SupervisorTUI(
         except Exception:
             self._preloaded_sessions = None
 
-        # Event loop heartbeat probe — measures event loop responsiveness
+        # Event loop heartbeat probe — measures event loop responsiveness.
+        # Diagnostic-only (#465): enabled by default but a config knob can
+        # turn it off, and the CSV is hard-capped as a backstop either way.
+        from .config import get_history_retention_config
+        _history_cfg = get_history_retention_config()
         self._heartbeat_last: float = 0.0  # monotonic timestamp of last tick
         self._heartbeat_log: list = []  # buffered (iso_timestamp, delta_ms, event) tuples
         self._heartbeat_csv_path = get_event_loop_timing_path(tmux_session)
+        self._heartbeat_enabled = _history_cfg["event_loop_timing_enabled"]
+        self._heartbeat_cap_mb = _history_cfg["event_loop_timing_cap_mb"]
 
         # Status change diagnostic log — tracks every per-agent status transition
         self._status_change_log: list = []
@@ -556,10 +562,13 @@ class SupervisorTUI(
         # Kick off status fetch immediately (widgets already exist from pre-load)
         self.update_all_statuses()
 
-        # Event loop heartbeat probe — always on (negligible overhead)
-        self._heartbeat_last = time.monotonic()
-        self.set_interval(0.1, self._record_heartbeat)
-        self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
+        # Event loop heartbeat probe — on by default (negligible per-tick
+        # overhead), but disable via history_retention.event_loop_timing_enabled
+        # in config.yaml if you don't need it (#465).
+        if self._heartbeat_enabled:
+            self._heartbeat_last = time.monotonic()
+            self.set_interval(0.1, self._record_heartbeat)
+            self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
         if self._prefs.status_change_logging:
             self.set_timer(5.0, lambda: self.set_interval(5, self._flush_status_changes))
 
@@ -4111,6 +4120,10 @@ class SupervisorTUI(
                     f.write("timestamp,delta_ms,event\n")
                 for ts, delta, event in buf:
                     f.write(f"{ts},{delta},{event}\n")
+            # Diagnostic-only file — hard cap as a backstop (#465). getattr
+            # default covers lightweight test doubles built via __new__.
+            from .settings import cap_diagnostics_csv
+            cap_diagnostics_csv(path, getattr(self, "_heartbeat_cap_mb", 100.0))
         except OSError:
             pass  # Best effort
 

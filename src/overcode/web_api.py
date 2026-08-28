@@ -18,7 +18,7 @@ from .monitor_daemon_state import (
     SessionDaemonState,
 )
 from .settings import get_agent_history_path
-from .status_history import read_agent_status_history
+from .status_history import read_agent_status_history, read_agent_status_history_range
 from .tui_helpers import (
     format_duration,
     format_tokens,
@@ -590,11 +590,17 @@ def get_analytics_timeline(
 
     hours = (end - start).total_seconds() / 3600.0
 
-    # Get agent status history from session-specific file
+    # Get agent status history from session-specific file. This endpoint is
+    # the one caller that legitimately reads beyond the active CSV's
+    # retained window (#468), so it uses the archive-aware reader that also
+    # scans rotated agent_status_history.*.csv.gz files rather than
+    # read_agent_status_history() (active-file-only, used by the 3h/24h
+    # windowed callers).
     history_path = get_agent_history_path(tmux_session)
-    all_history = read_agent_status_history(hours=hours, history_file=history_path)
+    all_history = read_agent_status_history_range(start, end, history_path)
 
-    # Filter to time range and group by agent
+    # Filter to time range (already applied by read_agent_status_history_range,
+    # kept here as a cheap defensive no-op) and group by agent
     agent_events: Dict[str, List[Dict[str, Any]]] = {}
     for ts, agent_name, status, activity, *_ in all_history:
         if ts < start or ts > end:

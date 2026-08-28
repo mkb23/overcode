@@ -51,6 +51,7 @@ def doctor(
         VERDICT_NO_CLAUDE,
         VERDICT_WINDOW_GONE,
         VERDICT_REMOTE,
+        VERDICT_TELEMETRY_DISABLED,
     )
     from ..stats_reader import stats_reader_for_session
     from ..monitor_daemon import is_monitor_daemon_running
@@ -99,6 +100,7 @@ def doctor(
         VERDICT_NO_CLAUDE: "[yellow]? no process[/yellow]",
         VERDICT_WINDOW_GONE: "[dim]window gone[/dim]",
         VERDICT_REMOTE: "[dim]remote[/dim]",
+        VERDICT_TELEMETRY_DISABLED: "[dim]○ telemetry off[/dim]",
     }
 
     def _issues_cell(findings):
@@ -210,6 +212,15 @@ def doctor(
         if any_skills_stale():
             rprint("[yellow]⚠[/yellow] installed skills differ from bundled "
                    "versions — run [bold]overcode skills install[/bold]")
+    except Exception:
+        pass
+
+    # Global (not per-agent): agent_status_history.csv / event_loop_timing.csv
+    # disk usage (#465, #468) — both are shared per-session files, not per-agent.
+    try:
+        from ..status_history import disk_usage_findings
+        for finding in disk_usage_findings(session):
+            rprint(f"[yellow]⚠[/yellow] {finding}")
     except Exception:
         pass
 

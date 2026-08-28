@@ -488,7 +488,16 @@ class OpencodeBackend:
         refreshes a stale copy. Failure is silent by design — a missing
         plugin costs hooks-grade status, not the launch, and the detection
         dispatcher falls back to pane polling on its own.
+
+        Skipped entirely when ``backend_telemetry.opencode`` is turned off in
+        config.yaml (``config.get_backend_telemetry_enabled``) — nothing is
+        written into the project directory, and any previously-installed
+        copy is left as-is (see ``overcode hooks uninstall-backend`` to
+        remove it).
         """
+        from ..config import get_backend_telemetry_enabled
+        if not get_backend_telemetry_enabled(self.name):
+            return None
         ensure_plugin_installed(spec.start_directory)
 
     def env_prefix(self, spec: LaunchSpec) -> Dict[str, str]:
@@ -621,12 +630,14 @@ def get_opencode_backend() -> OpencodeBackend:
 def installed_version() -> Optional[str]:
     """Run `opencode --version`, returning the trimmed output or None.
 
-    Always probes the real binary, never OPENCODE_COMMAND — a doctor check
-    against the mock harness would be meaningless.
+    Always probes the real binary, never OPENCODE_COMMAND (respect_override=
+    False) — a doctor check against the mock harness would be meaningless.
     """
     from ..dependency_check import check_agent_cli
 
-    available, _path, version = check_agent_cli(get_opencode_backend())
+    available, _path, version = check_agent_cli(
+        get_opencode_backend(), respect_override=False
+    )
     if not available or not version:
         return None
     return version.strip() or None

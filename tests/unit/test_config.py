@@ -819,6 +819,61 @@ class TestGetSyncBranch:
         assert config.get_sync_branch() == "develop"
 
 
+class TestGetHistoryRetentionConfig:
+    """Tests for history_retention config (#465, #468)."""
+
+    def test_returns_defaults_when_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+
+        result = config.get_history_retention_config()
+
+        assert result == {
+            "status_history_max_days": 540.0,
+            "status_history_rotate_mb": 50.0,
+            "event_loop_timing_cap_mb": 100.0,
+            "event_loop_timing_enabled": True,
+        }
+
+    def test_returns_custom_values(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "history_retention:\n"
+            "  status_history_max_days: 30\n"
+            "  status_history_rotate_mb: 10\n"
+            "  event_loop_timing_cap_mb: 25\n"
+            "  event_loop_timing_enabled: false\n"
+        )
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_history_retention_config()
+
+        assert result["status_history_max_days"] == 30.0
+        assert result["status_history_rotate_mb"] == 10.0
+        assert result["event_loop_timing_cap_mb"] == 25.0
+        assert result["event_loop_timing_enabled"] is False
+
+    def test_partial_override_keeps_other_defaults(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("history_retention:\n  status_history_rotate_mb: 5\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_history_retention_config()
+
+        assert result["status_history_rotate_mb"] == 5.0
+        assert result["status_history_max_days"] == 540.0
+        assert result["event_loop_timing_cap_mb"] == 100.0
+        assert result["event_loop_timing_enabled"] is True
+
+    def test_non_dict_value_falls_back_to_defaults(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("history_retention: not_a_dict\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+
+        result = config.get_history_retention_config()
+
+        assert result["status_history_max_days"] == 540.0
+
+
 class TestPassthruKeys:
     """Tests for configurable passthru keys (#446)."""
 
@@ -878,3 +933,82 @@ class TestPassthruKeys:
         import yaml
         written = yaml.safe_load(config_file.read_text()) or {}
         assert "passthru_keys" not in written
+
+
+class TestGetNewAgentDefaultsBackendExplicit:
+    """backend_explicit distinguishes "(unset)" from an explicit name (#470)."""
+
+    def test_no_config_is_not_explicit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        result = config.get_new_agent_defaults()
+        assert result["backend_explicit"] is False
+        from overcode.backends import DEFAULT_BACKEND
+        assert result["backend"] == DEFAULT_BACKEND
+
+    def test_explicit_backend_is_flagged(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("new_agent_defaults:\n  backend: opencode\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_new_agent_defaults()
+        assert result["backend"] == "opencode"
+        assert result["backend_explicit"] is True
+
+    def test_explicit_claude_code_is_still_flagged(self, tmp_path, monkeypatch):
+        # Distinguishing "(unset)" from an explicit "claude-code" is the
+        # whole point of this field — both resolve to the same backend name.
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("new_agent_defaults:\n  backend: claude-code\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_new_agent_defaults()
+        assert result["backend"] == "claude-code"
+        assert result["backend_explicit"] is True
+
+    def test_null_backend_is_not_explicit(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("new_agent_defaults:\n  backend: null\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        result = config.get_new_agent_defaults()
+        assert result["backend_explicit"] is False
+        from overcode.backends import DEFAULT_BACKEND
+        assert result["backend"] == DEFAULT_BACKEND
+
+
+class TestGetBackendTelemetryEnabled:
+    """backend_telemetry: {<name>: on|off} — the per-backend opt-out knob."""
+
+    def test_defaults_to_on_with_no_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        for name in ("opencode", "codex", "grok", "claude-code"):
+            assert config.get_backend_telemetry_enabled(name) is True
+
+    def test_claude_code_is_always_on_even_if_configured_off(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  claude-code: off\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_backend_telemetry_enabled("claude-code") is True
+
+    @pytest.mark.parametrize("off_value", ["off", "Off", "false", "False", "0", "no"])
+    def test_recognized_off_spellings(self, tmp_path, monkeypatch, off_value):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(f'backend_telemetry:\n  codex: "{off_value}"\n')
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_backend_telemetry_enabled("codex") is False
+        # Unconfigured backends are unaffected by another backend's setting.
+        assert config.get_backend_telemetry_enabled("opencode") is True
+        assert config.get_backend_telemetry_enabled("grok") is True
+
+    def test_literal_bool_false(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  grok: false\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_backend_telemetry_enabled("grok") is False
+
+    def test_explicit_on(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("backend_telemetry:\n  opencode: on\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_backend_telemetry_enabled("opencode") is True
+
+    def test_unknown_backend_name_defaults_on(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
+        assert config.get_backend_telemetry_enabled("some-future-backend") is True

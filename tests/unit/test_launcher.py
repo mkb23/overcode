@@ -135,6 +135,42 @@ class TestLauncherBasics:
         assert s1.tmux_window != s2.tmux_window != s3.tmux_window
 
 
+class TestDependencyCheckOverrideFailure:
+    """A CLI-override pointing at nothing fails the launch cleanly (dependency_check fix).
+
+    The module-level ``mock_dependency_checks`` autouse fixture patches
+    ``require_agent_cli`` out for every other test in this file; these tests
+    restore the real function (still routed through the fake filesystem, via
+    a bad CLAUDE_COMMAND override) to prove the launcher's existing
+    not-found handling still degrades gracefully now that the pre-flight
+    check actually validates the override.
+    """
+
+    def test_launch_returns_none_and_creates_no_session(self, tmp_path, capsys):
+        from overcode.dependency_check import require_agent_cli as real_require_agent_cli
+
+        mock_tmux = MockTmux()
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager,
+        )
+
+        with patch("overcode.launcher.require_agent_cli", side_effect=real_require_agent_cli), \
+             patch.dict(os.environ, {"CLAUDE_COMMAND": "/nonexistent/definitely-not-claude"}):
+            session = launcher.launch(name="bad-override")
+
+        assert session is None
+        assert session_manager.get_session_by_name("bad-override") is None
+        # The dependency check fails before any tmux window/keys are sent.
+        assert mock_tmux.sent_keys == []
+        captured = capsys.readouterr()
+        assert "Cannot launch" in captured.out
+        assert "Claude Code CLI is required but not found" in captured.out
+
+
 class TestLauncherDuplicates:
     """Test duplicate session handling"""
 
@@ -1215,6 +1251,18 @@ class TestParentSettingsInheritance:
         }):
             session = launcher.launch(name="solo")
         assert session.provider == "bedrock"
+
+    def test_config_default_backend_when_no_parent(self, tmp_path):
+        """new_agent_defaults.backend (#470) resolves the same way provider does."""
+        launcher, _ = self._make_launcher(tmp_path)
+
+        with patch("overcode.config.get_new_agent_defaults", return_value={
+            "bypass_permissions": False, "agent_teams": False,
+            "provider": "web", "wrapper": "",
+            "backend": "opencode", "backend_explicit": True,
+        }):
+            session = launcher.launch(name="solo-oc")
+        assert session.backend == "opencode"
 
     def test_invalid_provider_rejected(self, tmp_path, capsys):
         launcher, _ = self._make_launcher(tmp_path)
