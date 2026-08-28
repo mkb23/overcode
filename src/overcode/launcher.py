@@ -284,9 +284,16 @@ class AgentLauncher:
         if parent_session and inherit_parent_settings:
             if backend is None:
                 backend = getattr(parent_session, "backend", None) or None
-            if provider is None:
+            # Model ids and provider transports are backend-specific grammar —
+            # a Claude `sonnet`/`claude-fable-5` or a bedrock pin means nothing
+            # to codex/grok (and vice versa), so they only flow to a child on
+            # the same backend. A cross-backend child falls through to config
+            # defaults / the CLI's own default model instead.
+            parent_backend = getattr(parent_session, "backend", None) or DEFAULT_BACKEND
+            same_backend = backend is None or backend == parent_backend
+            if provider is None and same_backend:
                 provider = parent_session.provider
-            if model is None:
+            if model is None and same_backend:
                 model = parent_session.model
             if wrapper is None:
                 wrapper = parent_session.wrapper

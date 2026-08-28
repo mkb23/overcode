@@ -1102,6 +1102,37 @@ class TestParentSettingsInheritance:
         assert any("CLAUDE_CODE_USE_BEDROCK=1" in cmd for cmd in child_cmd)
         assert any("--model sonnet" in cmd for cmd in child_cmd)
 
+    def test_cross_backend_child_does_not_inherit_model_or_provider(self, tmp_path):
+        # A Claude parent's model id (`sonnet`, `claude-fable-5`) is Claude
+        # grammar — inheriting it onto a codex/grok child produces a launch
+        # the other CLI rejects or dies on. Cross-backend children must fall
+        # through to defaults instead.
+        launcher, mock_tmux = self._make_launcher(tmp_path)
+
+        parent = launcher.launch(name="parent", provider="bedrock", model="sonnet")
+        assert parent is not None
+
+        child = launcher.launch(name="child", parent_name="parent", backend="codex")
+        assert child is not None
+        assert child.backend == "codex"
+        assert child.model is None
+        assert child.provider == "web"
+
+        sent_commands = [k[2] for k in mock_tmux.sent_keys]
+        child_cmd = [c for c in sent_commands if "OVERCODE_SESSION_NAME=child" in c]
+        assert child_cmd and all("-m sonnet" not in c and "--model sonnet" not in c for c in child_cmd)
+
+    def test_same_backend_child_still_inherits_model(self, tmp_path):
+        launcher, _ = self._make_launcher(tmp_path)
+
+        parent = launcher.launch(name="parent", backend="grok", model="grok-4.6")
+        assert parent is not None
+
+        child = launcher.launch(name="child", parent_name="parent")
+        assert child is not None
+        assert child.backend == "grok"
+        assert child.model == "grok-4.6"
+
     def test_explicit_args_override_inheritance(self, tmp_path):
         launcher, _ = self._make_launcher(tmp_path)
 
