@@ -189,7 +189,7 @@ overcode tmux
 |-----|-------|--------|
 | `Tab` | Anywhere | Toggle focus between dashboard and terminal |
 | `Option+J/K` | Terminal pane | Navigate agents without leaving the terminal |
-| `PageUp/Down` | Terminal pane | Enter scrollback mode |
+| `PageUp/Down` | Terminal pane | Enter scrollback mode (full-screen agents such as opencode scroll their own transcript instead) |
 | `=` / `-` | Dashboard | Grow / shrink dashboard pane |
 | `q` | Dashboard | Detach (return to previous tmux session) |
 

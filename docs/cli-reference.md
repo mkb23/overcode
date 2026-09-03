@@ -279,6 +279,8 @@ Running `overcode tmux` again re-attaches to the existing layout (restarts the d
 | `PageUp/Down` | Enter scrollback in the terminal pane |
 | `WheelUp/Down` | Mouse scroll in the terminal pane |
 
+For agents that draw inline (Claude Code) scrolling enters tmux copy mode on the agent's real scrollback. For full-screen agents (opencode) the same gestures are passed to the program, which scrolls its own transcript.
+
 **Uninstall:**
 ```bash
 overcode tmux --uninstall

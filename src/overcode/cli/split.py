@@ -348,6 +348,30 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
             f"tmux show-window-option -t {linked_session} -v @is_ssh_proxy "
             "2>/dev/null | grep -q on"
         )
+        # Not every backend leaves its transcript in tmux's scrollback.
+        # Claude Code draws inline, so tmux history holds the trace and
+        # copy mode is the way to review it. opencode (and other
+        # full-screen TUIs) run on the alternate screen — tmux keeps no
+        # history for it — and scroll their own message list, asking
+        # tmux for mouse events to do so. Forcing such a pane into copy
+        # mode shows an empty, frozen buffer and swallows input until
+        # something cancels the mode. So the local branches below first
+        # ask the linked session's active pane whether its program owns
+        # scrolling (`alternate_on` / `mouse_any_flag`, the same signals
+        # tmux's own default WheelUpPane binding consults) and, if so,
+        # hand the gesture to the program instead of to copy mode.
+        #
+        # The pass-through is prefixed with `copy-mode -q` so a pane
+        # that was already stuck in copy mode (a scroll before these
+        # bindings were installed, or a stray prefix-[) is released
+        # first — `alternate_on` stays true inside copy mode, while
+        # `mouse_any_flag` reports the copy-mode screen and drops to 0.
+        # `-q` is a no-op outside a mode, unlike `send-keys -X cancel`,
+        # which errors and paints the status line (#454).
+        _pane_owns_screen = (
+            f"#{{||:#{{alternate_on}},#{{mouse_any_flag}}}}"
+        )
+        _release = f"copy-mode -q -t {linked_session}"
         _tmux(
             "bind-key", "-n", "PPage",
             "if-shell", "-F",
@@ -355,11 +379,15 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
             # SSH proxy: send prefix + PPage so the REMOTE tmux enters
             # copy mode (the remote's root-table PPage is overridden by
             # overcode, but prefix PPage still maps to copy-mode -u).
-            # Local: enter copy mode directly on the linked session.
+            # Local: full-screen program → deliver PPage to it (opencode
+            # maps PageUp to messages_page_up); otherwise enter copy mode
+            # directly on the linked session.
             f'if-shell "{_ssh_check}" '
             f'"send-keys -t {linked_session} C-b ; '
             f'send-keys -t {linked_session} PPage" '
-            f'"copy-mode -t {linked_session} -u"',
+            f'"if-shell -t {linked_session} -F \'{_pane_owns_screen}\''
+            f' \'{_release} ; send-keys -t {linked_session} PPage\''
+            f' \'copy-mode -t {linked_session} -u\'"',
             "send-keys PPage",
         )
         # PageDown in the inner session's copy mode
@@ -377,8 +405,15 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         # which has no scrollback (just rendered inner tmux frames).
         #
         # For local agents: enter copy mode in the inner session then
-        # send scroll commands. For SSH proxies: forward mouse events
-        # to the remote tmux through the pane.
+        # send scroll commands — unless the program owns its screen (see
+        # `_pane_owns_screen`), in which case `send-keys -M` passes the
+        # mouse event through to the nested tmux client. That client is
+        # on this same server, so the event re-enters this root table;
+        # its window is the agent's, not the split window, so it falls
+        # to the default branch below, whose `mouse_any_flag` test hands
+        # the wheel to the program (opencode scrolls its transcript).
+        # For SSH proxies: forward mouse events to the remote tmux
+        # through the pane.
         _in_bottom = (
             f"#{{&&:#{{==:#{{window_name}},{SPLIT_WINDOW_NAME}}},"
             f"#{{!=:#{{pane_index}},{_base}}}}}"
@@ -388,12 +423,15 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
             "if-shell", "-F", _in_bottom,
             # SSH proxy: send prefix+PPage to enter copy mode on remote
             # (no-op if already in copy mode, then PPage scrolls up).
-            # Local: enter copy mode + scroll up directly.
+            # Local: program owns screen → pass the mouse event through;
+            # otherwise enter copy mode + scroll up directly.
             f'if-shell "{_ssh_check}" '
             f'"send-keys -t {linked_session} C-b ; '
             f'send-keys -t {linked_session} PPage" '
-            f'"copy-mode -t {linked_session} -e ; '
-            f'send-keys -t {linked_session} -X -N 3 scroll-up"',
+            f'"if-shell -t {linked_session} -F \'{_pane_owns_screen}\''
+            f' \'{_release} ; send-keys -M\''
+            f' \'copy-mode -t {linked_session} -e ; '
+            f'send-keys -t {linked_session} -X -N 3 scroll-up\'"',
             # Default behaviour for other contexts
             "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
             "'send-keys -M' 'copy-mode -e'",
@@ -405,10 +443,15 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         # `send-keys -X -N 3 scroll-down` only works inside copy mode; out
         # of copy mode it errors with "not in a mode" and tmux paints the
         # status line, leaving the client looking frozen (#454). So for
-        # the local branch we gate on `pane_in_mode` of the linked
-        # session: in copy mode → scroll-down 3 lines (matches wheel-up);
-        # out of copy mode (already at the bottom) → NPage, a plain
-        # keystroke that's harmlessly delivered to the agent.
+        # the local branch we gate on the linked session's pane: in copy
+        # mode over real scrollback (not alternate screen) → scroll-down
+        # 3 lines (matches wheel-up); otherwise → release any copy mode
+        # and `send-keys -M`, which passes the wheel to the nested
+        # client. A program that asked for mouse events (opencode)
+        # scrolls its own transcript; one that didn't (Claude Code,
+        # already at the bottom) never sees it — tmux drops mouse events
+        # for panes without a mouse mode, so it's as harmless as the
+        # plain NPage keystroke this branch used to send.
         #
         # SSH proxy branch keeps the unconditional NPage: we can't
         # observe the remote tmux's mode from here, and NPage is safe in
@@ -419,9 +462,10 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
             "if-shell", "-F", _in_bottom,
             f'if-shell "{_ssh_check}" '
             f'"send-keys -t {linked_session} NPage" '
-            f'"if-shell -t {linked_session} -F \'#{{pane_in_mode}}\''
+            f'"if-shell -t {linked_session} -F '
+            f'\'#{{&&:#{{pane_in_mode}},#{{==:#{{alternate_on}},0}}}}\''
             f' \'send-keys -t {linked_session} -X -N 3 scroll-down\''
-            f' \'send-keys -t {linked_session} NPage\'"',
+            f' \'{_release} ; send-keys -M\'"',
             "send-keys -M",
         )
 

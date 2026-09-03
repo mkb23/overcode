@@ -8,6 +8,7 @@ the split-window parsers, and the resize-ratio cycle.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -403,3 +404,113 @@ class TestAreKeybindingsInstalled:
             ),
         )
         assert split_mod._are_keybindings_installed() is False
+
+
+class TestScrollKeybindings:
+    """The bottom-pane scroll bindings must route by what the agent draws.
+
+    Claude Code draws inline, so its transcript lives in tmux scrollback and
+    the wheel/PageUp must enter copy mode on the linked session. opencode is
+    a full-screen TUI on the alternate screen (tmux keeps no history for it)
+    that scrolls its own transcript from mouse events, so the same gestures
+    must be handed to the program instead — forcing copy mode there shows an
+    empty, frozen buffer and swallows input.
+    """
+
+    LINKED = "oc-view-agents"
+    OWNS_SCREEN = "#{||:#{alternate_on},#{mouse_any_flag}}"
+    # Releases a stale copy mode; a no-op (no error) outside any mode.
+    RELEASE = f"copy-mode -q -t {LINKED}"
+
+    @pytest.fixture
+    def bindings(self, monkeypatch):
+        calls = {}
+
+        def _tmux(*args, capture=True):
+            if args[:2] == ("bind-key", "-n"):
+                calls[args[2]] = args[3:]
+            return MagicMock(returncode=0, stdout="")
+
+        monkeypatch.setattr(split_mod, "_tmux", _tmux)
+        monkeypatch.setattr(split_mod, "get_pane_base_index", lambda: 0)
+        split_mod._setup_keybindings(linked_session=self.LINKED, toggle_key="Tab")
+        return calls
+
+    @staticmethod
+    def _local_branch(binding):
+        """The command run for a local (non-SSH-proxy) agent in the bottom pane."""
+        # bind-key -n KEY if-shell -F <in_bottom> <bottom_cmd> <other_cmd>
+        assert binding[:2] == ("if-shell", "-F")
+        bottom_cmd = binding[3]
+        # bottom_cmd: if-shell "<ssh check>" "<ssh branch>" "<local branch>"
+        assert bottom_cmd.startswith('if-shell "tmux show-window-option')
+        return bottom_cmd.rsplit('" "', 1)[1].rstrip('"')
+
+    def test_wheel_up_passes_through_to_full_screen_program(self, bindings):
+        local = self._local_branch(bindings["WheelUpPane"])
+        assert local == (
+            f"if-shell -t {self.LINKED} -F '{self.OWNS_SCREEN}' "
+            f"'{self.RELEASE} ; send-keys -M' "
+            f"'copy-mode -t {self.LINKED} -e ; "
+            f"send-keys -t {self.LINKED} -X -N 3 scroll-up'"
+        )
+
+    def test_wheel_down_scrolls_copy_mode_else_passes_through(self, bindings):
+        local = self._local_branch(bindings["WheelDownPane"])
+        assert local == (
+            f"if-shell -t {self.LINKED} -F "
+            "'#{&&:#{pane_in_mode},#{==:#{alternate_on},0}}' "
+            f"'send-keys -t {self.LINKED} -X -N 3 scroll-down' "
+            f"'{self.RELEASE} ; send-keys -M'"
+        )
+        # The old fallback delivered a PageDown keystroke to the agent; a
+        # full-screen program would page its transcript on every wheel tick.
+        assert "NPage" not in local
+
+    def test_page_up_passes_through_to_full_screen_program(self, bindings):
+        local = self._local_branch(bindings["PPage"])
+        assert local == (
+            f"if-shell -t {self.LINKED} -F '{self.OWNS_SCREEN}' "
+            f"'{self.RELEASE} ; send-keys -t {self.LINKED} PPage' "
+            f"'copy-mode -t {self.LINKED} -u'"
+        )
+
+    def test_default_branches_keep_tmux_semantics_outside_split(self, bindings):
+        # Outside the split window the wheel behaves as stock tmux: pass the
+        # event to a mouse-aware program, else enter copy mode.
+        assert bindings["WheelUpPane"][4] == (
+            "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' "
+            "'send-keys -M' 'copy-mode -e'"
+        )
+        assert bindings["WheelDownPane"][4] == "send-keys -M"
+        assert bindings["PPage"][4] == "send-keys PPage"
+
+    @pytest.mark.requires_tmux
+    @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
+    def test_bindings_parse_in_real_tmux(self, monkeypatch, tmp_path):
+        """tmux parses a binding's command at bind time, so a quoting slip in
+        the nested if-shell strings surfaces here rather than on first scroll."""
+        socket = f"overcode-test-{os.getpid()}"
+        base = ["tmux", "-L", socket, "-f", "/dev/null"]
+        failures = []
+
+        def _tmux(*args, capture=True):
+            result = subprocess.run(base + list(args), capture_output=True, text=True)
+            if args[:1] == ("bind-key",) and result.returncode != 0:
+                failures.append((args[2], result.stderr.strip()))
+            return result
+
+        subprocess.run(base + ["new-session", "-d", "-s", "scratch"], capture_output=True)
+        try:
+            monkeypatch.setattr(split_mod, "_tmux", _tmux)
+            monkeypatch.setattr(split_mod, "get_pane_base_index", lambda: 0)
+            split_mod._setup_keybindings(linked_session=self.LINKED, toggle_key="Tab")
+            listed = subprocess.run(
+                base + ["list-keys", "-T", "root"], capture_output=True, text=True,
+            ).stdout
+        finally:
+            subprocess.run(base + ["kill-server"], capture_output=True)
+
+        assert failures == []
+        for key in ("WheelUpPane", "WheelDownPane", "PPage", "NPage"):
+            assert f"-T root {key}" in listed.replace("  ", " ") or key in listed
