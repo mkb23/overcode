@@ -396,6 +396,69 @@ class TestModelContextWindow:
         assert model_context_window("openai/some-brand-new-model") is None
 
 
+class TestClaude5FamilyContextWindows:
+    """The Claude 5 family must be complete in both exact-match tables.
+
+    Regression guard: `claude-fable-5` was added when the family shipped but
+    `claude-opus-5`/`claude-sonnet-5` were not, so every Opus 5 agent showed
+    a dash in the CTX column while Fable 5 agents beside it read fine. The
+    cost columns hid the gap — `pricing.py` matches on substrings, so its
+    "opus" entry covered `claude-opus-5` and only the exact-match tables here
+    were short. Adding a Claude model means adding it in three places.
+    """
+
+    def test_opus_5_and_sonnet_5_have_windows(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("claude-opus-5") == 1_000_000
+        assert model_context_window("claude-sonnet-5") == 1_000_000
+
+    def test_opus_5_and_sonnet_5_have_short_names(self):
+        from overcode.history_reader import model_short_name
+        assert model_short_name("claude-opus-5") == "Op5"
+        assert model_short_name("claude-sonnet-5") == "Sn5"
+
+    def test_undated_haiku_4_5_alias_matches_dated_id(self):
+        from overcode.history_reader import (
+            model_context_window, model_short_name)
+        assert model_context_window("claude-haiku-4-5") == 200_000
+        assert model_short_name("claude-haiku-4-5") == "Hk4.5"
+
+    def test_gpt_4o_family_has_windows(self):
+        """Reachable via opencode (codex only drives the 5.x line)."""
+        from overcode.history_reader import model_context_window
+        assert model_context_window("gpt-4o-mini") == 128_000
+        assert model_context_window("openai/gpt-4o-mini") == 128_000
+        assert model_context_window("gpt-4o") == 128_000
+
+
+class TestCapacityVariantSuffix:
+    """A bracketed capacity suffix is a variant of one model, not another.
+
+    Claude Code names its 1M-context Opus 5 `claude-opus-5[1m]`. Left
+    unstripped it misses the table (dash) and — worse — the rule-based
+    shortener joins every digit it finds and yields "Op5.1", which reads as
+    a different model rather than as an unrecognized one.
+    """
+
+    def test_bracket_suffix_resolves_to_base_model(self):
+        from overcode.history_reader import (
+            model_context_window, model_short_name)
+        assert model_context_window("claude-opus-5[1m]") == 1_000_000
+        assert model_short_name("claude-opus-5[1m]") == "Op5"
+
+    def test_bracket_suffix_composes_with_provider_qualifier(self):
+        from overcode.history_reader import (
+            model_context_window, model_short_name)
+        assert model_context_window("anthropic/claude-opus-5[1m]") == 1_000_000
+        assert model_short_name("anthropic/claude-opus-5[1m]") == "Op5"
+
+    def test_unknown_base_model_with_suffix_still_returns_none(self):
+        """Stripping the suffix must not invent a window for a model the
+        table genuinely does not know."""
+        from overcode.history_reader import model_context_window
+        assert model_context_window("some-brand-new-model[1m]") is None
+
+
 class TestModelShortName:
     """#469 — model_short_name() for the new model families and opencode's
     provider-qualified ids."""
@@ -629,8 +692,9 @@ class TestReadTokenUsageFromSessionFile:
         assert result["output_tokens"] == 500
         assert result["cache_creation_tokens"] == 125
         assert result["cache_read_tokens"] == 75
-        # Current context = last message's input + cache_read: 150 + 50 = 200
-        assert result["current_context_tokens"] == 200
+        # Current context = last message's whole prompt:
+        # input 150 + cache_read 50 + cache_creation 75 = 275
+        assert result["current_context_tokens"] == 275
 
     def test_filters_by_timestamp(self, tmp_path):
         """Should only count tokens from messages after 'since' timestamp."""
@@ -657,11 +721,12 @@ class TestReadTokenUsageFromSessionFile:
         assert result["input_tokens"] == 150
         assert result["output_tokens"] == 300
 
-    def test_tracks_current_context_from_input_plus_cache_read(self, tmp_path):
-        """Should track current context as input_tokens + cache_read_input_tokens.
+    def test_tracks_current_context_from_whole_prompt(self, tmp_path):
+        """Current context = input_tokens + cache_read + cache_creation.
 
         This matches real Claude session files where most context comes from cache.
         Example: input_tokens=8, cache_read_input_tokens=129736 means 130K context.
+        Cache *writes* count too — see test_cache_write_turn_counts_full_prompt.
         """
         from overcode.history_reader import read_token_usage_from_session_file
 
@@ -697,11 +762,39 @@ class TestReadTokenUsageFromSessionFile:
 
         result = read_token_usage_from_session_file(session_file)
 
-        # Current context should be most recent: 8 + 129504 = 129512
-        assert result["current_context_tokens"] == 129512
+        # Current context should be most recent: 8 + 129504 + 232 = 129744
+        assert result["current_context_tokens"] == 129744
         # Verify it's ~65% of default 200K context window
         from overcode.history_reader import DEFAULT_CONTEXT_WINDOW
-        assert result["current_context_tokens"] / DEFAULT_CONTEXT_WINDOW * 100 == pytest.approx(64.756, rel=0.01)
+        assert result["current_context_tokens"] / DEFAULT_CONTEXT_WINDOW * 100 == pytest.approx(64.872, rel=0.01)
+
+    def test_cache_write_turn_counts_full_prompt(self, tmp_path):
+        """A cache-*writing* turn must not read as a near-empty context.
+
+        On the first turn after /clear (or after a cache expiry) the entire
+        prompt is billed to cache_creation and input_tokens is a handful.
+        Counting only input+cache_read reported a real 48K context as 2
+        tokens — "0%" in the column whose whole job is to warn before the
+        window fills. Taken from a real observed session.
+        """
+        from overcode.history_reader import read_token_usage_from_session_file
+
+        session_file = tmp_path / "session.jsonl"
+        session_file.write_text(json.dumps({
+            "type": "assistant",
+            "message": {
+                "model": "claude-opus-5",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 213,
+                    "cache_creation_input_tokens": 48176,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        }))
+
+        result = read_token_usage_from_session_file(session_file)
+        assert result["current_context_tokens"] == 48178
 
     def test_current_context_uses_last_message(self, tmp_path):
         """Should use the most recent message for current context."""
@@ -1576,7 +1669,8 @@ class TestReadSessionStatsFromContent:
         assert usage["cache_creation_tokens"] == 50
         assert usage["cache_read_tokens"] == 25
         assert usage["model"] == "claude-opus-4-6"
-        assert usage["current_context_tokens"] == 125  # input + cache_read
+        # input 100 + cache_read 25 + cache_creation 50
+        assert usage["current_context_tokens"] == 175
 
     def test_provider_detected_from_message_id(self):
         """Provider should be derived from msg_bdrk_ prefix even when the

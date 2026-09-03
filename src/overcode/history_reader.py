@@ -49,12 +49,15 @@ CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 # support extended context.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-fable-5": 1_000_000,
+    "claude-opus-5": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
     "claude-sonnet-4-5-20250929": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
+    "claude-haiku-4-5": 200_000,
     "claude-3-5-sonnet-20241022": 200_000,
     "claude-3-5-haiku-20241022": 200_000,
     "claude-3-opus-20240229": 200_000,
@@ -78,6 +81,12 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "gpt-5.4": 258_400,
     "gpt-5.6-sol": 258_400,
     "gpt-5.6-terra": 258_400,
+    # gpt-4o family, reachable via opencode (not by codex, which only drives
+    # the 5.x line). 128K per OpenAI's own model docs — these predate the
+    # codex CLI's `model_context_window` reporting, so unlike the 5.x rows
+    # above there is no live cross-check available for them.
+    "gpt-4o-mini": 128_000,
+    "gpt-4o": 128_000,
 
     # xAI Grok Build models (#469). Sourced from docs.x.ai/docs/models
     # (verified 2026-08-28) — the same source Phase 5's `pricing.py` entries
@@ -123,12 +132,15 @@ MODEL_SHORT_NAME_MAX_LEN = 7
 
 MODEL_SHORT_NAMES: Dict[str, str] = {
     "claude-fable-5": "Fb5",
+    "claude-opus-5": "Op5",
+    "claude-sonnet-5": "Sn5",
     "claude-opus-4-8": "Op4.8",
     "claude-opus-4-7": "Op4.7",
     "claude-opus-4-6": "Op4.6",
     "claude-sonnet-4-6": "Sn4.6",
     "claude-sonnet-4-5-20250929": "Sn4.5",
     "claude-haiku-4-5-20251001": "Hk4.5",
+    "claude-haiku-4-5": "Hk4.5",
     "claude-3-5-sonnet-20241022": "Sn3.5",
     "claude-3-5-haiku-20241022": "Hk3.5",
     "claude-3-opus-20240229": "Op3",
@@ -142,6 +154,8 @@ MODEL_SHORT_NAMES: Dict[str, str] = {
     "gpt-5.4": "G5.4",
     "gpt-5.6-sol": "G5.6Sol",
     "gpt-5.6-terra": "G5.6Ter",
+    "gpt-4o-mini": "G4oMn",
+    "gpt-4o": "G4o",
 
     # xAI Grok (#469).
     "grok-4.6": "Gk4.6",
@@ -194,6 +208,8 @@ _FAMILY_PREFIX_TAGS = [
 ]
 
 _DATE_SUFFIX_RE = re.compile(r"-20\d{6}$")
+# Trailing capacity-variant suffix, e.g. the "[1m]" in "claude-opus-5[1m]".
+_CAPACITY_SUFFIX_RE = re.compile(r"\[[^\]]*\]$")
 
 
 def _heuristic_short_name(bare: str) -> str:
@@ -243,7 +259,10 @@ def _heuristic_short_name(bare: str) -> str:
 
 
 def _bare_model_id(model: str) -> str:
-    """Strip an opencode-style ``provider/model`` qualifier, if present.
+    """Normalise a model id to the bare form this module's tables key on.
+
+    Strips an opencode-style ``provider/model`` qualifier and a trailing
+    capacity-variant suffix in brackets, if present.
 
     opencode's stats reader stores the qualified id it launched with (e.g.
     ``"openai/gpt-5.6-sol"``, ``"anthropic/claude-opus-4-6"`` — see
@@ -255,8 +274,16 @@ def _bare_model_id(model: str) -> str:
     "unrecognized." This was very likely the underlying mechanism behind
     the #469 bug report, independent of which models the table happens to
     cover at any given time.
+
+    The bracket suffix is a capacity variant, not a distinct model: Claude
+    Code names its 1M-context Opus 5 ``claude-opus-5[1m]``. Left in place it
+    breaks *both* lookups — an exact-match table miss (dash instead of a
+    window) and, worse, a wrong short name, since the rule-based shortener
+    joins every digit it finds and renders "Op5.1", which reads as a
+    different model rather than as an unrecognized one.
     """
-    return model.rsplit("/", 1)[-1] if "/" in model else model
+    bare = model.rsplit("/", 1)[-1] if "/" in model else model
+    return _CAPACITY_SUFFIX_RE.sub("", bare)
 
 
 def model_short_name(model: Optional[str]) -> str:
@@ -336,7 +363,9 @@ class AgentSessionStats:
     cache_creation_tokens: int
     cache_read_tokens: int
     work_times: List[float]  # seconds per work cycle (prompt to next prompt)
-    current_context_tokens: int = 0  # Most recent input_tokens (current context size)
+    # Size of the most recent turn's prompt: uncached input + cache reads +
+    # cache writes (all three are processed prompt — see read_session_file_stats).
+    current_context_tokens: int = 0
     subagent_count: int = 0  # Number of subagent files (#176)
     live_subagent_count: int = 0  # Subagents with recently-modified files (#256)
     background_task_count: int = 0  # Number of background/farm tasks (#177)
@@ -817,7 +846,16 @@ def _parse_session_lines(
                     totals["output_tokens"] += output_tokens
                     totals["cache_creation_tokens"] += cache_creation
                     totals["cache_read_tokens"] += cache_read
-                    context_size = input_tokens + cache_read
+                    # Every one of these three is prompt the model actually
+                    # processed this turn, so all three count toward context
+                    # occupancy. Omitting cache_creation under-reports badly
+                    # rather than slightly: on a turn that *writes* the cache
+                    # (the first turn after /clear, or after a cache expiry)
+                    # the whole prompt lands in cache_creation and
+                    # input_tokens is a literal handful — a 48K-token context
+                    # reported as 2 tokens, rendering "0%" in a column whose
+                    # entire job is to warn before the window fills.
+                    context_size = input_tokens + cache_read + cache_creation
                     if context_size > 0:
                         totals["current_context_tokens"] = context_size
                     # Only track model/provider from messages with actual API
@@ -974,7 +1012,7 @@ def read_token_usage_from_session_file(
 
     Returns:
         Dict with input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        and current_context_tokens (most recent input_tokens value)
+        and current_context_tokens (most recent turn's full prompt size)
     """
     totals, _ = read_session_file_stats(session_file, since)
     return totals
