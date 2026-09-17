@@ -2433,3 +2433,38 @@ class TestSortSessionsKeepsSelection:
         assert tui.focused_session_index == 0
         assert tui._selected_session_id() == "id-bravo"
         tui.update_session_widgets.assert_called_once()
+
+
+class TestFlushStatusChangesCap:
+    """#465 — the opt-in status-change diagnostic CSV gets the same hard cap
+    as event_loop_timing.csv."""
+
+    def test_flush_truncates_past_cap(self, tmp_path):
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._status_change_csv_path = tmp_path / "status_changes.csv"
+        app._heartbeat_cap_mb = 0.002  # ~2 KB
+        header = "timestamp,agent,old_status,new_status,source,focused,content_changed\n"
+        app._status_change_csv_path.write_text(header + ("2024-01-01T00:00:00.000,a,x,y,poll,N,N\n" * 200))
+        app._status_change_log = [("2024-01-02T00:00:00.000", "b", "x", "y", "poll", "Y", "N")]
+
+        app._flush_status_changes()
+
+        content = app._status_change_csv_path.read_text()
+        assert content.startswith(header)
+        assert len(content.encode()) < 2 * 1024
+        assert content.count("timestamp,agent") == 1
+
+    def test_flush_below_cap_is_untouched(self, tmp_path):
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._status_change_csv_path = tmp_path / "status_changes.csv"
+        app._heartbeat_cap_mb = 100.0
+        app._status_change_log = [("2024-01-02T00:00:00.000", "b", "x", "y", "poll", "Y", "N")]
+
+        app._flush_status_changes()
+
+        content = app._status_change_csv_path.read_text()
+        assert content.count("\n") == 2

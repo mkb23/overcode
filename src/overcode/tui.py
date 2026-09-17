@@ -4209,6 +4209,10 @@ class SupervisorTUI(
                     f.write("timestamp,agent,old_status,new_status,source,focused,content_changed\n")
                 for row in buf:
                     f.write(",".join(row) + "\n")
+            # Same diagnostic-only backstop as event_loop_timing.csv (#465):
+            # opt-in, but once on it is append-only for the life of the TUI.
+            from .settings import cap_diagnostics_csv
+            cap_diagnostics_csv(path, getattr(self, "_heartbeat_cap_mb", 100.0))
         except OSError:
             pass
 

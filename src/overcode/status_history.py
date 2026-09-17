@@ -397,7 +397,12 @@ def rotate_status_history(
     file; rows within keep_hours stay behind in a freshly-written active
     file, so windowed readers (3h/24h) are unaffected by rotation.
 
-    Both writes use write-temp + os.replace, so a concurrent reader never
+    Streams: rows are classified and written straight through to the two
+    temp files in one pass, never held in memory. The reported #468 case was
+    a 2.4 GB / 21-million-row file — materialising that as Python lists
+    would have OOM-killed the daemon on its very first rotation.
+
+    Both outputs use write-temp + os.replace, so a concurrent reader never
     observes a partially-written file — only the pre- or post-rotation
     file, whole (verified by test_status_history.py's shrink-tolerance
     coverage of the same StatusHistoryFile cache used here).
@@ -419,55 +424,67 @@ def rotate_status_history(
         return None
 
     cutoff = now - timedelta(hours=keep_hours)
-    header = _HISTORY_HEADER
-    keep_rows: List[List[str]] = []
-    archive_rows: List[List[str]] = []
+    archive_path = history_file.parent / (
+        f"{history_file.stem}.{now.strftime(ARCHIVE_TS_FORMAT)}{ARCHIVE_SUFFIX}"
+    )
+    tmp_archive = archive_path.with_suffix(archive_path.suffix + ".tmp")
+    tmp_active = history_file.with_suffix(history_file.suffix + ".tmp")
 
+    def _discard_temps() -> None:
+        tmp_archive.unlink(missing_ok=True)
+        tmp_active.unlink(missing_ok=True)
+
+    archived_rows = 0
     try:
-        with open(history_file, 'r', newline='') as f:
-            reader = csv.reader(f)
+        with open(history_file, 'r', newline='') as src, \
+                gzip.open(tmp_archive, 'wt', newline='', compresslevel=6) as arc, \
+                open(tmp_active, 'w', newline='') as act:
+            reader = csv.reader(src)
+            arc_writer = csv.writer(arc)
+            act_writer = csv.writer(act)
+
+            header = _HISTORY_HEADER
             first = next(reader, None)
+            legacy_first_row = None
             if first and first[0] == 'timestamp':
                 header = first
             elif first:
-                keep_rows.append(first)  # no header — legacy/malformed, keep as-is
+                legacy_first_row = first  # no header — legacy/malformed, keep as-is
+            arc_writer.writerow(header)
+            act_writer.writerow(header)
+            if legacy_first_row:
+                act_writer.writerow(legacy_first_row)
+
             for row in reader:
                 if not row:
                     continue
                 try:
                     ts = datetime.fromisoformat(row[0])
                 except (ValueError, IndexError):
-                    keep_rows.append(row)  # can't classify — never silently drop data
+                    act_writer.writerow(row)  # can't classify — never silently drop data
                     continue
-                (archive_rows if ts < cutoff else keep_rows).append(row)
+                if ts < cutoff:
+                    arc_writer.writerow(row)
+                    archived_rows += 1
+                else:
+                    act_writer.writerow(row)
     except (OSError, IOError):
+        _discard_temps()
         return None
 
-    if not archive_rows:
+    if archived_rows == 0:
+        _discard_temps()
         return None
 
-    archive_path = history_file.parent / (
-        f"{history_file.stem}.{now.strftime(ARCHIVE_TS_FORMAT)}{ARCHIVE_SUFFIX}"
-    )
-    tmp_archive = archive_path.with_suffix(archive_path.suffix + ".tmp")
     try:
-        with gzip.open(tmp_archive, 'wt', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
-            writer.writerows(archive_rows)
         os.replace(tmp_archive, archive_path)
-    except (OSError, IOError):
-        tmp_archive.unlink(missing_ok=True)
+    except OSError:
+        _discard_temps()
         return None
 
-    tmp_active = history_file.with_suffix(history_file.suffix + ".tmp")
     try:
-        with open(tmp_active, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
-            writer.writerows(keep_rows)
         os.replace(tmp_active, history_file)
-    except (OSError, IOError):
+    except OSError:
         tmp_active.unlink(missing_ok=True)
         # Archive already landed; active file is untouched (still valid).
 

@@ -847,3 +847,62 @@ class TestDiskUsageFindings:
         assert len(findings) == 1
         assert "event_loop_timing.csv" in findings[0]
         assert "event_loop_timing_cap_mb" in findings[0]
+
+
+class TestRotateStatusHistoryStreaming:
+    """#468 — rotation streams rows through, so a multi-GB legacy file never
+    has to fit in memory, and leaves no temp files behind either way."""
+
+    def _write(self, path, rows, header=True):
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            if header:
+                w.writerow(["timestamp", "agent", "status", "activity", "session_id", "hostname"])
+            w.writerows(rows)
+
+    def test_row_counts_are_conserved_across_a_large_rotation(self, tmp_path):
+        from overcode.status_history import rotate_status_history
+        path = tmp_path / "agent_status_history.csv"
+        now = datetime(2026, 9, 17, 12, 0, 0)
+        old = [(now - timedelta(days=3, seconds=i)).isoformat() for i in range(20_000)]
+        recent = [(now - timedelta(minutes=i)).isoformat() for i in range(500)]
+        self._write(path, [[ts, "a", "running", "x", "s", "h"] for ts in old + recent])
+
+        archive = rotate_status_history(path, rotate_mb=0.001, keep_hours=30, now=now)
+
+        assert archive is not None
+        with gzip.open(archive, "rt", newline="") as f:
+            archived = list(csv.reader(f))
+        with open(path, newline="") as f:
+            kept = list(csv.reader(f))
+        assert len(archived) - 1 == 20_000
+        assert len(kept) - 1 == 500
+        assert kept[0][0] == "timestamp" and archived[0][0] == "timestamp"
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_legacy_headerless_file_keeps_its_first_row(self, tmp_path):
+        from overcode.status_history import rotate_status_history
+        path = tmp_path / "agent_status_history.csv"
+        now = datetime(2026, 9, 17, 12, 0, 0)
+        first = [(now - timedelta(minutes=1)).isoformat(), "a", "running", "x", "s", "h"]
+        old = [[(now - timedelta(days=9)).isoformat(), "a", "idle", "x", "s", "h"]]
+        self._write(path, [first] + old, header=False)
+
+        archive = rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now)
+
+        assert archive is not None
+        with open(path, newline="") as f:
+            kept = list(csv.reader(f))
+        assert kept[0][0] == "timestamp"
+        assert kept[1] == first
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_nothing_archivable_leaves_no_temp_files(self, tmp_path):
+        from overcode.status_history import rotate_status_history
+        path = tmp_path / "agent_status_history.csv"
+        now = datetime(2026, 9, 17, 12, 0, 0)
+        self._write(path, [[(now - timedelta(minutes=i)).isoformat(), "a", "running", "x", "s", "h"] for i in range(50)])
+
+        assert rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now) is None
+        assert not list(tmp_path.glob("*.tmp"))
+        assert not list(tmp_path.glob("*.csv.gz"))
