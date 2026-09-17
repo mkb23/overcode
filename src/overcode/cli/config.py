@@ -17,6 +17,15 @@ CONFIG_TEMPLATE = """\
 # Default instructions sent to new agents
 # default_standing_instructions: "Be concise. Ask before making large changes."
 
+# Defaults for new agents (CLI `overcode launch` and the TUI's `n` key).
+# Explicit flag > parent agent's setting > these > built-in default.
+# new_agent_defaults:
+#   backend: claude-code       # claude-code | opencode | codex | grok (#470)
+#   provider: web              # web (Claude.ai OAuth) or bedrock (AWS)
+#   wrapper: ""                # wrapper script name or path, e.g. devcontainer
+#   bypass_permissions: false  # --dangerously-skip-permissions
+#   agent_teams: false         # CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+
 # AI summarizer settings (for corporate API gateways)
 # summarizer:
 #   api_url: https://api.openai.com/v1/chat/completions
@@ -129,6 +138,13 @@ def _config_show():
         instr = config["default_standing_instructions"]
         display = instr[:60] + "..." if len(instr) > 60 else instr
         rprint(f"  default_standing_instructions: \"{display}\"")
+
+    if "new_agent_defaults" in config and isinstance(config["new_agent_defaults"], dict):
+        nad = config["new_agent_defaults"]
+        rprint("  new_agent_defaults:")
+        for key in ("backend", "provider", "wrapper", "bypass_permissions", "agent_teams"):
+            if key in nad and nad[key] not in (None, ""):
+                rprint(f"    {key}: {nad[key]}")
 
     if "summarizer" in config:
         s = config["summarizer"]

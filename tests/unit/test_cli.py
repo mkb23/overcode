@@ -2597,6 +2597,24 @@ class TestConfigShowCommand:
                 assert "relay" in result.output
                 assert "macbook" in result.output
 
+    def test_config_show_lists_new_agent_defaults(self, tmp_path):
+        """The default backend (#470) is visible without opening the file."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("test: true")
+        config = {"new_agent_defaults": {"backend": "opencode", "provider": "web", "wrapper": ""}}
+        with patch('overcode.config.CONFIG_PATH', config_path):
+            with patch('overcode.config.load_config', return_value=config):
+                result = runner.invoke(app, ["config", "show"])
+                assert result.exit_code == 0
+                assert "new_agent_defaults" in result.output
+                assert "backend: opencode" in result.output
+                assert "wrapper" not in result.output  # empty values are skipped
+
+    def test_config_init_template_documents_default_backend(self, tmp_path):
+        from overcode.cli.config import CONFIG_TEMPLATE
+        assert "new_agent_defaults" in CONFIG_TEMPLATE
+        assert "backend: claude-code" in CONFIG_TEMPLATE
+
 
 class TestConfigPathCommand:
     """Test config path command."""
