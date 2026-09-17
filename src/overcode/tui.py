@@ -299,6 +299,8 @@ class SupervisorTUI(
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
+        # Folded parents survive a TUI restart (#464)
+        self.collapsed_parents = set(self._prefs.collapsed_parents)
 
         # Current summary detail level index (cycles through SUMMARY_LEVELS)
         # Initialize from saved preferences

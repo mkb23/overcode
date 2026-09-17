@@ -722,6 +722,9 @@ class TestToggleCollapseChildren:
         assert "parent-1" in mock_tui.collapsed_parents
         assert "Collapsed" in mock_tui.notify.call_args[0][0]
         assert "parent-agent" in mock_tui.notify.call_args[0][0]
+        # Persisted so the fold survives a TUI restart (#464)
+        assert mock_tui._prefs.collapsed_parents == {"parent-1"}
+        mock_tui._save_prefs.assert_called_once()
         mock_tui._sort_sessions.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
         mock_tui.update_timeline.assert_called_once()
@@ -754,6 +757,8 @@ class TestToggleCollapseChildren:
         assert "parent-1" not in mock_tui.collapsed_parents
         assert "Expanded" in mock_tui.notify.call_args[0][0]
         assert "parent-agent" in mock_tui.notify.call_args[0][0]
+        assert mock_tui._prefs.collapsed_parents == set()
+        mock_tui._save_prefs.assert_called_once()
         mock_tui._sort_sessions.assert_called_once()
         mock_tui.update_session_widgets.assert_called_once()
         mock_tui.update_timeline.assert_called_once()
@@ -1400,3 +1405,33 @@ class TestCycleNotifications:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestCollapsePersistencePrunesStaleIds:
+    """#464 — the persisted fold set only ever names agents that still exist."""
+
+    def test_stale_ids_are_dropped_from_the_saved_copy(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+
+        parent_session = MagicMock()
+        parent_session.id = "parent-1"
+        parent_session.name = "parent-agent"
+        parent_session.parent_session_id = None
+        child_session = MagicMock()
+        child_session.id = "child-1"
+        child_session.parent_session_id = "parent-1"
+
+        focused_widget = MagicMock()
+        focused_widget.session = parent_session
+        mock_tui = MagicMock()
+        mock_tui._prefs = MagicMock()
+        mock_tui._prefs.sort_mode = "by_tree"
+        mock_tui._get_focused_widget.return_value = focused_widget
+        mock_tui.sessions = [parent_session, child_session]
+        mock_tui.collapsed_parents = {"long-gone-parent"}
+        mock_tui._get_widgets_in_session_order.return_value = [focused_widget]
+
+        ViewActionsMixin.action_toggle_collapse_children(mock_tui)
+
+        assert mock_tui._prefs.collapsed_parents == {"parent-1"}
+        mock_tui._save_prefs.assert_called_once()

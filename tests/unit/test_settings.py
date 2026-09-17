@@ -673,3 +673,25 @@ class TestCapDiagnosticsCsv:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestCollapsedParentsPersistence:
+    """#464 — folded parents survive a TUI restart via tui_preferences.json."""
+
+    def test_round_trip(self, tmp_path):
+        from overcode.settings import TUIPreferences, ensure_session_dir
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("s")
+            TUIPreferences(collapsed_parents={"parent-b", "parent-a"}).save("s")
+            loaded = TUIPreferences.load("s")
+            assert loaded.collapsed_parents == {"parent-a", "parent-b"}
+            assert isinstance(loaded.collapsed_parents, set)
+
+    def test_default_is_empty_and_old_files_load(self, tmp_path):
+        from overcode.settings import TUIPreferences, ensure_session_dir, get_tui_preferences_path
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("s")
+            get_tui_preferences_path("s").write_text('{"sort_mode": "by_tree"}')
+            loaded = TUIPreferences.load("s")
+            assert loaded.collapsed_parents == set()
+            assert loaded.sort_mode == "by_tree"

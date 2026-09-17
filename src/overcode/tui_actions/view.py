@@ -308,6 +308,14 @@ class ViewActionsMixin:
                     break
             self.notify(f"Collapsed children of {parent_name}", severity="information")
 
+        # Persist so the fold survives a TUI restart (#464). Prune ids of
+        # agents that no longer exist so the set can't grow without bound.
+        known_ids = {s.id for s in self.sessions}
+        self._prefs.collapsed_parents = {
+            sid for sid in self.collapsed_parents if sid in known_ids
+        }
+        self._save_prefs()
+
         # Re-sort and refresh (update_session_widgets handles focus preservation)
         self._sort_sessions()
         self.update_session_widgets()

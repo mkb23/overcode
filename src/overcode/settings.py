@@ -760,6 +760,9 @@ class TUIPreferences:
     show_column_headers: bool = True
     # Sister instances hidden from agent list (#323)
     disabled_sisters: Set[str] = field(default_factory=set)
+    # Parents whose children are folded in tree sort mode (X key, #244),
+    # persisted so a fold survives a TUI restart (#464)
+    collapsed_parents: Set[str] = field(default_factory=set)
     # Log every status change to diagnostics CSV (off by default)
     status_change_logging: bool = False
 
