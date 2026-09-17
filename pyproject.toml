@@ -75,7 +75,10 @@ overcode = [
     "web/templates/*.html",
     # Bundled opencode telemetry plugin — copied into a project's
     # .opencode/plugins/ at launch, so it has to ship with the wheel.
+    # v1 is a single .js file; v2 ships a plugin directory (server stub
+    # index.js + TUI entry tui.js + the shared core .mjs it imports).
     "opencode_plugin/*.js",
+    "opencode_plugin/overcode-telemetry-v2/*",
     # Bundled Hermes telemetry plugin — copied into $HERMES_HOME/plugins/
     # overcode/ at launch (the .py ships as a module; the manifest must too).
     "hermes_plugin/*.yaml",

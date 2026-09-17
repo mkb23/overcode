@@ -127,11 +127,11 @@ Four modules implementing a dual-strategy pattern:
 - `settings.py` (493 lines): all path resolution, dataclasses for daemon/TUI/presence settings
 - `config.py` (300 lines): `~/.overcode/config.yaml` reader/writer
 
-## Agent Backends — 4,253 lines + 481 lines of JS
+## Agent Backends — 5,483 lines + 1,166 lines of JS
 
-Overcode drives five agent CLIs: Claude Code, opencode, Codex CLI, Grok, and Hermes
-Build. Everything that differs between them lives behind one seam,
-`src/overcode/backends/`:
+Overcode drives six agent CLIs: Claude Code, opencode, opencode2, Codex CLI,
+Grok Build, and Hermes. Everything that differs between them lives behind one
+seam, `src/overcode/backends/`:
 
 | Module | Lines | Role |
 |--------|-------|------|
@@ -141,6 +141,11 @@ Build. Everything that differs between them lives behind one seam,
 | `opencode.py` | 708 | opencode adapter, its `StatusPatterns` set, version guardrails, bypass-mode `OPENCODE_PERMISSION` |
 | `opencode_stats.py` | 641 | Read-only SQLite reader over opencode's session store |
 | `opencode_plugin/overcode-telemetry.js` | 481 | Bundled opencode plugin; translates bus events into overcode's hook-state files |
+| `opencode2.py` | 280 | opencode2 (2.0 preview) adapter — `--standalone` every launch, `--auto`-only bypass, TUI-verified key sequences |
+| `opencode2_stats.py` | 598 | Read-only SQLite reader over v2's `session_v2`/`session_message` tables (same `opencode.db`) |
+| `opencode2_patterns.py` | 227 | opencode2 `StatusPatterns` set, grounded in `tests/fixtures_opencode2_panes/` |
+| `opencode2_plugin_install.py` | 125 | Stages the v2 telemetry plugin as a `.opencode/plugins/overcode-telemetry-v2/` subdirectory |
+| `opencode_plugin/overcode-telemetry-v2/` | 685 | Bundled opencode2 plugin (`index.js` server entry, `tui.js` TUI entry, shared reducer core); same hook-state files as v1 |
 | `codex.py` | 581 | Codex adapter — subcommand-first argv (`resume`/`fork`), per-launch `-c 'hooks.<Event>=...'` injection |
 | `codex_stats.py` | 483 | Read-only rollout-JSONL reader over codex's own transcript files |
 | `grok.py` | 847 | Grok adapter — session-id prescription, permission allowlist, global hooks file |
@@ -154,7 +159,7 @@ render point for launch, restart, revive and fork, so one `build_command(spec)`
 call covers every path. `backend.prepare_launch()` runs the side effects a CLI
 needs before it starts — nothing for Claude Code or codex (codex's telemetry
 is pure argv, injected in `build_command()` itself), plugin staging for
-opencode, a global hooks-file write for grok, a global plugin install + one-time `hermes plugins enable` for hermes.
+opencode and opencode2, a global hooks-file write for grok, a global plugin install + one-time `hermes plugins enable` for hermes.
 
 **Capability model.** `BackendCapability` is a `Flag` (`RESUME`, `FORK`,
 `SESSION_ID_PRESCRIPTION`, `HOOK_EVENTS`, `TRANSCRIPT_STATS`,
@@ -170,14 +175,17 @@ predates this reports nothing and is read as claude-code with everything on.
 
 - *Chrome / patterns* — `StatusPatterns` instances (`DEFAULT_PATTERNS` for
   Claude Code, `OPENCODE_PATTERNS`/`CODEX_PATTERNS`/`GROK_PATTERNS` in their
-  respective adapter modules), selected per session by
+  respective adapter modules, `OPENCODE2_PATTERNS` in
+  `opencode2_patterns.py`), selected per session by
   `get_patterns(backend_name)`. Grounded in committed pane corpora
   (`tests/fixtures_realistic.py`, `tests/fixtures_opencode_panes/`,
-  `tests/fixtures_codex_panes/`, `tests/fixtures_grok_panes/`), which double
+  `tests/fixtures_opencode2_panes/`, `tests/fixtures_codex_panes/`,
+  `tests/fixtures_grok_panes/`), which double
   as drift tripwires.
 - *Stats* — the `StatsReader` protocol in `stats_reader.py`.
   `ClaudeStatsReader` wraps `history_reader`; `OpencodeStatsReader` queries
-  SQLite; `CodexStatsReader` scans the rollout JSONL (tokens/context accurate,
+  SQLite; `Opencode2StatsReader` reads v2's `session_v2`/`session_message`
+  tables in the same `opencode.db`; `CodexStatsReader` scans the rollout JSONL (tokens/context accurate,
   cost a list-price estimate — no local per-turn charge to bill against);
   `GrokStatsReader` reads a full, genuinely billing-accurate token/cost split
   from `updates.jsonl`; `NullStatsReader` answers "unknown" for backends with

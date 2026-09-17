@@ -1,3 +1,3 @@
 include LICENSE
 include README.md
-recursive-include src/overcode *.md *.sh *.js *.json *.yaml
+recursive-include src/overcode *.md *.sh *.js *.mjs *.json *.yaml

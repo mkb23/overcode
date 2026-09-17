@@ -99,6 +99,7 @@ class ClaudeCodeBackend:
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
         | BackendCapability.PERMISSION_INJECTION
+        | BackendCapability.AGENT_INJECTION
         | BackendCapability.SKILLS
         | BackendCapability.SANDBOX_PROBE
         | BackendCapability.SUBSCRIPTION_USAGE

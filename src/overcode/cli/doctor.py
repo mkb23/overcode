@@ -189,6 +189,18 @@ def doctor(
         except Exception:
             pass
 
+    # Global (not per-agent): opencode2 is a rolling dev preview — the doctor
+    # reports the build and schema drift rather than a tested-range verdict.
+    # Only runs when the fleet actually has an opencode2 agent.
+    from ..backends.opencode2 import Opencode2Backend
+    if any(session_backend_name(s) == Opencode2Backend.name for s in sessions):
+        try:
+            from ..backends.opencode2 import version_findings as oc2_version_findings
+            for finding in oc2_version_findings():
+                rprint(f"[yellow]⚠[/yellow] {finding}")
+        except Exception:
+            pass
+
     # Global (not per-agent): bundled skills drifted from what's installed.
     # Affects every agent, so it's surfaced once rather than duplicated per row.
     try:

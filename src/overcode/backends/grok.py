@@ -508,6 +508,7 @@ class GrokBackend:
         | BackendCapability.FORK
         | BackendCapability.SESSION_ID_PRESCRIPTION
         | BackendCapability.PERMISSION_INJECTION
+        | BackendCapability.AGENT_INJECTION
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
     )

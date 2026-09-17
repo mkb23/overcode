@@ -199,6 +199,116 @@ class TestHooksUninstallBackendOpencode:
         assert installed.exists()
 
 
+class TestHooksUninstallBackendOpencode2:
+
+    def test_requires_dir_flag(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2"])
+        assert result.exit_code != 0
+        assert "--dir is required" in result.output
+
+    def test_removes_marked_plugin(self, tmp_path):
+        from overcode.backends.opencode2_plugin_install import (
+            ensure_plugin_installed,
+            project_plugin_dir_v2,
+        )
+
+        ensure_plugin_installed(str(tmp_path))
+        installed = project_plugin_dir_v2(str(tmp_path))
+        assert installed.exists()
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Removed" in result.output
+        assert not installed.exists()
+
+    def test_missing_plugin_is_a_clean_no_op(self, tmp_path):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No opencode2 telemetry plugin found" in result.output
+
+    def test_refuses_unmarked_file(self, tmp_path):
+        from overcode.backends.opencode2_plugin_install import project_plugin_dir_v2
+
+        installed = project_plugin_dir_v2(str(tmp_path))
+        installed.mkdir(parents=True)
+        (installed / "index.js").write_text("export const Mine = async () => ({})\n")
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "not overcode-managed" in " ".join(result.output.split())
+        assert (installed / "index.js").exists()
+
+    def test_refuses_when_any_file_is_user_owned(self, tmp_path):
+        from overcode.backends.opencode2_plugin_install import (
+            ensure_plugin_installed,
+            project_plugin_dir_v2,
+        )
+
+        ensure_plugin_installed(str(tmp_path))
+        installed = project_plugin_dir_v2(str(tmp_path))
+        # The user replaced one of the three plugin files with their own.
+        (installed / "tui.js").write_text("export const Mine = async () => ({})\n")
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "not overcode-managed" in " ".join(result.output.split())
+        for name in ("index.js", "tui.js", "overcode-telemetry-core.mjs"):
+            assert (installed / name).exists()
+
+    def test_unreadable_file_is_skipped_and_others_removed(self, tmp_path):
+        # Present-but-unverifiable: an unreadable file (e.g. 0o000 in a
+        # writable directory) is NOT absent — only FileNotFoundError
+        # counts as missing — so it is skipped with a warning, never
+        # deleted, while the readable marked files are removed and the
+        # command still succeeds.
+        import os as _os
+
+        from overcode.backends.opencode2_plugin_install import (
+            ensure_plugin_installed,
+            project_plugin_dir_v2,
+        )
+
+        ensure_plugin_installed(str(tmp_path))
+        installed = project_plugin_dir_v2(str(tmp_path))
+        blocked = installed / "tui.js"
+        blocked_content = blocked.read_text()
+        blocked.chmod(0o000)
+        try:
+            if _os.access(blocked, _os.R_OK):
+                pytest.skip("platform cannot produce an unreadable file (e.g. root)")
+            result = runner.invoke(
+                app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)]
+            )
+            assert result.exit_code == 0
+            assert "could not be read" in " ".join(result.output.split())
+            # Untouched — still present; its content is checked after the
+            # perms are restored below.
+            assert blocked.is_file()
+            # The readable marked files were removed around it.
+            assert not (installed / "index.js").exists()
+            assert not (installed / "overcode-telemetry-core.mjs").exists()
+        finally:
+            blocked.chmod(0o644)
+        assert blocked.read_text() == blocked_content
+
+    def test_leaves_plugin_dir_when_user_parked_a_file_in_it(self, tmp_path):
+        from overcode.backends.opencode2_plugin_install import (
+            ensure_plugin_installed,
+            project_plugin_dir_v2,
+        )
+
+        ensure_plugin_installed(str(tmp_path))
+        installed = project_plugin_dir_v2(str(tmp_path))
+        (installed / "my-own.js").write_text("// mine\n")
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "opencode2", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        for name in ("index.js", "tui.js", "overcode-telemetry-core.mjs"):
+            assert not (installed / name).exists()
+        assert (installed / "my-own.js").exists()
+        assert installed.exists()
+
+
 class TestHooksUninstallBackendUnknown:
     def test_unknown_backend_errors(self):
         result = runner.invoke(app, ["hooks", "uninstall-backend", "something-else"])

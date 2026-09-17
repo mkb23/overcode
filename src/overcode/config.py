@@ -497,6 +497,7 @@ def get_backend_telemetry_enabled(backend_name: str) -> bool:
     Config format in ~/.overcode/config.yaml:
         backend_telemetry:
           opencode: off   # skip installing .opencode/plugins/overcode-telemetry.js
+          opencode2: off  # skip installing .opencode/plugins/overcode-telemetry-v2/ (bundled plugin)
           codex: on       # (default) inject -c hooks.*=... overrides
           grok: off       # skip installing ~/.grok/hooks/overcode.json
 

@@ -34,6 +34,8 @@ from .daemon_utils import create_daemon_helpers
 from .backends import (
     BackendCapability,
     capability_names,
+    get_backend,
+    session_backend_name,
     session_capabilities,
     session_supports,
 )
@@ -859,6 +861,28 @@ class MonitorDaemon:
                 stored_cost = stored_cost_reader(session)
                 if stored_cost:
                     cost_estimate = stored_cost
+
+            # The stats object's fallback recovers the persona the agent is
+            # actually running. For backends that honor launch-time --agent,
+            # only fill an empty persona — never clobber the launcher's
+            # choice. For backends without AGENT_INJECTION (opencode2, codex),
+            # a stored persona was never applied to the CLI, so the detected
+            # persona is the truth and replaces it.
+            detected_agent = getattr(stats, "agent", None)
+            if detected_agent:
+                honors_launch_agent = bool(
+                    get_backend(session_backend_name(session)).capabilities
+                    & BackendCapability.AGENT_INJECTION
+                )
+                if honors_launch_agent:
+                    if not getattr(session, "agent_persona", None):
+                        self.session_manager.update_session(
+                            session.id, agent_persona=detected_agent
+                        )
+                else:
+                    self.session_manager.update_session(
+                        session.id, agent_persona=detected_agent
+                    )
 
             self.session_manager.update_stats(
                 session.id,

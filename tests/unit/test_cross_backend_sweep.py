@@ -1,13 +1,13 @@
 """Cross-backend sweep — 0.5.1 hardening pass.
 
 Phase 5 of docs/design/agent-backends-codex-grok.md asks for one place that
-proves the four backends (claude-code, opencode, codex, grok) behave
-consistently as a *fleet*, rather than only individually the way each
+proves the five backends (claude-code, opencode, opencode2, codex, grok)
+behave consistently as a *fleet*, rather than only individually the way each
 backend's own test_backend_*.py file does. These are mock-level/unit tests —
-no live CLIs, no tmux — covering: the registry lists all four, their BKD
-badges are distinct, the new-agent modal's backend picker cycles all four
+no live CLIs, no tmux — covering: the registry lists all five, their BKD
+badges are distinct, the new-agent modal's backend picker cycles all five
 using the real production code path (not a hand-rolled duplicate), and
-`overcode doctor` runs cleanly over a fleet that mixes all four backends in
+`overcode doctor` runs cleanly over a fleet that mixes all five backends in
 one session.
 
 Supervisor context-line backend naming for codex/grok is covered by
@@ -31,7 +31,7 @@ from overcode.session_manager import Session, SessionStats
 from overcode.summary_columns import BACKEND_BADGES, _backend_badge
 from overcode.tui_widgets.new_agent_modal import NewAgentModal
 
-EXPECTED_BACKENDS = {"claude-code", "opencode", "codex", "grok", "hermes"}
+EXPECTED_BACKENDS = {"claude-code", "opencode", "opencode2", "codex", "grok", "hermes"}
 
 runner = CliRunner()
 
@@ -76,7 +76,7 @@ class TestBackendBadgesDistinct:
         assert _backend_badge("future-cli") == "fu"
 
 
-class TestNewAgentModalCyclesAllFour:
+class TestNewAgentModalCyclesAllFive:
     """Drives the real NewAgentModal.show()/._cycle(), not a hand-rolled copy.
 
     NewAgentModal can be constructed and driven without a running Textual

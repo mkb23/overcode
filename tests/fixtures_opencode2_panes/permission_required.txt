@@ -1,0 +1,40 @@
+ ! Running echo shell command    +
+
+  ┃
+  ┃  run this shell command: echo hi2
+  ┃
+
+     → Skill "using-superpowers"
+
+  ┃
+  ┃  ⠧ echo hi2
+  ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃  △ Permission required
+  ┃
+  ┃  $ echo hi2
+  ┃
+  ┃
+  ┃   Allow once   Always allow   Reject                                 ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃
+

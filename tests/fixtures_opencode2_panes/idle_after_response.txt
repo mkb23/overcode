@@ -1,0 +1,40 @@
+   Casual greeting               +
+
+  ┃
+  ┃  say hi
+  ┃
+
+     + Thought · 189ms
+
+     → Skill "using-superpowers"
+
+     Hi! 👋
+
+     Build · acme-llm-1 · 1.3s · 93.0 tok/s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · acme-llm-1 Acme · high
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/opencode/oc2cap-work/plain                                                  10.7K (2%) · $0.01  ctrl+p commands
+

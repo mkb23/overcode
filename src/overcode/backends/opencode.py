@@ -416,11 +416,13 @@ class OpencodeBackend:
     # Deliberately absent: SESSION_ID_PRESCRIPTION (opencode mints its own
     # `ses_…` ids), PERMISSION_INJECTION (no per-launch allowlist flag
     # exists), SKILLS / SANDBOX_PROBE / SUBSCRIPTION_USAGE / AGENT_TEAMS.
+    # --agent IS honored (build_agent_cmd), hence AGENT_INJECTION.
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
+        | BackendCapability.AGENT_INJECTION
     )
 
     def executable(self) -> str:

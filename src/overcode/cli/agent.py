@@ -247,7 +247,7 @@ def launch(
     backend: Annotated[
         Optional[str],
         # -b is already --budget, so the backend picker takes -B.
-        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, codex, grok, or hermes"),
+        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, opencode2, codex, grok, or hermes"),
     ] = None,
     wrapper: Annotated[
         Optional[str],
