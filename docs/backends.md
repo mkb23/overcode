@@ -495,7 +495,7 @@ then `OPENCODE_DATA_DIR`, then `$XDG_DATA_HOME/opencode/opencode.db`, then
 | cache write / read | `session.tokens_cache_write` / `tokens_cache_read` |
 | cost | `session.cost` (what the provider actually charged); recomputed from `pricing.py` when it is 0, which is the subscription-auth case |
 | model | `session.model` JSON, rendered back as `provider/model` |
-| context | newest assistant `message.data.tokens.total` |
+| context | newest assistant `message.data.tokens.total`, divided by the `limit.context` of opencode's **own** cached models.dev catalog (`~/.cache/opencode/models.json`) — the exact denominator opencode's console uses. See "CTX%: what the context column divides by" below |
 | interactions | count of `message.data.role == "user"` |
 
 Rows are located by the opencode session ids the plugin recorded into the
@@ -509,6 +509,55 @@ the columns render dashes rather than misleading zeros. Schema drift also
 raises an `overcode doctor` warning naming the missing columns.
 
 ---
+
+## CTX%: what the context column divides by
+
+The `CTX` column is `current context tokens ÷ context window`. The numerator
+is whatever the backend's own telemetry reports as the size of the most
+recent turn's prompt; the denominator is the window the *backend* will fill
+before it compacts. Getting the denominator from the backend's own source
+wherever one exists is the rule — a percentage against some other window is
+worse than no percentage, because the column's whole job is to warn before
+*that agent's* window fills (#469).
+
+| Backend | Numerator | Denominator (window) |
+|---|---|---|
+| claude-code | latest assistant turn's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` from the transcript | curated table in `history_reader.MODEL_CONTEXT_WINDOWS` (per-model, cited), then the models.dev catalog (freshest local copy, else the bundled snapshot) |
+| codex | latest `token_count` event's `last_token_usage.total_tokens` | the same event's `model_context_window` — codex's live self-report (258,400 for the gpt-5.6 line: its 272K standard context less a 5% reserve). Falls back to the curated table, then the snapshot |
+| opencode | newest assistant `message.data.tokens.total` (= input + output + reasoning + cache read + cache write; verified equal on live rows) | `limit.context` for the launched `provider/model` in opencode's own cached models.dev catalog, `~/.cache/opencode/models.json` (`$XDG_CACHE_HOME` honoured). Falls back to the bundled snapshot, then the curated table |
+| grok | latest `params._meta.totalTokens` in `updates.jsonl` | curated table (`grok-4.6`/`grok-4.5` = 500K per docs.x.ai), then the snapshot — grok's session files carry no window figure |
+
+Unknown everywhere → a dash, never a borrowed default (the original #469
+bug: an unrecognised model silently divided by 200K).
+
+**Why opencode reads opencode's catalog, not our table.** The #469 report
+was 11,822 tokens on `openai/gpt-5.6-sol` reading **1%** in opencode's
+console but **6%** in overcode. After the "assume nothing" fix it read 5% —
+still not 1%. Both denominators are real numbers for that model:
+
+- codex's CLI reports **258,400** as `model_context_window` — the 272K
+  standard-context tier (the boundary at which OpenAI's long-context
+  pricing kicks in) less codex's 5% compaction reserve. That is the window
+  codex fills before it compacts, so it is right for codex agents and it is
+  what the curated table carries.
+- models.dev lists **1,050,000** for the same model — the API's advertised
+  long-context ceiling. opencode's TUI divides by exactly this
+  (`Math.round(total / model.limit.context * 100)`, read off its bundled
+  client code, v1.18.29), and its auto-compaction fires against the same
+  figure, so an opencode agent on that model really will run to ~1M before
+  compacting. `11,822 / 1,050,000 ≈ 1%`.
+
+So a single per-model number cannot serve both backends; the per-backend
+rule above is the consistent one, and it is the same principle codex
+already used (prefer the CLI's own figure over the static table). Reading
+opencode's cache is what makes the TUI agree with the console. Caveats:
+an `opencode.json` per-model `limit` override is applied inside opencode's
+process and is invisible to overcode; and opencode's cache is refreshed by
+opencode itself, so a host that has never run opencode falls through to the
+bundled snapshot (same models.dev data, possibly a different vintage).
+
+The catalog tiers and the curated tables are described in
+docs/configuration.md, "Model metadata (context windows and pricing)".
 
 ## Stats: the rollout JSONL (codex)
 

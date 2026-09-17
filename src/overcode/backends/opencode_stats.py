@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .. import model_metadata
 from ..stats_reader import (
     AgentSessionStats,
     DiscoveredSessionIds,
@@ -96,6 +97,72 @@ def database_path() -> Path:
     if data_dir:
         return Path(data_dir) / "opencode.db"
     return default_data_dir() / "opencode.db"
+
+
+def models_cache_path() -> Path:
+    """opencode's cached models.dev catalog, honouring XDG."""
+    return model_metadata.opencode_models_cache_path()
+
+
+# (mtime, parsed catalog) — re-read only when opencode refreshes the file.
+_models_cache: Tuple[Optional[float], Dict[str, Any]] = (None, {})
+
+
+def _load_models_cache(path: Path) -> Dict[str, Any]:
+    global _models_cache
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached_mtime, cached = _models_cache
+    if cached_mtime == mtime:
+        return cached
+    try:
+        parsed = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    _models_cache = (mtime, parsed)
+    return parsed
+
+
+def opencode_context_limit(
+    qualified_model: Optional[str], cache_path: Optional[Path] = None
+) -> Optional[int]:
+    """The context window opencode itself divides by for its "N% used" figure (#469).
+
+    opencode's own TUI computes that percentage as the newest assistant
+    turn's ``tokens.total`` over ``provider.models[id].limit.context``
+    (read off the bundled client code of v1.18.29), where the catalog is
+    its cached models.dev snapshot at ``~/.cache/opencode/models.json``
+    (with any ``opencode.json`` per-model ``limit`` overrides applied
+    in-process, which overcode cannot see). Reading that same file, by the
+    exact ``provider/model`` pair (providers can list the same model with
+    different limits), and falling back to overcode's general models.dev
+    catalog when opencode has never populated it on this host, makes the
+    CTX column agree with the number the agent's own console shows, the
+    same way codex agents use the CLI-reported ``model_context_window``.
+
+    The original #469 report is exactly this denominator: 11,822 tokens on
+    ``openai/gpt-5.6-sol`` read 1% in opencode (÷ models.dev's 1,050,000)
+    but 5% against the codex-reported 258,400 in overcode's curated table.
+    Both are real figures for that model; opencode compacts against the
+    former, so for an opencode agent the former is the one that matters.
+    """
+    if not qualified_model:
+        return None
+    provider, _, model_id = qualified_model.partition("/")
+    if model_id:
+        catalog = _load_models_cache(cache_path or models_cache_path())
+        entry = catalog.get(provider) if isinstance(catalog, dict) else None
+        models = entry.get("models") if isinstance(entry, dict) else None
+        spec = models.get(model_id) if isinstance(models, dict) else None
+        limit = spec.get("limit") if isinstance(spec, dict) else None
+        context = limit.get("context") if isinstance(limit, dict) else None
+        if isinstance(context, (int, float)) and context > 0:
+            return int(context)
+    return model_metadata.context_window(qualified_model)
 
 
 def connect(path: Optional[Path] = None) -> Optional[sqlite3.Connection]:
@@ -483,6 +550,8 @@ class OpencodeStatsReader:
                 work_times=scan["work_times"],
                 current_context_tokens=scan["current_context_tokens"],
                 model=model,
+                # opencode's own denominator, so CTX% matches its console (#469)
+                reported_context_window=opencode_context_limit(model),
                 # Deliberately None: `provider` is overcode's API-transport
                 # discriminator ("web"/"bedrock"), not opencode's model
                 # provider, and writing "openai" into it would corrupt the
@@ -636,6 +705,8 @@ __all__ = [
     "fetch_rows_for_directory",
     "fetch_session_rows",
     "missing_columns",
+    "models_cache_path",
+    "opencode_context_limit",
     "schema_findings",
     "session_ids_from_hook_state",
 ]

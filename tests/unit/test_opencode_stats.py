@@ -21,6 +21,8 @@ from overcode.backends.opencode_stats import (
     database_path,
     default_data_dir,
     missing_columns,
+    models_cache_path,
+    opencode_context_limit,
     schema_findings,
     session_ids_from_hook_state,
 )
@@ -494,3 +496,65 @@ class TestBackendWiring:
             assert isinstance(reader, OpencodeStatsReader)
         finally:
             clear_reader_cache()
+
+
+def write_models_cache(path, provider, model_id, context):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        provider: {"id": provider, "models": {model_id: {"id": model_id, "limit": {"context": context, "output": 1}}}}
+    }))
+
+
+class TestContextLimit:
+    """#469 — CTX%'s denominator for opencode is the ``limit.context`` of
+    opencode's *own* cached models.dev catalog, exactly what its console's
+    "N% used" divides by; overcode's bundled snapshot is the fallback."""
+
+    def test_cache_path_honours_xdg(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        assert models_cache_path() == tmp_path / "opencode" / "models.json"
+
+    def test_cache_path_default(self, monkeypatch):
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        assert models_cache_path() == Path.home() / ".cache" / "opencode" / "models.json"
+
+    def test_reads_opencodes_own_catalog(self, tmp_path):
+        cache = tmp_path / "models.json"
+        write_models_cache(cache, "openai", "gpt-5.6-sol", 1_050_000)
+        assert opencode_context_limit("openai/gpt-5.6-sol", cache_path=cache) == 1_050_000
+
+    def test_opencodes_catalog_wins_over_bundled_snapshot(self, tmp_path):
+        cache = tmp_path / "models.json"
+        write_models_cache(cache, "zai", "glm-4.6", 424_242)
+        assert opencode_context_limit("zai/glm-4.6", cache_path=cache) == 424_242
+
+    def test_falls_back_to_bundled_snapshot_when_cache_absent(self, tmp_path):
+        from overcode.model_metadata import lookup
+        limit = opencode_context_limit("zai/glm-4.6", cache_path=tmp_path / "missing.json")
+        assert limit == lookup("glm-4.6").context_window
+
+    def test_falls_back_when_model_missing_from_cache(self, tmp_path):
+        from overcode.model_metadata import lookup
+        cache = tmp_path / "models.json"
+        write_models_cache(cache, "openai", "gpt-5.6-sol", 1_050_000)
+        assert opencode_context_limit("zai/glm-4.6", cache_path=cache) == lookup("glm-4.6").context_window
+
+    def test_unknown_everywhere_is_none(self, tmp_path):
+        assert opencode_context_limit("acme/internal-x1", cache_path=tmp_path / "missing.json") is None
+        assert opencode_context_limit(None) is None
+
+    def test_corrupt_cache_is_ignored(self, tmp_path):
+        from overcode.model_metadata import lookup
+        cache = tmp_path / "models.json"
+        cache.write_text("{nope")
+        assert opencode_context_limit("zai/glm-4.6", cache_path=cache) == lookup("glm-4.6").context_window
+
+    def test_get_stats_reports_opencodes_denominator(self, reader, monkeypatch, tmp_path):
+        """The #469 arithmetic end to end: 7,120 tokens of context over
+        opencode's catalog figure, not the static table's."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        write_models_cache(models_cache_path(), "openai", "gpt-4o-mini", 424_242)
+        stats = reader.get_stats(make_session())
+        assert stats.reported_context_window == 424_242
+        assert stats.max_context_tokens == 424_242
+        assert stats.current_context_tokens == 7120
