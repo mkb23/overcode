@@ -391,8 +391,17 @@ def invalidate_cache() -> None:
 # ── Refresh ──────────────────────────────────────────────────────────────
 
 
-def fetch_models_dev(url: str = MODELS_DEV_URL, timeout: float = 60.0) -> Dict[str, Any]:
-    """Download and parse models.dev's catalog. Raises on any failure."""
+FETCH_TIMEOUT_SECONDS = 15.0
+
+
+def fetch_models_dev(url: str = MODELS_DEV_URL, timeout: float = FETCH_TIMEOUT_SECONDS) -> Dict[str, Any]:
+    """Download and parse models.dev's catalog. Raises on any failure.
+
+    The timeout bounds connect + read on a network that silently drops
+    packets (a locked-down corporate host); DNS resolution is outside it.
+    Nothing on a lookup path calls this — only the CLI's refresh and the
+    daemon's opt-in background refresh do.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "overcode model-metadata refresh"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — fixed https URL
         data = json.load(resp)

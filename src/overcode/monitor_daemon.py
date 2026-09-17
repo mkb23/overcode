@@ -23,8 +23,9 @@ Pure business logic is extracted to monitor_daemon_core.py for testability.
 import os
 import signal
 import sys
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -344,8 +345,13 @@ class MonitorDaemon:
 
         # models.dev catalog auto-refresh (#473) — opt-in via config.yaml
         # model_metadata.auto_refresh; the hourly check itself is a stat().
+        # The fetch runs on a background thread so a packet-dropping network
+        # can never stall the loop, and a failure backs off for hours.
         self._last_model_metadata_check: Optional[datetime] = None
         self._model_metadata_check_interval = 3600  # seconds
+        self._model_metadata_thread: Optional[threading.Thread] = None
+        self._model_metadata_backoff_until: Optional[datetime] = None
+        self._model_metadata_failure_backoff = 6 * 3600  # seconds
 
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
@@ -1131,15 +1137,23 @@ class MonitorDaemon:
 
         Runs its stat() check at most hourly; the fetch only happens when
         ``model_metadata.auto_refresh`` is true *and* the local cache is
-        missing or older than ``max_age_days``. Failures are logged and
-        retried next hour — lookups keep working off whatever catalog is
-        already on disk (opencode's cache or the bundled snapshot).
+        missing or older than ``max_age_days``. The fetch itself runs on a
+        daemon thread — the loop never waits on the network — and a failure
+        backs off for ``_model_metadata_failure_backoff`` seconds with one
+        warning, so an air-gapped or packet-dropping host sees neither a
+        stall nor an hourly log line. Lookups keep working off whatever
+        catalog is already on disk throughout.
         """
         if not should_sync_stats(
             self._last_model_metadata_check, now, self._model_metadata_check_interval
         ):
             return
         self._last_model_metadata_check = now
+        thread = self._model_metadata_thread
+        if thread is not None and thread.is_alive():
+            return
+        if self._model_metadata_backoff_until and now < self._model_metadata_backoff_until:
+            return
         try:
             from .config import get_model_metadata_config
             from . import model_metadata
@@ -1150,13 +1164,38 @@ class MonitorDaemon:
             age = model_metadata.local_cache_age_days()
             if age is not None and age < cfg["max_age_days"]:
                 return
+        except Exception as e:
+            self.log.warning(f"Model metadata auto-refresh check failed: {e}")
+            return
+
+        thread = threading.Thread(
+            target=self._run_model_metadata_refresh,
+            name="model-metadata-refresh",
+            daemon=True,
+        )
+        self._model_metadata_thread = thread
+        thread.start()
+
+    def _run_model_metadata_refresh(self) -> None:
+        """Background body of the auto-refresh: fetch, write atomically, log once."""
+        try:
+            from . import model_metadata
+
             info = model_metadata.refresh_local_cache()
+            self._model_metadata_backoff_until = None
             self.log.info(
                 f"Refreshed model metadata catalog from models.dev: "
                 f"{info['model_count']} models -> {info['path']}"
             )
         except Exception as e:
-            self.log.warning(f"Model metadata auto-refresh failed (will retry in an hour): {e}")
+            self._model_metadata_backoff_until = datetime.now() + timedelta(
+                seconds=self._model_metadata_failure_backoff
+            )
+            hours = self._model_metadata_failure_backoff / 3600
+            self.log.warning(
+                f"Model metadata auto-refresh failed; not retrying for {hours:g}h "
+                f"(lookups keep using the catalog already on disk): {e}"
+            )
 
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).

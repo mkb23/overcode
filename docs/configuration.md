@@ -393,8 +393,11 @@ The catalog is whichever of these is **freshest on this machine**:
 | bundled snapshot | `src/overcode/data/model_metadata.json` (in the wheel) | each overcode release |
 
 Newest of the first two by file time wins; the bundled snapshot is the
-offline fallback. No network is used unless you run the refresh command or
-opt the daemon in:
+offline fallback. Lookups never touch the network, so an air-gapped host
+simply runs off whatever copy it has. Nothing is fetched unless you run the
+refresh command or opt the daemon in — and the daemon's fetch runs on a
+background thread with a 15-second timeout and backs off for six hours
+after a failure, so a locked-down network costs one log line, not a stall:
 
 ```yaml
 model_metadata:

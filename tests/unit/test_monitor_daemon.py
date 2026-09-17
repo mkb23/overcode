@@ -1764,8 +1764,9 @@ if __name__ == "__main__":
 
 
 class TestMaybeRefreshModelMetadata:
-    """_maybe_refresh_model_metadata — hourly stat check, fetch only when
-    opted in and the local cache is stale (#473)."""
+    """_maybe_refresh_model_metadata — hourly stat check; the fetch runs on a
+    background thread only when opted in and stale, and a failure backs off
+    for hours with a single warning (#473)."""
 
     def _make_daemon(self):
         from overcode.monitor_daemon import MonitorDaemon
@@ -1774,44 +1775,95 @@ class TestMaybeRefreshModelMetadata:
             daemon.log = MagicMock()
             daemon._last_model_metadata_check = None
             daemon._model_metadata_check_interval = 3600
+            daemon._model_metadata_thread = None
+            daemon._model_metadata_backoff_until = None
+            daemon._model_metadata_failure_backoff = 6 * 3600
             return daemon
+
+    @staticmethod
+    def _join(daemon):
+        if daemon._model_metadata_thread is not None:
+            daemon._model_metadata_thread.join(timeout=5)
+            assert not daemon._model_metadata_thread.is_alive()
+
+    ON = {"auto_refresh": True, "max_age_days": 7.0}
+    OFF = {"auto_refresh": False, "max_age_days": 7.0}
 
     def test_off_by_default_fetches_nothing(self):
         daemon = self._make_daemon()
-        with patch('overcode.config.get_model_metadata_config',
-                   return_value={"auto_refresh": False, "max_age_days": 7.0}), \
+        with patch('overcode.config.get_model_metadata_config', return_value=self.OFF), \
              patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
             daemon._maybe_refresh_model_metadata(datetime.now())
+        assert daemon._model_metadata_thread is None
         mock_refresh.assert_not_called()
 
-    def test_refreshes_when_enabled_and_cache_missing(self):
+    def test_refreshes_on_a_background_thread_when_enabled_and_cache_missing(self):
         daemon = self._make_daemon()
-        with patch('overcode.config.get_model_metadata_config',
-                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+        with patch('overcode.config.get_model_metadata_config', return_value=self.ON), \
              patch('overcode.model_metadata.local_cache_age_days', return_value=None), \
              patch('overcode.model_metadata.refresh_local_cache',
                    return_value={"model_count": 5, "path": "/x"}) as mock_refresh:
             daemon._maybe_refresh_model_metadata(datetime.now())
+            assert daemon._model_metadata_thread is not None
+            assert daemon._model_metadata_thread.daemon is True
+            self._join(daemon)
         mock_refresh.assert_called_once()
         daemon.log.info.assert_called()
+        assert daemon._model_metadata_backoff_until is None
+
+    def test_loop_does_not_wait_on_a_slow_fetch(self):
+        """A fetch that hangs (packet-dropping network) must not block the caller."""
+        import threading, time
+        release = threading.Event()
+
+        def slow_refresh():
+            release.wait(5)
+            return {"model_count": 1, "path": "/x"}
+
+        daemon = self._make_daemon()
+        with patch('overcode.config.get_model_metadata_config', return_value=self.ON), \
+             patch('overcode.model_metadata.local_cache_age_days', return_value=None), \
+             patch('overcode.model_metadata.refresh_local_cache', side_effect=slow_refresh):
+            started = time.monotonic()
+            daemon._maybe_refresh_model_metadata(datetime.now())
+            assert time.monotonic() - started < 1.0
+            assert daemon._model_metadata_thread.is_alive()
+            # A later hourly tick while the fetch is in flight starts nothing new
+            first_thread = daemon._model_metadata_thread
+            daemon._maybe_refresh_model_metadata(datetime.now() + timedelta(hours=2))
+            assert daemon._model_metadata_thread is first_thread
+            release.set()
+            self._join(daemon)
 
     def test_skips_when_cache_is_fresh(self):
         daemon = self._make_daemon()
-        with patch('overcode.config.get_model_metadata_config',
-                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+        with patch('overcode.config.get_model_metadata_config', return_value=self.ON), \
              patch('overcode.model_metadata.local_cache_age_days', return_value=2.0), \
              patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
             daemon._maybe_refresh_model_metadata(datetime.now())
+        assert daemon._model_metadata_thread is None
         mock_refresh.assert_not_called()
 
-    def test_failure_is_logged_not_raised(self):
+    def test_failure_warns_once_and_backs_off(self):
         daemon = self._make_daemon()
-        with patch('overcode.config.get_model_metadata_config',
-                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+        now = datetime.now()
+        with patch('overcode.config.get_model_metadata_config', return_value=self.ON), \
              patch('overcode.model_metadata.local_cache_age_days', return_value=30.0), \
-             patch('overcode.model_metadata.refresh_local_cache', side_effect=OSError("no network")):
-            daemon._maybe_refresh_model_metadata(datetime.now())
-        daemon.log.warning.assert_called()
+             patch('overcode.model_metadata.refresh_local_cache',
+                   side_effect=OSError("no network")) as mock_refresh:
+            daemon._maybe_refresh_model_metadata(now)
+            self._join(daemon)
+            assert daemon.log.warning.call_count == 1
+            assert daemon._model_metadata_backoff_until is not None
+            # The next few hourly ticks stay quiet and fetch nothing
+            for h in (1, 2, 5):
+                daemon._maybe_refresh_model_metadata(now + timedelta(hours=h))
+            assert mock_refresh.call_count == 1
+            assert daemon.log.warning.call_count == 1
+            # After the backoff window it tries again
+            daemon._maybe_refresh_model_metadata(daemon._model_metadata_backoff_until + timedelta(minutes=1))
+            self._join(daemon)
+            assert mock_refresh.call_count == 2
 
     def test_hourly_throttle(self):
         daemon = self._make_daemon()
