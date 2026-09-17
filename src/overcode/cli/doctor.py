@@ -170,6 +170,7 @@ def doctor(
     # reads on-screen chrome that drifts across releases), plus whatever
     # else that backend knows to check — opencode's autoupdate setting,
     # grok's subscription auth, hermes's plugin enablement / provider setup,
+    # opencode2's rolling-preview build,
     # and each stats store's schema drift. Each adapter answers through its
     # optional ``doctor_findings()`` (see AgentBackend in backends/base.py);
     # only backends that actually have an agent in the fleet are consulted.
@@ -185,18 +186,6 @@ def doctor(
             continue
         try:
             for finding in findings_fn():
-                rprint(f"[yellow]⚠[/yellow] {finding}")
-        except Exception:
-            pass
-
-    # Global (not per-agent): opencode2 is a rolling dev preview — the doctor
-    # reports the build and schema drift rather than a tested-range verdict.
-    # Only runs when the fleet actually has an opencode2 agent.
-    from ..backends.opencode2 import Opencode2Backend
-    if any(session_backend_name(s) == Opencode2Backend.name for s in sessions):
-        try:
-            from ..backends.opencode2 import version_findings as oc2_version_findings
-            for finding in oc2_version_findings():
                 rprint(f"[yellow]⚠[/yellow] {finding}")
         except Exception:
             pass

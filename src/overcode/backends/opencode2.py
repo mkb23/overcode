@@ -213,6 +213,73 @@ class Opencode2Backend:
             "back to pane polling. Relaunch via `overcode restart` to install it."
         )
 
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Remove the project-scoped v2 plugin directory (see cli/hooks.py).
+
+        Every file is checked for overcode's marker before anything is
+        removed: one user-owned file means nothing is deleted. A file that
+        exists but cannot be read (permissions) is not "missing" — it is
+        skipped with a note and the readable overcode files around it are
+        removed; the directory itself goes only once it is empty.
+        """
+        if not project_dir:
+            return False, (
+                "Error: --dir is required for opencode2 — its telemetry plugin "
+                "is installed per-project, not globally"
+            )
+        from .opencode2_plugin_install import (
+            PLUGIN_FILES_V2,
+            PLUGIN_MARKER_V2,
+            project_plugin_dir_v2,
+        )
+
+        plugin_dir = project_plugin_dir_v2(project_dir)
+        existing = {}
+        unreadable = []
+        for name in PLUGIN_FILES_V2:
+            try:
+                existing[name] = (plugin_dir / name).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unreadable.append(name)
+        if not existing and not unreadable:
+            return True, f"No opencode2 telemetry plugin found at {plugin_dir}"
+        for name, content in existing.items():
+            if PLUGIN_MARKER_V2 not in content:
+                return False, (
+                    f"{plugin_dir / name} exists but is not overcode-managed — "
+                    "leaving it alone"
+                )
+        removed = []
+        for name in existing:
+            try:
+                (plugin_dir / name).unlink()
+            except OSError as exc:
+                return False, f"could not remove {plugin_dir / name}: {exc}"
+            removed.append(name)
+        try:
+            plugin_dir.rmdir()
+        except OSError:
+            pass  # not empty: the user parked their own file there — leave it
+        notes = "".join(
+            f"; {plugin_dir / name} exists but could not be read — leaving it alone"
+            for name in unreadable
+        )
+        if not removed:
+            return True, f"No removable opencode2 telemetry plugin at {plugin_dir}{notes}"
+        return True, f"Removed {plugin_dir} ({', '.join(removed)}){notes}"
+
+    def doctor_findings(self) -> List[str]:
+        """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py).
+
+        opencode2 is a rolling dev preview with no stable tags, so this
+        never claims a tested range — it names the installed build as a
+        moving target and reports ``session_v2``/``session_message``
+        schema drift.
+        """
+        return version_findings()
+
     def check_binary(self):
         from ..dependency_check import check_agent_cli
         return check_agent_cli(self)
