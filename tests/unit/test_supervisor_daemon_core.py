@@ -59,7 +59,7 @@ class TestBuildDaemonClaudeContext:
 
         assert "No autopilot instructions set" in result
 
-    @pytest.mark.parametrize("backend", ["opencode", "codex", "grok"])
+    @pytest.mark.parametrize("backend", ["opencode", "codex", "grok", "hermes"])
     def test_non_default_backend_is_named(self, backend):
         """A mixed fleet tells the supervisor which dialect each agent speaks."""
         sessions = [{

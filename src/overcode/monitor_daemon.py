@@ -1239,7 +1239,10 @@ class MonitorDaemon:
             self._last_resources_sync, now, self._resources_sync_interval
         ):
             return
-        from .doctor import find_agent_process, session_process_basenames
+        from .doctor import (
+            find_agent_process, session_process_argv_markers,
+            session_process_basenames,
+        )
         from .implementations import RealTmux
         from .process_resources import (
             snapshot_processes, build_children_index, aggregate_tree,
@@ -1261,7 +1264,8 @@ class MonitorDaemon:
             if pane_pid is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session)
+                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                session_process_argv_markers(session),
             )
             if claude_pid is None:
                 # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
@@ -1288,7 +1292,7 @@ class MonitorDaemon:
             return
         from .doctor import (
             _snapshot_process_table, _build_child_index, find_agent_process,
-            session_process_basenames,
+            session_process_argv_markers, session_process_basenames,
         )
         from .implementations import RealTmux
         from .sandbox_detect import detect_sandbox_states
@@ -1312,7 +1316,8 @@ class MonitorDaemon:
             if pane_pid is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session)
+                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                session_process_argv_markers(session),
             )
             if claude_pid is not None:
                 session_pids[session.id] = claude_pid

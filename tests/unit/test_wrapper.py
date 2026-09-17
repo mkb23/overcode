@@ -372,23 +372,33 @@ class TestDevcontainerBackendSelection:
         assert binary == "claude"
         assert package == "@anthropic-ai/claude-code"
 
-    def test_hooks_install_is_skipped_for_opencode_codex_and_grok(self):
-        # opencode/codex/grok have no settings.json hook protocol: opencode's
+    def test_hermes_has_no_npm_package(self):
+        # hermes has no npm package either — Nous ships a curl installer.
+        backend, binary, package = self._resolve({"OVERCODE_BACKEND": "hermes"})
+        assert backend == "hermes"
+        assert binary == "hermes"
+        assert package == ""
+
+    def test_hooks_install_only_runs_for_claude_code(self):
+        # Only Claude Code has a settings.json hook protocol: opencode's
         # telemetry comes from the plugin staged into the mounted project
         # directory, codex's from per-launch -c hooks.<Event>= argv, grok's
-        # from the global ~/.grok/hooks/overcode.json file.
-        assert (
-            '[[ "$AGENT_BACKEND" != "opencode" && "$AGENT_BACKEND" != "codex"'
-            ' && "$AGENT_BACKEND" != "grok" ]] && \\'
-        ) in self.SCRIPT
+        # from the global ~/.grok/hooks/overcode.json file, hermes's from the
+        # global $HERMES_HOME/plugins/overcode/ plugin. The guard is an
+        # equality on the one backend that needs it, so a sixth backend
+        # doesn't have to be added to an exclusion list.
+        assert '[[ "$AGENT_BACKEND" == "claude-code" ]] && \\' in self.SCRIPT
         assert "overcode hooks install" in self.SCRIPT
 
     def test_install_method_selects_npm_or_curl(self):
-        # codex/opencode/claude install via npm; grok has no npm package and
-        # uses x.ai's curl installer instead.
+        # codex/opencode/claude install via npm; grok and hermes have no npm
+        # package and use their vendors' curl installers instead — one
+        # generic pipe reading the per-backend AGENT_INSTALL_URL.
         assert 'AGENT_INSTALL_METHOD="npm"' in self.SCRIPT
         assert 'AGENT_INSTALL_METHOD="curl"' in self.SCRIPT
-        assert "curl -fsSL https://x.ai/cli/install.sh | bash" in self.SCRIPT
+        assert 'AGENT_INSTALL_URL="https://x.ai/cli/install.sh"' in self.SCRIPT
+        assert 'AGENT_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"' in self.SCRIPT
+        assert '"curl -fsSL ${AGENT_INSTALL_URL} | bash"' in self.SCRIPT
 
     def test_provider_credentials_are_forwarded(self):
         assert "OPENAI_API_KEY" in self.SCRIPT

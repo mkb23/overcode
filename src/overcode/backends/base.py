@@ -107,7 +107,7 @@ class LaunchSpec:
 class AgentBackend(Protocol):
     """Adapter for one agent CLI."""
 
-    name: str                       # "claude-code" | "opencode" | "codex" | "grok"
+    name: str                       # "claude-code" | "opencode" | "codex" | "grok" | "hermes"
     display_name: str
     binary: str                     # for dependency_check + doctor process matching
     version_args: Sequence[str]
@@ -135,6 +135,16 @@ class AgentBackend(Protocol):
     # ``getattr(backend, "fork_prescribes_new_session_id", False)`` — this
     # default documents the fallback, it isn't inherited automatically.)
     fork_prescribes_new_session_id: bool = False
+
+    # Optional. Substrings that identify the agent's live process by argv when
+    # its basename is not distinctive — hermes runs as Hermes's own venv
+    # python (`.../venv/bin/python .../hermes-agent/hermes --cli`), so
+    # matching ``process_basenames`` alone would have to match "python".
+    # ``doctor.find_agent_process`` reads this via ``getattr`` and accepts a
+    # process whose basename is in ``process_basenames`` OR whose argv
+    # contains any marker. Same "not inherited from the Protocol" caveat as
+    # fork_prescribes_new_session_id above.
+    process_argv_markers: Sequence[str] = ()
 
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 
@@ -164,6 +174,37 @@ class AgentBackend(Protocol):
     def startup_dialog_rules(self) -> List[DialogRule]: ...
 
     def prompt_ready_chars(self) -> Set[str]: ...
+
+    def prompt_ready_line(self, line: str) -> bool:
+        """Optional. Is this (ANSI-stripped, whitespace-trimmed) pane line the
+        live, empty input prompt?
+
+        ``launcher._wait_for_prompt`` consults this via ``getattr`` before
+        falling back to an exact match against ``prompt_ready_chars()``. The
+        exact-set form can't express a prompt that is never drawn bare —
+        hermes always follows its glyph with a rotating placeholder hint —
+        so a backend with that shape implements this instead.
+        """
+        ...
+
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Optional. Remove this backend's on-disk telemetry footprint.
+
+        Backs ``overcode hooks uninstall-backend <name>``. Returns ``(ok,
+        message)``: ``ok`` False means the footprint was found but *not*
+        removed (not overcode-managed, or ``project_dir`` was needed and
+        missing) and the CLI exits non-zero. A backend whose telemetry
+        leaves nothing on disk (Claude Code's ``--settings``, codex's ``-c``
+        overrides) returns ``(True, "nothing installed on disk …")``.
+        """
+        ...
+
+    def doctor_findings(self) -> List[str]:
+        """Optional. Fleet-level warnings for ``overcode doctor`` — version
+        outside the tested range, missing auth, stats-store schema drift.
+        Only called when the fleet actually has an agent on this backend.
+        """
+        ...
 
     def status_patterns(self) -> "StatusPatterns": ...
 

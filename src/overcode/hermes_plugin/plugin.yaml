@@ -1,0 +1,22 @@
+# OVERCODE-PLUGIN-MARKER: overcode-hermes-telemetry
+#
+# Managed by overcode — installed into $HERMES_HOME/plugins/overcode/ on
+# every `overcode launch -B hermes`, rewritten when the bundled copy moves
+# on, and inert unless the OVERCODE_SESSION_NAME / OVERCODE_TMUX_SESSION env
+# vars are set. Safe to delete (`overcode hooks uninstall-backend hermes`);
+# the next launch reinstalls it.
+name: overcode
+version: 1
+description: "OVERCODE-PLUGIN-MARKER: overcode-hermes-telemetry — forwards Hermes lifecycle hooks to `overcode hook-handler` for live agent status. Inert outside overcode."
+author: overcode
+provides_hooks:
+  - on_session_start
+  - on_session_reset
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - pre_approval_request
+  - post_approval_response
+  - post_llm_call
+  - on_session_end
+  - on_session_finalize

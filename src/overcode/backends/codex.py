@@ -489,6 +489,14 @@ class CodexBackend:
             "not fire. Relaunch via `overcode restart` to re-inject."
         )
 
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Nothing on disk: telemetry rides on per-launch argv (see cli/hooks.py)."""
+        return True, f"nothing installed on disk for this backend ({self.name})"
+
+    def doctor_findings(self) -> List[str]:
+        """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""
+        return version_findings()
+
     def check_binary(self):
         from ..dependency_check import check_agent_cli
         return check_agent_cli(self)

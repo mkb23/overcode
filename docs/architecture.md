@@ -54,13 +54,13 @@ The core data pipeline is simple: tmux panes are scraped for status, the monitor
 
 1. **Status Detection** — Two detectors scrape each agent's state:
    - `PollingStatusDetector`: regex-matches captured tmux pane content against the session's backend `StatusPatterns`
-   - `HookStatusDetector`: reads hook-state files (Claude Code's hook system, opencode's bundled plugin, codex's per-launch `-c hooks...` injection, or grok's global hooks file) — authoritative when fresh
+   - `HookStatusDetector`: reads hook-state files (Claude Code's hook system, opencode's bundled plugin, codex's per-launch `-c hooks...` injection, grok's global hooks file, or hermes's bundled Python plugin) — authoritative when fresh
    - `StatusDetectorDispatcher`: picks hooks-vs-polling **per session**, from the backend's `HOOK_EVENTS` capability plus any per-agent override
 
 2. **Monitor Daemon** (~2s loop) — The single source of truth:
    - Runs status detection for all registered sessions
    - Accumulates green/non-green time via pure `monitor_daemon_core` functions
-   - Syncs token/cost data through the session's `StatsReader` (Claude Code transcripts, opencode's SQLite store, codex's rollout JSONL, grok's `updates.jsonl`, or "unknown")
+   - Syncs token/cost data through the session's `StatsReader` (Claude Code transcripts, opencode's SQLite store, codex's rollout JSONL, grok's `updates.jsonl`, hermes's `state.db`, or "unknown")
    - Manages heartbeat delivery, presence tracking, status history logging
    - Publishes `MonitorDaemonState` to `monitor_daemon_state.json` every iteration
 
@@ -129,7 +129,7 @@ Four modules implementing a dual-strategy pattern:
 
 ## Agent Backends — 4,253 lines + 481 lines of JS
 
-Overcode drives four agent CLIs: Claude Code, opencode, Codex CLI, and Grok
+Overcode drives five agent CLIs: Claude Code, opencode, Codex CLI, Grok, and Hermes
 Build. Everything that differs between them lives behind one seam,
 `src/overcode/backends/`:
 
@@ -145,6 +145,8 @@ Build. Everything that differs between them lives behind one seam,
 | `codex_stats.py` | 483 | Read-only rollout-JSONL reader over codex's own transcript files |
 | `grok.py` | 847 | Grok adapter — session-id prescription, permission allowlist, global hooks file |
 | `grok_stats.py` | 400 | Read-only reader over grok's `updates.jsonl`/`summary.json`/`prompt_history.jsonl` |
+| `hermes.py` | 760 | Hermes adapter — `--cli`/`--yolo`/`--resume` grammar, global plugin install + `hermes plugins enable`, argv-marker process match |
+| `hermes_stats.py` | 480 | Read-only reader over hermes's `state.db` (cumulative tokens, `_usage_anchor` context size, sampled burn-rate window) |
 
 **The seam.** A `Session.backend` discriminator (default `"claude-code"`)
 resolves to an adapter. `launcher._send_launch_for_session` is the single
@@ -152,7 +154,7 @@ render point for launch, restart, revive and fork, so one `build_command(spec)`
 call covers every path. `backend.prepare_launch()` runs the side effects a CLI
 needs before it starts — nothing for Claude Code or codex (codex's telemetry
 is pure argv, injected in `build_command()` itself), plugin staging for
-opencode, a global hooks-file write for grok.
+opencode, a global hooks-file write for grok, a global plugin install + one-time `hermes plugins enable` for hermes.
 
 **Capability model.** `BackendCapability` is a `Flag` (`RESUME`, `FORK`,
 `SESSION_ID_PRESCRIPTION`, `HOOK_EVENTS`, `TRANSCRIPT_STATS`,
@@ -193,7 +195,7 @@ predates this reports nothing and is read as claude-code with everything on.
   experience for free.
 
 Design and support matrix: `docs/design/agent-agnostic-backends-opencode.md`,
-`docs/design/agent-backends-codex-grok.md`, `docs/backends.md`.
+`docs/design/agent-backends-codex-grok.md`, `docs/design/agent-backend-hermes.md`, `docs/backends.md`.
 
 ## Agent Integration — 1,498 lines
 

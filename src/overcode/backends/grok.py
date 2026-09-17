@@ -747,6 +747,29 @@ class GrokBackend:
             "restart` to install it."
         )
 
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Remove the global hooks file if it is ours (see cli/hooks.py)."""
+        import json
+
+        path = hooks_file_path()
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except OSError:
+            return True, f"No grok hooks file found at {path}"
+        except (ValueError, TypeError):
+            return False, f"{path} is not valid JSON — leaving it alone"
+        if not _is_ours(existing):
+            return False, f"{path} exists but is not overcode-managed — leaving it alone"
+        try:
+            path.unlink()
+        except OSError as exc:
+            return False, f"could not remove {path}: {exc}"
+        return True, f"Removed {path}"
+
+    def doctor_findings(self) -> List[str]:
+        """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""
+        return version_findings()
+
     def check_binary(self):
         from ..dependency_check import check_agent_cli
         return check_agent_cli(self)

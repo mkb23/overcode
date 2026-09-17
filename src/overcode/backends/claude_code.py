@@ -247,6 +247,10 @@ class ClaudeCodeBackend:
         from ..stats_reader import ClaudeStatsReader
         return ClaudeStatsReader()
 
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Nothing on disk: telemetry rides on per-launch argv (see cli/hooks.py)."""
+        return True, f"nothing installed on disk for this backend ({self.name})"
+
     def health_verdict(self, argv: str) -> Tuple[str, str]:
         """Hooks reach Claude Code only via the injected --settings payload."""
         from ..doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK

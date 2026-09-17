@@ -165,42 +165,26 @@ def doctor(
                f"finding{'s' if findings_count != 1 else ''} across "
                f"{len(flagged)} agent{'s' if len(flagged) != 1 else ''}")
 
-    # Global (not per-agent): opencode churns fast and overcode reads its
-    # on-screen chrome, so flag a version outside the tested range and an
-    # autoupdate setting that would move it out from under us. Only runs
-    # when the fleet actually has an opencode agent.
-    from ..backends import session_backend_name
-    from ..backends.opencode import OpencodeBackend
-    if any(session_backend_name(s) == OpencodeBackend.name for s in sessions):
+    # Global (not per-agent), per backend present in the fleet: a version
+    # outside the tested range (every non-Claude backend's status detection
+    # reads on-screen chrome that drifts across releases), plus whatever
+    # else that backend knows to check — opencode's autoupdate setting,
+    # grok's subscription auth, hermes's plugin enablement / provider setup,
+    # and each stats store's schema drift. Each adapter answers through its
+    # optional ``doctor_findings()`` (see AgentBackend in backends/base.py);
+    # only backends that actually have an agent in the fleet are consulted.
+    from ..backends import UnknownBackendError, get_backend, session_backend_name
+    present = {session_backend_name(s) for s in sessions}
+    for backend_name in sorted(present):
         try:
-            from ..backends.opencode import version_findings
-            for finding in version_findings():
-                rprint(f"[yellow]⚠[/yellow] {finding}")
-        except Exception:
-            pass
-
-    # Same idea for codex: it ships even faster (multiple releases/week) and
-    # auto-updates by default with no config toggle found to disable it.
-    # Only runs when the fleet actually has a codex agent.
-    from ..backends.codex import CodexBackend
-    if any(session_backend_name(s) == CodexBackend.name for s in sessions):
+            backend = get_backend(backend_name)
+        except UnknownBackendError:
+            continue
+        findings_fn = getattr(backend, "doctor_findings", None)
+        if findings_fn is None:
+            continue
         try:
-            from ..backends.codex import version_findings as codex_version_findings
-            for finding in codex_version_findings():
-                rprint(f"[yellow]⚠[/yellow] {finding}")
-        except Exception:
-            pass
-
-    # Same idea for grok: no fast release cadence found in Phase 0, but the
-    # version-range guardrail still applies, plus a subscription-auth check
-    # codex/opencode don't need (grok requires SuperGrok/X Premium+ and a
-    # `grok login` the binary's own presence says nothing about). Only runs
-    # when the fleet actually has a grok agent.
-    from ..backends.grok import GrokBackend
-    if any(session_backend_name(s) == GrokBackend.name for s in sessions):
-        try:
-            from ..backends.grok import version_findings as grok_version_findings
-            for finding in grok_version_findings():
+            for finding in findings_fn():
                 rprint(f"[yellow]⚠[/yellow] {finding}")
         except Exception:
             pass

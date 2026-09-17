@@ -20,7 +20,7 @@ CONFIG_TEMPLATE = """\
 # Defaults for new agents (CLI `overcode launch` and the TUI's `n` key).
 # Explicit flag > parent agent's setting > these > built-in default.
 # new_agent_defaults:
-#   backend: claude-code       # claude-code | opencode | codex | grok (#470)
+#   backend: claude-code       # claude-code | opencode | codex | grok | hermes (#470)
 #   provider: web              # web (Claude.ai OAuth) or bedrock (AWS)
 #   wrapper: ""                # wrapper script name or path, e.g. devcontainer
 #   bypass_permissions: false  # --dangerously-skip-permissions

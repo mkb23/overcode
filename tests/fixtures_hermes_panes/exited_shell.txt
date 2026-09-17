@@ -1,0 +1,50 @@
+
+Resume this session with:
+  hermes --resume 20260917_131721_8f80ea
+  hermes -c "Delete ./junkdir_a directory"
+
+Session:        20260917_131721_8f80ea
+Title:          Delete ./junkdir_a directory
+Duration:       30s
+Messages:       9 (3 user, 4 tool calls)
+HERMES_EXITED_STATUS_0
+mike@shirka probe-hermes %
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

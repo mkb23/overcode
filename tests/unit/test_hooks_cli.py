@@ -212,3 +212,46 @@ class TestHookHandlerCommand:
         # hidden=True still allows --help
         result = runner.invoke(app, ["hook-handler", "--help"])
         assert result.exit_code == 0
+
+
+class TestHooksUninstallBackendHermes:
+
+    def test_removes_marked_plugin_dir(self, tmp_path, monkeypatch):
+        from overcode.backends.hermes import ensure_plugin_installed, plugin_dir
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+        assert ensure_plugin_installed() is not None
+        assert (plugin_dir() / "plugin.yaml").exists()
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "hermes"])
+        assert result.exit_code == 0
+        assert "Removed" in result.output
+        assert not plugin_dir().exists()
+
+    def test_missing_plugin_is_a_clean_no_op(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "hermes"])
+        assert result.exit_code == 0
+        assert "No hermes plugin found" in result.output
+
+    def test_refuses_unmarked_plugin(self, tmp_path, monkeypatch):
+        from overcode.backends.hermes import plugin_dir
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+        target = plugin_dir()
+        target.mkdir(parents=True)
+        (target / "plugin.yaml").write_text("name: overcode\nversion: 9\n")
+
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "hermes"])
+        assert result.exit_code != 0
+        assert "not overcode-managed" in " ".join(result.output.split())
+        assert (target / "plugin.yaml").exists()
+
+
+class TestHooksUninstallBackendUnknown:
+
+    def test_unknown_backend_errors(self):
+        result = runner.invoke(app, ["hooks", "uninstall-backend", "no-such-cli"])
+        assert result.exit_code != 0
+        assert "unknown backend" in result.output

@@ -211,7 +211,7 @@ def launch(
     ] = None,
     model: Annotated[
         Optional[str],
-        typer.Option("--model", "-m", help="Model (e.g. sonnet, opus; openai/gpt-4o-mini for opencode; gpt-5.6-sol for codex; grok-4.6 for grok)"),
+        typer.Option("--model", "-m", help="Model (e.g. sonnet, opus; openai/gpt-4o-mini for opencode; gpt-5.6-sol for codex; grok-4.6 for grok; gpt-5-mini or anthropic/claude-opus-4.6 for hermes)"),
     ] = None,
     backend_args: Annotated[
         Optional[List[str]],
@@ -247,7 +247,7 @@ def launch(
     backend: Annotated[
         Optional[str],
         # -b is already --budget, so the backend picker takes -B.
-        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, codex, or grok"),
+        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, codex, grok, or hermes"),
     ] = None,
     wrapper: Annotated[
         Optional[str],

@@ -14,11 +14,11 @@ set -euo pipefail
 #   OVERCODE_WRAPPER_DIR  — host directory to mount as /workspace
 #   OVERCODE_SESSION_NAME — agent name (used for container naming)
 #   OVERCODE_BACKEND      — agent CLI to install: claude-code (default),
-#                           opencode, codex, or grok
+#                           opencode, codex, grok, or hermes
 #
 # Environment forwarded into the container:
 #   ANTHROPIC_API_KEY     — required for claude authentication
-#   OPENAI_API_KEY etc.   — provider credentials for opencode/codex
+#   OPENAI_API_KEY etc.   — provider credentials for opencode/codex/hermes
 #   XAI_API_KEY           — provider credential for grok
 #   OVERCODE_*            — all overcode env vars
 #
@@ -69,6 +69,16 @@ case "$AGENT_BACKEND" in
         AGENT_NPM_PACKAGE=""
         AGENT_LABEL="Grok Build"
         AGENT_INSTALL_METHOD="curl"
+        AGENT_INSTALL_URL="https://x.ai/cli/install.sh"
+        ;;
+    hermes)
+        # Hermes has no npm package either: Nous ships a curl installer that
+        # provisions its own Python venv + Node under $HERMES_HOME.
+        AGENT_BINARY="hermes"
+        AGENT_NPM_PACKAGE=""
+        AGENT_LABEL="Hermes Agent"
+        AGENT_INSTALL_METHOD="curl"
+        AGENT_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
         ;;
     *)
         AGENT_BINARY="claude"
@@ -191,7 +201,7 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which "$AGENT_BINARY" >/dev
         fi
         docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" npm install -g "$AGENT_NPM_PACKAGE" 2>&1
     else
-        # grok has no npm package -- x.ai ships a curl installer instead.
+        # grok/hermes have no npm package -- each ships a curl installer.
         if ! docker exec "$CONTAINER_NAME" which curl >/dev/null 2>&1; then
             echo "[devcontainer] curl not found -- installing it ..."
             docker exec "$CONTAINER_NAME" $CONTAINER_SHELL -c \
@@ -201,7 +211,7 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which "$AGENT_BINARY" >/dev
             }
         fi
         docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" $CONTAINER_SHELL -c \
-            'curl -fsSL https://x.ai/cli/install.sh | bash' 2>&1
+            "curl -fsSL ${AGENT_INSTALL_URL} | bash" 2>&1
     fi
 fi
 
@@ -225,14 +235,16 @@ if ! docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2
 fi
 
 # Install overcode hooks into Claude Code settings inside the container.
-# opencode/codex/grok have no settings.json hook protocol: opencode's
-# telemetry comes from the bundled plugin the launcher stages into
+# Only Claude Code has a settings.json hook protocol: opencode's telemetry
+# comes from the bundled plugin the launcher stages into
 # <project>/.opencode/plugins/ (rides in on the /workspace mount); codex's
 # comes from per-launch `-c 'hooks.<Event>=...'` argv the launcher already
-# injects; grok's comes from the global ~/.grok/hooks/overcode.json the
-# launcher stages on the host. All three write hook-state files straight
-# into the mounted state-exchange dir below without any settings.json step.
-if [[ "$AGENT_BACKEND" != "opencode" && "$AGENT_BACKEND" != "codex" && "$AGENT_BACKEND" != "grok" ]] && \
+# injects; grok's comes from the global ~/.grok/hooks/overcode.json and
+# hermes's from the global $HERMES_HOME/plugins/overcode/ plugin, both
+# staged on the host (see docs/backends.md for what that means inside a
+# container). All of them write hook-state files straight into the mounted
+# state-exchange dir below without any settings.json step.
+if [[ "$AGENT_BACKEND" == "claude-code" ]] && \
    docker exec "${USER_FLAG[@]}" "$CONTAINER_NAME" which overcode >/dev/null 2>&1; then
     docker exec "${USER_FLAG[@]}" \
         -e "OVERCODE_STATE_DIR=${CONTAINER_STATE_DIR}" \

@@ -76,6 +76,9 @@ overcode = [
     # Bundled opencode telemetry plugin — copied into a project's
     # .opencode/plugins/ at launch, so it has to ship with the wheel.
     "opencode_plugin/*.js",
+    # Bundled Hermes telemetry plugin — copied into $HERMES_HOME/plugins/
+    # overcode/ at launch (the .py ships as a module; the manifest must too).
+    "hermes_plugin/*.yaml",
     # Bundled models.dev snapshot (context windows + list prices, #473) —
     # refreshed by scripts/refresh_model_metadata.py.
     "data/*.json",

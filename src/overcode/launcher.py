@@ -454,6 +454,9 @@ class AgentLauncher:
         target = tmux_window_target(self.tmux.session_name, window_name)
         tmux_cmd = _build_tmux_cmd()
         prompt_chars = backend.prompt_ready_chars()
+        # A backend whose idle prompt is never a bare glyph (hermes) answers
+        # through prompt_ready_line; the exact-set match is the default.
+        prompt_ready_line = getattr(backend, "prompt_ready_line", None)
         rules = backend.startup_dialog_rules()
         handled: set[str] = set()
 
@@ -481,7 +484,10 @@ class AgentLauncher:
 
                 for line in content.split('\n'):
                     cleaned = strip_ansi(line).strip()
-                    if cleaned in prompt_chars:
+                    if prompt_ready_line is not None:
+                        if prompt_ready_line(cleaned):
+                            return True
+                    elif cleaned in prompt_chars:
                         return True
             time.sleep(poll_interval)
         return False

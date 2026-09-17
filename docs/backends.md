@@ -2,7 +2,7 @@
 
 Overcode was built around Claude Code, but the pieces that know *which* CLI
 is running now live behind one seam — an `AgentBackend` adapter that owns
-that CLI's argv grammar, key gestures, pane chrome, and telemetry. Four
+that CLI's argv grammar, key gestures, pane chrome, and telemetry. Five
 backends ship today:
 
 | Backend name | CLI | Binary override |
@@ -11,6 +11,7 @@ backends ship today:
 | `opencode` | [opencode](https://opencode.ai) | `OPENCODE_COMMAND` |
 | `codex` | [Codex CLI](https://github.com/openai/codex) | `CODEX_COMMAND` |
 | `grok` | [Grok Build](https://x.ai) | `GROK_COMMAND` |
+| `hermes` | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `HERMES_COMMAND` |
 
 Everything below opencode's row is honest about maturity. opencode support
 now covers the dashboard, hook-grade live status, previews, AI summaries,
@@ -48,35 +49,50 @@ unavailable (see the pricing section below). grok also requires a SuperGrok
 or X Premium+ subscription, which `overcode doctor` checks for (below)
 rather than assuming.
 
+**hermes: launch, hook-grade live status (including `waiting_approval`),
+resume, restart, kill, devcontainer support (install only), and
+token/context columns; cost is a list-price estimate.** Telemetry rides on
+a small Python plugin overcode installs into `$HERMES_HOME/plugins/overcode/`
+and enables once through Hermes's own `hermes plugins enable` — the opencode
+shape, not the grok one: the plugin translates Hermes's hook vocabulary into
+Claude's inside the Hermes process, so `overcode hook-handler` needed no
+third dialect. `HermesStatsReader` reads cumulative tokens and the live
+context size from Hermes's SQLite store. No fork (Hermes only branches via
+its in-session `/branch` command), no session-id prescription, no
+`--allowed-tools`. Hermes's own cost figure is honoured when it has one;
+for providers Hermes has no price list for (`openai-api` at verification)
+the cost column prices real token counts through overcode's own model
+tables, the same posture as codex.
+
 ## Feature support at a glance
 
 The user-facing view: which overcode features work on which backend, with
 the TUI key where one exists. Unsupported actions are grayed out or answer
 with a clean "backend X does not support …" — never a crash.
 
-| Feature | TUI key | claude-code | opencode | codex | grok | Notes |
-|---|---|---|---|---|---|---|
-| Launch / new-agent modal | `n` | ✅ | ✅ | ✅ | ✅ | Backend toggle in the modal; `-B opencode` / `-B codex` / `-B grok` from the CLI |
-| Kill | `x` | ✅ | ✅ | ✅ | ✅ | |
-| Restart (same conversation) | `R` | ✅ | ✅ | ✅ | ✅ | opencode resumes via `--session <id>`; codex via `codex resume <id>`; grok via `--resume <id>` |
-| Revive a terminated agent | — | ✅ | ✅ | ✅ | ✅ | |
-| Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | ✅ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live); grok: `--resume <id> --fork-session --session-id <new-uuid>` — grok prescribes the fork's id too, verified live |
-| Send instruction | `i` / `:` | ✅ | ✅ | ✅ | ✅ | |
-| Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter |
-| Live hook-grade status | — | ✅ | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: global `~/.grok/hooks/overcode.json`, camelCase dialect, incl. `waiting_approval` |
-| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
-| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate | ✅ | codex: rollout-JSONL reader; cost has no local figure, but `pricing.py` now carries a `gpt-5.6-sol` entry (codex's account-default model), so it shows that model's real published rate applied to codex's real token counts — a list-price estimate, not a billed figure. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate |
-| AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | |
-| Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | |
-| Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | |
-| Remote agents via sisters | `N` | ✅ | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
-| Devcontainer wrapper | — | ✅ | ✅ | ✅ | ⚠️ installs, auth unverified | codex installs via npm like Claude; grok has no npm package (curl installer) and its container auth story is untested (see below) |
-| Permission modes | — | ✅ full | ⚠️ bypass full, permissive approximate | ✅ full | ✅ full | opencode: bypass genuinely overrides deny rules via `OPENCODE_PERMISSION`, permissive (`--auto` alone) still lets deny rules win (see below); codex: distinct flags for bypass/permissive/normal (see below); grok: same, plus flag-vs-config precedence confirmed live (see below) |
-| `--allowed-tools` allowlist | — | ✅ | ❌ | ❌ | ✅ | No opencode or codex flag exists, silently ignored; grok: repeated `--allow <rule>` per tool, confirmed to actually suppress the dialog live |
-| Skills | — | ✅ | ❌ | ❌ | ❌ | grok has skills + a marketplace, unintegrated |
-| Sandbox badge | — | ✅ | ❌ | ❌ | ❌ | Claude-only loopback probe |
-| Subscription-usage widget | — | ✅ | ❌ | ❌ | ❌ | Anthropic-only usage API |
-| Agent teams | — | ✅ | ❌ | ❌ | ❌ | Claude Code experimental feature |
+| Feature | TUI key | claude-code | opencode | codex | grok | hermes | Notes |
+|---|---|---|---|---|---|---|---|
+| Launch / new-agent modal | `n` | ✅ | ✅ | ✅ | ✅ | ✅ | Backend toggle in the modal; `-B opencode` / `-B codex` / `-B grok` / `-B hermes` from the CLI |
+| Kill | `x` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Restart (same conversation) | `R` | ✅ | ✅ | ✅ | ✅ | ✅ | opencode resumes via `--session <id>`; codex via `codex resume <id>`; grok and hermes via `--resume <id>` |
+| Revive a terminated agent | — | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Fork (branch conversation) | `F` | ✅ | ✅ | ✅ | ✅ | ❌ | opencode: `--session <id> --fork` creates a `(fork #1)` session; codex: `codex fork <id>` (subcommand, verified live); grok: `--resume <id> --fork-session --session-id <new-uuid>` — grok prescribes the fork's id too, verified live; hermes: no launch flag exists, only the in-session `/branch` command — grayed out |
+| Send instruction | `i` / `:` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Approve / reject gestures | `Enter` / `Escape` | ✅ | ✅ | ✅ | ✅ | ✅ | Key gestures are backend-resolved; grok uses digit keys (`2`/`3`), no Enter; hermes uses digit + Enter (`1`/`4`) |
+| Live hook-grade status | — | ✅ | ✅ | ✅ | ✅ | ✅ | codex: `-c 'hooks.<Event>=[...]'` + `--dangerously-bypass-hook-trust` injection, incl. `waiting_approval`; grok: global `~/.grok/hooks/overcode.json`, camelCase dialect, incl. `waiting_approval`; hermes: global `$HERMES_HOME/plugins/overcode/` Python plugin, incl. `waiting_approval` |
+| Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
+| Token / cost / context columns | — | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate unless Hermes priced it | codex: rollout-JSONL reader; cost has no local figure, but `pricing.py` now carries a `gpt-5.6-sol` entry (codex's account-default model), so it shows that model's real published rate applied to codex's real token counts — a list-price estimate, not a billed figure. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate. hermes: `HermesStatsReader` reads cumulative tokens + the live prompt size from `state.db`; Hermes's own `estimated_cost_usd` is used when its `cost_status` isn't `unknown`, else overcode prices the real tokens itself |
+| AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Remote agents via sisters | `N` | ✅ | ✅ | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
+| Devcontainer wrapper | — | ✅ | ✅ | ✅ | ⚠️ installs, auth unverified | ⚠️ installs, unverified | codex installs via npm like Claude; grok and hermes have no npm package (curl installers) and neither container story has had a live docker run (see below) |
+| Permission modes | — | ✅ full | ⚠️ bypass full, permissive approximate | ✅ full | ✅ full | ⚠️ bypass full, permissive = normal | opencode: bypass genuinely overrides deny rules via `OPENCODE_PERMISSION`, permissive (`--auto` alone) still lets deny rules win (see below); codex: distinct flags for bypass/permissive/normal (see below); grok: same, plus flag-vs-config precedence confirmed live (see below); hermes: `--yolo` for bypass, no per-launch flag below that — its `approvals.mode` config (`smart` by default) is the knob (see below) |
+| `--allowed-tools` allowlist | — | ✅ | ❌ | ❌ | ✅ | ❌ | No opencode, codex or hermes flag exists, silently ignored; grok: repeated `--allow <rule>` per tool, confirmed to actually suppress the dialog live |
+| Skills | — | ✅ | ❌ | ❌ | ❌ | ❌ | grok and hermes both have skills systems, unintegrated |
+| Sandbox badge | — | ✅ | ❌ | ❌ | ❌ | ❌ | Claude-only loopback probe |
+| Subscription-usage widget | — | ✅ | ❌ | ❌ | ❌ | ❌ | Anthropic-only usage API |
+| Agent teams | — | ✅ | ❌ | ❌ | ❌ | ❌ | Claude Code experimental feature |
 
 ---
 
@@ -178,6 +194,61 @@ No provider prefix — same grammar as codex's, unlike opencode's
 unknown id is silently ignored by the interactive TUI (it just falls back to
 the account default with no visible error) but rejected loudly by headless
 `-p` mode. overcode does not currently pre-validate against `grok models`.
+
+## Launching a hermes agent
+
+```bash
+overcode launch -n my-agent --backend hermes -d ~/code/myproject
+overcode launch -n my-agent -B hermes --model gpt-5-mini
+overcode launch -n my-agent -B hermes --bypass-permissions   # hermes --yolo
+```
+
+Same `-B` short form, same new-agent-modal toggle, same `overcode show`
+backend line as the others. Launch, resume, restart, kill, hook-grade live
+status (including `waiting_approval`), the approve/reject gestures, and the
+token/context columns all work — every one of them verified against a real
+Hermes Agent v0.21.3 driven through `overcode launch`/`send`/`restart`/
+`kill` on 2026-09-17. Fork is grayed out (no launch grammar for it).
+
+Hermes must be installed (`curl -fsSL
+https://hermes-agent.nousresearch.com/install.sh | bash`) **and configured
+with a model provider once, outside overcode** (`hermes model`, or
+non-interactively `hermes config set model.provider openai-api` plus
+`model.default gpt-5-mini` plus the provider's key in `$HERMES_HOME/.env`).
+A fresh install with no provider opens Hermes's interactive setup wizard on
+launch, which overcode cannot drive — `overcode doctor` names this up front
+rather than letting the launch stall.
+
+Every launch passes `--cli`: Hermes's `display.interface` config can
+default a bare `hermes` to its Node-based TUI, whose chrome this backend
+has not been verified against. Explicit beats config, the same posture
+grok takes with `--permission-mode`. `$HERMES_HOME` (default `~/.hermes`,
+including the per-profile homes `--profile` selects) is honoured for the
+plugin, the config and the stats store alike.
+
+### Models
+
+Hermes takes its own model id form, and overcode passes `-m` through
+verbatim: a bare id for a directly-keyed provider (`gpt-5-mini` with
+`openai-api`) or `provider/model` for routed ones
+(`anthropic/claude-opus-4.6` via OpenRouter). Which providers are usable
+depends on what `hermes model` has been set up with; overcode does not
+pre-validate.
+
+### Permission modes
+
+`--bypass-permissions` maps to `--yolo`, which skips every dangerous-command
+approval prompt (verified live: `rm -rf` ran with no dialog). There is no
+per-launch mode below that — `--skip-permissions`/permissive adds no flag
+and behaves as normal. Hermes's own `approvals.mode` config is the knob:
+`smart` (its default) has an auxiliary model pre-screen each dangerous
+command and only escalates to the human dialog when it declines; `manual`
+always asks; `off` equals `--yolo`. The approval dialog is a numbered box —
+`1. Allow once / 2. Allow for this session / 3. Add to permanent allowlist /
+4. Deny` — and `overcode send <name> approve` sends `1` + Enter,
+`reject` sends `4` + Enter. Never send `2`/`3` as a default approve: one
+silences the prompt for the session, the other writes the command pattern
+into Hermes's permanent allowlist.
 
 ### Session id prescription and the permission allowlist
 
@@ -773,6 +844,140 @@ a session whose per-call context had grown past the long-context threshold.
 
 ---
 
+## Telemetry: hermes's plugin
+
+Hermes has three hook surfaces — Python plugins (in-process), shell hooks
+(a `hooks:` block in its config.yaml, Claude-compatible JSON on stdin) and
+gateway hooks (messaging only). overcode uses the **plugin** one, for the
+same reason it uses a plugin for opencode: the CLI's own hook vocabulary
+(`pre_llm_call`, `post_tool_call`, `pre_approval_request`, …) can be
+translated into Claude's *inside the agent process*, so `overcode
+hook-handler` never learns a third dialect. The shell-hook route would have
+meant twelve list-valued entries in the user's 100KB commented config.yaml
+plus a per-launch consent env var; the plugin route is two files and one
+config key Hermes writes itself.
+
+```
+$HERMES_HOME/plugins/overcode/plugin.yaml
+$HERMES_HOME/plugins/overcode/__init__.py
+```
+
+copied from `src/overcode/hermes_plugin/` by `HermesBackend.prepare_launch()`
+(`ensure_plugin_installed()`) on every launch/restart/revive, then enabled —
+Hermes plugins are opt-in — by shelling out once to
+
+```
+hermes plugins enable overcode --no-allow-tool-override
+```
+
+(`ensure_plugin_enabled()`; the `--no-allow-tool-override` spelling is the
+non-interactive one — bare `enable` prompts on `/dev/tty` about a
+tool-override capability this plugin never requests). That is the only
+time overcode invokes Hermes outside a launch, it only happens while
+`plugins.enabled` in Hermes's config.yaml doesn't yet list `overcode`, and
+Hermes rewrites its own config file — overcode never round-trips it.
+
+### Things worth knowing about the footprint
+
+- **It is global, under `$HERMES_HOME`, not in your project.** Hermes only
+  discovers plugins under its home; there is no per-project plugin
+  directory. Nothing to `.gitignore`.
+- **It is inert outside overcode.** Every callback returns immediately
+  unless `OVERCODE_SESSION_NAME` and `OVERCODE_TMUX_SESSION` are set — a
+  `hermes` session you launch by hand loads the plugin and does nothing.
+- **Your own plugin of that name is never clobbered.** overcode only writes
+  into the directory if its `plugin.yaml` still carries the
+  `OVERCODE-PLUGIN-MARKER: overcode-hermes-telemetry` string. Replace the
+  contents (or the marker) and overcode leaves it alone permanently.
+- **It is not removed when the last agent dies.** `overcode hooks
+  uninstall-backend hermes` removes it (marker-guarded); `hermes plugins
+  disable overcode` is the user's own tool for the config entry.
+- **It runs in-process, stdlib-only, and never raises.** Each hook pipes
+  one JSON object to `overcode hook-handler` (bounded 10s) — the same
+  subprocess Claude Code, codex and grok invoke — found via the
+  `OVERCODE_HOOK_COMMAND` env var the launcher exports (Hermes's venv
+  python has no `overcode` on PATH by default).
+
+### Event mapping
+
+| Hermes hook | overcode hook event | Status |
+|---|---|---|
+| `on_session_start` | `SessionStart` (records `session_id`) | — |
+| `on_session_reset` (`/new`) | `SessionStart` (records the new id) | — |
+| `pre_llm_call` | `UserPromptSubmit` | running |
+| `pre_tool_call` / `post_tool_call` | `PreToolUse` / `PostToolUse` (`status == "error"` → `PostToolUseFailure`) | running |
+| `pre_approval_request` (surface `cli`/`tui`/…) | `PermissionRequest` | **waiting_approval** |
+| `post_approval_response` (choice `once`/`session`/`always`) | `PreToolUse` for the approved command | running |
+| `post_llm_call` | `Stop` | waiting_user |
+| `on_session_end` (`interrupted`) | `Interrupt` | waiting_user |
+| `on_session_end` (`failed`) | `StopFailure` | error |
+| `on_session_finalize` (`shutdown`/`keyboard_interrupt`) | `SessionEnd` | terminated |
+
+Dropped on purpose: the `smart` approval surface's `pre_approval_request`/
+`post_approval_response` pair (that is Hermes's auxiliary model
+pre-screening the command, no human involved — it resolves in seconds and
+would flash yellow on every dangerous command it waves through), denied
+approvals (Hermes fires `post_tool_call` with status `blocked` right after,
+which settles the status on its own), and `on_session_finalize` with reason
+`session_boundary` (a `/new`, followed by `on_session_reset` for the new id
+— not a teardown). `pre_llm_call` is also the one hook whose return value
+is used: `overcode hook-handler`'s stdout for `UserPromptSubmit` (the
+time/budget context line) comes back as `{"context": …}`, which Hermes
+injects into the turn exactly as Claude Code injects a `UserPromptSubmit`
+hook's output. A budget-exceeded block (exit 2) cannot stop a Hermes turn
+— `pre_llm_call` can inject, not block — so the `UserPromptSubmitRejected`
+state still turns the row purple, but the prompt goes through.
+
+Hermes's own tool names are mapped onto Claude's taxonomy so the running-
+state detail and obligation tracking keep working: `terminal`→`Bash`,
+`read_file`→`Read`, `write_file`→`Write`, `patch`→`Edit`,
+`search_files`→`Grep`, `web_search`→`WebSearch`, `web_extract`→`WebFetch`,
+`delegate_task`→`Agent`. An unaliased name passes through unchanged.
+
+---
+
+## Stats: hermes's state.db
+
+`HermesStatsReader` (`src/overcode/backends/hermes_stats.py`) reads
+`$HERMES_HOME/state.db` — a WAL-mode SQLite store, opened read-only with a
+short busy timeout the way opencode's is. The `sessions` row carries
+**cumulative** `input_tokens`/`output_tokens`/`cache_read_tokens`/
+`cache_write_tokens`/`reasoning_tokens` (reasoning folds into output, as
+for opencode/codex), `model`, `cwd`, `started_at`, and `estimated_cost_usd`
+with a `cost_status`; the `messages` rows give interaction counts and
+per-turn work times (user message → last assistant message of the turn).
+Compression-split children (`parent_session_id`) are folded into their
+parent.
+
+Three shape facts, all verified live, drive the reader:
+
+- **The live context size is `model_config._usage_anchor.prompt_tokens`** —
+  the prompt size of the most recent API call, which is exactly the number
+  Hermes's own status bar shows (`12.7K/400K`). CTX% divides it by
+  `model.context_length` from Hermes's config.yaml when the user pinned
+  one, else by overcode's model tables (which agreed with Hermes's own
+  catalogue for the models checked — 400K for `gpt-5-mini`).
+- **`messages` carries no per-message token usage**, so the burn-rate
+  window can't be rebuilt from history the way opencode's is. The reader
+  samples the session totals once per daemon tick and answers "since
+  *t*" as the delta from the oldest sample at or after *t* — exact within
+  a daemon's lifetime, and after a daemon restart it under-reports (never
+  over-reports) until a fresh sample lands inside the window.
+- **`estimated_cost_usd` is `0.0` with `cost_status = "unknown"`** for
+  providers Hermes has no price list for (`openai-api` at verification), so
+  `get_stored_cost` only trusts a non-zero figure whose status isn't
+  `unknown`; otherwise the daemon prices the real token counts through
+  overcode's own model tables, as it does for codex.
+
+Session discovery is the opencode shape: the plugin's `SessionStart`
+records the id (`YYYYMMDD_HHMMSS_<hex>`, so a leftover Claude UUID is never
+adopted), and the fallback matches `source = 'cli'` rows by `cwd` + launch
+time — weaker than it sounds, because Hermes writes `cwd` when a session is
+*finalized*, not started, so a plugin-less running session can carry a NULL
+`cwd` until it ends.
+
+---
+
 ## Opting out of telemetry
 
 Every non-Claude backend's telemetry has an on-disk footprint of some kind
@@ -1002,6 +1207,50 @@ have these — permission dialogs distinguish `waiting_approval` there):
 
 ---
 
+## hermes: hooks-grade status, pane polling as fallback
+
+A hermes agent whose plugin is installed and enabled gets the same
+hooks-grade status the others get, including `waiting_approval` (verified
+live: the daemon flipped to `waiting_approval` on the dialog and back to
+`waiting_user` after `overcode send <name> approve`). **Pane polling is
+still the fallback** for the gap before the first hook, for a
+`--safe-mode`/`--ignore-user-config` launch (both disable plugins), and for
+an install whose `plugins.enabled` never got the entry. The pattern set is
+`HERMES_PATTERNS` in `src/overcode/backends/hermes.py`, grounded in a
+committed corpus of real Hermes v0.21.3 classic-CLI captures at
+`tests/fixtures_hermes_panes/`, replayed by
+`tests/unit/test_status_detector_hermes.py`.
+
+The polling-mode signals that matter:
+
+| overcode status | hermes chrome |
+|---|---|
+| `running` | the input line becomes `☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel` for the whole turn — the kaomoji spinner above it (`(◔_◔) formulating...`) rotates face and verb and is only a secondary hint |
+| `waiting_user` (permission) | `⚠️  Dangerous Command` / `1. Allow once` / `Enter to confirm` — the boxed dialog with a `⚠ ❯` input line; the `/new` confirmation box shares the `Enter to confirm` chrome and is a human's turn too |
+| `waiting_user` (idle) | an input line reading `❯ <placeholder>` — the glyph is **never** drawn bare; the placeholder ("Draft a reply to the last email in my inbox", …) rotates |
+| `terminated` | the `Resume this session with: hermes --resume <id>` hint, then the shell prompt |
+
+Known rough edges of the **polling fallback**, honestly:
+
+- **No `waiting_approval` under polling.** Same as codex/grok: the dialog
+  reads as `waiting_user`; `overcode send <name> approve` still works.
+- **The status bar ticks while idle.** ` ☤ gpt-5-mini │ … │ ⏲ 6s │ ✓ 3s`
+  changes every second, so `☤ ` is filtered from the content hash; the
+  approval dialog's `(298s)` countdown ticks too, which is why permission
+  detection runs before the content-changed phase.
+- **Model refusals look like idle.** During capture the model twice
+  declined an `rm -rf` on its own judgement and asked for confirmation in
+  prose — that is `waiting_user` through the ordinary prompt path, not the
+  permission path, and indistinguishable from any other question.
+- **The Node TUI (`hermes --tui`) is not supported.** Every launch forces
+  `--cli`; if you point `HERMES_COMMAND` at something that ignores that,
+  status detection has no patterns for the alternate-screen TUI.
+- **A single `C-c` is safe; two within two seconds force-exit.** The
+  graceful-exit gesture is one `C-c` (settle any turn) then `/quit`; the
+  supervisor skill text tells the meta-agent never to send two.
+
+---
+
 ## Doctor checks
 
 `overcode doctor` adds three opencode-specific checks, and only when the
@@ -1067,6 +1316,31 @@ grok gets two checks of its own, gated on the fleet containing a grok agent:
    modified session directory across the whole sessions root) rather than
    leaving you to guess.
 
+hermes gets three checks of its own, gated on the fleet containing a hermes
+agent:
+
+1. **Version range.** Hermes ships from `main` with a rolling version and
+   its classic-CLI chrome moved several times in the 0.2x line. The range
+   lives in `TESTED_HERMES_RANGE` in `src/overcode/backends/hermes.py`
+   (currently `>=0.21.0, <0.22.0`). No auto-update: Hermes's passive check
+   only prints a notice, and `hermes update` is explicit.
+2. **Plugin installed but not enabled.** Hermes silently skips a plugin
+   that isn't in `plugins.enabled`; doctor names the `hermes plugins
+   enable overcode --no-allow-tool-override` command.
+3. **No model provider configured.** A launch would open Hermes's setup
+   wizard; doctor names `hermes model` (or the `hermes config set` pair)
+   instead.
+4. **`state.db` schema drift**, as for opencode: a renamed column blanks
+   the token/context columns and doctor names it.
+
+Per-agent, the health verdict for a hermes session is the two-pass shape:
+a live process under the pane reads `ok` on the first pass — found by the
+`hermes-agent/hermes` argv marker, since the pane actually runs Hermes's
+venv `python` and no `hermes` basename survives past its shim — then
+`refine_health_verdict` checks the plugin directory carries the marker
+**and** `plugins.enabled` lists it. Either missing reports
+`missing-settings`; `overcode restart` reinstalls and re-enables.
+
 Per-agent, the health verdict for a grok session is a two-pass check, the
 same shape opencode's plugin check takes: a live `grok` process under the
 pane reads `ok` on the first pass (grok's own argv carries no telemetry
@@ -1079,34 +1353,37 @@ telemetry plugin is missing. `overcode restart` re-installs it.
 
 ---
 
-## Supervising an opencode, codex, or grok agent
+## Supervising an opencode, codex, grok, or hermes agent
 
 The supervisor's own meta-agent stays Claude Code, but its gestures are
 backend-resolved:
 
 ```bash
-overcode send <name> approve   # opencode: confirms "Allow once"; codex: confirms "Yes, proceed"; grok: digit "2" (Yes, proceed — not the default-selected always-approve option)
-overcode send <name> reject    # Escape — dismisses, abandoning the tool call (grok: digit "3", no Escape needed)
+overcode send <name> approve   # opencode: confirms "Allow once"; codex: confirms "Yes, proceed"; grok: digit "2" (Yes, proceed — not the default-selected always-approve option); hermes: "1" + Enter (Allow once)
+overcode send <name> reject    # Escape — dismisses, abandoning the tool call (grok: digit "3", no Escape needed; hermes: "4" + Enter, Deny)
 ```
 
 These are *gestures*, not keys: overcode asks the agent's backend which keys
 its permission dialog wants. Prefer them over the raw `overcode send <name>
 enter` / `escape`, which still exist and still send literal keys. Supervisor
 context lines name a non-default backend (`Backend: opencode` /
-`Backend: codex` / `Backend: grok`) so the supervisor knows not to send
+`Backend: codex` / `Backend: grok` / `Backend: hermes`) so the supervisor knows not to send
 Claude slash commands or Enter-based approval gestures at it — codex's
 clear-conversation gesture is `/new`, not `/clear`, its graceful exit is
 `/quit`, not `/exit`; grok's approve/reject gestures are bare digit keys
 (`2`/`3`) with no Enter at all, and its default-selected dialog option is
 *always-approve*, not a one-time approval — sending a bare Enter at a grok
 permission dialog would silently switch the session into always-approve
-mode rather than approving just the one tool call.
+mode rather than approving just the one tool call. hermes's `/new` opens a
+confirmation box of its own, so its clear-conversation gesture is `/new`
+then `1`; and a second `C-c` within two seconds force-exits the process,
+so the skill text says never to send two.
 
 ---
 
 ## Containers: the devcontainer wrapper
 
-`--wrapper devcontainer` works for all four backends. The launcher exports
+`--wrapper devcontainer` works for all five backends. The launcher exports
 `OVERCODE_BACKEND` into the wrapper's environment for any non-default
 backend (Claude Code leaves it unset, so the wrapper's behaviour there is
 byte-for-byte what it was before), and the wrapper keys its install step off
@@ -1118,6 +1395,12 @@ it:
 | `opencode` | `npm i -g opencode-ai@latest` | skipped — no settings.json hook protocol |
 | `codex` | `npm i -g @openai/codex` | skipped — hooks are per-launch `-c hooks...` argv, not a settings file |
 | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` (no npm package) | skipped — hooks are the global `~/.grok/hooks/overcode.json` file |
+| `hermes` | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` (no npm package) | skipped — telemetry is the global `$HERMES_HOME/plugins/overcode/` plugin |
+
+The hooks-install guard is now an equality on the one backend that has a
+settings.json hook protocol (`claude-code`), and the two curl installers
+share one pipe reading a per-backend `AGENT_INSTALL_URL` — a sixth backend
+adds a case arm, not an exclusion.
 
 opencode's and codex's telemetry reach the host without any extra mount:
 opencode's plugin is staged into the project directory, which is
@@ -1130,6 +1413,14 @@ mount it in yourself. All backends' hook-state exchange directory is already
 mounted at `/overcode-state`. Provider credentials present in your shell
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 `GEMINI_API_KEY`, `XAI_API_KEY`) are forwarded into the container.
+
+**hermes inside a container is install-only and unverified.** Like grok's
+hooks file, hermes's plugin lives under the *host's* `$HERMES_HOME`, so a
+Hermes running inside the container sees neither the plugin nor the host's
+provider configuration unless you mount `~/.hermes` in yourself; Nous's
+installer also provisions its own Python and Node under that directory, so
+the install step itself is heavier than the others. No live docker build
+was run for this pass.
 
 **grok's container auth story is unverified, not confirmed unsupported.**
 Unlike codex/opencode's API-key-friendly auth, grok's normal path is a
@@ -1199,3 +1490,18 @@ reason to defer them the way codex deferred its (flag-shaped)
 Phase 4, exactly the axis codex's Phase 1→2 split was on. Declare whatever a
 phase actually verified, in whatever order the underlying CLI's own launch
 grammar makes cheap.
+
+The hermes backend (`src/overcode/backends/hermes.py`, design write-up in
+`docs/design/agent-backend-hermes.md`) is the fourth data point and the
+one that exercised the seam's optional hooks: `process_argv_markers` (a
+CLI that runs under an interpreter whose basename isn't distinctive),
+`prompt_ready_line` (an idle prompt that is never drawn bare),
+`uninstall_telemetry` and `doctor_findings` (so `overcode hooks
+uninstall-backend` and `overcode doctor` dispatch to the adapter instead
+of growing another `if backend == …` branch each). Its telemetry is also
+the second proof that the *adapter side* is the right place for a hook
+dialect: like opencode's JavaScript plugin, the bundled Hermes plugin
+emits Claude-vocabulary payloads, so `hook_handler` still knows exactly
+two dialects. Reach for that shape before teaching `hook_handler` a new
+one — grok's in-handler translation was forced by shell-command hooks that
+have nowhere else to run.

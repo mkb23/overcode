@@ -67,6 +67,19 @@ session stay alive -- the opposite of codex/opencode), but `overcode send
 raw keys. grok's own slash commands are `/new` (not `/clear`) and `/quit`
 (not `/exit`); do not send Claude's.
 
+A session line reading `Backend: hermes` is a Hermes agent (NousResearch),
+running its classic prompt_toolkit CLI. Its dangerous-command dialog is a
+numbered box -- `1. Allow once` / `2. Allow for this session` / `3. Add to
+permanent allowlist` / `4. Deny` -- answered with the digit then Enter:
+`overcode send <name> approve` sends `1` + Enter, `overcode send <name>
+reject` sends `4` + Enter. Never send `2` or `3` as a default approve:
+`2` silences the prompt for the rest of the session and `3` writes the
+command pattern into Hermes's permanent allowlist. A single bare `C-c` is
+safe (interrupts the turn, process and session stay alive) but a *second*
+`C-c` within two seconds force-exits the process -- never send two. Hermes's
+own slash commands are `/new` (which opens a confirm box: `1` approves it
+once) and `/quit`; do not send Claude's `/clear` or `/exit`.
+
 ## Approval Rules
 
 Follow the session's **standing instructions** first. Then apply these defaults:

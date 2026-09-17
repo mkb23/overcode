@@ -978,7 +978,7 @@ class TestGetBackendTelemetryEnabled:
 
     def test_defaults_to_on_with_no_config(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
-        for name in ("opencode", "codex", "grok", "claude-code"):
+        for name in ("opencode", "codex", "grok", "hermes", "claude-code"):
             assert config.get_backend_telemetry_enabled(name) is True
 
     def test_claude_code_is_always_on_even_if_configured_off(self, tmp_path, monkeypatch):

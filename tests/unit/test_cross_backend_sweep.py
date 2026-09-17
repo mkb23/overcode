@@ -31,13 +31,13 @@ from overcode.session_manager import Session, SessionStats
 from overcode.summary_columns import BACKEND_BADGES, _backend_badge
 from overcode.tui_widgets.new_agent_modal import NewAgentModal
 
-EXPECTED_BACKENDS = {"claude-code", "opencode", "codex", "grok"}
+EXPECTED_BACKENDS = {"claude-code", "opencode", "codex", "grok", "hermes"}
 
 runner = CliRunner()
 
 
-class TestRegistryListsFour:
-    def test_registry_has_exactly_the_four_backends(self):
+class TestRegistryListsFive:
+    def test_registry_has_exactly_the_five_backends(self):
         assert set(list_backends()) == EXPECTED_BACKENDS
 
     @pytest.mark.parametrize("name", sorted(EXPECTED_BACKENDS))
@@ -147,13 +147,15 @@ def _make_session(name, backend, **overrides):
     return Session(**defaults)
 
 
-class TestDoctorOverAFourBackendFleet:
-    """`overcode doctor` must not crash when the fleet mixes all four backends.
+class TestDoctorOverAFiveBackendFleet:
+    """`overcode doctor` must not crash when the fleet mixes all five backends.
 
     Mirrors test_doctor_cli.py's patch shape (AgentLauncher, snapshot_process_table,
     inspect_agent, is_monitor_daemon_running, bundled_skills.any_skills_stale) and
-    additionally exercises the three per-backend version_findings dispatches
-    doctor.py gates on fleet membership (opencode/codex/grok).
+    additionally exercises the per-backend ``doctor_findings`` dispatch
+    doctor.py gates on fleet membership (opencode/codex/grok/hermes) — each
+    adapter's hook resolves its module-level ``version_findings`` at call
+    time, which is what these patches replace.
     """
 
     def _run(self, sessions, health_by_name):
@@ -175,6 +177,7 @@ class TestDoctorOverAFourBackendFleet:
             patch("overcode.backends.opencode.version_findings", return_value=[]),
             patch("overcode.backends.codex.version_findings", return_value=[]),
             patch("overcode.backends.grok.version_findings", return_value=[]),
+            patch("overcode.backends.hermes.version_findings", return_value=[]),
         ]
         for p in patches:
             p.start()
@@ -184,12 +187,13 @@ class TestDoctorOverAFourBackendFleet:
             for p in patches:
                 p.stop()
 
-    def test_healthy_fleet_of_four_backends(self):
+    def test_healthy_fleet_of_five_backends(self):
         sessions = [
             _make_session("cc-agent", "claude-code"),
             _make_session("oc-agent", "opencode"),
             _make_session("cx-agent", "codex"),
             _make_session("gk-agent", "grok"),
+            _make_session("hm-agent", "hermes"),
         ]
         health_by_name = {
             sess.name: AgentHealth(
@@ -209,13 +213,14 @@ class TestDoctorOverAFourBackendFleet:
         assert result.exit_code == 0, result.output
         for sess in sessions:
             assert sess.name in result.output
-        assert "all 4 agents have hooks injected" in result.output
+        assert "all 5 agents have hooks injected" in result.output
 
     def test_one_broken_agent_per_non_default_backend_still_reports_cleanly(self):
         sessions = [
             _make_session("oc-agent", "opencode"),
             _make_session("cx-agent", "codex"),
             _make_session("gk-agent", "grok"),
+            _make_session("hm-agent", "hermes"),
         ]
         health_by_name = {
             sess.name: AgentHealth(
@@ -233,5 +238,5 @@ class TestDoctorOverAFourBackendFleet:
         result = self._run(sessions, health_by_name)
 
         assert result.exit_code == 0, result.output
-        assert "3 broken" in result.output
+        assert "4 broken" in result.output
         assert "overcode restart" in result.output

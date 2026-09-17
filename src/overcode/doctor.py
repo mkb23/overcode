@@ -173,12 +173,16 @@ def find_agent_process(
     children: Dict[int, List[int]],
     argv_by_pid: Dict[int, str],
     expected_basenames: Optional[Sequence[str]] = None,
+    expected_argv_markers: Optional[Sequence[str]] = None,
 ) -> tuple[Optional[int], str]:
     """Find the agent CLI process in the tmux pane's process tree.
 
     Returns (pid, argv) of the first descendant whose argv's first token
     basename is one of `expected_basenames` (defaulting to the default
-    backend's, i.e. `claude`). Returns (None, '') if none is found under
+    backend's, i.e. `claude`) — or whose argv contains one of
+    `expected_argv_markers`, for a backend that runs under an interpreter
+    whose basename is not distinctive (hermes: a venv `python` running
+    `.../hermes-agent/hermes`). Returns (None, '') if none is found under
     pane_pid.
 
     We search by argv rather than by stored PID because the user may have
@@ -189,6 +193,7 @@ def find_agent_process(
         from .backends import get_backend
         expected_basenames = get_backend().process_basenames
     wanted = set(expected_basenames)
+    markers = [m for m in (expected_argv_markers or ()) if m]
     for pid in get_descendant_pids(pane_pid, children):
         argv = argv_by_pid.get(pid, "")
         if not argv:
@@ -196,6 +201,8 @@ def find_agent_process(
         first_token = argv.split(None, 1)[0]
         basename = first_token.rsplit("/", 1)[-1]
         if basename in wanted:
+            return pid, argv
+        if any(marker in argv for marker in markers):
             return pid, argv
     return None, ""
 
@@ -208,6 +215,13 @@ def session_process_basenames(session) -> Sequence[str]:
     """Process basenames to look for under an agent's pane."""
     from .backends import get_backend
     return get_backend(getattr(session, "backend", None)).process_basenames
+
+
+def session_process_argv_markers(session) -> Sequence[str]:
+    """argv substrings that identify an agent's process (see find_agent_process)."""
+    from .backends import get_backend
+    backend = get_backend(getattr(session, "backend", None))
+    return tuple(getattr(backend, "process_argv_markers", ()) or ())
 
 
 def gather_data_findings(
@@ -467,7 +481,8 @@ def inspect_agent(
         )
 
     claude_pid, argv = find_agent_process(
-        pane_pid, children, argv_by_pid, session_process_basenames(session)
+        pane_pid, children, argv_by_pid, session_process_basenames(session),
+        session_process_argv_markers(session),
     )
     if claude_pid is None:
         return AgentHealth(

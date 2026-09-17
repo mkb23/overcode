@@ -10,7 +10,7 @@ from rich.console import Console
 # Main app
 app = typer.Typer(
     name="overcode",
-    help="Manage and supervise coding agents (Claude Code, opencode, codex, grok)",
+    help="Manage and supervise coding agents (Claude Code, opencode, codex, grok, hermes)",
     no_args_is_help=False,
     invoke_without_command=True,
     rich_markup_mode="rich",

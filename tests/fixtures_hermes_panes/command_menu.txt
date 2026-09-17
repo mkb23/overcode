@@ -1,0 +1,50 @@
+, I will need to reply with the word "finished." So, I'll call functions.terminal
+ and ensure the final response is correct.
+
+**Preparing tool command**
+
+I need to make sure not to include any extra content in the command. The tool output
+ will include "probe-done," and then I'll reply with "finished." It's important that
+ the command string is exactly "sleep 6 && echo probe-done ." — I have to note the
+ space before the period. So, the command will output "probe-done ." exactly as the
+ user asked. I’ll call functions.terminal with a timeout of ten seconds, and then
+ I'll respond properly once it's executed.
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ↪ Redirected current turn: 'Create a directory named junkdir containing an empty file, then remove the direc...'
+  (tip) Your correction redirected the current run without discarding completed work. Use /stop to cancel or /busy queue to wait for a separate turn. This tip only shows once.
+  ┊ 💻 $         sleep 6 + 1 command  0.6s
+  ↪ Redirected current turn: 'o'
+  ↪ Redirected current turn: 'Use the terminal tool to run: sleep 25 && echo late . Then reply ok.'
+⚡ Interrupted during API call.
+ ─  ☤ Hermes  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Operation interrupted: waiting for model response (3.9s elapsed).
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ─  ☤ Hermes  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ Operation interrupted: waiting for model response (3.9s elapsed).
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+◈ Background Process Finished: sleep 6 && echo probe-done .
+────────────────────────────────────────
+
+  💻 sleep 25 + 1 command  (  3.3s · ↓ 160 tok)
+
+ ☤ gpt-5-mini │ ~12.7K/400K │ [░░░░░░░░░░] ~3% │ ◎ 48.2% │ ◷ 4.3s │ ↑ 63 t/s │ 28s │ ⏱ 6s                                                                                ─ Run sleep 6 and echo prob...
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+☤ ❯ /q
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ /new                            Start a new session (fresh session ID + history) (usage: /new [name])
+ /reset                          Start a new session (fresh session ID + history) (alias for /new)
+ /clear                          Clear screen and start a new session
+ /redraw                         Force a full UI repaint (recovers from terminal drift)
+ /history                        Show conversation history
+ /save                           Export the current conversation (bare /save shows usage) (usage: /save <json|md|html> [filename] [redact])
+ /retry                          Retry the last message (resend to agent)
+ /prompt                         Compose your next prompt in $EDITOR (markdown), then send it (usage: /prompt [initial text])
+ /compose                        Compose your next prompt in $EDITOR (markdown), then send it (alias for /prompt)
+ /undo                           Back up N user turns and re-prompt (default 1) (usage: /undo [N])
+ /title                          Set a title for the current session (usage: /title [name])
+ /handoff                        Hand off this session to a messaging platform (Telegram, Discord, etc.) (usage: /handoff <platform>)

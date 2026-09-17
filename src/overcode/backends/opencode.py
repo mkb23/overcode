@@ -611,6 +611,30 @@ class OpencodeBackend:
             "back to pane polling. Relaunch via `overcode restart` to install it."
         )
 
+    def uninstall_telemetry(self, project_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Remove the project-scoped telemetry plugin (see cli/hooks.py)."""
+        if not project_dir:
+            return False, (
+                "Error: --dir is required for opencode — its telemetry plugin "
+                "is installed per-project, not globally"
+            )
+        path = project_plugin_path(project_dir)
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except OSError:
+            return True, f"No opencode telemetry plugin found at {path}"
+        if PLUGIN_MARKER not in existing:
+            return False, f"{path} exists but is not overcode-managed — leaving it alone"
+        try:
+            path.unlink()
+        except OSError as exc:
+            return False, f"could not remove {path}: {exc}"
+        return True, f"Removed {path}"
+
+    def doctor_findings(self) -> List[str]:
+        """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""
+        return version_findings()
+
     def check_binary(self):
         from ..dependency_check import check_agent_cli
         return check_agent_cli(self)

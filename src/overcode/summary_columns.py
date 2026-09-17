@@ -1264,6 +1264,7 @@ BACKEND_BADGES = {
     "opencode": "oc",
     "codex": "cx",
     "grok": "gk",
+    "hermes": "hm",
 }
 
 
