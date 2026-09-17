@@ -12,6 +12,12 @@ from pathlib import Path
 
 from tests.daemon_test_utils import stop_daemons_in_state_dir
 
+# Model-metadata lookups resolve against the freshest models.dev catalog on
+# the machine (~/.overcode/cache, opencode's cache) — tests must see the
+# bundled snapshot only, so results don't depend on what the developer's
+# host happens to have fetched. Tests of the local tiers delenv this.
+os.environ.setdefault("OVERCODE_MODEL_METADATA_BUNDLED_ONLY", "1")
+
 
 # Test classes that actually mount Textual apps or start daemons and need
 # an isolated OVERCODE_STATE_DIR with daemon cleanup on teardown.

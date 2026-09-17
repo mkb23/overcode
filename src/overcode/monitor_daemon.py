@@ -342,6 +342,11 @@ class MonitorDaemon:
         self._last_history_rotation_check: Optional[datetime] = None
         self._history_rotation_check_interval = 3600  # seconds
 
+        # models.dev catalog auto-refresh (#473) — opt-in via config.yaml
+        # model_metadata.auto_refresh; the hourly check itself is a stat().
+        self._last_model_metadata_check: Optional[datetime] = None
+        self._model_metadata_check_interval = 3600  # seconds
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -1088,6 +1093,7 @@ class MonitorDaemon:
         self._cleanup_stale(sessions)
         self._publish_and_enforce(sessions, session_states, all_waiting)
         self._maybe_rotate_history(now)
+        self._maybe_refresh_model_metadata(now)
 
     def _maybe_rotate_history(self, now: datetime) -> None:
         """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
@@ -1119,6 +1125,38 @@ class MonitorDaemon:
                 )
         except Exception as e:
             self.log.error(f"History rotation check failed: {e}")
+
+    def _maybe_refresh_model_metadata(self, now: datetime) -> None:
+        """Refresh the local models.dev cache when opted in and stale (#473).
+
+        Runs its stat() check at most hourly; the fetch only happens when
+        ``model_metadata.auto_refresh`` is true *and* the local cache is
+        missing or older than ``max_age_days``. Failures are logged and
+        retried next hour — lookups keep working off whatever catalog is
+        already on disk (opencode's cache or the bundled snapshot).
+        """
+        if not should_sync_stats(
+            self._last_model_metadata_check, now, self._model_metadata_check_interval
+        ):
+            return
+        self._last_model_metadata_check = now
+        try:
+            from .config import get_model_metadata_config
+            from . import model_metadata
+
+            cfg = get_model_metadata_config()
+            if not cfg["auto_refresh"]:
+                return
+            age = model_metadata.local_cache_age_days()
+            if age is not None and age < cfg["max_age_days"]:
+                return
+            info = model_metadata.refresh_local_cache()
+            self.log.info(
+                f"Refreshed model metadata catalog from models.dev: "
+                f"{info['model_count']} models -> {info['path']}"
+            )
+        except Exception as e:
+            self.log.warning(f"Model metadata auto-refresh failed (will retry in an hour): {e}")
 
     def _sync_session_ids(self, sessions: list, now: datetime) -> None:
         """Fast session ID detection every 10s (#116).

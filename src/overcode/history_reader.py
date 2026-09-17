@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
+from . import model_metadata
+
 if TYPE_CHECKING:
     from .session_manager import Session
 
@@ -47,6 +49,13 @@ CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
 # same model ID as its 200K sibling — we detect the actual context size
 # from token counts at runtime and update here for the models known to
 # support extended context.
+#
+# This table is the *curated* tier: a hand-verified primary source or a live
+# CLI figure per row. Ids missing here fall through to the bundled
+# models.dev snapshot (`model_metadata.py`, #473) before rendering a dash —
+# see model_context_window() below. Curated always wins where both know a
+# model, so the codex-reported 258,400 for the gpt-5.6 line stays put even
+# though models.dev advertises that family's 1.05M long-context ceiling.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-fable-5": 1_000_000,
     "claude-opus-5": 1_000_000,
@@ -208,8 +217,6 @@ _FAMILY_PREFIX_TAGS = [
 ]
 
 _DATE_SUFFIX_RE = re.compile(r"-20\d{6}$")
-# Trailing capacity-variant suffix, e.g. the "[1m]" in "claude-opus-5[1m]".
-_CAPACITY_SUFFIX_RE = re.compile(r"\[[^\]]*\]$")
 
 
 def _heuristic_short_name(bare: str) -> str:
@@ -282,8 +289,7 @@ def _bare_model_id(model: str) -> str:
     joins every digit it finds and renders "Op5.1", which reads as a
     different model rather than as an unrecognized one.
     """
-    bare = model.rsplit("/", 1)[-1] if "/" in model else model
-    return _CAPACITY_SUFFIX_RE.sub("", bare)
+    return model_metadata.bare_model_id(model)
 
 
 def model_short_name(model: Optional[str]) -> str:
@@ -312,10 +318,17 @@ def model_context_window(model: Optional[str]) -> Optional[int]:
     Returns None for unknown/None models (#469) — callers must render a
     dash, never assume some other model's window. Handles opencode's
     ``provider/model``-qualified ids the same way ``model_short_name`` does.
+
+    Resolution order (#473): the curated table above, then the bundled
+    models.dev snapshot (``model_metadata``), then None.
     """
     if not model:
         return None
-    return MODEL_CONTEXT_WINDOWS.get(_bare_model_id(model))
+    bare = _bare_model_id(model)
+    known = MODEL_CONTEXT_WINDOWS.get(bare)
+    if known is not None:
+        return known
+    return model_metadata.context_window(bare)
 
 
 def provider_from_model(model: Optional[str]) -> Optional[str]:
@@ -372,13 +385,16 @@ class AgentSessionStats:
     model: Optional[str] = None  # Most recently seen model name (#272)
     provider: Optional[str] = None  # Detected API provider ("web" or "bedrock")
     last_command: Optional[str] = None  # Most recent user prompt text
-    # CLI-self-reported context window size, when a backend's own transcript
-    # carries it (#469) — codex's rollout JSONL reports
-    # `payload.info.model_context_window` per token_count event, a live
-    # figure straight from the CLI rather than overcode's static table.
-    # Preferred over `model_context_window(self.model)` in max_context_tokens
-    # below when present. None for backends with no such signal (Claude,
-    # grok, opencode), which fall through to the static table.
+    # The backend's *own* context window for this session, when it has one
+    # (#469) — codex's rollout JSONL reports `payload.info.model_context_window`
+    # per token_count event (a live figure straight from the CLI), and
+    # opencode's is the `limit.context` of its own models.dev catalog, which
+    # is the exact denominator its console's "N% used" divides by (see
+    # `opencode_stats.opencode_context_limit`). Preferred over
+    # `model_context_window(self.model)` in max_context_tokens below when
+    # present, so the CTX column agrees with what the agent's own UI shows.
+    # None for backends with no such signal (Claude, grok), which fall
+    # through to the static tables.
     reported_context_window: Optional[int] = None
 
     @property

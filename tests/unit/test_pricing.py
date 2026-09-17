@@ -142,3 +142,41 @@ class TestCalculateCostEstimate:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSnapshotPricing:
+    """#473 — list prices for models the curated table doesn't name come
+    from the bundled models.dev snapshot; unknown ids stay at zero."""
+
+    def test_glm_and_kimi_price_from_snapshot(self):
+        from overcode.pricing import MODEL_PRICING, lookup_pricing, snapshot_pricing
+        for model_id in ("glm-4.6", "kimi-k2.6"):
+            assert not any(key in model_id for key in MODEL_PRICING)
+            p = lookup_pricing(model_id)
+            assert p.input > 0 and p.output > 0, model_id
+            assert p == snapshot_pricing(model_id)
+
+    def test_provider_qualified_id_resolves(self):
+        from overcode.pricing import lookup_pricing
+        assert lookup_pricing("zai/glm-4.6") == lookup_pricing("glm-4.6")
+
+    def test_curated_table_still_wins(self):
+        from overcode.pricing import MODEL_PRICING, lookup_pricing
+        assert lookup_pricing("gpt-5.6-sol") is MODEL_PRICING["gpt-5.6-sol"]
+        assert lookup_pricing("claude-opus-5") is MODEL_PRICING["opus"]
+
+    def test_zero_priced_listing_is_not_a_price(self):
+        from overcode import model_metadata
+        from overcode.pricing import snapshot_pricing
+        free = next(
+            (m for m in model_metadata.known_model_ids() if not model_metadata.lookup(m).has_pricing),
+            None,
+        )
+        if free is None:
+            pytest.skip("snapshot has no zero-priced listing to check")
+        assert snapshot_pricing(free) is None
+
+    def test_unknown_model_is_none(self):
+        from overcode.pricing import snapshot_pricing
+        assert snapshot_pricing("acme-internal-model-x1") is None
+        assert snapshot_pricing(None) is None

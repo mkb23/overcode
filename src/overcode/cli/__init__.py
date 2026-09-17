@@ -21,6 +21,7 @@ from . import monitoring  # noqa: F401
 from . import daemon  # noqa: F401
 from . import sister  # noqa: F401
 from . import config  # noqa: F401
+from . import models  # noqa: F401
 from . import split  # noqa: F401
 from . import jobs  # noqa: F401
 from . import wrappers  # noqa: F401

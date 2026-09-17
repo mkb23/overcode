@@ -675,6 +675,29 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
+class TestListPricingSnapshotFallback:
+    """#473 — settings.get_model_pricing consults the bundled snapshot before
+    the configured default rates, but after config.yaml overrides."""
+
+    def test_snapshot_beats_configured_default(self):
+        from overcode.settings import UserConfig, get_model_pricing
+        from overcode.pricing import snapshot_pricing
+        cfg = UserConfig(price_input=99.0, price_output=99.0)
+        assert get_model_pricing("zai/glm-4.6", cfg) == snapshot_pricing("glm-4.6")
+
+    def test_user_override_beats_snapshot(self):
+        from overcode.settings import UserConfig, get_model_pricing
+        from overcode.pricing import ModelPricing
+        cfg = UserConfig(model_pricing={"glm-4.6": ModelPricing(input=1.0, output=2.0)})
+        assert get_model_pricing("zai/glm-4.6", cfg).input == 1.0
+
+    def test_unknown_model_keeps_configured_default(self):
+        from overcode.settings import UserConfig, get_model_pricing
+        cfg = UserConfig(price_input=99.0, price_output=98.0)
+        p = get_model_pricing("acme-internal-model-x1", cfg)
+        assert (p.input, p.output) == (99.0, 98.0)
+
+
 class TestCollapsedParentsPersistence:
     """#464 — folded parents survive a TUI restart via tui_preferences.json."""
 

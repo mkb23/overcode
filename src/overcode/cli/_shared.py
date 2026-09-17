@@ -101,6 +101,12 @@ config_app = typer.Typer(
 )
 app.add_typer(config_app, name="config")
 
+models_app = typer.Typer(
+    help="Model metadata: the catalog behind the CTX% and $ columns",
+    no_args_is_help=True,
+)
+app.add_typer(models_app, name="models")
+
 # Console for rich output
 console = Console()
 

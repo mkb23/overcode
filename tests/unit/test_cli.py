@@ -3037,3 +3037,51 @@ class TestCleanupUntracked:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestModelsCommands:
+    """overcode models info / lookup / refresh (#473)."""
+
+    def test_info_reports_bundled_tier_under_test_pin(self):
+        result = runner.invoke(app, ["models", "info"])
+        assert result.exit_code == 0
+        assert "tier:       bundled" in result.output
+        assert "models:" in result.output
+
+    def test_lookup_curated_model(self):
+        result = runner.invoke(app, ["models", "lookup", "openai/gpt-5.6-sol"])
+        assert result.exit_code == 0
+        assert "258,400" in result.output
+        assert "[curated]" in result.output
+
+    def test_lookup_catalog_model(self):
+        result = runner.invoke(app, ["models", "lookup", "zai/glm-4.6"])
+        assert result.exit_code == 0
+        assert "list price:     $0.6 in / $2.2 out" in result.output
+        assert "catalog (bundled)" in result.output
+
+    def test_lookup_unknown_model(self):
+        result = runner.invoke(app, ["models", "lookup", "acme-internal-x1"])
+        assert result.exit_code == 0
+        assert "context window: —" in result.output
+        assert "model-alias-resolution" in result.output
+
+    def test_refresh_check_fetches_nothing(self):
+        with patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
+            result = runner.invoke(app, ["models", "refresh", "--check"])
+        assert result.exit_code == 0
+        mock_refresh.assert_not_called()
+
+    def test_refresh_reports_result(self):
+        with patch('overcode.model_metadata.refresh_local_cache',
+                   return_value={"model_count": 7, "source": "https://models.dev/api.json",
+                                 "fetched_at": "2026-10-01", "path": "/tmp/x.json", "tier": "local"}):
+            result = runner.invoke(app, ["models", "refresh"])
+        assert result.exit_code == 0
+        assert "7 models" in result.output
+
+    def test_refresh_failure_is_a_clean_error(self):
+        with patch('overcode.model_metadata.refresh_local_cache', side_effect=OSError("no network")):
+            result = runner.invoke(app, ["models", "refresh"])
+        assert result.exit_code == 1
+        assert "Refresh failed" in result.output

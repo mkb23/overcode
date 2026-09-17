@@ -1012,3 +1012,23 @@ class TestGetBackendTelemetryEnabled:
     def test_unknown_backend_name_defaults_on(self, tmp_path, monkeypatch):
         monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
         assert config.get_backend_telemetry_enabled("some-future-backend") is True
+
+
+class TestModelMetadataConfig:
+    """model_metadata: {auto_refresh, max_age_days} — the opt-in catalog refresh knob (#473)."""
+
+    def test_defaults_are_off(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+        assert config.get_model_metadata_config() == {"auto_refresh": False, "max_age_days": 7.0}
+
+    def test_parses_values(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("model_metadata:\n  auto_refresh: true\n  max_age_days: 30\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_model_metadata_config() == {"auto_refresh": True, "max_age_days": 30.0}
+
+    def test_garbage_falls_back(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("model_metadata:\n  auto_refresh: true\n  max_age_days: soon\n")
+        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
+        assert config.get_model_metadata_config()["max_age_days"] == 7.0

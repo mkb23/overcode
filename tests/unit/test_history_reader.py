@@ -373,12 +373,16 @@ class TestModelContextWindow:
         from overcode.history_reader import model_context_window
         assert model_context_window("kimi-k2.6") == 256_000
 
-    def test_discontinued_bare_kimi_k2_id_returns_none(self):
-        """The bare "kimi-k2" id the issue named is confirmed discontinued
-        (platform.kimi.ai) — deliberately not in the table, so it must not
-        silently borrow its replacement's window."""
-        from overcode.history_reader import model_context_window
-        assert model_context_window("kimi-k2") is None
+    def test_discontinued_bare_kimi_k2_id_is_not_in_the_curated_table(self):
+        """The bare "kimi-k2" id the issue named is discontinued on Moonshot's
+        own API (platform.kimi.ai) — deliberately not in the curated table,
+        so it never borrows its replacement's window from there. It still
+        resolves, because OpenCode Zen keeps serving it and the bundled
+        models.dev snapshot (#473) carries Zen's listing for it."""
+        from overcode.history_reader import MODEL_CONTEXT_WINDOWS, model_context_window
+        from overcode.model_metadata import lookup
+        assert "kimi-k2" not in MODEL_CONTEXT_WINDOWS
+        assert model_context_window("kimi-k2") == lookup("kimi-k2").context_window
 
     def test_opencode_qualified_model_id_still_matches(self):
         """opencode stores 'provider/model' (e.g. "openai/gpt-5.6-sol") —
@@ -1815,3 +1819,33 @@ class TestSynthesizeRemoteStats:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSnapshotFallbackForContextWindows:
+    """#473 — ids missing from the curated table fall through to the bundled
+    models.dev snapshot before rendering a dash."""
+
+    def test_curated_table_wins_where_both_know_the_model(self):
+        """gpt-5.6-sol: curated holds codex's live-reported 258,400; the
+        snapshot advertises the family's 1.05M long-context ceiling."""
+        from overcode.history_reader import model_context_window
+        from overcode.model_metadata import lookup
+        assert lookup("gpt-5.6-sol").context_window == 1_050_000
+        assert model_context_window("gpt-5.6-sol") == 258_400
+        assert model_context_window("openai/gpt-5.6-sol") == 258_400
+
+    def test_snapshot_only_model_resolves(self):
+        from overcode.history_reader import MODEL_CONTEXT_WINDOWS, model_context_window
+        from overcode.model_metadata import lookup
+        assert "deepseek-v4-pro" not in MODEL_CONTEXT_WINDOWS
+        assert model_context_window("deepseek/deepseek-v4-pro") == lookup("deepseek-v4-pro").context_window
+
+    def test_open_weights_families_beyond_the_curated_rows(self):
+        from overcode.history_reader import MODEL_CONTEXT_WINDOWS, model_context_window
+        for model_id in ("glm-5.3", "kimi-k3", "qwen3-coder-plus", "minimax-m2.5"):
+            assert model_id not in MODEL_CONTEXT_WINDOWS
+            assert model_context_window(model_id), model_id
+
+    def test_truly_unknown_model_is_still_none(self):
+        from overcode.history_reader import model_context_window
+        assert model_context_window("acme-internal-model-x1") is None

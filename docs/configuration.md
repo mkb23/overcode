@@ -366,6 +366,76 @@ Discounts are clamped to `[0, 1)` and scale every rate (input, output, cache wri
 
 The TUI shows costs based on these rates. Press `$` to toggle between token counts and dollar amounts.
 
+## Model metadata (context windows and pricing)
+
+Two tiers feed the `CTX` (context window) and `$` (cost) columns for any
+model id a backend reports (#473):
+
+1. **Curated tables** — `history_reader.MODEL_CONTEXT_WINDOWS` and
+   `pricing.MODEL_PRICING`. Every row cites a primary source or a live CLI
+   figure. These always win.
+2. **The models.dev catalog** — [models.dev](https://models.dev)'s open,
+   community-maintained catalog (`https://models.dev/api.json`), transcoded
+   to ~1,000 text models from first-party vendors and the major gateways
+   (OpenAI, Anthropic, xAI, Z.AI/GLM, Moonshot/Kimi, Google, DeepSeek,
+   Mistral, Alibaba/Qwen, MiniMax, OpenRouter, Bedrock, Vertex, GitHub
+   Copilot, Groq, Together, Fireworks, …). Consulted for any id the curated
+   tables don't name. This is also the catalog opencode ships with, so an
+   opencode agent's `CTX%` agrees with opencode's own console
+   (docs/backends.md, "CTX%: what the context column divides by").
+
+The catalog is whichever of these is **freshest on this machine**:
+
+| Source | Path | Refreshed by |
+|---|---|---|
+| local refreshed cache | `~/.overcode/cache/model_metadata.json` | `overcode models refresh`, or the daemon when `model_metadata.auto_refresh: true` |
+| opencode's own cache | `~/.cache/opencode/models.json` | opencode itself, whenever it runs |
+| bundled snapshot | `src/overcode/data/model_metadata.json` (in the wheel) | each overcode release |
+
+Newest of the first two by file time wins; the bundled snapshot is the
+offline fallback. No network is used unless you run the refresh command or
+opt the daemon in:
+
+```yaml
+model_metadata:
+  auto_refresh: false   # daemon fetches models.dev once the local cache is older than max_age_days
+  max_age_days: 7
+```
+
+`overcode models info` shows which one is active and how old it is;
+`overcode models lookup <id>` shows what a given id resolves to and which
+tier answered; `overcode doctor` warns when the active catalog is more than
+90 days old. Set `OVERCODE_MODEL_METADATA_BUNDLED_ONLY=1` to force the
+bundled snapshot (the unit tests do).
+
+Anything in neither renders a dash for `CTX` and falls back to your
+configured default per-token rates for `$` (see "Pricing Configuration"
+above). A `$0/$0` catalog listing (a coding-plan or promo tier) is treated
+as *no price*, not a free model.
+
+Resolution details:
+
+- Ids are normalised before lookup: an opencode `provider/model` qualifier
+  and a trailing `[1m]`-style capacity suffix are stripped, and the snapshot
+  is matched case-insensitively.
+- Where two providers list the same model, the first-party vendor's entry
+  wins (`model_metadata.PROVIDER_PRIORITY`), so resellers only ever *add*
+  ids.
+- Your `model_pricing:` overrides beat both tiers.
+
+Refreshing the *bundled* snapshot (contributors, before a release):
+
+```bash
+python scripts/refresh_model_metadata.py           # fetch models.dev, rewrite the file
+python scripts/refresh_model_metadata.py --check   # exit 1 if it would change
+python scripts/refresh_model_metadata.py --from api.json   # offline
+```
+
+The file is one model per line, so a refresh diffs cleanly; commit it with
+the version bump it ships in. A proposal for mapping *unrecognised* ids
+(internal model names, gateway aliases) onto this catalog is in
+`docs/design/model-alias-resolution.md`.
+
 ## Skill Emoticons
 
 Overcode displays emoticons for available skills in the TUI's "Available Skills" (ASK) column. You can customize these emoticons in your config file.

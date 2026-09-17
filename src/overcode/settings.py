@@ -275,7 +275,13 @@ def get_model_pricing(
 
 
 def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing:
-    """Resolve list (pre-discount) pricing for a model name."""
+    """Resolve list (pre-discount) pricing for a model name.
+
+    Order: config.yaml ``model_pricing`` overrides and the built-in
+    ``MODEL_PRICING`` table (substring, longest key first), then the bundled
+    models.dev snapshot by exact bare id (#473), then the configured default
+    per-token rates.
+    """
     if model:
         # Check user overrides first, then built-ins. Match longest key first
         # so versioned keys (e.g. "opus-4-1") win over generic ones ("opus");
@@ -285,6 +291,10 @@ def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing
         for key in sorted(all_pricing, key=len, reverse=True):
             if key in model_lower:
                 return all_pricing[key]
+        from .pricing import snapshot_pricing
+        from_snapshot = snapshot_pricing(model)
+        if from_snapshot is not None:
+            return from_snapshot
     return ModelPricing(
         input=fallback.price_input,
         output=fallback.price_output,

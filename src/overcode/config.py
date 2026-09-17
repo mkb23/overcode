@@ -597,6 +597,32 @@ def get_history_retention_config() -> dict:
     }
 
 
+def get_model_metadata_config() -> dict:
+    """Settings for the models.dev catalog behind CTX%/pricing lookups (#473).
+
+    Off by default: a monitoring daemon should not make unattended outbound
+    requests. ``overcode models refresh`` is the on-demand path; this knob
+    lets the daemon do the same fetch itself once the local cache is older
+    than ``max_age_days``.
+
+    Config format in ~/.overcode/config.yaml:
+        model_metadata:
+          auto_refresh: false   # daemon refreshes ~/.overcode/cache/model_metadata.json from models.dev
+          max_age_days: 7       # ...once the cache is older than this
+    """
+    cfg = _get_config_value("model_metadata", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    try:
+        max_age = float(cfg.get("max_age_days", 7))
+    except (TypeError, ValueError):
+        max_age = 7.0
+    return {
+        "auto_refresh": bool(cfg.get("auto_refresh", False)),
+        "max_age_days": max(0.0, max_age),
+    }
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 

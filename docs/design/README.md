@@ -12,6 +12,13 @@ This directory contains technical design documents, architecture analysis, and i
 - **Audience:** Contributors, architects, anyone considering remote agent monitoring integration
 - **Key Finding:** ACP covers ~25-30% of overcode features; recommend hybrid model (sister protocol for control, ACP for observability)
 
+### Model Alias Resolution (proposal)
+- **File:** `model-alias-resolution.md`
+- **Status:** Proposal / Not implemented
+- **Date:** September 2026
+- **Summary:** How to map model ids overcode doesn't recognise — internal naming conventions, gateway aliases — onto the bundled models.dev catalog: a deterministic alias file first, then an opt-in LLM-assisted resolver that writes confident matches back to that file. Follow-on to #473.
+- **Audience:** Contributors; users behind corporate gateways with their own model names
+
 ---
 
 ## Contributing Design Docs

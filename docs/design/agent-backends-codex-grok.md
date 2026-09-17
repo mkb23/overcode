@@ -1244,13 +1244,23 @@ none touching the launch/status/stats seam itself:
    `AgentSessionStats.reported_context_window`, which
    `max_context_tokens` prefers over the static table when present.
 
-**Canonical cross-model metadata: an open recommendation, not implemented.**
+**Canonical cross-model metadata: implemented as a bundled models.dev
+snapshot (#473).** `src/overcode/model_metadata.py` +
+`src/overcode/data/model_metadata.json`, refreshed by
+`scripts/refresh_model_metadata.py`; the curated tables stay the first
+tier and the snapshot is the fallback for everything else. For opencode
+sessions the denominator now comes from opencode's own cached catalog
+(`opencode_stats.opencode_context_limit`), which is what resolves the
+1%-vs-6% discrepancy this issue opened with — see docs/backends.md, "CTX%:
+what the context column divides by". The follow-on question of mapping
+*unrecognised* ids onto that catalog is proposed in
+`docs/design/model-alias-resolution.md`. The original evaluation follows.
+
 The issue also asked for research into "a good source of this metadata in a
 cross-model way that we can regularly just pull and transcode into our
 internal reference format" instead of hand-maintaining
 `MODEL_CONTEXT_WINDOWS`/`MODEL_PRICING` entries one model at a time as new
-releases ship. Two candidates worth evaluating when this becomes a
-maintenance burden rather than a research question:
+releases ship. Two candidates were evaluated:
 
 - **[models.dev](https://models.dev)'s API** (`https://models.dev/api.json`)
   — an open, community-maintained JSON catalog of model metadata (context

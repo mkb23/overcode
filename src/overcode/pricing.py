@@ -7,6 +7,9 @@ and the AI summariser.
 """
 
 from dataclasses import dataclass
+from typing import Optional
+
+from . import model_metadata
 
 
 @dataclass
@@ -85,11 +88,37 @@ MODEL_PRICING: dict[str, ModelPricing] = {
 }
 
 
+def snapshot_pricing(model: Optional[str]) -> Optional[ModelPricing]:
+    """List pricing from the bundled models.dev snapshot (#473), or None.
+
+    The second tier behind ``MODEL_PRICING``: exact match on the bare model
+    id (provider qualifier and capacity suffix stripped, case-insensitive)
+    rather than the curated table's substring rules, and only when the
+    snapshot carries a non-zero rate — a $0/$0 listing is a subscription or
+    promo tier, not a price, so it answers None and the caller keeps its
+    configured default.
+    """
+    meta = model_metadata.lookup(model)
+    if meta is None or not meta.has_pricing:
+        return None
+    return ModelPricing(
+        input=meta.price_input or 0.0,
+        output=meta.price_output or 0.0,
+        cache_write=meta.price_cache_write or 0.0,
+        cache_read=meta.price_cache_read or 0.0,
+    )
+
+
 def lookup_pricing(model: str) -> ModelPricing:
-    """Look up pricing for a model name by substring match.
+    """Look up pricing for a model name.
+
+    Curated ``MODEL_PRICING`` substring match first (longest key wins), then
+    the bundled models.dev snapshot by exact bare id (#473), then a
+    zero-cost fallback.
 
     Args:
-        model: Model name (e.g. "gpt-4o-mini", "claude-haiku-4-5-20250929")
+        model: Model name (e.g. "gpt-4o-mini", "claude-haiku-4-5-20250929",
+            "zai/glm-4.6")
 
     Returns:
         ModelPricing for the model family, or a zero-cost fallback if unknown.
@@ -99,6 +128,9 @@ def lookup_pricing(model: str) -> ModelPricing:
     for key in sorted(MODEL_PRICING, key=len, reverse=True):
         if key in model_lower:
             return MODEL_PRICING[key]
+    from_snapshot = snapshot_pricing(model)
+    if from_snapshot is not None:
+        return from_snapshot
     return ModelPricing(input=0.0, output=0.0)
 
 

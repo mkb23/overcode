@@ -224,6 +224,14 @@ def doctor(
     except Exception:
         pass
 
+    # Global: the models.dev catalog behind CTX%/pricing is stale (#473).
+    try:
+        from ..model_metadata import staleness_findings
+        for finding in staleness_findings():
+            rprint(f"[yellow]⚠[/yellow] {finding}")
+    except Exception:
+        pass
+
     if fix and broken:
         rprint()
         rprint("[bold]Restarting broken agents...[/bold]")

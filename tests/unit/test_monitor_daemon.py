@@ -1761,3 +1761,62 @@ class TestMaybeRotateHistory:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestMaybeRefreshModelMetadata:
+    """_maybe_refresh_model_metadata — hourly stat check, fetch only when
+    opted in and the local cache is stale (#473)."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        with patch.object(MonitorDaemon, '__init__', lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+            daemon.log = MagicMock()
+            daemon._last_model_metadata_check = None
+            daemon._model_metadata_check_interval = 3600
+            return daemon
+
+    def test_off_by_default_fetches_nothing(self):
+        daemon = self._make_daemon()
+        with patch('overcode.config.get_model_metadata_config',
+                   return_value={"auto_refresh": False, "max_age_days": 7.0}), \
+             patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
+            daemon._maybe_refresh_model_metadata(datetime.now())
+        mock_refresh.assert_not_called()
+
+    def test_refreshes_when_enabled_and_cache_missing(self):
+        daemon = self._make_daemon()
+        with patch('overcode.config.get_model_metadata_config',
+                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+             patch('overcode.model_metadata.local_cache_age_days', return_value=None), \
+             patch('overcode.model_metadata.refresh_local_cache',
+                   return_value={"model_count": 5, "path": "/x"}) as mock_refresh:
+            daemon._maybe_refresh_model_metadata(datetime.now())
+        mock_refresh.assert_called_once()
+        daemon.log.info.assert_called()
+
+    def test_skips_when_cache_is_fresh(self):
+        daemon = self._make_daemon()
+        with patch('overcode.config.get_model_metadata_config',
+                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+             patch('overcode.model_metadata.local_cache_age_days', return_value=2.0), \
+             patch('overcode.model_metadata.refresh_local_cache') as mock_refresh:
+            daemon._maybe_refresh_model_metadata(datetime.now())
+        mock_refresh.assert_not_called()
+
+    def test_failure_is_logged_not_raised(self):
+        daemon = self._make_daemon()
+        with patch('overcode.config.get_model_metadata_config',
+                   return_value={"auto_refresh": True, "max_age_days": 7.0}), \
+             patch('overcode.model_metadata.local_cache_age_days', return_value=30.0), \
+             patch('overcode.model_metadata.refresh_local_cache', side_effect=OSError("no network")):
+            daemon._maybe_refresh_model_metadata(datetime.now())
+        daemon.log.warning.assert_called()
+
+    def test_hourly_throttle(self):
+        daemon = self._make_daemon()
+        first = datetime.now()
+        daemon._last_model_metadata_check = first
+        with patch('overcode.config.get_model_metadata_config') as mock_cfg:
+            daemon._maybe_refresh_model_metadata(first + timedelta(minutes=10))
+        mock_cfg.assert_not_called()

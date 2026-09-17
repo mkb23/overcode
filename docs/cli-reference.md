@@ -477,6 +477,43 @@ overcode config path
 
 ---
 
+## Model Metadata Commands
+
+The catalog behind the `CTX%` and `$` columns — see
+[Configuration → Model metadata](configuration.md#model-metadata-context-windows-and-pricing).
+
+### `overcode models info`
+
+Show which catalog lookups resolve against (local refreshed cache,
+opencode's cache, or the bundled snapshot), its vintage and size.
+
+```bash
+overcode models info
+```
+
+### `overcode models lookup`
+
+Show what overcode resolves for a model id — context window, list price,
+short name — and which tier (curated table, catalog, or unknown) answered.
+
+```bash
+overcode models lookup zai/glm-4.6
+overcode models lookup openai/gpt-5.6-sol
+```
+
+### `overcode models refresh`
+
+Fetch models.dev and rewrite `~/.overcode/cache/model_metadata.json`. This is
+the on-demand path; nothing is fetched unattended unless `config.yaml` sets
+`model_metadata.auto_refresh: true`.
+
+```bash
+overcode models refresh          # fetch and rewrite
+overcode models refresh --check  # report the active catalog's age only
+```
+
+---
+
 ## Global Options
 
 Most commands accept `--session <name>` to specify a tmux session other than the default `agents`.
