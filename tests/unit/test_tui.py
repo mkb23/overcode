@@ -2324,3 +2324,112 @@ class TestSpinStats:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSortSessionsKeepsSelection:
+    """#471 — re-sorting (by_status / by_value) must keep the highlight on the
+    same *agent*, not the same row, so the TUI and the tmux pane stay in sync."""
+
+    @staticmethod
+    def _session(name, state="running", value=1):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            id=f"id-{name}", name=name, parent_session_id=None, agent_value=value,
+            stats=SimpleNamespace(current_state=state),
+        )
+
+    @staticmethod
+    def _tui(sessions, focused_index, sort_mode="by_status"):
+        """A MagicMock TUI with the real selection/sort methods bound and a
+        widget list that mirrors the real _get_widgets_in_session_order
+        (widgets sorted by the *current* self.sessions order)."""
+        from types import MethodType, SimpleNamespace
+        from overcode.tui import SupervisorTUI
+
+        tui = MagicMock()
+        tui.sessions = list(sessions)
+        tui.focused_session_index = focused_index
+        tui._suppress_focus_watcher = False
+        tui._prefs.sort_mode = sort_mode
+        widgets = [SimpleNamespace(session=s) for s in sessions]
+
+        def widgets_in_order():
+            order = {s.id: i for i, s in enumerate(tui.sessions)}
+            return sorted(widgets, key=lambda w: order.get(w.session.id, 999))
+
+        tui._get_widgets_in_session_order = widgets_in_order
+        for name in ("_selected_session_id", "_reanchor_selection", "_sort_sessions"):
+            setattr(tui, name, MethodType(getattr(SupervisorTUI, name), tui))
+        return tui
+
+    def test_state_change_moves_the_highlight_with_the_agent(self):
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=1)  # highlight on bravo
+        assert tui._selected_session_id() == "id-bravo"
+
+        bravo.stats.current_state = "waiting_user"  # bravo jumps to the top
+        tui._sort_sessions()
+
+        assert [s.name for s in tui.sessions] == ["bravo", "alpha"]
+        assert tui.focused_session_index == 0
+        assert tui._selected_session_id() == "id-bravo"
+
+    def test_reanchor_is_silent(self):
+        """The agent under the highlight hasn't changed, so no tmux sync."""
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=1)
+        bravo.stats.current_state = "waiting_user"
+        tui._sort_sessions()
+        assert tui.focused_session_index == 0
+        assert tui._suppress_focus_watcher is False  # restored afterwards
+        tui._sync_tmux_window.assert_not_called()
+        tui._fix_window_size_if_needed.assert_not_called()
+
+    def test_explicit_selected_id_survives_list_replacement(self):
+        """_apply_sessions replaces self.sessions before sorting; the id it
+        captured beforehand must be what the re-anchor uses."""
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=1)
+        selected = tui._selected_session_id()
+        fresh_bravo = self._session("bravo", state="waiting_user")
+        fresh_alpha = self._session("alpha")
+        tui.sessions = [fresh_alpha, fresh_bravo]  # new objects, unsorted
+        tui._sort_sessions(selected_id=selected)
+        assert [s.name for s in tui.sessions] == ["bravo", "alpha"]
+        assert tui.focused_session_index == 0
+
+    def test_removed_agent_leaves_index_for_restore_to_clamp(self):
+        alpha, bravo, charlie = self._session("alpha"), self._session("bravo"), self._session("charlie")
+        tui = self._tui([alpha, bravo, charlie], focused_index=2)
+        tui.sessions = [alpha, bravo]
+        tui._sort_sessions(selected_id="id-charlie")
+        assert tui.focused_session_index == 2
+
+    def test_alphabetical_is_unaffected(self):
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=1, sort_mode="alphabetical")
+        bravo.stats.current_state = "waiting_user"
+        tui._sort_sessions()
+        assert tui.focused_session_index == 1
+
+    def test_apply_sessions_end_to_end(self):
+        """The periodic refresh path: capture before replacement, re-anchor
+        after sort, then the widget update sees the right agent."""
+        from types import MethodType
+        from overcode.tui import SupervisorTUI
+
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=1)
+        tui._apply_sessions = MethodType(SupervisorTUI._apply_sessions, tui)
+        tui._visible_remote_sessions.return_value = []
+        tui._initial_tmux_sync_done = True
+        tui._initial_sessions_loaded = True
+        tui.tmux_sync = False
+
+        refreshed = [self._session("alpha"), self._session("bravo", state="waiting_user")]
+        tui._apply_sessions(refreshed)
+
+        assert [s.name for s in tui.sessions] == ["bravo", "alpha"]
+        assert tui.focused_session_index == 0
+        assert tui._selected_session_id() == "id-bravo"
+        tui.update_session_widgets.assert_called_once()

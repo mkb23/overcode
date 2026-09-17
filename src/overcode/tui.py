@@ -867,14 +867,17 @@ class SupervisorTUI(
         """Apply refreshed session list on main thread (no I/O)."""
         # Detect new sessions for timeline refresh (#244)
         old_names = {s.name for s in self.sessions}
+        # Which agent is highlighted, read against the *old* order — the
+        # index alone is meaningless once self.sessions is replaced (#471).
+        selected_id = self._selected_session_id()
 
         self._invalidate_sessions_cache()
         # Merge local + remote sessions (#245), filtering disabled sisters (#323)
         self.sessions = sessions + self._visible_remote_sessions()
         # Resolve cross-machine parent relationships (#245)
         self._resolve_remote_parents()
-        # Apply sorting (#61)
-        self._sort_sessions()
+        # Apply sorting (#61), re-anchoring the highlight to that agent (#471)
+        self._sort_sessions(selected_id=selected_id)
         # update_session_widgets handles focus preservation internally
         # Guard against race where background worker delivers sessions before
         # the ScrollableContainer is fully mounted (#286).
@@ -1009,9 +1012,63 @@ class SupervisorTUI(
                 parent_session = name_to_session[parent_name]
                 session.parent_session_id = parent_session.id
 
-    def _sort_sessions(self) -> None:
-        """Sort sessions based on current sort mode (#61)."""
+    def _selected_session_id(self) -> Optional[str]:
+        """Id of the agent the highlight is on, in the *current* display order.
+
+        ``focused_session_index`` is a row number, not an identity — it only
+        means something relative to whatever order ``self.sessions`` is in
+        at the moment it is read. Capture this *before* anything re-orders
+        the list (#471).
+        """
+        try:
+            widgets = self._get_widgets_in_session_order()
+        except Exception:
+            return None
+        if 0 <= self.focused_session_index < len(widgets):
+            return widgets[self.focused_session_index].session.id
+        return None
+
+    def _reanchor_selection(self, session_id: Optional[str]) -> None:
+        """Move ``focused_session_index`` back onto ``session_id`` after a re-order (#471).
+
+        Silent on purpose: the *agent* under the highlight hasn't changed,
+        only its row, so the external tmux pane is already showing it. The
+        watcher is suppressed here and ``update_session_widgets``'s own
+        focus-restore re-applies Textual focus afterwards. If the agent is
+        no longer displayed the index is left alone for that restore to clamp.
+        """
+        if not session_id:
+            return
+        try:
+            widgets = self._get_widgets_in_session_order()
+        except Exception:
+            return
+        for i, widget in enumerate(widgets):
+            if widget.session.id == session_id:
+                if i != self.focused_session_index:
+                    was_suppressed = self._suppress_focus_watcher
+                    self._suppress_focus_watcher = True
+                    try:
+                        self.focused_session_index = i
+                    finally:
+                        self._suppress_focus_watcher = was_suppressed
+                return
+
+    def _sort_sessions(self, selected_id: Optional[str] = None) -> None:
+        """Sort sessions based on current sort mode (#61), keeping the
+        highlight on the same agent (#471).
+
+        The by_status / by_value modes re-order the list whenever an agent
+        changes state, so a bare re-sort would leave ``focused_session_index``
+        pointing at whichever agent *landed* on that row — the TUI highlight
+        and the tmux pane (still on the original agent) then drift apart.
+        Callers that have already replaced ``self.sessions`` must pass the id
+        they captured beforehand via ``selected_id``.
+        """
+        if selected_id is None:
+            selected_id = self._selected_session_id()
         self.sessions = sort_sessions(self.sessions, self._prefs.sort_mode)
+        self._reanchor_selection(selected_id)
 
     def _get_cached_sessions(self) -> dict[str, Session]:
         """Get sessions with caching to reduce disk I/O.
