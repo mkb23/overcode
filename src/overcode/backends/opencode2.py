@@ -67,7 +67,13 @@ class Opencode2Backend:
         "opencode2 CLI is required but not found. "
         "Install the OpenCode 2.0 preview from: https://opencode.ai/docs/"
     )
-    process_basenames = ("opencode2",)
+    # The npm package's launcher runs as `opencode2`; the curl installer
+    # (https://opencode.ai/v2/install) ships `opencode2` as a two-line sh
+    # wrapper that execs `~/.opencode/bin/opencode`, so the pane's live
+    # process is named `opencode` there (verified live, build dev-19742).
+    # Doctor's process match only looks under the agent's own pane, so
+    # accepting both never confuses a v1 agent's process for a v2 one.
+    process_basenames = ("opencode2", "opencode")
     not_found_error = Opencode2NotFoundError
     capabilities = (
         BackendCapability.RESUME
@@ -295,13 +301,30 @@ def get_opencode2_backend() -> Opencode2Backend:
     return _backend
 
 
+# `opencode2 --version` prints a binary-name prefix that depends on how the
+# preview was installed — "opencode2 v0.0.0-dev-19272" from the npm package,
+# "opencode v0.0.0-dev-19742" from the curl installer's wrapper (both
+# observed live, Sep 17 2026). Only the version token is the version.
+_VERSION_TOKEN_RE = re.compile(r"v?\d+\.\d+\.\d+[\w.-]*")
+
+
 def installed_version() -> Optional[str]:
+    """The installed preview build ("v0.0.0-dev-19272"), or None.
+
+    Always probes the real binary, never OPENCODE2_COMMAND (respect_override=
+    False) — a doctor check against the mock harness would be meaningless.
+    The binary-name prefix is stripped so findings read "opencode2
+    v0.0.0-dev-…" rather than "opencode2 opencode2 v0.0.0-dev-…".
+    """
     from ..dependency_check import check_agent_cli
     available, _path, version = check_agent_cli(
         get_opencode2_backend(), respect_override=False
     )
     if not available or not version:
         return None
+    match = _VERSION_TOKEN_RE.search(version)
+    if match:
+        return match.group(0)
     return version.strip() or None
 
 

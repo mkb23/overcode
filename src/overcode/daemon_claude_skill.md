@@ -40,6 +40,16 @@ dialogs and slash commands differ, so stick to `overcode show`, `overcode send
 <name> approve|reject`, and plain-text instructions -- do not send Claude
 slash commands (`/clear`, `/exit`) to it.
 
+A session line reading `Backend: opencode2` is an opencode 2.0 *preview*
+agent -- the same rule as opencode (gestures and plain text only, no Claude
+slash commands), with two v2 quirks worth knowing: its slash commands need a
+trailing bare Enter because the command autocomplete swallows the first one
+(overcode's restart/exit sequences already do this), and `approve` is a bare
+Enter on the dialog's preselected *Allow once* while `reject` is a single
+Escape. A single bare `C-c` kills the whole opencode2 process (same as
+opencode, the opposite of grok) -- never send it; use `overcode restart` or
+`overcode kill`.
+
 A session line reading `Backend: codex` is a Codex CLI agent. Its permission
 dialog is `1. Yes, proceed (y)` / `2. Yes, and don't ask again for commands
 that start with ... (p)` / `3. No, and tell Codex what to do differently

@@ -400,18 +400,31 @@ class TestGestures:
 
     def test_startup_dialog_rules(self, backend):
         rules = backend.startup_dialog_rules()
-        assert [r.marker for r in rules] == ["I trust this folder", "Yes, I accept"]
+        assert [r.marker for r in rules] == [
+            "❯ No, exit", "I trust this folder", "Yes, I accept",
+        ]
 
-        trust = rules[0]
+        trust = rules[1]
         assert [(p.keys, p.enter) for p in trust.presses] == [("", True)]
         assert trust.settle_seconds == 1.5
 
-        perms = rules[1]
+        perms = rules[2]
         assert [(p.keys, p.enter, p.delay_after) for p in perms.presses] == [
             ("Down", False, 0.3),
             ("", True, 0.0),
         ]
         assert perms.settle_seconds == 2.0
+
+    def test_new_trust_dialog_navigates_to_the_trust_line(self, backend):
+        # Claude Code 2.1.27x preselects "No, exit"; a bare Enter is a no-op
+        # there (verified live), so the rule must move Down then confirm —
+        # and it must be checked before the legacy Enter-only rule.
+        rules = {r.marker: r for r in backend.startup_dialog_rules()}
+        assert [(p.keys, p.enter) for p in rules["❯ No, exit"].presses] == [
+            ("Down", False), ("", True),
+        ]
+        markers = [r.marker for r in backend.startup_dialog_rules()]
+        assert markers.index("❯ No, exit") < markers.index("I trust this folder")
 
 
 class TestCapabilities:

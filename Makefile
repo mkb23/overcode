@@ -12,6 +12,8 @@ help:
 	@echo "Testing:"
 	@echo "  make test           Run all tests"
 	@echo "  make test-e2e       Run only E2E integration tests (slow)"
+	@echo "  make test-matrix    Mock-backed backend matrix (all backends, no keys)"
+	@echo "  make test-live      Live smoke vs the real CLIs (OVERCODE_LIVE_BACKENDS=...)"
 	@echo "  make test-unit      Run only fast unit tests"
 	@echo "  make test-quick     Run E2E test directly (bypass pytest for faster dev)"
 	@echo "  make e2e            Containerized E2E: workflow + visual tiers (Docker)"
@@ -37,6 +39,16 @@ test:
 
 test-e2e:
 	pytest -v -m e2e -s
+
+# Mock-backed backend matrix: every backend through launch/status/
+# permission gestures/restart/kill in a real tmux, no credentials needed.
+test-matrix:
+	pytest -m e2e tests/e2e/test_backend_matrix.py tests/e2e/test_opencode2_backend.py
+
+# Live smoke against the REAL agent CLIs on this host (spends real tokens).
+# Name the backends: OVERCODE_LIVE_BACKENDS=opencode,codex make test-live
+test-live:
+	pytest -m e2e -rsx tests/e2e/test_live_backends.py
 
 test-unit:
 	pytest -v -m unit

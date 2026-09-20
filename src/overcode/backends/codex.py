@@ -446,6 +446,23 @@ class CodexBackend:
         # continue"), which persists trust per-path in ~/.codex/config.toml
         # so a revisited directory shows no dialog at all.
         return [
+            # Seen live on codex 0.153.4 (Sep 19 2026) when 0.155.1 was out,
+            # drawn BEFORE the trust dialog:
+            #   ✨ Update available! 0.153.4 -> 0.155.1
+            #   › 1. Update now (runs `npm install -g @openai/codex`)
+            #     2. Skip
+            #     3. Skip until next version
+            #   Press enter to continue
+            # The preselected option runs a global npm install, so a bare
+            # Enter here (or a supervisor's `approve` gesture) would start
+            # upgrading the CLI under the agent. Digits select immediately
+            # in this widget (verified on the trust dialog, same widget):
+            # "2" skips for this launch only and persists nothing.
+            DialogRule(
+                marker="Update available!",
+                presses=[KeyPress("2", enter=False)],
+                settle_seconds=1.5,
+            ),
             DialogRule(
                 marker="Do you trust the contents of this directory?",
                 presses=[KeyPress("", enter=True)],

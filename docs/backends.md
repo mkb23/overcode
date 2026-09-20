@@ -53,7 +53,7 @@ unavailable (see the pricing section below). grok also requires a SuperGrok
 **opencode2: launch, hook-grade live status (including `waiting_approval`),
 resume, and token/cost/context columns.** opencode2 is the rolling 2.0
 *preview* CLI (`v0.0.0-dev-<build>`, no stable tags), verified live against
-`v0.0.0-dev-19272`. The bare v2 TUI has no `--model`/`--agent`/`--fork`
+`v0.0.0-dev-19272` and `v0.0.0-dev-19742`. The bare v2 TUI has no `--model`/`--agent`/`--fork`
 flags, no environment override beats a project permission deny (bypass is
 `--auto`-only), and every launch passes `--standalone` so each agent gets a
 private server — see the opencode2 section below for the full verified-quirk
@@ -156,11 +156,40 @@ overcode launch -n my-agent --backend opencode2 -d ~/code/myproject
 Same `-B` short form, same new-agent-modal toggle, same `overcode show`
 backend line as the other backends. Resume works exactly like v1's
 (`--session <id>`). Everything below was verified live against
-`opencode2 v0.0.0-dev-19272` (Sep 15–16 2026) — a rolling dev preview
-with no stable tags, so expect drift between builds and read the doctor
-findings (below) rather than trusting a "tested range".
+`opencode2 v0.0.0-dev-19272` (Sep 15–17 2026) and re-checked against
+`v0.0.0-dev-19742` (Sep 17 2026: same flags, same pane chrome, same
+plugin API, same permission dialog) — a rolling dev preview with no
+stable tags, so expect drift between builds and read the doctor findings
+(below) rather than trusting a "tested range".
 
-### opencode2 limitations (verified against v0.0.0-dev-19272)
+### Installing the preview
+
+The preview installs *alongside* v1 — the binary is `opencode2`, v1's
+`opencode` is untouched. Two verified routes:
+
+```bash
+# Official installer: ~/.opencode/bin/opencode2 (add it to PATH yourself)
+curl -fsSL https://opencode.ai/v2/install | bash
+# npm: the `dev` dist-tag is the newest preview build, `beta` the calmer one
+npm install -g @opencode-ai/cli@dev
+```
+
+Two things to know about what each route leaves behind:
+
+- The curl installer's `opencode2` is a two-line `sh` wrapper that execs
+  `~/.opencode/bin/opencode`, so the *live process* under an overcode pane
+  is named `opencode`, and `opencode2 --version` prints
+  `opencode v0.0.0-dev-…`. The npm launcher runs as `opencode2` and prints
+  `opencode2 v0.0.0-dev-…`. The backend matches both process names and
+  strips either prefix from the version, so `overcode doctor` is right
+  either way. (The npm route needs its postinstall to have run — the same
+  "postinstall script was not run" stub v1 can leave behind.)
+- Both versions share `~/.local/share/opencode/opencode.db`. The first
+  opencode2 run migrates it in place (adds `session_v2`, `session_message`
+  and friends); v1 kept working against the migrated file in testing, but
+  it is one database, so back it up if you care about v1's history.
+
+### opencode2 limitations (verified against v0.0.0-dev-19272 and dev-19742)
 
 - **Every launch passes `--standalone`** — a private server per agent.
   This is required, not a default: the v2 SSE event bus is
@@ -184,7 +213,15 @@ findings (below) rather than trusting a "tested range".
   `OPENCODE_PERMISSION` blobs failed live against a project shell-deny —
   so project deny rules always win and v2's bypass is closer to Claude's
   `dontAsk` than to `--dangerously-skip-permissions`. `--allowed-tools`
-  is silently ignored like v1's.
+  is silently ignored like v1's. What `--auto` *does* do, verified live:
+  a project `ask` rule is auto-approved (the hook log shows the
+  `PermissionRequest` immediately followed by the auto-reply's
+  `PreToolUse`, ~10 ms apart, so the dashboard never settles on
+  `waiting_approval`) and the footer reads `Build auto`. Note v2's config
+  grammar: the key is `permissions` (plural) holding `{action, resource,
+  effect}` rules — a v1-style `permission` key is silently skipped
+  ("configuration normalization diagnostic" in opencode's log) and the
+  dialog never appears.
 - **Telemetry rides a plugin *subdirectory*:
   `.opencode/plugins/overcode-telemetry-v2/`** (`index.js`, `tui.js`,
   `overcode-telemetry-core.mjs`). v2 plugins must be subdirectories with a
@@ -200,8 +237,14 @@ findings (below) rather than trusting a "tested range".
 - **Stats come from the v2-only SQLite tables** `session_v2` /
   `session_message` in the same `~/.local/share/opencode/opencode.db`
   file as v1 (v2 never writes the v1 `session` table). `session_v2`'s
-  `model`/`agent` columns may be NULL even on completed sessions — the
-  reader falls back to the newest assistant message's `data` JSON.
+  `model`/`agent` columns were NULL on the Sep 15 capture but populated
+  (`{"id":"gpt-4o-mini","providerID":"openai"}` / `build`) on Sep 17 runs
+  of the same build — the reader takes the row's values when present and
+  falls back to the newest assistant message's `data` JSON otherwise.
+  After `/new` the plugin records the new `ses_…` id alongside the old
+  one: tokens and cost sum across every session the agent has owned,
+  while model, agent and the live context size come from the active one
+  (verified live).
 - **Exit and clear need a trailing bare Enter.** Graceful exit is Escape,
   Escape, `/exit`, Enter — *plus* a trailing bare Enter, because v2's
   command autocomplete consumes the first Enter to accept the highlighted
@@ -1460,7 +1503,11 @@ Per-agent, the health verdict for an opencode2 session takes the same shape
 opencode's plugin check does: `refine_health_verdict` looks for the plugin
 *subdirectory* (`.opencode/plugins/overcode-telemetry-v2/`) in the agent's
 project directory. Missing reports `missing-settings` — status falls back to
-pane polling. `overcode restart` re-installs it.
+pane polling. `overcode restart` re-installs it. The process match under the
+pane accepts both `opencode2` (npm launcher) and `opencode` (what the curl
+installer's `opencode2` wrapper execs) — without the second name a
+curl-installed preview reported "no opencode2 process under pane" for a
+perfectly healthy agent.
 
 ---
 
@@ -1619,3 +1666,67 @@ emits Claude-vocabulary payloads, so `hook_handler` still knows exactly
 two dialects. Reach for that shape before teaching `hook_handler` a new
 one — grok's in-handler translation was forced by shell-command hooks that
 have nowhere else to run.
+
+---
+
+## How each backend is tested
+
+Four tiers, cheapest first. The first two run on every backend with no
+credentials; the third is the one that catches what the mocks cannot.
+
+| Tier | What runs | Proves | Where | Cost |
+|---|---|---|---|---|
+| Unit + corpus replay | adapter argv/keys/capabilities; the backend's `StatusPatterns` replayed over its captured pane corpus (`tests/fixtures_<backend>_panes/`); stats readers over synthetic stores; the telemetry plugin/hook translators | the grammar overcode *thinks* the CLI has | `tests/unit/test_backend_<b>.py`, `test_status_detector_<b>.py`, `test_<b>_stats.py`, `test_<b>_plugin.py` / `test_<b>_hooks.py` | default `pytest` |
+| Mock e2e matrix | `overcode launch -B <b>` against `tests/mock_<b>.py` (chrome copied from the corpus) in a real tmux: launch, status flip, permission dialog + the backend-resolved `approve`/`reject` gestures, restart, kill | the CLI, launcher, dispatcher and gestures agree with each other, per backend | `tests/e2e/test_backend_matrix.py` (opencode, codex, grok, hermes), `tests/e2e/test_opencode2_backend.py` | `make test-matrix` (~2 min, no keys) |
+| Live smoke | the same flow against the **real** installed CLI: one plain turn (hook state must appear and settle), one tool call that must ask (hook `PermissionRequest`, polling `Permission:` activity, daemon `waiting_approval`, then `approve`), the stats reader over the real store, `overcode doctor` ok | today's binary still speaks the grammar; the install's process name, version string, config keys, startup dialogs | `tests/e2e/test_live_backends.py` | opt-in, ~1 ¢ per backend |
+| Container real-LLM | real Claude Code inside docker, scheduled | the Claude path end to end in a clean image | `tests/container/real_llm/` | `make e2e-real` |
+
+The corpora are snapshots of one build each (the version is in every
+corpus README), so the first two tiers can stay green while a CLI release
+changes its chrome. The live tier is what notices — it found the curl
+installer's `opencode` process name and the doubled version prefix for
+opencode2, the `permissions` config key, hermes's live-system guard and
+codex's update prompt, none of which any mock could have shown.
+
+### Running the live tier
+
+```bash
+# name the backends whose CLI *and* credentials this machine has
+OVERCODE_LIVE_BACKENDS=opencode,codex,hermes make test-live
+OVERCODE_LIVE_BACKENDS=all make test-live
+
+# a binary that is not on PATH (e.g. an npm scratch install of opencode2)
+OVERCODE_LIVE_BACKENDS=opencode2 \
+OVERCODE_LIVE_OPENCODE2_COMMAND=~/scratch/node_modules/.bin/opencode2 make test-live
+
+# a different cheap model
+OVERCODE_LIVE_OPENCODE_MODEL=openai/gpt-4o-mini make test-live
+```
+
+Backends that are not requested, not installed, or have no credential
+signal are *skipped* with the reason, never failed. Prerequisites per
+backend: `claude-code` a Keychain/OAuth login (`claude auth status`) or
+`ANTHROPIC_API_KEY`; `opencode`/`opencode2` `OPENAI_API_KEY` (the test
+writes a project `opencode.json` selecting `openai/gpt-4o-mini` and an
+ask-before-shell rule — v1 `permission` grammar for opencode, v2
+`permissions` for opencode2); `codex` its own login (`codex login status`);
+`grok` a signed-in `~/.grok/auth.json` — an expired login shows the
+device-code sign-in screen instead of the banner and the test fails
+there, so sign in first; `hermes` a configured provider in
+`~/.hermes/config.yaml`, plus `approvals.mode: manual` if you want the
+permission step (otherwise that one step is marked xfail and the rest
+runs).
+
+Two things the tier does deliberately: it launches with `--prompt`, which
+is the only launch path that dismisses a backend's startup dialogs (codex's
+and Claude's trust prompt in a fresh directory, codex's "Update available"
+prompt), and for hermes it sets `HERMES_STATE_DB_GUARD_BYPASS=1`, hermes's
+own escape hatch for child processes of a pytest run — its guard checks
+process ancestry, so without it the real `state.db` is never written and
+the stats reader finds nothing.
+
+What it leaves behind is exactly what a real launch leaves: the
+opencode/opencode2 telemetry plugin under the temp project (deleted with
+it), grok's global hooks file, hermes's global plugin, codex's trust entry
+for the temp directory. `overcode hooks uninstall-backend <b>` removes the
+global ones.

@@ -118,6 +118,9 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     # hermes's plugin install/enable step writes under HERMES_HOME; keep it
     # out of the developer's real ~/.hermes.
     env["HERMES_HOME"] = str(Path(state_dir) / "hermes-home")
+    # grok's prepare_launch writes a *global* hooks file under GROK_HOME
+    # (default ~/.grok); keep it out of the developer's real one too.
+    env["GROK_HOME"] = str(Path(state_dir) / "grok-home")
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(SRC_DIR)

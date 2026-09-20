@@ -34,7 +34,10 @@ Capture notes:
   with a transient spinner — the reason `busy.txt` was recaptured with a
   long generation ("write a 300-line poem").
 - `permission_required.txt` was captured with a project `opencode.json`
-  forcing `{"action": "shell", "resource": "*", "effect": "ask"}`; pressing
+  forcing `{"action": "shell", "resource": "*", "effect": "ask"}` under
+  v2's `"permissions"` (plural) key — a v1-style `"permission"` key is
+  skipped by v2 with a "configuration normalization diagnostic" log line
+  and no dialog ever appears; pressing
   Enter on it approved the preselected "Allow once" (the `approve_keys`
   verification) and the command ran to completion.
 - `error_api_key.txt` was produced by switching the session model to a
@@ -48,4 +51,8 @@ Capture notes:
   finished pill gains the same `· interrupted` suffix v1 had.
 - `exited_shell.txt` is unedited (the v1 corpus's equivalent was the only
   hand-fixed file there). Note the missing farewell block: v1 printed
-  `Continue  opencode -s ses_…` after `/exit`; v2 prints nothing.
+  `Continue  opencode -s ses_…` after `/exit`; v2 prints nothing after
+  `/exit`. A bare `C-c`, by contrast, kills the v2 process *and* prints a
+  `Session <title>` / `Continue  opencode2 -s ses_…` farewell block above
+  the shell prompt (observed live Sep 17 2026, dev-19272) — the
+  `terminated` verdict comes from the shell prompt either way.

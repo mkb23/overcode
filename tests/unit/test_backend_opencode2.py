@@ -219,3 +219,84 @@ def test_build_command_always_standalone():
         "--flag",
         "x",
     ]
+
+
+# ── installed_version: binary-name prefix stripping ─────────────────────
+#
+# `opencode2 --version` prints a prefix that depends on the install method
+# (both observed live, Sep 17 2026): the npm package's launcher says
+# "opencode2 v0.0.0-dev-19272", the curl installer's sh wrapper says
+# "opencode v0.0.0-dev-19742". The doctor finding must not read
+# "opencode2 opencode2 v…".
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("opencode2 v0.0.0-dev-19272\n", "v0.0.0-dev-19272"),
+        ("opencode v0.0.0-dev-19742\n", "v0.0.0-dev-19742"),
+        ("2.0.0-beta-19271", "2.0.0-beta-19271"),
+    ],
+)
+def test_installed_version_strips_binary_name_prefix(monkeypatch, raw, expected):
+    monkeypatch.setattr(
+        "overcode.dependency_check.check_agent_cli",
+        lambda backend, respect_override=True: (True, "/usr/local/bin/opencode2", raw),
+    )
+    assert installed_version() == expected
+
+
+def test_installed_version_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "overcode.dependency_check.check_agent_cli",
+        lambda backend, respect_override=True: (False, None, None),
+    )
+    assert installed_version() is None
+
+
+def test_version_findings_do_not_double_the_binary_name(monkeypatch):
+    monkeypatch.setattr(
+        "overcode.backends.opencode2.installed_version",
+        lambda: "v0.0.0-dev-19272",
+    )
+    findings = version_findings()
+    preview = [f for f in findings if "dev preview" in f]
+    assert preview and preview[0].startswith("opencode2 v0.0.0-dev-19272 is a dev preview")
+
+
+# ── process matching: the curl installer's wrapper execs `opencode` ─────
+
+def test_process_basenames_cover_both_install_methods():
+    # npm: the pane runs `…/.bin/opencode2 --standalone`; curl: `opencode2`
+    # is a two-line sh wrapper that execs `~/.opencode/bin/opencode`, so the
+    # live process is named `opencode` (verified live, build dev-19742).
+    assert set(Opencode2Backend().process_basenames) == {"opencode2", "opencode"}
+
+
+# ── adapter seams the CLI dispatches to (hooks uninstall, doctor) ────────
+
+def test_doctor_findings_delegates_to_version_findings(monkeypatch):
+    monkeypatch.setattr(
+        "overcode.backends.opencode2.version_findings", lambda: ["finding-a"]
+    )
+    assert Opencode2Backend().doctor_findings() == ["finding-a"]
+
+
+def test_uninstall_telemetry_requires_project_dir():
+    ok, message = Opencode2Backend().uninstall_telemetry(None)
+    assert ok is False
+    assert message.startswith("Error:") and "--dir" in message
+
+
+def test_uninstall_telemetry_round_trip(tmp_path):
+    from overcode.backends.opencode2_plugin_install import (
+        ensure_plugin_installed,
+        project_plugin_dir_v2,
+    )
+
+    ensure_plugin_installed(str(tmp_path))
+    plugin_dir = project_plugin_dir_v2(str(tmp_path))
+    ok, message = Opencode2Backend().uninstall_telemetry(str(tmp_path))
+    assert ok is True and message.startswith("Removed ")
+    assert not plugin_dir.exists()
+    ok, message = Opencode2Backend().uninstall_telemetry(str(tmp_path))
+    assert ok is True and "No opencode2 telemetry plugin found" in message

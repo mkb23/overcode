@@ -26,9 +26,11 @@ envelope) and assistant ``data`` carries ``agent``, ``model``,
 
 Two v2 deltas vs the v1 reader, both live-verified:
 
-- ``session_v2.model`` / ``session_v2.agent`` are NULL even on completed
-  sessions; the fallback is the newest assistant message's ``data`` JSON
-  (``model.id`` / ``agent``). The resolved persona rides the
+- ``session_v2.model`` / ``session_v2.agent`` were NULL on the Sep 15
+  capture but populated (a ``{"id", "providerID"}`` JSON string / ``build``)
+  on Sep 17 runs of the same build; the row wins when present and the
+  fallback is the newest assistant message's ``data`` JSON (``model.id`` /
+  ``agent``). The resolved persona rides the
   ``AgentSessionStats.agent`` field; both the row read and the message
   fallback are scoped to the ACTIVE session, so after ``/new`` an older
   tracked session's identities never leak into the live conversation.

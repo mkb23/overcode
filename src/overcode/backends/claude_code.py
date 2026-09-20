@@ -219,7 +219,21 @@ class ClaudeCodeBackend:
 
     def startup_dialog_rules(self) -> List[DialogRule]:
         return [
-            # Trust prompt: default is accept, just Enter
+            # Trust prompt, Claude Code ≥ 2.1.27x (seen live Sep 19 2026,
+            # v2.1.274/278): "Accessing workspace: … ❯ No, exit / Yes, I
+            # trust this folder" — the safe option is preselected and a
+            # bare Enter leaves the dialog up (verified live), so navigate
+            # Down to the trust line first. Listed before the legacy rule
+            # so it wins whenever the "❯ No, exit" cursor line is present.
+            DialogRule(
+                marker="❯ No, exit",
+                presses=[
+                    KeyPress("Down", enter=False, delay_after=0.3),
+                    KeyPress("", enter=True),
+                ],
+                settle_seconds=1.5,
+            ),
+            # Trust prompt, older builds: accept was preselected, just Enter
             DialogRule(
                 marker="I trust this folder",
                 presses=[KeyPress("", enter=True)],

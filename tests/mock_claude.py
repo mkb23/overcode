@@ -425,11 +425,11 @@ def interactive_menu(options: List[str], prompt: str = "") -> int:
         sys.stdout.flush()
 
         line = sys.stdin.readline().strip()
-        if line in ['1', 'y', 'Y']:
+        if line.isdigit() and 1 <= int(line) <= num_options:
+            return int(line) - 1
+        if line in ['y', 'Y']:
             return 0
-        elif line in ['2']:
-            return 1
-        elif line in ['3', 'n', 'N', '']:
+        elif line in ['n', 'N', '']:
             return 2
         return -1
 
@@ -465,9 +465,14 @@ def interactive_menu(options: List[str], prompt: str = "") -> int:
 
             # Handle escape sequences (arrow keys, etc.)
             if ch == '\x1b':
-                # Read the next two characters for arrow keys
-                # In raw mode, they should be available immediately
-                next1 = sys.stdin.read(1)
+                # An arrow key delivers its "[A"/"[B" tail in the same
+                # write; a bare Escape (what `overcode send <name> reject`
+                # sends to an opencode/codex dialog) delivers nothing more.
+                # A blocking read(1) here would hang the mock on that bare
+                # Escape until some unrelated key arrived — so only read
+                # the tail if it is already pending.
+                pending, _, _ = select.select([sys.stdin], [], [], 0.05)
+                next1 = sys.stdin.read(1) if pending else ''
                 if next1 == '[':
                     next2 = sys.stdin.read(1)
                     if next2 == 'A':  # Up arrow
@@ -485,13 +490,13 @@ def interactive_menu(options: List[str], prompt: str = "") -> int:
             elif ch in ['\r', '\n']:
                 return selected
 
-            # Handle number keys
-            elif ch == '1':
-                return 0
-            elif ch == '2':
-                return 1
-            elif ch == '3':
-                return 2
+            # Handle number keys — any option index the menu actually has.
+            # grok's dialog is driven by bare digits (2 approve / 3 reject)
+            # and hermes's by digit + Enter (1 allow / 4 deny), so a
+            # four-option menu must honour '4' rather than swallow it and
+            # let the trailing Enter confirm the preselected first option.
+            elif ch.isdigit() and 1 <= int(ch) <= num_options:
+                return int(ch) - 1
 
             # Handle y/n
             elif ch in ['y', 'Y']:
@@ -651,12 +656,23 @@ def main():
     parser = argparse.ArgumentParser(description="Mock Claude Code CLI")
     parser.add_argument("--scenario", "-s", help="Scenario to run")
     parser.add_argument("--print", "-p", help="Print message and exit")
+    parser.add_argument("--version", "-v", action="store_true",
+                        help="Print a plausible Claude Code version and exit")
     parser.add_argument("prompt", nargs="*", help="Initial prompt (ignored)")
 
     # Tolerate (and ignore) any real Claude Code flags the launcher adds,
     # e.g. --session-id and --settings (#373/#435) — the mock only cares
     # about its scenario.
     args, _unknown = parser.parse_known_args()
+
+    if args.version:
+        # The launcher's pre-flight runs `<CLAUDE_COMMAND> --version` with a
+        # 10 s timeout; without this branch the mock ran its default scenario
+        # instead and every mock launch paid the full 10 s (and the legacy
+        # host e2e tests' 10 s launch timeouts fired). Version string
+        # matches the corpus in tests/fixtures_realistic.py.
+        print("2.0.75 (Claude Code)")
+        return
 
     # Handle --print for simple testing
     if args.print:
