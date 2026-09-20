@@ -87,7 +87,7 @@ Run agents in custom environments — containers, VMs, or any setup your project
 See the [Wrappers Guide](docs/wrappers.md) for setup and customisation.
 
 ### Agent Backends
-Overcode is not Claude-Code-only. It supports five agent CLIs today: Claude Code, opencode,
+Overcode is not Claude-Code-only. It supports six agent CLIs today: Claude Code, opencode,
 the opencode2 2.0 preview, Codex, Grok, and Hermes. Launch a non-default one with `overcode launch
 -n my-agent --backend opencode` (or `opencode2` / `codex` / `grok` / `hermes`) and it appears in the
 same dashboard with live hook-grade status, previews, AI summaries, send-instruction, restart,
