@@ -22,6 +22,7 @@ from tests.daemon_test_utils import kill_by_pid_file, stop_daemons_in_state_dir
 TESTS_DIR = Path(__file__).parent.parent
 MOCK_CLAUDE = TESTS_DIR / "mock_claude.py"
 MOCK_OPENCODE = TESTS_DIR / "mock_opencode.py"
+MOCK_OPENCODE2 = TESTS_DIR / "mock_opencode2.py"
 MOCK_CODEX = TESTS_DIR / "mock_codex.py"
 MOCK_GROK = TESTS_DIR / "mock_grok.py"
 MOCK_HERMES = TESTS_DIR / "mock_hermes.py"
@@ -29,8 +30,10 @@ PROJECT_ROOT = TESTS_DIR.parent
 SRC_DIR = PROJECT_ROOT / "src"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
 
-# Test tmux socket (isolated from user's tmux)
-TEST_TMUX_SOCKET = "overcode-test"
+# Test tmux socket (isolated from user's tmux). Overridable so a CI slice
+# can pin its own dedicated socket (e.g. OVERCODE_TEST_TMUX_SOCKET=oc2e2e)
+# without ever touching the user's default tmux server.
+TEST_TMUX_SOCKET = os.environ.get("OVERCODE_TEST_TMUX_SOCKET", "overcode-test")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -104,19 +107,37 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     # (e.g., TUI's _ensure_monitor_daemon)
     env = os.environ.copy()
     env["CLAUDE_COMMAND"] = str(MOCK_CLAUDE)
-    # Same swap for the opencode/codex/grok/hermes backends, so a
-    # mixed-backend test never reaches a real `opencode`/`codex`/`grok`/
-    # `hermes` binary on the host.
+    # Same swap for the opencode/opencode2/codex/grok/hermes backends, so a
+    # mixed-backend test never reaches a real `opencode`/`opencode2`/`codex`/
+    # `grok`/`hermes` binary on the host.
     env["OPENCODE_COMMAND"] = str(MOCK_OPENCODE)
+    env["OPENCODE2_COMMAND"] = str(MOCK_OPENCODE2)
     env["CODEX_COMMAND"] = str(MOCK_CODEX)
     env["GROK_COMMAND"] = str(MOCK_GROK)
     env["HERMES_COMMAND"] = str(MOCK_HERMES)
     # hermes's plugin install/enable step writes under HERMES_HOME; keep it
     # out of the developer's real ~/.hermes.
     env["HERMES_HOME"] = str(Path(state_dir) / "hermes-home")
+    # grok's prepare_launch writes a *global* hooks file under GROK_HOME
+    # (default ~/.grok); keep it out of the developer's real one too.
+    env["GROK_HOME"] = str(Path(state_dir) / "grok-home")
     env["OVERCODE_STATE_DIR"] = state_dir
     env["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
     env["PYTHONPATH"] = str(SRC_DIR)
+
+    # Strip the host agent's identity so the launcher's auto-parent
+    # detection doesn't try to adopt it (the tests' fresh OVERCODE_STATE_DIR
+    # has no such session, and the launch would abort). Same list as
+    # test_hook_status_detection.py's real_claude_env fixture.
+    for key in [
+        "OVERCODE_SESSION_NAME",
+        "OVERCODE_TMUX_SESSION",
+        "OVERCODE_PARENT_SESSION_ID",
+        "OVERCODE_PARENT_NAME",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+    ]:
+        env.pop(key, None)
 
     # Propagate coverage settings to subprocesses for combined coverage
     # This allows e2e subprocess coverage to be collected alongside unit tests
@@ -130,10 +151,23 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
     # Save original values to restore later
     orig_state_dir = os.environ.get("OVERCODE_STATE_DIR")
     orig_tmux_socket = os.environ.get("OVERCODE_TMUX_SOCKET")
+    orig_identity = {
+        key: os.environ.get(key)
+        for key in [
+            "OVERCODE_SESSION_NAME",
+            "OVERCODE_TMUX_SESSION",
+            "OVERCODE_PARENT_SESSION_ID",
+            "OVERCODE_PARENT_NAME",
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+        ]
+    }
 
     # Set in os.environ so child processes inherit these
     os.environ["OVERCODE_STATE_DIR"] = state_dir
     os.environ["OVERCODE_TMUX_SOCKET"] = TEST_TMUX_SOCKET
+    for key in orig_identity:
+        os.environ.pop(key, None)
 
     try:
         yield {
@@ -165,6 +199,12 @@ def clean_test_env(test_session_name: str) -> Generator[dict, None, None]:
             os.environ.pop("OVERCODE_TMUX_SOCKET", None)
         else:
             os.environ["OVERCODE_TMUX_SOCKET"] = orig_tmux_socket
+
+        for key, value in orig_identity.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @pytest.fixture

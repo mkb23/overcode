@@ -1,0 +1,40 @@
+   New session                   +
+
+  ┃
+  ┃  say hi
+  ┃
+
+     Error: Provider request failed with HTTP 404
+
+     Build · GPT-4o mini · 119ms
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GPT-4o mini BogusOpenAI
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/opencode/oc2cap-work/bogus3                                                   shift+tab agents  ctrl+p commands
+

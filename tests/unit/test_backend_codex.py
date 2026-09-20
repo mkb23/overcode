@@ -368,10 +368,11 @@ class TestGestures:
         assert [(p.keys, p.enter) for p in presses] == [("Escape", False)]
 
     def test_trust_dialog_rule(self, backend):
-        rules = backend.startup_dialog_rules()
-        assert len(rules) == 1
-        rule = rules[0]
-        assert rule.marker == "Do you trust the contents of this directory?"
+        rules = {r.marker: r for r in backend.startup_dialog_rules()}
+        # Two startup dialogs are known: the update prompt (0.153.4+, see
+        # TestStartupDialogRules) and the per-directory trust dialog.
+        assert set(rules) == {"Update available!", "Do you trust the contents of this directory?"}
+        rule = rules["Do you trust the contents of this directory?"]
         assert [(p.keys, p.enter) for p in rule.presses] == [("", True)]
 
     def test_prompt_ready_chars(self, backend):
@@ -406,3 +407,31 @@ class TestPrepareLaunch:
         # raise, and must not stage any files.
         backend.prepare_launch(LaunchSpec(start_directory=str(tmp_path)))
         assert list(tmp_path.iterdir()) == []
+
+
+class TestStartupDialogRules:
+    """The launcher dismisses these while waiting for codex's prompt."""
+
+    def test_update_prompt_is_skipped_not_accepted(self):
+        # A bare Enter on the update prompt runs `npm install -g` — the rule
+        # must pick "2. Skip" by digit, no Enter (seen live, codex 0.153.4).
+        from overcode.backends.codex import CodexBackend
+        rules = {r.marker: r for r in CodexBackend().startup_dialog_rules()}
+        rule = rules["Update available!"]
+        assert [(p.keys, p.enter) for p in rule.presses] == [("2", False)]
+
+    def test_trust_dialog_is_accepted_with_enter(self):
+        from overcode.backends.codex import CodexBackend
+        rules = {r.marker: r for r in CodexBackend().startup_dialog_rules()}
+        rule = rules["Do you trust the contents of this directory?"]
+        assert [(p.keys, p.enter) for p in rule.presses] == [("", True)]
+
+    def test_update_rule_precedes_trust_rule(self):
+        # codex draws the update prompt first; the launcher handles rules in
+        # declaration order, one per poll, so order matters for latency only
+        # — but it must not be lost.
+        from overcode.backends.codex import CodexBackend
+        markers = [r.marker for r in CodexBackend().startup_dialog_rules()]
+        assert markers.index("Update available!") < markers.index(
+            "Do you trust the contents of this directory?"
+        )

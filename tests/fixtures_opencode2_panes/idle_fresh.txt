@@ -1,0 +1,40 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                          ▄
+                                         █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                         █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                                         ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+
+                       ┃
+                       ┃  Ask anything… "Fix broken tests"
+                       ┃
+                       ┃  Build · acme-llm-1 Acme · high
+                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                       /tmp/opencode/oc2cap-work/plain           shift+tab agents  ctrl+p commands
+
+
+
+
+
+
+
+
+
+
+
+
+  ⊙ 0 MCP /mcps                                                                                        0.0.0-dev-19272
+

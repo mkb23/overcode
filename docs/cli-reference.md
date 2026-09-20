@@ -25,7 +25,7 @@ overcode launch --name <name> [options]
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
 | `--allowed-tools` | | Comma-separated tools to allow (e.g., `Read,Glob,Grep,Edit`). Claude Code only — maps to `--allowedTools`; ignored for opencode, which has no such flag |
 | `--backend-arg` | | Extra agent-CLI flag (repeatable). Each value is a space-separated flag+value string. `--claude-arg` is a deprecated alias |
-| `--backend` | `-B` | Agent CLI backend: `claude-code` (default) or `opencode`. See [Backends](backends.md) |
+| `--backend` | `-B` | Agent CLI backend: `claude-code` (default), `opencode`, `opencode2`, `codex`, or `grok`. See [Backends](backends.md) |
 | `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |

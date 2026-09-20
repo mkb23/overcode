@@ -384,6 +384,7 @@ class AgentSessionStats:
     background_task_count: int = 0  # Number of background/farm tasks (#177)
     model: Optional[str] = None  # Most recently seen model name (#272)
     provider: Optional[str] = None  # Detected API provider ("web" or "bedrock")
+    agent: Optional[str] = None  # detected agent persona, opencode2's NULL-row fallback
     last_command: Optional[str] = None  # Most recent user prompt text
     # The backend's *own* context window for this session, when it has one
     # (#469) — codex's rollout JSONL reports `payload.info.model_context_window`

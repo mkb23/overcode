@@ -35,6 +35,7 @@ class BackendCapability(Flag):
     HOOK_EVENTS = auto()              # push telemetry (hook-state files) available
     TRANSCRIPT_STATS = auto()         # tokens/cost/context readable from disk
     PERMISSION_INJECTION = auto()     # per-launch permission allowlist
+    AGENT_INJECTION = auto()           # launch-time persona/agent flag (--agent) is honored
     SKILLS = auto()                   # skills/persona file discovery
     SANDBOX_PROBE = auto()
     SUBSCRIPTION_USAGE = auto()
@@ -107,7 +108,7 @@ class LaunchSpec:
 class AgentBackend(Protocol):
     """Adapter for one agent CLI."""
 
-    name: str                       # "claude-code" | "opencode" | "codex" | "grok" | "hermes"
+    name: str                       # "claude-code" | "opencode" | "opencode2" | "codex" | "grok" | "hermes"
     display_name: str
     binary: str                     # for dependency_check + doctor process matching
     version_args: Sequence[str]

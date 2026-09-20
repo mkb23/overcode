@@ -151,7 +151,7 @@ new_agent_defaults:
   agent_teams: false          # Enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
   provider: web               # "web" (Claude.ai OAuth) or "bedrock" (AWS)
   wrapper: ""                 # Wrapper script name or path (e.g., "devcontainer")
-  backend: claude-code        # claude-code | opencode | codex | grok — see docs/backends.md
+  backend: claude-code        # claude-code | opencode | opencode2 | codex | grok — see docs/backends.md
 ```
 
 These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults, and for child agents the parent's settings take precedence over config defaults (#433): explicit flag > parent setting > config default > built-in default. Use `--no-inherit` to skip the parent.
@@ -166,6 +166,29 @@ row that cycles through every registered backend plus `(unset)` (space/enter
 to cycle, `a` to apply). There is no `overcode config set` CLI subcommand —
 `overcode config` only supports `init`/`show`/`path`/`tmux` — so config.yaml
 and the `G` modal are the only two ways to change this default.
+
+## Backend Telemetry
+
+Non-Claude backends install a telemetry footprint at launch (a plugin file,
+a hooks file, or per-launch argv) so overcode gets hook-grade status. Turn
+one off per-backend in `~/.overcode/config.yaml`:
+
+```yaml
+backend_telemetry:
+  opencode: off    # skip installing <project>/.opencode/plugins/overcode-telemetry.js
+  opencode2: off   # skip installing <project>/.opencode/plugins/overcode-telemetry-v2/ (bundled plugin)
+  codex: off       # skip the per-launch -c 'hooks.*=...' argv injection
+  grok: off        # skip installing ~/.grok/hooks/overcode.json
+```
+
+Default is `on` for every backend, so nothing changes until you opt one out.
+`claude-code` is exempt and always on — its hooks ride per-launch
+`--settings` flags and leave no on-disk footprint to opt out of. With a
+backend's telemetry off, `prepare_launch()` writes nothing and status falls
+back to pane polling automatically; `overcode doctor` reports the agent as
+`telemetry-disabled` (informational) rather than `missing-settings` (broken).
+See [Backends](backends.md) ("Opting out of telemetry") for each backend's
+exact footprint and the `overcode hooks uninstall-backend` cleanup commands.
 
 ## Passthru Keys
 

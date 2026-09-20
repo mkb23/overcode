@@ -1,0 +1,40 @@
+   Casual greeting                 Writing a 300-line poem       +
+
+  ┃
+  ┃  write a 300-line poem
+  ┃
+
+     + Thought · 3.4s
+
+     Build · acme-llm-1 · 3.9s · interrupted
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · acme-llm-1 Acme · high
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/opencode/oc2cap-work/plain                                                               $0.00  ctrl+p commands
+

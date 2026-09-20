@@ -78,6 +78,16 @@ class TestLocalSessionCapabilities:
         assert not session_supports(_local("opencode"), BackendCapability.SUBSCRIPTION_USAGE)
         assert session_supports(_local("opencode"), BackendCapability.FORK)
 
+    def test_agent_injection_marks_the_backends_that_pass_agent(self):
+        # claude-code, opencode (v1) and grok pass --agent at launch and
+        # honor it; codex has no --agent and opencode2's TUI rejects the
+        # flag — their stored personas were never applied, which is what
+        # the daemon's persona-sync guard keys on.
+        for name in ("claude-code", "opencode", "grok"):
+            assert session_supports(_local(name), BackendCapability.AGENT_INJECTION)
+        for name in ("codex", "opencode2"):
+            assert not session_supports(_local(name), BackendCapability.AGENT_INJECTION)
+
 
 class TestRemoteSessionCapabilities:
     """Sister agents answer from what the remote daemon published."""

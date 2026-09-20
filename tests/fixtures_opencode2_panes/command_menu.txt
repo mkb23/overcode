@@ -1,0 +1,40 @@
+   Casual greeting               +
+
+  ┃
+  ┃  say hi
+  ┃
+
+     + Thought · 189ms
+
+     → Skill "using-superpowers"
+
+     Hi! 👋
+
+     Build · acme-llm-1 · 1.3s · 93.0 tok/s
+
+
+
+
+
+
+
+
+
+
+  ┃ /agents                   Switch agent                                                                           ┃
+  ┃ /build-skill              Step-by-step guide for creating new Claude Code skills (slash commands). Use when buil ┃
+  ┃ /cancel-ralph             Cancel active Ralph Wiggum loop                                                        ┃
+  ┃ /cd                       Change working directory                                                               ┃
+  ┃ /cmr                      Load forecasts and responses, generate reports, and analyse alpha performance with Cus ┃
+  ┃ /compact                  Compact session                                                                        ┃
+  ┃ /connect                  Connect an integration                                                                 ┃
+  ┃ /copy                     Copy session transcript                                                                ┃
+  ┃ /debug                    View debug info                                                                        ┃
+  ┃ /diff                     Open diff viewer                                                                       ┃
+  ┃
+  ┃  /
+  ┃
+  ┃  Build · acme-llm-1 Acme · high
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  /tmp/opencode/oc2cap-work/plain                                                  10.7K (2%) · $0.01  ctrl+p commands
+

@@ -170,6 +170,7 @@ def doctor(
     # reads on-screen chrome that drifts across releases), plus whatever
     # else that backend knows to check — opencode's autoupdate setting,
     # grok's subscription auth, hermes's plugin enablement / provider setup,
+    # opencode2's rolling-preview build,
     # and each stats store's schema drift. Each adapter answers through its
     # optional ``doctor_findings()`` (see AgentBackend in backends/base.py);
     # only backends that actually have an agent in the fleet are consulted.

@@ -72,11 +72,11 @@ def hooks_uninstall(
 def hooks_uninstall_backend(
     backend: Annotated[
         str,
-        typer.Argument(help="Backend name: claude-code, opencode, codex, grok, or hermes"),
+        typer.Argument(help="Backend name: claude-code, opencode, opencode2, codex, grok, or hermes"),
     ],
     dir: Annotated[
         Optional[str],
-        typer.Option("--dir", help="Project directory (required for opencode — its plugin is project-scoped)"),
+        typer.Option("--dir", help="Project directory (required for opencode/opencode2 — their plugins are project-scoped)"),
     ] = None,
 ):
     """Remove a backend's on-disk telemetry footprint, if any.
@@ -84,12 +84,14 @@ def hooks_uninstall_backend(
     Claude Code's hooks and codex's hooks both ride per-launch CLI flags
     with zero files written, so there is nothing to remove for either.
     opencode's telemetry plugin lives at
-    ``<project>/.opencode/plugins/overcode-telemetry.js``; grok's hooks file
-    is global at ``~/.grok/hooks/overcode.json``; hermes's plugin is global
-    at ``$HERMES_HOME/plugins/overcode/``. Each is removed only if it still
-    carries overcode's marker — a file you've since edited yourself is left
-    alone. Pair this with setting ``backend_telemetry: {<backend>: off}`` in
-    config.yaml so a future launch doesn't just reinstall it.
+    ``<project>/.opencode/plugins/overcode-telemetry.js``; opencode2's at
+    ``<project>/.opencode/plugins/overcode-telemetry-v2/`` (three files);
+    grok's hooks file is global at ``~/.grok/hooks/overcode.json``; hermes's
+    plugin is global at ``$HERMES_HOME/plugins/overcode/``. Each is removed
+    only if it still carries overcode's marker — a file you've since edited
+    yourself is left alone. Pair this with setting
+    ``backend_telemetry: {<backend>: off}`` in config.yaml so a future
+    launch doesn't just reinstall it.
 
     The per-backend logic is each adapter's ``uninstall_telemetry`` (see
     ``AgentBackend`` in backends/base.py) — this command only dispatches.

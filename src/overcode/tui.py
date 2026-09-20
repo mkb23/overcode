@@ -882,10 +882,12 @@ class SupervisorTUI(
         self._sort_sessions(selected_id=selected_id)
         # update_session_widgets handles focus preservation internally
         # Guard against race where background worker delivers sessions before
-        # the ScrollableContainer is fully mounted (#286).
+        # the ScrollableContainer is fully mounted (#286). The race surfaces
+        # as MountError when the container exists but is not yet mounted, or
+        # as NoMatches when the query runs before it is even in the DOM.
         try:
             self.update_session_widgets(force_refresh=False)
-        except MountError:
+        except (MountError, NoMatches):
             return
 
         # First-load sync: align the external tmux pane with the TUI's focused
