@@ -39,3 +39,35 @@ generates a store with opencode's real schema, indexes and row-size
 distribution, and `scripts/bench_opencode_scan.py` times both readers
 against whatever store `OPENCODE_DB` names, so a regression can be measured
 on a meaty store rather than the unit fixtures.
+
+## Also in 0.5.4: less tmux and subprocess load from polling
+
+A separate investigation into typing lag in tmux while overcode runs
+found that the load is the *number* of tmux commands and subprocesses the
+TUI and daemon issue per second, not the size of any one of them: the tmux
+server is single-threaded and serves every `capture-pane`, `resize-window`
+and `list-windows` in line with keystrokes. These changes cut that count
+without touching what the focused agent sees.
+
+- **Hook events start in 20 ms instead of 80 ms.** Every backend runs
+  `overcode hook-handler` on every tool call, and the `overcode` console
+  script used to import the whole typer CLI first. A new
+  `overcode.entrypoint` dispatches the bare `hook-handler` form before the
+  CLI, rich or libtmux are imported. Reinstall (`pip install -e .` or `uv
+  sync`) to pick up the new console script.
+- **Non-focused agents are captured round-robin.** The TUI's 250 ms fast
+  path still captures the focused agent every tick, and any agent the
+  daemon is not reporting on, but agents the daemon already covers rotate
+  through a 1-in-4 slot (about 1 Hz each) and take their status from
+  daemon state. Their pane-derived columns can lag by up to a second.
+- **The 15 s resize sweep only resizes windows that changed.** One
+  `list-windows` reports current sizes; `resize-window` at the same size
+  was not free (it fires layout hooks and redraws every client).
+- **Listing sessions costs one tmux command.** Terminated-window detection
+  and the legacy window-index migration share a single `list-windows`
+  instead of two commands per agent every 10 s.
+- **Git scans are deduplicated and slower.** Diff and untracked counts run
+  once per distinct directory, every third 5 s sweep, rather than per agent
+  every sweep; the daemon reads `.git/HEAD` directly instead of spawning
+  two git processes per agent every 2 s, and falls back to git for layouts
+  it does not recognise.

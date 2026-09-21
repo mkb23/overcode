@@ -640,6 +640,13 @@ flag never touches a codex session you launch by hand outside overcode.
 `overcode doctor` reports `missing-settings` for a codex agent whose argv
 lacks `--dangerously-bypass-hook-trust` — see the doctor section below.
 
+**Hook cost.** Every backend fires `overcode hook-handler` on every tool
+call, so its startup time is paid fleet-wide, many times a second. The
+`overcode` console script (`overcode.entrypoint:main`) dispatches the bare
+`hook-handler` form straight to `hook_handler.handle_hook_event()` before
+the typer CLI, rich, or libtmux are imported — roughly 20 ms per event
+instead of 80 ms. Any other invocation falls through to the full CLI.
+
 ### Event mapping and the Interrupt/SessionStart additions
 
 Codex's hook stdin is snake_case and Claude-shaped already

@@ -62,6 +62,9 @@ from .tui_logic import (
     compute_active_session_names,
     compute_session_widget_diff,
     detect_display_changes,
+    select_capture_sessions,
+    windows_needing_resize,
+    should_scan_git,
 )
 from .tui_widgets import (
     FullscreenPreview,
@@ -328,6 +331,14 @@ class SupervisorTUI(
         # Flags to prevent overlapping async updates (fast and slow paths are independent)
         self._status_update_in_progress = False
         self._stats_update_in_progress = False
+        # Fast-path tick counter and last captured pane text per session.
+        # Non-focused agents are captured round-robin (see
+        # tui_logic.select_capture_sessions); on ticks they're skipped, the
+        # cached text keeps their bash/subagent columns and preview stable.
+        self._status_tick = 0
+        self._pane_content_cache: dict[str, str] = {}
+        # Slow-path sweep counter: git scans run every Nth sweep
+        self._stats_sweep = 0
         # Track whether sessions have been loaded at least once (for startup sequencing)
         self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
@@ -830,12 +841,33 @@ class SupervisorTUI(
             return
         sync_session = self.tmux_sync_target or self.tmux_session
         # Local sessions only — remote sessions have their own resize path
-        for session in list(self.sessions):
-            if getattr(session, "is_remote", False):
-                continue
-            window = getattr(session, "tmux_window", None)
-            if not window:
-                continue
+        windows = [
+            session.tmux_window for session in list(self.sessions)
+            if not getattr(session, "is_remote", False)
+            and getattr(session, "tmux_window", None)
+        ]
+        # One list-windows call tells us which windows are already the right
+        # size; resize-window is not free even when nothing changes (it fires
+        # layout hooks and redraws), so in the steady state this sweep sends
+        # no per-window commands at all.
+        current_sizes: dict[str, tuple[int, int]] = {}
+        try:
+            listed = subprocess.run(
+                [*_tmux_base(), "list-windows", "-t", sync_session,
+                 "-F", "#{window_name}\t#{window_width}\t#{window_height}"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if listed.returncode == 0:
+                for line in listed.stdout.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) == 3:
+                        try:
+                            current_sizes[parts[0]] = (int(parts[1]), int(parts[2]))
+                        except ValueError:
+                            continue
+        except (subprocess.SubprocessError, OSError):
+            pass  # Unknown sizes → resize everything, as before
+        for window in windows_needing_resize(current_sizes, windows, width, height):
             target = f"{sync_session}:{window}"
             try:
                 subprocess.run(
@@ -1350,10 +1382,37 @@ class SupervisorTUI(
             focused_w = self._get_focused_widget()
             focused_session_id = focused_w.session.id if focused_w else None
 
+            # Daemon state is read once, up front: it decides which non-focused
+            # agents can skip their tmux capture this tick (their status comes
+            # from the daemon below) and enriches statuses afterwards.
+            daemon_state = get_monitor_daemon_state(self.tmux_session)
+            daemon_fresh = bool(
+                daemon_state and daemon_state.sessions
+                and not daemon_state.is_stale(buffer_seconds=5.0)
+            )
+            daemon_known_ids = (
+                {s.session_id for s in daemon_state.sessions} if daemon_fresh else set()
+            )
+            self._status_tick += 1
+            capture_ids = select_capture_sessions(
+                [sid for sid, _ in sessions_to_check], focused_session_id,
+                self._status_tick, daemon_known_ids,
+            )
+            content_cache = self._pane_content_cache
+
             def fetch_status(session):
                 try:
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
+                    if session.id not in capture_ids:
+                        # Skipped this tick: daemon supplies status/activity
+                        # (see enrichment below); reuse last captured text so
+                        # the pane-derived columns don't flicker to empty.
+                        return (
+                            self._previous_statuses.get(session.id, STATUS_WAITING_USER),
+                            "",
+                            content_cache.get(session.id, ""),
+                        )
                     if session.status == "terminated":
                         # Re-check to detect revival (window is uncontested)
                         return self.detector.detect_status(session)
@@ -1378,8 +1437,13 @@ class SupervisorTUI(
             _diag = self._prefs.status_change_logging
             for (session_id, _), status_result in zip(sessions_to_check, results):
                 status_results[session_id] = status_result
+                if session_id in capture_ids:
+                    content_cache[session_id] = status_result[2] or ""
                 if _diag:
                     raw_statuses[session_id] = status_result[0]
+            # Drop cache entries for sessions no longer displayed
+            for stale_id in [sid for sid in content_cache if sid not in status_results]:
+                del content_cache[stale_id]
 
             # Enrich non-focused agents with daemon state (#291)
             # The focused agent keeps its detect_status result for preview pane
@@ -1393,8 +1457,7 @@ class SupervisorTUI(
             # focused (no daemon override) for enrichment.
             focused_id = focused_session_id
             status_sources = {sid: "detect" for sid in status_results} if _diag else {}
-            daemon_state = get_monitor_daemon_state(self.tmux_session)
-            if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
+            if daemon_fresh:
                 daemon_by_id = {s.session_id: s for s in daemon_state.sessions}
                 for session_id in list(status_results):
                     if session_id == focused_id:
@@ -1424,7 +1487,7 @@ class SupervisorTUI(
 
             # Extract subtree costs from daemon state (local agents)
             subtree_costs = {}
-            if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
+            if daemon_fresh:
                 for ds in daemon_state.sessions:
                     if ds.subtree_cost_usd > 0:
                         subtree_costs[ds.session_id] = ds.subtree_cost_usd
@@ -1490,6 +1553,32 @@ class SupervisorTUI(
             # Single HistoryFile shared across all sessions — parse once, reuse N times
             history_file = HistoryFile()
 
+            sessions = [s for _, s in sessions_to_check]
+
+            # Git diff/untracked scans: once per distinct directory (agents
+            # commonly share a repo) and only every Nth sweep — they walk the
+            # working tree, which is the expensive part of this path.
+            from .tui_helpers import effective_git_directory
+            git_by_dir: dict = {}
+            run_git = should_scan_git(self._stats_sweep)
+            self._stats_sweep += 1
+            if run_git:
+                git_dirs = sorted({
+                    d for d in (
+                        effective_git_directory(s) for s in sessions if not s.is_remote
+                    ) if d
+                })
+
+                def scan_git(directory):
+                    try:
+                        return (get_git_diff_stats(directory), get_git_untracked_count(directory))
+                    except Exception:
+                        return (None, None)
+
+                if git_dirs:
+                    with ThreadPoolExecutor(max_workers=min(8, len(git_dirs))) as executor:
+                        git_by_dir = dict(zip(git_dirs, executor.map(scan_git, git_dirs)))
+
             def fetch_stats(session):
                 try:
                     if session.is_remote:
@@ -1501,18 +1590,14 @@ class SupervisorTUI(
                     claude_stats = stats_reader_for_session(session).get_stats(
                         session, history_file=history_file
                     )
-                    git_diff = None
-                    git_untracked = None
-                    from .tui_helpers import effective_git_directory
-                    _gdir = effective_git_directory(session)
-                    if _gdir:
-                        git_diff = get_git_diff_stats(_gdir)
-                        git_untracked = get_git_untracked_count(_gdir)
+                    # (None, None) on non-git sweeps → widgets keep prior values
+                    git_diff, git_untracked = git_by_dir.get(
+                        effective_git_directory(session), (None, None)
+                    )
                     return (claude_stats, git_diff, git_untracked)
                 except Exception:
                     return (None, None, None)
 
-            sessions = [s for _, s in sessions_to_check]
             with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
                 results = list(executor.map(fetch_stats, sessions))
 

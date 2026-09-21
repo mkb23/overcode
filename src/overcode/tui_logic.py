@@ -904,3 +904,71 @@ def calculate_human_interaction_count(
     if total_interactions is None:
         return 0
     return max(0, total_interactions - robot_interactions)
+
+
+# ── Polling load shaping ──────────────────────────────────────────────
+#
+# The TUI's fast path captures tmux panes every 250ms. Every capture is a
+# tmux client round-trip that the (single-threaded) tmux server has to
+# serve in line with keystrokes, so the *number* of commands per second is
+# what makes typing in agent panes feel laggy at fleet scale. Only the
+# focused agent needs 4 Hz (its pane feeds the preview); the daemon owns
+# every other agent's status and refreshes it every 2s anyway, so their
+# captures — which only feed the bash/subagent/auto-accept columns — are
+# spread round-robin across ticks.
+
+NON_FOCUSED_CAPTURE_EVERY = 4  # ticks; at 250ms that's ~1 Hz per agent
+
+
+def select_capture_sessions(
+    session_ids: List[str],
+    focused_id: Optional[str],
+    tick: int,
+    daemon_known_ids: Set[str],
+    every: int = NON_FOCUSED_CAPTURE_EVERY,
+) -> Set[str]:
+    """Pick which sessions get a tmux capture on this fast-path tick.
+
+    Always: the focused session, and any session the daemon isn't reporting
+    on (its status would otherwise be unknown). Everyone else is captured on
+    a rotating 1-in-``every`` slot so the per-tick tmux command count stays
+    roughly ``1 + N/every`` instead of ``N``.
+    """
+    every = max(1, every)
+    slot = tick % every
+    chosen: Set[str] = set()
+    for i, sid in enumerate(session_ids):
+        if sid == focused_id or sid not in daemon_known_ids or i % every == slot:
+            chosen.add(sid)
+    return chosen
+
+
+def windows_needing_resize(
+    current_sizes: dict,
+    windows: List[str],
+    width: int,
+    height: int,
+) -> List[str]:
+    """Windows whose recorded (width, height) differs from the target.
+
+    ``tmux resize-window`` is not a no-op at the same size: it still walks
+    the resize path, fires ``window-layout-changed`` hooks and schedules a
+    redraw for every client showing the window. Skipping already-correct
+    windows turns the periodic reconcile sweep into a single list-windows
+    call in the steady state.
+    """
+    return [w for w in windows if current_sizes.get(w) != (width, height)]
+
+
+GIT_STATS_EVERY_SWEEPS = 3  # 5s stats sweeps between git diff/untracked scans
+
+
+def should_scan_git(sweep: int, every: int = GIT_STATS_EVERY_SWEEPS) -> bool:
+    """Whether stats sweep number ``sweep`` (0-based) should run git scans.
+
+    ``git ls-files --others`` walks the whole working tree and ``git diff
+    --stat HEAD`` reads every tracked file's stat — heavy on big repos, and
+    the previous per-agent-every-5s cadence turned that into a periodic
+    CPU/IO burst. Diff and untracked columns tolerate a slower refresh.
+    """
+    return sweep % max(1, every) == 0

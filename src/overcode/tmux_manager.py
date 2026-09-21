@@ -270,10 +270,17 @@ class TmuxManager:
         from .tmux_utils import attach_bare
         attach_bare(self.session_name, window, socket_path=self.socket)
 
-    def list_windows(self) -> List[Dict[str, Any]]:
+    def list_windows(self, include_command: bool = True) -> List[Dict[str, Any]]:
         """List all windows in the session.
 
         Returns list of dicts with 'index' (int), 'name' (str), 'command' (str).
+
+        Args:
+            include_command: Populate 'command' with the first pane's current
+                command. libtmux fetches that with one ``list-panes`` call per
+                window, so callers that only need names/indices (existence
+                checks, legacy-index migration) should pass False to keep this
+                to a single tmux round-trip.
         """
         if not self.session_exists():
             return []
@@ -295,7 +302,7 @@ class TmuxManager:
             for win in sess.windows:
                 # Get command from first pane
                 command = ""
-                if win.panes:
+                if include_command and win.panes:
                     command = win.panes[0].pane_current_command or ""
                 windows.append({
                     "index": int(win.window_index),

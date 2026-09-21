@@ -15,6 +15,67 @@ import time
 
 from .exceptions import StateWriteError
 
+
+_HEADS_PREFIX = "ref: refs/heads/"
+
+
+def _looks_like_object_id(text: str) -> bool:
+    return len(text) in (40, 64) and all(c in "0123456789abcdef" for c in text)
+
+
+def read_git_context_from_disk(directory: str) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """Return ``(repo_name, branch)`` for ``directory`` by reading ``.git`` files.
+
+    A subprocess-free equivalent of ``git rev-parse --show-toplevel`` plus
+    ``git branch --show-current``, for the monitor daemon's per-agent
+    per-tick refresh:
+
+    - walks up from ``directory`` to the nearest ``.git`` — a directory, or
+      the ``gitdir: <path>`` file that worktrees and submodules use;
+    - ``repo_name`` is the name of the directory holding that ``.git``
+      (the worktree root, exactly what ``--show-toplevel`` reports);
+    - ``branch`` is the name behind ``ref: refs/heads/``, or ``""`` for a
+      detached HEAD / non-branch ref (``--show-current`` prints nothing).
+
+    Returns ``(None, None)`` when no repository encloses ``directory`` and
+    ``None`` when the layout is unrecognised or unreadable — the caller
+    then falls back to asking git itself.
+    """
+    try:
+        path = Path(directory).resolve()
+    except OSError:
+        return None
+
+    for candidate in (path, *path.parents):
+        dot_git = candidate / ".git"
+        try:
+            if dot_git.is_dir():
+                git_dir = dot_git
+            elif dot_git.is_file():
+                text = dot_git.read_text().strip()
+                if not text.startswith("gitdir:"):
+                    return None
+                git_dir = Path(text[len("gitdir:"):].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (candidate / git_dir).resolve()
+                if not git_dir.is_dir():
+                    return None
+            else:
+                continue
+            content = (git_dir / "HEAD").read_text().strip()
+        except OSError:
+            return None
+
+        if content.startswith(_HEADS_PREFIX):
+            branch = content[len(_HEADS_PREFIX):]
+        elif content.startswith("ref: ") or _looks_like_object_id(content):
+            branch = ""
+        else:
+            return None
+        return candidate.name, branch
+
+    return None, None
+
 try:
     import fcntl
     HAS_FCNTL = True
@@ -602,13 +663,22 @@ class SessionManager:
         return start_directory
 
     def _detect_git_context(self, directory: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-        """Detect git repo and branch from directory"""
+        """Detect git repo and branch from directory.
+
+        Reads ``.git/HEAD`` directly when it can (no subprocess — the monitor
+        daemon calls this for every agent every 2s) and only shells out to
+        git when the on-disk layout is something it doesn't understand.
+        """
         if not directory:
             return None, None
 
         # Check directory exists
         if not os.path.isdir(directory):
             return None, None
+
+        fast = read_git_context_from_disk(directory)
+        if fast is not None:
+            return fast
 
         try:
             import subprocess

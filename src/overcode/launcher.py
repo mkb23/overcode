@@ -15,7 +15,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import re
 
@@ -43,6 +43,26 @@ from .exceptions import TmuxNotFoundError, AgentCliNotFoundError, InvalidSession
 
 # Valid session name pattern
 SESSION_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def window_lookup(windows: List[Dict[str, Any]]) -> Tuple[set, set]:
+    """Build (names, index-strings) sets from a ``list_windows()`` result.
+
+    Lets callers answer "does window X exist?" for many X from one tmux
+    round-trip, with the same semantics as ``TmuxManager.window_exists``:
+    exact name match, falling back to a legacy digit-string index match.
+    """
+    names = {w.get("name", "") for w in windows}
+    indices = {str(w.get("index")) for w in windows if w.get("index") is not None}
+    return names, indices
+
+
+def window_in_lookup(window: str, lookup: Tuple[set, set]) -> bool:
+    """Existence check against ``window_lookup`` output (see there)."""
+    names, indices = lookup
+    if window in names:
+        return True
+    return window.isdigit() and window in indices
 
 
 def validate_session_name(name: str) -> None:
@@ -904,22 +924,29 @@ class AgentLauncher:
         # Filter to only sessions belonging to this tmux session
         my_sessions = [s for s in all_sessions if s.tmux_session == self.tmux.session_name]
 
+        # One tmux round-trip for the whole call: the window list serves both
+        # the legacy-index migration and the existence checks below. The old
+        # per-session window_exists() cost two tmux commands per agent, and
+        # the TUI calls this every 10s.
+        tmux_windows = self._list_tmux_windows_cheap()
+
         # Migrate legacy digit-string tmux_window values to actual window names.
         # Pre-name-based sessions stored window index (e.g. 4 → "4") but the new
         # code expects the window name (e.g. "overcode2"). Resolve via tmux.
-        self._migrate_legacy_window_ids(my_sessions)
+        self._migrate_legacy_window_ids(my_sessions, tmux_windows)
 
         # Detect terminated sessions (tmux window gone but session still tracked)
         if detect_terminated:
             from .follow_mode import _check_hook_stop, _check_report
             from .status_constants import STATUS_WAITING_OVERSIGHT
 
+            existing = window_lookup(tmux_windows)
             newly_terminated = []
             newly_done: list[str] = []  # session ids of children that just flipped to done (#432)
             for session in my_sessions:
                 # Only check non-terminated sessions
                 if session.status not in ("terminated", "done"):
-                    if not self.tmux.window_exists(session.tmux_window):
+                    if not window_in_lookup(session.tmux_window, existing):
                         # Child agents with Stop hook: check for report first
                         if (session.parent_session_id is not None
                                 and _check_hook_stop(self.tmux.session_name, session.name)):
@@ -1162,14 +1189,32 @@ class AgentLauncher:
 
         return success
 
-    def _migrate_legacy_window_ids(self, sessions: List[Session]) -> None:
+    def _list_tmux_windows_cheap(self) -> List[Dict[str, Any]]:
+        """Window list without per-window pane commands (one tmux command).
+
+        Tolerates tmux managers that don't accept ``include_command``
+        (test doubles, older subclasses).
+        """
+        try:
+            return self.tmux.list_windows(include_command=False)
+        except TypeError:
+            return self.tmux.list_windows()
+
+    def _migrate_legacy_window_ids(
+        self, sessions: List[Session], windows: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
         """Migrate legacy digit-string tmux_window values to actual window names.
 
         Legacy sessions stored the window index (int) which got converted to a
         digit string like "4". We resolve these to the actual window name by
         looking up the tmux window list by index.
+
+        Args:
+            windows: pre-fetched ``list_windows()`` result to avoid a second
+                tmux round-trip; fetched here when omitted.
         """
-        windows = self.tmux.list_windows()
+        if windows is None:
+            windows = self._list_tmux_windows_cheap()
         if not windows:
             return
         index_to_name = {str(w['index']): w['name'] for w in windows}
