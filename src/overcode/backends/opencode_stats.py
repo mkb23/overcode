@@ -26,9 +26,10 @@ daemon tick.
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .. import model_metadata
 from ..stats_reader import (
@@ -323,6 +324,159 @@ def fetch_rows_for_directory(
     return conn.execute(sql, (*candidates, since_ms)).fetchall()
 
 
+def _scan_sql(ids: Sequence[str]) -> Tuple[str, List[Any]]:
+    """The newest ``_MESSAGE_SCAN_LIMIT`` rows of each conversation — narrow
+    columns only, unordered across conversations.
+
+    One bounded probe per conversation, not one ``WHERE session_id IN (...)
+    ORDER BY ... LIMIT`` over all of them: SQLite answers the latter through
+    a temp B-tree fed by every candidate row, so its cost grew roughly
+    quadratically with the number of owned ids (~2 ms at one, ~115 ms at
+    eight on a real store — per agent, per second, for the burn rate; #476).
+    Each probe here walks the ``(session_id, time_created)`` index backwards
+    and stops at its own limit, which is also what the per-session scan
+    limit documents. The caller merges in Python: an SQL ``ORDER BY`` over
+    the union would materialise every row again.
+
+    ``data`` is deliberately not selected — see ``_cached_records``.
+    """
+    probe = (
+        "SELECT * FROM (SELECT id, session_id, time_created, time_updated "
+        "FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT ?)"
+    )
+    sql = " UNION ALL ".join([probe] * len(ids))
+    params: List[Any] = []
+    for sid in ids:
+        params.extend((sid, _MESSAGE_SCAN_LIMIT))
+    return sql, params
+
+
+# Per-row parse cache (#476). The TUI re-reads a conversation's newest rows
+# every second for the burn rate and every 5 s for the stats columns, and
+# on a real store an assistant row is 1 KB-1 MB of JSON (tool output
+# travels inline). So the scan selects only the narrow columns — they all
+# sit in the row's first page, so it never touches overflow pages — and
+# fetches + parses ``data`` only for rows it has not seen at that
+# ``time_updated``. opencode rewrites ``time_updated`` whenever it rewrites
+# a row (on a live store an assistant row's ``time_updated`` is its
+# ``time.completed``); an assistant row still in flight (no
+# ``time.completed`` yet) is never cached, so a stale key cannot freeze it.
+# Entries are small extracted records, never the envelope.
+_ROW_CACHE_MAX = 50_000
+_row_cache: Dict[Tuple[str, str, str], Tuple[Any, Any]] = {}
+_row_cache_lock = threading.Lock()
+
+# A parsed row: the record the scan consumes, and whether it may be cached.
+RowParser = Callable[[Optional[str], Any], Tuple[Optional[Dict[str, Any]], bool]]
+
+
+def clear_row_cache() -> None:
+    """Drop every cached row record (tests)."""
+    with _row_cache_lock:
+        _row_cache.clear()
+
+
+def _database_key(conn: sqlite3.Connection) -> str:
+    """The file behind ``conn`` — cache entries must not cross stores."""
+    try:
+        for _seq, name, file in conn.execute("PRAGMA database_list"):
+            if name == "main":
+                return file or ""
+    except sqlite3.Error:
+        pass
+    return ""
+
+
+def _fetch_data(
+    conn: sqlite3.Connection, table: str, ids: Sequence[str]
+) -> Dict[str, str]:
+    """``data`` for the given row ids, by primary key."""
+    out: Dict[str, str] = {}
+    for start in range(0, len(ids), 500):
+        chunk = list(ids[start : start + 500])
+        sql = f"SELECT id, data FROM {table} WHERE id IN ({_placeholders(len(chunk))})"
+        for msg_id, data in conn.execute(sql, chunk):
+            out[msg_id] = data
+    return out
+
+
+def _cached_records(
+    conn: sqlite3.Connection,
+    table: str,
+    rows: Sequence[Tuple[str, Any, Any]],
+    parse: RowParser,
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Records for ``rows`` of ``(id, time_updated, hint)``, parsed at most
+    once per ``(store, table, id, time_updated)``.
+
+    ``hint`` is handed to ``parse`` alongside the body (v2 keeps the row
+    type outside the envelope). Unparseable rows map to None.
+    """
+    db = _database_key(conn)
+    records: Dict[str, Optional[Dict[str, Any]]] = {}
+    missing: List[Tuple[str, Any, Any]] = []
+    for msg_id, version, hint in rows:
+        entry = _row_cache.get((db, table, msg_id))
+        if entry is not None and entry[0] == version:
+            records[msg_id] = entry[1]
+        else:
+            missing.append((msg_id, version, hint))
+    if not missing:
+        return records
+
+    bodies = _fetch_data(conn, table, [msg_id for msg_id, _, _ in missing])
+    fresh: Dict[Tuple[str, str, str], Tuple[Any, Any]] = {}
+    for msg_id, version, hint in missing:
+        record, cacheable = parse(bodies.get(msg_id), hint)
+        records[msg_id] = record
+        if cacheable:
+            fresh[(db, table, msg_id)] = (version, record)
+    if fresh:
+        with _row_cache_lock:
+            if len(_row_cache) + len(fresh) > _ROW_CACHE_MAX:
+                # Bound growth: drop the oldest half (insertion order).
+                for stale in list(_row_cache)[: _ROW_CACHE_MAX // 2]:
+                    del _row_cache[stale]
+            _row_cache.update(fresh)
+    return records
+
+
+def _optional_ms(value: Any) -> Optional[float]:
+    return value if isinstance(value, (int, float)) else None
+
+
+def _parse_message_record(
+    data: Optional[str], _hint: Any
+) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """Extract what the scan needs from a v1 ``message.data`` envelope."""
+    try:
+        envelope = json.loads(data) if data is not None else None
+    except (ValueError, TypeError):
+        return None, False
+    if not isinstance(envelope, dict):
+        return None, False
+    tokens = envelope.get("tokens")
+    tokens = tokens if isinstance(tokens, dict) else {}
+    cache = tokens.get("cache")
+    cache = cache if isinstance(cache, dict) else {}
+    times = envelope.get("time")
+    times = times if isinstance(times, dict) else {}
+    role = envelope.get("role")
+    record = {
+        "role": role,
+        "total": _as_int(tokens.get("total")),
+        "input": _as_int(tokens.get("input")),
+        "output": _as_int(tokens.get("output")),
+        "reasoning": _as_int(tokens.get("reasoning")),
+        "cache_read": _as_int(cache.get("read")),
+        "cache_write": _as_int(cache.get("write")),
+        "created": _optional_ms(times.get("created")),
+        "completed": _optional_ms(times.get("completed")),
+    }
+    in_flight = role == "assistant" and record["completed"] is None
+    return record, not in_flight
+
+
 def _scan_messages(
     conn: sqlite3.Connection,
     session_ids: Sequence[str],
@@ -345,64 +499,53 @@ def _scan_messages(
     if not ids:
         return out
 
-    sql = (
-        "SELECT id, session_id, time_created, data FROM message "
-        f"WHERE session_id IN ({_placeholders(len(ids))}) "
-        "ORDER BY time_created DESC LIMIT ?"
-    )
+    sql, params = _scan_sql(ids)
     try:
-        rows = conn.execute(sql, (*ids, _MESSAGE_SCAN_LIMIT * max(1, len(ids)))).fetchall()
+        rows = conn.execute(sql, params).fetchall()
+        rows.sort(key=lambda row: row[2], reverse=True)  # time_created DESC
+        records = _cached_records(
+            conn, "message", [(row[0], row[3], None) for row in rows],
+            _parse_message_record,
+        )
     except sqlite3.Error:
         return out
 
     seen_context = False
-    for _msg_id, session_id, time_created, data in rows:
-        try:
-            envelope = json.loads(data)
-        except (ValueError, TypeError):
+    for msg_id, session_id, time_created, _updated in rows:
+        record = records.get(msg_id)
+        if record is None:
             continue
-        if not isinstance(envelope, dict):
-            continue
-        role = envelope.get("role")
+        role = record["role"]
         if role == "user":
             out["interaction_count"] += 1
             continue
         if role != "assistant":
             continue
 
-        tokens = envelope.get("tokens")
-        tokens = tokens if isinstance(tokens, dict) else {}
-        cache = tokens.get("cache")
-        cache = cache if isinstance(cache, dict) else {}
-
         # Rows arrive newest-first, so the first assistant turn carrying a
         # total is the live context size. Only the active conversation's
         # context is meaningful — an older /new session's is stale.
         if (
             not seen_context
-            and tokens.get("total")
+            and record["total"]
             and (active_id is None or session_id == active_id)
         ):
-            out["current_context_tokens"] = _as_int(tokens.get("total"))
+            out["current_context_tokens"] = record["total"]
             seen_context = True
 
-        times = envelope.get("time")
-        times = times if isinstance(times, dict) else {}
-        created = times.get("created")
-        completed = times.get("completed")
-        if isinstance(created, (int, float)) and isinstance(completed, (int, float)):
+        created = record["created"]
+        completed = record["completed"]
+        if created is not None and completed is not None:
             elapsed = (completed - created) / 1000.0
             if elapsed > 0:
                 out["work_times"].append(elapsed)
 
         if since_ms is not None and _as_int(time_created) >= since_ms:
             window = out["window"]
-            window["input_tokens"] += _as_int(tokens.get("input"))
-            window["output_tokens"] += _as_int(tokens.get("output")) + _as_int(
-                tokens.get("reasoning")
-            )
-            window["cache_creation_tokens"] += _as_int(cache.get("write"))
-            window["cache_read_tokens"] += _as_int(cache.get("read"))
+            window["input_tokens"] += record["input"]
+            window["output_tokens"] += record["output"] + record["reasoning"]
+            window["cache_creation_tokens"] += record["cache_write"]
+            window["cache_read_tokens"] += record["cache_read"]
 
     out["work_times"].reverse()
     return out
@@ -697,6 +840,7 @@ def _launch_ms(session: Any) -> Optional[int]:
 
 __all__ = [
     "EXPECTED_MESSAGE_COLUMNS",
+    "clear_row_cache",
     "EXPECTED_SESSION_COLUMNS",
     "OpencodeStatsReader",
     "connect",

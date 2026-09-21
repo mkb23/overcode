@@ -19,6 +19,13 @@ This directory contains technical design documents, architecture analysis, and i
 - **Summary:** How to map model ids overcode doesn't recognise — internal naming conventions, gateway aliases — onto the bundled models.dev catalog: a deterministic alias file first, then an opt-in LLM-assisted resolver that writes confident matches back to that file. Follow-on to #473.
 - **Audience:** Contributors; users behind corporate gateways with their own model names
 
+### opencode stats reader performance (#476)
+- **File:** `opencode-stats-reader-performance.md`
+- **Status:** Implemented in 0.5.4
+- **Date:** September 2026
+- **Summary:** Profiling of the opencode/opencode2 stats readers' message scan against a generated 2.3 GB store, why the proposed 60 s TTL cache was declined, and the fix: per-conversation index probes plus a per-row parse cache (opencode2 `get_stats` at eight owned conversations 254 ms → 9.6 ms).
+- **Audience:** Contributors touching the backend stats readers or the TUI's polling
+
 ---
 
 ## Contributing Design Docs

@@ -60,7 +60,9 @@ from ..stats_reader import (
 from .opencode_stats import (
     _as_float,
     _as_int,
+    _cached_records,
     _launch_ms,
+    _optional_ms,
     _parse_model,
     _placeholders,
     _table_columns,
@@ -216,6 +218,69 @@ def _row_identities(rows: Sequence[sqlite3.Row]) -> Tuple[Optional[str], Optiona
     return _parse_model(active["model"]), (active["agent"] or None)
 
 
+def _scan_sql(ids: Sequence[str]) -> Tuple[str, List[Any]]:
+    """The newest ``_MESSAGE_SCAN_LIMIT`` user/assistant rows of each
+    conversation — narrow columns only, unordered across conversations.
+
+    One bounded probe per conversation rather than one ``session_id IN
+    (...) ORDER BY ... LIMIT`` over all of them — the shared sort's cost
+    grew roughly quadratically with the number of owned ids (#476; the v1
+    reader's ``_scan_sql`` has the numbers). Inside one conversation
+    ``seq`` is assigned in insertion order, so ``ORDER BY seq DESC`` on the
+    unique ``(session_id, seq)`` index yields exactly the newest rows
+    without a sort; the caller merges by ``(time_created, seq)`` in Python.
+
+    ``data`` is deliberately not selected: on a real store an assistant
+    row carries its tool output inline (1 KB-1 MB); bodies are fetched
+    once per version through ``opencode_stats._cached_records``.
+    """
+    probe = (
+        "SELECT * FROM (SELECT id, session_id, type, seq, time_created, "
+        "time_updated FROM session_message WHERE session_id = ? "
+        "AND type IN ('user', 'assistant') ORDER BY seq DESC LIMIT ?)"
+    )
+    sql = " UNION ALL ".join([probe] * len(ids))
+    params: List[Any] = []
+    for sid in ids:
+        params.extend((sid, _MESSAGE_SCAN_LIMIT))
+    return sql, params
+
+
+def _parse_session_message_record(
+    data: Optional[str], mtype: Any
+) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """Extract what the scan needs from a v2 ``session_message.data`` body.
+
+    ``mtype`` is the row's ``type`` column (the envelope has no role).
+    """
+    try:
+        envelope = json.loads(data) if data is not None else None
+    except (ValueError, TypeError):
+        return None, False
+    if not isinstance(envelope, dict):
+        return None, False
+    tokens = envelope.get("tokens")
+    tokens = tokens if isinstance(tokens, dict) else {}
+    cache = tokens.get("cache")
+    cache = cache if isinstance(cache, dict) else {}
+    times = envelope.get("time")
+    times = times if isinstance(times, dict) else {}
+    agent = envelope.get("agent")
+    record = {
+        "input": _as_int(tokens.get("input")),
+        "output": _as_int(tokens.get("output")),
+        "reasoning": _as_int(tokens.get("reasoning")),
+        "cache_read": _as_int(cache.get("read")),
+        "cache_write": _as_int(cache.get("write")),
+        "created": _optional_ms(times.get("created")),
+        "completed": _optional_ms(times.get("completed")),
+        "model": _parse_model(envelope.get("model")),
+        "agent": agent if isinstance(agent, str) and agent else None,
+    }
+    in_flight = mtype == "assistant" and record["completed"] is None
+    return record, not in_flight
+
+
 def _scan_messages(
     conn: sqlite3.Connection,
     session_ids: Sequence[str],
@@ -246,24 +311,22 @@ def _scan_messages(
     if not ids:
         return out
 
-    sql = (
-        "SELECT id, session_id, type, time_created, data FROM session_message "
-        f"WHERE session_id IN ({_placeholders(len(ids))}) "
-        "AND type IN ('user', 'assistant') "
-        "ORDER BY time_created DESC, seq DESC LIMIT ?"
-    )
+    sql, params = _scan_sql(ids)
     try:
-        rows = conn.execute(sql, (*ids, _MESSAGE_SCAN_LIMIT * max(1, len(ids)))).fetchall()
+        rows = conn.execute(sql, params).fetchall()
+        rows.sort(key=lambda row: (row[4], row[3]), reverse=True)
+        records = _cached_records(
+            conn, "session_message",
+            [(row[0], row[5], row[2]) for row in rows],
+            _parse_session_message_record,
+        )
     except sqlite3.Error:
         return out
 
     seen_context = False
-    for _msg_id, session_id, mtype, time_created, data in rows:
-        try:
-            envelope = json.loads(data)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(envelope, dict):
+    for msg_id, session_id, mtype, _seq, time_created, _updated in rows:
+        record = records.get(msg_id)
+        if record is None:
             continue
         if mtype == "user":
             out["interaction_count"] += 1
@@ -271,22 +334,13 @@ def _scan_messages(
         if mtype != "assistant":
             continue
 
-        tokens = envelope.get("tokens")
-        tokens = tokens if isinstance(tokens, dict) else {}
-        cache = tokens.get("cache")
-        cache = cache if isinstance(cache, dict) else {}
-
         # v2's assistant data has no `tokens.total` (verified); the context
         # size is the processed prompt — input + cache read + cache write —
         # the semantics AgentSessionStats.current_context_tokens documents.
         # Rows arrive newest-first, and only the active conversation's
         # context is meaningful — an older /new session's is stale.
         if not seen_context and (active_id is None or session_id == active_id):
-            context = (
-                _as_int(tokens.get("input"))
-                + _as_int(cache.get("read"))
-                + _as_int(cache.get("write"))
-            )
+            context = record["input"] + record["cache_read"] + record["cache_write"]
             if context > 0:
                 out["current_context_tokens"] = context
                 seen_context = True
@@ -296,32 +350,24 @@ def _scan_messages(
         # tracked session's identities must not leak into the active
         # conversation.
         if active_id is not None and session_id == active_id:
-            if out["model"] is None:
-                parsed_model = _parse_model(envelope.get("model"))
-                if parsed_model:
-                    out["model"] = parsed_model
-            if out["agent"] is None:
-                agent = envelope.get("agent")
-                if isinstance(agent, str) and agent:
-                    out["agent"] = agent
+            if out["model"] is None and record["model"]:
+                out["model"] = record["model"]
+            if out["agent"] is None and record["agent"]:
+                out["agent"] = record["agent"]
 
-        times = envelope.get("time")
-        times = times if isinstance(times, dict) else {}
-        created = times.get("created")
-        completed = times.get("completed")
-        if isinstance(created, (int, float)) and isinstance(completed, (int, float)):
+        created = record["created"]
+        completed = record["completed"]
+        if created is not None and completed is not None:
             elapsed = (completed - created) / 1000.0
             if elapsed > 0:
                 out["work_times"].append(elapsed)
 
         if since_ms is not None and _as_int(time_created) >= since_ms:
             window = out["window"]
-            window["input_tokens"] += _as_int(tokens.get("input"))
-            window["output_tokens"] += _as_int(tokens.get("output")) + _as_int(
-                tokens.get("reasoning")
-            )
-            window["cache_creation_tokens"] += _as_int(cache.get("write"))
-            window["cache_read_tokens"] += _as_int(cache.get("read"))
+            window["input_tokens"] += record["input"]
+            window["output_tokens"] += record["output"] + record["reasoning"]
+            window["cache_creation_tokens"] += record["cache_write"]
+            window["cache_read_tokens"] += record["cache_read"]
 
     out["work_times"].reverse()
     return out
