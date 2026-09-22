@@ -1390,6 +1390,33 @@ class TestComputeSubtreeCosts:
         daemon._compute_subtree_costs([orphan])
         assert orphan.subtree_cost_usd == 0.0
 
+    def test_self_parent_cycle_terminates(self):
+        """A duplicate name whose entry names itself as parent must not recurse forever."""
+        daemon = self._make_daemon()
+        a1 = self._make_state("dup", 1.00)
+        a2 = self._make_state("dup", 2.00, parent_name="dup")  # same name, parent = itself
+        daemon._compute_subtree_costs([a1, a2])
+        # by_name keeps the last entry; its subtree is itself, counted once
+        assert a2.subtree_cost_usd == 2.00
+
+    def test_two_node_cycle_counts_each_member_once(self):
+        daemon = self._make_daemon()
+        a = self._make_state("a", 1.00, parent_name="b")
+        b = self._make_state("b", 2.00, parent_name="a")
+        daemon._compute_subtree_costs([a, b])
+        assert a.subtree_cost_usd == 3.00
+        assert b.subtree_cost_usd == 3.00
+
+    def test_cycle_does_not_corrupt_an_unrelated_tree(self):
+        daemon = self._make_daemon()
+        a = self._make_state("a", 1.00, parent_name="b")
+        b = self._make_state("b", 2.00, parent_name="a")
+        parent = self._make_state("parent", 4.00)
+        child = self._make_state("child", 0.50, parent_name="parent")
+        daemon._compute_subtree_costs([a, b, parent, child])
+        assert parent.subtree_cost_usd == 4.50
+        assert child.subtree_cost_usd == 0.0
+
 
 class TestPrBranchMismatchClearing:
     """Test that PR is cleared when agent switches branches."""
@@ -1597,7 +1624,7 @@ class TestCountUntrackedWindows:
         session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'agent1'},
@@ -1615,7 +1642,7 @@ class TestCountUntrackedWindows:
         session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'agent1'},
@@ -1632,7 +1659,7 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
         ]
@@ -1649,7 +1676,7 @@ class TestCountUntrackedWindows:
         session.tmux_window = "orphan"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'orphan'},
@@ -1664,11 +1691,46 @@ class TestCountUntrackedWindows:
         daemon = self._make_daemon()
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = False
+        mock_tmux.has_session.return_value = False
 
         with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
             result = daemon._count_untracked_windows([])
             assert result == 0
+
+    def test_counts_against_the_fake_tmux(self):
+        """Works on a real ``TmuxInterface`` implementation, not just MagicMock.
+
+        MagicMock answers any attribute, which is how the old call to a
+        non-existent ``session_exists`` method passed these tests while
+        raising AttributeError (swallowed, count 0) against ``RealTmux``.
+        """
+        from overcode.mocks import MockTmux
+
+        daemon = self._make_daemon()
+        tmux = MockTmux()
+        tmux.new_session("agents")
+        tmux.new_window("agents", "bash")  # index 0: default shell, never counted
+        tmux.new_window("agents", "agent1")  # index 1: tracked
+        tmux.new_window("agents", "rogue")  # index 2: untracked
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = "agent1"
+
+        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+
+    def test_fake_tmux_without_the_session_returns_zero(self):
+        from overcode.mocks import MockTmux
+
+        daemon = self._make_daemon()
+        assert daemon._count_untracked_windows([], tmux=MockTmux()) == 0
+
+    def test_tmux_interface_has_no_session_exists(self):
+        """Guard against the bug coming back: the protocol spells it has_session."""
+        from overcode.implementations import RealTmux
+        from overcode.protocols import TmuxInterface
+
+        assert hasattr(TmuxInterface, "has_session")
+        assert not hasattr(RealTmux, "session_exists")
 
 
 class TestMaybeRotateHistory:

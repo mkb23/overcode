@@ -67,9 +67,11 @@ class MockTmux:
     def list_windows(self, session: str) -> List[Dict[str, Any]]:
         if session not in self.sessions:
             return []
+        # Windows are indexed in creation order, as tmux does, so callers
+        # that treat window 0 specially (the default shell) see real indices.
         return [
-            {'index': 0, 'name': key, 'active': False}
-            for key in self.sessions[session].keys()
+            {"index": i, "name": key, "active": False}
+            for i, key in enumerate(self.sessions[session].keys())
         ]
 
     def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:

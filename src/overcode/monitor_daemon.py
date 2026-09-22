@@ -958,16 +958,26 @@ class MonitorDaemon:
             self.session_manager.update_session_status(session.id, "terminated")
             self.log.info(f"Auto-archived done agent: {session.name}")
 
-    def _count_untracked_windows(self, sessions: list) -> int:
+    def _count_untracked_windows(self, sessions: list, tmux=None) -> int:
         """Count tmux windows not tracked by any active session (#344).
 
         Returns count of windows that exist in tmux but aren't tracked
         (excluding window 0 which is the default shell).
+
+        Args:
+            sessions: Sessions from the current tick.
+            tmux: A ``TmuxInterface``; a fresh ``RealTmux`` when None. Injected
+                so the count can be tested against the fake tmux — the previous
+                code called a ``session_exists`` method that ``RealTmux`` never
+                had, so it raised on every run and the ``except`` below silently
+                reported 0 untracked windows forever.
         """
         try:
-            from .implementations import RealTmux
-            tmux = RealTmux()
-            if not tmux.session_exists(self.tmux_session):
+            if tmux is None:
+                from .implementations import RealTmux
+
+                tmux = RealTmux()
+            if not tmux.has_session(self.tmux_session):
                 return 0
             tmux_windows = tmux.list_windows(self.tmux_session)
             active_sessions = [s for s in sessions if s.status != "terminated"]
@@ -1494,22 +1504,31 @@ class MonitorDaemon:
             )
 
     def _compute_subtree_costs(self, session_states):
-        """Compute subtree cost (self + all descendants) for each parent agent."""
+        """Compute subtree cost (self + all descendants) for each parent agent.
+
+        Agents are linked by *name*, and names are not guaranteed unique: a
+        duplicate name whose entry lists itself (or an ancestor) as parent
+        forms a cycle in ``children_map``. Each walk carries a ``visited`` set
+        so such a cycle counts every member once instead of recursing until
+        the daemon dies with RecursionError.
+        """
         by_name = {s.name: s for s in session_states}
         children_map = {}
         for s in session_states:
             if s.parent_name and s.parent_name in by_name:
                 children_map.setdefault(s.parent_name, []).append(s.name)
 
-        def _sum(name):
+        def _sum(name, visited):
+            visited.add(name)
             total = by_name[name].estimated_cost_usd
             for child in children_map.get(name, []):
-                total += _sum(child)
+                if child not in visited:
+                    total += _sum(child, visited)
             return total
 
         for s in session_states:
             if children_map.get(s.name):
-                s.subtree_cost_usd = _sum(s.name)
+                s.subtree_cost_usd = _sum(s.name, set())
 
     def _cleanup_stale(self, sessions: list) -> None:
         """Remove stale tracking entries for deleted sessions."""
