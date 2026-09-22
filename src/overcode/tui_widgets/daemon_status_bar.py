@@ -216,6 +216,12 @@ class DaemonStatusBar(Static):
             content.append(f"{symbol} ", style=style)
             content.append(f"#{state.loop_count}", style="cyan")
             content.append(f" @{format_interval(state.current_interval)}", style="dim")
+            # A tick slower than the interval means the daemon is alive but
+            # behind. is_stale() already tolerates it (it adds the tick
+            # duration to its window), so say so rather than flip to "stopped".
+            tick_s = getattr(state, "last_tick_duration_seconds", 0.0)
+            if isinstance(tick_s, (int, float)) and tick_s > state.current_interval:
+                content.append(f" ⚠daemon slow ({tick_s:.1f}s tick)", style="bold yellow")
             # Version mismatch warning
             if state.daemon_version != DAEMON_VERSION:
                 content.append(f" ⚠v{state.daemon_version}→{DAEMON_VERSION}", style="bold yellow")

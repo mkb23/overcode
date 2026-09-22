@@ -309,6 +309,59 @@ class TestMonitorDaemonState:
 
         assert state.is_stale() is False
 
+    # -- slow-but-alive daemon (audit R6) ------------------------------------
+
+    def _state_aged(self, seconds, **kw):
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        t = (datetime.now() - timedelta(seconds=seconds)).isoformat()
+        return MonitorDaemonState(pid=1, status="active", last_loop_time=t, **kw)
+
+    def test_slow_tick_widens_the_freshness_window(self):
+        """A 2 s-interval daemon whose ticks take 8 s publishes every ~10 s."""
+        # Without the duration the TUI's 5 s buffer declares this dead
+        assert self._state_aged(9, current_interval=2).is_stale(buffer_seconds=5.0) is True
+        # With it the state is fresh: 2 + 8 + 5 = 15 s window
+        slow = self._state_aged(9, current_interval=2, last_tick_duration_seconds=8.0)
+        assert slow.is_stale(buffer_seconds=5.0) is False
+
+    def test_slow_tick_still_goes_stale_past_the_window(self):
+        slow = self._state_aged(16, current_interval=2, last_tick_duration_seconds=8.0)
+        assert slow.is_stale(buffer_seconds=5.0) is True
+
+    def test_expected_publish_gap_is_interval_plus_tick(self):
+        s = self._state_aged(0, current_interval=2, last_tick_duration_seconds=8.5)
+        assert s.expected_publish_gap() == 10.5
+
+    def test_zero_or_bad_duration_keeps_old_behaviour(self):
+        """Old state files (no field) and garbage values fall back to interval + buffer."""
+        assert self._state_aged(0, current_interval=2).expected_publish_gap() == 2.0
+        bad = self._state_aged(0, current_interval=2, last_tick_duration_seconds=-3.0)
+        assert bad.expected_publish_gap() == 2.0
+        assert self._state_aged(8, current_interval=2).is_stale(buffer_seconds=5.0) is True
+        assert self._state_aged(6, current_interval=2).is_stale(buffer_seconds=5.0) is False
+
+    def test_tick_fields_round_trip_and_default_when_absent(self, tmp_path):
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        state = self._state_aged(
+            0,
+            current_interval=2,
+            last_tick_duration_seconds=7.25,
+            tick_started_at="2026-09-23T10:00:00",
+        )
+        path = tmp_path / "state.json"
+        state.save(path)
+        loaded = MonitorDaemonState.load(path)
+        assert loaded.last_tick_duration_seconds == 7.25
+        assert loaded.tick_started_at == "2026-09-23T10:00:00"
+        # A state file written by an older daemon has neither key
+        legacy = MonitorDaemonState.from_dict(
+            {"pid": 1, "last_loop_time": datetime.now().isoformat()}
+        )
+        assert legacy.last_tick_duration_seconds == 0.0
+        assert legacy.tick_started_at is None
+
 
 class TestCreateMonitorLogger:
     """Test _create_monitor_logger factory function."""
@@ -1028,6 +1081,84 @@ class TestPublishState:
             daemon._publish_state([])
 
         mock_relay.assert_called_once()
+
+    def test_publishes_last_tick_duration(self, tmp_path, monkeypatch):
+        """The measured tick duration lands in the state file (rounded to ms)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon._last_tick_duration_seconds = 7.123456
+
+        daemon._publish_state([])
+
+        with open(tmp_path / "state.json") as f:
+            data = json.load(f)
+        assert data["last_tick_duration_seconds"] == 7.123
+        assert daemon.state.last_tick_duration_seconds == 7.123
+
+    def test_publishes_zero_duration_before_first_tick_completes(self, tmp_path, monkeypatch):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon._publish_state([])
+        with open(tmp_path / "state.json") as f:
+            assert json.load(f)["last_tick_duration_seconds"] == 0.0
+
+
+class TestTickTiming:
+    """_tick measures its own wall time and stamps when it started (R6)."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        with patch.object(MonitorDaemon, "__init__", lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon.state = MonitorDaemonState()
+        daemon._last_tick_duration_seconds = 0.0
+        return daemon
+
+    def test_tick_records_duration_and_start(self):
+        import time as _time
+
+        daemon = self._make_daemon()
+        now = datetime(2026, 9, 23, 10, 0, 0)
+        with patch.object(daemon, "_tick_phases", side_effect=lambda _now: _time.sleep(0.02)):
+            daemon._tick(now)
+
+        assert daemon.state.tick_started_at == now.isoformat()
+        assert daemon._last_tick_duration_seconds >= 0.02
+
+    def test_duration_is_recorded_even_when_a_phase_raises(self):
+        daemon = self._make_daemon()
+        with patch.object(daemon, "_tick_phases", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                daemon._tick(datetime.now())
+        assert daemon._last_tick_duration_seconds >= 0.0
+
+    def test_next_tick_publishes_previous_duration(self, tmp_path, monkeypatch):
+        """Tick N publishes mid-way, so tick N+1 is the first to carry N's duration."""
+        import time as _time
+
+        daemon = self._make_daemon()
+        daemon.tmux_session = "test"
+        daemon.state_path = tmp_path / "state.json"
+        daemon.presence = Mock()
+        daemon.presence.available = False
+        daemon.presence.get_current_state.return_value = (None, None, False)
+        monkeypatch.setattr(
+            "overcode.monitor_daemon.get_supervisor_stats_path", lambda x: tmp_path / "sup.json"
+        )
+        published = []
+
+        def phases(_now):
+            _time.sleep(0.02)
+            with patch.object(daemon, "_maybe_push_to_relay"):
+                daemon._publish_state([])
+            published.append(daemon.state.last_tick_duration_seconds)
+
+        with patch.object(daemon, "_tick_phases", side_effect=phases):
+            daemon._tick(datetime.now())
+            daemon._tick(datetime.now())
+
+        assert published[0] == 0.0
+        assert published[1] >= 0.02
 
 
 class TestMaybePushToRelay:

@@ -173,6 +173,13 @@ class MonitorDaemonState:
     loop_count: int = 0
     current_interval: int = field(default_factory=lambda: DAEMON.interval_fast)
     last_loop_time: Optional[str] = None  # ISO timestamp
+    # Tick timing. ``tick_started_at`` is when the tick that produced this
+    # state began; ``last_tick_duration_seconds`` is the wall time of the
+    # previous complete tick. The loop is tick-then-sleep, so consecutive
+    # publishes are ~(tick duration + interval) apart and is_stale() adds the
+    # duration to its window: a slow-but-alive daemon is not declared dead.
+    tick_started_at: Optional[str] = None  # ISO timestamp
+    last_tick_duration_seconds: float = 0.0
     started_at: Optional[str] = None  # ISO timestamp
     daemon_version: int = 0  # Version of daemon code
 
@@ -305,17 +312,36 @@ class MonitorDaemonState:
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
             return None
 
+    def expected_publish_gap(self) -> float:
+        """Seconds between consecutive publishes if the daemon is healthy.
+
+        The daemon runs a tick, publishes near its end, then sleeps
+        ``current_interval``; so the gap is the tick's own duration plus the
+        interval. Before ``last_tick_duration_seconds`` was published the
+        duration was assumed to be zero, and any tick slower than the
+        caller's buffer (5 s in the TUI fast path) flipped consumers into
+        "daemon dead" mode — at 50 agents that meant 4N capture-pane calls a
+        second on the shared tmux server (audit R6).
+        """
+        duration = self.last_tick_duration_seconds
+        if not isinstance(duration, (int, float)) or duration < 0:
+            duration = 0.0
+        return float(self.current_interval) + float(duration)
+
     def is_stale(self, buffer_seconds: float = 30.0) -> bool:
         """Check if the state is stale (daemon may have crashed).
 
-        Uses current_interval + buffer to determine staleness. This way, a daemon
-        sleeping for 300s won't be considered stale after just 30s.
+        The state is fresh while its age is at most the expected gap between
+        publishes (``current_interval`` plus the last tick's duration, see
+        :meth:`expected_publish_gap`) plus ``buffer_seconds``. This way a
+        daemon sleeping for 300 s isn't stale after 30 s, and one whose tick
+        takes 8 s isn't stale either.
 
         Args:
-            buffer_seconds: Extra time beyond current_interval before considered stale
+            buffer_seconds: Extra time beyond the expected gap before considered stale
 
         Returns:
-            True if state is older than (current_interval + buffer_seconds)
+            True if state is older than (expected gap + buffer_seconds)
         """
         if not self.last_loop_time:
             return True
@@ -323,8 +349,7 @@ class MonitorDaemonState:
         try:
             last_time = datetime.fromisoformat(self.last_loop_time)
             age = (datetime.now() - last_time).total_seconds()
-            # Allow current_interval + buffer before considering stale
-            max_age = self.current_interval + buffer_seconds
+            max_age = self.expected_publish_gap() + buffer_seconds
             return age > max_age
         except (ValueError, TypeError):
             return True

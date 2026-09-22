@@ -87,6 +87,8 @@ def _make_monitor_state(**overrides):
         relay_enabled=False,
         relay_last_status="disabled",
         untracked_window_count=0,
+        tick_started_at=None,
+        last_tick_duration_seconds=0.0,
     )
     defaults.update(overrides)
     mock = MagicMock(spec=MonitorDaemonState)
@@ -246,6 +248,30 @@ class TestDaemonStatusBarRenderRunning:
         assert "Monitor:" in plain
         assert "#42" in plain
         assert "@10s" in plain
+        assert "daemon slow" not in plain
+
+    def test_render_slow_tick_indicator(self):
+        """A tick longer than the interval is shown, not mistaken for 'stopped'."""
+        state = _make_monitor_state(
+            loop_count=42, current_interval=2, last_tick_duration_seconds=7.26
+        )
+        widget = _make_bare_status_bar(monitor_state=state)
+        plain = widget.render().plain
+        assert "#42" in plain
+        assert "daemon slow (7.3s tick)" in plain
+        assert "stopped" not in plain.split("Supervisor")[0]
+
+    def test_render_tick_within_interval_shows_nothing(self):
+        state = _make_monitor_state(current_interval=2, last_tick_duration_seconds=1.9)
+        widget = _make_bare_status_bar(monitor_state=state)
+        assert "daemon slow" not in widget.render().plain
+
+    def test_render_tolerates_missing_duration_attribute(self):
+        """State from an older daemon (or a bare mock) has no usable duration."""
+        state = _make_monitor_state(current_interval=2)
+        state.last_tick_duration_seconds = MagicMock()  # not a number
+        widget = _make_bare_status_bar(monitor_state=state)
+        assert "daemon slow" not in widget.render().plain
 
     def test_render_supervisor_running_ready(self):
         state = _make_monitor_state(

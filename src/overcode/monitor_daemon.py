@@ -311,6 +311,10 @@ class MonitorDaemon:
             daemon_version=DAEMON_VERSION,
         )
 
+        # Wall time of the previous complete tick, published so consumers can
+        # size their staleness window (MonitorDaemonState.is_stale).
+        self._last_tick_duration_seconds: float = 0.0
+
         # Per-session tracking
         self.previous_states: Dict[str, str] = {}
         self.last_state_times: Dict[str, datetime] = {}
@@ -1019,6 +1023,10 @@ class MonitorDaemon:
         presence_state, presence_idle, _ = self.presence.get_current_state()
 
         self.state.last_loop_time = now.isoformat()
+        # getattr: test doubles built via __new__ skip __init__
+        self.state.last_tick_duration_seconds = round(
+            getattr(self, "_last_tick_duration_seconds", 0.0), 3
+        )
         self.state.sessions = session_states
         self.state.presence_available = self.presence.available
         self.state.presence_state = presence_state
@@ -1109,7 +1117,22 @@ class MonitorDaemon:
     # ------------------------------------------------------------------
 
     def _tick(self, now: datetime) -> None:
-        """Execute one monitoring loop iteration."""
+        """Execute one monitoring loop iteration.
+
+        Times itself: the duration is published by the *next* tick's
+        ``_publish_state`` (this tick publishes mid-way, before it knows its
+        own length) so consumers can widen their staleness window instead of
+        treating a slow tick as a dead daemon.
+        """
+        tick_t0 = time.monotonic()
+        self.state.tick_started_at = now.isoformat()
+        try:
+            self._tick_phases(now)
+        finally:
+            self._last_tick_duration_seconds = time.monotonic() - tick_t0
+
+    def _tick_phases(self, now: datetime) -> None:
+        """The phases of one tick, in order."""
         # Re-read the fleet default detection mode (the legacy global
         # detection_mode file). Per-agent overrides are resolved inside the
         # dispatcher, on top of this default.
