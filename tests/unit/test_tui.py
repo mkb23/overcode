@@ -1561,6 +1561,7 @@ class TestRecordHeartbeat:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.1  # 100ms ago
 
@@ -1576,6 +1577,7 @@ class TestRecordHeartbeat:
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = 0
 
@@ -1589,6 +1591,7 @@ class TestRecordHeartbeat:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.1
 
@@ -1597,6 +1600,68 @@ class TestRecordHeartbeat:
         after = time.monotonic()
 
         assert before <= app._heartbeat_last <= after
+
+
+class TestHeartbeatProbeGrowth:
+    """The probe buffer must not grow when disabled, and is capped as a backstop.
+
+    With event_loop_timing_enabled: false the flush timer is never scheduled,
+    yet _mark_event was still appending ~10 rows/s from the apply callbacks:
+    >100 MB RSS after ~15 h of TUI uptime, >1 GB after a week (audit R17).
+    """
+
+    def _app(self, enabled):
+        from overcode.tui import SupervisorTUI
+        import time
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = enabled
+        app._heartbeat_log = []
+        app._heartbeat_last = time.monotonic() - 0.05
+        return app
+
+    def test_mark_event_is_a_no_op_when_disabled(self):
+        app = self._app(enabled=False)
+        for _ in range(1000):
+            app._mark_event("apply_status_start")
+        assert app._heartbeat_log == []
+
+    def test_record_heartbeat_is_a_no_op_when_disabled(self):
+        app = self._app(enabled=False)
+        before = app._heartbeat_last
+        app._record_heartbeat()
+        assert app._heartbeat_log == []
+        assert app._heartbeat_last == before
+
+    def test_missing_flag_counts_as_disabled(self):
+        """Lightweight doubles built via __new__ never grow a buffer."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._mark_event("x")
+        assert app._heartbeat_log == []
+
+    def test_buffer_is_capped_when_enabled(self):
+        from overcode.tui import HEARTBEAT_LOG_MAX_ENTRIES
+
+        app = self._app(enabled=True)
+        for i in range(HEARTBEAT_LOG_MAX_ENTRIES + 500):
+            app._mark_event(f"ev{i}")
+        assert len(app._heartbeat_log) <= HEARTBEAT_LOG_MAX_ENTRIES
+        # Newest rows survive; the oldest half was dropped at the cap
+        assert app._heartbeat_log[-1][2] == f"ev{HEARTBEAT_LOG_MAX_ENTRIES + 499}"
+        assert app._heartbeat_log[0][2] != "ev0"
+
+    def test_cap_drops_oldest_half_once_not_per_row(self):
+        from overcode.tui import HEARTBEAT_LOG_MAX_ENTRIES
+
+        app = self._app(enabled=True)
+        app._heartbeat_log = [("t", "0.0", f"ev{i}") for i in range(HEARTBEAT_LOG_MAX_ENTRIES)]
+        app._mark_event("new")
+        assert len(app._heartbeat_log) == HEARTBEAT_LOG_MAX_ENTRIES // 2 + 1
+        assert app._heartbeat_log[0][2] == f"ev{HEARTBEAT_LOG_MAX_ENTRIES // 2}"
+        assert app._heartbeat_log[-1][2] == "new"
 
 
 class TestMarkEvent:
@@ -1608,6 +1673,7 @@ class TestMarkEvent:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.05
 
@@ -1622,6 +1688,7 @@ class TestMarkEvent:
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = 0
 

@@ -47,6 +47,12 @@ from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
 from .tmux_utils import get_pane_base_index
+
+# Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
+# only bites if the flush timer never runs. Without it the buffer grew for the
+# life of the process (~10 rows/s => >100 MB after 15 h) whenever the probe
+# was disabled, because _mark_event kept appending with no flush scheduled.
+HEARTBEAT_LOG_MAX_ENTRIES = 10_000
 from .tui_helpers import (
     format_duration,
     get_git_diff_stats,
@@ -4236,20 +4242,35 @@ class SupervisorTUI(
 
     def _record_heartbeat(self) -> None:
         """Record one heartbeat tick. Runs every 100ms on the event loop."""
+        if not getattr(self, "_heartbeat_enabled", False):
+            return
         now = time.monotonic()
         if self._heartbeat_last > 0:
             delta_ms = (now - self._heartbeat_last) * 1000.0
             iso_ts = datetime.now().isoformat(timespec="milliseconds")
-            self._heartbeat_log.append((iso_ts, f"{delta_ms:.1f}", ""))
+            self._append_heartbeat((iso_ts, f"{delta_ms:.1f}", ""))
         self._heartbeat_last = now
 
     def _mark_event(self, name: str) -> None:
-        """Record a named event marker in the heartbeat log."""
+        """Record a named event marker in the heartbeat log.
+
+        A no-op when the probe is disabled: the flush timer only exists when
+        it is enabled, so appending here would grow the buffer unbounded.
+        """
+        if not getattr(self, "_heartbeat_enabled", False):
+            return
         now = time.monotonic()
         delta_ms = (now - self._heartbeat_last) * 1000.0 if self._heartbeat_last > 0 else 0.0
         iso_ts = datetime.now().isoformat(timespec="milliseconds")
-        self._heartbeat_log.append((iso_ts, f"{delta_ms:.1f}", name))
+        self._append_heartbeat((iso_ts, f"{delta_ms:.1f}", name))
         self._heartbeat_last = now
+
+    def _append_heartbeat(self, row: tuple) -> None:
+        """Buffer one probe row, dropping the oldest half at the cap (backstop)."""
+        log = self._heartbeat_log
+        if len(log) >= HEARTBEAT_LOG_MAX_ENTRIES:
+            del log[: len(log) // 2]
+        log.append(row)
 
     def _flush_heartbeat(self) -> None:
         """Write buffered heartbeat data to CSV. Runs every 5s."""
