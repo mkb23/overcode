@@ -1227,3 +1227,42 @@ class TestSynthesizeStatusDetailFromLegacy:
     def test_asleep_returns_none(self):
         from overcode.status_constants import STATUS_ASLEEP
         assert synthesize_status_detail_from_legacy(STATUS_ASLEEP) is None
+
+
+class TestHookDetectorCaptureGate:
+    """get_pane_content consults an installed PaneCaptureGate; the raw capture is unchanged."""
+
+    def test_gate_serves_cached_text_for_an_unchanged_pane(self, tmp_path):
+        from overcode.pane_capture_gate import PaneCaptureGate
+
+        state_dir = tmp_path / "sessions" / "agents"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "first")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        assert detector.capture_gate is None
+        gate = PaneCaptureGate()
+        detector.capture_gate = gate
+        gate.begin_loop()
+        gate.plan(1, True)
+        assert detector.get_pane_content(1) == "first"
+        mock_tmux.set_pane_content("agents", 1, "second")
+        gate.begin_loop()
+        gate.plan(1, False)
+        assert detector.get_pane_content(1) == "first"
+        assert gate.raw_captures == 1 and gate.served_from_cache == 1
+
+    def test_subprocess_fallback_command_is_unchanged(self, tmp_path):
+        """Without a tmux interface the raw capture is the same plain
+        ``capture-pane -p -S -N`` (no -e), gated or not."""
+        from unittest.mock import MagicMock, patch
+
+        state_dir = tmp_path / "sessions" / "agents"
+        detector = HookStatusDetector("agents", state_dir=state_dir)
+        with patch("overcode.hook_status_detector.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0, stdout="pane\n")
+            assert detector.get_pane_content("w1") == "pane\n"
+            assert detector.get_pane_content("w1", num_lines=40) == "pane\n"
+        assert run.call_args_list[0].args[0][-6:] == [
+            "capture-pane", "-t", "agents:w1", "-p", "-S", f"-{detector.capture_lines}",
+        ]
+        assert run.call_args_list[1].args[0][-2:] == ["-S", "-40"]
+        assert run.call_args.kwargs["timeout"] == 5

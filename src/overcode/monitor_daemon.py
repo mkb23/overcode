@@ -73,6 +73,7 @@ from .status_constants import (
     STATUS_WAITING_OVERSIGHT,
     is_green_status,
 )
+from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_detector import StatusDetector
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
@@ -308,10 +309,17 @@ class MonitorDaemon:
         self.session_manager = session_manager or SessionManager()
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
+        # Capture gating (audit R11): each loop plans, from the tick's pane
+        # listing, which panes changed and captures only those; the
+        # detectors read the rest from the gate's cache. See _plan_captures.
+        self._capture_gate = PaneCaptureGate()
+        self._pane_tracker = PaneChangeTracker()
+        self._loop_clock = time.monotonic  # the keepalive's clock; tests freeze it
         self.detector = StatusDetectorDispatcher(
             tmux_session,
             polling_detector=status_detector,
             mode=detection_mode,
+            capture_gate=self._capture_gate,
         )
 
         # Hostname for history disambiguation
@@ -1501,6 +1509,7 @@ class MonitorDaemon:
         if index is None:
             index = self._session_index()
         pending = self._pending
+        self._plan_captures(sessions, now)
 
         for snapshot in sessions:
             # Earlier phases of this tick may have staged changes for this
@@ -1608,6 +1617,55 @@ class MonitorDaemon:
 
         return session_states, all_waiting_user
 
+    def _plan_captures(self, sessions: list, now: datetime) -> None:
+        """Decide which panes this loop captures; the rest come from the gate's cache.
+
+        The tick's one ``list-panes -s`` (``_panes_at``) carries every
+        window's change signature. A pane is captured when that signature
+        moved since its last capture, when its hook_state file did (so a
+        status transition in hooks mode is always paired with fresh pane
+        text), for one follow-up loop after a change (the polling
+        detector's running-to-waiting step is "content unchanged since last
+        time"), when it was never captured, or when its last capture is
+        older than the keepalive — the bound on the listing's same-second
+        blind spot (pane_capture_gate). Without a listing (tmux down, session
+        gone) nothing is planned and every read is a raw capture: the loop
+        as it was before gating. Idle agents therefore cost no capture-pane
+        at all, and a changed pane is captured on the very next loop.
+        """
+        gate = self._capture_gate
+        gate.begin_loop()
+        panes = self._panes_at(now)
+        if panes is None:
+            return
+        tracker = self._pane_tracker
+        clock = self._loop_clock()
+        for session in sessions:
+            if session.status == "done":
+                continue
+            pane = pane_for_window(panes, session.tmux_window)
+            signature = pane.signature if pane is not None else None
+            capture = tracker.due(
+                session.id, signature, self._hook_state_stamp(session.name), clock
+            )
+            gate.plan(session.tmux_window, capture)
+
+    def _hook_state_stamp(self, session_name: str) -> Optional[tuple]:
+        """(mtime_ns, size) of the session's hook_state file; None without one.
+
+        The file the hook detector reads for status: any hook event rewrites
+        it, so its stat moving is the signal that the pane must be re-read
+        for the event's enrichment even if the listing saw no pane change.
+        """
+        path_of = getattr(getattr(self.detector, "hooks", None), "_hook_state_path", None)
+        if path_of is None:
+            return None
+        try:
+            st = os.stat(path_of(session_name))
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
     def _refresh_git_context(self, session) -> bool:
         """Stage a changed repo/branch for ``session``; True if it changed.
 
@@ -1698,6 +1756,8 @@ class MonitorDaemon:
         stale_ids = set(self.previous_states.keys()) - current_session_ids
         for stale_id in stale_ids:
             del self.previous_states[stale_id]
+        self._pane_tracker.forget(current_session_ids)
+        self._capture_gate.forget({s.tmux_window for s in sessions})
 
     def _archive_terminated_sessions(self, all_sessions, now: datetime) -> None:
         """Stage terminated entries that have outstayed the grace for the archive.

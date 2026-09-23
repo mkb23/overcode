@@ -876,3 +876,39 @@ mike@shirka overcode-main %
         assert status == STATUS_RUNNING, (
             f"Content changing should return RUNNING even with error text, got {status}: {activity}"
         )
+
+
+class TestPollingDetectorCaptureGate:
+    """get_pane_content consults an installed PaneCaptureGate (audit R11)."""
+
+    def test_no_gate_captures_every_call(self):
+        from unittest.mock import patch
+
+        mock_tmux = create_mock_tmux_with_content("agents", "w1", "line")
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        assert detector.capture_gate is None
+        with patch.object(mock_tmux, "capture_pane", wraps=mock_tmux.capture_pane) as cap:
+            detector.get_pane_content("w1")
+            detector.get_pane_content("w1")
+        assert cap.call_count == 2
+        # Depth is unchanged: capture_lines + 50 trailing-blank allowance
+        assert cap.call_args.kwargs["lines"] == detector.capture_lines + 50
+
+    def test_gate_serves_cached_text_for_an_unchanged_pane(self):
+        from overcode.pane_capture_gate import PaneCaptureGate
+
+        mock_tmux = create_mock_tmux_with_content("agents", "w1", "first")
+        detector = StatusDetector("agents", tmux=mock_tmux)
+        gate = PaneCaptureGate()
+        detector.capture_gate = gate
+        gate.begin_loop()
+        gate.plan("w1", True)
+        assert detector.get_pane_content("w1") == "first"
+        mock_tmux.set_pane_content("agents", "w1", "second")
+        gate.begin_loop()
+        gate.plan("w1", False)
+        assert detector.get_pane_content("w1") == "first"
+        gate.begin_loop()
+        gate.plan("w1", True)
+        assert detector.get_pane_content("w1") == "second"
+        assert gate.raw_captures == 2 and gate.served_from_cache == 1

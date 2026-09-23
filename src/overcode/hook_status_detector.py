@@ -427,6 +427,9 @@ class HookStatusDetector:
         self.tmux_session = tmux_session
         self.capture_lines = DEFAULT_CAPTURE_LINES
         self._tmux = tmux
+        # Optional pane_capture_gate.PaneCaptureGate: serves the last captured
+        # text when the caller's loop found the pane unchanged (get_pane_content).
+        self.capture_gate = None
         # Pane-scraping side signals (interrupt prompt, monitor count) are
         # backend-specific, so the detector always holds a pattern set.
         self._patterns = patterns or get_patterns()
@@ -555,20 +558,24 @@ class HookStatusDetector:
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get pane content via tmux capture-pane."""
+        lines = num_lines or self.capture_lines
+        gate = self.capture_gate
+        if gate is not None:
+            return gate.capture(window, lines, self._capture_raw)
+        return self._capture_raw(window, lines)
+
+    def _capture_raw(self, window: str, lines: int) -> Optional[str]:
+        """One capture-pane: the tmux interface if given, else a plain subprocess."""
         if self._tmux:
-            return self._tmux.capture_pane(
-                self.tmux_session, window,
-                lines=num_lines or self.capture_lines
-            )
+            return self._tmux.capture_pane(self.tmux_session, window, lines=lines)
         # Direct tmux subprocess fallback
-        lines_arg = num_lines or self.capture_lines
         try:
             from .tmux_utils import _build_tmux_cmd
 
             result = subprocess.run(
                 [*_build_tmux_cmd(), "capture-pane",
                  "-t", f"{self.tmux_session}:{window}",
-                 "-p", "-S", f"-{lines_arg}"],
+                 "-p", "-S", f"-{lines}"],
                 capture_output=True, text=True, timeout=5,
             )
             return result.stdout if result.returncode == 0 else None
