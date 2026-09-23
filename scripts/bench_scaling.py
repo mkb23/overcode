@@ -1044,7 +1044,7 @@ def patched_environment(paths: FixturePaths) -> Iterator[None]:
         setattr(obj, name, value)
 
     def clear_caches():
-        history_reader._session_stats_cache.clear()
+        history_reader.clear_transcript_caches()
         status_history._readers.clear()
         stats_reader.clear_reader_cache()
         config._clear_config_cache()
@@ -1358,7 +1358,7 @@ def time_window_burn(paths: FixturePaths, hours: float = 1.0, reps: int = 2) -> 
     def burn():
         return compute_window_burn(sessions, asleep, hours)
 
-    history_reader._session_stats_cache.clear()
+    history_reader.clear_transcript_caches()
     cold = _ms(burn, 1)
     warm = _ms(burn, reps)
     stats = burn()
@@ -1422,7 +1422,7 @@ def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
         for s in sessions:
             stats_reader_for_session(s).get_stats(s, history_file=hf)
 
-    history_reader._session_stats_cache.clear()
+    history_reader.clear_transcript_caches()
     cold = _ms(sweep, 1)
     warm = _ms(sweep, reps)
     _append_transcript_line(paths, sessions[0])

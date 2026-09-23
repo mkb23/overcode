@@ -26,12 +26,9 @@ from overcode.transcript_index import (
     parse_message_time,
 )
 
-# The full-parse references. ``read_window_token_usage`` has no cache and
-# ``_parse_session_lines`` is the parser itself, so neither can return a
-# remembered answer for a file whose bytes just changed.
-full_window = getattr(
-    history_reader, "_read_window_token_usage_full", history_reader.read_window_token_usage
-)
+# The full-parse references: the single-pass readers the wrappers used to
+# be, kept private in history_reader. Neither remembers anything.
+from overcode.history_reader import _read_window_token_usage_full as full_window
 
 
 def full_stats(path: Path, since=None):
@@ -591,3 +588,339 @@ class TestRegistry:
             t.join(timeout=60)
         assert not errors
         assert len(reg) <= 4
+
+
+# ── the history_reader wrappers and the tree walks over them ─────────────
+
+
+@pytest.fixture(autouse=True)
+def _fresh_caches():
+    history_reader.clear_transcript_caches()
+    yield
+    history_reader.clear_transcript_caches()
+
+
+class TestWrappers:
+    def test_read_session_file_stats_matches_full_parse_over_appends(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        w = _Writer(path)
+        since = T0 + timedelta(minutes=2)
+        w.write("\n".join(_turns(T0, 5)) + "\n")
+        for step in range(3):
+            for s in (None, since):
+                assert history_reader.read_session_file_stats(path, s) == (
+                    history_reader._read_session_file_stats_full(path, s)
+                )
+            w.append("\n".join(_turns(T0 + timedelta(hours=step + 1), 2, seed=step)) + "\n")
+        w.write("\n".join(_turns(T0, 2, seed=7)) + "\n")  # truncated
+        assert history_reader.read_session_file_stats(path, since) == (
+            history_reader._read_session_file_stats_full(path, since)
+        )
+        assert path in history_reader._transcripts
+
+    def test_read_window_token_usage_matches_full_parse_over_appends(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        w = _Writer(path)
+        w.write("\n".join(_turns(T0, 5)) + "\n")
+        for step in range(3):
+            for s in WINDOWS:
+                assert history_reader.read_window_token_usage(path, s) == full_window(path, s)
+            w.append("\n".join(_turns(T0 + timedelta(hours=step + 1), 2, seed=step)) + "\n")
+        assert history_reader.read_window_token_usage(path, T0) == full_window(path, T0)
+
+    def test_stats_and_window_share_one_index(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write("\n".join(_turns(T0, 3)) + "\n")
+        history_reader.read_session_file_stats(path, T0)
+        history_reader.read_window_token_usage(path, T0)
+        assert len(history_reader._transcripts) == 1
+
+    def test_aware_since_uses_the_full_parse(self, tmp_path, monkeypatch):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write("\n".join(_turns(T0, 3)) + "\n")
+        aware = T0.replace(tzinfo=timezone.utc)
+
+        def boom(*a, **k):
+            raise AssertionError("index used for an aware since")
+
+        monkeypatch.setattr(history_reader._transcripts, "stats", boom)
+        monkeypatch.setattr(history_reader._transcripts, "window_usage", boom)
+        assert history_reader.read_session_file_stats(path, aware) == (
+            history_reader._read_session_file_stats_full(path, aware)
+        )
+        assert history_reader.read_window_token_usage(path, aware) == full_window(path, aware)
+
+    def test_missing_and_unreadable_files(self, tmp_path):
+        missing = tmp_path / "missing.jsonl"
+        assert history_reader.read_session_file_stats(missing) == (
+            history_reader._read_session_file_stats_full(missing)
+        )
+        assert history_reader.read_window_token_usage(missing, T0) == full_window(missing, T0)
+        directory = tmp_path / "dir.jsonl"
+        directory.mkdir()
+        assert history_reader.read_session_file_stats(directory) == (
+            history_reader._read_session_file_stats_full(directory)
+        )
+        assert history_reader.read_window_token_usage(directory, T0) == full_window(directory, T0)
+
+
+class _Session:
+    def __init__(self, start_directory, ids, start_time, sid=None):
+        self.id = "sess-1"
+        self.name = "agent-1"
+        self.start_directory = start_directory
+        self.agent_session_ids = ids
+        self.active_agent_session_id = sid or ids[0]
+        self.start_time = start_time.isoformat()
+        self.tmux_session = "test"
+        self.backend = "claude-code"
+
+
+# Tree stamps sit a day after the newest message (settled, and inside any
+# window the tests ask for); the mtime-skip test moves one file below the floor.
+TREE_EPOCH = int((T0 + timedelta(days=1)).timestamp())
+
+
+def _settle(path: Path, n: int) -> None:
+    os.utime(path, (TREE_EPOCH + n, TREE_EPOCH + n))
+
+
+class _Tree:
+    """A projects tree with two owned ids, subagents incl. duplicates, and history.jsonl."""
+
+    def __init__(self, tmp_path: Path):
+        self.projects = tmp_path / "projects"
+        self.project_dir = tmp_path / "work"
+        self.project_dir.mkdir()
+        self.encoded = history_reader.encode_project_path(str(self.project_dir))
+        self.sid_live, self.sid_old = "sid-live", "sid-old"
+        self.n = 0
+        live = self.primary(self.sid_live)
+        old = self.primary(self.sid_old)
+        live.parent.mkdir(parents=True)
+        self.write(live, "\n".join(_turns(T0, 6)) + "\n")
+        self.write(old, "\n".join(_turns(T0 - timedelta(days=3), 6, seed=2)) + "\n")
+        sub = self.subagents(self.sid_live)
+        sub.mkdir(parents=True)
+        self.write(
+            sub / "agent-a1.jsonl", "\n".join(_turns(T0 + timedelta(minutes=1), 3, seed=3)) + "\n"
+        )
+        meta = json.dumps({"type": "user", "isMeta": True, "message": {"content": "copy"}})
+        self.write(
+            sub / "agent-acompact-1.jsonl", meta + "\n" + "\n".join(_turns(T0, 4, seed=4)) + "\n"
+        )
+        self.write(
+            sub / "agent-aside_question-1.jsonl",
+            meta + "\n" + _assistant(T0 + timedelta(minutes=5), inp=5000) + "\n",
+        )
+        self.write(
+            sub / "agent-acompact-2.jsonl",
+            "\n".join(_turns(T0 + timedelta(minutes=2), 1, seed=5)) + "\n",
+        )
+        tasks = self.projects / self.encoded / self.sid_live / "tasks"
+        tasks.mkdir(parents=True)
+        self.write(tasks / "task-1.jsonl", "{}\n")
+        self._settle_dirs()
+        self.history = tmp_path / "history.jsonl"
+        entries = [
+            {
+                "display": "hi",
+                "timestamp": int((T0 + timedelta(seconds=1)).timestamp() * 1000),
+                "project": str(self.project_dir),
+                "sessionId": self.sid_live,
+            },
+            {
+                "display": "old",
+                "timestamp": int((T0 + timedelta(seconds=2)).timestamp() * 1000),
+                "project": str(self.project_dir),
+                "sessionId": self.sid_old,
+            },
+        ]
+        self.history.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+        self.session = _Session(str(self.project_dir), [self.sid_live, self.sid_old], T0)
+
+    def primary(self, sid):
+        return self.projects / self.encoded / f"{sid}.jsonl"
+
+    def subagents(self, sid):
+        return self.projects / self.encoded / sid / "subagents"
+
+    def write(self, path, text):
+        path.write_text(text)
+        self.n += 1
+        _settle(path, self.n)
+
+    def append(self, path, text):
+        with open(path, "a") as f:
+            f.write(text)
+        self.n += 1
+        _settle(path, self.n)
+
+    def _settle_dirs(self):
+        for d in (
+            self.subagents(self.sid_live),
+            self.projects / self.encoded / self.sid_live / "tasks",
+        ):
+            self.n += 1
+            _settle(d, self.n)
+
+
+def _reference_window(monkeypatch, tree, since):
+    """get_session_window_token_usage as it was: full parses, plain globs, no mtime skip."""
+    with monkeypatch.context() as m:
+        m.setattr(history_reader, "read_window_token_usage", full_window)
+        m.setattr(history_reader, "_window_mtime_floor", lambda s: float("-inf"))
+        m.setattr(
+            history_reader, "_cached_glob", lambda d, p: list(d.glob(p)) if d.exists() else []
+        )
+        return history_reader.get_session_window_token_usage(
+            tree.session, since, projects_path=tree.projects
+        )
+
+
+def _reference_stats(monkeypatch, tree):
+    with monkeypatch.context() as m:
+        m.setattr(
+            history_reader, "read_session_file_stats", history_reader._read_session_file_stats_full
+        )
+        m.setattr(
+            history_reader, "_cached_glob", lambda d, p: list(d.glob(p)) if d.exists() else []
+        )
+        return history_reader.get_session_stats(
+            tree.session,
+            projects_path=tree.projects,
+            history_file=history_reader.HistoryFile(tree.history),
+        )
+
+
+class TestTreeWalks:
+    def _check(self, monkeypatch, tree):
+        for since in (T0 - timedelta(days=5), T0 - timedelta(hours=1), T0 + timedelta(minutes=3)):
+            got = history_reader.get_session_window_token_usage(
+                tree.session, since, projects_path=tree.projects
+            )
+            assert got == _reference_window(monkeypatch, tree, since), since
+        got = history_reader.get_session_stats(
+            tree.session,
+            projects_path=tree.projects,
+            history_file=history_reader.HistoryFile(tree.history),
+        )
+        assert got == _reference_stats(monkeypatch, tree)
+        return got
+
+    def test_identity_over_a_tree_with_duplicate_subagents(self, tmp_path, monkeypatch):
+        tree = _Tree(tmp_path)
+        stats = self._check(monkeypatch, tree)
+        assert stats.subagent_count == 2  # a1 and acompact-2; the two isMeta copies are skipped
+        assert stats.background_task_count == 1
+        # append to the primary and to a subagent, then add a new subagent
+        tree.append(
+            tree.primary(tree.sid_live),
+            "\n".join(_turns(T0 + timedelta(hours=1), 2, seed=8)) + "\n",
+        )
+        self._check(monkeypatch, tree)
+        tree.append(
+            tree.subagents(tree.sid_live) / "agent-a1.jsonl",
+            _assistant(T0 + timedelta(hours=2), inp=77) + "\n",
+        )
+        self._check(monkeypatch, tree)
+        tree.write(
+            tree.subagents(tree.sid_live) / "agent-a2.jsonl",
+            _assistant(T0 + timedelta(hours=3), inp=99) + "\n",
+        )
+        tree._settle_dirs()
+        stats = self._check(monkeypatch, tree)
+        assert stats.subagent_count == 3
+        # a duplicate replaced (new inode) by a real transcript is counted again
+        real = tree.subagents(tree.sid_live) / "agent-acompact-1.jsonl"
+        tmp = real.with_suffix(".tmp")
+        tmp.write_text(_assistant(T0 + timedelta(hours=4), inp=123) + "\n")
+        os.replace(tmp, real)
+        tree.n += 1
+        _settle(real, tree.n)
+        tree._settle_dirs()
+        stats = self._check(monkeypatch, tree)
+        assert stats.subagent_count == 4
+
+    def test_old_files_are_skipped_by_mtime_without_opening(self, tmp_path, monkeypatch):
+        import builtins
+
+        tree = _Tree(tmp_path)
+        since = T0 - timedelta(hours=1)
+        old = tree.primary(tree.sid_old)
+        # far in the past, well below since - 1 h
+        os.utime(old, (EPOCH - 10, EPOCH - 10))
+        assert EPOCH - 10 < history_reader._window_mtime_floor(since)
+        opened = []
+        real_open = builtins.open
+
+        def spy(file, mode="r", *a, **kw):
+            opened.append(os.fspath(file))
+            return real_open(file, mode, *a, **kw)
+
+        monkeypatch.setattr(builtins, "open", spy)
+        got = history_reader.get_session_window_token_usage(
+            tree.session, since, projects_path=tree.projects
+        )
+        assert str(old) not in opened
+        assert str(tree.primary(tree.sid_live)) in opened
+        monkeypatch.setattr(builtins, "open", real_open)
+        assert got == _reference_window(monkeypatch, tree, since)
+
+    def test_window_mtime_floor_margin(self):
+        floor = history_reader._window_mtime_floor(T0)
+        assert floor == T0.timestamp() - history_reader.WINDOW_MTIME_MARGIN_SECONDS
+        assert history_reader._window_mtime_floor(datetime(1, 1, 1)) < 0
+
+
+class TestDirectoryCaches:
+    def test_cached_glob_reuses_and_refreshes(self, tmp_path):
+        d = tmp_path / "subagents"
+        d.mkdir()
+        (d / "agent-a.jsonl").write_text("{}\n")
+        (d / "agent-b.jsonl").write_text("{}\n")
+        (d / "other.txt").write_text("")
+        _settle(d, 1)
+        first = history_reader._cached_glob(d, "agent-*.jsonl")
+        assert sorted(p.name for p in first) == ["agent-a.jsonl", "agent-b.jsonl"]
+        assert history_reader._cached_glob(d, "agent-*.jsonl") is first  # unchanged dir: no glob
+        (d / "agent-c.jsonl").write_text("{}\n")
+        _settle(d, 2)
+        again = history_reader._cached_glob(d, "agent-*.jsonl")
+        assert sorted(p.name for p in again) == ["agent-a.jsonl", "agent-b.jsonl", "agent-c.jsonl"]
+        assert history_reader._cached_glob(tmp_path / "nope", "agent-*.jsonl") == []
+
+    def test_cached_glob_does_not_trust_an_unsettled_directory(self, tmp_path):
+        d = tmp_path / "subagents"
+        d.mkdir()
+        (d / "agent-a.jsonl").write_text("{}\n")  # dir mtime is 'now'
+        assert len(history_reader._cached_glob(d, "agent-*.jsonl")) == 1
+        (d / "agent-b.jsonl").write_text("{}\n")
+        assert len(history_reader._cached_glob(d, "agent-*.jsonl")) == 2
+
+    def test_duplicate_subagent_cache_keyed_on_inode(self, tmp_path):
+        f = tmp_path / "agent-acompact-1.jsonl"
+        f.write_text(json.dumps({"isMeta": True}) + "\n")
+        assert history_reader._is_duplicate_subagent(f) is True
+        assert str(f) in history_reader._duplicate_subagent_cache
+        tmp = tmp_path / "x.tmp"
+        tmp.write_text(json.dumps({"isMeta": False}) + "\n")
+        os.replace(tmp, f)
+        assert history_reader._is_duplicate_subagent(f) is False
+
+    def test_duplicate_subagent_incomplete_first_line_is_not_cached(self, tmp_path):
+        f = tmp_path / "agent-acompact-1.jsonl"
+        f.write_text('{"isMeta": fa')  # mid-write
+        assert history_reader._is_duplicate_subagent(f) is False
+        assert str(f) not in history_reader._duplicate_subagent_cache
+        f.write_text(json.dumps({"isMeta": True}))  # complete but no newline yet
+        assert history_reader._is_duplicate_subagent(f) is True
+        assert str(f) not in history_reader._duplicate_subagent_cache
+        f.write_text(json.dumps({"isMeta": True}) + "\n")
+        assert history_reader._is_duplicate_subagent(f) is True
+        assert str(f) in history_reader._duplicate_subagent_cache
+        assert history_reader._is_duplicate_subagent(tmp_path / "agent-plain.jsonl") is False
+        assert (
+            history_reader._is_duplicate_subagent(tmp_path / "agent-acompact-missing.jsonl")
+            is False
+        )

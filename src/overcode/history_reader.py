@@ -26,6 +26,8 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from . import model_metadata
+from .stat_gate import FileSignature, is_settled
+from .transcript_index import TranscriptRegistry, empty_stats, empty_window
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -656,20 +658,81 @@ def _is_duplicate_subagent(subagent_file: Path) -> bool:
     Small compact files (≤10 lines) without ``isMeta`` are the actual API
     calls Claude Code made to generate the compaction summary.  Those
     represent real, unique token usage and must still be counted.
+
+    The answer is remembered per path: a transcript's first line never
+    changes once written, so the cache is keyed on the file's inode (a
+    replaced file is re-read) and filled only from a complete first line
+    (one ending in a newline — a half-written one is re-read next time).
+    Without it every stats sweep and every 1 Hz burn pass re-opened each
+    compact/aside file of every live agent.
     """
     name = subagent_file.name
     if not (name.startswith("agent-acompact-") or name.startswith("agent-aside_question-")):
         return False
+    try:
+        ino = subagent_file.stat().st_ino
+    except OSError:
+        return False
+    key = str(subagent_file)
+    with _dir_cache_lock:
+        hit = _duplicate_subagent_cache.get(key)
+        if hit is not None and hit[0] == ino:
+            return hit[1]
     # Read only the first line to check isMeta — fast even for huge files
     try:
         with open(subagent_file, 'r') as f:
-            first_line = f.readline().strip()
-        if not first_line:
+            first_line = f.readline()
+        stripped = first_line.strip()
+        if not stripped:
             return False
-        data = json.loads(first_line)
-        return bool(data.get("isMeta"))
+        data = json.loads(stripped)
+        result = isinstance(data, dict) and bool(data.get("isMeta"))
     except (IOError, json.JSONDecodeError, TypeError):
         return False
+    if first_line.endswith("\n"):
+        with _dir_cache_lock:
+            if len(_duplicate_subagent_cache) >= _DIR_CACHE_MAX:
+                _duplicate_subagent_cache.clear()
+            _duplicate_subagent_cache[key] = (ino, result)
+    return result
+
+
+# Directory listings and first-line checks reused while nothing changed.
+# A directory's mtime moves when an entry is created, deleted or renamed —
+# the only ways its listing can change — so a glob is repeated only then.
+# Bounded by a flush at _DIR_CACHE_MAX entries (each is a few hundred
+# bytes; a flush costs one re-listing per directory).
+_dir_cache_lock = threading.Lock()
+_dir_listing_cache: Dict[Tuple[str, str], Tuple[FileSignature, List[Path]]] = {}
+_duplicate_subagent_cache: Dict[str, Tuple[int, bool]] = {}
+_DIR_CACHE_MAX = 8192
+
+
+def _cached_glob(directory: Path, pattern: str) -> List[Path]:
+    """``list(directory.glob(pattern))``, reused while the directory is unchanged.
+
+    Returns ``[]`` for a missing directory (what ``exists()`` + glob gave).
+    A listing is remembered only once the directory's mtime has settled
+    (see ``stat_gate``), so an entry created in the same coarse mtime tick
+    as the listing cannot be missed. Callers iterate the returned list;
+    they must not mutate it.
+    """
+    try:
+        sig = FileSignature.of(directory.stat())
+    except OSError:
+        return []
+    key = (str(directory), pattern)
+    with _dir_cache_lock:
+        hit = _dir_listing_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    listing = list(directory.glob(pattern))
+    if is_settled(sig):
+        with _dir_cache_lock:
+            if len(_dir_listing_cache) >= _DIR_CACHE_MAX:
+                _dir_listing_cache.clear()
+            _dir_listing_cache[key] = (sig, listing)
+    return listing
 
 
 def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str]:
@@ -920,29 +983,35 @@ def _parse_session_lines(
     return totals, work_times
 
 
-# Cache for read_session_file_stats: {path: (mtime, size, since, result)}.
-# A long-lived agent accumulates many session files (100+ MB total), but only
-# the active one changes between polls — without this cache _update_stats_async
-# re-parsed every static file every 5s, pinning a CPU core. Keyed by path and
-# invalidated on mtime/size/since change, so results stay identical to an
-# uncached read. Mirrors the mtime+size caching HistoryFile already does.
-_session_stats_cache: Dict[str, Tuple[float, int, Optional[datetime], Tuple[dict, List[float]]]] = {}
-_session_stats_cache_lock = threading.Lock()
-_SESSION_STATS_CACHE_MAX = 512
+# Every transcript-derived number is read through one incremental index per
+# file (transcript_index.py, audit R1/R3): a query costs the bytes appended
+# since the previous query of that file, never the file's size. This replaced
+# the per-path (mtime, size, since) result cache, which re-parsed an active
+# transcript whole on every change and held at most 512 entries.
+_transcripts = TranscriptRegistry()
+
+
+def clear_transcript_caches() -> None:
+    """Drop every transcript index and directory/first-line cache (tests, benchmarks)."""
+    _transcripts.clear()
+    with _dir_cache_lock:
+        _dir_listing_cache.clear()
+        _duplicate_subagent_cache.clear()
 
 
 def read_session_file_stats(
     session_file: Path,
     since: Optional[datetime] = None,
 ) -> Tuple[dict, List[float]]:
-    """Read token usage and work times from a session file in a single pass.
+    """Read token usage and work times from a session file.
 
-    Combines the work of read_token_usage_from_session_file and
-    read_work_times_from_session_file so the file is only read once.
-
-    Results are cached per path and reused while the file's mtime and size (and
-    the ``since`` filter) are unchanged, so a static multi-MB session file is
-    parsed at most once rather than on every polling cycle.
+    Answers from the file's :class:`~overcode.transcript_index.TranscriptIndex`,
+    which parses only the bytes appended since it was last asked, so a
+    static file costs one ``stat`` per call and an active one costs its
+    new lines. Output is identical to :func:`_read_session_file_stats_full`
+    (the single-pass parse this wrapped before), which is kept as the
+    reference and used directly for a timezone-aware ``since`` — the
+    full parser's naive/aware comparison error is not worth reproducing.
 
     Args:
         session_file: Path to the session JSONL file
@@ -951,42 +1020,26 @@ def read_session_file_stats(
     Returns:
         (token_usage_dict, work_times_list)
     """
-    def _empty() -> Tuple[dict, List[float]]:
-        return {
-            "input_tokens": 0, "output_tokens": 0,
-            "cache_creation_tokens": 0, "cache_read_tokens": 0,
-            "current_context_tokens": 0, "model": None, "provider": None,
-        }, []
+    if since is not None and getattr(since, "tzinfo", None) is not None:
+        return _read_session_file_stats_full(session_file, since)
+    return _transcripts.stats(session_file, since)
 
+
+def _read_session_file_stats_full(
+    session_file: Path,
+    since: Optional[datetime] = None,
+) -> Tuple[dict, List[float]]:
+    """Full single-pass parse of a session file — the reference for the index."""
     try:
-        stat = session_file.stat()
+        session_file.stat()
     except OSError:
         # Missing/unreadable file — matches the old exists() short-circuit.
-        return _empty()
-
-    key = str(session_file)
-    with _session_stats_cache_lock:
-        cached = _session_stats_cache.get(key)
-        if (cached is not None
-                and cached[0] == stat.st_mtime
-                and cached[1] == stat.st_size
-                and cached[2] == since):
-            return cached[3]
-
+        return empty_stats()
     try:
         with open(session_file, 'r') as f:
-            result = _parse_session_lines(f, since=since)
+            return _parse_session_lines(f, since=since)
     except IOError:
-        return _empty()
-
-    with _session_stats_cache_lock:
-        if len(_session_stats_cache) >= _SESSION_STATS_CACHE_MAX:
-            # Bound growth: drop the oldest half (dicts preserve insertion order).
-            for stale in list(_session_stats_cache)[:_SESSION_STATS_CACHE_MAX // 2]:
-                del _session_stats_cache[stale]
-        _session_stats_cache[key] = (stat.st_mtime, stat.st_size, since, result)
-
-    return result
+        return empty_stats()
 
 
 def read_session_stats_from_content(
@@ -1176,30 +1229,28 @@ def get_session_stats(
         actual_project = sid_to_project.get(sid, session.start_directory)
         encoded = encode_project_path(actual_project)
         subagents_dir = projects_path / encoded / sid / "subagents"
-        if subagents_dir.exists():
-            for subagent_file in subagents_dir.glob("agent-*.jsonl"):
-                # Skip duplicate conversation logs from compaction/side-question
-                # subagents. Claude Code writes these with isMeta=True and they
-                # contain copies of messages already in the parent session file.
-                # See docs/claude-session-files.md for details.
-                if _is_duplicate_subagent(subagent_file):
-                    continue
-                subagent_count += 1
-                if now - subagent_file.stat().st_mtime < 30:
-                    live_subagent_count += 1
-                sub_usage, _ = read_session_file_stats(
-                    subagent_file, since=session_start
-                )
-                total_input += sub_usage["input_tokens"]
-                total_output += sub_usage["output_tokens"]
-                total_cache_creation += sub_usage["cache_creation_tokens"]
-                total_cache_read += sub_usage["cache_read_tokens"]
+        for subagent_file in _cached_glob(subagents_dir, "agent-*.jsonl"):
+            # Skip duplicate conversation logs from compaction/side-question
+            # subagents. Claude Code writes these with isMeta=True and they
+            # contain copies of messages already in the parent session file.
+            # See docs/claude-session-files.md for details.
+            if _is_duplicate_subagent(subagent_file):
+                continue
+            subagent_count += 1
+            if now - subagent_file.stat().st_mtime < 30:
+                live_subagent_count += 1
+            sub_usage, _ = read_session_file_stats(
+                subagent_file, since=session_start
+            )
+            total_input += sub_usage["input_tokens"]
+            total_output += sub_usage["output_tokens"]
+            total_cache_creation += sub_usage["cache_creation_tokens"]
+            total_cache_read += sub_usage["cache_read_tokens"]
 
         # Check for background tasks (run_in_background agents) (#177)
         # These are subagents that were started in background mode
         tasks_dir = projects_path / encoded / sid / "tasks"
-        if tasks_dir.exists():
-            background_task_count += len(list(tasks_dir.glob("task-*.jsonl")))
+        background_task_count += len(_cached_glob(tasks_dir, "task-*.jsonl"))
 
     # Extract last command from history interactions
     last_command = None
@@ -1231,10 +1282,14 @@ def read_window_token_usage(
 ) -> dict:
     """Sum token usage for assistant messages timestamped at or after ``since``.
 
-    Lighter than read_session_file_stats — only walks the JSONL once tracking
-    a single set of totals, skipping work-time / model / provider extraction.
-    Used by the burn-rate calculation, which re-parses files independently of
-    the daemon's full stats sync (#174).
+    Used by the burn-rate calculation (#174), once a second for every owned
+    transcript of every awake agent. Answers from the file's
+    :class:`~overcode.transcript_index.TranscriptIndex`: the per-message
+    usage log is kept in timestamp order, so a call is one ``stat`` (plus
+    the appended lines, if any) and a bisect — not a re-parse of the file.
+    Output is identical to :func:`_read_window_token_usage_full`, the full
+    pass this wrapped before, kept as the reference and used for a
+    timezone-aware ``since``.
 
     ``since`` should be a LOCAL-naive datetime. Each message's UTC timestamp
     is converted to the local zone and stripped of tzinfo before comparison,
@@ -1243,6 +1298,16 @@ def read_window_token_usage(
     Returns dict with input_tokens, output_tokens, cache_creation_tokens,
     cache_read_tokens (all zero if the file is missing or unreadable).
     """
+    if getattr(since, "tzinfo", None) is not None:
+        return _read_window_token_usage_full(session_file, since)
+    return _transcripts.window_usage(session_file, since)
+
+
+def _read_window_token_usage_full(
+    session_file: Path,
+    since: datetime,
+) -> dict:
+    """Full single-pass window sum — the reference for the index."""
     totals = {
         "input_tokens": 0,
         "output_tokens": 0,
@@ -1297,6 +1362,17 @@ def get_session_window_token_usage(
     Mirrors the file discovery in get_session_stats so subagent token spend
     (parallel workflows) is counted alongside the main conversation.
 
+    A file whose mtime is more than an hour before ``since`` is not opened:
+    every message in it was written before the window started (a message's
+    timestamp is taken just before the line is appended, on the same
+    clock), so it contributes nothing. The hour covers a DST fold in the
+    local-naive ``since``, coarse mtime stamps, and small clock skew; a
+    transcript copied from a host whose clock ran more than an hour slow
+    relative to its mtimes could still be skipped wrongly. Every other
+    file is answered by its incremental index (read_window_token_usage).
+    Subagent listings and the duplicate-subagent check are cached, so an
+    unchanged tree costs one stat per directory and file.
+
     Returns dict with input_tokens, output_tokens, cache_creation_tokens,
     cache_read_tokens — totals over messages timestamped at or after ``since``.
     """
@@ -1319,26 +1395,49 @@ def get_session_window_token_usage(
     if not sids:
         return totals
 
+    mtime_floor = _window_mtime_floor(since)
     for sid in sids:
         session_file = get_session_file_path(
             session.start_directory, sid, projects_path
         )
-        if not session_file.exists():
+        try:
+            st = session_file.stat()
+        except OSError:
             continue
-        u = read_window_token_usage(session_file, since)
-        for k in totals:
-            totals[k] += u[k]
+        if st.st_mtime >= mtime_floor:
+            u = read_window_token_usage(session_file, since)
+            for k in totals:
+                totals[k] += u[k]
 
         # Include subagent files (parallel workflows), skipping duplicate
         # compaction/side-question logs that copy parent messages.
         encoded = encode_project_path(session.start_directory)
         subagents_dir = projects_path / encoded / sid / "subagents"
-        if subagents_dir.exists():
-            for sub_file in subagents_dir.glob("agent-*.jsonl"):
-                if _is_duplicate_subagent(sub_file):
-                    continue
-                u = read_window_token_usage(sub_file, since)
-                for k in totals:
-                    totals[k] += u[k]
+        for sub_file in _cached_glob(subagents_dir, "agent-*.jsonl"):
+            if _is_duplicate_subagent(sub_file):
+                continue
+            try:
+                st = sub_file.stat()
+            except OSError:
+                continue  # vanished since the listing: reads as zeros anyway
+            if st.st_mtime < mtime_floor:
+                continue
+            u = read_window_token_usage(sub_file, since)
+            for k in totals:
+                totals[k] += u[k]
 
     return totals
+
+
+# Margin under the window start below which a file's mtime proves it holds
+# nothing in the window. One hour covers a DST fold of the local-naive
+# ``since``, whole-second mtime stamps, and small clock skew.
+WINDOW_MTIME_MARGIN_SECONDS = 3600.0
+
+
+def _window_mtime_floor(since: datetime) -> float:
+    """Epoch seconds: files last modified before this cannot hold window messages."""
+    try:
+        return since.timestamp() - WINDOW_MTIME_MARGIN_SECONDS
+    except (OverflowError, OSError, ValueError):
+        return float("-inf")
