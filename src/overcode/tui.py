@@ -376,10 +376,6 @@ class SupervisorTUI(
         self._non_stall_since: dict[str, float] = {}
         # Timers for auto-dismissing bell when the stalled agent is already focused
         self._bell_dismiss_timers: dict[str, object] = {}
-        # Session cache to avoid disk I/O on every status update (250ms interval)
-        self._sessions_cache: dict[str, Session] = {}
-        self._sessions_cache_time: float = 0
-        self._sessions_cache_ttl: float = 1.0  # 1 second TTL
         # Flag to prevent overlapping fast-path updates. It is checked on the
         # main thread before a worker is even submitted, and the fast path
         # is deliberately not coupled to any other worker group. Every other
@@ -724,11 +720,15 @@ class SupervisorTUI(
         from .settings import get_monitor_daemon_pid_path
         daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
 
-        # Gather data that DaemonStatusBar.update_status() would fetch
+        # Gather data that DaemonStatusBar.update_status() would fetch. One
+        # list_sessions() per tick: the same list feeds the asleep set here
+        # and the burn-window computation in fetch_volatile_state() below.
+        sessions = None
         asleep_ids = set()
         if daemon_bar._session_manager:
+            sessions = daemon_bar._session_manager.list_sessions()
             asleep_ids = {
-                s.id for s in daemon_bar._session_manager.list_sessions()
+                s.id for s in sessions
                 if s.is_asleep and s.tmux_session == self.tmux_session
             }
 
@@ -748,6 +748,7 @@ class SupervisorTUI(
         daemon_bar.fetch_volatile_state(
             baseline_minutes=baseline_minutes,
             active_session_names=active_session_names,
+            sessions=sessions,
         )
 
         # Apply results on main thread
@@ -985,7 +986,6 @@ class SupervisorTUI(
         # index alone is meaningless once self.sessions is replaced (#471).
         selected_id = self._selected_session_id()
 
-        self._invalidate_sessions_cache()
         # Merge local + remote sessions (#245), filtering disabled sisters (#323)
         self.sessions = sessions + self._visible_remote_sessions()
         # Resolve cross-machine parent relationships (#245)
@@ -1185,24 +1185,6 @@ class SupervisorTUI(
             selected_id = self._selected_session_id()
         self.sessions = sort_sessions(self.sessions, self._prefs.sort_mode)
         self._reanchor_selection(selected_id)
-
-    def _get_cached_sessions(self) -> dict[str, Session]:
-        """Get sessions with caching to reduce disk I/O.
-
-        Returns cached session data if TTL hasn't expired, otherwise
-        reloads from disk and updates the cache.
-        """
-        import time
-        now = time.time()
-        if now - self._sessions_cache_time > self._sessions_cache_ttl:
-            # Cache expired, reload from disk
-            self._sessions_cache = {s.id: s for s in self.session_manager.list_sessions()}
-            self._sessions_cache_time = now
-        return self._sessions_cache
-
-    def _invalidate_sessions_cache(self) -> None:
-        """Invalidate the sessions cache to force reload on next access."""
-        self._sessions_cache_time = 0
 
     def _get_focused_widget(self) -> "SessionSummary | None":
         """Get the selected session widget using focused_session_index.
@@ -3195,7 +3177,6 @@ class SupervisorTUI(
         success = launcher.send_to_session_by_id(session.id, message.text) if session else False
         if success:
             self._record_instruction(message.text, message.session_name)
-            self._invalidate_sessions_cache()  # Refresh to show updated stats
             self.notify(f"Sent to {message.session_name}")
         else:
             self.notify(f"Failed to send to {message.session_name}", severity="error")
@@ -3674,9 +3655,6 @@ class SupervisorTUI(
 
             # Remove the widget (will be re-added if show_terminated is True)
             focused.remove()
-            # Update session cache
-            if session_id in self._sessions_cache:
-                del self._sessions_cache[session_id]
             # Reconcile widgets immediately — Textual's Widget.remove() is async,
             # and without this kicker the row could linger until the next 10 s
             # refresh_sessions tick (#456). update_session_widgets diffs DOM vs
@@ -3705,8 +3683,6 @@ class SupervisorTUI(
         if session_id in self._terminated_sessions:
             del self._terminated_sessions[session_id]
         self._terminated_times.pop(session_id, None)
-        if session_id in self._sessions_cache:
-            del self._sessions_cache[session_id]
         # Remove the widget
         focused.remove()
         # Same reconciliation as _execute_kill (#456) — force a diff so the row
@@ -4030,7 +4006,6 @@ class SupervisorTUI(
         )
         if launcher.send_to_session_by_id(session.id, message.text):
             self._record_instruction(message.text, session.name)
-            self._invalidate_sessions_cache()
             self.notify(f"Reinjected to {session.name}")
         else:
             self.notify(f"Failed to send to {session.name}", severity="error")

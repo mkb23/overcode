@@ -63,10 +63,14 @@ class DaemonStatusBar(Static):
         self,
         baseline_minutes: int = 0,
         active_session_names: Optional[list] = None,
+        sessions: Optional[list] = None,
     ) -> None:
         """Fetch all I/O-dependent state. Call from a background thread, NOT main thread.
 
         This replaces the I/O that was previously done inside render().
+        ``sessions`` is the caller's already-loaded ``list_sessions()``
+        result (every tmux session; filtered here), so the 1 Hz worker
+        reads sessions.json once per tick. It is loaded here when omitted.
         """
         self._supervisor_running = is_supervisor_daemon_running(self.tmux_session)
         self._summarizer_available = SummarizerClient.is_available()
@@ -95,12 +99,11 @@ class DaemonStatusBar(Static):
         if burn_hours > 0 and self._session_manager:
             from ..tui_logic import compute_window_burn
             try:
-                sessions = [
-                    s for s in self._session_manager.list_sessions()
-                    if s.tmux_session == self.tmux_session
-                ]
+                if sessions is None:
+                    sessions = self._session_manager.list_sessions()
+                mine = [s for s in sessions if s.tmux_session == self.tmux_session]
                 self._burn_stats = compute_window_burn(
-                    sessions, self._asleep_session_ids, burn_hours,
+                    mine, self._asleep_session_ids, burn_hours,
                 )
             except Exception as exc:
                 # Log so silent failures don't masquerade as "burn stuck at
@@ -123,14 +126,17 @@ class DaemonStatusBar(Static):
         manual refresh).
         """
         self.monitor_state = get_monitor_daemon_state(self.tmux_session)
+        sessions = None
         if self._session_manager:
+            sessions = self._session_manager.list_sessions()
             self._asleep_session_ids = {
-                s.id for s in self._session_manager.list_sessions()
+                s.id for s in sessions
                 if s.is_asleep and s.tmux_session == self.tmux_session
             }
         self.fetch_volatile_state(
             baseline_minutes=getattr(self.app, 'baseline_minutes', 0),
             active_session_names=self._get_active_session_names(),
+            sessions=sessions,
         )
         self.refresh()
 

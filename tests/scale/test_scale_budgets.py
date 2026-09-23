@@ -139,18 +139,15 @@ class TestFixtureShape:
 
 
 class TestSharedFileReads:
-    @pytest.mark.xfail(
-        strict=True, reason="R4 not fixed yet: list_sessions re-parses sessions.json"
-    )
     def test_list_sessions_warm_is_a_stat(self, list_sessions_rows):
-        # today: 73 ms per call at 2,000 entries (11.7 MB), called ~6x/s by the TUI
+        # was: 73 ms per call at 2,000 entries (11.7 MB), called ~6x/s by the TUI;
+        # fixed (R4): one os.stat while sessions.json is unchanged, ~0.01 ms
         assert list_sessions_rows["list_sessions (warm, unchanged file)"].ms_per_call < 2.0
 
-    @pytest.mark.xfail(strict=True, reason="R4 not fixed yet: MonitorDaemonState.load re-parses")
     def test_daemon_state_load_warm_is_a_stat(self, daemon_state_rows):
-        # today: 1.1 ms per load at 50 sessions, called ~5x/s by the TUI. The
-        # brief's 1 ms budget is within 10% of today's number, so the budget
-        # is the stat-gated cost instead (a cache hit is well under 0.1 ms).
+        # was: 1.1 ms per load at 50 sessions, called ~5x/s by the TUI. The
+        # brief's 1 ms budget is within 10% of that number, so the budget is
+        # the stat-gated cost instead; fixed (R4): ~0.01 ms per load.
         assert daemon_state_rows["daemon-state load (warm, unchanged file)"].ms_per_call < 0.25
 
 

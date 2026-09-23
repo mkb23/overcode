@@ -1796,62 +1796,6 @@ class TestFlushHeartbeat:
         app._flush_heartbeat()
 
 
-class TestInvalidateSessionsCache:
-    """Test _invalidate_sessions_cache method."""
-
-    def test_resets_cache_time_to_zero(self):
-        """Should set _sessions_cache_time to 0."""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        app._sessions_cache_time = 12345.0
-
-        app._invalidate_sessions_cache()
-
-        assert app._sessions_cache_time == 0
-
-
-class TestGetCachedSessions:
-    """Test _get_cached_sessions method."""
-
-    def test_returns_cached_data_within_ttl(self):
-        """Should return cached data if TTL has not expired."""
-        import time as time_mod
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        mock_session = Mock()
-        mock_session.id = "s1"
-        app._sessions_cache = {"s1": mock_session}
-        app._sessions_cache_time = time_mod.time()  # Just now
-        app._sessions_cache_ttl = 1.0
-        app.session_manager = Mock()
-
-        result = app._get_cached_sessions()
-
-        assert result == {"s1": mock_session}
-        app.session_manager.list_sessions.assert_not_called()
-
-    def test_reloads_after_ttl_expires(self):
-        """Should reload from session_manager when TTL is expired."""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        app._sessions_cache = {}
-        app._sessions_cache_time = 0  # Expired
-        app._sessions_cache_ttl = 1.0
-
-        s1 = Mock()
-        s1.id = "session1"
-        app.session_manager = Mock()
-        app.session_manager.list_sessions.return_value = [s1]
-
-        result = app._get_cached_sessions()
-
-        assert "session1" in result
-        app.session_manager.list_sessions.assert_called_once()
-
-
 class TestCalculateSafeBreakDuration:
     """Test calculate_safe_break_duration from tui_helpers."""
 
