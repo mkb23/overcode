@@ -9,10 +9,15 @@ No side effects, no mutations of input data.
 """
 
 from datetime import datetime, timedelta
-from typing import List, Set, Optional, TypeVar, Protocol, Tuple
+from typing import List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from .status_constants import is_green_status
+from .tmux_utils import pane_for_window
+
+if TYPE_CHECKING:
+    from .pane_capture_gate import PaneChangeTracker
+    from .tmux_utils import PaneInfo
 
 
 class SessionLike(Protocol):
@@ -975,6 +980,53 @@ def select_capture_sessions(
         if sid == focused_id or sid in always_ids or i % every == slot:
             chosen.add(sid)
     return chosen
+
+
+def gate_worth_a_listing(n_nonfocused: int, every: Optional[int] = None) -> bool:
+    """Whether one ``list-panes`` per tick can save the fast path a command.
+
+    The listing costs one command and can only remove the rotation's
+    non-focused picks, so it pays when the rotation would issue more than
+    one of them per tick: ``ceil(n_nonfocused / every) > 1``. Below that
+    (up to ``every`` non-focused agents) the rotation runs as it is.
+    """
+    if every is None:
+        every = capture_rotation_period(n_nonfocused)
+    return n_nonfocused > max(1, every)
+
+
+def gate_capture_ids(
+    capture_ids: Set[str],
+    focused_id: Optional[str],
+    windows: Mapping[str, str],
+    panes: Optional[Mapping[str, "PaneInfo"]],
+    tracker: "PaneChangeTracker",
+    now: float,
+) -> Set[str]:
+    """Drop the rotation's non-focused picks whose pane has not changed (audit R11).
+
+    ``panes`` is this tick's ``list-panes -s`` (window name -> PaneInfo);
+    a pick stays when the tracker finds its signature moved since the
+    session's last capture, when it was never captured, for the one
+    follow-up capture after a change, or on the keepalive (see
+    pane_capture_gate). The focused session always stays — captured every
+    tick, unconditionally — and its signature is recorded so its record is
+    current when focus moves on. ``windows`` maps session id to tmux window;
+    a session without one, or absent from the listing, has signature None
+    (window gone): captured once, then only when it reappears. With no
+    listing (``panes`` None, tmux could not answer) every pick stands and
+    the tick is the plain rotation.
+    """
+    if panes is None:
+        return set(capture_ids)
+    kept: Set[str] = set()
+    for sid in capture_ids:
+        window = windows.get(sid)
+        info = pane_for_window(panes, window) if window is not None else None
+        signature = info.signature if info is not None else None
+        if tracker.due(sid, signature, None, now) or sid == focused_id:
+            kept.add(sid)
+    return kept
 
 
 def windows_needing_resize(

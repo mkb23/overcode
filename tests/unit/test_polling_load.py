@@ -177,6 +177,12 @@ class TestFastPathRotationWithoutDaemon:
         app._remote_sessions = []
         app._summaries = {}
         app.detector = MagicMock()
+        # No pane listing (tmux cannot answer): the plain rotation this class pins
+        from overcode.pane_capture_gate import PaneChangeTracker
+
+        app._pane_change_tracker = PaneChangeTracker()
+        app._tmux = MagicMock()
+        app._tmux.list_panes.return_value = None
 
         def detect(session, num_lines=0):
             return ("running", f"act-{session.id}", f"pane-{session.id}")
@@ -493,3 +499,194 @@ class TestEntrypoint:
     def test_console_script_points_at_entrypoint(self):
         text = (Path(__file__).parent.parent.parent / "pyproject.toml").read_text()
         assert 'overcode = "overcode.entrypoint:main"' in text
+
+
+# ── signature gating of the rotation's picks (audit R11) ─────────────
+
+
+def _pane(name, index, version):
+    from overcode.tmux_utils import PaneInfo
+
+    return PaneInfo(name, index, 1000 + index, 1_790_000_000, version, 0, 0, "claude", 0)
+
+
+class TestGateWorthAListing:
+    def test_pays_only_past_one_non_focused_capture_per_tick(self):
+        from overcode.tui_logic import gate_worth_a_listing
+
+        every = NON_FOCUSED_CAPTURE_EVERY
+        for n in range(0, every + 1):
+            assert not gate_worth_a_listing(n)  # rotation issues <= 1 per tick
+        assert gate_worth_a_listing(every + 1)
+        assert gate_worth_a_listing(49) and gate_worth_a_listing(200)
+        assert gate_worth_a_listing(5, every=4) and not gate_worth_a_listing(4, every=4)
+
+
+class TestGateCaptureIds:
+    def _tracker(self):
+        from overcode.pane_capture_gate import PaneChangeTracker
+
+        return PaneChangeTracker()
+
+    def test_no_listing_keeps_every_pick(self):
+        from overcode.tui_logic import gate_capture_ids
+
+        picks = {"s0", "s3", "s7"}
+        out = gate_capture_ids(picks, "s0", {"s0": "w0", "s3": "w3", "s7": "w7"}, None, self._tracker(), 0.0)
+        assert out == picks and out is not picks
+
+    def test_unchanged_non_focused_picks_are_dropped_focused_stays(self):
+        from overcode.tui_logic import gate_capture_ids
+
+        windows = {f"s{i}": f"w{i}" for i in range(4)}
+        panes = {f"w{i}": _pane(f"w{i}", i, 1) for i in range(4)}
+        tracker = self._tracker()
+        first = gate_capture_ids({"s0", "s1", "s2"}, "s0", windows, panes, tracker, 0.0)
+        assert first == {"s0", "s1", "s2"}  # never captured
+        second = gate_capture_ids({"s0", "s1", "s2"}, "s0", windows, panes, tracker, 1.0)
+        assert second == {"s0"}
+        panes["w2"] = _pane("w2", 2, 2)  # w2 moved
+        third = gate_capture_ids({"s0", "s1", "s2"}, "s0", windows, panes, tracker, 2.0)
+        assert third == {"s0", "s2"}
+        fourth = gate_capture_ids({"s0", "s1", "s2"}, "s0", windows, panes, tracker, 3.0)
+        assert fourth == {"s0", "s2"}  # the follow-up capture
+        assert gate_capture_ids({"s0", "s1", "s2"}, "s0", windows, panes, tracker, 4.0) == {"s0"}
+
+    def test_a_pick_not_in_the_listing_is_a_gone_window(self):
+        from overcode.tui_logic import gate_capture_ids
+
+        tracker = self._tracker()
+        windows = {"s1": "w1", "s9": "w9"}
+        panes = {"w1": _pane("w1", 1, 1)}
+        assert gate_capture_ids({"s1", "s9"}, None, windows, panes, tracker, 0.0) == {"s1", "s9"}
+        assert gate_capture_ids({"s1", "s9"}, None, windows, panes, tracker, 1.0) == set()
+        panes["w9"] = _pane("w9", 9, 1)  # revived
+        assert gate_capture_ids({"s1", "s9"}, None, windows, panes, tracker, 2.0) == {"s9"}
+
+    def test_keepalive_recaptures_an_idle_pick(self):
+        from overcode.tui_logic import gate_capture_ids
+
+        tracker = self._tracker()
+        windows, panes = {"s1": "w1"}, {"w1": _pane("w1", 1, 1)}
+        assert gate_capture_ids({"s1"}, None, windows, panes, tracker, 0.0) == {"s1"}
+        assert gate_capture_ids({"s1"}, None, windows, panes, tracker, 4.0) == set()
+        assert gate_capture_ids({"s1"}, None, windows, panes, tracker, 5.5) == {"s1"}
+
+
+class TestFastPathSignatureGating:
+    """Drive the real fast-path worker body with a listing per tick.
+
+    Focused: captured every tick, unconditionally. Non-focused: only when the
+    listing shows the pane changed since its last capture (in its rotation
+    slot); a listing that fails leaves the rotation as it was.
+    """
+
+    N = 10
+
+    def _app(self, n=None, listing=True):
+        from overcode.pane_capture_gate import PaneChangeTracker
+        from overcode.tui import SupervisorTUI
+
+        n = n or self.N
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        sessions = []
+        for i in range(n):
+            s = MagicMock()
+            s.id = f"s{i}"
+            s.is_remote = False
+            s.status = "running"
+            s.tmux_window = f"w{i}"
+            sessions.append(s)
+        widgets = [MagicMock(session=s) for s in sessions]
+        app.session_manager = MagicMock()
+        app.session_manager.list_sessions.return_value = sessions
+        app.tmux_session = "agents"
+        app._get_focused_widget = lambda: widgets[0]
+        app._previous_statuses = {}
+        app._pane_content_cache = {}
+        app._activity_cache = {}
+        app._pane_change_tracker = PaneChangeTracker()
+        app._status_tick = 0
+        app._prefs = MagicMock(status_change_logging=False)
+        app._remote_sessions = []
+        app._summaries = {}
+        app.detector = MagicMock()
+        versions = {f"w{i}": 1 for i in range(n)}
+        app._tmux = MagicMock()
+        app._tmux.list_panes.side_effect = lambda session: (
+            {w: _pane(w, i, v) for i, (w, v) in enumerate(versions.items())} if listing else None
+        )
+
+        def detect(session, num_lines=0):
+            v = versions[session.tmux_window]
+            return ("running", f"act-{session.id}-v{v}", f"pane-{session.id}-v{v}")
+
+        app.detector.detect_status.side_effect = detect
+        applied = []
+        app.call_from_thread = lambda fn, *a, **kw: applied.append((fn, a, kw))
+        return app, widgets, applied, versions
+
+    def _tick(self, app, widgets, applied):
+        from overcode.tui import SupervisorTUI
+
+        app.detector.detect_status.reset_mock()
+        with patch("overcode.tui.get_monitor_daemon_state", return_value=None):
+            SupervisorTUI._fetch_statuses_async.__wrapped__(app, widgets)
+        fn, args, _ = applied[-1]
+        status_results = args[0]
+        for sid, (status, _, _) in status_results.items():
+            app._previous_statuses[sid] = status
+        captured = {c.args[0].id for c in app.detector.detect_status.call_args_list}
+        return status_results, captured
+
+    def test_focused_captured_every_tick_non_focused_only_on_change(self):
+        app, widgets, applied, versions = self._app()
+        _, captured = self._tick(app, widgets, applied)
+        assert captured == {f"s{i}" for i in range(self.N)}  # first sight: everyone
+        for _ in range(3 * NON_FOCUSED_CAPTURE_EVERY):
+            results, captured = self._tick(app, widgets, applied)
+            assert captured == {"s0"}, captured
+            for i in range(self.N):  # skipped sessions replay their last capture
+                assert results[f"s{i}"] == ("running", f"act-s{i}-v1", f"pane-s{i}-v1")
+        assert app._tmux.list_panes.call_count == 1 + 3 * NON_FOCUSED_CAPTURE_EVERY
+
+        versions["w5"] = 2  # s5's pane moves
+        seen = []
+        for _ in range(NON_FOCUSED_CAPTURE_EVERY):
+            results, captured = self._tick(app, widgets, applied)
+            assert captured <= {"s0", "s5"}
+            seen.append(captured)
+            assert results["s5"] == ("running", "act-s5-v2", "pane-s5-v2") or "s5" not in captured
+        assert {"s0", "s5"} in seen  # captured within its rotation period
+        assert results["s5"] == ("running", "act-s5-v2", "pane-s5-v2")
+        # One follow-up capture in its next slot, then quiet again
+        follow_ups = 0
+        for _ in range(2 * NON_FOCUSED_CAPTURE_EVERY):
+            _, captured = self._tick(app, widgets, applied)
+            follow_ups += "s5" in captured
+        assert follow_ups == 1
+
+    def test_listing_failure_falls_back_to_the_plain_rotation(self):
+        app, widgets, applied, _ = self._app(listing=False)
+        self._tick(app, widgets, applied)
+        every = NON_FOCUSED_CAPTURE_EVERY
+        per_tick = []
+        for _ in range(every):
+            _, captured = self._tick(app, widgets, applied)
+            assert "s0" in captured
+            per_tick.append(len(captured))
+        assert max(per_tick) <= 1 + (self.N - 1 + every - 1) // every
+        assert sum(per_tick) == 1 * every + (self.N - 1)  # focused each tick + every non-focused once
+
+    def test_small_fleets_do_not_pay_for_a_listing(self):
+        app, widgets, applied, _ = self._app(n=NON_FOCUSED_CAPTURE_EVERY + 1)
+        for _ in range(8):
+            self._tick(app, widgets, applied)
+        app._tmux.list_panes.assert_not_called()
+
+    def test_departed_sessions_are_forgotten(self):
+        app, widgets, applied, _ = self._app()
+        self._tick(app, widgets, applied)
+        assert len(app._pane_change_tracker) == self.N
+        self._tick(app, widgets[:4], applied)
+        assert len(app._pane_change_tracker) == 4

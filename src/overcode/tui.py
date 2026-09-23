@@ -46,6 +46,7 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
+from .pane_capture_gate import PaneChangeTracker
 from .tmux_utils import get_pane_base_index, SSH_PROXY_WINDOW_PREFIX
 from .worker_guard import single_flight, worker_cancelled
 from .tui_helpers import (
@@ -64,6 +65,8 @@ from .tui_logic import (
     compute_session_widget_diff,
     detect_display_changes,
     select_capture_sessions,
+    gate_capture_ids,
+    gate_worth_a_listing,
     windows_needing_resize,
     should_scan_git,
 )
@@ -398,6 +401,10 @@ class SupervisorTUI(
         # Last applied activity per session, replayed on skipped ticks so the
         # activity column holds steady when the daemon can't supply one.
         self._activity_cache: dict[str, str] = {}
+        # Per-session pane change signature at its last capture: the rotation's
+        # non-focused picks are captured only when one list-panes per tick says
+        # the pane moved (tui_logic.gate_capture_ids, audit R11).
+        self._pane_change_tracker = PaneChangeTracker()
         # Slow-path sweep counter: git scans run every Nth sweep
         self._stats_sweep = 0
         # Track whether sessions have been loaded at least once (for startup sequencing)
@@ -1472,6 +1479,22 @@ class SupervisorTUI(
                 # status and pane columns are right on first sight.
                 always_ids={sid for sid in session_ids if sid not in content_cache},
             )
+            # One list-panes per tick says which of the rotation's picks
+            # actually changed, so an idle non-focused pane costs no
+            # capture-pane; the focused pane is captured every tick
+            # regardless, and a listing that fails leaves the rotation as
+            # it is. Only worth the command when the rotation would issue
+            # more than one non-focused capture per tick.
+            n_nonfocused = sum(1 for sid in session_ids if sid != focused_session_id)
+            if gate_worth_a_listing(n_nonfocused):
+                capture_ids = gate_capture_ids(
+                    capture_ids,
+                    focused_session_id,
+                    {sid: s.tmux_window for sid, s in sessions_to_check if not s.is_remote},
+                    self._tmux.list_panes(self.tmux_session),
+                    self._pane_change_tracker,
+                    time.monotonic(),
+                )
 
             def fetch_status(session):
                 try:
@@ -1518,6 +1541,7 @@ class SupervisorTUI(
             # Drop cache entries for sessions no longer displayed
             for stale_id in [sid for sid in content_cache if sid not in status_results]:
                 del content_cache[stale_id]
+            self._pane_change_tracker.forget(status_results)
 
             # Enrich non-focused agents with daemon state (#291)
             # The focused agent keeps its detect_status result for preview pane
