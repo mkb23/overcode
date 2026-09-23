@@ -49,7 +49,7 @@ from .pid_utils import (
     acquire_daemon_lock,
     remove_pid_file,
 )
-from .session_manager import SessionManager
+from .session_manager import SessionIndex, SessionManager
 from .settings import (
     DAEMON,
     DAEMON_VERSION,
@@ -394,20 +394,30 @@ class MonitorDaemon:
         except Exception as e:
             self.log.warning(f"Legacy window migration failed: {e}")
 
-    def _get_parent_name(self, session) -> Optional[str]:
-        """Get the name of a session's parent, if any (#244)."""
-        if not session.parent_session_id:
-            return None
-        parent = self.session_manager.get_session(session.parent_session_id)
-        return parent.name if parent else None
+    def _session_index(self) -> SessionIndex:
+        """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
+        return SessionIndex(self.session_manager.sessions_by_id())
 
-    def track_session_stats(self, session, status: str) -> SessionDaemonState:
+    def _get_parent_name(self, session, index: Optional[SessionIndex] = None) -> Optional[str]:
+        """Get the name of a session's parent, if any (#244)."""
+        return (index or self._session_index()).parent_name(session)
+
+    def track_session_stats(
+        self, session, status: str, index: Optional[SessionIndex] = None
+    ) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
 
         Returns the session state for inclusion in MonitorDaemonState.
+
+        ``index`` is the tick's ``SessionIndex``; the hierarchy fields
+        (parent name, depth, children count) are looked up in it instead of
+        being recomputed from the session table per session. Callers
+        without one get an index over the current snapshot.
         """
         session_id = session.id
         now = datetime.now()
+        if index is None:
+            index = self._session_index()
 
         # Get previous status
         prev_status = self.previous_states.get(session_id, status)
@@ -520,10 +530,10 @@ class MonitorDaemon:
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
-            # Agent hierarchy (#244)
-            parent_name=self._get_parent_name(session),
-            depth=self.session_manager.compute_depth(session),
-            children_count=len(self.session_manager.get_children(session.id)),
+            # Agent hierarchy (#244), from the tick's index
+            parent_name=index.parent_name(session),
+            depth=index.depth(session),
+            children_count=index.children_count(session.id),
             # Oversight system
             oversight_policy=getattr(session, 'oversight_policy', 'wait') or 'wait',
             oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
@@ -1139,8 +1149,11 @@ class MonitorDaemon:
         if self.detector.mode != current_mode:
             self.detector.mode = current_mode
             self.log.info(f"Fleet detection mode changed to: {current_mode}")
-        sessions = [s for s in self.session_manager.list_sessions()
-                    if s.tmux_session == self.tmux_session]
+        # One snapshot per tick: the index answers every parent/child lookup
+        # the tick makes, and ``sessions`` is this tmux session's slice of it
+        # in file order (what list_sessions() would return, filtered).
+        index = self._session_index()
+        sessions = [s for s in index.by_id.values() if s.tmux_session == self.tmux_session]
         if not self._legacy_windows_migrated:
             self._migrate_legacy_window_ids(sessions)
             self._legacy_windows_migrated = True
@@ -1150,7 +1163,7 @@ class MonitorDaemon:
         self._sync_sandbox_state(sessions, now)
         self._sync_process_resources(sessions, now)
         self._dispatch_heartbeats(sessions)
-        session_states, all_waiting = self._detect_and_enrich(sessions, now)
+        session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
         self._cleanup_stale(sessions)
         self._publish_and_enforce(sessions, session_states, all_waiting)
         self._maybe_rotate_history(now)
@@ -1393,14 +1406,21 @@ class MonitorDaemon:
         # Track pending heartbeat starts for timeline marker
         self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
 
-    def _detect_and_enrich(self, sessions: list, now: datetime) -> tuple:
+    def _detect_and_enrich(
+        self, sessions: list, now: datetime, index: Optional[SessionIndex] = None
+    ) -> tuple:
         """Detect status and build SessionDaemonState for each session.
+
+        ``index`` is the tick's ``SessionIndex`` (built over the snapshot
+        ``sessions`` came from); one is built here when the caller has none.
 
         Returns:
             (session_states, all_waiting_user) tuple
         """
         session_states = []
         all_waiting_user = True
+        if index is None:
+            index = self._session_index()
 
         for session in sessions:
             pane_content = ""
@@ -1483,7 +1503,7 @@ class MonitorDaemon:
                     and effective_status != STATUS_TERMINATED):
                 self.session_manager.update_session_status(session.id, "running")
 
-            session_state = self.track_session_stats(session, effective_status)
+            session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
             session_states.append(session_state)
 

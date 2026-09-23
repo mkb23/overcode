@@ -5,10 +5,11 @@ Session state management for Overcode.
 import functools
 import json
 import os
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields
 import uuid
 import time
@@ -392,6 +393,66 @@ def _accept_legacy_kwargs(init):
 
 
 Session.__init__ = _accept_legacy_kwargs(Session.__init__)
+
+
+class SessionIndex:
+    """Parent/child lookups over one snapshot of the session table (#244).
+
+    The monitor daemon publishes ``parent_name``, ``depth`` and
+    ``children_count`` for every session every tick. Answering those through
+    ``get_session`` / ``compute_depth`` / ``get_children`` costs, per session,
+    a stat per ancestor and a scan of every entry (``get_children`` walks the
+    whole table), so a tick was O(agents x entries) even with nothing
+    changed (audit R5). Built once per tick from the snapshot the tick
+    already holds, each answer is a dict lookup; the values are exactly what
+    the per-call methods return over the same snapshot, and
+    ``SessionManager.get_parent_chain`` is this class's walk.
+    """
+
+    def __init__(self, by_id: Mapping[str, "Session"]):
+        self.by_id = by_id
+        self._children_count: Optional[Counter] = None
+
+    @classmethod
+    def of(cls, sessions: Iterable["Session"]) -> "SessionIndex":
+        return cls({s.id: s for s in sessions})
+
+    def parent_name(self, session: "Session") -> Optional[str]:
+        """Name of ``session``'s parent, or None for a root or a missing parent."""
+        if not session.parent_session_id:
+            return None
+        parent = self.by_id.get(session.parent_session_id)
+        return parent.name if parent else None
+
+    def parent_chain(self, session_id: str) -> List["Session"]:
+        """Ancestors from the immediate parent up to the root (cycle-safe)."""
+        chain: List[Session] = []
+        current_id = session_id
+        visited = set()
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            session = self.by_id.get(current_id)
+            if not session or not session.parent_session_id:
+                break
+            parent = self.by_id.get(session.parent_session_id)
+            if parent:
+                chain.append(parent)
+                current_id = parent.id
+            else:
+                break
+        return chain
+
+    def depth(self, session: "Session") -> int:
+        """Depth in the hierarchy (0 = root), as ``compute_depth`` reports it."""
+        return len(self.parent_chain(session.id))
+
+    def children_count(self, session_id: str) -> int:
+        """``len(get_children(session_id))``; the count is built on first use."""
+        if self._children_count is None:
+            self._children_count = Counter(
+                s.parent_session_id for s in self.by_id.values() if s.parent_session_id
+            )
+        return self._children_count.get(session_id, 0)
 
 
 class SessionManager:
@@ -900,6 +961,16 @@ class SessionManager:
         """
         return list(self._snapshot().values())
 
+    def sessions_by_id(self) -> Mapping[str, Session]:
+        """Every session keyed by id — the snapshot itself, in file order.
+
+        The same objects ``list_sessions`` returns, without the list copy; the
+        daemon builds its per-tick ``SessionIndex`` on it. Read-only, as for
+        ``get_session``: the mapping is replaced, never mutated, when
+        ``sessions.json`` changes.
+        """
+        return self._snapshot()
+
     def update_session_status(self, session_id: str, status: str):
         """Update session status"""
         with self._locked_state() as state:
@@ -1168,23 +1239,10 @@ class SessionManager:
     def get_parent_chain(self, session_id: str) -> List[Session]:
         """Walk up from session to root, returning list of ancestors.
 
-        Returns list ordered from immediate parent to root.
+        Returns list ordered from immediate parent to root, over one
+        snapshot (see ``SessionIndex.parent_chain``).
         """
-        chain = []
-        current_id = session_id
-        visited = set()  # Cycle protection
-        while current_id and current_id not in visited:
-            visited.add(current_id)
-            session = self.get_session(current_id)
-            if not session or not session.parent_session_id:
-                break
-            parent = self.get_session(session.parent_session_id)
-            if parent:
-                chain.append(parent)
-                current_id = parent.id
-            else:
-                break
-        return chain
+        return SessionIndex(self._snapshot()).parent_chain(session_id)
 
     def compute_depth(self, session: Session) -> int:
         """Compute depth of a session in the hierarchy (0 = root)."""
