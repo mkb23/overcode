@@ -334,7 +334,13 @@ class SupervisorTUI(
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
-        self.launcher = AgentLauncher(tmux_session)
+        # One manager per process: the launcher's reads share the app's
+        # stat-gated snapshot instead of parsing sessions.json a second time.
+        self.launcher = AgentLauncher(tmux_session, session_manager=self.session_manager)
+        # One history.jsonl reader for the app's lifetime, so its mtime+size
+        # gate carries across the 5 s stats sweeps (a fresh HistoryFile per
+        # sweep re-parsed the whole file every time).
+        self._history_file = HistoryFile()
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
@@ -1608,8 +1614,8 @@ class SupervisorTUI(
         git diff subprocess) and don't need 250ms updates. Runs independently
         from the fast status path so it never blocks preview pane updates.
 
-        Uses a shared HistoryFile so history.jsonl is parsed at most once
-        per cycle, regardless of how many sessions are checked.
+        Uses the app's HistoryFile so history.jsonl is parsed only when it
+        changed, regardless of how many sessions or sweeps ask.
         """
         widgets = list(self.query(SessionSummary))
         if not widgets:
@@ -1622,8 +1628,8 @@ class SupervisorTUI(
             session = fresh_sessions.get(widget.session.id, widget.session)
             sessions_to_check.append((widget.session.id, session))
 
-        # Single HistoryFile shared across all sessions — parse once, reuse N times
-        history_file = HistoryFile()
+        # The app's HistoryFile: parsed when history.jsonl changes, reused N times
+        history_file = self._history_file
 
         sessions = [s for _, s in sessions_to_check]
 

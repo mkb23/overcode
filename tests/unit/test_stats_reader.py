@@ -169,15 +169,73 @@ class TestClaudeStatsReader:
             _entry("orphan-b", start_ms + 4000),
         ]
         fake_history = Mock()
-        fake_history.read_all.return_value = entries
-        monkeypatch.setattr(
-            "overcode.history_reader.HistoryFile", lambda *a, **k: fake_history
-        )
+        fake_history.iter_entries.return_value = entries
+        fake_history.signature.return_value = ("sig", 1)
+        monkeypatch.setattr("overcode.history_reader._default_history", fake_history)
 
         found = reader.discover_session_ids(session, start, [session, other])
 
         assert found.ids == ["orphan-a", "orphan-b"]
         assert found.latest == "orphan-b"
+
+    def _discovery_setup(self, monkeypatch):
+        reader = ClaudeStatsReader()
+        session = _make_session(agent_session_ids=["mine"])
+        other = Mock()
+        other.id = "sess-2"
+        other.agent_session_ids = ["theirs"]
+        start = datetime(2026, 1, 1, 12, 0, 0)
+        start_ms = int(start.timestamp() * 1000)
+
+        def _entry(sid, ts):
+            e = Mock()
+            e.session_id = sid
+            e.project = "/tmp/project"
+            e.timestamp_ms = ts
+            return e
+
+        fake_history = Mock()
+        fake_history.iter_entries.return_value = [
+            _entry("mine", start_ms + 1000),
+            _entry("theirs", start_ms + 2000),
+            _entry("orphan-a", start_ms + 3000),
+        ]
+        fake_history.signature.return_value = ("sig", 1)
+        monkeypatch.setattr("overcode.history_reader._default_history", fake_history)
+        return reader, session, other, start, fake_history
+
+    def test_discover_session_ids_skips_the_scan_while_nothing_changed(self, monkeypatch):
+        reader, session, other, start, hf = self._discovery_setup(monkeypatch)
+        first = reader.discover_session_ids(session, start, [session, other])
+        second = reader.discover_session_ids(session, start, [session, other])
+        assert first == second == DiscoveredSessionIds(ids=["orphan-a"], latest="orphan-a")
+        assert hf.iter_entries.call_count == 1  # memo hit: stat + dict lookup only
+        assert first is not second and first.ids is not second.ids  # callers get copies
+
+    def test_discover_session_ids_rescans_when_history_changes(self, monkeypatch):
+        reader, session, other, start, hf = self._discovery_setup(monkeypatch)
+        reader.discover_session_ids(session, start, [session, other])
+        hf.signature.return_value = ("sig", 2)
+        reader.discover_session_ids(session, start, [session, other])
+        assert hf.iter_entries.call_count == 2
+
+    def test_discover_session_ids_rescans_when_ownership_changes(self, monkeypatch):
+        reader, session, other, start, hf = self._discovery_setup(monkeypatch)
+        found = reader.discover_session_ids(session, start, [session, other])
+        assert found.ids == ["orphan-a"]
+        other.agent_session_ids = ["theirs", "orphan-a"]  # another agent adopted it
+        found = reader.discover_session_ids(session, start, [session, other])
+        assert found.ids == [] and hf.iter_entries.call_count == 2
+        session.agent_session_ids = ["mine", "theirs"]  # our own ids changed
+        reader.discover_session_ids(session, start, [session, other])
+        assert hf.iter_entries.call_count == 3
+
+    def test_discover_session_ids_does_not_memoise_a_missing_history(self, monkeypatch):
+        reader, session, other, start, hf = self._discovery_setup(monkeypatch)
+        hf.signature.return_value = None
+        reader.discover_session_ids(session, start, [session, other])
+        reader.discover_session_ids(session, start, [session, other])
+        assert hf.iter_entries.call_count == 2
 
     def test_discover_session_ids_without_directory(self):
         reader = ClaudeStatsReader()

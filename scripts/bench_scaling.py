@@ -1404,11 +1404,11 @@ def _append_transcript_line(paths: FixturePaths, session) -> None:
 
 
 def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
-    """The TUI 5 s sweep: fresh ``HistoryFile`` + ``ClaudeStatsReader.get_stats`` per session.
+    """The TUI 5 s sweep: the app's ``HistoryFile`` + ``ClaudeStatsReader.get_stats`` per session.
 
-    Mirrors ``tui._update_stats_async`` (one ``HistoryFile()`` per sweep, one
-    ``get_stats`` per widget) minus the thread pool — the parse is
-    GIL-bound, so serial wall time is the CPU the sweep costs.
+    Mirrors ``tui._update_stats_async`` (one ``HistoryFile`` held by the app
+    across sweeps, one ``get_stats`` per widget) minus the thread pool — the
+    parse is GIL-bound, so serial wall time is the CPU the sweep costs.
     """
     from overcode import history_reader
     from overcode.history_reader import HistoryFile
@@ -1416,9 +1416,9 @@ def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
 
     sessions = live_sessions(paths)
     n = len(sessions)
+    hf = HistoryFile()  # the app's instance, reused for every sweep
 
     def sweep():
-        hf = HistoryFile()
         for s in sessions:
             stats_reader_for_session(s).get_stats(s, history_file=hf)
 
@@ -1434,7 +1434,7 @@ def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
             tick,
             cold / n,
             n,
-            note=f"{n} sessions, fresh HistoryFile per sweep",
+            note=f"{n} sessions, one HistoryFile across sweeps",
         ),
         _result("stats sweep get_stats (warm, nothing changed)", tick, warm / n, n),
         _result("stats sweep get_stats (warm, one transcript appended)", tick, touched / n, n),

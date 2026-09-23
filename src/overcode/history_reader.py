@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from . import model_metadata
-from .stat_gate import FileSignature, is_settled
+from .stat_gate import FileSignature, is_settled, stat_signature
 from .transcript_index import TranscriptRegistry, empty_stats, empty_window
 
 if TYPE_CHECKING:
@@ -38,6 +38,30 @@ CLAUDE_HISTORY_PATH = Path.home() / ".claude" / "history.jsonl"
 # Claude Code encodes project dirs by dashing every non-alphanumeric char
 _NON_ALNUM = re.compile(r"[^a-zA-Z0-9]")
 CLAUDE_PROJECTS_PATH = Path.home() / ".claude" / "projects"
+
+# Path.resolve() results by the string resolved. A resolve is an lstat per
+# path component (~25 us); the same few dozen project strings are resolved
+# thousands of times a tick (once per owned id in encode_project_path, once
+# per history entry in the directory-matching fallbacks, audit R8), so the
+# memo turns those into dict lookups. A memoised answer goes stale only if
+# a symlink inside a project path is re-pointed while overcode runs.
+_resolved_paths: Dict[str, str] = {}
+_resolved_paths_lock = threading.Lock()
+_RESOLVED_PATHS_MAX = 8192
+
+
+def resolve_project_path(path: str) -> str:
+    """``str(Path(path).resolve())``, memoised per distinct ``path`` string."""
+    with _resolved_paths_lock:
+        hit = _resolved_paths.get(path)
+    if hit is not None:
+        return hit
+    resolved = str(Path(path).resolve())
+    with _resolved_paths_lock:
+        if len(_resolved_paths) >= _RESOLVED_PATHS_MAX:
+            _resolved_paths.clear()
+        _resolved_paths[path] = resolved
+    return resolved
 
 # Model name → context window size in tokens.
 # No default for unknown models (#469) — an unrecognized model renders a
@@ -485,6 +509,10 @@ class HistoryFile:
     the file at most once per mtime+size change, so multiple callers in
     the same update cycle share a single parse.
 
+    Each parse also indexes entry positions by sessionId and by raw project
+    string, so a per-session lookup costs its matches rather than a scan of
+    every entry (audit R8: the 5 s sweep did one full scan per widget).
+
     Thread-safe: a lock protects the cache so concurrent workers in a
     ThreadPoolExecutor can call methods without re-parsing.
     """
@@ -494,7 +522,12 @@ class HistoryFile:
         self._lock = threading.Lock()
         self._cached_mtime: float = 0.0
         self._cached_size: int = 0
-        self._cached_entries: List[HistoryEntry] = []
+        # (entries, positions by sessionId, positions by raw project string),
+        # replaced as one object so a reader never pairs an index with the
+        # entries of a different parse.
+        self._parsed: Tuple[List[HistoryEntry], Dict[str, List[int]], Dict[str, List[int]]] = (
+            [], {}, {}
+        )
         # Separate cache for backward-read session ID lookups
         self._session_id_cache: Dict[str, Tuple[float, int, Optional[str]]] = {}
 
@@ -502,16 +535,22 @@ class HistoryFile:
 
     def _entries(self) -> List[HistoryEntry]:
         """Return parsed entries, re-parsing only if the file changed."""
+        return self._snapshot()[0]
+
+    def _snapshot(self) -> Tuple[List[HistoryEntry], Dict[str, List[int]], Dict[str, List[int]]]:
+        """Parsed entries with their indexes, re-parsing only if the file changed."""
         try:
             stat = self._path.stat()
         except OSError:
-            return []
+            return [], {}, {}
 
         with self._lock:
             if stat.st_mtime == self._cached_mtime and stat.st_size == self._cached_size:
-                return self._cached_entries
+                return self._parsed
 
             entries: List[HistoryEntry] = []
+            by_sid: Dict[str, List[int]] = {}
+            by_project: Dict[str, List[int]] = {}
             try:
                 with open(self._path, 'r') as f:
                     for line in f:
@@ -520,27 +559,48 @@ class HistoryFile:
                             continue
                         try:
                             data = json.loads(line)
-                            entries.append(HistoryEntry(
+                            entry = HistoryEntry(
                                 display=data.get("display", ""),
                                 timestamp_ms=data.get("timestamp", 0),
                                 project=data.get("project"),
                                 session_id=data.get("sessionId"),
-                            ))
+                            )
                         except (json.JSONDecodeError, KeyError):
                             continue
+                        position = len(entries)
+                        entries.append(entry)
+                        if entry.session_id is not None:
+                            by_sid.setdefault(entry.session_id, []).append(position)
+                        if entry.project:
+                            by_project.setdefault(entry.project, []).append(position)
             except IOError:
-                return []
+                return [], {}, {}
 
-            self._cached_entries = entries
+            self._parsed = (entries, by_sid, by_project)
             self._cached_mtime = stat.st_mtime
             self._cached_size = stat.st_size
-            return entries
+            return self._parsed
 
     # ── Public query methods ──────────────────────────────────────────
 
     def read_all(self) -> List[HistoryEntry]:
         """Read all entries from history.jsonl (cached)."""
         return list(self._entries())
+
+    def iter_entries(self) -> List[HistoryEntry]:
+        """The cached entries themselves, without the copy ``read_all`` makes.
+
+        Read-only: callers iterate and must not mutate the list.
+        """
+        return self._entries()
+
+    def signature(self) -> Optional[FileSignature]:
+        """Stat signature of history.jsonl now, or None if it cannot be stat'ed.
+
+        Lets a caller remember which version of the file an answer came
+        from and skip its own scan while the file is unchanged.
+        """
+        return stat_signature(self._path)
 
     def get_interactions_for_session(
         self, session: "Session"
@@ -564,23 +624,24 @@ class HistoryFile:
         # Use owned sessionIds when available for precise matching (#264)
         owned_ids = set(getattr(session, 'agent_session_ids', None) or [])
 
-        session_dir = str(Path(session.start_directory).resolve())
-        matching = []
+        entries, by_sid, by_project = self._snapshot()
+        positions: List[int] = []
+        if owned_ids:
+            # Precise: only count interactions from this session's own Claude sessions
+            for sid in owned_ids:
+                positions.extend(by_sid.get(sid, ()))
+        else:
+            # Fallback: directory matching for sessions without tracked IDs.
+            # Each distinct raw project string is resolved once (memoised).
+            session_dir = resolve_project_path(session.start_directory)
+            for project, found in by_project.items():
+                if resolve_project_path(project) == session_dir:
+                    positions.extend(found)
+        positions.sort()  # file order, as a scan would produce
 
-        for entry in self._entries():
-            if entry.timestamp_ms < session_start_ms:
-                continue
-            if owned_ids:
-                # Precise: only count interactions from this session's own Claude sessions
-                if entry.session_id in owned_ids:
-                    matching.append(entry)
-            elif entry.project:
-                # Fallback: directory matching for sessions without tracked IDs
-                entry_dir = str(Path(entry.project).resolve())
-                if entry_dir == session_dir:
-                    matching.append(entry)
-
-        return matching
+        return [
+            entries[i] for i in positions if entries[i].timestamp_ms >= session_start_ms
+        ]
 
     def count_interactions(self, session: "Session") -> int:
         """Count interactions for a session."""
@@ -612,7 +673,7 @@ class HistoryFile:
         except OSError:
             return None
 
-        session_dir = str(Path(directory).resolve())
+        session_dir = resolve_project_path(directory)
         cache_key = session_dir
 
         with self._lock:
@@ -631,7 +692,7 @@ class HistoryFile:
                     break
                 project = data.get("project")
                 if project:
-                    entry_dir = str(Path(project).resolve())
+                    entry_dir = resolve_project_path(project)
                     if entry_dir == session_dir:
                         sid = data.get("sessionId")
                         if sid:
@@ -840,7 +901,7 @@ def encode_project_path(path: str) -> str:
     Returns:
         Encoded directory name
     """
-    resolved = str(Path(path).resolve())
+    resolved = resolve_project_path(path)
     return _NON_ALNUM.sub("-", resolved)
 
 
@@ -992,11 +1053,13 @@ _transcripts = TranscriptRegistry()
 
 
 def clear_transcript_caches() -> None:
-    """Drop every transcript index and directory/first-line cache (tests, benchmarks)."""
+    """Drop every transcript index and path/directory/first-line cache (tests, benchmarks)."""
     _transcripts.clear()
     with _dir_cache_lock:
         _dir_listing_cache.clear()
         _duplicate_subagent_cache.clear()
+    with _resolved_paths_lock:
+        _resolved_paths.clear()
 
 
 def read_session_file_stats(
