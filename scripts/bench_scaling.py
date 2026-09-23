@@ -1327,11 +1327,12 @@ def time_list_sessions(paths: FixturePaths, reps: int = 3) -> List[SiteResult]:
 
 def time_daemon_state_load(paths: FixturePaths, reps: int = 3) -> List[SiteResult]:
     """``MonitorDaemonState.load`` — 4/s fast path + 1/s status bar + 1/10 s."""
-    from overcode.monitor_daemon_state import MonitorDaemonState
+    from overcode.monitor_daemon_state import MonitorDaemonState, reset_load_cache
 
     def load():
         MonitorDaemonState.load(paths.daemon_state_path)
 
+    reset_load_cache()  # this process may have loaded the file already (the scale tests do)
     cold = _ms(load, 1)
     note = "TUI: 4/s fast path + 1/s status bar + 1/10 s"
     return [

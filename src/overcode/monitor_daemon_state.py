@@ -15,19 +15,48 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .settings import (
     PATHS,
     DAEMON,
     get_monitor_daemon_state_path,
 )
+from .stat_gate import FileSignature, StatGatedCache
 
 logger = logging.getLogger(__name__)
+
+# One parse cache per state-file path, shared by every consumer in this
+# process (audit R4): the TUI loads the file from its 4 Hz fast path, its
+# 1 Hz status bar and its 10 s refresh while the daemon rewrites it once a
+# tick, so the parse rate should follow the write rate. See
+# :mod:`overcode.stat_gate` for the gate and its aliasing contract.
+_LOAD_CACHES: Dict[str, StatGatedCache] = {}
+_LOAD_CACHES_LOCK = threading.Lock()
+
+
+def _load_cache_for(path: Path) -> StatGatedCache:
+    key = str(path)
+    with _LOAD_CACHES_LOCK:
+        cache = _LOAD_CACHES.get(key)
+        if cache is None:
+            cache = _LOAD_CACHES[key] = StatGatedCache()
+        return cache
+
+
+def reset_load_cache() -> None:
+    """Forget every remembered parse; the next ``load`` of each path re-reads.
+
+    For tests and benchmarks that want a cold load on purpose — production
+    code never needs it, the file's stat signature drives invalidation.
+    """
+    with _LOAD_CACHES_LOCK:
+        _LOAD_CACHES.clear()
 
 
 @dataclass
@@ -293,7 +322,13 @@ class MonitorDaemonState:
 
     @classmethod
     def load(cls, state_file: Optional[Path] = None) -> Optional["MonitorDaemonState"]:
-        """Load state from file.
+        """Load state from file, parsing only when the file changed.
+
+        While the file's ``(st_mtime_ns, st_size, st_ino)`` matches the
+        previous load of the same path, every caller in this process gets
+        the previous object back for the cost of one ``os.stat``. Treat it
+        as a read-only snapshot: the daemon is the only writer, and it
+        publishes a whole new file each tick (``save`` is mkstemp + rename).
 
         Args:
             state_file: Optional path override (for testing)
@@ -302,15 +337,28 @@ class MonitorDaemonState:
             MonitorDaemonState if file exists and is valid, None otherwise
         """
         path = state_file or PATHS.monitor_daemon_state
-        if not path.exists():
-            return None
+        return _load_cache_for(path).get(path, lambda: cls._read_state_file(path))
 
+    @classmethod
+    def _read_state_file(
+        cls, path: Path
+    ) -> Tuple[Optional[FileSignature], Optional["MonitorDaemonState"]]:
+        """Parse ``path`` now — uncached — with the fstat signature of the bytes read.
+
+        The signature is ``None`` only when there is no file to sign, so a
+        missing file is never remembered; a corrupt file is remembered as
+        ``None`` until it changes, rather than re-parsed on every call.
+        """
         try:
-            with open(path) as f:
-                data = json.load(f)
-            return cls.from_dict(data)
-        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-            return None
+            f = open(path)
+        except (FileNotFoundError, NotADirectoryError):
+            return None, None
+        with f:
+            sig = FileSignature.of(os.fstat(f.fileno()))
+            try:
+                return sig, cls.from_dict(json.load(f))
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                return sig, None
 
     def expected_publish_gap(self) -> float:
         """Seconds between consecutive publishes if the daemon is healthy.
