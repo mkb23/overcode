@@ -411,21 +411,20 @@ InstructionHistoryModal.visible {
     display: block;
 }
 
-/* Jump-to-agent Modal (#420) */
-JumpModal {
+/* Command palette (#420, #482) — size and offset are set in code to
+   centre it for the current terminal */
+CommandPalette {
     display: none;
     layer: above;
-    offset: 27 10;
-    width: auto;
-    height: auto;
-    max-height: 70%;
-    overflow-y: auto;
     background: $surface;
-    border: thick $primary;
-    padding: 1 2;
+    border: round #5fafd7;
+    border-title-color: #5fafd7;
+    border-title-style: bold;
+    border-subtitle-color: #8a8a8a;
+    padding: 0 1;
 }
 
-JumpModal.visible {
+CommandPalette.visible {
     display: block;
 }
 

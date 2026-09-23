@@ -36,6 +36,7 @@ class HelpOverlay(Static):
         row("b", "Jump to attention", "c", "Sync main + clear")
         row("h/?", "Toggle help", "q", "Quit / detach")
         row("^P", "Jump to agent by name", "J", "Agents / jobs view")
+        row("/", "Command palette: find any command and its key")
         t.append("\n")
 
         section("VIEW")

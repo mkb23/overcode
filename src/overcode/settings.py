@@ -22,7 +22,7 @@ import os
 DAEMON_VERSION = 2  # Increment when daemon behavior changes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 import yaml
 
@@ -831,6 +831,8 @@ class TUIPreferences:
     # Parents whose children are folded in tree sort mode (X key, #244),
     # persisted so a fold survives a TUI restart (#464)
     collapsed_parents: Set[str] = field(default_factory=set)
+    # Actions last run from the command palette, newest first (#482)
+    recent_commands: List[str] = field(default_factory=list)
     # Log every status change to diagnostics CSV (off by default)
     status_change_logging: bool = False
 

@@ -24,7 +24,8 @@ from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
 from .instruction_history_modal import InstructionHistoryModal
 from .new_agent_modal import NewAgentModal
-from .jump_modal import JumpModal, JumpCandidate
+from .jump_modal import JumpCandidate
+from .command_palette import CommandPalette
 from .rename_agent_modal import RenameAgentModal
 from .job_summary import JobSummary
 
@@ -47,7 +48,7 @@ __all__ = [
     "NewAgentModal",
     "InstructionHistoryModal",
     "NewAgentModal",
-    "JumpModal",
+    "CommandPalette",
     "JumpCandidate",
     "RenameAgentModal",
     "JobSummary",

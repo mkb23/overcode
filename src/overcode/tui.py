@@ -22,6 +22,7 @@ from textual.widget import MountError
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual import events, work
+from rich.text import Text
 
 from . import __version__, get_dev_version_suffix
 from .session_manager import SessionManager, Session
@@ -98,7 +99,7 @@ from .tui_widgets import (
     AgentSelectModal,
     SisterSelectionModal,
     InstructionHistoryModal,
-    JumpModal,
+    CommandPalette,
     JumpCandidate,
 )
 from .tui_actions import (
@@ -218,7 +219,7 @@ class SupervisorTUI(
     # Disable any size restrictions
     AUTO_FOCUS = None
 
-    # Free Ctrl+P for our jump-to-agent modal (#420). Textual's built-in
+    # Free Ctrl+P for our own palette (#420, #482). Textual's built-in
     # App opens its system command palette on Ctrl+P, which would otherwise
     # shadow the binding before it reaches us.
     ENABLE_COMMAND_PALETTE = False
@@ -288,8 +289,10 @@ class SupervisorTUI(
         ("g", "toggle_show_terminated", "Show killed"),
         # Jump to sessions needing attention (bell/red)
         ("b", "jump_to_attention", "Jump attention"),
-        # VSCode-style jump-to-agent by name (#420)
+        # VSCode-style jump-to-agent by name (#420); `>` in it lists commands
         ("ctrl+p", "jump_to_agent", "Jump to agent"),
+        # Command palette: search every command, see its key and state (#482)
+        ("slash", "command_palette", "Commands"),
         # Filter agents by tag (#357). With no tags currently in use this
         # is a no-op; otherwise opens the same fuzzy modal seeded with the
         # set of tags so the user can pick one. Press T again with the
@@ -618,8 +621,8 @@ class SupervisorTUI(
         yield SisterSelectionModal(id="sister-selection-modal", classes="modal")
         # Modal for instruction history (#376)
         yield InstructionHistoryModal(id="instruction-history-modal", classes="modal")
-        # Modal for VSCode-style jump-to-agent (#420)
-        yield JumpModal(id="jump-modal", classes="modal")
+        # Command palette: jump to agent, filter by tag, run commands (#420, #482)
+        yield CommandPalette(id="command-palette", classes="modal")
         yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
@@ -1132,6 +1135,12 @@ class SupervisorTUI(
     def on_resize(self) -> None:
         """Handle terminal resize events"""
         self._update_capture_lines()
+        try:
+            palette = self.query_one("#command-palette", CommandPalette)
+            if palette.has_class("visible"):
+                palette.relayout()
+        except NoMatches:
+            pass
         self.refresh()
         self.update_session_widgets()
         # Cascade to nested agent tmux windows in compact (split) mode so
@@ -3268,15 +3277,36 @@ class SupervisorTUI(
         else:
             self.sub_title = f"{session_label} [{mode_label}]{sync_label}"
 
-    def _build_footer_text(self) -> str:
-        """Build the footer help text string with current detail level."""
+    def _build_footer_text(self) -> Text:
+        """The footer: a few keys to start with, leading with `/`.
+
+        Deliberately short. The palette lists every command with its key
+        and state, so the footer's job is to send people there (#482).
+        """
+        from .tui_widgets.command_palette import KEY, KEYCAP
         if self.tui_mode == "jobs":
-            return "J:Agents | h:Help | q:Quit | j/k:Nav | x:Kill | c:Clear done | enter:Send | g:Show done"
-        level = self.SUMMARY_LEVELS[self.summary_level_index] if hasattr(self, 'summary_level_index') else "low"
-        return f"s:{level} | h:Help | q:Quit | j/k:Nav | i:Send | n:New | x:Kill | m:Preview | p:Pause | d:Daemon | t:Timeline | g:Killed | J:Jobs"
+            keys = [("J", "Agents"), ("j/k", "Jobs"), ("x", "Kill"), ("c", "Clear done")]
+        else:
+            keys = [("n", "New agent"), ("j/k", "Next/prev"), ("^P", "Jump to agent")]
+            if self.compact:
+                from .config import get_tmux_toggle_key
+                from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
+                toggle = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+                label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == toggle), toggle)
+                keys.append((label.split(" ")[0], "Switch pane"))
+        keys += [("?", "Help"), ("q", "Quit")]
+
+        text = Text()
+        text.append(" / ", style=KEYCAP)
+        text.append(" Commands", style="bold")
+        for key, label in keys:
+            text.append("   ")
+            text.append(key, style=KEY)
+            text.append(f" {label}")
+        return text
 
     def _update_footer(self) -> None:
-        """Update the footer help-text with current detail level."""
+        """Rebuild the footer (view mode or toggle key changed)."""
         try:
             help_text = self.query_one("#help-text", Static)
             help_text.update(self._build_footer_text())
@@ -4225,6 +4255,7 @@ class SupervisorTUI(
             banner.update(self._terminal_active_banner_text())
         except NoMatches:
             pass
+        self._update_footer()  # it names the toggle key in split mode
         self._dialog_did_close()
 
     def on_tmux_config_modal_cancelled(self, message: TmuxConfigModal.Cancelled) -> None:
@@ -4380,104 +4411,137 @@ class SupervisorTUI(
         """Handle instruction history modal dismissal (#376)."""
         self._dialog_did_close()
 
-    # --- Jump-to-agent modal (#420) --------------------------------
+    # --- Command palette: agents, tags and commands (#420, #357, #482) ---
 
-    # The jump modal is reused for both jump-to-agent and filter-by-tag.
-    # This flag tells the AgentSelected handler which mode the open modal
-    # is operating in so we can route the chosen value correctly (#357).
-    _jump_modal_mode: str = "agent"
-    # Sentinel session_id used to encode "(clear filter)" as a JumpCandidate.
-    _TAG_CLEAR_SENTINEL: str = "tag::__clear__"
-    _TAG_PREFIX: str = "tag::"
+    def action_command_palette(self) -> None:
+        """Open the command palette on commands (#482)."""
+        self._open_palette("commands")
 
     def action_jump_to_agent(self) -> None:
-        """Open the VSCode-style jump-to-agent modal (#420)."""
+        """Open the palette on agents: VSCode-style jump by name (#420)."""
         if self.tui_mode == "jobs":
             return
-        widgets = self._get_widgets_in_session_order()
-        if not widgets:
+        if not self._get_widgets_in_session_order():
             self.notify("No agents to jump to", severity="information")
             return
-        candidates = [
-            JumpCandidate(
-                session_id=w.session.id,
-                name=w.session.name,
-                repo=getattr(w.session, 'repo_name', '') or '',
-                branch=getattr(w.session, 'branch', '') or '',
-            )
-            for w in widgets
-        ]
-        try:
-            modal = self.query_one("#jump-modal", JumpModal)
-        except NoMatches:
-            return
-        self._jump_modal_mode = "agent"
-        self._dialog_will_open()
-        modal.show(candidates, self)
+        self._open_palette("agents")
 
     def action_filter_by_tag(self) -> None:
         """Filter visible agents by tag (#357).
 
-        Pops the same fuzzy modal as Ctrl+P but seeded with the distinct
-        tags currently in use (across local + remote). A `(clear filter)`
-        row is included so the user can cancel an active filter.
+        Opens the palette on the distinct tags currently in use (across
+        local + remote), with a `(clear filter)` row while a filter is on.
         """
         if self.tui_mode == "jobs":
             return
-        # Collect tags from all sessions (not just visible) so the user can
-        # filter back in to a tag they just filtered out.
-        tag_counts: dict[str, int] = {}
-        for s in self.sessions:
-            for t in (getattr(s, 'tags', None) or []):
-                tag_counts[t] = tag_counts.get(t, 0) + 1
-        if not tag_counts and not self.tag_filter:
+        if not self._palette_tags():
             self.notify(
                 "No tags in use yet — apply with `overcode tag <agent> <tag>`.",
                 severity="information",
             )
             return
+        self._open_palette("tags")
+
+    def _open_palette(self, mode: str) -> None:
+        from .command_palette import keys_by_action
+        try:
+            palette = self.query_one("#command-palette", CommandPalette)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        palette.open(
+            mode,
+            agents=self._palette_agents(),
+            tags=self._palette_tags(),
+            keymap=keys_by_action(self.BINDINGS),
+            recent=self._prefs.recent_commands,
+            app_ref=self,
+        )
+
+    def _palette_agents(self) -> list:
+        if self.tui_mode == "jobs":
+            return []
+        from .status_constants import get_status_symbol
+        candidates = []
+        for w in self._get_widgets_in_session_order():
+            symbol, color = get_status_symbol(w.detected_status, self.emoji_free)
+            candidates.append(JumpCandidate(
+                session_id=w.session.id,
+                name=w.session.name,
+                repo=getattr(w.session, 'repo_name', '') or '',
+                branch=getattr(w.session, 'branch', '') or '',
+                status=symbol,
+                status_style=color,
+            ))
+        return candidates
+
+    def _palette_tags(self) -> list:
+        # Count tags over all sessions (not just visible) so the user can
+        # filter back in to a tag they just filtered out.
+        tag_counts: dict[str, int] = {}
+        for s in self.sessions:
+            for t in (getattr(s, 'tags', None) or []):
+                tag_counts[t] = tag_counts.get(t, 0) + 1
         candidates: list[JumpCandidate] = []
         if self.tag_filter:
             candidates.append(JumpCandidate(
-                session_id=self._TAG_CLEAR_SENTINEL,
-                name="(clear filter)",
-                repo=f"current: {self.tag_filter}",
+                session_id="", name="(clear filter)", repo=f"current: {self.tag_filter}",
             ))
         for tag in sorted(tag_counts):
+            n = tag_counts[tag]
             candidates.append(JumpCandidate(
-                session_id=self._TAG_PREFIX + tag,
-                name=tag,
-                repo=f"{tag_counts[tag]} agent{'s' if tag_counts[tag] != 1 else ''}",
+                session_id=tag, name=tag, repo=f"{n} agent{'s' if n != 1 else ''}",
             ))
-        try:
-            modal = self.query_one("#jump-modal", JumpModal)
-        except NoMatches:
-            return
-        self._jump_modal_mode = "tag"
-        self._dialog_will_open()
-        modal.show(candidates, self)
+        return candidates
 
-    def on_jump_modal_agent_selected(self, message: JumpModal.AgentSelected) -> None:
-        if self._jump_modal_mode == "tag":
-            sid = message.session_id
-            if sid == self._TAG_CLEAR_SENTINEL:
-                self.tag_filter = None
-                self.notify("Tag filter cleared", severity="information")
-            elif sid.startswith(self._TAG_PREFIX):
-                self.tag_filter = sid[len(self._TAG_PREFIX):]
-                self.notify(f"Filtering by tag: {self.tag_filter}", severity="information")
-            self._dialog_did_close()
-            self.update_session_widgets()
-            return
-        widgets = self._get_widgets_in_session_order()
-        for i, w in enumerate(widgets):
+    def on_command_palette_agent_chosen(self, message: CommandPalette.AgentChosen) -> None:
+        for i, w in enumerate(self._get_widgets_in_session_order()):
             if w.session.id == message.session_id:
                 self._user_navigated = True
                 self.focused_session_index = i
                 break
         self._dialog_did_close()
 
-    def on_jump_modal_cancelled(self, message: JumpModal.Cancelled) -> None:
+    def on_command_palette_tag_chosen(self, message: CommandPalette.TagChosen) -> None:
+        self.tag_filter = message.tag
+        if message.tag is None:
+            self.notify("Tag filter cleared", severity="information")
+        else:
+            self.notify(f"Filtering by tag: {message.tag}", severity="information")
+        self._dialog_did_close()
+        self.update_session_widgets()
+
+    def on_command_palette_command_chosen(self, message: CommandPalette.CommandChosen) -> None:
+        """Run a command picked in the palette.
+
+        Arrives after the palette handed focus back, so actions that read
+        the focused agent see the right one. Called directly rather than
+        through run_action: check_action blocks every action while a modal
+        is visible, which the palette still is when kept open (Tab).
+        """
+        recent = [message.action] + [a for a in self._prefs.recent_commands if a != message.action]
+        self._prefs.recent_commands = recent[:10]
+        self._save_prefs()
+        if not message.keep_open:
+            self._dialog_did_close()
+        method = getattr(self, f"action_{message.action}", None)
+        if method is None:
+            return
+        target = message.focus_target
+        self.screen.set_focus(target if target is not None and target.is_attached else None)
+        if self.compact and message.action in self._COMPACT_BLOCKED_ACTIONS:
+            self.notify("Not available in split mode", severity="information")
+        else:
+            method()
+        if message.keep_open:
+            try:
+                palette = self.query_one("#command-palette", CommandPalette)
+            except NoMatches:
+                return
+            self.screen.set_focus(palette)
+            palette.refresh()
+
+    def on_command_palette_closed(self, message: CommandPalette.Closed) -> None:
         self._dialog_did_close()
 
     def action_cycle_focal_repo(self) -> None:
