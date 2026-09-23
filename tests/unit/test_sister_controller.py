@@ -263,11 +263,6 @@ class TestSisterControllerMethods:
             r = self.ctrl.set_hook_detection(self.url, self.key, "agent1", True)
         assert r.ok
 
-    def test_transport_all(self):
-        with self._mock_request("POST", "/api/agents/transport"):
-            r = self.ctrl.transport_all(self.url, self.key)
-        assert r.ok
-
     def test_cleanup_agents(self):
         with self._mock_request("POST", "/api/agents/cleanup", {"include_done": True}):
             r = self.ctrl.cleanup_agents(self.url, self.key, include_done=True)

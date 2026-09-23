@@ -26,7 +26,6 @@ from overcode.web_control_api import (
     resume_heartbeat,
     set_enhanced_context,
     set_hook_detection,
-    transport_all,
     cleanup_agents,
     restart_monitor,
     start_supervisor,
@@ -591,36 +590,6 @@ class TestFeatureToggles:
         sm.update_session.assert_called_once_with(
             "sess-1", hook_status_detection=True, detection_mode_override="hooks",
         )
-
-
-class TestTransportAll:
-    """Tests for transport_all handler."""
-
-    @patch(LAUNCHER_PATH)
-    @patch(SM_PATH)
-    def test_sends_handover_to_active_agents(self, MockSM, MockLauncher):
-        sm = MockSM.return_value
-        active_session = _mock_session(tmux_session="agents", status="running", is_asleep=False)
-        sleeping_session = _mock_session(tmux_session="agents", status="running", is_asleep=True)
-        sm.list_sessions.return_value = [active_session, sleeping_session]
-
-        launcher = MockLauncher.return_value
-        launcher.send_to_session.return_value = True
-
-        result = transport_all("agents")
-
-        assert result["ok"] is True
-        assert result["sent"] == 1
-        assert result["total"] == 1
-
-    @patch(SM_PATH)
-    def test_no_active_agents_raises_409(self, MockSM):
-        sm = MockSM.return_value
-        sm.list_sessions.return_value = []
-
-        with pytest.raises(ControlError) as exc_info:
-            transport_all("agents")
-        assert exc_info.value.status == 409
 
 
 class TestCleanupAgents:

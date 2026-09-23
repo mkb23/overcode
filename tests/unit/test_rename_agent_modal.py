@@ -279,6 +279,16 @@ class TestHelpCoversEveryBinding:
                 missing.append(f"{key} ({action})")
         assert missing == []
 
+    def test_no_key_is_bound_twice(self):
+        """Textual runs only the first binding for a key, so a second one is
+        dead: that is how `T` (handover) was lost to the tag filter."""
+        from collections import Counter
+
+        from overcode.tui import SupervisorTUI
+
+        keys = [b[0] if isinstance(b, tuple) else b.key for b in SupervisorTUI.BINDINGS]
+        assert {k: n for k, n in Counter(keys).items() if n > 1} == {}
+
     def test_rename_is_in_the_help(self):
         from overcode.tui_widgets.help_overlay import HelpOverlay
 

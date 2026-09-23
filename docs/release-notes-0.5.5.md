@@ -78,3 +78,8 @@ turn. In the TUI, Ctrl+N opens a rename dialog for the focused agent, with a
 force toggle. The help overlay now also lists Ctrl+R (cycle focal repo),
 Ctrl+P (jump to agent) and J (jobs view), which were bound but missing from
 it.
+
+The defunct "handover all" feature is removed: the `T` binding, the web
+endpoint `POST /api/agents/transport` and its sister-controller call. `T`
+was also bound to the tag filter, which had been shadowing it, so `T` now
+filters by tag and the help says so.

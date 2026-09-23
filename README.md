@@ -134,7 +134,7 @@ See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
 - [TUI Guide](docs/tui-guide.md) - Keyboard shortcuts and display modes
 - [Configuration](docs/configuration.md) - Config file and environment variables
 - [Wrappers](docs/wrappers.md) - Run agents in containers and custom environments
-- [Advanced Features](docs/advanced-features.md) - Sleep mode, handover, remote monitoring
+- [Advanced Features](docs/advanced-features.md) - Sleep mode, remote monitoring
 
 ## Testing
 

@@ -500,36 +500,6 @@ def set_hook_detection(tmux_session: str, name: str, enabled: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def transport_all(tmux_session: str) -> dict:
-    """Send handover instructions to all active agents."""
-    from .launcher import AgentLauncher
-    from .session_manager import SessionManager
-
-    sm = SessionManager()
-    launcher = AgentLauncher(tmux_session=tmux_session, session_manager=sm)
-
-    sessions = sm.list_sessions()
-    active = [
-        s for s in sessions
-        if s.tmux_session == tmux_session
-        and s.status != "terminated"
-        and not s.is_asleep
-    ]
-
-    if not active:
-        raise ControlError("No active agents to transport", status=409)
-
-    from .standing_instructions import HANDOVER_INSTRUCTION
-    handover_instruction = HANDOVER_INSTRUCTION
-
-    success_count = 0
-    for session in active:
-        if launcher.send_to_session(session.name, handover_instruction):
-            success_count += 1
-
-    return {"ok": True, "sent": success_count, "total": len(active)}
-
-
 def cleanup_agents(tmux_session: str, include_done: bool = False) -> dict:
     """Archive terminated (and optionally done) agents."""
     from .session_manager import SessionManager

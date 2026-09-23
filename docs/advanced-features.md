@@ -21,7 +21,6 @@ Sleep mode lets you pause agents and exclude them from statistics.
 - **Focus time**: Sleep agents you're not actively monitoring
 - **Pause without killing**: Keep agent state but stop activity
 - **Clean metrics**: Exclude agents from efficiency calculations
-- **Handover prep**: Sleep non-critical agents before handoff
 
 ### Constraints
 
@@ -280,30 +279,6 @@ Press `b` repeatedly to cycle through all attention-needing agents.
 ### Bell Indicator
 
 The bell (🔔) appears when an agent stalls and you haven't visited it yet. Focus the agent to mark it as "visited" and clear the bell. This helps you track which stalled agents you've already seen.
-
-## Handover Mode
-
-Prepare all active agents for handoff to another person or session.
-
-### How to Use
-
-1. Put any non-critical agents to sleep with `z`
-2. Press `H` twice (double-press for confirmation)
-3. Each awake agent receives instructions to:
-   - Create a new branch (if on main/master)
-   - Commit current changes
-   - Push to the branch
-   - Create a draft PR if none exists
-   - Post a handover summary as a PR comment
-
-### What Gets Committed
-
-Each agent commits its work-in-progress with a summary of:
-- What was being worked on
-- Current state
-- Any blockers or next steps
-
-This creates a clean checkpoint for async collaboration.
 
 ## Sync to Main
 

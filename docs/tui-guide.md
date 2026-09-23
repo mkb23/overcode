@@ -82,7 +82,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `V` | Edit agent priority value |
 | `B` | Edit cost budget |
 | `c` | Sync to main + clear (double-press to confirm) |
-| `T` | Handover all (double-press to confirm) |
+| `T` | Filter agents by tag |
 | `H` | Configure heartbeat |
 | `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |

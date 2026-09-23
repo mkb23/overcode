@@ -62,7 +62,6 @@ _FIXED_CONTROL_ROUTES = {
         prompt=body.get("prompt"), permissions=body.get("permissions", "normal"),
         provider=body.get("provider"),
     ),
-    ("POST", "/api/agents/transport"): lambda api, ts, body: api.transport_all(ts),
     ("POST", "/api/agents/cleanup"): lambda api, ts, body: api.cleanup_agents(
         ts, include_done=body.get("include_done", False),
     ),

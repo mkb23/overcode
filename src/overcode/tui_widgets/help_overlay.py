@@ -68,7 +68,7 @@ class HelpOverlay(Static):
         row("V", "Edit agent value", "B", "Edit cost budget")
         row("H", "Heartbeat config", "K", "Agent detection mode")
         row("F", "Fork agent", "^T", "Enhanced context")
-        row("T", "Handover all (2x)", "I", "Instruction history")
+        row("T", "Filter by tag", "I", "Instruction history")
         row("G", "New agent defaults", "U", "Sister visibility")
         row("^G", "Tmux toggle-key config", "^K", "Passthru key config")
         row("^O", "Send Ctrl+O (passthru)", "^R", "Cycle focal repo")

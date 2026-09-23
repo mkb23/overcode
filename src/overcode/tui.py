@@ -329,8 +329,6 @@ class SupervisorTUI(
         ("E", "toggle_emoji_free", "Emoji-free"),
         # Cycle between token count, dollar cost, and joules display
         ("dollar_sign", "toggle_cost_display", "Cycle $/⚡"),
-        # Transport/handover - prepare all sessions for handoff (double-press)
-        ("T", "transport_all", "Handover all"),
         # Heartbeat configuration (#171)
         ("H", "configure_heartbeat", "Heartbeat config"),
         # Fork agent - create child with source's conversation context (#347)

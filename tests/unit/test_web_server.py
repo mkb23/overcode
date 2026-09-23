@@ -1143,7 +1143,7 @@ class TestRouteControl:
     def test_dispatches_on_success(self):
         """Should dispatch and send response on success."""
         handler = _make_handler()
-        handler.path = "/api/agents/transport"
+        handler.path = "/api/agents/cleanup"
         handler._check_auth = MagicMock(return_value=True)
         handler._check_control_allowed = MagicMock(return_value=True)
         handler._read_json_body = MagicMock(return_value={})
@@ -1151,7 +1151,7 @@ class TestRouteControl:
 
         OvercodeHandler._route_control(handler, "POST")
 
-        handler._dispatch_control.assert_called_once_with("POST", "/api/agents/transport", {})
+        handler._dispatch_control.assert_called_once_with("POST", "/api/agents/cleanup", {})
         handler._send_json_response.assert_called_once_with({"ok": True})
 
     def test_handles_control_error(self):
@@ -1292,18 +1292,6 @@ class TestDispatchControl:
             )
 
         mock_fn.assert_called_once_with("test-session", "agent1")
-
-    def test_post_transport_all(self):
-        """POST /api/agents/transport dispatches correctly."""
-        handler = _make_handler()
-
-        with patch('overcode.web_control_api.transport_all') as mock_fn:
-            mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
-                handler, "POST", "/api/agents/transport", {}
-            )
-
-        mock_fn.assert_called_once_with("test-session")
 
     def test_post_cleanup(self):
         """POST /api/agents/cleanup dispatches correctly."""

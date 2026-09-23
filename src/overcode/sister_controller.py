@@ -260,14 +260,6 @@ class SisterController:
 
     # --- Bulk Operations ---
 
-    def transport_all(
-        self, sister_url: str, api_key: str,
-    ) -> ControlResult:
-        return self._request(
-            "POST", sister_url, api_key,
-            "/api/agents/transport",
-        )
-
     def cleanup_agents(
         self, sister_url: str, api_key: str, include_done: bool = False,
     ) -> ControlResult:

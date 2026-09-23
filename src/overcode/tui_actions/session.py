@@ -8,7 +8,7 @@ through the SisterController HTTP client.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from textual.css.query import NoMatches
 from textual.widgets import Input
@@ -717,71 +717,3 @@ class SessionActionsMixin:
             "heartbeat_freq",
             lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",
         )
-
-    def action_transport_all(self) -> None:
-        """Prepare all sessions for transport/handover (requires double-press confirmation).
-
-        Sends instructions to all active (non-sleeping) agents to:
-        - Create a new branch if on main/master
-        - Commit their current changes
-        - Push to their branch
-        - Create a draft PR if none exists
-        - Post handover summary as a PR comment
-
-        Sleeping agents are excluded from handover.
-        """
-        # Get active sessions (exclude terminated and sleeping)
-        active_sessions = [
-            s for s in self.sessions
-            if s.status != "terminated" and not s.is_asleep
-        ]
-        if not active_sessions:
-            self.notify("No active sessions to prepare (sleeping sessions excluded)", severity="warning")
-            return
-
-        count = len(active_sessions)
-        self._confirm_double_press(
-            "transport",
-            f"Press H again to send handover instructions to {count} agent(s)",
-            lambda: self._execute_transport_all(active_sessions),
-        )
-
-    def _execute_transport_all(self, sessions: List["Session"]) -> None:
-        """Execute transport/handover instructions to all sessions."""
-        from ..launcher import AgentLauncher
-
-        from ..standing_instructions import HANDOVER_INSTRUCTION
-        handover_instruction = HANDOVER_INSTRUCTION
-
-        launcher = AgentLauncher(
-            tmux_session=self.tmux_session,
-            session_manager=self.session_manager
-        )
-
-        success_count = 0
-        for session in sessions:
-            if self._is_remote(session):
-                if not self._sister_reachable(session):
-                    continue
-                # Send via sister controller for remote agents
-                result = self._sister_controller.send_instruction(
-                    session.source_url, session.source_api_key,
-                    session.name, text=handover_instruction,
-                )
-                if result.ok:
-                    success_count += 1
-            else:
-                if launcher.send_to_session_by_id(session.id, handover_instruction):
-                    success_count += 1
-
-        if success_count == len(sessions):
-            self.notify(
-                f"Sent handover instructions to {success_count} agent(s)",
-                severity="information"
-            )
-        else:
-            failed = len(sessions) - success_count
-            self.notify(
-                f"Sent to {success_count}, failed {failed} agent(s)",
-                severity="warning"
-            )

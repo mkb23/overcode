@@ -188,4 +188,4 @@ overcode cleanup
 - [CLI Reference](cli-reference.md) - All commands and options
 - [TUI Guide](tui-guide.md) - Master the dashboard shortcuts
 - [Configuration](configuration.md) - Customize behavior with config files
-- [Advanced Features](advanced-features.md) - Sleep mode, handover, remote monitoring
+- [Advanced Features](advanced-features.md) - Sleep mode, remote monitoring
