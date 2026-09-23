@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.tui_logic import (  # noqa: E402
     NON_FOCUSED_CAPTURE_EVERY,
+    NON_FOCUSED_CAPTURES_PER_TICK,
+    capture_rotation_period,
     select_capture_sessions,
     should_scan_git,
     windows_needing_resize,
@@ -43,49 +45,194 @@ class TestSelectCaptureSessions:
     IDS = [f"s{i}" for i in range(10)]
 
     def test_focused_session_captured_every_tick(self):
-        known = set(self.IDS)
         for tick in range(20):
-            chosen = select_capture_sessions(self.IDS, "s7", tick, known)
-            assert "s7" in chosen
+            assert "s7" in select_capture_sessions(self.IDS, "s7", tick)
 
-    def test_sessions_unknown_to_daemon_captured_every_tick(self):
-        known = set(self.IDS) - {"s3"}
-        for tick in range(20):
-            chosen = select_capture_sessions(self.IDS, "s0", tick, known)
-            assert "s3" in chosen
-
-    def test_no_daemon_state_captures_everything(self):
-        """Stale/absent daemon → the TUI is the only status source → no skipping."""
+    def test_rotation_is_independent_of_daemon_state(self):
+        """No daemon parameter at all: the daemon only decides where a skipped
+        session's status comes from, never how many panes a tick captures.
+        The old function captured every session every tick once the daemon
+        looked stale (4N capture-pane/s on the shared tmux server)."""
+        every = NON_FOCUSED_CAPTURE_EVERY
         for tick in range(8):
-            assert select_capture_sessions(self.IDS, "s0", tick, set()) == set(self.IDS)
+            chosen = select_capture_sessions(self.IDS, "s0", tick)
+            assert len(chosen) <= 1 + (len(self.IDS) + every - 1) // every
 
     def test_non_focused_rotate_once_per_window(self):
         """Over `every` consecutive ticks each non-focused session is captured exactly once."""
-        known = set(self.IDS)
         every = NON_FOCUSED_CAPTURE_EVERY
         counts = {sid: 0 for sid in self.IDS}
         for tick in range(100, 100 + every):
-            for sid in select_capture_sessions(self.IDS, "s0", tick, known, every=every):
+            for sid in select_capture_sessions(self.IDS, "s0", tick, every=every):
                 counts[sid] += 1
         assert counts["s0"] == every  # focused
         for sid in self.IDS[1:]:
             assert counts[sid] == 1, sid
 
     def test_per_tick_command_count_is_bounded(self):
-        known = set(self.IDS)
         every = NON_FOCUSED_CAPTURE_EVERY
         for tick in range(every):
-            chosen = select_capture_sessions(self.IDS, "s0", tick, known, every=every)
+            chosen = select_capture_sessions(self.IDS, "s0", tick, every=every)
             # focused + at most ceil(N/every) rotating
             assert len(chosen) <= 1 + (len(self.IDS) + every - 1) // every
 
     def test_every_one_means_no_skipping(self):
-        known = set(self.IDS)
-        assert select_capture_sessions(self.IDS, None, 5, known, every=1) == set(self.IDS)
+        assert select_capture_sessions(self.IDS, None, 5, every=1) == set(self.IDS)
 
     def test_zero_every_is_clamped(self):
-        known = set(self.IDS)
-        assert select_capture_sessions(self.IDS, None, 5, known, every=0) == set(self.IDS)
+        assert select_capture_sessions(self.IDS, None, 5, every=0) == set(self.IDS)
+
+    def test_always_ids_captured_every_tick(self):
+        """Never-captured sessions get an immediate capture (first sight)."""
+        for tick in range(20):
+            chosen = select_capture_sessions(self.IDS, "s0", tick, always_ids={"s3", "s8"})
+            assert {"s0", "s3", "s8"} <= chosen
+
+    def test_identical_to_previous_selection_when_daemon_was_fresh(self):
+        """Byte-identical choice to the old function for the case it handled well.
+
+        The old rule with every session known to the daemon: focused, or
+        index % every == tick % every. Up to 48 non-focused agents the
+        adaptive period is still 4, so nothing changes for that fleet size.
+        """
+
+        def old(ids, focused, tick, every=NON_FOCUSED_CAPTURE_EVERY):
+            slot = tick % every
+            return {sid for i, sid in enumerate(ids) if sid == focused or i % every == slot}
+
+        for n in (1, 2, 5, 10, 33, 48, 49):
+            ids = [f"a{i}" for i in range(n)]
+            for tick in range(0, 25):
+                # 49 ids = focused + 48 non-focused: still period 4
+                new = select_capture_sessions(ids, ids[0], tick)
+                assert new == old(ids, ids[0], tick), (n, tick)
+                if n <= 48:  # with no focused session all n are non-focused
+                    assert select_capture_sessions(ids, None, tick) == old(ids, None, tick)
+
+
+class TestCaptureRotationPeriod:
+    def test_small_fleets_keep_one_hertz(self):
+        for n in range(0, 49):
+            assert capture_rotation_period(n) == NON_FOCUSED_CAPTURE_EVERY
+
+    def test_period_grows_to_cap_captures_per_tick(self):
+        assert capture_rotation_period(49) == 5
+        assert capture_rotation_period(60) == 5
+        assert capture_rotation_period(61) == 6
+        assert capture_rotation_period(200) == 17
+        assert capture_rotation_period(1000) == 84
+
+    @pytest.mark.parametrize("n", [8, 48, 50, 51, 200, 1000])
+    def test_captures_per_tick_capped_at_any_fleet_size(self, n):
+        """<= 1 focused + NON_FOCUSED_CAPTURES_PER_TICK, stale daemon or not."""
+        ids = [f"s{i}" for i in range(n)]
+        every = capture_rotation_period(n - 1)
+        worst = max(len(select_capture_sessions(ids, "s0", t)) for t in range(1, every + 41))
+        assert worst <= 1 + NON_FOCUSED_CAPTURES_PER_TICK
+        # and every non-focused session is still visited once per period
+        seen = set()
+        for t in range(100, 100 + every):
+            seen |= select_capture_sessions(ids, "s0", t)
+        assert seen == set(ids)
+
+    def test_reference_fleet_numbers(self):
+        """50 agents: 50 captures/tick with a stale daemon before; 11 now, any daemon."""
+        ids = [f"s{i}" for i in range(50)]
+        assert max(len(select_capture_sessions(ids, "s0", t)) for t in range(1, 41)) == 11
+
+
+class TestFastPathRotationWithoutDaemon:
+    """Drive the real fast-path worker body with the daemon absent.
+
+    Before: an absent/stale daemon made the TUI capture every pane on every
+    250 ms tick. Now the rotation applies and skipped sessions repeat their
+    last known status and activity, so the screen reads the same as when
+    they were captured.
+    """
+
+    N = 10
+
+    def _app(self):
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        sessions = []
+        for i in range(self.N):
+            s = MagicMock()
+            s.id = f"s{i}"
+            s.is_remote = False
+            s.status = "running"
+            s.tmux_window = f"w{i}"
+            sessions.append(s)
+        widgets = [MagicMock(session=s) for s in sessions]
+        app.session_manager = MagicMock()
+        app.session_manager.list_sessions.return_value = sessions
+        app.tmux_session = "agents"
+        app._get_focused_widget = lambda: widgets[0]
+        app._previous_statuses = {}
+        app._pane_content_cache = {}
+        app._activity_cache = {}
+        app._status_tick = 0
+        app._prefs = MagicMock(status_change_logging=False)
+        app._remote_sessions = []
+        app._summaries = {}
+        app.detector = MagicMock()
+
+        def detect(session, num_lines=0):
+            return ("running", f"act-{session.id}", f"pane-{session.id}")
+
+        app.detector.detect_status.side_effect = detect
+        applied = []
+        app.call_from_thread = lambda fn, *a, **kw: applied.append((fn, a, kw))
+        return app, widgets, applied
+
+    def _tick(self, app, widgets, applied):
+        from overcode.tui import SupervisorTUI
+
+        with patch("overcode.tui.get_monitor_daemon_state", return_value=None):
+            SupervisorTUI._fetch_statuses_async.__wrapped__(app, widgets)
+        fn, args, _ = applied[-1]
+        status_results = args[0]
+        # What _apply_status_results does with the statuses on the main thread
+        for sid, (status, _, _) in status_results.items():
+            app._previous_statuses[sid] = status
+        return status_results
+
+    def test_first_tick_captures_every_session_once(self):
+        app, widgets, applied = self._app()
+        results = self._tick(app, widgets, applied)
+        assert app.detector.detect_status.call_count == self.N
+        for i in range(self.N):
+            assert results[f"s{i}"] == ("running", f"act-s{i}", f"pane-s{i}")
+
+    def test_later_ticks_rotate_and_replay_skipped_sessions(self):
+        app, widgets, applied = self._app()
+        self._tick(app, widgets, applied)
+        every = NON_FOCUSED_CAPTURE_EVERY
+        for _ in range(every):
+            app.detector.detect_status.reset_mock()
+            results = self._tick(app, widgets, applied)
+            assert app.detector.detect_status.call_count <= 1 + (self.N + every - 1) // every
+            # Every session still reports the same status/activity/pane text
+            for i in range(self.N):
+                assert results[f"s{i}"] == ("running", f"act-s{i}", f"pane-s{i}"), i
+        assert "s0" in {c.args[0].id for c in app.detector.detect_status.call_args_list}
+
+    def test_status_change_lands_when_the_slot_comes_round(self):
+        app, widgets, applied = self._app()
+        self._tick(app, widgets, applied)
+        def idle(session, num_lines=0):
+            return ("waiting_user", "idle", f"pane-{session.id}")
+
+        app.detector.detect_status.side_effect = idle
+        seen_change = {}
+        for _ in range(NON_FOCUSED_CAPTURE_EVERY):
+            results = self._tick(app, widgets, applied)
+            for sid, (status, activity, _) in results.items():
+                if status == "waiting_user":
+                    seen_change[sid] = activity
+        assert set(seen_change) == {f"s{i}" for i in range(self.N)}
+        assert set(seen_change.values()) == {"idle"}
 
 
 # ── windows_needing_resize ───────────────────────────────────────────

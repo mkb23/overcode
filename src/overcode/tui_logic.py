@@ -920,25 +920,59 @@ def calculate_human_interaction_count(
 NON_FOCUSED_CAPTURE_EVERY = 4  # ticks; at 250ms that's ~1 Hz per agent
 
 
+NON_FOCUSED_CAPTURES_PER_TICK = 12  # the rotation period grows past this many per tick
+
+
+def capture_rotation_period(
+    n_nonfocused: int,
+    min_every: int = NON_FOCUSED_CAPTURE_EVERY,
+    max_per_tick: int = NON_FOCUSED_CAPTURES_PER_TICK,
+) -> int:
+    """Ticks between two captures of the same non-focused session.
+
+    1-in-``min_every`` (about 1 Hz at 250 ms ticks) until that would put more
+    than ``max_per_tick`` non-focused captures on one tick; past that the
+    period grows with N so a tick issues at most ~``1 + max_per_tick``
+    capture-pane commands whatever the fleet size: 48 agents -> every 4
+    (13/tick), 50 -> every 5 (11/tick), 200 -> every 17 (13/tick). The tmux
+    server is single-threaded and shared by every overcode process on the
+    host, so the per-tick command count is what has to be bounded; each
+    non-focused status is still refreshed every ``every`` * 250 ms.
+    """
+    every = max(1, min_every)
+    if n_nonfocused > 0:
+        every = max(every, -(-n_nonfocused // max(1, max_per_tick)))  # ceil
+    return every
+
+
 def select_capture_sessions(
     session_ids: List[str],
     focused_id: Optional[str],
     tick: int,
-    daemon_known_ids: Set[str],
-    every: int = NON_FOCUSED_CAPTURE_EVERY,
+    always_ids: Set[str] = frozenset(),
+    every: Optional[int] = None,
 ) -> Set[str]:
     """Pick which sessions get a tmux capture on this fast-path tick.
 
-    Always: the focused session, and any session the daemon isn't reporting
-    on (its status would otherwise be unknown). Everyone else is captured on
-    a rotating 1-in-``every`` slot so the per-tick tmux command count stays
-    roughly ``1 + N/every`` instead of ``N``.
+    Always: the focused session, and ``always_ids`` (sessions never captured
+    yet, so their pane-derived columns fill in on first sight — at most one
+    extra capture per session lifetime). Everyone else is captured on a
+    rotating 1-in-``every`` slot (``capture_rotation_period`` when ``every``
+    is None), *whether or not the daemon is reporting on them*: daemon
+    freshness decides where a skipped session's status comes from (the
+    daemon, or its last known value), never how many panes a tick captures.
+    The previous design captured every session on every tick as soon as the
+    daemon looked stale — 4N capture-pane/s on the shared tmux server, 200/s
+    at 50 agents — and a daemon tick slower than 5 s was enough to trip it.
     """
+    n_nonfocused = sum(1 for sid in session_ids if sid != focused_id)
+    if every is None:
+        every = capture_rotation_period(n_nonfocused)
     every = max(1, every)
     slot = tick % every
     chosen: Set[str] = set()
     for i, sid in enumerate(session_ids):
-        if sid == focused_id or sid not in daemon_known_ids or i % every == slot:
+        if sid == focused_id or sid in always_ids or i % every == slot:
             chosen.add(sid)
     return chosen
 

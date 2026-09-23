@@ -1584,6 +1584,36 @@ def time_discover_session_ids(paths: FixturePaths, reps: int = 2) -> List[SiteRe
     ]
 
 
+def time_capture_selection(paths: FixturePaths, reps: int = 5) -> List[SiteResult]:
+    """``tui_logic.select_capture_sessions`` — panes the TUI fast path captures per 250 ms tick.
+
+    ``tmux``/``spawns`` are the capture-pane commands one tick issues (one per
+    chosen session). The count is the same with a fresh, slow or absent
+    daemon — the rotation no longer depends on daemon freshness.
+    """
+    from overcode.tui_logic import capture_rotation_period, select_capture_sessions
+
+    ids = [s.id for s in live_sessions(paths)]
+    focused = ids[0] if ids else None
+    every = capture_rotation_period(max(0, len(ids) - 1))
+    per_tick = max(len(select_capture_sessions(ids, focused, t)) for t in range(1, every + 1))
+    ms = _ms(lambda: select_capture_sessions(ids, focused, 7), reps)
+    return [
+        _result(
+            "capture selection (per tick, any daemon state)",
+            "TUI 250 ms fast",
+            ms,
+            1,
+            tmux_cmds=per_tick,
+            spawns=per_tick,
+            note=(
+                f"{len(ids)} agents: focused + 1-in-{every} rotation = {per_tick} capture-pane/tick "
+                f"({per_tick * 4}/s); was {len(ids)}/tick ({len(ids) * 4}/s) with a stale daemon"
+            ),
+        )
+    ]
+
+
 # ---- daemon -----------------------------------------------------------------
 
 
@@ -1795,6 +1825,7 @@ SITES: Dict[str, Callable[..., List[SiteResult]]] = {
     "presence": time_presence,
     "timeline": time_timeline_slots,
     "discover_ids": time_discover_session_ids,
+    "capture_rotation": time_capture_selection,
     "daemon": time_daemon_phases,
 }
 

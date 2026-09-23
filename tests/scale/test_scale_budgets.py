@@ -72,6 +72,11 @@ def discover_rows(scale_fixture):
 
 
 @pytest.fixture(scope="session")
+def capture_rows(scale_fixture):
+    return _by_site(bench_scaling.time_capture_selection(scale_fixture))
+
+
+@pytest.fixture(scope="session")
 def daemon_rows(scale_fixture):
     return _by_site(bench_scaling.time_daemon_phases(scale_fixture))
 
@@ -147,6 +152,16 @@ class TestSharedFileReads:
         # brief's 1 ms budget is within 10% of today's number, so the budget
         # is the stat-gated cost instead (a cache hit is well under 0.1 ms).
         assert daemon_state_rows["daemon-state load (warm, unchanged file)"].ms_per_call < 0.25
+
+
+class TestFastPathCaptures:
+    def test_captures_per_tick_capped_regardless_of_daemon(self, capture_rows):
+        # was: 50 capture-pane/tick (200/s) whenever the daemon looked stale (R6)
+        from overcode.tui_logic import NON_FOCUSED_CAPTURES_PER_TICK
+
+        row = capture_rows["capture selection (per tick, any daemon state)"]
+        assert row.tmux_cmds <= 1 + NON_FOCUSED_CAPTURES_PER_TICK
+        assert row.ms_per_call < 0.5
 
 
 class TestStatusBarWorker:

@@ -343,6 +343,9 @@ class SupervisorTUI(
         # cached text keeps their bash/subagent columns and preview stable.
         self._status_tick = 0
         self._pane_content_cache: dict[str, str] = {}
+        # Last applied activity per session, replayed on skipped ticks so the
+        # activity column holds steady when the daemon can't supply one.
+        self._activity_cache: dict[str, str] = {}
         # Slow-path sweep counter: git scans run every Nth sweep
         self._stats_sweep = 0
         # Track whether sessions have been loaded at least once (for startup sequencing)
@@ -1388,35 +1391,41 @@ class SupervisorTUI(
             focused_w = self._get_focused_widget()
             focused_session_id = focused_w.session.id if focused_w else None
 
-            # Daemon state is read once, up front: it decides which non-focused
-            # agents can skip their tmux capture this tick (their status comes
-            # from the daemon below) and enriches statuses afterwards.
+            # Daemon state is read once, up front. It only decides, in the
+            # enrichment below, whether a non-focused agent's status comes
+            # from the daemon or from its last known value — never how many
+            # panes this tick captures: the rotation is the same with a
+            # fresh, slow, or absent daemon (tui_logic.select_capture_sessions).
             daemon_state = get_monitor_daemon_state(self.tmux_session)
             daemon_fresh = bool(
                 daemon_state and daemon_state.sessions
                 and not daemon_state.is_stale(buffer_seconds=5.0)
             )
-            daemon_known_ids = (
-                {s.session_id for s in daemon_state.sessions} if daemon_fresh else set()
-            )
             self._status_tick += 1
-            capture_ids = select_capture_sessions(
-                [sid for sid, _ in sessions_to_check], focused_session_id,
-                self._status_tick, daemon_known_ids,
-            )
             content_cache = self._pane_content_cache
+            activity_cache = self._activity_cache
+            session_ids = [sid for sid, _ in sessions_to_check]
+            capture_ids = select_capture_sessions(
+                session_ids,
+                focused_session_id,
+                self._status_tick,
+                # Never-captured sessions get one immediate capture so their
+                # status and pane columns are right on first sight.
+                always_ids={sid for sid in session_ids if sid not in content_cache},
+            )
 
             def fetch_status(session):
                 try:
                     if session.is_remote:
                         return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
                     if session.id not in capture_ids:
-                        # Skipped this tick: daemon supplies status/activity
-                        # (see enrichment below); reuse last captured text so
-                        # the pane-derived columns don't flicker to empty.
+                        # Skipped this tick (rotation): repeat the last known
+                        # status and activity — a fresh daemon overrides both
+                        # below — and reuse the last captured text so the
+                        # pane-derived columns don't flicker to empty.
                         return (
                             self._previous_statuses.get(session.id, STATUS_WAITING_USER),
-                            "",
+                            activity_cache.get(session.id, ""),
                             content_cache.get(session.id, ""),
                         )
                     if session.status == "terminated":
@@ -1490,6 +1499,13 @@ class SupervisorTUI(
                             _, _, content = status_results[session_id]
                             status_results[session_id] = (ds.current_status, ds.current_activity, content)
                             status_sources[session_id] = "daemon"
+
+            # Remember each session's activity so a skipped tick repeats it
+            # instead of blanking the column when the daemon isn't fresh.
+            for session_id, (_, activity, _) in status_results.items():
+                activity_cache[session_id] = activity
+            for stale_id in [sid for sid in activity_cache if sid not in status_results]:
+                del activity_cache[stale_id]
 
             # Extract subtree costs from daemon state (local agents)
             subtree_costs = {}
