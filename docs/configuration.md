@@ -406,17 +406,21 @@ keeps the stall bell and the macOS notifications working from the
 daemon's status with no capture. The moment a client attaches (or a key is
 pressed) every timer resumes and one full refresh runs. Nothing changes
 while you are attached, and a TUI run outside tmux can't tell, so it
-always behaves as attended.
+always behaves as attended (and keeps telling the daemon so — see the
+touch below).
 
 **The monitor daemon** stretches its loop from `interval_fast` (2 s) to
 `interval_unattended_seconds` (default 10 s) when all three of these say
 nobody is watching: no client is attached to the agents tmux session, no
-TUI keypress heartbeat is fresh (60 s), and no TUI has touched its
-`tui_attended` file in the last 15 s (an attended TUI touches it every
-5 s — this is how a TUI in another tmux session, or in a plain terminal,
-keeps the daemon fast). It returns to the fast interval within one loop of
-a client attaching, and within a second of a TUI re-attaching or a key
-being pressed (the activity signal ends the sleep). The published state
+TUI keypress heartbeat is fresh (60 s), and nothing has touched the
+`tui_attended` file in the last 15 s. An attended TUI touches it every
+5 s — including one in another tmux session or in a plain terminal, which
+the first two signals cannot see — and the web server touches it whenever
+it serves a status request, so a fleet watched through the browser
+dashboard or a sister TUI stays on the fast loop too. It returns to the
+fast interval within one loop of a client attaching, and within about two
+seconds of a TUI re-attaching or a key being pressed (the activity signal
+ends the sleep at its next 1 s chunk). The published state
 carries `interval_mode` (`attended` / `unattended`) and the TUI's daemon
 status bar shows `(unattended)` next to the interval when the daemon is
 still in that mode — normally only for the loop after you return.
@@ -426,16 +430,17 @@ written on change (plus a 60 s keepalive), so the timeline you come back
 to has no holes at 10 s resolution; heartbeats, oversight timeouts and the
 every-two-minutes housekeeping (done-agent auto-archive, untracked window
 count, terminated-session archive) are all wall-clock and keep their
-cadence. Web dashboard and sister readers carry no "someone is watching"
-signal, so a fleet read only through them runs at the unattended
-interval.
+cadence. The daemon's own relay push reads the same status data without
+counting as a watcher.
 
 ```yaml
 monitor_daemon:
   interval_unattended_seconds: 10  # loop while nobody is watching; must be >= 2 (interval_fast)
 ```
 
-Read when the daemon starts (`overcode daemon restart` after changing it).
+Read when the daemon starts: after changing it, restart the daemon with
+`overcode monitor-daemon stop` then `overcode monitor-daemon start`, or
+press `\` (Restart monitor) in the TUI.
 
 ## Pricing Configuration
 

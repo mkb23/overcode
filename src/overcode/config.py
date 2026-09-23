@@ -667,7 +667,8 @@ def get_monitor_daemon_config() -> dict:
 
     Config format in ~/.overcode/config.yaml:
         monitor_daemon:
-          interval_unattended_seconds: 10   # >= interval_fast; the default is settings.DAEMON.interval_unattended
+          interval_unattended_seconds: 10   # >= interval_fast
+          # (the default is settings.DAEMON.interval_unattended)
 
     Returns:
         Dict with ``interval_unattended`` (int); a missing or invalid entry,
