@@ -166,6 +166,13 @@ class DaemonSettings:
     # session_archive.terminated_grace_seconds overrides; negative = never).
     terminated_archive_grace_seconds: int = 3600
 
+    # agent_status_history.csv is written on change (audit R10): a row when
+    # an agent's (status, activity) pair moves, and otherwise one keepalive
+    # row per this many seconds, so a reader can tell "unchanged" from "no
+    # daemon" and every live agent has a row within a keepalive of any
+    # window's cutoff.
+    status_history_keepalive_seconds: int = 60
+
     # Default tmux session name
     default_tmux_session: str = "agents"
 

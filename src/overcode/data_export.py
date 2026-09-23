@@ -199,6 +199,11 @@ def _get_sessions_schema():
 
 
 def _get_timeline_schema():
+    # One record per agent_status_history.csv row, as written: a row is
+    # written when the agent's (status, activity) changes and as a periodic
+    # keepalive (status_history.status_row_due), so each record is valid
+    # for its agent until that agent's next record — not a fixed-interval
+    # sample.
     import pyarrow as pa
     return pa.schema([
         ("timestamp", pa.string()),

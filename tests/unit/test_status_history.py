@@ -884,9 +884,13 @@ class TestRotateStatusHistoryStreaming:
         from overcode.status_history import rotate_status_history
         path = tmp_path / "agent_status_history.csv"
         now = datetime(2026, 9, 17, 12, 0, 0)
-        first = [(now - timedelta(minutes=1)).isoformat(), "a", "running", "x", "s", "h"]
-        old = [[(now - timedelta(days=9)).isoformat(), "a", "idle", "x", "s", "h"]]
-        self._write(path, [first] + old, header=False)
+        # Rows in time order, as every writer appends them (the oldest-row
+        # short-circuit relies on that): the headerless first row is old
+        # yet stays in the active file as-is, the next old row is archived.
+        first = [(now - timedelta(days=9)).isoformat(), "a", "running", "x", "s", "h"]
+        old = [[(now - timedelta(days=9, minutes=-1)).isoformat(), "a", "idle", "x", "s", "h"]]
+        recent = [[(now - timedelta(minutes=1)).isoformat(), "a", "running", "x", "s", "h"]]
+        self._write(path, [first] + old + recent, header=False)
 
         archive = rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now)
 
@@ -895,6 +899,10 @@ class TestRotateStatusHistoryStreaming:
             kept = list(csv.reader(f))
         assert kept[0][0] == "timestamp"
         assert kept[1] == first
+        assert kept[2] == recent[0]
+        with gzip.open(archive, "rt", newline="") as f:
+            archived = list(csv.reader(f))
+        assert archived[1:] == old
         assert not list(tmp_path.glob("*.tmp"))
 
     def test_nothing_archivable_leaves_no_temp_files(self, tmp_path):
@@ -906,3 +914,283 @@ class TestRotateStatusHistoryStreaming:
         assert rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now) is None
         assert not list(tmp_path.glob("*.tmp"))
         assert not list(tmp_path.glob("*.csv.gz"))
+
+
+# ── Change-only logging (audit R10) ─────────────────────────────────────
+
+
+class _Clock:
+    """``status_history.datetime`` replacement whose ``now()`` is scripted."""
+
+    def __init__(self, monkeypatch, start):
+        self.now = start
+        clock = self
+
+        class _Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: D401 - datetime API
+                return clock.now
+
+        import overcode.status_history as sh
+        monkeypatch.setattr(sh, "datetime", _Frozen)
+
+
+def _write_rows(path, rows):
+    """rows: (ts, agent, status, activity, session_id, hostname) tuples, file order."""
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "agent", "status", "activity", "session_id", "hostname"])
+        for row in rows:
+            w.writerow([row[0].isoformat(), *row[1:]])
+
+
+class TestStatusRowDue:
+    """The daemon's rule for when an agent's history row is written."""
+
+    def test_first_sight_is_due(self):
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        assert status_row_due(None, None, "running", "x", now, 60)
+
+    def test_same_pair_within_the_keepalive_is_not_due(self):
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        last = now - timedelta(seconds=58)
+        assert not status_row_due(("running", "x"), last, "running", "x", now, 60)
+
+    def test_status_change_is_due(self):
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        assert status_row_due(("running", "x"), now, "waiting_user", "x", now, 60)
+
+    def test_activity_change_is_due(self):
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        assert status_row_due(("running", "Read(a.py)"), now, "running", "Read(b.py)", now, 60)
+
+    def test_activity_compared_as_the_writer_stores_it(self):
+        """A change past the 100-char truncation is not a new row; empty is ''."""
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        base = "x" * 100
+        assert not status_row_due(("running", base), now, "running", base + "tail", now, 60)
+        assert not status_row_due(("running", ""), now, "running", None, now, 60)
+
+    def test_keepalive_elapsed_is_due(self):
+        from overcode.status_history import status_row_due
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        assert status_row_due(("running", "x"), now - timedelta(seconds=60), "running", "x", now, 60)
+        assert status_row_due(("running", "x"), now - timedelta(seconds=90), "running", "x", now, 60)
+
+    def test_default_keepalive_is_the_daemon_setting(self):
+        from overcode.settings import DAEMON
+        from overcode.status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, status_row_due
+        assert STATUS_HISTORY_KEEPALIVE_SECONDS == DAEMON.status_history_keepalive_seconds
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        just_under = now - timedelta(seconds=STATUS_HISTORY_KEEPALIVE_SECONDS - 1)
+        assert not status_row_due(("running", "x"), just_under, "running", "x", now)
+
+
+class TestStatusHistoryCarry:
+    """``read(carry=True)``: each agent's state at the window's left edge."""
+
+    def test_carry_is_the_last_row_before_the_cutoff_timestamped_at_the_cutoff(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [
+            (now - timedelta(minutes=90), "a3", "running", "", "s3", "h"),   # beyond the lookback
+            (now - timedelta(minutes=63), "a1", "running", "r", "s1", "h"),  # 3 min before cutoff
+            (now - timedelta(minutes=62), "a2", "waiting_user", "w", "s2", "h"),
+            (now - timedelta(minutes=61), "a1", "running", "r2", "s1", "h"),
+            (now - timedelta(minutes=30), "a1", "waiting_user", "", "s1", "h"),
+        ])
+        cutoff = now - timedelta(hours=1)
+
+        plain = StatusHistoryFile(path).read(hours=1.0)
+        assert [(r[0], r[1], r[2]) for r in plain] == [(now - timedelta(minutes=30), "a1", "waiting_user")]
+
+        result = StatusHistoryFile(path).read(hours=1.0, carry=True)
+        assert [(r[0], r[1], r[2], r[3]) for r in result[:2]] == [
+            (cutoff, "a1", "running", "r2"),  # its last row before the cutoff, not its first
+            (cutoff, "a2", "waiting_user", "w"),
+        ]
+        assert result[2:] == plain
+        assert not [r for r in result if r[1] == "a3"]
+
+    def test_carry_keeps_the_other_columns(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [(now - timedelta(minutes=61), "a1", "running", "act", "sid", "host")])
+        (row,) = StatusHistoryFile(path).read(hours=1.0, carry=True)
+        assert row == (now - timedelta(hours=1), "a1", "running", "act", "sid", "host")
+
+    def test_carry_honours_the_agent_filter(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [
+            (now - timedelta(minutes=61), "a1", "running", "", "s1", "h"),
+            (now - timedelta(minutes=61), "a2", "waiting_user", "", "s2", "h"),
+            (now - timedelta(minutes=10), "a2", "running", "", "s2", "h"),
+        ])
+        result = StatusHistoryFile(path).read(hours=1.0, agent_name="a2", carry=True)
+        assert [(r[1], r[2]) for r in result] == [("a2", "waiting_user"), ("a2", "running")]
+
+    def test_rows_that_age_out_become_the_carry_on_an_incremental_read(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        clock = _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [
+            (now - timedelta(minutes=50), "a1", "running", "", "s1", "h"),
+            (now - timedelta(minutes=20), "a1", "waiting_user", "", "s1", "h"),
+        ])
+        reader = StatusHistoryFile(path)
+        assert len(reader.read(hours=1.0, carry=True)) == 2
+        assert len(reader._cached_entries) == 2
+
+        # 43 minutes later a row lands for another agent; the file grew, so
+        # the read is incremental and the deque is trimmed from the left.
+        clock.now = now + timedelta(minutes=43)
+        log_agent_status("a2", "running", "", path, session_id="s2", hostname="h")
+        result = reader.read(hours=1.0, carry=True)
+
+        assert len(reader._cached_entries) == 1  # only a2's row is inside the window
+        assert reader._read_offset > 0
+        cutoff = clock.now - timedelta(hours=1)
+        assert [(r[0], r[1], r[2]) for r in result][:1] == [(cutoff, "a1", "waiting_user")]
+        assert result[1][1] == "a2"
+
+    def test_carry_ages_out_of_the_lookback(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        clock = _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [(now - timedelta(minutes=30), "a1", "running", "", "s1", "h")])
+        reader = StatusHistoryFile(path)
+        assert len(reader.read(hours=1.0, carry=True)) == 1
+        clock.now = now + timedelta(minutes=33)  # the row is now 3 min before the cutoff
+        assert [r[1] for r in reader.read(hours=1.0, carry=True)] == ["a1"]
+        clock.now = now + timedelta(minutes=40)  # 10 min before it: not logged at the cutoff
+        assert reader.read(hours=1.0, carry=True) == []
+        assert reader._carry == {}
+
+    def test_carry_for_a_window_narrower_than_the_cached_one(self, tmp_path, monkeypatch):
+        now = datetime(2026, 9, 23, 12, 0, 0)
+        _Clock(monkeypatch, now)
+        path = tmp_path / "history.csv"
+        _write_rows(path, [
+            (now - timedelta(minutes=100), "a1", "running", "", "s1", "h"),
+            (now - timedelta(minutes=33), "a1", "waiting_user", "", "s1", "h"),
+            (now - timedelta(minutes=10), "a1", "running", "", "s1", "h"),
+        ])
+        reader = StatusHistoryFile(path)
+        assert len(reader.read(hours=3.0)) == 3  # the cached window is 3 h
+        result = reader.read(hours=0.5, carry=True)
+        assert [(r[0], r[2]) for r in result] == [
+            (now - timedelta(minutes=30), "waiting_user"),
+            (now - timedelta(minutes=10), "running"),
+        ]
+        assert len(reader._cached_entries) == 3  # the wider cache is untouched
+
+    def test_repeated_columns_are_interned(self, tmp_path):
+        path = tmp_path / "history.csv"
+        now = datetime.now()
+        _write_rows(path, [
+            (now - timedelta(minutes=i), "agent-with-a-long-name", "waiting_user", f"act{i}", "sid", "host")
+            for i in range(20, 0, -1)
+        ])
+        rows = StatusHistoryFile(path).read(hours=1.0)
+        assert len(rows) == 20
+        for column in (1, 2, 4, 5):
+            assert all(r[column] is rows[0][column] for r in rows)
+        assert rows[0][3] != rows[1][3]
+
+
+class TestRotationShortCircuit:
+    """A size-triggered rotation with nothing beyond keep_hours reads one row."""
+
+    def test_nothing_old_enough_does_not_stream_the_file(self, tmp_path, monkeypatch):
+        import overcode.status_history as sh
+        path = tmp_path / "agent_status_history.csv"
+        now = datetime(2026, 9, 17, 12, 0, 0)
+        _write_rows(path, [
+            (now - timedelta(minutes=i), "a", "running", "x", "s", "h") for i in range(50, 0, -1)
+        ])
+
+        def no_stream(*args, **kwargs):
+            raise AssertionError("rotation opened the archive stream")
+
+        monkeypatch.setattr(sh.gzip, "open", no_stream)
+        assert rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now) is None
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_rotation_still_runs_when_the_oldest_row_is_beyond_keep_hours(self, tmp_path):
+        path = tmp_path / "agent_status_history.csv"
+        now = datetime(2026, 9, 17, 12, 0, 0)
+        _write_rows(path, [
+            (now - timedelta(hours=31), "a", "running", "x", "s", "h"),
+            (now - timedelta(minutes=1), "a", "running", "x", "s", "h"),
+        ])
+        archive = rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now)
+        assert archive is not None
+
+
+class TestReadAgentStatusHistoryRangeCarry:
+    def _archive(self, tmp_path, history_file, rotated_at, rows):
+        from overcode.status_history import ARCHIVE_SUFFIX, ARCHIVE_TS_FORMAT
+        name = f"{history_file.stem}.{rotated_at.strftime(ARCHIVE_TS_FORMAT)}{ARCHIVE_SUFFIX}"
+        archive = tmp_path / name
+        with gzip.open(archive, "wt", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "agent", "status", "activity", "session_id", "hostname"])
+            for row in rows:
+                w.writerow([row[0].isoformat(), *row[1:]])
+        return archive
+
+    def test_carry_at_start_from_active_rows(self, tmp_path):
+        path = tmp_path / "history.csv"
+        end = datetime.now()
+        start = end - timedelta(hours=2)
+        _write_rows(path, [
+            (start - timedelta(minutes=10), "a1", "running", "", "s1", "h"),  # beyond the lookback
+            (start - timedelta(minutes=2), "a1", "waiting_user", "w", "s1", "h"),
+            (start - timedelta(minutes=1), "a2", "running", "r", "s2", "h"),
+            (start + timedelta(minutes=30), "a1", "running", "", "s1", "h"),
+        ])
+        plain = read_agent_status_history_range(start, end, path)
+        assert [(r[1], r[2]) for r in plain] == [("a1", "running")]
+
+        result = read_agent_status_history_range(start, end, path, carry=True)
+        assert [(r[0], r[1], r[2], r[3]) for r in result] == [
+            (start, "a1", "waiting_user", "w"),
+            (start, "a2", "running", "r"),
+            (start + timedelta(minutes=30), "a1", "running", ""),
+        ]
+
+    def test_carry_at_start_from_an_archive_within_the_lookback(self, tmp_path):
+        path = tmp_path / "history.csv"
+        end = datetime.now()
+        start = end - timedelta(hours=2)
+        _write_rows(path, [(start + timedelta(minutes=5), "a1", "running", "", "s1", "h")])
+        self._archive(tmp_path, path, start + timedelta(hours=1), [
+            (start - timedelta(minutes=2), "a2", "waiting_user", "", "s2", "h"),
+        ])
+        result = read_agent_status_history_range(start, end, path, carry=True)
+        assert [(r[0], r[1], r[2]) for r in result] == [
+            (start, "a2", "waiting_user"),
+            (start + timedelta(minutes=5), "a1", "running"),
+        ]
+
+    def test_archives_rotated_before_the_lookback_are_skipped(self, tmp_path):
+        path = tmp_path / "history.csv"
+        end = datetime.now()
+        start = end - timedelta(hours=2)
+        _write_rows(path, [(start + timedelta(minutes=5), "a1", "running", "", "s1", "h")])
+        # Rotated before the lookback opens: every row in it is older still
+        # (the file would not really hold this row; it proves the skip).
+        self._archive(tmp_path, path, start - timedelta(minutes=10), [
+            (start - timedelta(minutes=2), "a2", "waiting_user", "", "s2", "h"),
+        ])
+        result = read_agent_status_history_range(start, end, path, carry=True)
+        assert [r[1] for r in result] == ["a1"]

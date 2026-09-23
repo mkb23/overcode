@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
+from .settings import DAEMON
 from .status_constants import is_green_status
 from .tmux_utils import pane_for_window
 
@@ -448,6 +449,13 @@ def calculate_spin_stats(
     )
 
 
+# A history row stands for its agent until the agent's next row (rows are
+# written on change plus a keepalive, audit R10), or for this long when none
+# follows: two keepalives. A daemon gap longer than that counts as "no
+# samples", the way it did with a row per tick.
+SPIN_ROW_VALIDITY_SECONDS = 2 * DAEMON.status_history_keepalive_seconds
+
+
 def calculate_mean_spin_from_history(
     history: list,
     agent_names: List[str],
@@ -459,8 +467,17 @@ def calculate_mean_spin_from_history(
     This provides a time-windowed average of how many agents were running,
     as opposed to the cumulative calculation in calculate_spin_stats().
 
+    Time-weighted: each row stands for its agent from its timestamp until
+    the agent's next row (or SPIN_ROW_VALIDITY_SECONDS, or ``now``), clipped
+    to the window, and the mean is the green share of that covered time
+    scaled to the agent count. With a row per agent per tick this is the
+    old "fraction of samples that were running" to within one tick; with
+    change-only logging it is the same number from far fewer rows. Rows
+    before the cutoff set each agent's state at the window's left edge.
+
     Args:
-        history: List of (timestamp, agent, status, activity) tuples from CSV
+        history: List of (timestamp, agent, status, ...) tuples from CSV,
+            oldest first; rows before the cutoff are welcome
         agent_names: List of active (non-sleeping) agent names to include
         baseline_minutes: Minutes back from now (0 = instantaneous, not used)
         now: Reference time (defaults to datetime.now())
@@ -468,7 +485,8 @@ def calculate_mean_spin_from_history(
     Returns:
         Tuple of (mean_spin, sample_count) where:
         - mean_spin: Average number of agents in "running" state during window
-        - sample_count: Total samples in the window (0 if no data)
+        - sample_count: Rows inside the window for the named agents (0 if no
+          data; the status bar's has-data gate)
     """
     if now is None:
         now = datetime.now()
@@ -477,27 +495,47 @@ def calculate_mean_spin_from_history(
         return (0.0, 0)
 
     cutoff = now - timedelta(minutes=baseline_minutes)
+    names = set(agent_names)
+    validity = timedelta(seconds=SPIN_ROW_VALIDITY_SECONDS)
 
-    # Filter to window and active agents only
-    window_history = [
-        (ts, agent, status)
-        for ts, agent, status, *_ in history
-        if cutoff <= ts <= now and agent in agent_names
-    ]
+    green_seconds = 0.0
+    covered_seconds = 0.0
+    sample_count = 0
+    # Per agent: (timestamp, is_green) of its latest row seen so far
+    open_rows: dict = {}
 
-    if not window_history:
-        return (0.0, 0)
+    def close(agent: str, until: datetime) -> None:
+        nonlocal green_seconds, covered_seconds
+        ts, is_green = open_rows[agent]
+        end = min(until, ts + validity)
+        start = max(ts, cutoff)
+        if end > start:
+            seconds = (end - start).total_seconds()
+            covered_seconds += seconds
+            if is_green:
+                green_seconds += seconds
 
-    running_count = sum(1 for _, _, status in window_history if is_green_status(status))
-    total_count = len(window_history)
+    for ts, agent, status, *_ in history:
+        if agent not in names or ts > now:
+            continue
+        if ts >= cutoff:
+            sample_count += 1
+        if agent in open_rows:
+            close(agent, ts)
+        open_rows[agent] = (ts, is_green_status(status))
+    for agent in open_rows:
+        close(agent, now)
 
-    # mean_spin = (fraction of samples that were "running") * num_agents
+    if sample_count == 0 or covered_seconds <= 0:
+        return (0.0, sample_count)
+
+    # mean_spin = (green share of the covered agent-time) * num_agents
     # This gives "average number of agents running at any point in time"
-    # Example: 2 agents, 50% of samples are "running" -> mean_spin = 1.0
+    # Example: 2 agents, running half the time each -> mean_spin = 1.0
     num_agents = len(agent_names)
-    mean_spin = (running_count / total_count) * num_agents if total_count > 0 else 0.0
+    mean_spin = (green_seconds / covered_seconds) * num_agents
 
-    return (mean_spin, total_count)
+    return (mean_spin, sample_count)
 
 
 @dataclass

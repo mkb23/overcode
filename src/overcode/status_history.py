@@ -2,17 +2,25 @@
 Agent status history tracking.
 
 Provides functions to log and read agent status history for timeline visualization.
+
+Rows are appended by the monitor daemon when an agent's (status, activity)
+pair changes and as a periodic keepalive (``status_row_due``), so a row is
+valid for its agent until that agent's next row; readers that forward-fill
+can ask for the *carry* — each agent's last row at or before a window's
+cutoff — so the state at the window's left edge is known.
 """
 
 import csv
 import gzip
 import os
+import sys
 import threading
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
-from .settings import PATHS
+from .settings import DAEMON, PATHS
 
 
 def log_agent_status(
@@ -25,8 +33,9 @@ def log_agent_status(
 ) -> None:
     """Log agent status to history CSV file.
 
-    Called by daemon each loop to track agent status over time.
-    Used by TUI for timeline visualization.
+    Called by the daemon when ``status_row_due`` says a row is due (a status
+    or activity change, a keepalive, or an agent's first observation) to
+    track agent status over time. Used by TUI for timeline visualization.
 
     Args:
         agent_name: Name of the agent
@@ -56,6 +65,71 @@ def log_agent_status(
         ])
 
 
+# ── Change-only logging (audit R10) ──────────────────────────────────────
+#
+# The monitor daemon used to append one row per agent per 2 s loop whether
+# or not anything had changed: 25 rows a second at 50 agents, ~170 MB a day,
+# and every reader's cost grew with agents x hours at that rate. Rows are
+# now written only when an agent's (status, activity) pair moves, plus one
+# keepalive row per DAEMON.status_history_keepalive_seconds, so a row stands
+# for its agent until that agent's next row. The daemon owns the decision
+# (MonitorDaemon._detect_and_enrich); log_agent_status itself is unchanged.
+
+STATUS_HISTORY_KEEPALIVE_SECONDS = DAEMON.status_history_keepalive_seconds
+
+# How far before a window's cutoff a reader looks for each agent's last row
+# (the "carry"): every live agent writes at least one row per keepalive, so
+# its state at the cutoff is within the last few keepalives before it. Five
+# also covers a daemon tick that overran. An agent whose last row is older
+# than this was not being logged at the cutoff and gets no carry — the same
+# empty left edge a row-per-tick file gave it.
+CARRY_LOOKBACK_SECONDS = 5 * STATUS_HISTORY_KEEPALIVE_SECONDS
+
+
+def status_row_due(
+    last_pair: Optional[Tuple[str, str]],
+    last_written: Optional[datetime],
+    status: str,
+    activity: str,
+    now: datetime,
+    keepalive_seconds: float = STATUS_HISTORY_KEEPALIVE_SECONDS,
+) -> bool:
+    """Whether the daemon should append a history row for an agent this tick.
+
+    ``last_pair`` / ``last_written`` are what was last logged for the agent
+    (None when it has not been logged in this daemon's lifetime, which
+    always writes). A row is due when the (status, activity) pair differs
+    from the last one written — ``activity`` compared as the writer stores
+    it, truncated — or when the last row is a keepalive or more old.
+    """
+    if last_pair is None or last_written is None:
+        return True
+    if last_pair != (status, activity[:100] if activity else ""):
+        return True
+    return (now - last_written).total_seconds() >= keepalive_seconds
+
+
+Row = Tuple[datetime, str, str, str, str, str]
+
+
+def _intern_row(row: Row) -> Row:
+    """The same row with its repeated columns interned.
+
+    Agent, status, session id and hostname repeat across every row of an
+    agent; sharing one string object per distinct value is what keeps a
+    3 h window of a 50-agent fleet small. Activity varies per row and is
+    left alone.
+    """
+    return (
+        row[0],
+        sys.intern(row[1]),
+        sys.intern(row[2]),
+        row[3],
+        sys.intern(row[4]),
+        sys.intern(row[5]),
+    )
+
+
 class StatusHistoryFile:
     """Cached incremental reader for agent_status_history.csv.
 
@@ -64,6 +138,15 @@ class StatusHistoryFile:
     - Incremental tail reads (only parse newly appended bytes)
     - mtime+size cache (instant return when file unchanged)
     - Thread-safe (lock protects cache state)
+
+    The cached window is a deque, oldest row first, trimmed from the left as
+    rows age out; rows that leave it (and rows parsed from the lookback
+    before the window on a full read) become the per-agent *carry*: the
+    last row at or before the cutoff, which ``read(carry=True)`` returns
+    timestamped at the cutoff. With change-only logging (see
+    ``status_row_due``) an agent's first in-window row can be up to a
+    keepalive after the cutoff; the carry is what lets a forward-filling
+    consumer show its state from the window's left edge.
     """
 
     def __init__(self, path: Path):
@@ -71,7 +154,9 @@ class StatusHistoryFile:
         self._lock = threading.Lock()
         self._cached_mtime: float = 0.0
         self._cached_size: int = 0
-        self._cached_entries: List[Tuple[datetime, str, str, str, str, str]] = []
+        self._cached_entries: Deque[Row] = deque()
+        # Per agent: its last row older than the cached window
+        self._carry: Dict[str, Row] = {}
         self._cached_hours: float = 0.0
         self._read_offset: int = 0
 
@@ -79,13 +164,21 @@ class StatusHistoryFile:
         self,
         hours: float = 3.0,
         agent_name: Optional[str] = None,
-    ) -> List[Tuple[datetime, str, str, str, str, str]]:
-        """Read status history entries, using cache when possible."""
+        carry: bool = False,
+    ) -> List[Row]:
+        """Read status history entries, using cache when possible.
+
+        With ``carry`` the result also holds, per agent, its last row at or
+        before ``now - hours`` — timestamped at that cutoff, and only when
+        that row is within CARRY_LOOKBACK_SECONDS of it — ahead of the rows
+        inside the window.
+        """
         try:
             stat = self._path.stat()
         except OSError:
             return []
 
+        now = datetime.now()
         with self._lock:
             file_changed = (
                 stat.st_mtime != self._cached_mtime
@@ -95,7 +188,8 @@ class StatusHistoryFile:
 
             # Cache hit: file unchanged and hours within cached window
             if not file_changed and not hours_expanded:
-                return self._filter(self._cached_entries, hours, agent_name)
+                self._trim(now - timedelta(hours=self._cached_hours))
+                return self._filter(now, hours, agent_name, carry)
 
             # Incremental: file grew, hours didn't expand, have previous offset
             if (
@@ -104,28 +198,37 @@ class StatusHistoryFile:
                 and stat.st_size > self._cached_size
                 and self._read_offset > 0
             ):
-                return self._incremental_read(stat, hours, agent_name)
+                return self._incremental_read(stat, now, hours, agent_name, carry)
 
             # Full re-read for all other cases
-            return self._full_read(stat, hours, agent_name)
+            return self._full_read(stat, now, hours, agent_name, carry)
 
-    def _full_read(self, stat, hours, agent_name):
-        cutoff = datetime.now() - timedelta(hours=hours)
+    def _full_read(self, stat, now, hours, agent_name, carry):
+        cutoff = now - timedelta(hours=hours)
+        lookback_cutoff = cutoff - timedelta(seconds=CARRY_LOOKBACK_SECONDS)
         try:
             with open(self._path, 'rb') as f:
-                start = self._seek_to_cutoff(f, cutoff, stat.st_size)
-                entries = self._parse_rows(f, start)
+                start = self._seek_to_cutoff(f, lookback_cutoff, stat.st_size)
+                rows = self._parse_rows(f, start)
         except (OSError, IOError):
             return []
 
+        entries: Deque[Row] = deque()
+        prior: Dict[str, Row] = {}
+        for row in rows:
+            if row[0] < cutoff:
+                prior[row[1]] = row  # last in file order wins
+            else:
+                entries.append(row)
         self._cached_entries = entries
+        self._carry = prior
         self._cached_mtime = stat.st_mtime
         self._cached_size = stat.st_size
         self._cached_hours = hours
         self._read_offset = stat.st_size
-        return self._filter(entries, hours, agent_name)
+        return self._filter(now, hours, agent_name, carry)
 
-    def _incremental_read(self, stat, hours, agent_name):
+    def _incremental_read(self, stat, now, hours, agent_name, carry):
         try:
             with open(self._path, 'rb') as f:
                 new_entries = self._parse_rows(f, self._read_offset)
@@ -133,13 +236,28 @@ class StatusHistoryFile:
             new_entries = []
 
         # Trim entries that have aged out of the cached window
-        cutoff = datetime.now() - timedelta(hours=self._cached_hours)
-        self._cached_entries = [e for e in self._cached_entries if e[0] >= cutoff]
+        self._trim(now - timedelta(hours=self._cached_hours))
         self._cached_entries.extend(new_entries)
         self._cached_mtime = stat.st_mtime
         self._cached_size = stat.st_size
         self._read_offset = stat.st_size
-        return self._filter(self._cached_entries, hours, agent_name)
+        return self._filter(now, hours, agent_name, carry)
+
+    def _trim(self, cutoff: datetime) -> None:
+        """Drop rows older than ``cutoff`` from the left; they become the carry.
+
+        Amortised O(rows that aged since the last call). A carry older than
+        the lookback is forgotten too, so the dict holds one row per agent
+        seen in the last window plus a few minutes, not per agent ever.
+        """
+        entries = self._cached_entries
+        prior = self._carry
+        while entries and entries[0][0] < cutoff:
+            row = entries.popleft()
+            prior[row[1]] = row
+        stale_before = cutoff - timedelta(seconds=CARRY_LOOKBACK_SECONDS)
+        for agent in [a for a, row in prior.items() if row[0] < stale_before]:
+            del prior[agent]
 
     @staticmethod
     def _seek_to_cutoff(f, cutoff: datetime, file_size: int) -> int:
@@ -185,11 +303,11 @@ class StatusHistoryFile:
         return lo
 
     @staticmethod
-    def _parse_rows(f, start_offset: int) -> List[Tuple[datetime, str, str, str, str, str]]:
+    def _parse_rows(f, start_offset: int) -> List[Row]:
         """Parse CSV rows from start_offset to end of file."""
         f.seek(start_offset)
         data = f.read().decode('utf-8', errors='replace')
-        entries: List[Tuple[datetime, str, str, str, str, str]] = []
+        entries: List[Row] = []
         for row in csv.reader(data.splitlines()):
             if len(row) < 3:
                 continue
@@ -197,24 +315,50 @@ class StatusHistoryFile:
                 continue
             try:
                 ts = datetime.fromisoformat(row[0])
-                entries.append((
+                entries.append(_intern_row((
                     ts,
                     row[1],                             # agent
                     row[2],                             # status
                     row[3] if len(row) > 3 else '',     # activity
                     row[4] if len(row) > 4 else '',     # session_id
                     row[5] if len(row) > 5 else '',     # hostname
-                ))
+                )))
             except (ValueError, IndexError):
                 continue
         return entries
 
-    @staticmethod
-    def _filter(entries, hours, agent_name):
-        cutoff = datetime.now() - timedelta(hours=hours)
-        if agent_name is None:
-            return [e for e in entries if e[0] >= cutoff]
-        return [e for e in entries if e[0] >= cutoff and e[1] == agent_name]
+    def _filter(self, now, hours, agent_name, carry) -> List[Row]:
+        """Rows inside ``[now - hours, now]``, preceded by the carry when asked.
+
+        The carry for a window narrower than the cached one is found on the
+        way: every cached row older than the cutoff supersedes what the
+        deque's left edge left behind.
+        """
+        cutoff = now - timedelta(hours=hours)
+        result: List[Row] = []
+        prior: Optional[Dict[str, Row]] = None
+        if carry:
+            if agent_name is None:
+                prior = dict(self._carry)
+            else:
+                prior = {}
+                row = self._carry.get(agent_name)
+                if row is not None:
+                    prior[agent_name] = row
+        for e in self._cached_entries:
+            if agent_name is not None and e[1] != agent_name:
+                continue
+            if e[0] >= cutoff:
+                result.append(e)
+            elif prior is not None:
+                prior[e[1]] = e
+        if not prior:
+            return result
+        lookback = cutoff - timedelta(seconds=CARRY_LOOKBACK_SECONDS)
+        carried = [
+            (cutoff,) + row[1:] for row in prior.values() if row[0] >= lookback
+        ]
+        return carried + result
 
 
 # ── Module-level reader cache ────────────────────────────────────────
@@ -236,7 +380,8 @@ def _get_or_create_reader(path: Path) -> StatusHistoryFile:
 def read_agent_status_history(
     hours: float = 3.0,
     agent_name: Optional[str] = None,
-    history_file: Optional[Path] = None
+    history_file: Optional[Path] = None,
+    carry: bool = False,
 ) -> List[Tuple[datetime, str, str, str, str, str]]:
     """Read agent status history from CSV file.
 
@@ -244,14 +389,21 @@ def read_agent_status_history(
         hours: How many hours of history to read (default 3)
         agent_name: Optional - filter to specific agent
         history_file: Optional path override (for testing)
+        carry: Also return, per agent, its last row at or before the
+            window's cutoff, timestamped at the cutoff (ahead of the rows
+            inside the window). Rows are written on change plus a
+            keepalive, so an agent's first in-window row can be up to a
+            keepalive after the cutoff; a consumer that forward-fills
+            (build_timeline_slots, the analytics segments) wants this.
 
     Returns:
         List of (timestamp, agent, status, activity, session_id, hostname)
         tuples, oldest first. session_id and hostname may be empty for
-        rows written before v0.3.6.
+        rows written before v0.3.6. A row stands for its agent until that
+        agent's next row.
     """
     path = history_file or PATHS.agent_history
-    return _get_or_create_reader(path).read(hours, agent_name)
+    return _get_or_create_reader(path).read(hours, agent_name, carry)
 
 
 def get_agent_timeline(
@@ -327,13 +479,15 @@ def clear_old_history(
 
 # ── Rotation, compression, and retention (#465, #468) ───────────────────
 #
-# agent_status_history.csv grows without bound (one row per agent per
-# monitor-daemon loop). The windowed readers above (StatusHistoryFile /
-# read_agent_status_history) only ever read the active CSV and are used
-# with small windows — 3h (TUI timeline default) and 24h (parquet export,
-# data_export.py). ROTATION_KEEP_HOURS is set comfortably above the widest
-# of those so a rotation can never remove data a windowed reader still
-# needs, even with a slow (hourly) rotation check racing a read.
+# agent_status_history.csv grows without bound (a row per agent per status
+# or activity change plus a keepalive per minute — the daemon used to write
+# one per agent per 2 s loop, audit R10). The windowed readers above
+# (StatusHistoryFile / read_agent_status_history) only ever read the active
+# CSV and are used with small windows — 3h (TUI timeline default) and 24h
+# (parquet export, data_export.py). ROTATION_KEEP_HOURS is set comfortably
+# above the widest of those so a rotation can never remove data a windowed
+# reader still needs, even with a slow (hourly) rotation check racing a
+# read. The triggers are byte/time based and do not depend on the row rate.
 
 ARCHIVE_SUFFIX = ".csv.gz"
 ARCHIVE_TS_FORMAT = "%Y%m%d-%H%M%S"
@@ -424,6 +578,12 @@ def rotate_status_history(
         return None
 
     cutoff = now - timedelta(hours=keep_hours)
+    if oldest_ts is not None and oldest_ts >= cutoff:
+        # The size trigger fired but every row is within keep_hours: the
+        # streaming pass below would classify the whole file just to find
+        # nothing to archive. Rows are appended in time order, so the first
+        # row's timestamp settles it without reading the rest.
+        return None
     archive_path = history_file.parent / (
         f"{history_file.stem}.{now.strftime(ARCHIVE_TS_FORMAT)}{ARCHIVE_SUFFIX}"
     )
@@ -550,6 +710,7 @@ def read_agent_status_history_range(
     end: datetime,
     history_file: Path,
     agent_name: Optional[str] = None,
+    carry: bool = False,
 ) -> List[Tuple[datetime, str, str, str, str, str]]:
     """Read agent status history across [start, end], transparently
     including rotated .csv.gz archives.
@@ -561,17 +722,38 @@ def read_agent_status_history_range(
     analytics date-range endpoint, the one caller that legitimately reads
     further back than the active file retains.
 
+    With ``carry`` the result starts with, per agent, its last row within
+    CARRY_LOOKBACK_SECONDS before ``start``, timestamped at ``start`` — the
+    agent's state when the range opens (see read_agent_status_history).
+
     Archives are skipped when their rotation timestamp is at or before
-    `start` (all their rows are necessarily older than the range).
+    `start` — or before the carry lookback — since all their rows are
+    necessarily older than that.
     """
     now = datetime.now()
     hours = max((now - start).total_seconds() / 3600.0, 0.0) + 1.0  # cover `start` with margin
-    active = read_agent_status_history(hours=hours, agent_name=agent_name, history_file=history_file)
-    entries = [e for e in active if start <= e[0] <= end]
+    scan_from = start - timedelta(seconds=CARRY_LOOKBACK_SECONDS) if carry else start
+    prior: Dict[str, Tuple[datetime, str, str, str, str, str]] = {}
+    entries: List[Tuple[datetime, str, str, str, str, str]] = []
+
+    def consider(row) -> None:
+        ts = row[0]
+        if ts > end:
+            return
+        if ts >= start:
+            entries.append(row)
+        elif ts >= scan_from:
+            prior[row[1]] = row  # last in file order wins
+
+    active = read_agent_status_history(
+        hours=hours, agent_name=agent_name, history_file=history_file
+    )
+    for e in active:
+        consider(e)
 
     for archive in _archive_glob(history_file):
         ts = _parse_archive_timestamp(archive, history_file)
-        if ts is not None and ts <= start:
+        if ts is not None and ts <= scan_from:
             continue
         try:
             with gzip.open(archive, 'rt', newline='') as f:
@@ -584,11 +766,11 @@ def read_agent_status_history_range(
                         row_ts = datetime.fromisoformat(row[0])
                     except (ValueError, IndexError):
                         continue
-                    if row_ts < start or row_ts > end:
+                    if row_ts < scan_from or row_ts > end:
                         continue
                     if agent_name is not None and row[1] != agent_name:
                         continue
-                    entries.append((
+                    consider((
                         row_ts, row[1], row[2],
                         row[3] if len(row) > 3 else '',
                         row[4] if len(row) > 4 else '',
@@ -598,6 +780,8 @@ def read_agent_status_history_range(
             continue
 
     entries.sort(key=lambda e: e[0])
+    if prior:
+        entries = [(start,) + row[1:] for row in prior.values()] + entries
     return entries
 
 
@@ -606,9 +790,11 @@ def disk_usage_findings(tmux_session: str, threshold_mb: float = 5000.0) -> List
     threshold_mb (#465, #468). agent_status_history's total combines the
     active file with its rotated archives.
 
-    The default threshold is sized for the default 540-day archive horizon:
-    at the write rate the issue reported (~40MB/day, ~10:1 gzip), 18 months
-    of intentional archives lands near 2GB, so warn only well above that.
+    The default threshold is sized for the default 540-day archive horizon
+    at the row-per-agent-per-2 s rate the issue reported (~40MB/day, ~10:1
+    gzip): 18 months of intentional archives landed near 2GB, so warn only
+    well above that. Change-only logging (audit R10) writes 10-50x fewer
+    rows, so a fleet has to be that much larger to get near it.
 
     Used by `overcode doctor` as a global (not per-agent) check — these are
     one shared pair of files per tmux session, not one per agent.

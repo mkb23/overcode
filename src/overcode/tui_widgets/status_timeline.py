@@ -4,7 +4,7 @@ Status timeline widget for TUI.
 Shows historical status timelines for user presence and agents.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from textual.widgets import Static
 from rich.text import Text
@@ -91,8 +91,13 @@ class StatusTimeline(Static):
         presence_history = read_presence_history(hours=self.timeline_hours)
         agent_histories = {}
 
+        # The carry is each agent's state at the window's left edge; rows
+        # are written on change plus a keepalive, and build_timeline_slots
+        # forward-fills from it.
         history_path = get_agent_history_path(self.tmux_session)
-        all_history = read_agent_status_history(hours=self.timeline_hours, history_file=history_path)
+        all_history = read_agent_status_history(
+            hours=self.timeline_hours, history_file=history_path, carry=True
+        )
         for ts, agent, status, activity, *_ in all_history:
             if agent not in agent_histories:
                 agent_histories[agent] = []
@@ -115,39 +120,6 @@ class StatusTimeline(Static):
         """
         presence_history, agent_histories = self.fetch_history_data(sessions)
         self.apply_history_data(sessions, presence_history, agent_histories)
-
-    def _build_timeline(self, history: list, state_to_char: callable) -> str:
-        """Build a timeline string from history data.
-
-        Args:
-            history: List of (timestamp, state) tuples
-            state_to_char: Function to convert state to display character
-
-        Returns:
-            String of timeline_width characters representing the timeline
-        """
-        width = self.timeline_width
-        if not history:
-            return "─" * width
-
-        now = datetime.now()
-        start_time = now - timedelta(hours=self.timeline_hours)
-        slot_duration = timedelta(hours=self.timeline_hours) / width
-
-        # Initialize timeline with empty slots
-        timeline = ["─"] * width
-
-        # Fill in slots based on history
-        for ts, state in history:
-            if ts < start_time:
-                continue
-            # Calculate which slot this belongs to
-            elapsed = ts - start_time
-            slot_idx = int(elapsed / slot_duration)
-            if 0 <= slot_idx < width:
-                timeline[slot_idx] = state_to_char(state)
-
-        return "".join(timeline)
 
     def render(self) -> Text:
         """Render the timeline visualization."""

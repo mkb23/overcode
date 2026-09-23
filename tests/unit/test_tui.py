@@ -2271,20 +2271,25 @@ class TestMeanSpinFromHistory:
         assert mean_spin == pytest.approx(2.0, rel=0.01)  # All running = 2 agents
 
     def test_half_running(self):
-        """Half running samples should give mean_spin = num_agents * 0.5."""
+        """Running for half the covered time should give mean_spin = num_agents * 0.5.
+
+        Rows stand until the agent's next row (change-only logging plus a
+        keepalive), so the fixture is a keepalive row per minute: running
+        from -10 to -5, waiting from -5 to now.
+        """
         from overcode.tui_logic import calculate_mean_spin_from_history
 
         now = datetime.now()
         history = [
-            (now - timedelta(minutes=5), "agent1", "running", "working"),
-            (now - timedelta(minutes=5), "agent1", "waiting_user", "idle"),
+            (now - timedelta(minutes=m), "agent1", "running" if m > 5 else "waiting_user", "x")
+            for m in range(10, 0, -1)
         ]
 
         mean_spin, count = calculate_mean_spin_from_history(
             history, ["agent1"], 15, now
         )
 
-        assert count == 2
+        assert count == 10
         assert mean_spin == pytest.approx(0.5, rel=0.01)
 
 

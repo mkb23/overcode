@@ -121,7 +121,9 @@ class TestFixtureShape:
         from overcode.status_history import StatusHistoryFile
 
         rows = StatusHistoryFile(scale_fixture.agent_history_path).read(hours=3.0)
-        assert len(rows) > N_AGENTS * 1000
+        # change-only rows: 180 keepalives per agent over 3 h plus its flips,
+        # not the 5,400 a row per 2 s tick would leave
+        assert N_AGENTS * 150 < len(rows) < N_AGENTS * 400
         assert {r[1] for r in rows} >= {f"agent-{i:02d}" for i in range(N_AGENTS)}
         assert len(read_presence_history(hours=3.0)) >= 170
 
@@ -193,11 +195,10 @@ class TestStatusBarWorker:
             < 20.0
         )
 
-    @pytest.mark.xfail(
-        strict=True, reason="R10 not fixed yet: mean spin walks every row in the window"
-    )
     def test_mean_spin_is_cheap(self, status_history_rows):
-        # today: 22 ms over ~99k rows x 48 agents, once a second
+        # was: 22 ms over ~99k rows (a row per agent per 2 s) x 48 agents, once a
+        # second; fixed (R10): the daemon writes rows on change plus a keepalive,
+        # so the window holds ~4k rows, and the time-weighted mean is one pass
         assert status_history_rows["calculate_mean_spin_from_history"].ms_per_call < 10.0
 
 
@@ -234,12 +235,9 @@ class TestTimeline:
         # today: 29 ms (43k rows re-parsed) every minute the daemon appends a row
         assert presence_rows["presence read (one row appended)"].ms_per_call < 5.0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R10 not fixed yet: timeline slots bucket every 2 s sample on the main thread",
-    )
     def test_timeline_slot_build_is_cheap(self, timeline_rows):
-        # today: 57 ms per render for 50 agents over ~270k rows
+        # was: 57 ms per render for 50 agents over ~270k rows (a row per agent
+        # per 2 s); fixed (R10): change-only rows plus a keepalive, ~12k rows
         assert (
             timeline_rows["timeline build_timeline_slots (render, main thread)"].ms_per_tick < 10.0
         )

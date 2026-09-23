@@ -74,7 +74,7 @@ class FixtureSpec:
     agents: int = 50  # live agents in the benchmarked tmux session
     sessions: int = 2000  # sessions.json entries ever launched (live + terminated)
     transcript_mb: float = 50.0  # total live transcript bytes (primary + subagents)
-    history_hours: float = 3.0  # agent_status_history.csv span (one row/agent/2 s)
+    history_hours: float = 3.0  # agent_status_history.csv span (rows on change + keepalive)
     presence_days: float = 30.0  # presence_log.csv span (one row/60 s)
     history_lines: int = 20_000  # ~/.claude/history.jsonl entries
     ids_per_agent: int = 3  # agent_session_ids per live agent (/clear history)
@@ -575,7 +575,7 @@ def build_fixture(spec: FixtureSpec, root: Path, quiet: bool = False) -> Fixture
     from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
     from overcode.session_manager import SessionManager
     from overcode.settings import DAEMON_VERSION
-    from overcode.status_history import _HISTORY_HEADER, log_agent_status
+    from overcode.status_history import _HISTORY_HEADER, log_agent_status, status_row_due
 
     t0 = time.perf_counter()
     rng = random.Random(spec.seed)
@@ -856,13 +856,19 @@ def build_fixture(spec: FixtureSpec, root: Path, quiet: bool = False) -> Fixture
     sizes["history_bytes"] = _write_lines(paths.history_path, lines)
     sizes["history_lines"] = len(lines)
 
-    # ---- agent_status_history.csv (one row per agent per 2 s) ---------------
+    # ---- agent_status_history.csv (the daemon's change-only rows) ----------
+    # The daemon observes every agent each 2 s tick but writes a row only
+    # when the (status, activity) pair moved or a keepalive is due
+    # (status_history.status_row_due, audit R10) — the same rule, so the
+    # file is what a real daemon leaves behind for this fleet.
     ticks = int(spec.history_hours * 3600 / 2)
-    say(f"agent_status_history.csv: {ticks * spec.agents} rows")
+    say(f"agent_status_history.csv: {ticks * spec.agents} observations")
     hostname = "bench-host"
     status_of = ["running" if i % 2 == 0 else "waiting_user" for i in range(spec.agents)]
     run_left = [rng.randint(30, 300) for _ in range(spec.agents)]
     activity_of = [s.stats.current_task[:100] for s in live_sessions]
+    last_pair: List[Optional[tuple]] = [None] * spec.agents
+    last_written: List[Optional[datetime]] = [None] * spec.agents
     rows = 0
     with open(paths.agent_history_path, "w", newline="") as f:
         w = csv.writer(f)
@@ -874,11 +880,16 @@ def build_fixture(spec: FixtureSpec, root: Path, quiet: bool = False) -> Fixture
                 if run_left[i] <= 0:
                     status_of[i] = "waiting_user" if status_of[i] == "running" else "running"
                     run_left[i] = rng.randint(30, 300)
+                status = "asleep" if s.is_asleep else status_of[i]
+                if not status_row_due(last_pair[i], last_written[i], status, activity_of[i], t):
+                    continue
+                last_pair[i] = (status, activity_of[i])
+                last_written[i] = t
                 w.writerow(
                     [
                         (t + timedelta(microseconds=i * 40)).isoformat(),
                         s.name,
-                        "asleep" if s.is_asleep else status_of[i],
+                        status,
                         activity_of[i],
                         s.id,
                         hostname,

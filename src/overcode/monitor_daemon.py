@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
@@ -77,7 +77,7 @@ from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_detector import StatusDetector
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_history import log_agent_status
+from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .monitor_daemon_core import (
     calculate_time_accumulation,
     calculate_cost_estimate,
@@ -355,6 +355,13 @@ class MonitorDaemon:
         self.previous_states: Dict[str, str] = {}
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
+
+        # agent_status_history.csv is written on change (audit R10): per
+        # session id, the (status, activity) pair last logged and when, so
+        # a row goes out when the pair moves, when the last row is a
+        # keepalive old, and the first time this daemon sees the session.
+        self._last_logged: Dict[str, Tuple[str, str]] = {}
+        self._last_keepalive: Dict[str, datetime] = {}
 
         # Everything a tick wants persisted to sessions.json is staged here
         # and written once at the end of the tick (audit R5); see
@@ -1600,13 +1607,26 @@ class MonitorDaemon:
             session_state.current_activity = activity
             session_states.append(session_state)
 
-            # Log status history to session-specific file
-            log_agent_status(
-                session.name, effective_status, activity,
-                history_file=self.history_path,
-                session_id=session.id,
-                hostname=self._hostname,
-            )
+            # Log status history to session-specific file — on change, on
+            # keepalive, and on first sight; a row stands until the next.
+            if status_row_due(
+                self._last_logged.get(session.id),
+                self._last_keepalive.get(session.id),
+                effective_status,
+                activity,
+                now,
+                STATUS_HISTORY_KEEPALIVE_SECONDS,
+            ):
+                log_agent_status(
+                    session.name, effective_status, activity,
+                    history_file=self.history_path,
+                    session_id=session.id,
+                    hostname=self._hostname,
+                )
+                self._last_logged[session.id] = (
+                    effective_status, activity[:100] if activity else ""
+                )
+                self._last_keepalive[session.id] = now
 
             # Track if any session is not waiting for user
             if status != "waiting_user":
@@ -1756,6 +1776,9 @@ class MonitorDaemon:
         stale_ids = set(self.previous_states.keys()) - current_session_ids
         for stale_id in stale_ids:
             del self.previous_states[stale_id]
+        for stale_id in set(self._last_logged) - current_session_ids:
+            del self._last_logged[stale_id]
+            self._last_keepalive.pop(stale_id, None)
         self._pane_tracker.forget(current_session_ids)
         self._capture_gate.forget({s.tmux_window for s in sessions})
 
