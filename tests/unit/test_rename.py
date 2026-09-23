@@ -41,6 +41,10 @@ def _state_dir(tmp_path, monkeypatch):
         if var.startswith("OVERCODE_"):
             monkeypatch.delenv(var)
     monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+    # launch() refuses without the agent CLI on the machine (CI has none);
+    # these tests never run it — MockTmux only records the keys sent.
+    monkeypatch.setattr("overcode.launcher.require_tmux", lambda: "tmux")
+    monkeypatch.setattr("overcode.launcher.require_agent_cli", lambda backend: "claude")
     yield tmp_path
 
 
