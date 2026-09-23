@@ -81,6 +81,39 @@ class MockTmux:
         """Return None in tests — no real pane PIDs."""
         return None
 
+    def list_panes(self, session: str) -> Optional[Dict[str, Any]]:
+        """One ``PaneInfo`` per window; pid 0 (no real processes in tests).
+
+        The change signature is derived from the pane text — tmux's
+        ``window_activity`` / ``history_size`` / cursor all move with
+        output — so a ``set_pane_content`` shows up as a changed signature.
+        """
+        from .tmux_utils import PaneInfo
+
+        if session not in self.sessions:
+            return None
+        panes = {}
+        for index, (name, content) in enumerate(self.sessions[session].items()):
+            if not isinstance(content, str):
+                continue  # the placeholder bookkeeping entry, not a pane
+            lines = content.split("\n")
+            panes[name] = PaneInfo(
+                window_name=name,
+                window_index=index,
+                pane_pid=0,
+                activity=hash(content) & 0xFFFFFFFF,
+                history_size=len(lines),
+                cursor_x=len(lines[-1]),
+                cursor_y=len(lines) - 1,
+                current_command="claude",
+                session_attached=0,
+            )
+        return panes
+
+    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
+        """No real pane pids in tests: an empty map for a known session."""
+        return {} if session in self.sessions else None
+
     def select_window(self, session: str, window: str) -> bool:
         """Select a window - no-op in tests, just return True."""
         return session in self.sessions

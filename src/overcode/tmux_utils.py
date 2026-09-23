@@ -10,7 +10,7 @@ import os
 import subprocess
 import tempfile
 import time
-from typing import Any, Collection, Iterable, List, Mapping, Optional
+from typing import Any, Collection, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,143 @@ def _build_tmux_cmd() -> List[str]:
     """Build base tmux command, respecting OVERCODE_TMUX_SOCKET env var."""
     socket = os.environ.get("OVERCODE_TMUX_SOCKET")
     return ["tmux", "-L", socket] if socket else ["tmux"]
+
+
+# Everything the monitor daemon's tick and the TUI's fast path want to know
+# about a session's panes, from ONE ``list-panes -s -t <session>``. A
+# ``get_pane_pid`` per window on a fresh RealTmux was three commands
+# (list-sessions, list-windows, list-panes) plus a libtmux object per window
+# for each, so a 50-agent sync cost 101 commands (audit R7); the change
+# signature is what lets a loop skip the capture-pane of an unchanged pane
+# (audit R11). Fields are tab-separated; tmux does not interpret escapes in a
+# format, so the literal tab goes in the argument.
+PANE_LISTING_FORMAT = "\t".join(
+    (
+        "#{window_name}",
+        "#{window_index}",
+        "#{pane_pid}",
+        "#{window_activity}",
+        "#{history_size}",
+        "#{cursor_x}",
+        "#{cursor_y}",
+        "#{pane_current_command}",
+        "#{session_attached}",
+    )
+)
+
+
+class PaneInfo(NamedTuple):
+    """One window's first pane, as ``list-panes -s -F PANE_LISTING_FORMAT`` reports it.
+
+    ``signature`` is what moves when the pane's content does: tmux stamps
+    ``window_activity`` (whole seconds) on every parsed byte of output,
+    ``history_size`` grows as lines scroll into the scrollback, the cursor
+    moves as text is drawn and ``pane_current_command`` changes with the
+    foreground process. ``session_attached`` (clients attached to the
+    session) is carried for consumers that want it and is not part of the
+    signature — attaching a client changes no pane.
+    """
+
+    window_name: str
+    window_index: int
+    pane_pid: int
+    activity: int
+    history_size: int
+    cursor_x: int
+    cursor_y: int
+    current_command: str
+    session_attached: int
+
+    @property
+    def signature(self) -> Tuple[int, int, int, int, str]:
+        return (
+            self.activity,
+            self.history_size,
+            self.cursor_x,
+            self.cursor_y,
+            self.current_command,
+        )
+
+
+def parse_pane_listing(lines: Iterable[str]) -> Dict[str, PaneInfo]:
+    """``{window_name: PaneInfo}`` from ``list-panes -s -F PANE_LISTING_FORMAT`` output.
+
+    A window with several panes lists each; the first is the one
+    ``RealTmux`` addresses (``window.panes[0]``: capture, send-keys, pid), so
+    the first row per window wins. A window name may itself contain a tab
+    (the trailing eight fields never do), and a row that does not parse is
+    skipped.
+    """
+    panes: Dict[str, PaneInfo] = {}
+    for line in lines:
+        parts = line.split("\t")
+        if len(parts) < 9:
+            continue
+        name = "\t".join(parts[:-8])
+        if name in panes:
+            continue
+        index, pid, activity, history, cx, cy, command, attached = parts[-8:]
+        try:
+            panes[name] = PaneInfo(
+                name,
+                int(index),
+                int(pid),
+                int(activity),
+                int(history),
+                int(cx),
+                int(cy),
+                command,
+                int(attached),
+            )
+        except ValueError:
+            continue
+    return panes
+
+
+def list_panes(session: str, timeout: float = 5) -> Optional[Dict[str, PaneInfo]]:
+    """Every window's first pane in ``session`` from ONE tmux command.
+
+    None when tmux is not running or the session does not exist, so the
+    caller can tell "no answer" from "no windows" (a live session always has
+    one). Honours ``OVERCODE_TMUX_SOCKET``; ``RealTmux.list_panes`` is the
+    same listing over its own server connection.
+    """
+    try:
+        result = subprocess.run(
+            _build_tmux_cmd() + ["list-panes", "-s", "-t", session, "-F", PANE_LISTING_FORMAT],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_pane_listing(result.stdout.splitlines())
+
+
+def list_pane_pids(session: str, timeout: float = 5) -> Optional[Dict[str, int]]:
+    """``{window_name: pane_pid}`` for ``session`` from one ``list-panes -s``; None if unavailable."""
+    panes = list_panes(session, timeout=timeout)
+    if panes is None:
+        return None
+    return {name: info.pane_pid for name, info in panes.items()}
+
+
+def pane_for_window(panes: Mapping[str, PaneInfo], window: str) -> Optional[PaneInfo]:
+    """The pane ``RealTmux`` would address for ``window``.
+
+    By name, else — for a legacy digit-string ``tmux_window`` from before
+    windows were name-addressed — by index, the order ``RealTmux._get_window``
+    tries. The index scan only runs for digit-string names.
+    """
+    info = panes.get(window)
+    if info is None and window.isdigit():
+        index = int(window)
+        for candidate in panes.values():
+            if candidate.window_index == index:
+                return candidate
+    return info
 
 
 def send_keys_to_pane(pane, keys: str, enter: bool = True) -> None:

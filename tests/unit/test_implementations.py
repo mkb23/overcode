@@ -823,6 +823,77 @@ class TestRealTmux:
             tmux.capture_pane("test_session", "win1")
             assert mock_server.sessions.get.call_count == 2
 
+    def test_list_panes_is_one_command_for_the_session(self):
+        """The whole session's panes from a single ``list-panes -s`` (audit R7)."""
+        from overcode.tmux_utils import PANE_LISTING_FORMAT
+
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_server = MagicMock()
+            mock_server.cmd.return_value = MagicMock(
+                returncode=0,
+                stdout=[
+                    "bash\t0\t100\t1790136430\t1\t28\t0\tzsh\t1",
+                    "agent-a\t1\t200\t1790136432\t8\t28\t4\tclaude\t1",
+                ],
+            )
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+            panes = tmux.list_panes("agents")
+
+            mock_server.cmd.assert_called_once_with(
+                "list-panes", "-s", "-t", "agents", "-F", PANE_LISTING_FORMAT
+            )
+            assert {n: p.pane_pid for n, p in panes.items()} == {"bash": 100, "agent-a": 200}
+            assert panes["agent-a"].signature == (1790136432, 8, 28, 4, "claude")
+            assert tmux.list_pane_pids("agents") == {"bash": 100, "agent-a": 200}
+            # No object lookups: the cache is not involved
+            mock_server.sessions.get.assert_not_called()
+
+    def test_list_panes_failure_is_none_and_drops_the_session_cache(self):
+        """A failed listing means the session or server is gone: cached objects are stale."""
+        from libtmux.exc import LibTmuxException
+
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_pane = MagicMock()
+            mock_pane.capture_pane.return_value = ["line"]
+            mock_window = MagicMock()
+            mock_window.panes = [mock_pane]
+            mock_session = MagicMock()
+            mock_session.windows.get.return_value = mock_window
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+            tmux.capture_pane("agents", "win1")
+            assert mock_server.sessions.get.call_count == 1
+
+            mock_server.cmd.return_value = MagicMock(returncode=1, stdout=[], stderr=["gone"])
+            assert tmux.list_panes("agents") is None
+            assert tmux.list_pane_pids("agents") is None
+            tmux.capture_pane("agents", "win1")
+            assert mock_server.sessions.get.call_count == 2
+
+            mock_server.cmd.side_effect = LibTmuxException("no server")
+            assert tmux.list_panes("agents") is None
+
+    def test_list_windows_failure_drops_the_session_cache(self):
+        from libtmux.exc import LibTmuxException
+
+        with patch('overcode.implementations.libtmux.Server') as mock_server_class:
+            mock_session = MagicMock()
+            type(mock_session).windows = PropertyMock(side_effect=LibTmuxException("gone"))
+            mock_server = MagicMock()
+            mock_server.sessions.get.return_value = mock_session
+            mock_server_class.return_value = mock_server
+
+            tmux = RealTmux()
+            assert tmux.list_windows("agents") == []
+            assert tmux.list_windows("agents") == []
+            # Looked the session up afresh after the failure
+            assert mock_server.sessions.get.call_count == 2
+
     def test_invalidate_cache_specific_window(self):
         """Should clear only specific window's cache when specified."""
         with patch('overcode.implementations.libtmux.Server') as mock_server_class:

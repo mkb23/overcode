@@ -16,7 +16,7 @@ import libtmux
 from libtmux.exc import LibTmuxException
 from libtmux._internal.query_list import ObjectDoesNotExist
 
-from .tmux_utils import _build_tmux_cmd
+from .tmux_utils import PANE_LISTING_FORMAT, PaneInfo, _build_tmux_cmd, parse_pane_listing
 
 
 class RealTmux:
@@ -222,7 +222,38 @@ class RealTmux:
                 })
             return windows
         except LibTmuxException:
+            # The cached session object is stale (server restarted, session
+            # gone); drop it so the next call looks the session up again.
+            self.invalidate_cache(session)
             return []
+
+    def list_panes(self, session: str) -> Optional[Dict[str, PaneInfo]]:
+        """Every window's first pane in ``session`` from one ``list-panes -s``.
+
+        The whole session in a single command — pid, change signature and
+        attached-client count per window (``tmux_utils.PaneInfo``) — for
+        callers that would otherwise ask per window: ``get_pane_pid`` costs
+        three commands each on a fresh instance. Goes straight to the server
+        (the object cache is not involved). None when the server or session
+        is unavailable, in which case the cached objects for the session are
+        dropped as well.
+        """
+        try:
+            proc = self.server.cmd("list-panes", "-s", "-t", session, "-F", PANE_LISTING_FORMAT)
+        except LibTmuxException:
+            self.invalidate_cache(session)
+            return None
+        if proc.returncode != 0:
+            self.invalidate_cache(session)
+            return None
+        return parse_pane_listing(proc.stdout)
+
+    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
+        """``{window_name: pane_pid}`` for ``session`` from one command; None if unavailable."""
+        panes = self.list_panes(session)
+        if panes is None:
+            return None
+        return {name: info.pane_pid for name, info in panes.items()}
 
     def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         if bare:

@@ -11,6 +11,7 @@ from pathlib import Path
 
 if TYPE_CHECKING:
     from .session_manager import Session
+    from .tmux_utils import PaneInfo
 
 
 @runtime_checkable
@@ -92,6 +93,24 @@ class TmuxInterface(Protocol):
 
         Returns:
             PID as int, or None if window doesn't exist
+        """
+        ...
+
+    def list_panes(self, session: str) -> Optional[Dict[str, "PaneInfo"]]:
+        """Every window's first pane in a session, from ONE tmux command.
+
+        Returns:
+            {window_name: tmux_utils.PaneInfo} (pid, change signature,
+            attached-client count), or None when tmux or the session is
+            unavailable
+        """
+        ...
+
+    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
+        """Every window's first-pane pid in a session, from ONE tmux command.
+
+        Returns:
+            {window_name: pid}, or None when tmux or the session is unavailable
         """
         ...
 

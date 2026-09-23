@@ -187,7 +187,9 @@ def run_scenario(root: Path, ticks: int = TICKS, counters=None) -> Dict[str, obj
         {s.tmux_window: "pane" for s in sessions},
         {s.tmux_window: 10_000 + _index(s) for s in sessions},
     )
-    daemon = make_daemon(root / "home" / ".overcode", TMUX_SESSION, detector, session_manager=sm)
+    daemon = make_daemon(
+        root / "home" / ".overcode", TMUX_SESSION, detector, session_manager=sm, tmux=tmux
+    )
     # A real first loop: every periodic sync is due
     for name in (
         "_last_stats_sync",

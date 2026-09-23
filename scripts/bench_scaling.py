@@ -55,7 +55,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Sequence
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
@@ -1188,14 +1188,39 @@ class CountingTmux:
     Each method call stands for at least one real tmux command; a fresh
     ``RealTmux().get_pane_pid`` is three (list-sessions, list-windows,
     list-panes), so ``total`` is a lower bound on the production count.
+    ``list_panes`` is the one-command-per-session listing; its change
+    signature per window is a counter ``bump`` advances, so a benchmark can
+    play an idle fleet (nothing bumped) or an all-active one (every window
+    bumped between loops).
     """
 
     def __init__(self, session: str, panes: Dict[str, str], pids: Dict[str, int]):
         self.session = session
         self._panes = dict(panes)
         self._pids = dict(pids)
+        self._versions: Counter = Counter()
         self.calls: Counter = Counter()
         self.sent_keys: List[tuple] = []
+
+    def bump(self, windows: Optional[Iterable[str]] = None) -> None:
+        """Move the change signature of ``windows`` (all when None), as output would."""
+        for name in windows if windows is not None else list(self._panes):
+            self._versions[name] += 1
+
+    def list_panes(self, session: str):
+        self.calls["list_panes"] += 1
+        if session != self.session:
+            return None
+        from overcode.tmux_utils import PaneInfo
+
+        return {
+            name: PaneInfo(name, i + 1, self._pids.get(name, 0), 1_700_000_000, self._versions[name], 0, 0, "claude", 0)
+            for i, name in enumerate(self._panes)
+        }
+
+    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
+        self.calls["list_pane_pids"] += 1
+        return dict(self._pids) if session == self.session else None
 
     @property
     def total(self) -> int:
@@ -1647,11 +1672,12 @@ def _process_table(sessions, pids: Dict[str, int]) -> List[tuple]:
 def daemon_doubles(paths: FixturePaths, sessions, counters: IoCounters) -> Iterator[CountingTmux]:
     """Fake tmux + synthetic ps/lsof for the daemon phases.
 
-    The daemon builds a fresh ``RealTmux()`` inside ``_sync_process_resources``
-    and ``_sync_sandbox_state``, so the class is replaced by a factory that
-    hands back one counting double. ``ps`` and ``lsof`` are replaced by
-    stubs that return the synthetic table and count themselves as the one
-    spawn each would cost.
+    ``RealTmux`` is replaced by a factory that hands back one counting
+    double, so a daemon that builds its own client (the current one holds a
+    single persistent instance; older trees built a fresh one inside
+    ``_sync_process_resources`` and ``_sync_sandbox_state``) gets the double
+    either way. ``ps`` and ``lsof`` are replaced by stubs that return the
+    synthetic table and count themselves as the one spawn each would cost.
     """
     from overcode import doctor, implementations, process_resources, sandbox_detect
     from overcode.process_resources import ProcInfo

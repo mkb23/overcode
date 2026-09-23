@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
@@ -90,7 +90,15 @@ from .monitor_daemon_core import (
     should_auto_archive,
     should_enforce_oversight_timeout,
 )
-from .tmux_utils import send_text_to_tmux_window, untracked_window_names
+from .tmux_utils import (
+    PaneInfo,
+    pane_for_window,
+    send_text_to_tmux_window,
+    untracked_window_names,
+)
+
+if TYPE_CHECKING:
+    from .protocols import TmuxInterface
 
 
 # Check for macOS presence APIs (optional)
@@ -274,11 +282,22 @@ class MonitorDaemon:
         tmux_session: str = "agents",
         session_manager: Optional[SessionManager] = None,
         status_detector: Optional[StatusDetector] = None,
+        tmux: Optional["TmuxInterface"] = None,
     ):
         self.tmux_session = tmux_session
 
         # Ensure session directory exists
         ensure_session_dir(tmux_session)
+
+        # One tmux client for the daemon's lifetime (audit R7). The periodic
+        # syncs used to build a fresh RealTmux each, so its 30 s cache never
+        # hit and every pane-pid lookup was list-sessions + list-windows +
+        # list-panes. Injected by tests and the bench.
+        if tmux is None:
+            from .implementations import RealTmux
+
+            tmux = RealTmux()
+        self._tmux = tmux
 
         # Session-specific paths
         self.pid_path = get_monitor_daemon_pid_path(tmux_session)
@@ -316,6 +335,13 @@ class MonitorDaemon:
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
         self._last_tick_duration_seconds: float = 0.0
+
+        # This tmux session's panes from one ``list-panes -s`` per tick
+        # (``_panes_at``): pid per window for the 5 s / 15 s syncs, and the
+        # attached-client count. None when the listing failed.
+        self._pane_table: Optional[Dict[str, PaneInfo]] = None
+        self._pane_table_at: Optional[datetime] = None
+        self.session_attached: Optional[int] = None
 
         # Per-session tracking
         self.previous_states: Dict[str, str] = {}
@@ -392,9 +418,7 @@ class MonitorDaemon:
     def _migrate_legacy_window_ids(self, sessions: list) -> None:
         """Migrate legacy digit-string tmux_window values to actual window names."""
         try:
-            from .implementations import RealTmux
-            tmux = RealTmux()
-            tmux_windows = tmux.list_windows(self.tmux_session)
+            tmux_windows = self._tmux.list_windows(self.tmux_session)
             if not tmux_windows:
                 return
             index_to_name = {str(w['index']): w['name'] for w in tmux_windows}
@@ -997,17 +1021,15 @@ class MonitorDaemon:
 
         Args:
             sessions: Sessions from the current tick.
-            tmux: A ``TmuxInterface``; a fresh ``RealTmux`` when None. Injected
-                so the count can be tested against the fake tmux — the previous
-                code called a ``session_exists`` method that ``RealTmux`` never
-                had, so it raised on every run and the ``except`` below silently
-                reported 0 untracked windows forever.
+            tmux: A ``TmuxInterface``; the daemon's own client when None.
+                Injectable so the count can be tested against a fake tmux —
+                the previous code called a ``session_exists`` method that
+                ``RealTmux`` never had, so it raised on every run and the
+                ``except`` below silently reported 0 untracked windows forever.
         """
         try:
             if tmux is None:
-                from .implementations import RealTmux
-
-                tmux = RealTmux()
+                tmux = self._tmux
             if not tmux.has_session(self.tmux_session):
                 return 0
             tmux_windows = tmux.list_windows(self.tmux_session)
@@ -1333,6 +1355,26 @@ class MonitorDaemon:
                     self._pending.update_session(session.id, available_skills=available)
             self._last_skills_sync = now
 
+    def _panes_at(self, now: datetime) -> Optional[Dict[str, PaneInfo]]:
+        """This tmux session's panes, listed once per ``now`` (one tmux command).
+
+        Every phase of a tick is called with the tick's ``now``, so the 5 s
+        process-resources sync and the 15 s sandbox sync share one
+        ``list-panes -s`` instead of asking tmux for each agent's pane pid
+        (three commands each on a fresh ``RealTmux``, audit R7). A pane's pid
+        never changes for the life of its window, and a window that is gone
+        is simply absent from the listing. None when the listing failed
+        (tmux down, session gone): callers then skip every session, as they
+        did when ``get_pane_pid`` returned None. ``session_attached`` is
+        kept from the same listing for consumers that want it.
+        """
+        if self._pane_table_at != now:
+            self._pane_table_at = now
+            self._pane_table = self._tmux.list_panes(self.tmux_session)
+            if self._pane_table:
+                self.session_attached = next(iter(self._pane_table.values())).session_attached
+        return self._pane_table
+
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
         """Sample CPU and RSS for each agent's claude process tree.
 
@@ -1349,7 +1391,6 @@ class MonitorDaemon:
             find_agent_process, session_process_argv_markers,
             session_process_basenames,
         )
-        from .implementations import RealTmux
         from .process_resources import (
             snapshot_processes, build_children_index, aggregate_tree,
         )
@@ -1362,15 +1403,15 @@ class MonitorDaemon:
         # shape doctor expects is derived on the fly.
         children = build_children_index(snapshot)
         argv_by_pid = {pid: info.argv for pid, info in snapshot.items()}
-        tmux = RealTmux()
+        panes = self._panes_at(now) or {}
         for session in sessions:
             if getattr(session, "is_remote", False):
                 continue
-            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
-            if pane_pid is None:
+            pane = pane_for_window(panes, session.tmux_window)
+            if pane is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
                 session_process_argv_markers(session),
             )
             if claude_pid is None:
@@ -1401,7 +1442,6 @@ class MonitorDaemon:
             _snapshot_process_table, _build_child_index, find_agent_process,
             session_process_argv_markers, session_process_basenames,
         )
-        from .implementations import RealTmux
         from .sandbox_detect import detect_sandbox_states
 
         rows = _snapshot_process_table()
@@ -1409,7 +1449,7 @@ class MonitorDaemon:
             self._last_sandbox_sync = now
             return
         children, argv_by_pid = _build_child_index(rows)
-        tmux = RealTmux()
+        panes = self._panes_at(now) or {}
         # Gather all local claude PIDs with one lsof call (#451 optimization).
         session_pids: dict = {}  # session.id -> claude_pid
         for session in sessions:
@@ -1419,11 +1459,11 @@ class MonitorDaemon:
             # backends that have a sandbox toggle.
             if not session_supports(session, BackendCapability.SANDBOX_PROBE):
                 continue
-            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
-            if pane_pid is None:
+            pane = pane_for_window(panes, session.tmux_window)
+            if pane is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
                 session_process_argv_markers(session),
             )
             if claude_pid is not None:

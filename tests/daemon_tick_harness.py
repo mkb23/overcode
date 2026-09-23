@@ -35,12 +35,21 @@ SKILLS_SCRIPT = Callable[[int, str], List[str]]
 
 
 class FakeTmux:
-    """``TmuxInterface`` double serving scripted panes; counts every call."""
+    """``TmuxInterface`` double serving scripted panes; counts every call.
+
+    ``list_panes`` derives each window's change signature from its pane text
+    (any edit to ``panes[window]`` moves it, as output moves tmux's
+    ``window_activity`` / ``history_size`` / cursor), unless a test pins one
+    in ``signatures[window]`` — the way to script tmux's same-second blind
+    spot, where the text changes and the signature does not.
+    """
 
     def __init__(self, session: str, panes: Dict[str, str], pids: Optional[Dict[str, int]] = None):
         self.session = session
         self.panes = dict(panes)
         self.pids = dict(pids or {})
+        self.signatures: Dict[str, tuple] = {}
+        self.attached = 0
         self.calls: Counter = Counter()
         self.killed: List[str] = []
 
@@ -56,6 +65,30 @@ class FakeTmux:
     def get_pane_pid(self, session: str, window: str) -> Optional[int]:
         self.calls["get_pane_pid"] += 1
         return self.pids.get(window) if session == self.session else None
+
+    def list_panes(self, session: str):
+        """One call for the whole session: ``{window: PaneInfo}``, None for another session."""
+        self.calls["list_panes"] += 1
+        if session != self.session:
+            return None
+        from overcode.tmux_utils import PaneInfo  # only the current tree calls this
+
+        panes = {}
+        for index, (name, content) in enumerate(self.panes.items()):
+            lines = content.split("\n")
+            activity, history, cx, cy, command = self.signatures.get(
+                name,
+                (hash(content) & 0xFFFFFFFF, len(lines), len(lines[-1]), len(lines) - 1, "claude"),
+            )
+            panes[name] = PaneInfo(
+                name, index + 1, self.pids.get(name, 0), activity, history, cx, cy, command,
+                self.attached,
+            )
+        return panes
+
+    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
+        self.calls["list_pane_pids"] += 1
+        return dict(self.pids) if session == self.session else None
 
     def list_windows(self, session: str) -> List[Dict[str, object]]:
         self.calls["list_windows"] += 1
@@ -308,13 +341,18 @@ def seed_sessions(
 # ── daemon construction ──────────────────────────────────────────────────
 
 
-def make_daemon(state_dir: Path, tmux_session: str, detector, *, session_manager=None):
+def make_daemon(
+    state_dir: Path, tmux_session: str, detector, *, session_manager=None, tmux=None
+):
     """A ``MonitorDaemon`` on ``state_dir`` with every periodic sync already done.
 
     ``OVERCODE_STATE_DIR`` must point at ``state_dir`` (the daemon's paths
     are resolved from it at construction). The presence logger is not
     started; the log goes to a StringIO. Only the per-tick session body
-    runs until a test moves a ``_last_*_sync`` stamp back.
+    runs until a test moves a ``_last_*_sync`` stamp back. ``tmux`` (a
+    ``FakeTmux``, an empty one when omitted) is wired into the polling
+    detector and, on a tree whose daemon holds its own client, into the
+    daemon, so no tick ever reaches a real tmux server.
     """
     from rich.console import Console
 
@@ -326,16 +364,18 @@ def make_daemon(state_dir: Path, tmux_session: str, detector, *, session_manager
     sm = session_manager or SessionManager(
         state_dir=state_dir / "sessions", skip_git_detection=True
     )
+    tmux = tmux if tmux is not None else FakeTmux(tmux_session, {})
     original_presence = monitor_daemon.PresenceLogger
     monitor_daemon.PresenceLogger = None
     try:
         daemon = monitor_daemon.MonitorDaemon(
             tmux_session=tmux_session,
             session_manager=sm,
-            status_detector=PollingStatusDetector(tmux_session, tmux=FakeTmux(tmux_session, {})),
+            status_detector=PollingStatusDetector(tmux_session, tmux=tmux),
         )
     finally:
         monitor_daemon.PresenceLogger = original_presence
+    daemon._tmux = tmux  # the current tree's persistent client; unused by older trees
     daemon.detector = detector
     daemon._hostname = "test-host"
     daemon._relay_config = None  # never push anywhere from a test tick

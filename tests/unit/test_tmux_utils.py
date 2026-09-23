@@ -242,3 +242,143 @@ class TestUntrackedWindowNames:
 
         assert SupervisorDaemon.DAEMON_CLAUDE_WINDOW_NAME == DAEMON_CLAUDE_WINDOW_NAME
         assert tmux_manager.EMPTY_PLACEHOLDER_WINDOW == EMPTY_PLACEHOLDER_WINDOW
+
+
+# ── one list-panes for a whole session (audit R7 / R11) ─────────────────
+
+
+class TestParsePaneListing:
+    """``parse_pane_listing`` over ``list-panes -s -F PANE_LISTING_FORMAT`` rows."""
+
+    ROW = "agent-01\t1\t4242\t1790136432\t8\t28\t4\tclaude\t1"
+
+    def test_fields(self):
+        from overcode.tmux_utils import parse_pane_listing
+
+        panes = parse_pane_listing([self.ROW])
+        info = panes["agent-01"]
+        assert (info.window_name, info.window_index, info.pane_pid) == ("agent-01", 1, 4242)
+        assert (info.activity, info.history_size, info.cursor_x, info.cursor_y) == (
+            1790136432, 8, 28, 4,
+        )
+        assert info.current_command == "claude" and info.session_attached == 1
+        assert info.signature == (1790136432, 8, 28, 4, "claude")
+
+    def test_session_attached_is_not_part_of_the_signature(self):
+        """Attaching a client changes no pane, so it must not read as a change."""
+        from overcode.tmux_utils import parse_pane_listing
+
+        a = parse_pane_listing([self.ROW])["agent-01"]
+        b = parse_pane_listing([self.ROW.rsplit("\t", 1)[0] + "\t3"])["agent-01"]
+        assert a.signature == b.signature and a.session_attached != b.session_attached
+
+    def test_first_pane_per_window_wins(self):
+        """A split window lists a row per pane; RealTmux addresses ``panes[0]``."""
+        from overcode.tmux_utils import parse_pane_listing
+
+        rows = [
+            "w2\t2\t100\t10\t0\t0\t3\tbash\t0",
+            "w2\t2\t200\t10\t0\t0\t0\tsleep\t0",
+            "w3\t3\t300\t10\t0\t0\t0\tzsh\t0",
+        ]
+        panes = parse_pane_listing(rows)
+        assert [p.pane_pid for p in panes.values()] == [100, 300]
+        assert panes["w2"].current_command == "bash"
+
+    def test_window_name_with_a_tab_and_malformed_rows(self):
+        from overcode.tmux_utils import parse_pane_listing
+
+        rows = [
+            "odd\tname\t4\t400\t10\t0\t0\t0\tzsh\t0",  # a tab inside the name
+            "short\t1\t2",  # too few fields
+            "bad\t1\tnot-a-pid\t10\t0\t0\t0\tzsh\t0",  # unparsable pid
+            "",
+        ]
+        panes = parse_pane_listing(rows)
+        assert list(panes) == ["odd\tname"]
+        assert panes["odd\tname"].window_index == 4
+
+    def test_format_has_one_field_per_parsed_column(self):
+        from overcode.tmux_utils import PANE_LISTING_FORMAT
+
+        fields = PANE_LISTING_FORMAT.split("\t")
+        assert fields == [
+            "#{window_name}", "#{window_index}", "#{pane_pid}", "#{window_activity}",
+            "#{history_size}", "#{cursor_x}", "#{cursor_y}", "#{pane_current_command}",
+            "#{session_attached}",
+        ]
+
+
+class TestListPanes:
+    """``list_panes`` / ``list_pane_pids``: one subprocess, None when tmux cannot answer."""
+
+    def test_one_list_panes_command_for_the_session(self):
+        from overcode.tmux_utils import PANE_LISTING_FORMAT, list_panes
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="a\t1\t10\t5\t0\t0\t0\tclaude\t0\nb\t2\t20\t5\t0\t0\t0\tclaude\t0\n"
+            )
+            panes = list_panes("agents")
+        assert mock_run.call_count == 1
+        cmd = mock_run.call_args.args[0]
+        assert cmd[-6:] == ["list-panes", "-s", "-t", "agents", "-F", PANE_LISTING_FORMAT]
+        assert {n: p.pane_pid for n, p in panes.items()} == {"a": 10, "b": 20}
+
+    def test_respects_socket_env(self):
+        from overcode.tmux_utils import list_panes
+
+        with patch.dict(os.environ, {"OVERCODE_TMUX_SOCKET": "sock"}):
+            with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="")
+                list_panes("agents")
+        assert mock_run.call_args.args[0][:3] == ["tmux", "-L", "sock"]
+
+    def test_missing_session_or_server_is_none(self):
+        from overcode.tmux_utils import list_pane_pids, list_panes
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="can't find session")
+            assert list_panes("agents") is None
+            assert list_pane_pids("agents") is None
+        with patch(
+            "overcode.tmux_utils.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("tmux", 5),
+        ):
+            assert list_panes("agents") is None
+
+    def test_pids_projection(self):
+        from overcode.tmux_utils import list_pane_pids
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="a\t1\t10\t5\t0\t0\t0\tclaude\t0\n"
+            )
+            assert list_pane_pids("agents") == {"a": 10}
+
+
+class TestPaneForWindow:
+    def _panes(self):
+        from overcode.tmux_utils import parse_pane_listing
+
+        return parse_pane_listing(
+            ["bash\t0\t1\t5\t0\t0\t0\tzsh\t0", "agent-a\t3\t30\t5\t0\t0\t0\tclaude\t0"]
+        )
+
+    def test_by_name(self):
+        from overcode.tmux_utils import pane_for_window
+
+        assert pane_for_window(self._panes(), "agent-a").pane_pid == 30
+
+    def test_legacy_digit_window_falls_back_to_the_index(self):
+        """Pre-name-based sessions stored the window index; RealTmux._get_window
+        tries the name first, then the index, and so does the listing lookup."""
+        from overcode.tmux_utils import pane_for_window
+
+        assert pane_for_window(self._panes(), "3").pane_pid == 30
+        assert pane_for_window(self._panes(), "7") is None
+
+    def test_a_name_that_is_not_a_digit_string_never_scans_indices(self):
+        from overcode.tmux_utils import pane_for_window
+
+        assert pane_for_window(self._panes(), "missing") is None
