@@ -92,6 +92,11 @@ history_retention:
 session_archive:
   terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
 
+# Monitor daemon loop interval while nobody is watching
+# See "Unattended Low-Power Mode" below
+monitor_daemon:
+  interval_unattended_seconds: 10
+
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
 sisters:
@@ -382,6 +387,55 @@ archive). An existing `archive.json` is migrated into `archive.jsonl` the
 first time the archive is touched and renamed to `archive.json.migrated`.
 Everything that reads the archive (`overcode history`, the web analytics
 endpoints, `overcode export`) reads the JSONL.
+
+## Unattended Low-Power Mode
+
+Nothing used to be gated on anyone watching: the TUI captured panes four
+times a second and the monitor daemon looped every 2 s whether or not a
+tmux client was attached, the screen was locked or the laptop lid was
+shut. Both now notice when nobody is looking, and both come straight back
+when someone is.
+
+**The TUI** watches whether a tmux client is attached to the pane it runs
+in (one `tmux display-message` a second, or for free from the pane listing
+its fast path already issues). While none is, every pane capture, the
+stats sweep, the timeline read, the AI summaries, the sister polls, the
+jobs and sessions refreshes and the resize sweep are paused; the only
+thing left running is a 2 s read of the daemon's published state, which
+keeps the stall bell and the macOS notifications working from the
+daemon's status with no capture. The moment a client attaches (or a key is
+pressed) every timer resumes and one full refresh runs. Nothing changes
+while you are attached, and a TUI run outside tmux can't tell, so it
+always behaves as attended.
+
+**The monitor daemon** stretches its loop from `interval_fast` (2 s) to
+`interval_unattended_seconds` (default 10 s) when all three of these say
+nobody is watching: no client is attached to the agents tmux session, no
+TUI keypress heartbeat is fresh (60 s), and no TUI has touched its
+`tui_attended` file in the last 15 s (an attended TUI touches it every
+5 s — this is how a TUI in another tmux session, or in a plain terminal,
+keeps the daemon fast). It returns to the fast interval within one loop of
+a client attaching, and within a second of a TUI re-attaching or a key
+being pressed (the activity signal ends the sleep). The published state
+carries `interval_mode` (`attended` / `unattended`) and the TUI's daemon
+status bar shows `(unattended)` next to the interval when the daemon is
+still in that mode — normally only for the loop after you return.
+
+What the coarser loop does *not* change: `agent_status_history.csv` is
+written on change (plus a 60 s keepalive), so the timeline you come back
+to has no holes at 10 s resolution; heartbeats, oversight timeouts and the
+every-two-minutes housekeeping (done-agent auto-archive, untracked window
+count, terminated-session archive) are all wall-clock and keep their
+cadence. Web dashboard and sister readers carry no "someone is watching"
+signal, so a fleet read only through them runs at the unattended
+interval.
+
+```yaml
+monitor_daemon:
+  interval_unattended_seconds: 10  # loop while nobody is watching; must be >= 2 (interval_fast)
+```
+
+Read when the daemon starts (`overcode daemon restart` after changing it).
 
 ## Pricing Configuration
 

@@ -10,6 +10,8 @@ is back on the fast interval within one tick of a client attaching, a TUI
 touch, or the activity signal.
 """
 
+import contextlib
+import csv
 import os
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -368,3 +370,153 @@ class TestStatusBarShowsTheMode:
         state = _make_monitor_state(current_interval=2)
         del state.interval_mode
         assert "unattended" not in _make_bare_status_bar(monitor_state=state).render().plain
+
+
+class TestUnattendedTimelineHasNoHoles:
+    """detach -> 10 unattended loops -> attach: the timeline the user returns to is gap-free.
+
+    The maintainer's reason the daemon stays alive while unattended. Whole
+    ticks through the daemon tick harness over three sessions, the clock
+    frozen for the daemon *and* the history writer/reader so rows carry the
+    scripted times: 15 attended ticks at 2 s, then the tmux client goes
+    away and the next ten loops run at the unattended interval, then a
+    client is back. Status changes land in every phase. Read the history
+    the way the timeline widget does (carry=True) and bucket it into 10 s
+    slots: every slot of every agent has a state, and the states are the
+    scripted truth.
+    """
+
+    N = 3
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _frozen_history_clock(clock):
+        from overcode import status_history
+
+        class _Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: D401 - datetime API
+                return clock.now
+
+        original = status_history.datetime
+        status_history.datetime = _Frozen
+        try:
+            yield
+        finally:
+            status_history.datetime = original
+
+    @staticmethod
+    def _truth(t: float, name: str) -> str:
+        """Scripted status by seconds since START."""
+        if name == "agent-01":
+            return "waiting_user" if 10 <= t < 60 else "running"
+        if name == "agent-02":
+            return "waiting_user" if 100 <= t < 140 else "running"
+        return "running"
+
+    def test_walk(self, root):
+        from overcode.session_manager import SessionManager
+        from overcode.status_history import read_agent_status_history
+        from overcode.tui_helpers import build_timeline_slots
+        from tests.daemon_tick_harness import (
+            FakeTmux,
+            FrozenClock,
+            ScriptedDetector,
+            make_daemon,
+            run_ticks,
+            seed_sessions,
+            seed_steady_state,
+        )
+
+        state_dir = root / "home" / ".overcode"
+        sm = SessionManager(state_dir=state_dir / "sessions", skip_git_detection=True)
+        sessions = seed_sessions(sm, self.N, "agents", root / "work", START)
+        tmux = FakeTmux("agents", {s.tmux_window: "pane" for s in sessions})
+        tmux.attached = 1
+        clock = FrozenClock(START)
+
+        def script(tick, session):
+            t = (clock.now - START).total_seconds()
+            status = self._truth(t, session.name)
+            return status, ("Working" if status == "running" else "Waiting"), "pane"
+
+        detector = ScriptedDetector(script)
+        daemon = make_daemon(state_dir, "agents", detector, session_manager=sm, tmux=tmux)
+        seed_steady_state(daemon, sessions, START)
+        sync_stamps = (
+            "_last_stats_sync",
+            "_last_session_id_sync",
+            "_last_skills_sync",
+            "_last_sandbox_sync",
+            "_last_resources_sync",
+            "_last_history_rotation_check",
+            "_last_model_metadata_check",
+        )
+        intervals = []  # (seconds since START, current_interval, interval_mode) per tick
+
+        def after_tick(_i):
+            for name in sync_stamps:
+                setattr(daemon, name, clock.now)
+            intervals.append(
+                (
+                    (
+                        daemon.state.tick_started_at
+                        and (
+                            datetime.fromisoformat(daemon.state.tick_started_at) - START
+                        ).total_seconds()
+                    ),
+                    daemon.state.current_interval,
+                    daemon.state.interval_mode,
+                )
+            )
+
+        with clock.installed(), self._frozen_history_clock(clock):
+            # Attended: 15 ticks at 2 s (t = 0 .. 28)
+            run_ticks(daemon, detector, clock, 15, step_seconds=2, between_ticks=after_tick)
+            assert intervals[-1][1:] == (INTERVAL_FAST, "attended")
+            rows_attended = len(_history_rows(daemon.history_path))
+            # The client detaches: the daemon sees it on its next tick and
+            # sleeps the unattended interval from then on (t = 30 .. 120)
+            tmux.attached = 0
+            run_ticks(daemon, detector, clock, 10, step_seconds=10, between_ticks=after_tick)
+            rows_unattended = len(_history_rows(daemon.history_path)) - rows_attended
+            # A client is back: the very next tick is on the fast interval (t = 130 ..)
+            tmux.attached = 1
+            run_ticks(daemon, detector, clock, 10, step_seconds=2, between_ticks=after_tick)
+            end = clock.now  # START + 150 s
+
+            # The interval trajectory: fast, ten unattended loops, fast within one loop
+            unattended = [t for t, iv, mode in intervals if mode == "unattended"]
+            assert unattended == [30 + 10 * k for k in range(10)]
+            assert all(iv == INTERVAL_UNATTENDED for t, iv, _ in intervals if t in unattended)
+            assert intervals[15 + 10][1:] == (INTERVAL_FAST, "attended")  # t = 130
+            # Change-only logging: the ten unattended loops wrote the two
+            # changes plus keepalives, not ten rows per agent
+            assert 2 <= rows_unattended < 10 * self.N
+
+            # What the timeline widget reads and buckets
+            span = (end - START).total_seconds()
+            history = read_agent_status_history(
+                hours=span / 3600, history_file=daemon.history_path, carry=True
+            )
+        by_agent = {}
+        for ts, agent, status, *_ in history:
+            by_agent.setdefault(agent, []).append((ts, status))
+        assert set(by_agent) == {s.name for s in sessions}
+        width = int(span / 10)  # 10 s slots
+        for name, agent_history in by_agent.items():
+            slots = build_timeline_slots(agent_history, width, span / 3600, now=end)
+            assert sorted(slots) == list(range(width)), (
+                name,
+                "holes at",
+                sorted(set(range(width)) - set(slots)),
+            )
+            for i in range(width):
+                assert slots[i] == self._truth(i * 10, name), (name, i, slots[i])
+
+
+def _history_rows(path):
+    if not path.exists():
+        return []
+    with open(path, newline="") as f:
+        return list(csv.reader(f))[1:]
