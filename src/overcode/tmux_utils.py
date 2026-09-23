@@ -191,7 +191,46 @@ def tui_pane_target(environ: Optional[Mapping[str, str]] = None) -> Optional[str
     return pane if pane.startswith("%") else None
 
 
-def query_pane_attended(pane: str, timeout: float = 2) -> Optional[Tuple[str, int]]:
+def tui_tmux_socket(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The socket path of the tmux server this process runs under, or None.
+
+    ``TMUX`` is ``<socket path>,<server pid>,<session index>``. It names the
+    server holding this pane — not necessarily the one overcode's commands
+    target: ``-L $OVERCODE_TMUX_SOCKET`` makes tmux ignore ``TMUX``, so the
+    attended poll addresses this server with ``-S`` explicitly.
+    """
+    env = os.environ if environ is None else environ
+    path = env.get("TMUX", "").split(",", 1)[0]
+    return path or None
+
+
+def tmux_cmd_targets_own_server(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """Whether :func:`_build_tmux_cmd` reaches the server this process runs under.
+
+    A bare ``tmux`` inside a pane follows ``TMUX``, so without
+    ``OVERCODE_TMUX_SOCKET`` the answer is yes. With it, ``-L <label>`` is
+    ``$TMUX_TMPDIR/tmux-<uid>/<label>`` (``/tmp`` when unset — the man
+    page's rule for ``-L``), compared with ``TMUX``'s path resolved, since
+    ``/tmp`` is a link to ``/private/tmp`` on macOS. False outside tmux.
+    The TUI uses this to decide whether the agents session's pane listing
+    describes its own server; only then can the listing's attached-client
+    count stand in for a poll of this pane.
+    """
+    env = os.environ if environ is None else environ
+    own = tui_tmux_socket(env)
+    if own is None:
+        return False
+    label = env.get("OVERCODE_TMUX_SOCKET")
+    if not label:
+        return True
+    tmpdir = env.get("TMUX_TMPDIR") or "/tmp"
+    label_path = os.path.join(tmpdir, f"tmux-{os.getuid()}", label)
+    return os.path.realpath(label_path) == os.path.realpath(own)
+
+
+def query_pane_attended(
+    pane: str, timeout: float = 2, socket_path: Optional[str] = None
+) -> Optional[Tuple[str, int]]:
     """``(session_name, attached_clients)`` for the session holding ``pane``.
 
     ONE tmux command (``display-message -p``), the TUI's per-second
@@ -199,11 +238,17 @@ def query_pane_attended(pane: str, timeout: float = 2) -> Optional[Tuple[str, in
     a timeout, or a pane that no longer exists (tmux 3.5 prints an empty
     line with status 0 for an unresolvable ``-t``) — so the caller can
     leave its state as it was rather than mistake silence for "detached".
+
+    ``socket_path`` addresses that server with ``-S``: a pane id only means
+    something on the server that issued it, and ``-L $OVERCODE_TMUX_SOCKET``
+    would resolve it against another server's pane of the same id (the TUI
+    passes its own, :func:`tui_tmux_socket`). Without it the command goes
+    where every other one does.
     """
+    base = ["tmux", "-S", socket_path] if socket_path else _build_tmux_cmd()
     try:
         result = subprocess.run(
-            _build_tmux_cmd()
-            + ["display-message", "-p", "-t", pane, "#{session_name}\t#{session_attached}"],
+            base + ["display-message", "-p", "-t", pane, "#{session_name}\t#{session_attached}"],
             capture_output=True,
             text=True,
             timeout=timeout,

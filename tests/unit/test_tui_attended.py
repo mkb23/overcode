@@ -87,6 +87,8 @@ def _bare_app(attended=True, in_tmux=True):
     app.attended = attended
     app._periodic_timers = {}
     app._tui_tmux_pane = "%3" if in_tmux else None
+    app._tui_tmux_socket = "/tmp/tmux-1/default" if in_tmux else None
+    app._listing_is_own_server = in_tmux
     app._tui_tmux_session = None
     app._attached_reading = None
     app._last_attended_touch = 0.0
@@ -146,7 +148,7 @@ def _start_all_timers(app):
     app._start_periodic("focused_job_pane", app._poll_focused_job_pane)
     app._start_periodic("agent_resize", app._periodic_agent_resize)
     app._start_periodic("attended_watch", app._attended_watch_tick)
-    app._start_periodic("unattended_status", app._unattended_status_tick, paused=True)
+    app._start_periodic("unattended_status", app._unattended_status_tick)
 
 
 ATTENDED_ONLY = {
@@ -213,7 +215,9 @@ class TestWatcher:
             patch("overcode.tui.signal_activity", signalled.append),
         ):
             app._set_attended(True)
-        assert not any(t.paused for n, t in app._periodic_timers.items() if n in PAUSED_WHEN_UNATTENDED)
+        assert not any(
+            t.paused for n, t in app._periodic_timers.items() if n in PAUSED_WHEN_UNATTENDED
+        )
         assert app._periodic_timers["unattended_status"].paused
         assert touched == ["agents"] and signalled == ["agents"]
         # One full refresh: sessions, daemon bar, timeline, statuses (fast + slow), jobs
@@ -240,6 +244,23 @@ class TestWatcher:
         with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
             app._set_attended(True)
         assert app.calls["_poll_sisters"] == 1
+
+    def test_a_detach_during_the_unattended_reads_delayed_start_still_starts_it(self):
+        """The first poll (0.45 s) can answer 0 clients before the 2 s read's
+        delayed start (0.8 s) lands — a TUI launched under ``tmux new -d``.
+        The read must start running, not paused: bells depend on it."""
+        app, clock = _bare_app()
+        _start_all_timers(app)
+        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+            clock.advance(0.5)  # the watch has started; the read has not
+            assert "unattended_status" not in app._periodic_timers
+            app._set_attended(False)
+            before = dict(app.calls)
+            clock.advance(60)
+        assert not app._periodic_timers["unattended_status"].paused
+        assert app.calls["_fetch_unattended_status_async"] == pytest.approx(30, abs=2)
+        for name in ATTENDED_ONLY:
+            assert app.calls.get(name, 0) == before.get(name, 0), name
 
 
 class TestWorkerInvocationsAcrossDetachAttach:
@@ -340,6 +361,46 @@ class TestAttendedWatchTick:
             app._attended_watch_tick()
         assert touched == []
 
+    def test_the_poll_addresses_this_panes_own_server(self):
+        """A pane id means nothing on another server: the query carries the
+        socket from $TMUX, not -L $OVERCODE_TMUX_SOCKET."""
+        app, _ = _bare_app()
+        app.call_from_thread = lambda fn, *a: fn(*a)
+        with patch("overcode.tui.query_pane_attended", return_value=("work", 0)) as query:
+            SupervisorTUI._poll_attended_async.__wrapped__(app)
+        query.assert_called_once_with("%3", socket_path="/tmp/tmux-1/default")
+        assert app.attended is False and app._tui_tmux_session == "work"
+
+
+class TestOutsideTmux:
+    """A TUI in a plain terminal: nobody can tell, so it stays attended and
+    keeps the daemon fast with its touch — the case the daemon's third
+    signal exists for."""
+
+    def test_the_watch_runs_touches_and_never_polls(self):
+        app, clock = _bare_app(in_tmux=False)
+        _start_all_timers(app)
+        touched = []
+        with (
+            patch("overcode.tui.touch_tui_attended", touched.append),
+            patch("overcode.tui.time.monotonic", lambda: clock.now),  # the touch is wall-clock
+        ):
+            clock.advance(60)
+        assert app.attended is True
+        assert "_poll_attended_async" not in app.calls
+        assert touched == ["agents"] * 12  # every 5 s for a minute
+        assert app.calls["update_focused_status"] == pytest.approx(240, abs=2)
+        assert app.calls["update_daemon_status"] >= 58
+        assert "_fetch_unattended_status_async" not in app.calls
+
+    def test_a_stale_listing_reading_is_never_consulted(self):
+        app, _ = _bare_app(in_tmux=False)
+        app._tui_tmux_session = "agents"
+        app._attached_reading = (0, time.monotonic())  # could not arise, but must not flip
+        with patch("overcode.tui.touch_tui_attended"):
+            app._attended_watch_tick()
+        assert app.attended is True
+
 
 class TestListingReading:
     def _panes(self, attached):
@@ -367,6 +428,15 @@ class TestListingReading:
         app._tui_tmux_session = "agents"
         app._note_pane_listing(None)
         app._note_pane_listing({})
+        assert app._attached_reading is None
+
+    def test_ignored_when_the_listing_is_from_another_server(self):
+        """OVERCODE_TMUX_SOCKET names a server this pane is not on: a session
+        called "agents" there is not the one holding this pane."""
+        app, _ = _bare_app()
+        app._tui_tmux_session = "agents"
+        app._listing_is_own_server = False
+        app._note_pane_listing(self._panes(0))
         assert app._attached_reading is None
 
     def test_fast_path_records_the_listing_it_already_issues(self):

@@ -322,6 +322,54 @@ class TestTuiPaneTarget:
         assert tui_pane_target({"TMUX_PANE": "%7"}) is None  # TMUX unset: not inside tmux
         assert tui_pane_target({"TMUX": "x", "TMUX_PANE": "7"}) is None
 
+    def test_own_socket_is_the_first_field_of_tmux(self):
+        from overcode.tmux_utils import tui_tmux_socket
+
+        assert tui_tmux_socket({"TMUX": "/private/tmp/tmux-1/default,24475,0"}) == (
+            "/private/tmp/tmux-1/default"
+        )
+        assert tui_tmux_socket({}) is None
+        assert tui_tmux_socket({"TMUX": ""}) is None
+
+
+class TestTmuxCmdTargetsOwnServer:
+    """Does ``-L $OVERCODE_TMUX_SOCKET`` (or a bare tmux) reach this pane's server?"""
+
+    def test_bare_tmux_follows_the_tmux_variable(self):
+        from overcode.tmux_utils import tmux_cmd_targets_own_server
+
+        assert tmux_cmd_targets_own_server({"TMUX": "/tmp/tmux-1/default,1,0"}) is True
+        assert tmux_cmd_targets_own_server({}) is False  # no own server outside tmux
+
+    def test_label_resolved_under_tmpdir_and_compared_by_real_path(self, tmp_path):
+        from overcode.tmux_utils import tmux_cmd_targets_own_server
+
+        uid = os.getuid()
+        real = tmp_path / "real"
+        (real / f"tmux-{uid}").mkdir(parents=True)
+        link = tmp_path / "link"
+        link.symlink_to(real)  # /tmp -> /private/tmp on macOS
+        env = {
+            "TMUX_TMPDIR": str(link),
+            "OVERCODE_TMUX_SOCKET": "agents",
+            "TMUX": f"{real}/tmux-{uid}/agents,1,0",
+        }
+        assert tmux_cmd_targets_own_server(env) is True
+        env["OVERCODE_TMUX_SOCKET"] = "other"
+        assert tmux_cmd_targets_own_server(env) is False
+        env["TMUX_TMPDIR"] = str(tmp_path / "elsewhere")
+        env["OVERCODE_TMUX_SOCKET"] = "agents"
+        assert tmux_cmd_targets_own_server(env) is False
+
+    def test_default_directory_is_tmp(self):
+        from overcode.tmux_utils import tmux_cmd_targets_own_server
+
+        uid = os.getuid()
+        env = {"OVERCODE_TMUX_SOCKET": "sock", "TMUX": f"/tmp/tmux-{uid}/sock,1,0"}
+        assert tmux_cmd_targets_own_server(env) is True
+        env["TMUX"] = f"/tmp/tmux-{uid}/default,1,0"
+        assert tmux_cmd_targets_own_server(env) is False
+
 
 class TestQueryPaneAttended:
     """One display-message per call; None whenever tmux cannot answer."""
@@ -373,6 +421,20 @@ class TestQueryPaneAttended:
                 mock_run.return_value = MagicMock(returncode=0, stdout="agents\t1\n")
                 query_pane_attended("%3")
         assert mock_run.call_args.args[0][:3] == ["tmux", "-L", "sock"]
+
+    def test_socket_path_addresses_that_server_with_dash_s(self):
+        """The TUI's pane id is only meaningful on its own server; with
+        OVERCODE_TMUX_SOCKET set, -L would resolve it on another one."""
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch.dict(os.environ, {"OVERCODE_TMUX_SOCKET": "sock"}):
+            with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="work\t1\n")
+                result = query_pane_attended("%3", socket_path="/private/tmp/tmux-1/default")
+        assert result == ("work", 1)
+        cmd = mock_run.call_args.args[0]
+        assert cmd[:3] == ["tmux", "-S", "/private/tmp/tmux-1/default"]
+        assert "-L" not in cmd
 
 
 class TestListPanes:

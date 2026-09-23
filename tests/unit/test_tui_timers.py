@@ -14,7 +14,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.tui import TIMER_INTERVALS, TIMER_PHASE_OFFSETS, SupervisorTUI  # noqa: E402
+from overcode.tui import (  # noqa: E402
+    RUNS_ONLY_WHEN_UNATTENDED,
+    TIMER_INTERVALS,
+    TIMER_PHASE_OFFSETS,
+    SupervisorTUI,
+)
 
 
 class TestCadences:
@@ -119,19 +124,33 @@ class TestStartPeriodic:
 
     @pytest.mark.parametrize("name", sorted(TIMER_INTERVALS))
     def test_every_timer_starts_with_its_own_cadence(self, name):
-        app = self._app()
+        app = self._app()  # attended: only the unattended-only read starts paused
         cb = object()
         app._start_periodic(name, cb)
         if TIMER_PHASE_OFFSETS[name] > 0:
             app.set_timer.call_args.args[1]()
-        app.set_interval.assert_called_once_with(TIMER_INTERVALS[name], cb, pause=False)
+        app.set_interval.assert_called_once_with(
+            TIMER_INTERVALS[name], cb, pause=name in RUNS_ONLY_WHEN_UNATTENDED
+        )
         assert app._periodic_timers[name] is app.set_interval.return_value
 
-    def test_a_timer_can_be_started_paused(self):
-        app = self._app()
-        app._start_periodic("unattended_status", object(), paused=True)
+    def test_the_unattended_read_starts_paused_only_while_attended(self):
+        app = self._app(attended=True)
+        app._start_periodic("unattended_status", object())
         app.set_timer.call_args.args[1]()
         assert app.set_interval.call_args.kwargs == {"pause": True}
+        app = self._app(attended=False)
+        app._start_periodic("unattended_status", object())
+        app.set_timer.call_args.args[1]()
+        assert app.set_interval.call_args.kwargs == {"pause": False}
+
+    def test_the_pause_decision_is_made_when_the_delayed_start_lands(self):
+        """A detach during the 0.8 s delay must not leave the read paused."""
+        app = self._app(attended=True)
+        app._start_periodic("unattended_status", object())
+        app.attended = False
+        app.set_timer.call_args.args[1]()
+        assert app.set_interval.call_args.kwargs == {"pause": False}
 
     def test_a_pausable_timer_started_while_unattended_starts_paused(self):
         app = self._app(attended=False)

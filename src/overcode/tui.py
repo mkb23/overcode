@@ -39,7 +39,12 @@ from .monitor_daemon import (
 )
 from .pid_utils import is_daemon_lock_held, spawn_daemon
 from .tmux_utils import _build_tmux_cmd as _tmux_base
-from .tmux_utils import query_pane_attended, tui_pane_target
+from .tmux_utils import (
+    query_pane_attended,
+    tmux_cmd_targets_own_server,
+    tui_pane_target,
+    tui_tmux_socket,
+)
 from .summarizer_component import (
     SummarizerComponent,
     SummarizerConfig,
@@ -190,6 +195,12 @@ PAUSED_WHEN_UNATTENDED = frozenset(
         "timeline",
     }
 )
+
+# The mirror image: timers that run only while nobody is attached, paused
+# the rest of the time. Both sets are read by _start_periodic (a timer's
+# initial pause state, decided when its delayed start lands) and by
+# _on_attended_changed (the flip).
+RUNS_ONLY_WHEN_UNATTENDED = frozenset({"unattended_status"})
 
 
 class SupervisorTUI(
@@ -462,9 +473,14 @@ class SupervisorTUI(
         # TUI runs in. False pauses every timer in PAUSED_WHEN_UNATTENDED
         # (_on_attended_changed is the one place that reacts). Written only
         # through _set_attended. Outside tmux nobody can tell, so it stays
-        # True and the watch timer is never started.
+        # True; the watch still runs there for its liveness touch.
         self.attended: bool = True
         self._tui_tmux_pane: Optional[str] = tui_pane_target()
+        # This pane's own server, which the poll addresses explicitly (a
+        # pane id means nothing on another server), and whether that is
+        # the server the agents session's pane listing comes from.
+        self._tui_tmux_socket: Optional[str] = tui_tmux_socket()
+        self._listing_is_own_server: bool = tmux_cmd_targets_own_server()
         self._tui_tmux_session: Optional[str] = None  # learned from the first poll
         # (attached count, monotonic) from the fast path's own list-panes,
         # when this pane is in the agents session: a reading under a second
@@ -746,35 +762,41 @@ class SupervisorTUI(
             # misfires after splits/zooms leave windows stuck at the old size.
             self._start_periodic("agent_resize", self._periodic_agent_resize)
             # Unattended low-power mode: once a second ask tmux whether a
-            # client is attached to this pane; the 2 s daemon-status read
-            # runs only while none is. Outside tmux nobody can tell.
-            if self._tui_tmux_pane is not None:
-                self._start_periodic("attended_watch", self._attended_watch_tick)
-                self._start_periodic(
-                    "unattended_status", self._unattended_status_tick, paused=True
-                )
+            # client is attached to this pane (outside tmux the tick only
+            # touches the liveness file that keeps the daemon fast); the
+            # 2 s daemon-status read runs only while none is.
+            self._start_periodic("attended_watch", self._attended_watch_tick)
+            self._start_periodic("unattended_status", self._unattended_status_tick)
 
         # Apply initial jobs mode if requested (e.g. --jobs flag)
         if self._initial_jobs_mode:
             self.tui_mode = "jobs"
 
-    def _start_periodic(self, name: str, callback, paused: bool = False) -> None:
+    def _start_periodic(self, name: str, callback) -> None:
         """Start the ``name`` timer at its TIMER_INTERVALS cadence, phase-shifted.
 
         A non-zero TIMER_PHASE_OFFSETS entry delays the first tick by that
         many seconds (set_timer, then set_interval), so the timer fires at
         offset + k * interval instead of k * interval. The Timer is kept in
-        ``self._periodic_timers`` so the attended watcher can pause and resume it; a
-        timer in PAUSED_WHEN_UNATTENDED that starts while nobody is attached
-        starts paused, as does one asked to (``paused``).
+        ``self._periodic_timers`` so the attended watcher can pause and
+        resume it. Whether it starts paused is decided when it actually
+        starts — after the delay — from the attended state at that moment:
+        a PAUSED_WHEN_UNATTENDED timer starts paused while nobody is
+        attached, a RUNS_ONLY_WHEN_UNATTENDED one while somebody is. (A
+        detach during the delay would otherwise leave the unattended read
+        dead until the next attach-detach cycle.)
         """
         interval = TIMER_INTERVALS[name]
         delay = TIMER_PHASE_OFFSETS[name]
 
         def start() -> None:
-            start_paused = paused or (
-                name in PAUSED_WHEN_UNATTENDED and not getattr(self, "attended", True)
-            )
+            attended = getattr(self, "attended", True)
+            if name in PAUSED_WHEN_UNATTENDED:
+                start_paused = not attended
+            elif name in RUNS_ONLY_WHEN_UNATTENDED:
+                start_paused = attended
+            else:
+                start_paused = False
             self._periodic_timers[name] = self.set_interval(interval, callback, pause=start_paused)
 
         if delay > 0:
@@ -789,18 +811,22 @@ class SupervisorTUI(
 
         The fast path's per-tick ``list-panes`` already carries the agents
         session's attached-client count; when this pane lives in that
-        session and such a reading is under a second old it is used and no
-        command is spent. Otherwise one ``display-message`` asks tmux about
-        this pane's session. While attended, the liveness file the monitor
-        daemon watches is touched every TUI_ATTENDED_TOUCH_SECONDS (it is
-        how a TUI outside the agents session keeps the daemon fast).
+        session on the same server and such a reading is under a second
+        old it is used and no command is spent. Otherwise one
+        ``display-message`` asks this pane's own server about its session.
+        Outside tmux there is nothing to ask and the state stays attended.
+        Either way, while attended, the liveness file the monitor daemon
+        watches is touched every TUI_ATTENDED_TOUCH_SECONDS: it is how a
+        TUI outside the agents session — another tmux session, or a plain
+        terminal — keeps the daemon fast.
         """
         now = time.monotonic()
-        reading = self._attached_reading
-        if reading is not None and now - reading[1] < TIMER_INTERVALS["attended_watch"]:
-            self._set_attended(reading[0] > 0)
-        else:
-            self._poll_attended_async()
+        if self._tui_tmux_pane is not None:
+            reading = self._attached_reading
+            if reading is not None and now - reading[1] < TIMER_INTERVALS["attended_watch"]:
+                self._set_attended(reading[0] > 0)
+            else:
+                self._poll_attended_async()
         if self.attended and now - self._last_attended_touch >= TUI_ATTENDED_TOUCH_SECONDS:
             self._last_attended_touch = now
             touch_tui_attended(self.tmux_session)
@@ -808,8 +834,8 @@ class SupervisorTUI(
     @work(thread=True, group="attended_watch")
     @single_flight("attended_watch")
     def _poll_attended_async(self) -> None:
-        """Worker: one tmux command, applied on the main thread."""
-        result = query_pane_attended(self._tui_tmux_pane)
+        """Worker: one tmux command to this pane's own server, applied on the main thread."""
+        result = query_pane_attended(self._tui_tmux_pane, socket_path=self._tui_tmux_socket)
         self.call_from_thread(self._apply_attended_poll, result)
 
     def _apply_attended_poll(self, result: Optional[tuple]) -> None:
@@ -823,10 +849,16 @@ class SupervisorTUI(
     def _note_pane_listing(self, panes) -> None:
         """Fast path (worker thread): keep the listing's attached count as a reading.
 
-        Only when this pane is in the agents session — a TUI in another
-        session or a plain terminal is not among that session's clients.
+        Only when this pane is in the agents session on the server the
+        listing came from — a TUI in another session, on another server
+        (OVERCODE_TMUX_SOCKET naming one this pane is not on) or in a plain
+        terminal is not among that session's clients.
         """
-        if not panes or getattr(self, "_tui_tmux_session", None) != self.tmux_session:
+        if (
+            not panes
+            or not getattr(self, "_listing_is_own_server", False)
+            or getattr(self, "_tui_tmux_session", None) != self.tmux_session
+        ):
             return
         first = next(iter(panes.values()))
         self._attached_reading = (first.session_attached, time.monotonic())
@@ -857,12 +889,14 @@ class SupervisorTUI(
                 timer.resume()
             else:
                 timer.pause()
-        unattended = self._periodic_timers.get("unattended_status")
-        if unattended is not None:
+        for name in RUNS_ONLY_WHEN_UNATTENDED:
+            timer = self._periodic_timers.get(name)
+            if timer is None:
+                continue
             if attended:
-                unattended.pause()
+                timer.pause()
             else:
-                unattended.resume()
+                timer.resume()
         if attended:
             now = time.monotonic()
             # The probe measured nothing while paused; a delta spanning the
