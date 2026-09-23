@@ -88,7 +88,7 @@ from .monitor_daemon_core import (
     should_auto_archive,
     should_enforce_oversight_timeout,
 )
-from .tmux_utils import send_text_to_tmux_window
+from .tmux_utils import send_text_to_tmux_window, untracked_window_names
 
 
 # Check for macOS presence APIs (optional)
@@ -965,8 +965,12 @@ class MonitorDaemon:
     def _count_untracked_windows(self, sessions: list, tmux=None) -> int:
         """Count tmux windows not tracked by any active session (#344).
 
-        Returns count of windows that exist in tmux but aren't tracked
-        (excluding window 0 which is the default shell).
+        Uses the same predicate as ``overcode cleanup --untracked``
+        (``tmux_utils.untracked_window_names``): window 0, live agents'
+        windows and overcode's own windows (the dead-window placeholder,
+        the supervisor daemon's claude window, SSH proxy windows) are not
+        untracked, so the count never advertises a cleanup that would kill
+        them.
 
         Args:
             sessions: Sessions from the current tick.
@@ -986,13 +990,7 @@ class MonitorDaemon:
             tmux_windows = tmux.list_windows(self.tmux_session)
             active_sessions = [s for s in sessions if s.status != "terminated"]
             tracked_windows = {s.tmux_window for s in active_sessions}
-            count = 0
-            for window_info in tmux_windows:
-                w_name = window_info['name']
-                window_idx = int(window_info['index'])
-                if window_idx != 0 and w_name not in tracked_windows:
-                    count += 1
-            return count
+            return len(untracked_window_names(tmux_windows, tracked_windows))
         except Exception:
             return 0
 

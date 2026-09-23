@@ -1530,6 +1530,26 @@ class TestComputeSubtreeCosts:
         # by_name keeps the last entry; its subtree is itself, counted once
         assert a2.subtree_cost_usd == 2.00
 
+    def test_duplicate_sibling_names_count_the_kept_entry_once(self):
+        """Duplicate names among siblings (acyclic) changed with the visited set.
+
+        ``by_name`` keeps the *last* entry for a name, and ``children_map``
+        lists the name once per child. The pre-visited-set code summed the
+        kept entry once per listing (parent 1 + 5 + 5 = 11, never seeing the
+        first ``x``); with the visited set the kept entry is counted once
+        (1 + 5 = 6). Neither counts the shadowed first ``x``; that needs
+        id-keyed links and is out of scope. This pins the current number so
+        a change is deliberate.
+        """
+        daemon = self._make_daemon()
+        parent = self._make_state("p", 1.00)
+        x_first = self._make_state("x", 2.00, parent_name="p")
+        x_last = self._make_state("x", 5.00, parent_name="p")
+        daemon._compute_subtree_costs([parent, x_first, x_last])
+        assert parent.subtree_cost_usd == 6.00
+        assert x_first.subtree_cost_usd == 0.0
+        assert x_last.subtree_cost_usd == 0.0
+
     def test_two_node_cycle_counts_each_member_once(self):
         daemon = self._make_daemon()
         a = self._make_state("a", 1.00, parent_name="b")
@@ -1854,6 +1874,46 @@ class TestCountUntrackedWindows:
 
         daemon = self._make_daemon()
         assert daemon._count_untracked_windows([], tmux=MockTmux()) == 0
+
+    def test_overcode_owned_windows_are_not_untracked(self):
+        """Parity with cleanup --untracked (#344): the count must never advertise
+        a cleanup that would kill the TUI's dead-window placeholder (#457),
+        the supervisor daemon's claude window or an SSH proxy window — none
+        of which is tracked in sessions.json.
+        """
+        from overcode.mocks import MockTmux
+        from overcode.tmux_utils import (
+            DAEMON_CLAUDE_WINDOW_NAME,
+            EMPTY_PLACEHOLDER_WINDOW,
+            SSH_PROXY_WINDOW_PREFIX,
+        )
+
+        daemon = self._make_daemon()
+        tmux = MockTmux()
+        tmux.new_session("agents")
+        tmux.new_window("agents", "bash")  # index 0
+        tmux.new_window("agents", "agent1")  # tracked
+        tmux.new_window("agents", EMPTY_PLACEHOLDER_WINDOW)
+        tmux.new_window("agents", DAEMON_CLAUDE_WINDOW_NAME)
+        tmux.new_window("agents", f"{SSH_PROXY_WINDOW_PREFIX}desktop:remote1")
+        tmux.new_window("agents", "rogue")
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = "agent1"
+
+        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+
+    def test_count_uses_the_shared_predicate(self):
+        """Both paths must go through tmux_utils.untracked_window_names."""
+        import inspect
+        from overcode import launcher, monitor_daemon
+
+        assert "untracked_window_names(" in inspect.getsource(
+            monitor_daemon.MonitorDaemon._count_untracked_windows
+        )
+        assert "untracked_window_names(" in inspect.getsource(
+            launcher.AgentLauncher.list_sessions
+        )
 
     def test_tmux_interface_has_no_session_exists(self):
         """Guard against the bug coming back: the protocol spells it has_session."""

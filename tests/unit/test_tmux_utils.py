@@ -6,9 +6,14 @@ from unittest.mock import patch, MagicMock, call
 import subprocess
 
 from overcode.tmux_utils import (
+    DAEMON_CLAUDE_WINDOW_NAME,
+    EMPTY_PLACEHOLDER_WINDOW,
+    SSH_PROXY_WINDOW_PREFIX,
+    is_overcode_owned_window,
     send_text_to_tmux_window,
     get_tmux_pane_content,
     exit_copy_mode_if_active,
+    untracked_window_names,
 )
 
 
@@ -190,3 +195,50 @@ class TestGetTmuxPaneContent:
 
         cmd = mock_run.call_args[0][0]
         assert "-100" in cmd
+
+
+class TestUntrackedWindowNames:
+    """The one predicate behind the daemon's untracked count and cleanup --untracked (#344)."""
+
+    def test_window_zero_is_never_untracked(self):
+        assert untracked_window_names([{"index": 0, "name": "bash"}], set()) == []
+        assert untracked_window_names([{"index": "0", "name": "bash"}], set()) == []
+
+    def test_tracked_windows_are_skipped(self):
+        windows = [{"index": 1, "name": "agent-a"}, {"index": 2, "name": "agent-b"}]
+        assert untracked_window_names(windows, {"agent-a", "agent-b"}) == []
+        assert untracked_window_names(windows, {"agent-a"}) == ["agent-b"]
+
+    def test_overcode_owned_windows_are_skipped(self):
+        """Placeholder (#457), supervisor claude and SSH proxies are overcode's own."""
+        windows = [
+            {"index": 0, "name": "bash"},
+            {"index": 1, "name": EMPTY_PLACEHOLDER_WINDOW},
+            {"index": 2, "name": DAEMON_CLAUDE_WINDOW_NAME},
+            {"index": 3, "name": f"{SSH_PROXY_WINDOW_PREFIX}desktop:remote-agent"},
+            {"index": 4, "name": "rogue"},
+        ]
+        assert untracked_window_names(windows, set()) == ["rogue"]
+
+    def test_index_may_be_int_or_str_and_order_is_kept(self):
+        windows = [
+            {"index": "3", "name": "c"},
+            {"index": 1, "name": "a"},
+            {"index": "2", "name": "b"},
+        ]
+        assert untracked_window_names(windows, set()) == ["c", "a", "b"]
+
+    def test_is_overcode_owned_window(self):
+        assert is_overcode_owned_window(EMPTY_PLACEHOLDER_WINDOW)
+        assert is_overcode_owned_window(DAEMON_CLAUDE_WINDOW_NAME)
+        assert is_overcode_owned_window(f"{SSH_PROXY_WINDOW_PREFIX}host:name")
+        assert not is_overcode_owned_window("my-agent-1a2b")
+        assert not is_overcode_owned_window("oc-empty2")
+
+    def test_names_are_the_ones_other_modules_use(self):
+        """The constants must match what creates the windows, or the skip is dead."""
+        from overcode.supervisor_daemon import SupervisorDaemon
+        from overcode import tmux_manager
+
+        assert SupervisorDaemon.DAEMON_CLAUDE_WINDOW_NAME == DAEMON_CLAUDE_WINDOW_NAME
+        assert tmux_manager.EMPTY_PLACEHOLDER_WINDOW == EMPTY_PLACEHOLDER_WINDOW

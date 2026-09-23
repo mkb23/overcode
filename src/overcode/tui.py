@@ -46,7 +46,7 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
-from .tmux_utils import get_pane_base_index
+from .tmux_utils import get_pane_base_index, SSH_PROXY_WINDOW_PREFIX
 from .worker_guard import single_flight, worker_cancelled
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
@@ -2603,7 +2603,7 @@ class SupervisorTUI(
 
         Returns the local tmux window name, or None on failure.
         """
-        proxy_name = f"ssh:{session.source_host}:{session.name}"
+        proxy_name = f"{SSH_PROXY_WINDOW_PREFIX}{session.source_host}:{session.name}"
 
         # Check if proxy already exists in our cache
         if session.id in self._ssh_proxies:
@@ -2657,7 +2657,7 @@ class SupervisorTUI(
             if sess is None:
                 return
             for win in list(sess.windows):
-                if win.window_name.startswith("ssh:"):
+                if win.window_name.startswith(SSH_PROXY_WINDOW_PREFIX):
                     try:
                         win.kill()
                     except Exception:

@@ -812,6 +812,43 @@ class TestListSessionsKillUntracked:
         assert len(sessions) == 1
         assert sessions[0].name == "tracked-agent"
 
+    def test_kill_untracked_spares_overcode_owned_windows(self, tmp_path):
+        """Same predicate as the daemon's count (#344): kill only rogue windows.
+
+        Window 0, the live agent's window, the dead-window placeholder
+        (#457), the supervisor daemon's claude window and SSH proxy windows
+        all survive; a genuinely untracked window is killed.
+        """
+        from overcode.tmux_utils import (
+            DAEMON_CLAUDE_WINDOW_NAME,
+            EMPTY_PLACEHOLDER_WINDOW,
+            SSH_PROXY_WINDOW_PREFIX,
+        )
+
+        mock_tmux = MockTmux()
+        mock_tmux.new_session("agents")
+        mock_tmux.new_window("agents", "bash")  # index 0: default shell
+        tmux_manager = TmuxManager("agents", tmux=mock_tmux)
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=tmux_manager,
+            session_manager=session_manager
+        )
+        tracked = launcher.launch(name="tracked-agent")
+        proxy = f"{SSH_PROXY_WINDOW_PREFIX}desktop:remote-agent"
+        for name in (EMPTY_PLACEHOLDER_WINDOW, DAEMON_CLAUDE_WINDOW_NAME, proxy, "rogue"):
+            mock_tmux.new_window("agents", name)
+
+        launcher.list_sessions(kill_untracked=True)
+
+        remaining = set(mock_tmux.sessions["agents"])
+        assert "rogue" not in remaining
+        assert {
+            "bash", tracked.tmux_window, EMPTY_PLACEHOLDER_WINDOW,
+            DAEMON_CLAUDE_WINDOW_NAME, proxy,
+        } <= remaining
+
 
 class TestGetSessionOutput:
     """Test get_session_output subprocess handling"""

@@ -54,7 +54,7 @@ from .status_constants import (
 )
 from .status_patterns import get_patterns
 from .tmux_manager import TmuxManager
-from .tmux_utils import send_text_to_tmux_window
+from .tmux_utils import DAEMON_CLAUDE_WINDOW_NAME, send_text_to_tmux_window
 from .history_reader import encode_project_path, read_token_usage_from_session_file
 from .supervisor_daemon_core import (
     build_daemon_claude_context as _build_daemon_claude_context,
@@ -234,7 +234,9 @@ class SupervisorDaemon:
     interface (MonitorDaemonState) and launches daemon claude when needed.
     """
 
-    DAEMON_CLAUDE_WINDOW_NAME = "_daemon_claude"
+    # Defined in tmux_utils so the untracked-window checks (daemon count,
+    # cleanup --untracked) know this window is overcode's own.
+    DAEMON_CLAUDE_WINDOW_NAME = DAEMON_CLAUDE_WINDOW_NAME
 
     def __init__(
         self,

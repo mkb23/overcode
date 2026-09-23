@@ -10,9 +10,52 @@ import os
 import subprocess
 import tempfile
 import time
-from typing import List, Optional
+from typing import Any, Collection, Iterable, List, Mapping, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Windows overcode creates for itself on the agents tmux session. None of
+# them belongs to an agent in sessions.json, so every "is this window
+# untracked?" check (the daemon's untracked count, `overcode cleanup
+# --untracked`) must skip them explicitly: otherwise the count shows a
+# permanent warning and the cleanup kills overcode's own windows.
+EMPTY_PLACEHOLDER_WINDOW = "oc-empty"  # TUI dead-window placeholder (#457)
+DAEMON_CLAUDE_WINDOW_NAME = "_daemon_claude"  # supervisor daemon's claude
+SSH_PROXY_WINDOW_PREFIX = "ssh:"  # TUI proxies to sister agents over SSH
+
+
+def is_overcode_owned_window(name: str) -> bool:
+    """Whether ``name`` is a window overcode created for itself (see above)."""
+    return (
+        name == EMPTY_PLACEHOLDER_WINDOW
+        or name == DAEMON_CLAUDE_WINDOW_NAME
+        or name.startswith(SSH_PROXY_WINDOW_PREFIX)
+    )
+
+
+def untracked_window_names(
+    windows: Iterable[Mapping[str, Any]], tracked_windows: Collection[str]
+) -> List[str]:
+    """Names of the windows no live agent owns and overcode did not create.
+
+    The one definition behind the monitor daemon's untracked-window count
+    and ``overcode cleanup --untracked`` (#344), so the two can never
+    disagree about what is safe to kill. Skips window 0 (the session's
+    default shell), every name in ``tracked_windows`` (the ``tmux_window``
+    of each non-terminated session) and overcode's own windows. ``windows``
+    are the dicts ``TmuxInterface.list_windows`` returns (``index`` as int
+    or str, ``name``); listing order is preserved.
+    """
+    names: List[str] = []
+    for window in windows:
+        name = window["name"]
+        if int(window["index"]) == 0:
+            continue
+        if name in tracked_windows or is_overcode_owned_window(name):
+            continue
+        names.append(name)
+    return names
 
 
 def _build_tmux_cmd() -> List[str]:
