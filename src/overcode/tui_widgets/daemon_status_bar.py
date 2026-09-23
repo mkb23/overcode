@@ -222,6 +222,11 @@ class DaemonStatusBar(Static):
             content.append(f"{symbol} ", style=style)
             content.append(f"#{state.loop_count}", style="cyan")
             content.append(f" @{format_interval(state.current_interval)}", style="dim")
+            # The daemon stretched its loop because it saw nobody watching;
+            # a TUI can see this for up to one loop after re-attaching, or
+            # for good when it runs where the daemon cannot see it.
+            if getattr(state, "interval_mode", "attended") == "unattended":
+                content.append(" (unattended)", style="dim")
             # A tick slower than the interval means the daemon is alive but
             # behind. is_stale() already tolerates it (it adds the tick
             # duration to its window), so say so rather than flip to "stopped".

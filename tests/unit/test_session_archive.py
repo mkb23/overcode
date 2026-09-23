@@ -352,7 +352,19 @@ class TestDaemonArchivesTerminatedSessions:
         return daemon, sm, sessions, start
 
     def _tick(self, daemon, loop, now):
+        """A tick at ``now``; a multiple-of-60 ``loop`` is a housekeeping tick.
+
+        Housekeeping is wall-clock now (every HOUSEKEEPING_INTERVAL_SECONDS,
+        so the unattended loop keeps its cadence); the loop number only
+        chooses whether this tick's clock says the pass is due.
+        """
+        from overcode.monitor_daemon import HOUSEKEEPING_INTERVAL_SECONDS
+
         daemon.state.loop_count = loop
+        if loop % 60 == 0:
+            daemon._last_housekeeping = now - timedelta(seconds=HOUSEKEEPING_INTERVAL_SECONDS)
+        else:
+            daemon._last_housekeeping = now
         with FrozenClock(now).installed():
             daemon._tick(now)
         settle(daemon.session_manager.state_file)

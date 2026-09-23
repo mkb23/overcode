@@ -209,6 +209,10 @@ class MonitorDaemonState:
     # duration to its window: a slow-but-alive daemon is not declared dead.
     tick_started_at: Optional[str] = None  # ISO timestamp
     last_tick_duration_seconds: float = 0.0
+    # "attended" (interval_fast) or "unattended" (DAEMON.interval_unattended:
+    # no client on the tmux session, no fresh TUI heartbeat, no TUI touching
+    # its attended file). current_interval is the number; this is the why.
+    interval_mode: str = "attended"
     started_at: Optional[str] = None  # ISO timestamp
     daemon_version: int = 0  # Version of daemon code
 

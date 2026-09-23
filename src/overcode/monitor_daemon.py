@@ -60,8 +60,10 @@ from .settings import (
     get_activity_signal_path,
     get_supervisor_stats_path,
     get_tui_heartbeat_path,
+    tui_attended_age_seconds,
+    TUI_ATTENDED_TOUCH_SECONDS,
 )
-from .config import get_relay_config
+from .config import get_monitor_daemon_config, get_relay_config
 from .status_constants import (
     STATUS_ASLEEP,
     STATUS_DONE,
@@ -121,6 +123,16 @@ except ImportError:
 INTERVAL_FAST = DAEMON.interval_fast    # When active or agents working
 INTERVAL_SLOW = DAEMON.interval_slow    # When all agents need user input
 INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
+INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attendance)
+
+# A TUI touches its attended file every TUI_ATTENDED_TOUCH_SECONDS while a
+# client is attached to it; three missed touches and it is not there.
+TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
+
+# The every-60-loops housekeeping (done-agent auto-archive, untracked window
+# count, terminated-session archive) was 120 s of wall clock at the 2 s
+# loop; it is a wall-clock cadence now so the unattended loop keeps it.
+HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
 
 
 # Create PID helper functions using factory
@@ -412,6 +424,15 @@ class MonitorDaemon:
         self._model_metadata_thread: Optional[threading.Thread] = None
         self._model_metadata_backoff_until: Optional[datetime] = None
         self._model_metadata_failure_backoff = 6 * 3600  # seconds
+
+        # Loop interval while nobody is watching (config.yaml
+        # monitor_daemon.interval_unattended_seconds; read once, like relay).
+        self._interval_unattended: int = get_monitor_daemon_config()["interval_unattended"]
+
+        # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
+        # after the first tick (loop 60 at 2 s used to be 2 minutes in), then
+        # every interval, whatever the loop length.
+        self._last_housekeeping: Optional[datetime] = None
 
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
@@ -972,18 +993,73 @@ class MonitorDaemon:
         """Calculate median operation time."""
         return calculate_median(operation_times)
 
-    def calculate_interval(self, sessions: list, all_waiting_user: bool) -> int:
+    def attendance(self) -> str:
+        """``"attended"`` or ``"unattended"``: is anyone watching this fleet?
+
+        Unattended only when all three say nobody is: this tick's pane
+        listing counted no client attached to the agents tmux session
+        (``session_attached``; an unknown count — listing failed — counts
+        as attended), the TUI keypress heartbeat is not fresh
+        (PresenceComponent's 60 s window), and no TUI has touched its
+        attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
+        TUI in another tmux session or a plain terminal has — the first
+        two cannot see it — so the daemon never slows under a dashboard
+        someone is reading. Web dashboard and sister readers carry no
+        signal and are not covered.
+        """
+        attached = self.session_attached
+        if attached is None or attached > 0:
+            return "attended"
+        if self.presence._is_tui_active():
+            return "attended"
+        age = tui_attended_age_seconds(self.tmux_session)
+        if age is not None and age <= TUI_ATTENDED_FRESHNESS:
+            return "attended"
+        return "unattended"
+
+    def calculate_interval(
+        self, sessions: list, all_waiting_user: bool, unattended: bool = False
+    ) -> int:
         """Calculate appropriate loop interval.
 
-        The monitor daemon always uses a fixed 10s interval to maintain
-        high-resolution monitoring data. Variable frequency logic is only
-        used by the supervisor daemon.
+        The monitor daemon runs at the fixed fast interval whenever anyone
+        is watching, for consistent monitoring resolution (variable
+        frequency by agent state is the supervisor daemon's). While
+        ``unattended`` (see :meth:`attendance`) it stretches to the
+        configured unattended interval: status history is written on
+        change, so the timeline it keeps for the user's return has no holes
+        at that resolution, and heartbeats, oversight timeouts and the
+        housekeeping are wall-clock, so nothing drifts with the loop.
         """
-        # Always use fast interval for consistent monitoring resolution
+        if unattended:
+            return self._interval_unattended
         return INTERVAL_FAST
 
+    def _housekeeping_due(self, now: datetime) -> bool:
+        """Wall-clock replacement for ``loop_count % 60 == 0``.
+
+        The first tick starts the clock (the loop-count rule first fired
+        two minutes in, not on loop 1); after that every
+        HOUSEKEEPING_INTERVAL_SECONDS, at the 2 s loop and the unattended
+        one alike. Tests move ``_last_housekeeping`` back to force a pass.
+        """
+        last = self._last_housekeeping
+        if last is None:
+            self._last_housekeeping = now
+            return False
+        if (now - last).total_seconds() >= HOUSEKEEPING_INTERVAL_SECONDS:
+            self._last_housekeeping = now
+            return True
+        return False
+
     def _interruptible_sleep(self, total_seconds: int) -> None:
-        """Sleep with activity signal checking."""
+        """Sleep with activity signal checking.
+
+        The signal (a TUI keypress, or a TUI re-attaching) ends the sleep
+        and puts the next loop on the fast interval, so an unattended
+        daemon is back within a second of the user's return; a bare
+        ``tmux attach`` with no TUI is seen by the next tick's listing.
+        """
         chunk_size = 1
         elapsed = 0
 
@@ -996,6 +1072,7 @@ class MonitorDaemon:
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
                 self.state.current_interval = INTERVAL_FAST
+                self.state.interval_mode = "attended"
                 self.state.save(self.state_path)
                 return
 
@@ -1216,7 +1293,7 @@ class MonitorDaemon:
         try:
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
-            self._publish_and_enforce(sessions, session_states, all_waiting, index)
+            self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
         finally:
             # One write for the whole tick, even when a phase raised: what
             # was staged before the failure lands, as it did when each
@@ -1817,15 +1894,24 @@ class MonitorDaemon:
         session_states: list,
         all_waiting_user: bool,
         index: Optional[SessionIndex] = None,
+        now: Optional[datetime] = None,
     ) -> None:
         """Publish state, enforce policies, and log summary.
 
         ``index`` is the tick's ``SessionIndex`` over the whole session
         table (every tmux session); the terminated-session archive pass
         walks it. Without one, that pass reads the manager's snapshot.
+        ``now`` is the tick's clock (the housekeeping cadence runs on it).
         """
-        # Calculate interval
-        interval = self.calculate_interval(sessions, all_waiting_user)
+        if now is None:
+            now = datetime.now()
+        # Interval for the sleep that follows this tick, published with the
+        # state so consumers size their staleness window to it.
+        mode = self.attendance()
+        interval = self.calculate_interval(sessions, all_waiting_user, mode == "unattended")
+        if mode != self.state.interval_mode:
+            self.log.info(f"Loop interval: {mode} ({interval}s)")
+        self.state.interval_mode = mode
         self.state.current_interval = interval
 
         # Update status based on state
@@ -1845,13 +1931,13 @@ class MonitorDaemon:
         # Auto-archive "done" agents after 1 hour (#244)
         # Count untracked tmux windows every 2 minutes (#344)
         # Move terminated sessions to the archive once past their grace
-        if self.state.loop_count % 60 == 0:
+        if self._housekeeping_due(now):
             self._auto_archive_done_agents(sessions)
             self.state.untracked_window_count = self._count_untracked_windows(sessions)
             all_sessions = (
                 index.by_id.values() if index is not None else self.session_manager.list_sessions()
             )
-            self._archive_terminated_sessions(all_sessions, datetime.now())
+            self._archive_terminated_sessions(all_sessions, now)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

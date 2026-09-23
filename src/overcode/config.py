@@ -655,6 +655,39 @@ def get_session_archive_config() -> dict:
     return {"terminated_grace_seconds": grace}
 
 
+def get_monitor_daemon_config() -> dict:
+    """The monitor daemon's loop interval while nobody is watching.
+
+    With no client attached to the agents tmux session, no fresh TUI
+    keypress heartbeat and no TUI touching its attended file, the daemon
+    stretches its loop from ``interval_fast`` (2 s) to this many seconds.
+    Status history is written on change, so the timeline it keeps for the
+    user's return has no holes at this resolution. Read once when the
+    daemon starts.
+
+    Config format in ~/.overcode/config.yaml:
+        monitor_daemon:
+          interval_unattended_seconds: 10   # >= interval_fast; the default is settings.DAEMON.interval_unattended
+
+    Returns:
+        Dict with ``interval_unattended`` (int); a missing or invalid entry,
+        or one below ``interval_fast``, falls back to the default.
+    """
+    from .settings import DAEMON
+
+    cfg = _get_config_value("monitor_daemon", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    default = int(DAEMON.interval_unattended)
+    try:
+        interval = int(cfg.get("interval_unattended_seconds", default))
+    except (TypeError, ValueError):
+        interval = default
+    if interval < DAEMON.interval_fast:
+        interval = default
+    return {"interval_unattended": interval}
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 

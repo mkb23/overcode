@@ -201,7 +201,9 @@ class TestCalculateInterval:
     """Test calculate_interval method."""
 
     def test_always_returns_fast_interval(self, tmp_path, monkeypatch):
-        """Monitor daemon always uses fast interval."""
+        """Monitor daemon always uses the fast interval while attended (agent
+        state never changes it; only nobody watching does, see
+        test_daemon_unattended)."""
         from overcode.monitor_daemon import MonitorDaemon, INTERVAL_FAST
 
         monkeypatch.setattr('overcode.monitor_daemon.ensure_session_dir', lambda x: tmp_path)

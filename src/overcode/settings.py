@@ -156,6 +156,13 @@ class DaemonSettings:
     interval_fast: int = 2       # When active or agents working
     interval_slow: int = 300     # When all agents need user input (5 min)
     interval_idle: int = 3600    # When no agents at all (1 hour)
+    # Loop interval while nobody is watching: no client attached to the
+    # agents tmux session, no fresh TUI keypress heartbeat and no TUI
+    # touching its attended file (config.yaml
+    # monitor_daemon.interval_unattended_seconds overrides). Status history
+    # is written on change, so the timeline stays gap-free at this
+    # resolution; heartbeats and oversight timeouts are wall-clock.
+    interval_unattended: int = 10
 
     # Daemon Claude settings
     daemon_claude_timeout: int = 300  # Max wait for daemon claude (5 min)
