@@ -548,3 +548,285 @@ class TestReadByDetector:
         assert detail.color == STATUS_COLOR_ORANGE
         assert [b.kind for b in detail.badges] == ["permission"]
         assert detail.badges[0].label == "Bash"
+
+
+@node
+class TestTurnSignals:
+    """The v1.18.29 findings (#474), each pinned in isolation.
+
+    The full captures live in tests/fixtures_opencode_events/ and are
+    replayed by test_opencode_plugin_replay.py; these are the minimal
+    sequences so a regression names the rule it broke.
+    """
+
+    def test_status_idle_alone_settles_the_turn(self, plugin_module, env):
+        # session.idle is deprecated upstream; session.status {idle} must
+        # be enough on its own or a future opencode pins the agent green.
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.status", sessionID=SESSION_ID, status={"type": "idle"}),
+            ],
+        )
+        assert read_state(env)["event"] == "Stop"
+
+    def test_both_idle_signals_publish_one_stop(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.status", sessionID=SESSION_ID, status={"type": "idle"}),
+                bus("session.idle", sessionID=SESSION_ID),
+            ],
+        )
+        assert [e["event"] for e in read_events(env)] == ["UserPromptSubmit", "Stop"]
+
+    def test_busy_during_a_turn_is_silent(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.status", sessionID=SESSION_ID, status={"type": "busy"}),
+                TOOL_BEFORE,
+                bus("session.status", sessionID=SESSION_ID, status={"type": "busy"}),
+            ],
+        )
+        assert [e["event"] for e in read_events(env)] == ["UserPromptSubmit", "PreToolUse"]
+        assert read_state(env)["tool_name"] == "Bash"  # busy did not clobber the tool
+
+    def test_busy_after_stop_without_a_user_message_is_running(self, plugin_module, env):
+        # Safety net: a turn whose user-message hooks were missed still shows.
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.idle", sessionID=SESSION_ID),
+                bus("session.status", sessionID=SESSION_ID, status={"type": "busy"}),
+            ],
+        )
+        assert read_state(env)["event"] == "UserPromptSubmit"
+
+    def test_retry_backoff_is_running(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                bus("session.status", sessionID=SESSION_ID,
+                    status={"type": "retry", "attempt": 2, "message": "rate limited", "next": 5000}),
+            ],
+        )
+        assert read_state(env)["event"] == "UserPromptSubmit"
+
+    def test_escape_interrupt_is_not_an_error(self, plugin_module, env):
+        # Live-captured: a double-Escape publishes session.error
+        # {name: MessageAbortedError} and then goes idle.
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.error", sessionID=SESSION_ID,
+                    error={"name": "MessageAbortedError", "data": {}}),
+                bus("session.status", sessionID=SESSION_ID, status={"type": "idle"}),
+                bus("session.idle", sessionID=SESSION_ID),
+            ],
+        )
+        assert [e["event"] for e in read_events(env)] == ["UserPromptSubmit", "Stop"]
+
+    def test_provider_error_survives_the_idle_that_follows(self, plugin_module, env):
+        # Live-captured: APIError, then status idle + session.idle within 1ms.
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.error", sessionID=SESSION_ID, error={
+                    "name": "APIError",
+                    "data": {"message": "Incorrect API key provided: sk-****", "statusCode": 401},
+                }),
+                bus("session.status", sessionID=SESSION_ID, status={"type": "idle"}),
+                bus("session.idle", sessionID=SESSION_ID),
+            ],
+        )
+        state = read_state(env)
+        assert state["event"] == "StopFailure"
+        assert state["error"] == "APIError: Incorrect API key provided: sk-****"
+        assert [e["event"] for e in read_events(env)] == ["UserPromptSubmit", "StopFailure"]
+
+    def test_next_prompt_clears_the_error(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                bus("session.error", sessionID=SESSION_ID, error={"name": "APIError", "data": {"message": "x"}}),
+                bus("session.idle", sessionID=SESSION_ID),
+                bus("message.updated", sessionID=SESSION_ID, info={"id": "msg_next", "role": "user"}),
+                bus("session.idle", sessionID=SESSION_ID),
+            ],
+        )
+        assert [e["event"] for e in read_events(env)] == [
+            "UserPromptSubmit", "StopFailure", "UserPromptSubmit", "Stop",
+        ]
+        assert "error" not in read_state(env)
+
+    def test_error_reason_is_bounded(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                bus("session.error", sessionID=SESSION_ID,
+                    error={"name": "APIError", "data": {"message": "x" * 5000}}),
+            ],
+        )
+        assert len(read_state(env)["error"]) <= 200
+
+
+CHILD_ID = "ses_child0000000000000000000000"
+CHILD_CREATED = bus(
+    "session.created",
+    sessionID=CHILD_ID,
+    info={"id": CHILD_ID, "parentID": SESSION_ID, "title": "Read README (@general subagent)"},
+)
+CHILD_PROMPT = {
+    "kind": "chat",
+    "input": {"sessionID": CHILD_ID, "agent": "general"},
+    "output": {"message": {"id": "msg_child_user", "role": "user", "sessionID": CHILD_ID}},
+}
+CHILD_TOOL_BEFORE = {
+    "kind": "before",
+    "input": {"tool": "read", "sessionID": CHILD_ID, "callID": "call_child"},
+    "output": {"args": {"filePath": "/proj/README.md"}},
+}
+TASK_BEFORE = {
+    "kind": "before",
+    "input": {"tool": "task", "sessionID": SESSION_ID, "callID": "call_task"},
+    "output": {"args": {"description": "Read README", "subagent_type": "general"}},
+}
+TASK_AFTER = {
+    "kind": "after",
+    "input": {"tool": "task", "sessionID": SESSION_ID, "callID": "call_task", "args": {}},
+    "output": {"output": "The first line is the title."},
+}
+
+
+@node
+class TestSubagentScoping:
+    """A `task` sub-agent runs its whole turn on this plugin (live-captured).
+
+    Before #474 the child's chat.message was adopted as a root, so its tool
+    calls and its idle were published as the parent's — a spurious Stop in
+    the middle of the parent's Task call, and the child id in
+    agent_session_ids (double-counted by the stats reader).
+    """
+
+    def _subagent_turn(self):
+        return [
+            SESSION_CREATED,
+            USER_PROMPT,
+            TASK_BEFORE,
+            CHILD_CREATED,
+            CHILD_PROMPT,
+            bus("session.status", sessionID=CHILD_ID, status={"type": "busy"}),
+            CHILD_TOOL_BEFORE,
+            {
+                "kind": "after",
+                "input": {"tool": "read", "sessionID": CHILD_ID, "callID": "call_child", "args": {}},
+                "output": {"output": "# title"},
+            },
+            bus("session.status", sessionID=CHILD_ID, status={"type": "idle"}),
+            bus("session.idle", sessionID=CHILD_ID),
+            TASK_AFTER,
+            bus("session.status", sessionID=SESSION_ID, status={"type": "idle"}),
+            bus("session.idle", sessionID=SESSION_ID),
+        ]
+
+    def test_child_turn_is_invisible_to_the_parent(self, plugin_module, env):
+        result = run_plugin(plugin_module, env, self._subagent_turn())
+        events = [(e["event"], e.get("tool_name")) for e in read_events(env)]
+        assert events == [
+            ("UserPromptSubmit", None),
+            ("PreToolUse", "Task"),
+            ("PostToolUse", "Task"),
+            ("Stop", None),
+        ]
+        assert result["rootSessionIds"] == [SESSION_ID]
+        assert read_state(env)["agent_session_ids"] == [SESSION_ID]
+
+    def test_child_is_never_adopted_even_before_a_root_is_known(self, plugin_module, env):
+        # A resumed parent (no session.created) whose first event is the
+        # child's creation: the child must still not become the root.
+        result = run_plugin(
+            plugin_module,
+            env,
+            [CHILD_CREATED, CHILD_PROMPT, bus("session.idle", sessionID=CHILD_ID), USER_PROMPT],
+        )
+        assert result["rootSessionIds"] == [SESSION_ID]
+        assert [e["event"] for e in read_events(env)] == ["UserPromptSubmit"]
+
+    def test_child_permission_ask_surfaces_for_the_parent(self, plugin_module, env):
+        # Live-captured (S12): the sub-agent's bash ask is drawn in the
+        # parent's TUI and answered there, so it IS the parent's business.
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                TASK_BEFORE,
+                CHILD_CREATED,
+                CHILD_PROMPT,
+                {
+                    "kind": "before",
+                    "input": {"tool": "bash", "sessionID": CHILD_ID, "callID": "call_cb"},
+                    "output": {"args": {"command": "echo child-ok"}},
+                },
+                bus(
+                    "permission.asked",
+                    id="per_child",
+                    sessionID=CHILD_ID,
+                    permission="bash",
+                    patterns=["echo child-ok"],
+                    metadata={"command": "echo child-ok"},
+                    tool={"messageID": "msg_x", "callID": "call_cb"},
+                ),
+            ],
+        )
+        state = read_state(env)
+        assert state["event"] == "PermissionRequest"
+        assert state["tool_name"] == "Bash"
+        assert state["tool_input"] == {"command": "echo child-ok"}
+        # ...but the child's id is still not one of the agent's conversations.
+        assert state["agent_session_ids"] == [SESSION_ID]
+
+    def test_child_permission_reply_resumes_running(self, plugin_module, env):
+        run_plugin(
+            plugin_module,
+            env,
+            [
+                SESSION_CREATED,
+                USER_PROMPT,
+                TASK_BEFORE,
+                CHILD_CREATED,
+                bus("permission.asked", id="per_child", sessionID=CHILD_ID, permission="bash",
+                    metadata={"command": "echo child-ok"}, tool={"callID": "call_cb"}),
+                bus("permission.replied", sessionID=CHILD_ID, requestID="per_child", reply="once"),
+            ],
+        )
+        state = read_state(env)
+        assert state["event"] == "PreToolUse"
+        assert state["tool_name"] == "Bash"

@@ -124,6 +124,25 @@ function computeForeground(event, toolName, toolInput) {
 // files, so a huge error payload cannot bloat the hook files.
 const MAX_ERROR_REASON_CHARS = 200
 
+// What each published event means for the agent, mirrored from
+// hook_status_detector._HOOK_STATUS_MAP. The reducer keeps the last one so
+// a repeated turn-end signal settles once and a StopFailure survives the
+// idle that follows it (#474; verified on v1, ported here by shape).
+const EVENT_STATUS = {
+  UserPromptSubmit: "running",
+  PreToolUse: "running",
+  PostToolUse: "running",
+  PostToolUseFailure: "running",
+  PermissionRequest: "waiting_approval",
+  Stop: "waiting_user",
+  StopFailure: "error",
+  SessionEnd: "terminated",
+}
+
+// session.error names that are the user's own doing, not a failure (v1's
+// double-Escape publishes {name: "MessageAbortedError"} before going idle).
+const ABORT_ERROR_NAMES = ["MessageAbortedError"]
+
 /**
  * A bounded reason string from a failure event, or null.
  *
@@ -316,6 +335,19 @@ function createTelemetry(env, options = {}) {
   // tool call id → {toolName, toolInput}: v2's session.tool.success/failed
   // events carry no tool name, only the call id.
   const activeToolCalls = new Map()
+  // Status of the last event this process published (see EVENT_STATUS).
+  let current = null
+
+  function publish(event, detail = {}) {
+    current = EVENT_STATUS[event] || current
+    writer.publish(event, detail)
+  }
+
+  function settle(sessionId) {
+    if (current === "waiting_user" || current === "error" || current === "terminated") return
+    publish("Stop", { agentSessionId: activeId(sessionId) })
+  }
+
   function rememberRoot(sessionId) {
     if (!sessionId) return
     if (rootSessionIds.includes(sessionId)) return
@@ -350,6 +382,16 @@ function createTelemetry(env, options = {}) {
     return false
   }
 
+  /** A root this agent owns, or a child of one. A sub-agent's permission
+   *  dialog is answered in the parent's TUI (verified live on v1, #474),
+   *  so a child's permission.asked/replied — and only those — are the
+   *  parent's business. */
+  function ownsOrChild(sessionId) {
+    if (!sessionId) return false
+    if (childSessionIds.includes(sessionId)) return true
+    return owns(sessionId)
+  }
+
   function activeId(sessionId) {
     return sessionId && rootSessionIds.includes(sessionId) ? sessionId : undefined
   }
@@ -361,7 +403,7 @@ function createTelemetry(env, options = {}) {
       while (seenUserMessages.length > MAX_SEEN_MESSAGES) seenUserMessages.shift()
     }
     if (!owns(sessionId, { adopt: true })) return
-    writer.publish("UserPromptSubmit", { agentSessionId: activeId(sessionId) })
+    publish("UserPromptSubmit", { agentSessionId: activeId(sessionId) })
   }
 
   function onToolBefore(input, output) {
@@ -369,7 +411,7 @@ function createTelemetry(env, options = {}) {
     if (!owns(sessionId)) return
     const toolName = canonicalToolName(input && input.tool)
     const toolInput = output && output.args ? output.args : undefined
-    writer.publish("PreToolUse", {
+    publish("PreToolUse", {
       toolName,
       toolInput,
       toolUseId: input && input.callID,
@@ -381,7 +423,7 @@ function createTelemetry(env, options = {}) {
     const sessionId = input && input.sessionID
     if (!owns(sessionId)) return
     const toolName = canonicalToolName(input && input.tool)
-    writer.publish("PostToolUse", {
+    publish("PostToolUse", {
       toolName,
       toolInput: input && input.args ? input.args : undefined,
       toolUseId: input && input.callID,
@@ -462,7 +504,7 @@ function createTelemetry(env, options = {}) {
             activeToolCalls.delete(activeToolCalls.keys().next().value)
           }
         }
-        writer.publish("PreToolUse", {
+        publish("PreToolUse", {
           toolName,
           toolInput,
           toolUseId: props.id,
@@ -480,7 +522,7 @@ function createTelemetry(env, options = {}) {
         // event the status detector reads for failed tools
         // (hook_status_detector.py accepts both).
         const event = type === "session.tool.failed" ? "PostToolUseFailure" : "PostToolUse"
-        writer.publish(event, {
+        publish(event, {
           toolName: call.toolName,
           toolInput: call.toolInput,
           toolUseId: props.id,
@@ -491,7 +533,7 @@ function createTelemetry(env, options = {}) {
 
       case "permission.asked":
       case "permission.v2.asked": {
-        if (!owns(sessionId)) return
+        if (!ownsOrChild(sessionId)) return
         const toolName = canonicalToolName(permissionToolKey(props))
         const toolInput = permissionToolInput(props)
         const toolUseId =
@@ -507,7 +549,7 @@ function createTelemetry(env, options = {}) {
             pendingPermissions.delete(pendingPermissions.keys().next().value)
           }
         }
-        writer.publish("PermissionRequest", {
+        publish("PermissionRequest", {
           toolName,
           toolInput,
           toolUseId,
@@ -518,7 +560,7 @@ function createTelemetry(env, options = {}) {
 
       case "permission.replied":
       case "permission.v2.replied": {
-        if (!owns(sessionId)) return
+        if (!ownsOrChild(sessionId)) return
         // Either way the approval gate is gone and the agent is working again:
         // an allow resumes the tool call (PreToolUse), a reject hands the
         // refusal back to the model (PostToolUse). Both map to `running`, and
@@ -526,7 +568,7 @@ function createTelemetry(env, options = {}) {
         const rejected = props.reply === "reject"
         const gated = pendingPermissions.get(props.requestID) || {}
         pendingPermissions.delete(props.requestID)
-        writer.publish(rejected ? "PostToolUse" : "PreToolUse", {
+        publish(rejected ? "PostToolUse" : "PreToolUse", {
           toolName: gated.toolName,
           toolInput: gated.toolInput,
           toolUseId: gated.toolUseId,
@@ -538,9 +580,10 @@ function createTelemetry(env, options = {}) {
       case "session.execution.succeeded":
       case "session.execution.interrupted": {
         // The turn ended — normally or by user interrupt; either way the
-        // agent is back to waiting for input.
+        // agent is back to waiting for input. Settles once, and never
+        // over a StopFailure the user has not seen yet.
         if (!owns(sessionId)) return
-        writer.publish("Stop", { agentSessionId: activeId(sessionId) })
+        settle(sessionId)
         return
       }
 
@@ -549,7 +592,7 @@ function createTelemetry(env, options = {}) {
         // as an error the same way v1's session.error did, carrying a
         // bounded reason when the event has one.
         if (sessionId && !owns(sessionId)) return
-        writer.publish("StopFailure", {
+        publish("StopFailure", {
           agentSessionId: activeId(sessionId),
           error: failureReason(props),
         })
@@ -559,15 +602,19 @@ function createTelemetry(env, options = {}) {
       case "session.idle": {
         // v1's turn-end event; never fires on the v2 stream but stays handled.
         if (!owns(sessionId)) return
-        writer.publish("Stop", { agentSessionId: activeId(sessionId) })
+        settle(sessionId)
         return
       }
 
       case "session.error": {
         // Shape unconfirmed — accept it whether or not it names a session,
         // because an error that ends the turn is worth surfacing either way.
+        // v1's user interrupt arrives here too (MessageAbortedError): not a
+        // failure, the idle after it is a Stop.
         if (sessionId && !owns(sessionId)) return
-        writer.publish("StopFailure", {
+        const errName = props.error && typeof props.error === "object" ? props.error.name : undefined
+        if (ABORT_ERROR_NAMES.includes(errName)) return
+        publish("StopFailure", {
           agentSessionId: activeId(sessionId),
           error: failureReason(props),
         })
@@ -576,7 +623,7 @@ function createTelemetry(env, options = {}) {
 
       case "session.deleted": {
         if (sessionId && !owns(sessionId)) return
-        writer.publish("SessionEnd", {})
+        publish("SessionEnd", {})
         return
       }
 

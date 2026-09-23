@@ -1,0 +1,25 @@
+
+
+  ┃
+  ┃  Reply with th┃                                                          ┃
+  ┃               ┃  Incorrect API key provided: sk-                         ┃
+                  ┃  inval********************test. You can find your API    ┃
+  ┃               ┃  key at https://platform.openai.com/account/api-keys.    ┃
+  ┃  Incorrect API┃                                                          ┃
+  ┃  find your API key at https://platform.openai.com/account/api-keys.
+  ┃
+
+     ▣  Build · GPT-4o mini
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GPT-4o mini OpenAI
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /private/var/folders/sh/                              tab      ctrl+p
+   tmpdirhash/T/cap-proj-x agents   commands
+

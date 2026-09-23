@@ -75,6 +75,33 @@ def _pane_shows_interrupt_prompt(
     return patterns.shows_interrupt_prompt(tail)
 
 
+def _pane_shows_dead_shell(pane_content: str, patterns: "StatusPatterns" = None) -> bool:
+    """True when the agent process is gone and the pane sits at a bare shell prompt (#474).
+
+    Claude Code fires SessionEnd on exit, but opencode emits nothing at all
+    when it quits (``/exit``, a crash, Ctrl-C) — verified live on v1.18.29 —
+    so the last hook state (usually ``Stop``) would say *waiting_user*
+    forever. A live TUI always draws its own chrome at the bottom of the
+    pane; only a dead one leaves the shell prompt as the last line with no
+    input-hint marker anywhere near it.
+    """
+    if not pane_content:
+        return False
+    if patterns is None:
+        patterns = get_patterns()
+    clean = strip_ansi(pane_content)
+    lines = [line.strip() for line in clean.splitlines() if line.strip()]
+    if not lines or not is_shell_prompt(lines[-1]):
+        return False
+    tail = "\n".join(lines[-_DEAD_SHELL_TAIL_LINES:])
+    return not patterns.shows_input_hint(tail)
+
+
+# How many trailing pane lines a live TUI's input-hint marker must appear in
+# for the pane to count as alive despite a shell-prompt-looking last line.
+_DEAD_SHELL_TAIL_LINES = 12
+
+
 # Events that mean Claude is in the middle of an active turn — drives the
 # GREEN "acting" bucket in compute_status_detail.
 _ACTING_EVENTS = frozenset({
@@ -593,6 +620,11 @@ class HookStatusDetector:
             if pane_content is None:
                 self._last_detect_phase[session.id] = "hook:no_state+no_window"
                 return STATUS_TERMINATED, "Window no longer exists", ""
+            if _pane_shows_dead_shell(pane_content, self._patterns):
+                # The CLI died before its first hook (bad flag, missing
+                # binary) and the window is back at the shell.
+                self._last_detect_phase[session.id] = "hook:no_state+dead_shell"
+                return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
             # Window alive, no hooks yet — assume waiting for input
             self._last_detect_phase[session.id] = "hook:no_state"
             return STATUS_WAITING_USER, "Waiting for first hook event", pane_content
@@ -621,6 +653,14 @@ class HookStatusDetector:
 
         # Read pane for activity enrichment and content return value
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
+
+        # A CLI that exits without a SessionEnd (opencode's /exit, any
+        # crash) leaves its last hook state behind; the bare shell prompt
+        # in the pane is the only evidence it is gone (#474).
+        if _pane_shows_dead_shell(pane_content, self._patterns):
+            self._last_detect_phase[session.id] = f"hook:{event}+dead_shell"
+            self._status_details.pop(session.name, None)
+            return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
 
         # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
         sleep_dur = None
@@ -796,6 +836,10 @@ class HookStatusDetector:
             return "Waiting for user input"
 
         if event == "StopFailure":
+            # The opencode/opencode2 plugins record a bounded reason (#474).
+            reason = hook_state.get("error")
+            if isinstance(reason, str) and reason.strip():
+                return f"API error: {reason.strip()}"
             return "API error"
 
         if event == "PermissionRequest":

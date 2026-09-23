@@ -319,3 +319,61 @@ class TestVersionChecks:
         cfg.parent.mkdir(parents=True)
         cfg.write_text("{not json at all")
         assert autoupdate_enabled() is None
+
+
+PANES_1_18_29 = PANES_DIR / "v1.18.29"
+
+
+def load_pane_1_18_29(name: str) -> str:
+    return (PANES_1_18_29 / f"{name}.txt").read_text(encoding="utf-8")
+
+
+class TestCorpus1_18_29:
+    """The same verdicts over verbatim v1.18.29 captures (#474, Sep 21 2026).
+
+    opencode ships every few days; this second corpus is the tripwire that
+    the pattern set written against v1.18.19 still reads the chrome ten
+    releases on — and it adds the panes the first corpus lacked: a settled
+    sub-agent turn, and a permission dialog raised by a sub-agent.
+    """
+
+    @pytest.mark.parametrize("pane, expected", [
+        ("idle_fresh", STATUS_WAITING_USER),
+        ("idle_after_response", STATUS_WAITING_USER),
+        ("busy", STATUS_RUNNING),
+        ("permission_required", STATUS_WAITING_USER),
+        ("permission_required_subagent", STATUS_WAITING_USER),
+        ("interrupted", STATUS_WAITING_USER),
+        ("tool_execution", STATUS_WAITING_USER),
+        ("subagent_settled", STATUS_WAITING_USER),
+        ("error_api_key", STATUS_WAITING_USER),
+        ("exited_shell", STATUS_TERMINATED),
+    ])
+    def test_status(self, pane, expected):
+        status, _activity, _content = detect(load_pane_1_18_29(pane))
+        assert status == expected
+
+    @pytest.mark.parametrize("pane", ["permission_required", "permission_required_subagent"])
+    def test_permission_dialogs_report_the_dialog(self, pane):
+        _status, activity, _content = detect(load_pane_1_18_29(pane))
+        assert activity.startswith("Permission:")
+
+    def test_subagent_dialog_is_the_same_chrome(self):
+        # A sub-agent's ask is drawn with the parent's dialog: same keys.
+        assert "Allow once" in load_pane_1_18_29("permission_required_subagent")
+        assert "enter confirm" in load_pane_1_18_29("permission_required_subagent")
+
+    def test_settled_panes_beat_content_change(self):
+        for name in ("idle_after_response", "subagent_settled", "interrupted"):
+            pane = load_pane_1_18_29(name)
+            status, _activity, _content = detect(pane, second_pane=pane + "\n")
+            assert status == STATUS_WAITING_USER, name
+
+    def test_interrupt_marker_only_on_the_interrupted_pane(self):
+        assert OPENCODE_PATTERNS.shows_interrupt_prompt(load_pane_1_18_29("interrupted"))
+        for name in ("busy", "idle_after_response", "subagent_settled", "error_api_key"):
+            assert not OPENCODE_PATTERNS.shows_interrupt_prompt(load_pane_1_18_29(name)), name
+
+    def test_exited_pane_shows_no_input_hint(self):
+        assert not OPENCODE_PATTERNS.shows_input_hint(load_pane_1_18_29("exited_shell"))
+        assert OPENCODE_PATTERNS.shows_input_hint(load_pane_1_18_29("idle_after_response"))

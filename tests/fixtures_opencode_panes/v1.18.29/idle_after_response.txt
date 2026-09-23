@@ -1,0 +1,51 @@
+
+
+  ┃                                                                                                                     pong
+  ┃  Reply with the single word pong and nothing else.
+  ┃                                                                                                                     Context
+                                                                                                                        9,160 tokens
+     pong                                                                                                               7% used
+                                                                                                                        $0.00 spent
+     ▣  Build · GPT-4o mini · 7.1s
+                                                                                                                        LSP
+                                                                                                                        LSPs are disabled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃                                                                                                                     /private/var/folders/sh/
+  ┃                                                                                                                     tmpdirhash/T/cap-
+  ┃  Build · GPT-4o mini OpenAI                                                                                         proj-x:main
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /proj     9.2K (7%) · $0.00  ctrl+p commands    • OpenCode 1.18.29
+

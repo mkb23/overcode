@@ -610,3 +610,94 @@ class TestPluginInstallationV2:
         target = tmp_path / ".opencode" / "plugins" / PLUGIN_DIR_NAME_V2
         for name in PLUGIN_FILES_V2:
             assert (target / name).is_file()
+
+
+@node
+class TestV2TurnSignalsPortedFromV1:
+    """The #474 rules verified live on opencode v1, ported to the v2 core.
+
+    v2's vocabulary differs (session.execution.* / session.tool.*), but the
+    three failure modes are shape-level and apply unchanged: a sub-agent's
+    permission ask must surface for the parent, a turn must settle once,
+    and a StopFailure must survive the turn-end signal that follows it.
+    """
+
+    def test_child_permission_ask_surfaces_for_the_parent(self, tmp_path):
+        events = [
+            {"type": "session.created", "data": {"sessionID": SESSION_ID, "agent": "build"}},
+            {
+                "type": "session.inbox.enqueued",
+                "data": {"sessionID": SESSION_ID, "inboxID": "msg_u1",
+                         "item": {"type": "user", "payload": {"text": "delegate"}}},
+            },
+            {"type": "session.tool.called", "data": {"sessionID": SESSION_ID, "id": "call_sub",
+                                                    "name": "subagent", "input": {}}},
+            {"type": "session.created", "data": {"sessionID": CHILD_ID, "parentID": SESSION_ID}},
+            {
+                "type": "session.inbox.enqueued",
+                "data": {"sessionID": CHILD_ID, "inboxID": "msg_c1",
+                         "item": {"type": "user", "payload": {"text": "run it"}}},
+            },
+            {
+                "type": "permission.asked",
+                "data": {"id": "per_c", "sessionID": CHILD_ID, "action": "shell",
+                         "resources": ["echo child-ok"],
+                         "source": {"type": "tool", "messageID": "msg_x", "id": "call_c"}},
+            },
+        ]
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == [
+            "UserPromptSubmit", "PreToolUse", "PermissionRequest",
+        ]
+        assert result["state"]["event"] == "PermissionRequest"
+        assert result["state"]["tool_name"] == "Bash"
+        assert result["state"]["tool_input"] == {"command": "echo child-ok"}
+        assert result["state"]["agent_session_ids"] == [SESSION_ID]
+
+        events.append({"type": "permission.replied",
+                       "data": {"sessionID": CHILD_ID, "requestID": "per_c", "reply": "once"}})
+        events.append({"type": "session.execution.succeeded", "data": {"sessionID": CHILD_ID}})
+        events.append({"type": "session.tool.success", "data": {"sessionID": SESSION_ID, "id": "call_sub"}})
+        events.append({"type": "session.execution.succeeded", "data": {"sessionID": SESSION_ID}})
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == [
+            "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PreToolUse",
+            "PostToolUse", "Stop",
+        ]
+
+    def test_turn_end_settles_once(self, tmp_path):
+        events = live_turn_events()
+        events.append({"type": "session.idle", "data": {"sessionID": SESSION_ID}})
+        events.append({"type": "session.execution.succeeded", "data": {"sessionID": SESSION_ID}})
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == ["UserPromptSubmit", "Stop"]
+
+    def test_failure_survives_the_turn_end_that_follows(self, tmp_path):
+        events = live_turn_events()[:-1]
+        events.append({"type": "session.execution.failed",
+                       "data": {"sessionID": SESSION_ID, "error": {"message": "boom"}}})
+        events.append({"type": "session.execution.succeeded", "data": {"sessionID": SESSION_ID}})
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == ["UserPromptSubmit", "StopFailure"]
+        assert result["state"]["event"] == "StopFailure"
+        assert result["state"]["error"] == "boom"
+
+    def test_next_prompt_clears_the_failure(self, tmp_path):
+        events = live_turn_events()[:-1]
+        events.append({"type": "session.execution.failed",
+                       "data": {"sessionID": SESSION_ID, "error": {"message": "boom"}}})
+        events.append({"type": "session.execution.succeeded", "data": {"sessionID": SESSION_ID}})
+        events += live_turn_events()[1:]  # a second turn on the same session
+        events[-3]["data"]["inboxID"] = "msg_u2"
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == [
+            "UserPromptSubmit", "StopFailure", "UserPromptSubmit", "Stop",
+        ]
+
+    def test_v1_abort_error_shape_is_not_a_failure(self, tmp_path):
+        events = live_turn_events()[:-1]
+        events.append({"type": "session.error",
+                       "data": {"sessionID": SESSION_ID, "error": {"name": "MessageAbortedError"}}})
+        events.append({"type": "session.execution.interrupted", "data": {"sessionID": SESSION_ID}})
+        result = run_harness(tmp_path, events)
+        assert [e["event"] for e in result["events"]] == ["UserPromptSubmit", "Stop"]

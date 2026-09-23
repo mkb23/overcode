@@ -1,0 +1,51 @@
+
+
+     ctrl+x down view subagents                                                                                         pong
+
+     The first line of the README.md file is:                                                                           Context
+                                                                                                                        9,588 tokens
+     # cap-project                                                                                                      7% used
+                                                                                                                        $0.01 spent
+     ▣  Build · GPT-4o mini · 7.2s
+                                                                                                                        LSP
+  ┃                                                                                                                     LSPs are disabled
+  ┃  Write a 300 line poem about the sea, one short line per line, no headings.
+  ┃
+
+     In the silent dawn,
+     Waves whisper softly,
+     The ocean breathes deep,
+     Secrets hidden beneath,
+     Blue stretches endlessly,
+     Mirroring the sky,
+     A realm of mystery,
+     Where dreams come alive,
+     Clouds drift lazily,
+     Painting shadows on water,
+     Sunrise ignites the horizon,
+     Gold spills across the surface,
+     Seagulls cry out,
+     Dancing upon the breeze,
+     Tides ebb and flow,
+     A rhythm ancient and true,
+     Shells scatter on the shore,
+     Treasures washed ashore,
+     Footprints fade in sand,
+     Nature’s canvas,
+     Emerald depths call,
+     Sirens sing sweetly,
+     Coral gardens bloom,
+     Life thrives hidden,
+     In vibrant ecosystems,
+     Whales breach majestically,
+     A ballet of giants,
+
+     ▣  Build · GPT-4o mini
+
+  ┃
+  ┃                                                                                                                     /private/var/folders/sh/
+  ┃                                                                                                                     tmpdirhash/T/cap-
+  ┃  Build · GPT-4o mini OpenAI                                                                                         proj-x:main
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝⬝⬝■■■  esc interrupt                                                        9.6K (7%) · $0.01  ctrl+p commands    • OpenCode 1.18.29
+

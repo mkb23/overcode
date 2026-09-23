@@ -1227,3 +1227,97 @@ class TestSynthesizeStatusDetailFromLegacy:
     def test_asleep_returns_none(self):
         from overcode.status_constants import STATUS_ASLEEP
         assert synthesize_status_detail_from_legacy(STATUS_ASLEEP) is None
+
+
+class TestDeadShellDetection:
+    """An agent CLI that exits without a SessionEnd hook (#474).
+
+    opencode's ``/exit`` (or any crash) emits no bus event, so the last hook
+    state — a ``Stop`` — would keep the agent at waiting_user forever. The
+    pane is the only witness: a bare shell prompt on the last line and no
+    live-TUI hint anywhere near it means the process is gone.
+    """
+
+    EXITED_PANE = (
+        "  Session   pong\n"
+        "  Continue  opencode -s ses_f39d6ec47ffeWwbQwGLUIkx5MK\n"
+        "user@host cap-proj %\n"
+    )
+    LIVE_OPENCODE_PANE = (
+        "     pong\n"
+        "     ▣  Build · GPT-4o mini · 2.9s\n"
+        "  ┃\n"
+        "  ┃  Build · GPT-4o mini OpenAI\n"
+        "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n"
+        "   /proj   8.5K (1%) · $0.00  ctrl+p commands\n"
+    )
+    # A live Claude pane whose model output happens to end in a prompt-shaped
+    # line: the input box and its hint follow, so it must stay alive.
+    LIVE_CLAUDE_PANE = (
+        "⏺ Bash(ssh host)\n"
+        "  ⎿  user@host ~ %\n"
+        "╭──────────────────────────────╮\n"
+        "│ > \n"
+        "╰──────────────────────────────╯\n"
+        "  ? for shortcuts\n"
+    )
+
+    def _detector(self, tmp_path, pane, backend="opencode"):
+        from overcode.status_patterns import get_patterns
+        state_dir = tmp_path / "sessions" / "agents"
+        tmux = MockTmux()
+        tmux.set_pane_content("agents", "w1", pane)
+        detector = HookStatusDetector(
+            "agents", tmux=tmux, patterns=get_patterns(backend), state_dir=state_dir
+        )
+        return detector, state_dir
+
+    def test_stop_then_shell_prompt_is_terminated(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path, self.EXITED_PANE)
+        _write_hook_state(state_dir, "oc", "Stop")
+        session = create_mock_session(name="oc", tmux_window="w1")
+        status, activity, _ = detector.detect_status(session)
+        assert status == STATUS_TERMINATED
+        assert "shell prompt" in activity
+        assert detector.get_status_detail("oc") is None
+
+    def test_running_then_shell_prompt_is_terminated(self, tmp_path):
+        # A crash mid-turn leaves PreToolUse behind; the shell prompt wins.
+        detector, state_dir = self._detector(tmp_path, self.EXITED_PANE)
+        _write_hook_state(state_dir, "oc", "PreToolUse", tool_name="Bash")
+        session = create_mock_session(name="oc", tmux_window="w1")
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_TERMINATED
+
+    def test_no_hook_state_yet_and_shell_prompt_is_terminated(self, tmp_path):
+        # The CLI died before its first hook (bad flag, missing binary).
+        detector, state_dir = self._detector(tmp_path, self.EXITED_PANE)
+        state_dir.mkdir(parents=True)
+        session = create_mock_session(name="oc", tmux_window="w1")
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_TERMINATED
+
+    def test_live_opencode_pane_after_stop_is_waiting_user(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path, self.LIVE_OPENCODE_PANE)
+        _write_hook_state(state_dir, "oc", "Stop")
+        session = create_mock_session(name="oc", tmux_window="w1")
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_WAITING_USER
+
+    def test_prompt_shaped_tool_output_in_live_claude_pane_is_not_terminated(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path, self.LIVE_CLAUDE_PANE, backend="claude-code")
+        _write_hook_state(state_dir, "cc", "PostToolUse", tool_name="Bash")
+        session = create_mock_session(name="cc", tmux_window="w1")
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_RUNNING
+
+    def test_real_exited_opencode_capture(self, tmp_path):
+        # Verbatim tmux capture 5s after `/exit` on opencode v1.18.29.
+        pane = (
+            Path(__file__).parent.parent / "fixtures_opencode_panes" / "v1.18.29" / "exited_shell.txt"
+        ).read_text(encoding="utf-8")
+        detector, state_dir = self._detector(tmp_path, pane)
+        _write_hook_state(state_dir, "oc", "Stop")
+        session = create_mock_session(name="oc", tmux_window="w1")
+        status, _, _ = detector.detect_status(session)
+        assert status == STATUS_TERMINATED

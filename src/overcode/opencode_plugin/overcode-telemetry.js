@@ -53,17 +53,34 @@
  *   → session.idle
  * On reject there is no tool.execute.after; session.idle follows directly.
  *
+ * Re-verified against v1.18.29 (Sep 21 2026; corpus in
+ * tests/fixtures_opencode_events/, spec in tests/opencode_oracle.py):
+ *   * `session.idle` is marked deprecated in the schema; `session.status
+ *     {type: "idle"}` precedes it by ~1ms and is the signal to rely on.
+ *   * A `task` sub-agent runs its whole turn on this same plugin —
+ *     session.created {info: {parentID}}, chat.message, tool.execute.*,
+ *     session.idle — with its own session id. Only its permission.asked /
+ *     permission.replied concern the parent (the dialog is answered in the
+ *     parent's TUI).
+ *   * A double-Escape interrupt is session.error {name: "MessageAbortedError"}
+ *     followed by idle. A provider failure is session.error {name: "APIError",
+ *     data: {message}} followed by idle within the same millisecond.
+ *   * `/exit` emits nothing at all (no session.deleted); the Python detector
+ *     spots the bare shell prompt instead.
+ *
  * ── Mapping to overcode's hook vocabulary (hook_status_detector._HOOK_STATUS_MAP) ──
  *
  *   chat.message / message.updated(role=user, unseen)  → UserPromptSubmit  (running)
+ *   session.status(busy|retry), not already running    → UserPromptSubmit  (running; safety net)
  *   tool.execute.before                                → PreToolUse        (running)
- *   permission.asked                                   → PermissionRequest (waiting_approval)
+ *   permission.asked  (root or child session)          → PermissionRequest (waiting_approval)
  *   permission.replied, reply != "reject"              → PreToolUse        (running)
  *   permission.replied, reply == "reject"              → PostToolUse       (running)
  *   tool.execute.after                                 → PostToolUse       (running)
- *   session.idle                                       → Stop              (waiting_user)
- *   session.error                                      → StopFailure       (error)
+ *   session.status(idle) / session.idle                → Stop              (waiting_user; once per settle)
+ *   session.error, not MessageAbortedError             → StopFailure       (error; the idle after it publishes nothing)
  *   session.deleted                                    → SessionEnd        (terminated)
+ *   anything else from a child session                 → ignored
  */
 
 import fs from "node:fs"
@@ -77,6 +94,29 @@ const EVENT_LOG_KEEP_LINES = 200
 // How many root session ids to remember. The stats reader sums every id it is
 // given, so this bounds a long-lived agent that keeps hitting /new.
 const MAX_SESSION_IDS = 20
+
+// What each published event means for the agent, mirrored from
+// hook_status_detector._HOOK_STATUS_MAP — the reducer keeps the last one so
+// a repeated idle signal settles once and an error survives the idle that
+// follows it.
+const EVENT_STATUS = {
+  UserPromptSubmit: "running",
+  PreToolUse: "running",
+  PostToolUse: "running",
+  PermissionRequest: "waiting_approval",
+  Stop: "waiting_user",
+  StopFailure: "error",
+  SessionEnd: "terminated",
+}
+
+// session.error names that are the user's own doing, not a failure. A
+// double-Escape mid-generation publishes session.error {name:
+// "MessageAbortedError"} and then goes idle (live-captured, v1.18.29).
+const ABORT_ERROR_NAMES = ["MessageAbortedError"]
+
+// The maximum length of a failure reason written to the state/events files,
+// so a huge provider error payload cannot bloat the hook files.
+const MAX_ERROR_REASON_CHARS = 200
 
 // How many user message ids to remember for UserPromptSubmit de-duplication.
 // `message.updated` re-fires for the same user message at the end of a turn,
@@ -125,6 +165,32 @@ function classifyBlockedOn(command) {
     if (pattern.test(command)) return kind
   }
   return null
+}
+
+/**
+ * A bounded reason string from a session.error payload, or null.
+ *
+ * v1.18.29 delivers `{name, data: {message, statusCode, ...}}` (live-captured
+ * APIError); older shapes with a top-level `message` and bare strings are
+ * accepted too.
+ */
+function failureReason(err) {
+  if (err == null) return null
+  let text
+  if (typeof err === "string") text = err
+  else if (typeof err === "object") {
+    const data = err.data && typeof err.data === "object" ? err.data : {}
+    if (typeof data.message === "string") text = data.message
+    else if (typeof err.message === "string") text = err.message
+    else {
+      try { text = JSON.stringify(err) } catch (e) { return null }
+    }
+    if (err.name && typeof err.name === "string" && text && !text.startsWith(err.name)) {
+      text = `${err.name}: ${text}`
+    }
+  } else text = String(err)
+  if (!text) return null
+  return text.length > MAX_ERROR_REASON_CHARS ? text.slice(0, MAX_ERROR_REASON_CHARS) : text
 }
 
 function computeForeground(event, toolName, toolInput) {
@@ -183,6 +249,9 @@ function createWriter(env, options = {}) {
     if (detail.toolName != null) state.tool_name = detail.toolName
     if (detail.toolInput != null) state.tool_input = detail.toolInput
     if (detail.toolUseId != null) state.tool_use_id = detail.toolUseId
+    // StopFailure only: the Python detector validates `event` + `timestamp`
+    // and passes the dict through, so the extra field is tolerated.
+    if (detail.error != null) state.error = detail.error
     if (loadedSkills.length) state.loaded_skills = loadedSkills
 
     // Obligations are Claude-tool concepts (ScheduleWakeup, CronCreate,
@@ -231,6 +300,7 @@ function createWriter(env, options = {}) {
     const entry = { event, timestamp: now() }
     if (detail.toolName != null) entry.tool_name = detail.toolName
     if (detail.toolInput != null) entry.tool_input = detail.toolInput
+    if (detail.error != null) entry.error = detail.error
     fs.mkdirSync(dir, { recursive: true })
     fs.appendFileSync(logPath, JSON.stringify(entry) + "\n")
     rotateLog()
@@ -247,15 +317,31 @@ function createWriter(env, options = {}) {
 /**
  * The event→overcode-event reducer, with the session-scoping and de-duplication
  * state an opencode process needs.
+ *
+ * Re-verified against opencode v1.18.29 (Sep 21 2026) with the captures in
+ * tests/fixtures_opencode_events/; tests/opencode_oracle.py is the
+ * executable specification of what each event below must publish.
  */
 function createTelemetry(env, options = {}) {
   const writer = options.writer || createWriter(env, options)
   const rootSessionIds = []
+  // Child sessions the `task` tool spawns. Live-captured: a child runs a
+  // full turn of its own — chat.message, tool.execute.*, session.idle — on
+  // the same plugin, while the parent sits inside its Task call. Children
+  // are remembered so owns() can NEVER adopt one, even on the adopt path
+  // a resumed conversation needs; otherwise the child's idle publishes a
+  // Stop for the parent mid-Task and its id pollutes agent_session_ids.
+  const childSessionIds = []
   const seenUserMessages = []
   // permission request id → what it was gating. permission.replied carries
   // only `requestID`, so without this the event that clears waiting_approval
   // would have no tool name and the status badge would lose its label.
   const pendingPermissions = new Map()
+  // The status of the last event this process published, so an idle signal
+  // that arrives twice (session.status {idle} AND the deprecated
+  // session.idle) settles once, and the idle that follows a session.error
+  // does not overwrite the StopFailure the user needs to see.
+  let current = null
 
   function rememberRoot(sessionId) {
     if (!sessionId) return
@@ -264,17 +350,23 @@ function createTelemetry(env, options = {}) {
     while (rootSessionIds.length > MAX_SESSION_IDS) rootSessionIds.shift()
   }
 
+  function rememberChild(sessionId) {
+    if (!sessionId || childSessionIds.includes(sessionId)) return
+    childSessionIds.push(sessionId)
+    while (childSessionIds.length > MAX_SESSION_IDS) childSessionIds.shift()
+  }
+
   /**
    * True when an event belongs to a session this agent owns.
    *
    * Until a root session is known (a resumed conversation emits no
-   * session.created), the first session id seen is adopted — otherwise a
-   * resumed agent would publish nothing at all. After that, child sessions
-   * spawned by the `task` tool are filtered out so their idle events cannot
-   * mark the parent as finished.
+   * session.created), the first non-child session id seen is adopted —
+   * otherwise a resumed agent would publish nothing at all. Child sessions
+   * are filtered out first, even on the adopt path.
    */
   function owns(sessionId, { adopt = false } = {}) {
     if (!sessionId) return false
+    if (childSessionIds.includes(sessionId)) return false
     if (rootSessionIds.includes(sessionId)) return true
     if (adopt || rootSessionIds.length === 0) {
       rememberRoot(sessionId)
@@ -283,8 +375,27 @@ function createTelemetry(env, options = {}) {
     return false
   }
 
+  /** A root this agent owns, or a child of one — permission dialogs for a
+   *  sub-agent's tool are answered in the parent's TUI, so those (and only
+   *  those) child events are the parent's business. */
+  function ownsOrChild(sessionId) {
+    if (!sessionId) return false
+    if (childSessionIds.includes(sessionId)) return true
+    return owns(sessionId)
+  }
+
   function activeId(sessionId) {
     return sessionId && rootSessionIds.includes(sessionId) ? sessionId : undefined
+  }
+
+  function publish(event, detail = {}) {
+    current = EVENT_STATUS[event] || current
+    writer.publish(event, detail)
+  }
+
+  function settle(sessionId) {
+    if (current === "waiting_user" || current === "error" || current === "terminated") return
+    publish("Stop", { agentSessionId: activeId(sessionId) })
   }
 
   function onUserMessage(sessionId, messageId) {
@@ -294,7 +405,7 @@ function createTelemetry(env, options = {}) {
       while (seenUserMessages.length > MAX_SEEN_MESSAGES) seenUserMessages.shift()
     }
     if (!owns(sessionId, { adopt: true })) return
-    writer.publish("UserPromptSubmit", { agentSessionId: activeId(sessionId) })
+    publish("UserPromptSubmit", { agentSessionId: activeId(sessionId) })
   }
 
   function onToolBefore(input, output) {
@@ -302,7 +413,7 @@ function createTelemetry(env, options = {}) {
     if (!owns(sessionId)) return
     const toolName = canonicalToolName(input && input.tool)
     const toolInput = output && output.args ? output.args : undefined
-    writer.publish("PreToolUse", {
+    publish("PreToolUse", {
       toolName,
       toolInput,
       toolUseId: input && input.callID,
@@ -314,7 +425,7 @@ function createTelemetry(env, options = {}) {
     const sessionId = input && input.sessionID
     if (!owns(sessionId)) return
     const toolName = canonicalToolName(input && input.tool)
-    writer.publish("PostToolUse", {
+    publish("PostToolUse", {
       toolName,
       toolInput: input && input.args ? input.args : undefined,
       toolUseId: input && input.callID,
@@ -333,7 +444,10 @@ function createTelemetry(env, options = {}) {
         const info = props.info || {}
         // Child sessions (spawned by the `task` tool) carry a parent id; only
         // root sessions are this agent's conversation.
-        if (info.parentID || info.parent_id) return
+        if (info.parentID || info.parent_id || props.parentID) {
+          rememberChild(sessionId || info.id)
+          return
+        }
         rememberRoot(sessionId || info.id)
         return
       }
@@ -346,7 +460,7 @@ function createTelemetry(env, options = {}) {
       }
 
       case "permission.asked": {
-        if (!owns(sessionId)) return
+        if (!ownsOrChild(sessionId)) return
         const toolMeta = props.tool || {}
         const toolName = canonicalToolName(props.permission)
         const toolInput =
@@ -361,7 +475,7 @@ function createTelemetry(env, options = {}) {
             pendingPermissions.delete(pendingPermissions.keys().next().value)
           }
         }
-        writer.publish("PermissionRequest", {
+        publish("PermissionRequest", {
           toolName,
           toolInput,
           toolUseId: toolMeta.callID,
@@ -371,15 +485,15 @@ function createTelemetry(env, options = {}) {
       }
 
       case "permission.replied": {
-        if (!owns(sessionId)) return
+        if (!ownsOrChild(sessionId)) return
         // Either way the approval gate is gone and the agent is working again:
         // an allow resumes the tool call (PreToolUse), a reject hands the
         // refusal back to the model (PostToolUse). Both map to `running`, and
-        // session.idle settles it a moment later.
+        // the idle that ends the turn settles it.
         const rejected = props.reply === "reject"
         const gated = pendingPermissions.get(props.requestID) || {}
         pendingPermissions.delete(props.requestID)
-        writer.publish(rejected ? "PostToolUse" : "PreToolUse", {
+        publish(rejected ? "PostToolUse" : "PreToolUse", {
           toolName: gated.toolName,
           toolInput: gated.toolInput,
           toolUseId: gated.toolUseId,
@@ -388,23 +502,48 @@ function createTelemetry(env, options = {}) {
         return
       }
 
+      case "session.status": {
+        // The non-deprecated turn signal (session.idle is marked deprecated
+        // in v1.18.29's schema). Idle settles the turn; busy/retry is a
+        // safety net that only fires when the turn's own hooks were missed.
+        if (!owns(sessionId)) return
+        const kind = props.status && props.status.type
+        if (kind === "idle") {
+          settle(sessionId)
+          return
+        }
+        if (kind === "busy" || kind === "retry") {
+          if (current === "running" || current === "waiting_approval") return
+          publish("UserPromptSubmit", { agentSessionId: activeId(sessionId) })
+        }
+        return
+      }
+
       case "session.idle": {
         if (!owns(sessionId)) return
-        writer.publish("Stop", { agentSessionId: activeId(sessionId) })
+        settle(sessionId)
         return
       }
 
       case "session.error": {
-        // Shape unconfirmed — accept it whether or not it names a session,
-        // because an error that ends the turn is worth surfacing either way.
+        // Accept it whether or not it names a session, because an error
+        // that ends the turn is worth surfacing either way. A double-Escape
+        // also arrives here (MessageAbortedError, verified live) — that is
+        // the user's interrupt, not a failure: the idle after it is a Stop.
         if (sessionId && !owns(sessionId)) return
-        writer.publish("StopFailure", { agentSessionId: activeId(sessionId) })
+        const err = props.error
+        const name = err && typeof err === "object" ? err.name : undefined
+        if (ABORT_ERROR_NAMES.includes(name)) return
+        publish("StopFailure", {
+          agentSessionId: activeId(sessionId),
+          error: failureReason(err),
+        })
         return
       }
 
       case "session.deleted": {
         if (sessionId && !owns(sessionId)) return
-        writer.publish("SessionEnd", {})
+        publish("SessionEnd", {})
         return
       }
 
@@ -420,6 +559,7 @@ function createTelemetry(env, options = {}) {
     onToolAfter,
     writer,
     rootSessionIds,
+    childSessionIds,
   }
 }
 

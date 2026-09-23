@@ -14,7 +14,10 @@ remains the fallback for a launch where the plugin could not be installed.
 Everything below the flag table was captured from a real opencode
 v1.18.19 session; the pane corpus lives in
 ``tests/fixtures_opencode_panes/`` and is replayed by
-``tests/unit/test_status_detector_opencode.py``.
+``tests/unit/test_status_detector_opencode.py``. Re-verified unchanged
+against v1.18.29 (Sep 2026, #474): a second pane corpus under
+``tests/fixtures_opencode_panes/v1.18.29/`` and the plugin's event-stream
+corpus in ``tests/fixtures_opencode_events/``.
 """
 
 import json

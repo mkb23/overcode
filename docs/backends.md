@@ -556,19 +556,51 @@ classification, the status-detail column — works unchanged.
 
 | opencode signal | overcode hook event | Status |
 |---|---|---|
-| `chat.message` (user) / `message.updated` role=user | `UserPromptSubmit` | running |
+| `chat.message` (user) / `message.updated` role=user, unseen id | `UserPromptSubmit` | running |
+| `session.status {busy\|retry}` while not already running | `UserPromptSubmit` | running (safety net) |
 | `tool.execute.before` | `PreToolUse` | running |
-| `permission.asked` | `PermissionRequest` | **waiting_approval** |
+| `permission.asked` — root **or sub-agent** session | `PermissionRequest` | **waiting_approval** |
 | `permission.replied` (allow) | `PreToolUse` | running |
 | `permission.replied` (reject) | `PostToolUse` | running |
 | `tool.execute.after` | `PostToolUse` | running |
-| `session.idle` | `Stop` | waiting_user |
-| `session.error` | `StopFailure` | error |
+| `session.status {idle}` / `session.idle` | `Stop` | waiting_user (once per settle) |
+| `session.error`, not `MessageAbortedError` | `StopFailure` | **error** — the idle that follows publishes nothing |
 | `session.deleted` | `SessionEnd` | terminated |
+| anything else from a sub-agent session | — | ignored |
 
 opencode's lowercase tool names (`bash`, `read`, `webfetch`) are mapped onto
 Claude's taxonomy (`Bash`, `Read`, `WebFetch`) so the detector's Bash-command
 activity strings and sleep detection keep working.
+
+Four of those rows come from a live re-verification against **v1.18.29**
+(Sep 2026, issue #474, "opencode agents often show *running* when they are
+not"); the verbatim captures are in `tests/fixtures_opencode_events/` and
+the rules are written out as an executable oracle in
+`tests/opencode_oracle.py`:
+
+- **Sub-agents run on the same plugin.** A `task` tool call spawns a child
+  session (`session.created` with `info.parentID`) that then fires its
+  *own* `chat.message`, tool hooks and `session.idle`. The plugin used to
+  adopt that child as a root, so its idle published a `Stop` in the middle
+  of the parent's `Task` call and its id leaked into `agent_session_ids`
+  (double-counted by the stats reader). Children are now remembered and
+  never adopted. The one thing of theirs that *is* the parent's business is
+  a permission dialog — it is drawn and answered in the parent's TUI — so
+  a child's `permission.asked`/`replied` still surface.
+- **`session.idle` is deprecated upstream.** `session.status {type: idle}`
+  precedes it by a millisecond and is now the primary turn-end signal;
+  either alone settles the turn, both together settle it once.
+- **Errors used to be invisible.** A provider failure is `session.error`
+  followed by idle *in the same millisecond*, so `Stop` overwrote
+  `StopFailure` before any poll could see it. The idle after an error now
+  publishes nothing; the red *error* state (with the bounded reason in the
+  activity column, e.g. `API error: APIError: Incorrect API key provided…`)
+  stays until the next prompt. A double-Escape interrupt arrives as
+  `session.error {name: MessageAbortedError}` and is *not* an error.
+- **`/exit` emits nothing at all.** No `session.deleted`, no bus event —
+  the process just ends and the last `Stop` would say *waiting_user*
+  forever. `HookStatusDetector` now reports *terminated* for any backend
+  whose pane is back at a bare shell prompt with no live-TUI chrome near it.
 
 ### Things worth knowing about the footprint
 
@@ -1687,6 +1719,21 @@ credentials; the third is the one that catches what the mocks cannot.
 | Mock e2e matrix | `overcode launch -B <b>` against `tests/mock_<b>.py` (chrome copied from the corpus) in a real tmux: launch, status flip, permission dialog + the backend-resolved `approve`/`reject` gestures, restart, kill | the CLI, launcher, dispatcher and gestures agree with each other, per backend | `tests/e2e/test_backend_matrix.py` (opencode, codex, grok, hermes), `tests/e2e/test_opencode2_backend.py` | `make test-matrix` (~2 min, no keys) |
 | Live smoke | the same flow against the **real** installed CLI: one plain turn (hook state must appear and settle), one tool call that must ask (hook `PermissionRequest`, polling `Permission:` activity, daemon `waiting_approval`, then `approve`), the stats reader over the real store, `overcode doctor` ok | today's binary still speaks the grammar; the install's process name, version string, config keys, startup dialogs | `tests/e2e/test_live_backends.py` | opt-in, ~1 ¢ per backend |
 | Container real-LLM | real Claude Code inside docker, scheduled | the Claude path end to end in a clean image | `tests/container/real_llm/` | `make e2e-real` |
+
+For opencode there is a fifth artefact between the corpus and the live
+tiers: **event-stream replay**. `tests/fixtures_opencode_events/` holds
+verbatim plugin-hook traffic from eleven live v1.18.29 scenarios (tool
+calls, both permission answers, a sub-agent with and without its own
+permission ask, an interrupt, a provider error, `/new`, a queued prompt,
+a resumed session); `tests/unit/test_opencode_plugin_replay.py` feeds each
+through the real plugin and checks every publish against the oracle in
+`tests/opencode_oracle.py`, and `tests/unit/test_opencode_event_grammar.py`
+does the same for 400 streams generated from a grammar of that vocabulary.
+`tests/e2e/test_live_opencode_states.py` (`OVERCODE_LIVE_BACKENDS=opencode`)
+walks the same scenarios against the installed CLI with a spy plugin
+recording, so a new opencode build is checked against the oracle and the
+daemon's verdicts at every settle point, including *terminated* after
+`/exit`.
 
 The corpora are snapshots of one build each (the version is in every
 corpus README), so the first two tiers can stay green while a CLI release

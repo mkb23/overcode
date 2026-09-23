@@ -1,0 +1,51 @@
+
+
+  ┃                                                                                                                     pong
+  ┃  Reply with the single word pong and nothing else.
+  ┃                                                                                                                     Context
+                                                                                                                        9,314 tokens
+     pong                                                                                                               7% used
+                                                                                                                        $0.00 spent
+     ▣  Build · GPT-4o mini · 7.1s
+                                                                                                                        LSP
+  ┃                                                                                                                     LSPs are disabled
+  ┃  Use the read tool to read README.md and tell me its first line. Do not use bash.
+  ┃
+
+     → Read README.md [offset=1, limit=1]
+
+     The first line of README.md is:
+
+     # cap-project
+
+     ▣  Build · GPT-4o mini · 4.8s
+
+  ┃
+  ┃  Use the bash tool to run exactly this command and report its output: echo live-ok
+  ┃
+
+     $ echo live-ok
+
+     ▣  Build · GPT-4o mini
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃  △ Permission required
+  ┃    # Shell command
+  ┃
+  ┃  $ echo live-ok                                                                                                     /private/var/folders/sh/
+  ┃                                                                                                                     tmpdirhash/T/cap-
+  ┃                                                                                                                     proj-x:main
+  ┃   Allow once   Allow always   Reject                               ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃                                                                                                                     • OpenCode 1.18.29
+
