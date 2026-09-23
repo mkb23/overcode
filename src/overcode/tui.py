@@ -54,6 +54,51 @@ from .worker_guard import single_flight, worker_cancelled
 # life of the process (~10 rows/s => >100 MB after 15 h) whenever the probe
 # was disabled, because _mark_event kept appending with no flush scheduled.
 HEARTBEAT_LOG_MAX_ENTRIES = 10_000
+
+# Periodic timer cadences (seconds). These are the product's freshness
+# contract (focused status 250 ms, non-focused via the daemon at 1 s, token
+# columns 5 s, sessions 10 s, resize 15 s, timeline 30 s) and are never
+# changed to save CPU.
+TIMER_INTERVALS = {
+    "fast_status": 0.25,
+    "daemon_status": 1,
+    "focused_job_pane": 1,
+    "focused_sister": 1.5,
+    "slow_stats": 5,
+    "summarizer": 5,
+    "refresh_jobs": 5,
+    "heartbeat_flush": 5,
+    "status_changes": 5,
+    "refresh_sessions": 10,
+    "sister_poll": 10,
+    "agent_resize": 15,
+    "timeline": 30,
+}
+
+# Initial delay before each timer's first tick. The intervals above share
+# common multiples (5/10/15/30 s), so timers started at the same instant fire
+# together forever: every fifth second used to launch the 8-thread stats
+# executor, git subprocesses, a tmux list-windows, the jobs refresh and
+# several main-thread apply callbacks at once, and the event-loop probe
+# showed main-thread stalls over 150 ms were seven times more frequent
+# inside that window. Distinct offsets (mod 5 s) spread the burst without
+# touching any cadence. The sub-5 s timers overlap everything regardless
+# and are left at phase 0 (daemon_status keeps its existing 1.7).
+TIMER_PHASE_OFFSETS = {
+    "fast_status": 0.0,
+    "daemon_status": 1.7,
+    "focused_job_pane": 0.0,
+    "focused_sister": 0.0,
+    "slow_stats": 0.0,
+    "agent_resize": 0.7,
+    "refresh_jobs": 1.1,
+    "refresh_sessions": 2.3,
+    "status_changes": 2.9,
+    "summarizer": 3.3,
+    "timeline": 3.9,
+    "sister_poll": 4.2,
+    "heartbeat_flush": 4.5,
+}
 from .tui_helpers import (
     format_duration,
     get_git_diff_stats,
@@ -594,9 +639,9 @@ class SupervisorTUI(
         if self._heartbeat_enabled:
             self._heartbeat_last = time.monotonic()
             self.set_interval(0.1, self._record_heartbeat)
-            self.set_timer(4.5, lambda: self.set_interval(5, self._flush_heartbeat))
+            self._start_periodic("heartbeat_flush", self._flush_heartbeat)
         if self._prefs.status_change_logging:
-            self.set_timer(5.0, lambda: self.set_interval(5, self._flush_status_changes))
+            self._start_periodic("status_changes", self._flush_status_changes)
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -607,37 +652,52 @@ class SupervisorTUI(
                 timeout=10
             )
         else:
-            # Normal mode: Set up all timers
+            # Normal mode: set up all timers. Cadences and phase offsets are
+            # the TIMER_INTERVALS / TIMER_PHASE_OFFSETS tables (see the note
+            # there on why the long timers are de-phased).
             # Refresh session list every 10 seconds
-            self.set_interval(10, self.refresh_sessions)
+            self._start_periodic("refresh_sessions", self.refresh_sessions)
             # Fast status updates every 250ms (detect_status + capture_pane only)
-            self.set_interval(0.25, self.update_focused_status)
+            self._start_periodic("fast_status", self.update_focused_status)
             # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
-            # Stagger the three 5s timers so background work doesn't burst all at once
-            self.set_interval(5, self._update_stats_async)
-            self.set_timer(1.7, lambda: self.set_interval(1, self.update_daemon_status))
+            self._start_periodic("slow_stats", self._update_stats_async)
+            self._start_periodic("daemon_status", self.update_daemon_status)
             # Update timeline every 30 seconds
-            self.set_interval(30, self.update_timeline)
+            self._start_periodic("timeline", self.update_timeline)
             # Update AI summaries every 5 seconds (only runs if enabled)
-            self.set_timer(3.3, lambda: self.set_interval(5, self._update_summaries_async))
+            self._start_periodic("summarizer", self._update_summaries_async)
             # Poll sister instances every 10 seconds (only runs if configured)
             if self.has_sisters:
-                self.set_interval(10, self._poll_sisters)
+                self._start_periodic("sister_poll", self._poll_sisters)
                 self._poll_sisters()  # Initial fetch
                 # Fast poll for the focused remote agent (1.5s)
-                self.set_interval(1.5, self._poll_focused_sister)
+                self._start_periodic("focused_sister", self._poll_focused_sister)
             # Refresh jobs list every 5 seconds
-            self.set_interval(5, self._refresh_jobs)
+            self._start_periodic("refresh_jobs", self._refresh_jobs)
             # Refresh focused job pane content every second
-            self.set_interval(1, self._poll_focused_job_pane)
+            self._start_periodic("focused_job_pane", self._poll_focused_job_pane)
             # Periodically reconcile nested agent tmux windows with the outer
             # pane size — on_resize catches most changes, but tmux auto-resize
             # misfires after splits/zooms leave windows stuck at the old size.
-            self.set_interval(15, self._periodic_agent_resize)
+            self._start_periodic("agent_resize", self._periodic_agent_resize)
 
         # Apply initial jobs mode if requested (e.g. --jobs flag)
         if self._initial_jobs_mode:
             self.tui_mode = "jobs"
+
+    def _start_periodic(self, name: str, callback) -> None:
+        """Start the ``name`` timer at its TIMER_INTERVALS cadence, phase-shifted.
+
+        A non-zero TIMER_PHASE_OFFSETS entry delays the first tick by that
+        many seconds (set_timer, then set_interval), so the timer fires at
+        offset + k * interval instead of k * interval.
+        """
+        interval = TIMER_INTERVALS[name]
+        delay = TIMER_PHASE_OFFSETS[name]
+        if delay > 0:
+            self.set_timer(delay, lambda: self.set_interval(interval, callback))
+        else:
+            self.set_interval(interval, callback)
 
     def update_daemon_status(self) -> None:
         """Update daemon status bar (kicks off background worker)"""
