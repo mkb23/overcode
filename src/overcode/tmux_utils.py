@@ -409,6 +409,24 @@ def tmux_window_target(session: str, window) -> str:
     return f"{session}:={window}"
 
 
+def rename_tmux_window(server, session: str, window, new_name: str) -> bool:
+    """Rename ``session``'s window ``window`` to ``new_name``; True on success.
+
+    The target is exact (``session:=name``): a bare ``session:name`` falls
+    back to a prefix match, so renaming a window that has gone would rename
+    whichever window's name starts with it — another agent's (#478).
+    libtmux's ``Server.cmd`` does not raise when tmux fails; it returns the
+    result, so success is read from its return code and stderr.
+    """
+    try:
+        result = server.cmd(
+            "rename-window", "-t", tmux_window_target(session, window), new_name,
+        )
+    except Exception:
+        return False
+    return getattr(result, "returncode", 0) == 0 and not getattr(result, "stderr", None)
+
+
 def exit_copy_mode_if_active(
     tmux_session: str,
     window: str,

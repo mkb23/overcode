@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 import typer
 from rich import print as rprint
 
-from ._shared import app, jobs_app
+from ._shared import app, jobs_app, find_agent
 
 
 @app.command()
@@ -32,7 +32,7 @@ def bash(
         agent = os.environ.get("OVERCODE_SESSION_NAME")
     if agent:
         sm = SessionManager()
-        sess = sm.get_session_by_name(agent)
+        sess = find_agent(sm, agent)
         if sess:
             agent_session_id = sess.id
             agent_name = sess.name

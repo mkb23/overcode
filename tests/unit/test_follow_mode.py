@@ -233,7 +233,7 @@ class TestFollowAgent:
     def test_returns_1_when_agent_not_found(self, tmp_path):
         with patch("overcode.follow_mode.SessionManager") as mock_sm:
             mock_instance = MagicMock()
-            mock_instance.get_session_by_name.return_value = None
+            mock_instance.resolve_session_name.return_value = None
             mock_sm.return_value = mock_instance
 
             result = follow_agent("nonexistent", "agents")
@@ -242,13 +242,15 @@ class TestFollowAgent:
 
     def test_returns_1_on_immediate_termination(self, tmp_path):
         mock_session = MagicMock()
+        mock_session.name = "test-agent"
         mock_session.tmux_window = 1
         mock_session.oversight_policy = "wait"
         mock_session.oversight_timeout_seconds = 0.0
 
         with patch("overcode.follow_mode.SessionManager") as mock_sm:
             mock_instance = MagicMock()
-            mock_instance.get_session_by_name.side_effect = [mock_session, None]
+            mock_instance.resolve_session_name.return_value = mock_session
+            mock_instance.get_session.return_value = mock_session
             mock_sm.return_value = mock_instance
 
             with patch("overcode.follow_mode._capture_pane", return_value=None):
@@ -259,6 +261,7 @@ class TestFollowAgent:
 
     def test_returns_0_on_success_report(self, tmp_path):
         mock_session = MagicMock()
+        mock_session.name = "test-agent"
         mock_session.tmux_window = 1
         mock_session.oversight_policy = "wait"
         mock_session.oversight_timeout_seconds = 0.0
@@ -278,7 +281,8 @@ class TestFollowAgent:
 
         with patch("overcode.follow_mode.SessionManager") as mock_sm:
             mock_instance = MagicMock()
-            mock_instance.get_session_by_name.return_value = mock_session
+            mock_instance.resolve_session_name.return_value = mock_session
+            mock_instance.get_session.return_value = mock_session
             mock_sm.return_value = mock_instance
 
             with patch("overcode.follow_mode._capture_pane", side_effect=mock_capture):

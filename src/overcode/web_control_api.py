@@ -22,7 +22,9 @@ class ControlError(Exception):
 
 def _get_session_or_error(session_manager, name: str):
     """Look up a session by name, raise 404 if not found."""
-    session = session_manager.get_session_by_name(name)
+    # Old names resolve too (#478): a rename must not break a client that
+    # still addresses the agent by the name it knew.
+    session = session_manager.resolve_session_name(name)
     if session is None:
         raise ControlError(f"Agent '{name}' not found", status=404)
     return session

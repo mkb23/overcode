@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 import typer
 from rich import print as rprint
 
-from ._shared import app, SessionOption
+from ._shared import app, SessionOption, find_agent
 
 
 @app.command("focal-repo")
@@ -40,7 +40,7 @@ def focal_repo(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)

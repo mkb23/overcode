@@ -9,7 +9,7 @@ import typer
 from rich import print as rprint
 
 from ..launcher import AgentLauncher
-from ._shared import app, SessionOption, _parse_duration
+from ._shared import app, SessionOption, _parse_duration, find_agent
 
 
 def _parse_oversight_policy(on_stuck: Optional[str], oversight_timeout: Optional[str]) -> tuple[str, float]:
@@ -427,7 +427,7 @@ def fork(
     from ..backends import BackendCapability, get_backend, supports
 
     sm = SessionManager()
-    source_session = sm.get_session_by_name(source)
+    source_session = find_agent(sm, source)
     if not source_session:
         rprint(f"[red]Error: Agent '{source}' not found[/red]")
         raise typer.Exit(code=1)
@@ -546,7 +546,7 @@ def list_agents(
 
     # Filter to specific agent + descendants if name given (#244)
     if name:
-        root = launcher.sessions.get_session_by_name(name)
+        root = find_agent(launcher.sessions, name)
         if not root:
             rprint(f"[red]Error: Agent '{name}' not found[/red]")
             raise typer.Exit(code=1)
@@ -842,7 +842,7 @@ def restart(
     from ..launcher import AgentLauncher
 
     launcher = AgentLauncher(session)
-    sess = launcher.sessions.get_session_by_name(name)
+    sess = find_agent(launcher.sessions, name)
     if not sess:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -883,35 +883,56 @@ def follow(
 def rename(
     name: Annotated[str, typer.Argument(help="Current name of agent")],
     new_name: Annotated[str, typer.Argument(help="New name for the agent")],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Rename even if the agent is mid-turn (its turn is cancelled)",
+        ),
+    ] = False,
     session: SessionOption = "agents",
 ):
-    """Rename an agent, preserving its conversation and history.
+    """Rename an agent, keeping its conversation and history.
 
-    Stops the agent, renames its tmux window and hook-state files, then
-    relaunches it in place resuming the prior conversation. Status
-    detection, cost totals, and timeline continuity carry over through the
-    rekeyed telemetry files. For an agent without a live window, the record
-    and telemetry are renamed and a later `revive`/`restart` lands under
-    the new name.
+    A live agent is briefly stopped and resumed under the new name, in the
+    same window with the same conversation; it is told its new name with
+    its next prompt. The old name keeps working as an alias — `send`,
+    `follow`, `kill` and the rest reach the agent and say it was renamed —
+    so a parent or script still using it is not broken.
+
+    An agent that is busy (working, or showing a permission dialog) is not
+    renamed, because stopping it would cancel its turn; wait until it is
+    idle, or pass --force. A terminated agent just has its record renamed.
 
     Examples:
-        overcode agent rename bugfix-1 auth-refactor
+        overcode rename bugfix-1 auth-refactor
     """
-    from ..exceptions import InvalidSessionNameError
+    from ..exceptions import AgentBusyError, InvalidSessionNameError
     from ..launcher import AgentLauncher
 
     launcher = AgentLauncher(session)
-    sess = launcher.sessions.get_session_by_name(name)
+    sess = find_agent(launcher.sessions, name)
     if not sess:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
+    name = sess.name
 
     try:
-        renamed = launcher.rename(sess, new_name)
+        renamed = launcher.rename(sess, new_name, force=force)
     except InvalidSessionNameError:
         rprint(
             f"[red]Error: '{new_name}' is not a valid agent name "
             f"(letters, digits, - and _ only, max 64 chars)[/red]"
+        )
+        raise typer.Exit(code=1)
+    except AgentBusyError as exc:
+        state = (
+            "could not be checked" if exc.status == "unknown" else f"is busy ({exc.status})"
+        )
+        rprint(
+            f"[yellow]Agent '{name}' {state}.[/yellow] Renaming restarts it, "
+            "which would cancel a turn in progress. Try again when it is idle, "
+            "or use --force."
         )
         raise typer.Exit(code=1)
     except ValueError as exc:
@@ -919,10 +940,17 @@ def rename(
         raise typer.Exit(code=1)
 
     if not renamed:
-        rprint(
-            f"[red]Error: failed to rename '{name}' "
-            "(tmux window rename failed — the agent is unchanged)[/red]"
-        )
+        current = launcher.sessions.get_session(sess.id)
+        if current is not None and current.name == new_name:
+            rprint(
+                f"[yellow]Renamed '{name}' → '{new_name}', but the relaunch could "
+                f"not be sent.[/yellow] Run: overcode restart {new_name}"
+            )
+        else:
+            rprint(
+                f"[red]Error: tmux refused to rename the window; '{name}' was "
+                "restarted under its old name.[/red]"
+            )
         raise typer.Exit(code=1)
 
     rprint(f"[green]Renamed agent: {name} → {new_name} (conversation preserved)[/green]")
@@ -979,7 +1007,7 @@ def report(
     # Also update session fields for persistence
     from ..session_manager import SessionManager
     sm = SessionManager()
-    session = sm.get_session_by_name(agent_name)
+    session = find_agent(sm, agent_name)
     if session:
         sm.update_session(
             session.id,
@@ -1045,7 +1073,7 @@ def set_value(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -1067,7 +1095,7 @@ def set_budget(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -1104,7 +1132,7 @@ def annotate(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -1148,7 +1176,9 @@ def send(
     sm = SessionManager()
 
     # Auto-wake sleeping agent (#168)
-    agent_session = sm.get_session_by_name(name)
+    agent_session = find_agent(sm, name)
+    if agent_session:
+        name = agent_session.name  # an old name resolved; say the current one
     if agent_session and agent_session.is_asleep:
         sm.update_session(agent_session.id, is_asleep=False)
         rprint(f"[dim]Woke agent '{name}' to send command[/dim]")
@@ -1198,10 +1228,11 @@ def show(
     launcher = AgentLauncher(session)
 
     # Get the Session object
-    sess = launcher.sessions.get_session_by_name(name)
+    sess = find_agent(launcher.sessions, name)
     if sess is None:
         rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
         raise typer.Exit(1)
+    name = sess.name  # an old name resolved; show under the current one
 
     # Read daemon state for status/activity (single source of truth)
     daemon_state = get_monitor_daemon_state(session)

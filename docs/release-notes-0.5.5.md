@@ -66,3 +66,12 @@ attached client's PID, so every later `overcode tmux` was refused until
 that client detached. The lock is now released before the hand-off.
 Running the command from another window of the `overcode` session now
 also moves you to the split window, as it said it did.
+
+`overcode rename <agent> <new-name>` renames an agent (#478). A live agent
+is stopped and resumed under the new name with its conversation, status
+history and costs intact, and it is told its new name with its next
+prompt. The old name keeps working as an alias: `send`, `follow`, `kill`
+and the other commands still reach the agent and say it was renamed, so a
+parent or script still using the old name is not broken. A busy agent is
+refused unless you pass `--force`, because the restart would cancel its
+turn.

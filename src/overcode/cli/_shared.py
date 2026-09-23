@@ -109,6 +109,24 @@ app.add_typer(models_app, name="models")
 
 # Console for rich output
 console = Console()
+# Notices that must not mix into output a script may parse
+err_console = Console(stderr=True)
+
+
+def find_agent(manager, name: str):
+    """Look up the agent ``name`` addresses, following renames (#478).
+
+    ``manager`` is a SessionManager. When ``name`` is an agent's old name,
+    the agent is returned and a one-line notice goes to stderr, so a person
+    or script still using the old name learns the new one.
+    """
+    from ..session_manager import rename_notice
+
+    session = manager.resolve_session_name(name)
+    notice = rename_notice(name, session)
+    if notice:
+        err_console.print(f"[yellow]{notice}[/yellow]")
+    return session
 
 # Global session option (hidden advanced usage)
 SessionOption = Annotated[

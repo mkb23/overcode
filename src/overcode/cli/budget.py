@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 import typer
 from rich import print as rprint
 
-from ._shared import budget_app, SessionOption
+from ._shared import budget_app, SessionOption, find_agent
 
 
 @budget_app.command("set")
@@ -28,7 +28,7 @@ def budget_set(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -73,12 +73,12 @@ def budget_transfer(
 
     manager = SessionManager()
 
-    source_agent = manager.get_session_by_name(source)
+    source_agent = find_agent(manager, source)
     if not source_agent:
         rprint(f"[red]Error: Source agent '{source}' not found[/red]")
         raise typer.Exit(code=1)
 
-    target_agent = manager.get_session_by_name(target)
+    target_agent = find_agent(manager, target)
     if not target_agent:
         rprint(f"[red]Error: Target agent '{target}' not found[/red]")
         raise typer.Exit(code=1)
@@ -118,7 +118,7 @@ def budget_reclaim(
     from ..session_manager import SessionManager
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
@@ -162,7 +162,7 @@ def budget_show(
 
     if name:
         agents = []
-        agent = manager.get_session_by_name(name)
+        agent = find_agent(manager, name)
         if not agent:
             rprint(f"[red]Error: Agent '{name}' not found[/red]")
             raise typer.Exit(code=1)

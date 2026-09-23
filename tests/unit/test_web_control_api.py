@@ -70,7 +70,7 @@ class TestSendToAgent:
     @patch(SM_PATH)
     def test_sends_text_to_agent(self, MockSM, MockLauncher):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         launcher = MockLauncher.return_value
         launcher.send_to_session.return_value = True
 
@@ -84,7 +84,7 @@ class TestSendToAgent:
     def test_auto_wakes_sleeping_agent(self, MockSM, MockLauncher):
         sm = MockSM.return_value
         session = _mock_session(is_asleep=True)
-        sm.get_session_by_name.return_value = session
+        sm.resolve_session_name.return_value = session
         launcher = MockLauncher.return_value
         launcher.send_to_session.return_value = True
 
@@ -95,7 +95,7 @@ class TestSendToAgent:
     @patch(SM_PATH)
     def test_agent_not_found_raises_404(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = None
+        sm.resolve_session_name.return_value = None
 
         with pytest.raises(ControlError) as exc_info:
             send_to_agent("agents", "nonexistent", "hello")
@@ -105,7 +105,7 @@ class TestSendToAgent:
     @patch(SM_PATH)
     def test_send_failure_raises_500(self, MockSM, MockLauncher):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         launcher = MockLauncher.return_value
         launcher.send_to_session.return_value = False
 
@@ -121,7 +121,7 @@ class TestSendKeyToAgent:
     @patch(SM_PATH)
     def test_sends_enter_key(self, MockSM, MockTmux):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         tmux = MockTmux.return_value
         tmux.send_keys.return_value = True
 
@@ -134,7 +134,7 @@ class TestSendKeyToAgent:
     @patch(SM_PATH)
     def test_sends_escape_key(self, MockSM, MockTmux):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         tmux = MockTmux.return_value
         tmux.send_keys.return_value = True
 
@@ -146,7 +146,7 @@ class TestSendKeyToAgent:
     @patch(SM_PATH)
     def test_invalid_key_raises_400(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         with pytest.raises(ControlError) as exc_info:
             send_key_to_agent("agents", "test-agent", "ctrl-c")
@@ -161,7 +161,7 @@ class TestSendKeyToAgent:
         # A remote/web caller shouldn't have to know whether the agent is
         # Claude Code or opencode to answer its permission prompt.
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         MockLauncher.return_value.send_to_session.return_value = True
 
         assert send_key_to_agent("agents", "test-agent", gesture) == {"ok": True}
@@ -172,7 +172,7 @@ class TestSendKeyToAgent:
     @patch(SM_PATH)
     def test_gestures_are_listed_in_the_error_message(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         with pytest.raises(ControlError) as exc_info:
             send_key_to_agent("agents", "test-agent", "nope")
@@ -186,7 +186,7 @@ class TestKillAgent:
     @patch(SM_PATH)
     def test_kills_agent_with_cascade(self, MockSM, MockLauncher):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         launcher = MockLauncher.return_value
         launcher.kill_session.return_value = True
 
@@ -199,7 +199,7 @@ class TestKillAgent:
     @patch(SM_PATH)
     def test_kills_agent_without_cascade(self, MockSM, MockLauncher):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         launcher = MockLauncher.return_value
         launcher.kill_session.return_value = True
 
@@ -216,7 +216,7 @@ class TestRestartAgent:
     @patch(SM_PATH)
     def test_sends_ctrl_c_then_restart_command(self, MockSM, MockTmux, mock_sleep):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(permissiveness_mode="normal")
+        sm.resolve_session_name.return_value = _mock_session(permissiveness_mode="normal")
         tmux = MockTmux.return_value
         tmux.send_keys.return_value = True
 
@@ -239,7 +239,7 @@ class TestRestartAgent:
     @patch(SM_PATH)
     def test_bypass_permissions_in_restart(self, MockSM, MockTmux, mock_sleep):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(permissiveness_mode="bypass")
+        sm.resolve_session_name.return_value = _mock_session(permissiveness_mode="bypass")
         tmux = MockTmux.return_value
         tmux.send_keys.return_value = True
 
@@ -304,7 +304,7 @@ class TestSetStandingOrders:
     @patch(SM_PATH)
     def test_sets_custom_text(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_standing_orders("agents", "test-agent", text="Do the thing")
 
@@ -315,7 +315,7 @@ class TestSetStandingOrders:
     @patch(SM_PATH)
     def test_sets_preset(self, MockSM, mock_resolve):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
         mock_resolve.return_value = ("Full coding instructions", "CODING")
 
         result = set_standing_orders("agents", "test-agent", preset="CODING")
@@ -328,7 +328,7 @@ class TestSetStandingOrders:
     @patch(SM_PATH)
     def test_no_text_or_preset_raises_400(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         with pytest.raises(ControlError):
             set_standing_orders("agents", "test-agent")
@@ -340,7 +340,7 @@ class TestClearStandingOrders:
     @patch(SM_PATH)
     def test_clears_standing_orders(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = clear_standing_orders("agents", "test-agent")
 
@@ -354,7 +354,7 @@ class TestSetBudget:
     @patch(SM_PATH)
     def test_sets_budget(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_budget("agents", "test-agent", usd=5.0)
 
@@ -364,7 +364,7 @@ class TestSetBudget:
     @patch(SM_PATH)
     def test_zero_budget_clears(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_budget("agents", "test-agent", usd=0)
 
@@ -374,7 +374,7 @@ class TestSetBudget:
     @patch(SM_PATH)
     def test_negative_budget_raises_400(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         with pytest.raises(ControlError):
             set_budget("agents", "test-agent", usd=-1.0)
@@ -386,7 +386,7 @@ class TestSetValue:
     @patch(SM_PATH)
     def test_sets_value(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_value("agents", "test-agent", value=1500)
 
@@ -400,7 +400,7 @@ class TestSetAnnotation:
     @patch(SM_PATH)
     def test_sets_annotation(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_annotation("agents", "test-agent", text="Important agent")
 
@@ -410,7 +410,7 @@ class TestSetAnnotation:
     @patch(SM_PATH)
     def test_clears_annotation_with_empty_text(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_annotation("agents", "test-agent", text="")
 
@@ -428,7 +428,7 @@ class TestSetSleep:
             stats=MagicMock(current_state="waiting"),
             heartbeat_enabled=False,
         )
-        sm.get_session_by_name.return_value = session
+        sm.resolve_session_name.return_value = session
 
         result = set_sleep("agents", "test-agent", asleep=True)
 
@@ -438,7 +438,7 @@ class TestSetSleep:
     @patch(SM_PATH)
     def test_wakes_agent(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_sleep("agents", "test-agent", asleep=False)
 
@@ -448,7 +448,7 @@ class TestSetSleep:
     @patch(SM_PATH)
     def test_rejects_sleep_on_running_agent(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             stats=MagicMock(current_state="running"),
         )
 
@@ -459,7 +459,7 @@ class TestSetSleep:
     @patch(SM_PATH)
     def test_rejects_sleep_with_active_heartbeat(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             stats=MagicMock(current_state="waiting"),
             heartbeat_enabled=True,
             heartbeat_paused=False,
@@ -476,7 +476,7 @@ class TestConfigureHeartbeat:
     @patch(SM_PATH)
     def test_enables_heartbeat(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = configure_heartbeat("agents", "test-agent", enabled=True, frequency="5m")
 
@@ -490,7 +490,7 @@ class TestConfigureHeartbeat:
     @patch(SM_PATH)
     def test_rejects_frequency_under_30s(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         with pytest.raises(ControlError):
             configure_heartbeat("agents", "test-agent", enabled=True, frequency="10")
@@ -502,7 +502,7 @@ class TestPauseResumeHeartbeat:
     @patch(SM_PATH)
     def test_pauses_heartbeat(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             heartbeat_enabled=True, heartbeat_paused=False,
         )
 
@@ -514,7 +514,7 @@ class TestPauseResumeHeartbeat:
     @patch(SM_PATH)
     def test_pause_rejects_when_no_heartbeat(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(heartbeat_enabled=False)
+        sm.resolve_session_name.return_value = _mock_session(heartbeat_enabled=False)
 
         with pytest.raises(ControlError) as exc_info:
             pause_heartbeat("agents", "test-agent")
@@ -523,7 +523,7 @@ class TestPauseResumeHeartbeat:
     @patch(SM_PATH)
     def test_pause_rejects_when_already_paused(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             heartbeat_enabled=True, heartbeat_paused=True,
         )
 
@@ -534,7 +534,7 @@ class TestPauseResumeHeartbeat:
     @patch(SM_PATH)
     def test_resumes_heartbeat(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             heartbeat_enabled=True, heartbeat_paused=True, is_asleep=False,
         )
 
@@ -546,7 +546,7 @@ class TestPauseResumeHeartbeat:
     @patch(SM_PATH)
     def test_resume_rejects_on_sleeping_agent(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session(
+        sm.resolve_session_name.return_value = _mock_session(
             heartbeat_enabled=True, heartbeat_paused=True, is_asleep=True,
         )
 
@@ -561,7 +561,7 @@ class TestFeatureToggles:
     @patch(SM_PATH)
     def test_enables_time_context(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_enhanced_context("agents", "test-agent", enabled=True)
 
@@ -571,7 +571,7 @@ class TestFeatureToggles:
     @patch(SM_PATH)
     def test_disables_hook_detection(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_hook_detection("agents", "test-agent", enabled=False)
 
@@ -583,7 +583,7 @@ class TestFeatureToggles:
     @patch(SM_PATH)
     def test_enables_hook_detection(self, MockSM):
         sm = MockSM.return_value
-        sm.get_session_by_name.return_value = _mock_session()
+        sm.resolve_session_name.return_value = _mock_session()
 
         result = set_hook_detection("agents", "test-agent", enabled=True)
 

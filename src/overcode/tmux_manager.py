@@ -30,7 +30,7 @@ class TmuxManager:
     TmuxInterface for testing.
     """
 
-    def __init__(self, session_name: str = "agents", tmux: "TmuxInterface" = None, socket: str = None):
+    def __init__(self, session_name: str = "agents", tmux: "TmuxInterface" = None, socket: Optional[str] = None):
         """Initialize the tmux manager.
 
         Args:
@@ -315,23 +315,15 @@ class TmuxManager:
             return []
 
     def rename_window(self, window_name: str, new_name: str) -> bool:
-        """Rename a window, keeping 'automatic-rename' off (stable names)."""
+        """Rename a window; False when tmux refused (see ``rename_tmux_window``).
+
+        tmux's ``rename-window`` also turns ``automatic-rename`` off for the
+        window, so the new name sticks.
+        """
         if self._tmux:
             return self._tmux.rename_window(self.session_name, window_name, new_name)
-
-        try:
-            if self._server is None:
-                return False
-            # Raw command: robust against libtmux API drift, and -t is
-            # session-qualified so the wrong session can never be touched.
-            self._server.cmd(
-                "rename-window",
-                "-t", f"{self.session_name}:{window_name}",
-                new_name,
-            )
-            return True
-        except Exception:
-            return False
+        from .tmux_utils import rename_tmux_window
+        return rename_tmux_window(self.server, self.session_name, window_name, new_name)
 
     def kill_window(self, window_name: str) -> bool:
         """Kill a specific window"""

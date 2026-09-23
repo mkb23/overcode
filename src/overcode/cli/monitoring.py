@@ -9,7 +9,7 @@ from typing import Annotated, Optional, List
 import typer
 from rich import print as rprint
 
-from ._shared import app, SessionOption
+from ._shared import app, SessionOption, find_agent
 
 
 @app.command("hook-handler", hidden=True)
@@ -67,7 +67,7 @@ def instruct(
         raise typer.Exit(1)
 
     sessions = SessionManager()
-    sess = sessions.get_session_by_name(name)
+    sess = find_agent(sessions, name)
 
     if sess is None:
         rprint(f"[red]✗[/red] Agent '[bold]{name}[/bold]' not found")
@@ -150,7 +150,7 @@ def heartbeat(
     from ..tui_helpers import format_duration
 
     manager = SessionManager()
-    agent = manager.get_session_by_name(name)
+    agent = find_agent(manager, name)
     if not agent:
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)

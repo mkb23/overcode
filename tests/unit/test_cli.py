@@ -218,7 +218,7 @@ class TestShowCommandWithMocks:
         """Show --no-stats outputs only pane content"""
         with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = self._make_mock_session()
+            mock_launcher.sessions.resolve_session_name.return_value = self._make_mock_session()
             mock_launcher.get_session_output.return_value = None
             mock_launcher_class.return_value = mock_launcher
 
@@ -241,7 +241,7 @@ class TestShowCommandWithMocks:
 
         with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
             with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
@@ -272,7 +272,7 @@ class TestShowCommandWithMocks:
         """Show exits with error when agent not found"""
         with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = None
+            mock_launcher.sessions.resolve_session_name.return_value = None
             mock_launcher_class.return_value = mock_launcher
 
             result = runner.invoke(app, ["show", "nonexistent"])
@@ -285,7 +285,7 @@ class TestShowCommandWithMocks:
 
         with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
             with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
@@ -310,7 +310,7 @@ class TestShowCommandWithMocks:
 
         with patch('overcode.cli.agent.AgentLauncher') as mock_launcher_class:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_launcher_class.return_value = mock_launcher
 
             with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
@@ -403,7 +403,7 @@ class TestInstructCommandWithMocks:
         """Should error when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm:
             mock_instance = MagicMock()
-            mock_instance.get_session_by_name.return_value = None
+            mock_instance.resolve_session_name.return_value = None
             mock_sm.return_value = mock_instance
 
             result = runner.invoke(app, ["instruct", "nonexistent", "DO_NOTHING"])
@@ -418,7 +418,7 @@ class TestInstructCommandWithMocks:
             mock_session.id = "test-id"
 
             mock_instance = MagicMock()
-            mock_instance.get_session_by_name.return_value = mock_session
+            mock_instance.resolve_session_name.return_value = mock_session
             mock_sm.return_value = mock_instance
 
             result = runner.invoke(app, ["instruct", "test-agent", "--clear"])
@@ -939,7 +939,7 @@ class TestReportCommand:
                     mock_sm = MagicMock()
                     mock_session = MagicMock()
                     mock_session.id = "child-id"
-                    mock_sm.get_session_by_name.return_value = mock_session
+                    mock_sm.resolve_session_name.return_value = mock_session
                     mock_sm_cls.return_value = mock_sm
 
                     result = runner.invoke(app, ["report", "--status", "success", "--reason", "All tests passed"])
@@ -968,7 +968,7 @@ class TestReportCommand:
 
                 with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
                     mock_sm = MagicMock()
-                    mock_sm.get_session_by_name.return_value = None
+                    mock_sm.resolve_session_name.return_value = None
                     mock_sm_cls.return_value = mock_sm
 
                     result = runner.invoke(app, ["report", "--status", "failure"])
@@ -1006,7 +1006,7 @@ class TestSetValueExtended:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-value", "my-agent", "2000"])
@@ -1018,7 +1018,7 @@ class TestSetValueExtended:
         """Set value errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-value", "missing", "2000"])
@@ -1035,7 +1035,7 @@ class TestSetBudgetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-budget", "my-agent", "5.00"])
@@ -1049,7 +1049,7 @@ class TestSetBudgetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-budget", "my-agent", "0"])
@@ -1060,7 +1060,7 @@ class TestSetBudgetCommand:
         """Set budget errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-budget", "missing", "5.00"])
@@ -1073,7 +1073,7 @@ class TestSetBudgetCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["set-budget", "my-agent", "-1"])
@@ -1091,7 +1091,7 @@ class TestBudgetSetCommand:
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
             mock_agent.parent_session_id = None
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "set", "my-agent", "10.0"])
@@ -1105,7 +1105,7 @@ class TestBudgetSetCommand:
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
             mock_agent.parent_session_id = None
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "set", "my-agent", "0"])
@@ -1116,7 +1116,7 @@ class TestBudgetSetCommand:
         """Budget set errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "set", "missing", "5"])
@@ -1130,7 +1130,7 @@ class TestBudgetSetCommand:
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
             mock_agent.parent_session_id = None
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "set", "my-agent", "-5"])
@@ -1149,7 +1149,7 @@ class TestBudgetTransferCommand:
             mock_src.id = "src-id"
             mock_tgt = MagicMock()
             mock_tgt.id = "tgt-id"
-            mock_sm.get_session_by_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
+            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
             mock_sm.is_ancestor.return_value = True
             mock_sm.transfer_budget.return_value = True
             mock_sm_cls.return_value = mock_sm
@@ -1162,7 +1162,7 @@ class TestBudgetTransferCommand:
         """Budget transfer errors when source not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "transfer", "missing", "child", "2.0"])
@@ -1175,7 +1175,7 @@ class TestBudgetTransferCommand:
             mock_sm = MagicMock()
             mock_src = MagicMock()
             mock_src.id = "src-id"
-            mock_sm.get_session_by_name.side_effect = lambda n: mock_src if n == "parent" else None
+            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "transfer", "parent", "missing", "2.0"])
@@ -1190,7 +1190,7 @@ class TestBudgetTransferCommand:
             mock_src.id = "src-id"
             mock_tgt = MagicMock()
             mock_tgt.id = "tgt-id"
-            mock_sm.get_session_by_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
+            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "transfer", "parent", "child", "0"])
@@ -1205,7 +1205,7 @@ class TestBudgetTransferCommand:
             mock_src.id = "src-id"
             mock_tgt = MagicMock()
             mock_tgt.id = "tgt-id"
-            mock_sm.get_session_by_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
+            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
             mock_sm.is_ancestor.return_value = False
             mock_sm_cls.return_value = mock_sm
 
@@ -1221,7 +1221,7 @@ class TestBudgetTransferCommand:
             mock_src.id = "src-id"
             mock_tgt = MagicMock()
             mock_tgt.id = "tgt-id"
-            mock_sm.get_session_by_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
+            mock_sm.resolve_session_name.side_effect = lambda n: mock_src if n == "parent" else mock_tgt
             mock_sm.is_ancestor.return_value = True
             mock_sm.transfer_budget.return_value = False
             mock_sm_cls.return_value = mock_sm
@@ -1266,7 +1266,7 @@ class TestBudgetShowCommand:
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
             agent = _make_session(name="my-agent", cost_budget_usd=5.0)
-            mock_sm.get_session_by_name.return_value = agent
+            mock_sm.resolve_session_name.return_value = agent
             mock_sm.get_descendants.return_value = []
             mock_sm.compute_depth.return_value = 0
             mock_sm_cls.return_value = mock_sm
@@ -1279,7 +1279,7 @@ class TestBudgetShowCommand:
         """Budget show errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["budget", "show", "missing"])
@@ -1291,7 +1291,7 @@ class TestBudgetShowCommand:
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
             agent = _make_session(name="free", cost_budget_usd=0.0)
-            mock_sm.get_session_by_name.return_value = agent
+            mock_sm.resolve_session_name.return_value = agent
             mock_sm.get_descendants.return_value = []
             mock_sm.compute_depth.return_value = 0
             mock_sm_cls.return_value = mock_sm
@@ -1307,7 +1307,7 @@ class TestBudgetShowCommand:
             mock_sm = MagicMock()
             parent_agent = _make_session(name="parent", cost_budget_usd=10.0)
             child_agent = _make_session(name="child")
-            mock_sm.get_session_by_name.return_value = parent_agent
+            mock_sm.resolve_session_name.return_value = parent_agent
             mock_sm.get_descendants.return_value = [child_agent]
             mock_sm.compute_depth.return_value = 0
             mock_sm_cls.return_value = mock_sm
@@ -1326,7 +1326,7 @@ class TestAnnotateCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["annotate", "my-agent", "Working", "on", "auth"])
@@ -1340,7 +1340,7 @@ class TestAnnotateCommand:
             mock_sm = MagicMock()
             mock_agent = MagicMock()
             mock_agent.id = "agent-id"
-            mock_sm.get_session_by_name.return_value = mock_agent
+            mock_sm.resolve_session_name.return_value = mock_agent
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["annotate", "my-agent"])
@@ -1352,7 +1352,7 @@ class TestAnnotateCommand:
         """Annotate errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["annotate", "missing"])
@@ -1417,7 +1417,7 @@ class TestShowExtended:
         mock_session = _make_session()
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
 
             with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
@@ -1439,7 +1439,7 @@ class TestShowExtended:
         mock_session = _make_session(status="terminated")
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_launcher.get_session_output.return_value = None
             mock_cls.return_value = mock_launcher
 
@@ -1455,7 +1455,7 @@ class TestShowExtended:
         mock_session = _make_session()
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
 
             mock_daemon_state = MagicMock()
@@ -1484,7 +1484,7 @@ class TestShowExtended:
         mock_session = _make_session(is_asleep=True)
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_cls.return_value = mock_launcher
 
             with patch('overcode.status_detector_factory.create_status_detector') as mock_factory:
@@ -1504,7 +1504,7 @@ class TestShowExtended:
         mock_session = _make_session(status="terminated")
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
-            mock_launcher.sessions.get_session_by_name.return_value = mock_session
+            mock_launcher.sessions.resolve_session_name.return_value = mock_session
             mock_launcher.get_session_output.return_value = "fallback output here"
             mock_cls.return_value = mock_launcher
 
@@ -1841,7 +1841,7 @@ class TestInstructExtended:
             mock_sm = MagicMock()
             mock_session = MagicMock()
             mock_session.id = "test-id"
-            mock_sm.get_session_by_name.return_value = mock_session
+            mock_sm.resolve_session_name.return_value = mock_session
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.standing_instructions.resolve_instructions') as mock_resolve:
@@ -1860,7 +1860,7 @@ class TestInstructExtended:
             mock_sm = MagicMock()
             mock_session = MagicMock()
             mock_session.id = "test-id"
-            mock_sm.get_session_by_name.return_value = mock_session
+            mock_sm.resolve_session_name.return_value = mock_session
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.standing_instructions.resolve_instructions') as mock_resolve:
@@ -1878,7 +1878,7 @@ class TestInstructExtended:
             mock_session.id = "test-id"
             mock_session.standing_instructions = "Do nothing"
             mock_session.standing_instructions_preset = "DO_NOTHING"
-            mock_sm.get_session_by_name.return_value = mock_session
+            mock_sm.resolve_session_name.return_value = mock_session
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["instruct", "my-agent"])
@@ -1893,7 +1893,7 @@ class TestInstructExtended:
             mock_session.id = "test-id"
             mock_session.standing_instructions = "Custom stuff"
             mock_session.standing_instructions_preset = None
-            mock_sm.get_session_by_name.return_value = mock_session
+            mock_sm.resolve_session_name.return_value = mock_session
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["instruct", "my-agent"])
@@ -1907,7 +1907,7 @@ class TestInstructExtended:
             mock_session = MagicMock()
             mock_session.id = "test-id"
             mock_session.standing_instructions = ""
-            mock_sm.get_session_by_name.return_value = mock_session
+            mock_sm.resolve_session_name.return_value = mock_session
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["instruct", "my-agent"])
@@ -1938,7 +1938,7 @@ class TestHeartbeatCommand:
         """Show heartbeat when disabled."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--show"])
@@ -1949,7 +1949,7 @@ class TestHeartbeatCommand:
         """Show heartbeat when enabled."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(
+            mock_sm.resolve_session_name.return_value = self._mock_agent(
                 heartbeat_enabled=True,
                 heartbeat_instruction="Check status",
                 last_heartbeat_time="2026-02-06T12:00:00",
@@ -1965,7 +1965,7 @@ class TestHeartbeatCommand:
         """Show heartbeat when paused."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(
+            mock_sm.resolve_session_name.return_value = self._mock_agent(
                 heartbeat_enabled=True,
                 heartbeat_paused=True,
                 heartbeat_instruction="Check",
@@ -1980,7 +1980,7 @@ class TestHeartbeatCommand:
         """Heartbeat with no flags shows config."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent"])
@@ -1991,7 +1991,7 @@ class TestHeartbeatCommand:
         """Enable heartbeat."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2008,7 +2008,7 @@ class TestHeartbeatCommand:
         """Enable heartbeat uses default 5min frequency."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2025,7 +2025,7 @@ class TestHeartbeatCommand:
         """Enable heartbeat requires --instruction."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--enable"])
@@ -2036,7 +2036,7 @@ class TestHeartbeatCommand:
         """Disable heartbeat."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2048,7 +2048,7 @@ class TestHeartbeatCommand:
         """Pause heartbeat."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2060,7 +2060,7 @@ class TestHeartbeatCommand:
         """Pause heartbeat when not enabled."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=False)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=False)
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--pause"])
@@ -2071,7 +2071,7 @@ class TestHeartbeatCommand:
         """Resume heartbeat."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(
+            mock_sm.resolve_session_name.return_value = self._mock_agent(
                 heartbeat_enabled=True, heartbeat_paused=True
             )
             mock_sm_cls.return_value = mock_sm
@@ -2085,7 +2085,7 @@ class TestHeartbeatCommand:
         """Resume heartbeat when not enabled."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=False)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=False)
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--resume"])
@@ -2096,7 +2096,7 @@ class TestHeartbeatCommand:
         """Update just frequency without full enable."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2108,7 +2108,7 @@ class TestHeartbeatCommand:
         """Update just instruction without full enable."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2120,7 +2120,7 @@ class TestHeartbeatCommand:
         """Heartbeat errors when agent not found."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = None
+            mock_sm.resolve_session_name.return_value = None
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "missing"])
@@ -2131,7 +2131,7 @@ class TestHeartbeatCommand:
         """Heartbeat rejects invalid frequency."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "abc"])
@@ -2142,7 +2142,7 @@ class TestHeartbeatCommand:
         """Heartbeat rejects frequency below 30s."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent()
+            mock_sm.resolve_session_name.return_value = self._mock_agent()
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["heartbeat", "test-agent", "--frequency", "10s"])
@@ -2153,7 +2153,7 @@ class TestHeartbeatCommand:
         """Heartbeat parses seconds suffix."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2164,7 +2164,7 @@ class TestHeartbeatCommand:
         """Heartbeat parses hours suffix."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2175,7 +2175,7 @@ class TestHeartbeatCommand:
         """Heartbeat parses bare number as seconds."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.get_session_by_name.return_value = self._mock_agent(heartbeat_enabled=True)
+            mock_sm.resolve_session_name.return_value = self._mock_agent(heartbeat_enabled=True)
             mock_sm_cls.return_value = mock_sm
 
             with patch('overcode.settings.signal_activity'):
@@ -2837,7 +2837,7 @@ class TestListExtended:
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [_make_session()]
-            mock_launcher.sessions.get_session_by_name.return_value = None
+            mock_launcher.sessions.resolve_session_name.return_value = None
             mock_cls.return_value = mock_launcher
 
             with patch('overcode.monitor_daemon_state.get_monitor_daemon_state', return_value=None):
@@ -2853,7 +2853,7 @@ class TestListExtended:
         with patch('overcode.cli.agent.AgentLauncher') as mock_cls:
             mock_launcher = MagicMock()
             mock_launcher.list_sessions.return_value = [root, child]
-            mock_launcher.sessions.get_session_by_name.return_value = root
+            mock_launcher.sessions.resolve_session_name.return_value = root
             mock_launcher.sessions.get_descendants.return_value = [child]
             mock_cls.return_value = mock_launcher
 
@@ -3088,16 +3088,30 @@ class TestModelsCommands:
         assert result.exit_code == 1
         assert "Refresh failed" in result.output
 class TestRenameCommand:
-    """`overcode agent rename` — the CLI wrapper around AgentLauncher.rename."""
+    """`overcode rename` — the CLI wrapper around AgentLauncher.rename (#478)."""
 
     @staticmethod
-    def _stub_launcher(monkeypatch, sess=None, rename_result=None):
-        """Patch the CLI's AgentLauncher with a stub; return its rename calls."""
+    def _stub_launcher(monkeypatch, sess=None, rename_result=True, name_after=None):
+        """Patch the CLI's AgentLauncher with a stub; return its rename calls.
+
+        ``rename_result`` is what ``rename`` returns, or an exception it
+        raises. ``name_after`` is the record's name once rename returns (what
+        the CLI reads to tell the two ``False`` outcomes apart).
+        """
+        from types import SimpleNamespace
+
         calls = {}
 
         class _Sessions:
-            def get_session_by_name(self, name):
+            def resolve_session_name(self, name):
                 return sess
+
+            def get_session(self, session_id):
+                if sess is None:
+                    return None
+                return SimpleNamespace(
+                    id=sess.id, name=name_after if name_after else sess.name,
+                )
 
         class _Launcher:
             def __init__(self, tmux_session="agents"):
@@ -3106,12 +3120,18 @@ class TestRenameCommand:
             def rename(self, session, new_name, **kwargs):
                 calls["old"] = getattr(session, "name", session)
                 calls["new"] = new_name
+                calls["force"] = kwargs.get("force", False)
                 if isinstance(rename_result, Exception):
                     raise rename_result
-                return calls.get("succeed", True)
+                return rename_result
 
         monkeypatch.setattr("overcode.launcher.AgentLauncher", _Launcher)
         return calls
+
+    @staticmethod
+    def _sess(name="ghost"):
+        from types import SimpleNamespace
+        return SimpleNamespace(name=name, id="abc123", tmux_window=f"{name}-abc1")
 
     def test_rename_unknown_agent_errors(self, monkeypatch):
         self._stub_launcher(monkeypatch, sess=None)
@@ -3120,13 +3140,10 @@ class TestRenameCommand:
         assert "not found" in result.output
 
     def test_rename_invalid_name_errors(self, monkeypatch):
-        from types import SimpleNamespace
-
         from overcode.exceptions import InvalidSessionNameError
 
-        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
         self._stub_launcher(
-            monkeypatch, sess=sess,
+            monkeypatch, sess=self._sess(),
             rename_result=InvalidSessionNameError("bad name!"),
         )
         result = runner.invoke(app, ["rename", "ghost", "bad name!"])
@@ -3134,34 +3151,67 @@ class TestRenameCommand:
         assert "not a valid agent name" in strip_ansi(result.output)
 
     def test_rename_duplicate_name_errors(self, monkeypatch):
-        from types import SimpleNamespace
-
-        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
         self._stub_launcher(
-            monkeypatch, sess=sess,
+            monkeypatch, sess=self._sess(),
             rename_result=ValueError("an agent named 'first' already exists"),
         )
         result = runner.invoke(app, ["rename", "ghost", "first"])
         assert result.exit_code == 1
         assert "already exists" in strip_ansi(result.output)
 
-    def test_rename_launcher_failure_errors(self, monkeypatch):
-        """A launcher rename failure must not print success."""
-        from types import SimpleNamespace
+    def test_busy_agent_is_refused_with_a_force_hint(self, monkeypatch):
+        from overcode.exceptions import AgentBusyError
 
-        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
-        calls = self._stub_launcher(monkeypatch, sess=sess)
-        calls["succeed"] = False
+        calls = self._stub_launcher(
+            monkeypatch, sess=self._sess(),
+            rename_result=AgentBusyError("ghost", "running"),
+        )
         result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        out = " ".join(strip_ansi(result.output).split())  # rich wraps lines
         assert result.exit_code == 1
-        assert "failed to rename" in strip_ansi(result.output)
+        assert "busy (running)" in out
+        assert "--force" in out
+        assert "Renamed agent" not in out
+        assert calls["force"] is False
+
+    def test_force_is_passed_through(self, monkeypatch):
+        calls = self._stub_launcher(monkeypatch, sess=self._sess())
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor", "--force"])
+        assert result.exit_code == 0
+        assert calls["force"] is True
+
+    def test_window_rename_refused_says_agent_kept_its_name(self, monkeypatch):
+        """False with the record unchanged: tmux refused, agent restored."""
+        self._stub_launcher(monkeypatch, sess=self._sess(), rename_result=False)
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        out = " ".join(strip_ansi(result.output).split())  # rich wraps lines
+        assert result.exit_code == 1
+        assert "restarted under its old name" in out
+        assert "Renamed agent" not in out
+
+    def test_relaunch_failure_says_renamed_and_how_to_restart(self, monkeypatch):
+        """False with the record renamed: the rename stands, relaunch did not."""
+        self._stub_launcher(
+            monkeypatch, sess=self._sess(), rename_result=False,
+            name_after="auth-refactor",
+        )
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        out = " ".join(strip_ansi(result.output).split())  # rich wraps lines
+        assert result.exit_code == 1
+        assert "overcode restart auth-refactor" in out
 
     def test_rename_success(self, monkeypatch):
-        from types import SimpleNamespace
-
-        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
-        calls = self._stub_launcher(monkeypatch, sess=sess)
+        calls = self._stub_launcher(monkeypatch, sess=self._sess())
         result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
         assert result.exit_code == 0
         assert "Renamed agent: ghost" in strip_ansi(result.output)
-        assert calls == {"old": "ghost", "new": "auth-refactor"}
+        assert calls == {"old": "ghost", "new": "auth-refactor", "force": False}
+
+    def test_old_name_reaches_the_agent_with_a_notice(self, monkeypatch):
+        """Renaming by a previous name works and says what the name is now."""
+        calls = self._stub_launcher(monkeypatch, sess=self._sess("current"))
+        result = runner.invoke(app, ["rename", "original", "third"])
+        out = strip_ansi(result.output)
+        assert result.exit_code == 0
+        assert "'original' was renamed to 'current'" in out
+        assert calls["old"] == "current"

@@ -3405,7 +3405,7 @@ class SupervisorTUI(
         Deprecated: prefer _find_any_session_by_id() for unambiguous routing.
         """
         # Check local sessions first
-        session = self.session_manager.get_session_by_name(name)
+        session = self.session_manager.resolve_session_name(name)
         if session:
             return session
         # Check remote sessions in self.sessions

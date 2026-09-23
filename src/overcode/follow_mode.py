@@ -15,7 +15,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .session_manager import SessionManager
+from .session_manager import Session, SessionManager, rename_notice
 from .status_patterns import strip_ansi
 from .settings import get_session_dir
 from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_WAITING_OVERSIGHT
@@ -83,12 +83,41 @@ def _check_report(tmux_session: str, agent_name: str) -> Optional[dict]:
         return None
 
 
-def _check_session_terminated(sessions: SessionManager, agent_name: str) -> bool:
-    """Check if the session has been terminated (tmux window gone)."""
-    session = sessions.get_session_by_name(agent_name)
+def _check_session_terminated(
+    sessions: SessionManager, agent_name: str, session_id: Optional[str] = None,
+) -> bool:
+    """Check if the session has been terminated (tmux window gone).
+
+    With ``session_id`` the agent is found by id, so a rename (#478) — which
+    changes the name mid-follow — is not mistaken for termination.
+    """
+    session = _lookup(sessions, agent_name, session_id)
     if session is None:
         return True
     return session.status == "terminated"
+
+
+def _lookup(
+    sessions: SessionManager, name: str, session_id: Optional[str],
+) -> Optional[Session]:
+    """The followed agent: by id when known (survives renames), else by name."""
+    if session_id is not None:
+        return sessions.get_session(session_id)
+    return sessions.get_session_by_name(name)
+
+
+def _current_identity(
+    sessions: SessionManager, session_id: Optional[str], name: str, window_name: str,
+) -> tuple:
+    """(name, window) of the followed agent now — both change on a rename (#478)."""
+    if session_id is None:
+        return name, window_name
+    session = sessions.get_session(session_id)
+    if session is None:
+        return name, window_name
+    if session.name != name:
+        print(f"\n[follow] Agent '{name}' was renamed to '{session.name}'", file=sys.stderr)
+    return session.name, session.tmux_window
 
 
 def _find_dedup_start(new_lines: list[str], recent_lines: deque) -> int:
@@ -148,9 +177,11 @@ def _stream_final_output(tmux_session: str, window_name: str, poll_interval: flo
         _emit_new_lines(raw, recent_lines)
 
 
-def _handle_report(report: dict, name: str, sessions: SessionManager) -> int:
+def _handle_report(
+    report: dict, name: str, sessions: SessionManager, session_id: Optional[str] = None,
+) -> int:
     """Process a report and return the appropriate exit code."""
-    session = sessions.get_session_by_name(name)
+    session = _lookup(sessions, name, session_id)
     if session:
         sessions.update_session_status(session.id, "done")
         # Refund unused budget to parent on successful completion (#432).
@@ -190,11 +221,19 @@ def follow_agent(
         Exit code: 0 on success report, 1 on failure/terminated, 2 on timeout, 130 on Ctrl-C
     """
     sessions = SessionManager()
-    session = sessions.get_session_by_name(name)
+    session = sessions.resolve_session_name(name)
     if session is None:
         print(f"Error: Agent '{name}' not found", file=sys.stderr)
         return 1
+    notice = rename_notice(name, session)
+    if notice:
+        print(f"[follow] {notice}", file=sys.stderr)
 
+    # Follow by id: the name and window are re-read every poll, so a rename
+    # of the followed agent (#478) is tracked instead of reported as its
+    # termination (which a parent would read as the child failing).
+    session_id = session.id
+    name = session.name
     window_name = session.tmux_window
 
     # Read oversight policy from session
@@ -213,10 +252,11 @@ def follow_agent(
 
     try:
         while not interrupted:
+            name, window_name = _current_identity(sessions, session_id, name, window_name)
             # Capture pane content
             raw = _capture_pane(tmux_session, window_name)
             if raw is None:
-                if _check_session_terminated(sessions, name):
+                if _check_session_terminated(sessions, name, session_id):
                     print(f"\n[follow] Agent '{name}' terminated", file=sys.stderr)
                     return 1
                 time.sleep(poll_interval)
@@ -231,18 +271,18 @@ def follow_agent(
                 # Check if report already filed before Stop
                 report = _check_report(tmux_session, name)
                 if report:
-                    return _handle_report(report, name, sessions)
+                    return _handle_report(report, name, sessions, session_id)
 
                 # --on-stuck fail: exit immediately without waiting for report
                 if oversight_policy == "fail":
-                    session = sessions.get_session_by_name(name)
+                    session = _lookup(sessions, name, session_id)
                     if session:
                         sessions.update_session_status(session.id, "done")
                     print(f"\n[follow] Agent '{name}' stopped without report (--on-stuck fail)", file=sys.stderr)
                     return 1
 
                 # Mark as waiting_oversight and set deadline
-                session = sessions.get_session_by_name(name)
+                session = _lookup(sessions, name, session_id)
                 if session:
                     if oversight_policy == "timeout" and oversight_timeout_seconds > 0:
                         deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
@@ -262,10 +302,11 @@ def follow_agent(
                     name, tmux_session, sessions, window_name,
                     oversight_policy, oversight_timeout_seconds,
                     poll_interval, recent_lines,
+                    session_id=session_id,
                 )
 
             # Check if agent terminated (window gone)
-            if _check_session_terminated(sessions, name):
+            if _check_session_terminated(sessions, name, session_id):
                 print(f"\n[follow] Agent '{name}' terminated", file=sys.stderr)
                 return 1
 
@@ -291,8 +332,13 @@ def _poll_for_report(
     oversight_timeout_seconds: float,
     poll_interval: float,
     recent_lines: deque,
+    session_id: Optional[str] = None,
 ) -> int:
     """Poll for a report file after Stop event detected.
+
+    With ``session_id`` the agent's name and window are re-read each poll,
+    so a child renamed while its parent waits (#478) keeps being followed
+    and its report is found under the new name.
 
     Returns:
         0 on success report, 1 on failure report or terminated, 2 on timeout
@@ -302,14 +348,15 @@ def _poll_for_report(
         deadline = datetime.now() + timedelta(seconds=oversight_timeout_seconds)
 
     while True:
+        name, window_name = _current_identity(sessions, session_id, name, window_name)
         # Check for report
         report = _check_report(tmux_session, name)
         if report:
-            return _handle_report(report, name, sessions)
+            return _handle_report(report, name, sessions, session_id)
 
         # Check timeout
         if deadline and datetime.now() >= deadline:
-            session = sessions.get_session_by_name(name)
+            session = _lookup(sessions, name, session_id)
             if session:
                 sessions.update_session(
                     session.id,
@@ -321,7 +368,7 @@ def _poll_for_report(
             return 2
 
         # Check if window is gone
-        if _check_session_terminated(sessions, name):
+        if _check_session_terminated(sessions, name, session_id):
             print(f"\n[follow] Agent '{name}' terminated while waiting for report", file=sys.stderr)
             return 1
 

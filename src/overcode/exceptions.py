@@ -119,6 +119,15 @@ class SessionAlreadyExistsError(SessionError):
         super().__init__(f"Session '{name}' already exists")
 
 
+class AgentBusyError(SessionError):
+    """The agent is mid-turn, so an operation that restarts it was refused (#478)."""
+
+    def __init__(self, name: str, status: str):
+        self.name = name
+        self.status = status
+        super().__init__(f"Agent '{name}' is busy ({status})")
+
+
 class SessionLaunchError(SessionError):
     """Error launching an agent session."""
 

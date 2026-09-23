@@ -18,7 +18,7 @@ import threading
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from .settings import DAEMON, PATHS
 
@@ -159,6 +159,12 @@ class StatusHistoryFile:
         self._carry: Dict[str, Row] = {}
         self._cached_hours: float = 0.0
         self._read_offset: int = 0
+        # Per session id: the agent name on its newest row, and the ids
+        # whose name changed within the rows read (#478 rename). A renamed
+        # agent's older rows are reported under its current name, so its
+        # timeline stays one agent across the rename.
+        self._name_by_sid: Dict[str, str] = {}
+        self._renamed_sids: Set[str] = set()
 
     def read(
         self,
@@ -213,6 +219,9 @@ class StatusHistoryFile:
         except (OSError, IOError):
             return []
 
+        self._name_by_sid = {}
+        self._renamed_sids = set()
+        self._note_names(rows)
         entries: Deque[Row] = deque()
         prior: Dict[str, Row] = {}
         for row in rows:
@@ -234,6 +243,7 @@ class StatusHistoryFile:
                 new_entries = self._parse_rows(f, self._read_offset)
         except (OSError, IOError):
             new_entries = []
+        self._note_names(new_entries)
 
         # Trim entries that have aged out of the cached window
         self._trim(now - timedelta(hours=self._cached_hours))
@@ -242,6 +252,28 @@ class StatusHistoryFile:
         self._cached_size = stat.st_size
         self._read_offset = stat.st_size
         return self._filter(now, hours, agent_name, carry)
+
+    def _note_names(self, rows: List[Row]) -> None:
+        """Record each session id's newest name, noting ids that changed."""
+        names = self._name_by_sid
+        for row in rows:
+            sid = row[4]
+            if not sid:
+                continue  # rows written before v0.3.6 carry no id
+            prev = names.get(sid)
+            if prev != row[1]:
+                if prev is not None:
+                    self._renamed_sids.add(sid)
+                names[sid] = row[1]
+
+    def _canonical(self, row: Row) -> Row:
+        """``row`` under its agent's current name (see ``_name_by_sid``)."""
+        sid = row[4]
+        if sid in self._renamed_sids:
+            current = self._name_by_sid[sid]
+            if current != row[1]:
+                return (row[0], current) + row[2:]
+        return row
 
     def _trim(self, cutoff: datetime) -> None:
         """Drop rows older than ``cutoff`` from the left; they become the carry.
@@ -337,15 +369,20 @@ class StatusHistoryFile:
         cutoff = now - timedelta(hours=hours)
         result: List[Row] = []
         prior: Optional[Dict[str, Row]] = None
+        canon = self._canonical if self._renamed_sids else None
         if carry:
-            if agent_name is None:
-                prior = dict(self._carry)
-            else:
-                prior = {}
-                row = self._carry.get(agent_name)
-                if row is not None:
-                    prior[agent_name] = row
+            prior = {}
+            for row in self._carry.values():
+                if canon is not None:
+                    row = canon(row)
+                if agent_name is not None and row[1] != agent_name:
+                    continue
+                held = prior.get(row[1])
+                if held is None or row[0] >= held[0]:
+                    prior[row[1]] = row
         for e in self._cached_entries:
+            if canon is not None:
+                e = canon(e)
             if agent_name is not None and e[1] != agent_name:
                 continue
             if e[0] >= cutoff:
@@ -780,9 +817,54 @@ def read_agent_status_history_range(
             continue
 
     entries.sort(key=lambda e: e[0])
+    entries, prior = _canonicalize_names(entries, prior)
     if prior:
         entries = [(start,) + row[1:] for row in prior.values()] + entries
     return entries
+
+
+def _canonicalize_names(
+    entries: List[Row],
+    prior: Dict[str, Row],
+) -> Tuple[List[Row], Dict[str, Row]]:
+    """Report a renamed agent's rows under its newest name (#478).
+
+    Each session id's newest row, across ``entries`` (oldest first) and
+    the carry rows in ``prior``, names the agent; older rows with the same
+    id under another name are relabelled, and the carry is re-keyed so one
+    agent keeps one carry row. Rows without an id are left alone. One pass
+    to find the newest names, a second only when some id changed name.
+    """
+    newest: Dict[str, Tuple[datetime, str]] = {}
+    names_seen: Dict[str, str] = {}
+    renamed_sids: Set[str] = set()
+    for row in (*prior.values(), *entries):
+        sid = row[4]
+        if not sid:
+            continue
+        seen = names_seen.setdefault(sid, row[1])
+        if seen != row[1]:
+            renamed_sids.add(sid)
+        newest_seen = newest.get(sid)
+        if newest_seen is None or row[0] >= newest_seen[0]:
+            newest[sid] = (row[0], row[1])
+    if not renamed_sids:
+        return entries, prior
+
+    def canon(row: Row) -> Row:
+        if row[4] in renamed_sids:
+            current = newest[row[4]][1]
+            if current != row[1]:
+                return (row[0], current) + row[2:]
+        return row
+
+    rekeyed: Dict[str, Row] = {}
+    for row in prior.values():
+        row = canon(row)
+        held = rekeyed.get(row[1])
+        if held is None or row[0] >= held[0]:
+            rekeyed[row[1]] = row
+    return [canon(r) for r in entries], rekeyed
 
 
 def disk_usage_findings(tmux_session: str, threshold_mb: float = 5000.0) -> List[str]:

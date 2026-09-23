@@ -315,6 +315,29 @@ def _get_hook_state_path(tmux_session: str, session_name: str) -> Path:
     return base / tmux_session / f"hook_state_{session_name}.json"
 
 
+def get_rename_notice_path(tmux_session: str, session_name: str) -> Path:
+    """One-shot note telling a renamed agent its new name (#478).
+
+    ``overcode rename`` writes it under the *new* name; the agent's next
+    UserPromptSubmit prints it as prompt context and deletes it.
+    """
+    state_dir = os.environ.get("OVERCODE_STATE_DIR")
+    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
+    return base / tmux_session / f"rename_notice_{session_name}.txt"
+
+
+def _emit_rename_notice(tmux_session: str, session_name: str) -> None:
+    """Print, then consume, the agent's pending rename note if there is one."""
+    path = get_rename_notice_path(tmux_session, session_name)
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return  # none pending (the common case)
+    path.unlink(missing_ok=True)
+    if text:
+        print(text)
+
+
 def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     """Get the path for the append-only hook event log (#448).
 
@@ -859,3 +882,4 @@ def handle_hook_event() -> None:
         line = generate_enhanced_context(tmux_session, session_name)
         if line:
             print(line)
+        _emit_rename_notice(tmux_session, session_name)

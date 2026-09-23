@@ -185,6 +185,13 @@ class Session:
     # Human annotation - user's notes about this agent (#74)
     human_annotation: str = ""
 
+    # Names this agent had before `overcode rename`, oldest first (#478).
+    # Name lookups fall back to these (resolve_session_name) so a parent,
+    # the supervisor or a script still holding an old name reaches the
+    # agent — with a notice — instead of "not found". An old name belongs
+    # to one agent at a time, and a live agent's own name always wins.
+    previous_names: List[str] = field(default_factory=list)
+
     # Backend session ids owned by this overcode session (#119)
     # Used to accurately calculate context window for this specific agent
     agent_session_ids: List[str] = field(default_factory=list)
@@ -588,6 +595,18 @@ def _archived_session(record: dict) -> Optional["Session"]:
         return session
     except (KeyError, TypeError):
         return None
+
+
+def rename_notice(requested: str, session: Optional["Session"]) -> Optional[str]:
+    """The line to show when ``requested`` reached ``session`` through a rename.
+
+    ``SessionManager.resolve_session_name`` follows old names; a caller that
+    used one gets its answer plus this notice, so a person or agent holding
+    a stale name learns the new one (#478). None when no rename was involved.
+    """
+    if session is None or session.name == requested:
+        return None
+    return f"note: agent '{requested}' was renamed to '{session.name}'"
 
 
 class SessionManager:
@@ -1151,6 +1170,13 @@ class SessionManager:
         )
 
         with self._locked_state() as state:
+            # A new agent taking a name that is another agent's alias takes
+            # it over outright: the alias would otherwise come back to life
+            # when this agent is archived (#478).
+            for record in state.values():
+                aliases = record.get("previous_names") or []
+                if name in aliases:
+                    record["previous_names"] = [a for a in aliases if a != name]
             state[session.id] = session.to_dict()
 
         return session
@@ -1166,9 +1192,30 @@ class SessionManager:
         return self._snapshot().get(session_id)
 
     def get_session_by_name(self, name: str) -> Optional[Session]:
-        """Get a session by name (same shared snapshot as ``get_session``)."""
+        """Get a session by its current name (same shared snapshot as ``get_session``).
+
+        Exact match only — use this where the question is "is this name
+        taken?" (launch/fork duplicate checks). Anything addressing an agent
+        a user or another agent named should use ``resolve_session_name``,
+        which also follows renames.
+        """
         for session in self._snapshot().values():
             if session.name == name:
+                return session
+        return None
+
+    def resolve_session_name(self, name: str) -> Optional[Session]:
+        """Find the agent ``name`` refers to, following renames (#478).
+
+        The agent currently called ``name`` wins; otherwise the agent that
+        was called ``name`` before an ``overcode rename``. The caller can
+        tell the two apart by ``session.name != name`` (``rename_notice``).
+        """
+        exact = self.get_session_by_name(name)
+        if exact is not None:
+            return exact
+        for session in self._snapshot().values():
+            if name in session.previous_names:
                 return session
         return None
 
@@ -1453,6 +1500,11 @@ class SessionManager:
         """Atomically rename a session: duplicate check and update in one
         locked read-modify-write, so two concurrent renames cannot both win.
 
+        The old name is appended to the session's ``previous_names`` and
+        taken off every other session's, so an old name resolves to the
+        agent that held it most recently; ``new_name`` is dropped from all
+        alias lists, since it is now a live name.
+
         Args:
             session_id: The session being renamed.
             new_name: The new name; the write is refused (False) when any
@@ -1469,8 +1521,20 @@ class SessionManager:
             for sid, record in state.items():
                 if sid != session_id and record.get("name") == new_name:
                     return False
-            state[session_id].update(fields)
-            state[session_id]["name"] = new_name
+            old_name = state[session_id].get("name")
+            for sid, record in state.items():
+                aliases = record.get("previous_names") or []
+                drop = {new_name} if sid == session_id else {new_name, old_name}
+                if any(a in drop for a in aliases):
+                    record["previous_names"] = [a for a in aliases if a not in drop]
+            record = state[session_id]
+            record.update(fields)
+            if old_name and old_name != new_name:
+                record["previous_names"] = [
+                    *(a for a in record.get("previous_names") or [] if a != old_name),
+                    old_name,
+                ]
+            record["name"] = new_name
             return True
 
     def update_stats(self, session_id: str, **stats_kwargs):
