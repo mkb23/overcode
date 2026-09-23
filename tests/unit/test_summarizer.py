@@ -328,11 +328,11 @@ class TestSummarizerComponentMethods:
 class TestUpdatePassCancellation:
     """update() checks should_stop between agents and resumes round-robin.
 
-    The TUI runs a pass every 5 s in an exclusive thread worker; a new tick
-    cancels the previous one. One HTTP call per agent means a 50-agent pass
+    The TUI runs a pass every 5 s in a single-flight thread worker; the app
+    cancels it on exit. One HTTP call per agent means a 50-agent pass
     outlasts the tick, so a cancelled pass must keep what it produced and
     the next pass must carry on from where it stopped — otherwise the first
-    few agents would be re-summarised every tick and the rest never.
+    few agents would be re-summarised every pass and the rest never.
     """
 
     def _component(self):

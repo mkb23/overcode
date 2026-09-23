@@ -383,8 +383,9 @@ class SupervisorTUI(
         # Flag to prevent overlapping fast-path updates. It is checked on the
         # main thread before a worker is even submitted, and the fast path
         # is deliberately not coupled to any other worker group. Every other
-        # periodic thread worker carries @single_flight (worker_guard) so a
-        # slow tick is skipped rather than stacked.
+        # periodic thread worker carries @single_flight (worker_guard): a
+        # tick or explicit refresh that arrives mid-run is coalesced into
+        # one rerun after it, never stacked and never dropped.
         self._status_update_in_progress = False
         # Fast-path tick counter and last captured pane text per session.
         # Non-focused agents are captured round-robin (see
@@ -703,7 +704,7 @@ class SupervisorTUI(
         """Update daemon status bar (kicks off background worker)"""
         self._fetch_daemon_status_async()
 
-    @work(thread=True, exclusive=True, group="daemon_status")
+    @work(thread=True, group="daemon_status")
     @single_flight("daemon_status")
     def _fetch_daemon_status_async(self) -> None:
         """Fetch daemon status off the main thread, then apply to UI."""
@@ -804,7 +805,7 @@ class SupervisorTUI(
         """Update the status timeline widget (kicks off background worker)"""
         self._fetch_timeline_async()
 
-    @work(thread=True, exclusive=True, group="timeline")
+    @work(thread=True, group="timeline")
     @single_flight("timeline")
     def _fetch_timeline_async(self) -> None:
         """Read timeline CSV data off the main thread, then apply to UI."""
@@ -893,7 +894,7 @@ class SupervisorTUI(
         """
         self._resize_agent_windows_async()
 
-    @work(thread=True, exclusive=True, group="agent_resize")
+    @work(thread=True, group="agent_resize")
     @single_flight("agent_resize")
     def _resize_agent_windows_async(self) -> None:
         """Worker: read bottom-pane size, then resize each agent window."""
@@ -945,7 +946,7 @@ class SupervisorTUI(
             pass  # Unknown sizes → resize everything, as before
         for window in windows_needing_resize(current_sizes, windows, width, height):
             if worker_cancelled():
-                return  # a newer resize pass (or shutdown) superseded this one
+                return  # app exit; the next pass picks up the remaining windows
             target = f"{sync_session}:{window}"
             try:
                 subprocess.run(
@@ -969,7 +970,7 @@ class SupervisorTUI(
         """
         self._fetch_sessions_async()
 
-    @work(thread=True, exclusive=True, group="refresh_sessions")
+    @work(thread=True, group="refresh_sessions")
     @single_flight("refresh_sessions")
     def _fetch_sessions_async(self) -> None:
         """Read session list off the main thread, then apply to UI."""
@@ -1616,7 +1617,7 @@ class SupervisorTUI(
         finally:
             self._status_update_in_progress = False
 
-    @work(thread=True, exclusive=True, group="slow_stats")
+    @work(thread=True, group="slow_stats")
     @single_flight("slow_stats")
     def _update_stats_async(self) -> None:
         """Slow path: fetch claude stats + git diff every 5s.
@@ -1711,7 +1712,7 @@ class SupervisorTUI(
         """Kick off sister polling in background thread."""
         self._poll_sisters_async()
 
-    @work(thread=True, exclusive=True, group="sister_poll")
+    @work(thread=True, group="sister_poll")
     @single_flight("sister_poll")
     def _poll_sisters_async(self) -> None:
         """Fetch remote sessions from all sisters."""
@@ -1754,7 +1755,7 @@ class SupervisorTUI(
             session.source_url, session.source_api_key, session.name, session.id
         )
 
-    @work(thread=True, exclusive=True, group="focused_sister_poll")
+    @work(thread=True, group="focused_sister_poll")
     @single_flight("focused_sister_poll")
     def _poll_focused_sister_async(
         self, source_url: str, source_api_key: str, agent_name: str, session_id: str
@@ -2015,7 +2016,7 @@ class SupervisorTUI(
                 widget.refresh()
         self._mark_event("apply_stats_end")
 
-    @work(thread=True, exclusive=True, group="summarizer", name="summarizer")
+    @work(thread=True, group="summarizer", name="summarizer")
     @single_flight("summarizer")
     def _update_summaries_async(self) -> None:
         """Background thread for AI summarization.
@@ -2066,9 +2067,11 @@ class SupervisorTUI(
             return
 
         # Update summaries (this makes API calls). One HTTP round trip per
-        # agent: a 50-agent pass outlasts the 5 s tick, so the component
-        # checks the cancel flag between agents, stops early (keeping the
-        # summaries it did produce) and resumes from that agent next tick.
+        # agent: a 50-agent pass outlasts the 5 s tick. Ticks that land
+        # mid-pass are coalesced by @single_flight into one rerun, so the
+        # pass runs to completion; the cancel check between agents fires
+        # only on app exit, and the round-robin cursor resumes from that
+        # agent on the next pass.
         summaries = self._summarizer.update(sessions, should_stop=worker_cancelled)
 
         # Apply to widgets on main thread
@@ -2834,7 +2837,7 @@ class SupervisorTUI(
         """Get job widgets in order."""
         return list(self.query(JobSummary))
 
-    @work(thread=True, exclusive=True, group="refresh_jobs")
+    @work(thread=True, group="refresh_jobs")
     @single_flight("refresh_jobs")
     def _refresh_jobs(self) -> None:
         """Refresh jobs list from state file."""
@@ -3584,7 +3587,7 @@ class SupervisorTUI(
         else:
             self.notify("Failed to start Monitor Daemon", severity="warning")
 
-    @work(thread=True, exclusive=True, group="ssh_provision")
+    @work(thread=True, group="ssh_provision")
     @single_flight("ssh_provision")
     def _provision_ssh_sisters(self) -> None:
         """Provision SSH-configured sisters in a background thread.
