@@ -1598,3 +1598,194 @@ class TestPhase6FieldRenames:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ── stat-gated parse cache (audit R4) ────────────────────────────────────
+
+
+def _settle(path: Path, seconds_ago: float = 1.0) -> None:
+    """Age ``path``'s mtime so the cache trusts its signature (see stat_gate)."""
+    import os
+
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns - int(seconds_ago * 1e9)))
+
+
+def _count_reads(sm: SessionManager, attr: str = "_read_state_file") -> list:
+    """Wrap the uncached reader so a test can count real parses."""
+    calls = []
+    original = getattr(sm, attr)
+
+    def counting():
+        calls.append(1)
+        return original()
+
+    setattr(sm, attr, counting)
+    return calls
+
+
+def _dicts(sessions) -> list:
+    return [s.to_dict() for s in sessions]
+
+
+class TestStatGatedSessionCache:
+    """``list_sessions``/``get_session`` re-parse only when sessions.json changed."""
+
+    def _manager_with_sessions(self, tmp_path, n=3):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        ids = []
+        for i in range(n):
+            s = sm.create_session(
+                name=f"agent-{i}", tmux_session="agents", tmux_window=f"w{i}", command=["claude"]
+            )
+            ids.append(s.id)
+        return sm, ids
+
+    def test_unchanged_file_is_parsed_once(self, tmp_path):
+        sm, ids = self._manager_with_sessions(tmp_path)
+        _settle(sm.state_file)
+        reads = _count_reads(sm)
+        first = sm.list_sessions()
+        for _ in range(5):
+            sm.list_sessions()
+            sm.get_session(ids[0])
+            sm.get_session_by_name("agent-1")
+        assert len(reads) == 1
+        assert [s.id for s in first] == ids
+
+    def test_cached_output_matches_an_uncached_manager_across_writes(self, tmp_path):
+        """Byte-identical to a fresh parse before and after every kind of write."""
+        cached, ids = self._manager_with_sessions(tmp_path)
+        _settle(cached.state_file)
+        reads = _count_reads(cached)
+
+        def fresh():
+            return SessionManager(state_dir=tmp_path, skip_git_detection=True)
+
+        assert _dicts(cached.list_sessions()) == _dicts(fresh().list_sessions())
+        assert len(reads) == 1
+
+        # In-place rewrite with the same byte length (only mtime_ns moves)
+        cached.update_stats(ids[0], interaction_count=1)
+        cached.update_stats(ids[0], interaction_count=2)
+        _settle(cached.state_file)
+        assert cached.get_session(ids[0]).stats.interaction_count == 2
+        assert _dicts(cached.list_sessions()) == _dicts(fresh().list_sessions())
+
+        # In-place rewrite that changes the size, by another manager instance
+        fresh().update_session(ids[1], human_annotation="a much longer note than before")
+        _settle(cached.state_file)
+        assert cached.get_session(ids[1]).human_annotation == "a much longer note than before"
+        assert _dicts(cached.list_sessions()) == _dicts(fresh().list_sessions())
+
+        # A whole-file replacement (new inode)
+        fresh().delete_session(ids[2], archive=False)
+        state = json.loads(cached.state_file.read_text())
+        tmp = cached.state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.rename(cached.state_file)
+        _settle(cached.state_file)
+        assert [s.id for s in cached.list_sessions()] == ids[:2]
+        assert _dicts(cached.list_sessions()) == _dicts(fresh().list_sessions())
+
+        # A parse per change, none for the reads in between
+        assert len(reads) == 4
+
+    def test_a_just_written_file_is_reread_until_its_stamp_settles(self, tmp_path):
+        """Write-then-read is exact even when the write is the last thing that happened."""
+        sm, ids = self._manager_with_sessions(tmp_path)
+        reads = _count_reads(sm)
+        sm.update_stats(ids[0], interaction_count=5)
+        assert sm.get_session(ids[0]).stats.interaction_count == 5
+        sm.update_stats(ids[0], interaction_count=6)
+        assert sm.get_session(ids[0]).stats.interaction_count == 6
+        assert len(reads) == 2
+
+    def test_readers_share_objects_until_the_file_changes(self, tmp_path):
+        """The documented aliasing contract: one object per session per parse."""
+        sm, ids = self._manager_with_sessions(tmp_path)
+        _settle(sm.state_file)
+        a = sm.list_sessions()
+        b = sm.list_sessions()
+        assert a is not b and a == b  # a new list each call...
+        assert a[0] is b[0]  # ...of the same objects
+        assert sm.get_session(ids[0]) is a[0]
+        assert sm.get_session_by_name("agent-0") is a[0]
+        sm.update_session(ids[0], human_annotation="changed")
+        _settle(sm.state_file)
+        c = sm.get_session(ids[0])
+        assert c is not a[0]
+        assert c.human_annotation == "changed"
+        assert a[0].human_annotation == ""  # the old snapshot is untouched
+
+    def test_load_state_dict_is_not_mutated_by_object_construction(self, tmp_path):
+        sm, ids = self._manager_with_sessions(tmp_path)
+        sm.list_sessions()
+        raw = sm._load_state()
+        assert isinstance(raw[ids[0]]["stats"], dict)
+
+    def test_from_dict_leaves_its_input_alone(self):
+        data = {
+            "id": "x",
+            "name": "n",
+            "tmux_session": "agents",
+            "tmux_window": 3,
+            "command": [],
+            "start_directory": None,
+            "start_time": "2026-01-01T00:00:00",
+            "stats": {"interaction_count": 4, "model": "opus"},
+            "time_context_enabled": True,
+        }
+        before = json.dumps(data, sort_keys=True)
+        session = Session.from_dict(data)
+        assert json.dumps(data, sort_keys=True) == before
+        assert session.model == "opus"
+        assert session.stats.interaction_count == 4
+        assert session.tmux_window == "3"
+        assert session.enhanced_context_enabled is True
+
+    def test_writers_always_reread_the_file(self, tmp_path):
+        """_locked_state never trusts the snapshot: an external write between a
+        cached read and an update is preserved."""
+        sm, ids = self._manager_with_sessions(tmp_path)
+        _settle(sm.state_file)
+        sm.list_sessions()  # warm the snapshot
+        other = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        other.update_session(ids[0], human_annotation="from elsewhere")
+        sm.update_stats(ids[0], interaction_count=9)
+        _settle(sm.state_file)
+        s = sm.get_session(ids[0])
+        assert s.human_annotation == "from elsewhere"
+        assert s.stats.interaction_count == 9
+
+    def test_missing_state_file_is_not_cached(self, tmp_path):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        reads = _count_reads(sm)
+        assert sm.list_sessions() == []
+        assert sm.get_session("nope") is None
+        assert len(reads) == 2
+
+
+class TestStatGatedArchiveCache:
+    def test_archive_parsed_once_and_matches_uncached(self, tmp_path):
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        s1 = sm.create_session(name="a", tmux_session="agents", tmux_window="w", command=[])
+        s2 = sm.create_session(name="b", tmux_session="agents", tmux_window="w", command=[])
+        sm.delete_session(s1.id)
+        _settle(sm.archive_file)
+        reads = _count_reads(sm, "_read_archive_file")
+        archived = sm.list_archived_sessions()
+        assert [s.id for s in archived] == [s1.id]
+        assert archived[0]._end_time is not None
+        assert sm.get_archived_session(s1.id) is archived[0]
+        assert sm.list_archived_sessions()[0] is archived[0]
+        assert len(reads) == 1
+
+        fresh = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        assert _dicts(sm.list_archived_sessions()) == _dicts(fresh.list_archived_sessions())
+
+        sm.delete_session(s2.id)  # its read-modify-write uses the uncached reader
+        _settle(sm.archive_file)
+        assert [s.id for s in sm.list_archived_sessions()] == [s1.id, s2.id]
+        assert _dicts(sm.list_archived_sessions()) == _dicts(fresh.list_archived_sessions())
+        assert len(reads) == 3  # one for the append, one re-parse, none for the rest

@@ -8,12 +8,13 @@ import os
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields
 import uuid
 import time
 
 from .exceptions import StateWriteError
+from .stat_gate import FileSignature, StatGatedCache
 
 
 _HEADS_PREFIX = "ref: refs/heads/"
@@ -326,6 +327,8 @@ class Session:
 
         Returns None if required fields are missing or data is corrupt.
         Uses dataclasses.fields() to auto-detect required fields and valid keys.
+        Never mutates ``data``: ``SessionManager`` hands the same parsed dict
+        to every reader until the state file changes.
         """
         cls_fields = fields(cls)
 
@@ -337,21 +340,20 @@ class Session:
         if not all(k in data for k in required):
             return None
 
-        # Backward compat: migrate stats.model → session.model
-        if 'stats' in data and isinstance(data['stats'], dict):
-            stats_model = data['stats'].get('model')
-            if stats_model and not data.get('model'):
-                data['model'] = stats_model
-
-        # Handle stats separately (nested dataclass needs manual conversion)
-        if 'stats' in data and isinstance(data['stats'], dict):
-            data['stats'] = SessionStats.from_dict(data['stats'])
-        elif 'stats' not in data:
-            data['stats'] = SessionStats()
-
         # Filter to only known fields
         valid_fields = {f.name for f in cls_fields}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
+
+        # Handle stats separately (nested dataclass needs manual conversion)
+        if 'stats' in data and isinstance(data['stats'], dict):
+            stats_data = data['stats']
+            # Backward compat: migrate stats.model → session.model
+            stats_model = stats_data.get('model')
+            if stats_model and not data.get('model'):
+                filtered['model'] = stats_model
+            filtered['stats'] = SessionStats.from_dict(stats_data)
+        elif 'stats' not in data:
+            filtered['stats'] = SessionStats()
 
         # Backward compat: convert int tmux_window to str
         if 'tmux_window' in filtered and isinstance(filtered['tmux_window'], int):
@@ -417,14 +419,62 @@ class SessionManager:
         self.state_file = self.state_dir / "sessions.json"
         self.archive_file = self.state_dir / "archive.json"
         self._skip_git_detection = skip_git_detection
+        # The last parse of each file plus the Session objects built from it,
+        # reused while the file's stat signature is unchanged (audit R4). Per
+        # instance: the daemon and each TUI hold their own manager, and the
+        # TUI's workers call list_sessions() five to six times a second
+        # against a file that changes only when something writes it.
+        self._state_cache: StatGatedCache[Tuple[Dict[str, dict], Dict[str, Session]]] = (
+            StatGatedCache()
+        )
+        self._archive_cache: StatGatedCache[Tuple[Dict[str, dict], Dict[str, Session]]] = (
+            StatGatedCache()
+        )
 
     def _load_state(self) -> Dict[str, dict]:
-        """Load all sessions from state file with file locking.
+        """Load all sessions from the state file, parsing only when it changed.
+
+        Returns the same dict as the previous call while ``sessions.json``
+        has the same stat signature (see :mod:`overcode.stat_gate`); that
+        dict is shared with every other reader of this manager and must not
+        be mutated. Writers go through :meth:`_locked_state`, which always
+        re-reads under the exclusive lock.
+        """
+        return self._snapshot()[0]
+
+    def _snapshot(self) -> Tuple[Dict[str, dict], Dict[str, Session]]:
+        """The parsed state file and the ``Session`` objects built from it.
+
+        Both are built once per change of ``sessions.json`` and handed to
+        every ``get_session`` / ``list_sessions`` call until the file
+        changes; a call in between costs one ``os.stat``.
+        """
+        return self._state_cache.get(self.state_file, self._parse_state_file)
+
+    def _parse_state_file(
+        self,
+    ) -> Tuple[Optional[FileSignature], Tuple[Dict[str, dict], Dict[str, Session]]]:
+        sig, state = self._read_state_file()
+        by_id: Dict[str, Session] = {}
+        for key, data in state.items():
+            session = Session.from_dict(data)
+            if session is not None:  # skips corrupted entries
+                by_id[key] = session
+        return sig, (state, by_id)
+
+    def _read_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
+        """Read and parse the state file under a shared lock — uncached.
+
+        Also returns the ``fstat`` signature of the bytes parsed, taken while
+        the shared lock is held so an in-place writer cannot slip between
+        the two; it is ``None`` whenever the result did not come from one
+        clean read of the file (missing file, backup restore, give-up after
+        retries), so the caller never remembers such a result.
 
         On JSON corruption, attempts to restore from backup automatically.
         """
         if not self.state_file.exists():
-            return {}
+            return None, {}
 
         max_retries = 5
         retry_delay = 0.1
@@ -436,12 +486,14 @@ class SessionManager:
                         # Acquire shared lock for reading
                         fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                         try:
-                            return json.load(f)
+                            sig = FileSignature.of(os.fstat(f.fileno()))
+                            return sig, json.load(f)
                         finally:
                             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                     else:
                         # No locking on Windows
-                        return json.load(f)
+                        sig = FileSignature.of(os.fstat(f.fileno()))
+                        return sig, json.load(f)
             except json.JSONDecodeError as e:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
@@ -453,21 +505,21 @@ class SessionManager:
                     # Try loading the restored file
                     try:
                         with open(self.state_file, 'r') as f:
-                            return json.load(f)
+                            return None, json.load(f)
                     except json.JSONDecodeError:
                         print("Warning: Backup file also corrupted, starting fresh")
-                        return {}
+                        return None, {}
                 else:
                     print("Warning: No backup available, starting fresh")
-                    return {}
+                    return None, {}
             except IOError as e:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
                 print(f"Warning: Could not load state file: {e}")
-                return {}
+                return None, {}
 
-        return {}
+        return None, {}
 
     def _backup_state(self) -> None:
         """Create a backup of the current state file before writing."""
@@ -551,7 +603,7 @@ class SessionManager:
         """
         if not HAS_FCNTL:
             # No locking on Windows - fall back to read/modify/write
-            state = self._load_state()
+            _, state = self._read_state_file()
             yield state
             self._save_state(state)
             return
@@ -823,26 +875,30 @@ class SessionManager:
         return session
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID"""
-        state = self._load_state()
-        if session_id in state:
-            return Session.from_dict(state[session_id])
-        return None
+        """Get a session by ID.
+
+        The object is shared with every other reader of this manager until
+        ``sessions.json`` changes — a read-only snapshot. Persist changes
+        through ``update_session`` / ``update_stats`` (which rewrite the file
+        and so invalidate the snapshot) rather than by assigning to it.
+        """
+        return self._snapshot()[1].get(session_id)
 
     def get_session_by_name(self, name: str) -> Optional[Session]:
-        """Get a session by name"""
-        state = self._load_state()
-        for session_data in state.values():
-            if session_data['name'] == name:
-                return Session.from_dict(session_data)
+        """Get a session by name (same shared snapshot as ``get_session``)."""
+        for session in self._snapshot()[1].values():
+            if session.name == name:
+                return session
         return None
 
     def list_sessions(self) -> List[Session]:
-        """List all sessions (skips corrupted entries)"""
-        state = self._load_state()
-        sessions = [Session.from_dict(data) for data in state.values()]
-        # Filter out None (corrupted sessions)
-        return [s for s in sessions if s is not None]
+        """List all sessions (skips corrupted entries).
+
+        A new list each call, of ``Session`` objects that are shared with
+        every other reader until ``sessions.json`` changes — see
+        ``get_session`` for the read-only contract.
+        """
+        return list(self._snapshot()[1].values())
 
     def update_session_status(self, session_id: str, status: str):
         """Update session status"""
@@ -872,22 +928,51 @@ class SessionManager:
             self._archive_session(archived_data)
 
     def _load_archive(self) -> Dict[str, dict]:
-        """Load archived sessions."""
+        """Load archived sessions — the shared, read-only parse (see ``_load_state``)."""
+        return self._archive_snapshot()[0]
+
+    def _archive_snapshot(self) -> Tuple[Dict[str, dict], Dict[str, Session]]:
+        return self._archive_cache.get(self.archive_file, self._parse_archive_file)
+
+    def _parse_archive_file(
+        self,
+    ) -> Tuple[Optional[FileSignature], Tuple[Dict[str, dict], Dict[str, Session]]]:
+        sig, archive = self._read_archive_file()
+        by_id: Dict[str, Session] = {}
+        for key, data in archive.items():
+            try:
+                # Handle end_time field that's not in Session dataclass
+                data_copy = data.copy()
+                end_time = data_copy.pop('end_time', None)
+                session = Session.from_dict(data_copy)
+                if session is None:
+                    continue
+                # Store end_time as attribute for display
+                session._end_time = end_time  # type: ignore
+                by_id[key] = session
+            except (KeyError, TypeError):
+                continue
+        return sig, (archive, by_id)
+
+    def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
+        """Read and parse the archive file under a shared lock — uncached."""
         if not self.archive_file.exists():
-            return {}
+            return None, {}
 
         try:
             with open(self.archive_file, 'r') as f:
                 if HAS_FCNTL:
                     fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                     try:
-                        return json.load(f)
+                        sig = FileSignature.of(os.fstat(f.fileno()))
+                        return sig, json.load(f)
                     finally:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                 else:
-                    return json.load(f)
+                    sig = FileSignature.of(os.fstat(f.fileno()))
+                    return sig, json.load(f)
         except (json.JSONDecodeError, IOError):
-            return {}
+            return None, {}
 
     def _save_archive(self, archive: Dict[str, dict]):
         """Save archived sessions."""
@@ -914,41 +999,22 @@ class SessionManager:
 
     def _archive_session(self, session_data: dict):
         """Add a session to the archive."""
-        archive = self._load_archive()
+        # A private copy to modify: the cached parse is shared and read-only.
+        _, archive = self._read_archive_file()
         archive[session_data['id']] = session_data
         self._save_archive(archive)
 
     def list_archived_sessions(self) -> List[Session]:
-        """List all archived sessions (skips corrupted entries)."""
-        archive = self._load_archive()
-        sessions = []
-        for data in archive.values():
-            try:
-                # Handle end_time field that's not in Session dataclass
-                data_copy = data.copy()
-                end_time = data_copy.pop('end_time', None)
-                session = Session.from_dict(data_copy)
-                if session is None:
-                    continue
-                # Store end_time as attribute for display
-                session._end_time = end_time  # type: ignore
-                sessions.append(session)
-            except (KeyError, TypeError):
-                continue
-        return sessions
+        """List all archived sessions (skips corrupted entries).
+
+        Same sharing contract as ``list_sessions``: the objects are reused
+        until ``archive.json`` changes.
+        """
+        return list(self._archive_snapshot()[1].values())
 
     def get_archived_session(self, session_id: str) -> Optional[Session]:
-        """Get an archived session by ID."""
-        archive = self._load_archive()
-        if session_id in archive:
-            data = archive[session_id].copy()
-            end_time = data.pop('end_time', None)
-            session = Session.from_dict(data)
-            if session is None:
-                return None
-            session._end_time = end_time  # type: ignore
-            return session
-        return None
+        """Get an archived session by ID (shared snapshot, see ``get_session``)."""
+        return self._archive_snapshot()[1].get(session_id)
 
     def update_session(self, session_id: str, **kwargs):
         """Update session fields.
