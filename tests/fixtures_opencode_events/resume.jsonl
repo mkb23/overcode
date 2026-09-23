@@ -1,0 +1,127 @@
+{"_fixture": "resume", "_note": "overcode restart resumed the session: fresh process, no session.created (S9)"}
+{"t": 1790030998.105, "hook": "__load__", "input": {"directory": "/proj", "worktree": "/proj"}}
+{"t": 1790030999.871, "hook": "event", "event": {"id": "evt_0c629713f001QGQcWGcvgzAcOU", "type": "plugin.added", "properties": {"id": "core/config-reference"}}}
+{"t": 1790030999.872, "hook": "event", "event": {"id": "evt_0c6297140001AtUSfT6KKSNSpZ", "type": "plugin.added", "properties": {"id": "agent"}}}
+{"t": 1790030999.872, "hook": "event", "event": {"id": "evt_0c6297140002bPMFFME5OmOUXA", "type": "plugin.added", "properties": {"id": "command"}}}
+{"t": 1790030999.872, "hook": "event", "event": {"id": "evt_0c6297140003oo6u3NDKO0Fw5t", "type": "plugin.added", "properties": {"id": "skill"}}}
+{"t": 1790030999.873, "hook": "event", "event": {"id": "evt_0c6297141001QT19CPwhE6K3KF", "type": "plugin.added", "properties": {"id": "models-dev"}}}
+{"t": 1790030999.873, "hook": "event", "event": {"id": "evt_0c6297141002I9jzNWNwrFt6eq", "type": "plugin.added", "properties": {"id": "config-agent"}}}
+{"t": 1790030999.873, "hook": "event", "event": {"id": "evt_0c62971410031QhNgWpWvgXb2V", "type": "plugin.added", "properties": {"id": "config-command"}}}
+{"t": 1790030999.873, "hook": "event", "event": {"id": "evt_0c6297141004d18EAKam74vifh", "type": "plugin.added", "properties": {"id": "config-skill"}}}
+{"t": 1790030999.874, "hook": "event", "event": {"id": "evt_0c6297142001rSO0maL4Im1lYX", "type": "plugin.added", "properties": {"id": "alibaba"}}}
+{"t": 1790030999.874, "hook": "event", "event": {"id": "evt_0c6297142002ID62dH5VEOI2dG", "type": "plugin.added", "properties": {"id": "amazon-bedrock"}}}
+{"t": 1790030999.874, "hook": "event", "event": {"id": "evt_0c6297142003ADBXUEh1HLGLZC", "type": "plugin.added", "properties": {"id": "anthropic"}}}
+{"t": 1790030999.874, "hook": "event", "event": {"id": "evt_0c6297142004lV0vc7nhkFfhvq", "type": "plugin.added", "properties": {"id": "azure-cognitive-services"}}}
+{"t": 1790030999.98, "hook": "event", "event": {"id": "evt_0c62971ac001jMMD2S6TDLLr6W", "type": "plugin.added", "properties": {"id": "azure"}}}
+{"t": 1790030999.98, "hook": "event", "event": {"id": "evt_0c62971ac002cR7VDxE1Yy4oEb", "type": "plugin.added", "properties": {"id": "cerebras"}}}
+{"t": 1790030999.98, "hook": "event", "event": {"id": "evt_0c62971ac003Vi0xn1XhowzoCR", "type": "plugin.added", "properties": {"id": "cloudflare-ai-gateway"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad001huZjWWeldXzFCL", "type": "plugin.added", "properties": {"id": "cloudflare-workers-ai"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad002ZIsw30OaMF4Qtb", "type": "plugin.added", "properties": {"id": "cohere"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad003vNLZn52yVM788q", "type": "plugin.added", "properties": {"id": "deepinfra"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad004Oks1wFOfZ1VYLq", "type": "plugin.added", "properties": {"id": "gateway"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad005OxcKct5bQJFteO", "type": "plugin.added", "properties": {"id": "github-copilot"}}}
+{"t": 1790030999.981, "hook": "event", "event": {"id": "evt_0c62971ad006lf4aS64XDr347e", "type": "plugin.added", "properties": {"id": "gitlab"}}}
+{"t": 1790030999.982, "hook": "event", "event": {"id": "evt_0c62971ae001Lo7ogjrwulwF1I", "type": "plugin.added", "properties": {"id": "google"}}}
+{"t": 1790030999.982, "hook": "event", "event": {"id": "evt_0c62971ae002TJdA7va2BN9yge", "type": "plugin.added", "properties": {"id": "google-vertex-anthropic"}}}
+{"t": 1790030999.982, "hook": "event", "event": {"id": "evt_0c62971ae003VtGxkia24IfoDx", "type": "plugin.added", "properties": {"id": "google-vertex"}}}
+{"t": 1790030999.986, "hook": "event", "event": {"id": "evt_0c62971b2001e8lPrbE4TsE976", "type": "plugin.added", "properties": {"id": "groq"}}}
+{"t": 1790030999.987, "hook": "event", "event": {"id": "evt_0c62971b3001gGrYXTBMuz2pWa", "type": "plugin.added", "properties": {"id": "kilo"}}}
+{"t": 1790030999.987, "hook": "event", "event": {"id": "evt_0c62971b3002pYAVNBpjT3FqkJ", "type": "plugin.added", "properties": {"id": "llmgateway"}}}
+{"t": 1790030999.987, "hook": "event", "event": {"id": "evt_0c62971b30039cUqTzMWBT7UJW", "type": "plugin.added", "properties": {"id": "mistral"}}}
+{"t": 1790030999.987, "hook": "event", "event": {"id": "evt_0c62971b3004MuhRZ55QEn3Cgz", "type": "plugin.added", "properties": {"id": "nvidia"}}}
+{"t": 1790030999.988, "hook": "event", "event": {"id": "evt_0c62971b4001f8694CDXTWTvsh", "type": "plugin.added", "properties": {"id": "opencode"}}}
+{"t": 1790030999.988, "hook": "event", "event": {"id": "evt_0c62971b40022jAEe4SkMlDMLX", "type": "plugin.added", "properties": {"id": "snowflake-cortex"}}}
+{"t": 1790030999.989, "hook": "event", "event": {"id": "evt_0c62971b5001qT21YivZf0TK0H", "type": "plugin.added", "properties": {"id": "openai-compatible"}}}
+{"t": 1790030999.989, "hook": "event", "event": {"id": "evt_0c62971b5002ppZo5M0BL5eLHm", "type": "plugin.added", "properties": {"id": "openai"}}}
+{"t": 1790030999.989, "hook": "event", "event": {"id": "evt_0c62971b50033p58SzA0nUB0g2", "type": "plugin.added", "properties": {"id": "openrouter"}}}
+{"t": 1790030999.989, "hook": "event", "event": {"id": "evt_0c62971b500487abtA5z3vkW8X", "type": "plugin.added", "properties": {"id": "perplexity"}}}
+{"t": 1790030999.989, "hook": "event", "event": {"id": "evt_0c62971b5005ltRf6WD7doE9Yx", "type": "plugin.added", "properties": {"id": "sap-ai-core"}}}
+{"t": 1790030999.99, "hook": "event", "event": {"id": "evt_0c62971b6001pr0mWIz7gqq3ew", "type": "plugin.added", "properties": {"id": "togetherai"}}}
+{"t": 1790031000.053, "hook": "event", "event": {"id": "evt_0c62971f5001s4kXFuAkY3ansa", "type": "catalog.updated", "properties": {}}}
+{"t": 1790031000.053, "hook": "event", "event": {"id": "evt_0c62971f5002Pc6jvBcEOjpBUk", "type": "plugin.added", "properties": {"id": "vercel"}}}
+{"t": 1790031000.053, "hook": "event", "event": {"id": "evt_0c62971f5003J8Od1zY3jD7osu", "type": "plugin.added", "properties": {"id": "venice"}}}
+{"t": 1790031000.053, "hook": "event", "event": {"id": "evt_0c62971f5004fVhDIbOE7GPtTe", "type": "plugin.added", "properties": {"id": "xai"}}}
+{"t": 1790031000.054, "hook": "event", "event": {"id": "evt_0c62971f6001KBU4Vf6BIL11gH", "type": "plugin.added", "properties": {"id": "zenmux"}}}
+{"t": 1790031000.054, "hook": "event", "event": {"id": "evt_0c62971f60020BWkLH4ZTq6Kkl", "type": "plugin.added", "properties": {"id": "dynamic-provider"}}}
+{"t": 1790031000.055, "hook": "event", "event": {"id": "evt_0c62971f70011aECXIyEUwEdg8", "type": "plugin.added", "properties": {"id": "config-plugin"}}}
+{"t": 1790031000.055, "hook": "event", "event": {"id": "evt_0c62971f7002VFUQ8Y5H6Tve1H", "type": "plugin.added", "properties": {"id": "config-provider"}}}
+{"t": 1790031000.055, "hook": "event", "event": {"id": "evt_0c62971f7003yhbheHF3A19RsB", "type": "plugin.added", "properties": {"id": "variant"}}}
+{"t": 1790031000.056, "hook": "event", "event": {"id": "evt_0c62971f7004LX65TBuCReTGY0", "type": "reference.updated", "properties": {}}}
+{"t": 1790031000.066, "hook": "event", "event": {"id": "evt_0c6297202001dPmOFGaFfDNpKu", "type": "integration.updated", "properties": {}}}
+{"t": 1790031000.114, "hook": "event", "event": {"id": "evt_0c6297232001XcDVSCpSbsK44Q", "type": "catalog.updated", "properties": {}}}
+{"t": 1790031002.004, "hook": "chat.message", "input": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "agent": "build", "model": {"providerID": "openai", "modelID": "gpt-4o-mini"}}, "output": {"message": {"id": "msg_0c6297992001Q47Yw82pr6pxyA", "role": "user", "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "time": {"created": 1790031002002}, "agent": "build", "model": {"providerID": "openai", "modelID": "gpt-4o-mini"}}, "parts": [{"type": "text", "text": "Reply with the single word pong-again and nothing else.", "messageID": "msg_0c6297992001Q47Yw82pr6pxyA", "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "id": "prt_0c6297993001YfR8kxh6XQta8i"}]}}
+{"t": 1790031002.006, "hook": "event", "event": {"id": "evt_0c62979950013nQiHQ2UMNOZfP", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "msg_0c6297992001Q47Yw82pr6pxyA", "role": "user", "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "time": {"created": 1790031002002}, "agent": "build", "model": {"providerID": "openai", "modelID": "gpt-4o-mini"}}}}}
+{"t": 1790031002.008, "hook": "event", "event": {"type": "message.part.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c6297992001Q47Yw82pr6pxyA", "partID": "prt_0c6297993001YfR8kxh6XQta8i", "partType": "text"}}}
+{"t": 1790031002.009, "hook": "event", "event": {"id": "evt_0c62979980015BVWcs84qYACn1", "type": "session.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "slug": "cosmic-mountain", "projectID": "global", "directory": "/proj", "path": "", "title": "pong", "agent": "build", "model": {"id": "gpt-4o-mini", "providerID": "openai"}, "version": "1.18.29", "summary": {"additions": 0, "deletions": 0, "files": 0}, "cost": 0.0028216499999999998, "tokens": {"input": 9307, "output": 88, "reasoning": 0, "cache": {"read": 18304, "write": 0}}, "time": {"created": 1790030975928, "updated": 1790031002008}}}}}
+{"t": 1790031002.011, "hook": "event", "event": {"id": "evt_0c629799b001vdQOrqjSOXYK9w", "type": "session.status", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "status": {"type": "busy"}}}}
+{"t": 1790031002.013, "hook": "event", "event": {"id": "evt_0c629799c001ZgWSO6vIY9MwjK", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "msg_0c629799c0012BGYkrsl2EjILX", "parentID": "msg_0c6297992001Q47Yw82pr6pxyA", "role": "assistant", "mode": "build", "agent": "build", "path": {"cwd": "/proj", "root": "/proj"}, "cost": 0, "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}}, "modelID": "gpt-4o-mini", "providerID": "openai", "time": {"created": 1790031002012}, "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK"}}}}
+{"t": 1790031002.053, "hook": "event", "event": {"id": "evt_0c62979c4001j9Lv8mtsi6AANV", "type": "session.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "slug": "cosmic-mountain", "projectID": "global", "directory": "/proj", "path": "", "title": "pong", "agent": "build", "model": {"id": "gpt-4o-mini", "providerID": "openai"}, "version": "1.18.29", "summary": {"additions": 0, "deletions": 0, "files": 0}, "cost": 0.0028216499999999998, "tokens": {"input": 9307, "output": 88, "reasoning": 0, "cache": {"read": 18304, "write": 0}}, "time": {"created": 1790030975928, "updated": 1790031002052}}}}}
+{"t": 1790031002.053, "hook": "event", "event": {"id": "evt_0c62979c5001bF4rXsRZVs7bm2", "type": "session.diff", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "diff": []}}}
+{"t": 1790031002.055, "hook": "event", "event": {"id": "evt_0c62979c6001kIFDW4d1X4n4zu", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"role": "user", "time": {"created": 1790031002002}, "agent": "build", "model": {"providerID": "openai", "modelID": "gpt-4o-mini"}, "id": "msg_0c6297992001Q47Yw82pr6pxyA", "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "summary": {"diffs": []}}}}}
+{"t": 1790031002.1, "hook": "event", "event": {"id": "evt_0c62979f4001abByUO2r3ULo0R", "type": "plugin.added", "properties": {"id": "core/config-reference"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f50015bwf7UvfIU1jHQ", "type": "plugin.added", "properties": {"id": "agent"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5002getaBZ1QVy3KJk", "type": "plugin.added", "properties": {"id": "command"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5003cSLuw8v6mu1t7N", "type": "plugin.added", "properties": {"id": "skill"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5004ECeoc1EuSQUaA1", "type": "plugin.added", "properties": {"id": "models-dev"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5005TxrMdkrr6gIPWo", "type": "plugin.added", "properties": {"id": "config-agent"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5006VUUliSuUcffK2f", "type": "plugin.added", "properties": {"id": "config-command"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5007dmMw6Jz4aWkopW", "type": "plugin.added", "properties": {"id": "config-skill"}}}
+{"t": 1790031002.101, "hook": "event", "event": {"id": "evt_0c62979f5008fWdAoveUefzjNr", "type": "plugin.added", "properties": {"id": "alibaba"}}}
+{"t": 1790031002.102, "hook": "event", "event": {"id": "evt_0c62979f6001zhD2b3uhGs3VYs", "type": "plugin.added", "properties": {"id": "amazon-bedrock"}}}
+{"t": 1790031002.102, "hook": "event", "event": {"id": "evt_0c62979f60020NjdQ4kz8ze3iU", "type": "plugin.added", "properties": {"id": "anthropic"}}}
+{"t": 1790031002.102, "hook": "event", "event": {"id": "evt_0c62979f6003mY2tZxvOJU80aP", "type": "plugin.added", "properties": {"id": "azure-cognitive-services"}}}
+{"t": 1790031002.102, "hook": "event", "event": {"id": "evt_0c62979f6004IKRG3q6QcUbCJm", "type": "plugin.added", "properties": {"id": "azure"}}}
+{"t": 1790031002.102, "hook": "event", "event": {"id": "evt_0c62979f6005ixMnED95tp6JyC", "type": "plugin.added", "properties": {"id": "cerebras"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f70011HAD5PB4taT2ya", "type": "plugin.added", "properties": {"id": "cloudflare-ai-gateway"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7002JvNstZ6A2k6Se7", "type": "plugin.added", "properties": {"id": "cloudflare-workers-ai"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f70034JuLt4jyZU6PSC", "type": "plugin.added", "properties": {"id": "cohere"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7004Tk7g7hjX1tJOLl", "type": "plugin.added", "properties": {"id": "deepinfra"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7005F4xTPmhJ3HfYzC", "type": "plugin.added", "properties": {"id": "gateway"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f70066qCOM7oF8fOQb7", "type": "plugin.added", "properties": {"id": "github-copilot"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7007Untjj7coykghGo", "type": "plugin.added", "properties": {"id": "gitlab"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7008ggGWZC1wCGLR6u", "type": "plugin.added", "properties": {"id": "google"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f7009aP18z3kk6S3O5t", "type": "plugin.added", "properties": {"id": "google-vertex-anthropic"}}}
+{"t": 1790031002.103, "hook": "event", "event": {"id": "evt_0c62979f700ab9RWFH9dbX5O0y", "type": "plugin.added", "properties": {"id": "google-vertex"}}}
+{"t": 1790031002.104, "hook": "event", "event": {"id": "evt_0c62979f8001AfTXy2rDjV92n1", "type": "plugin.added", "properties": {"id": "groq"}}}
+{"t": 1790031002.104, "hook": "event", "event": {"id": "evt_0c62979f8002Ko6jFYfsbI3bJ0", "type": "plugin.added", "properties": {"id": "kilo"}}}
+{"t": 1790031002.104, "hook": "event", "event": {"id": "evt_0c62979f8003BYS1Xj1aln6p9H", "type": "plugin.added", "properties": {"id": "llmgateway"}}}
+{"t": 1790031002.104, "hook": "event", "event": {"id": "evt_0c62979f8004fsA9le0mT5hOMh", "type": "plugin.added", "properties": {"id": "mistral"}}}
+{"t": 1790031002.104, "hook": "event", "event": {"id": "evt_0c62979f8005qMxPcf9USW9omJ", "type": "plugin.added", "properties": {"id": "nvidia"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f8006h0Pdmx3tAlXD0s", "type": "plugin.added", "properties": {"id": "opencode"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9001dFmA4GyarOO9ef", "type": "plugin.added", "properties": {"id": "snowflake-cortex"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9002VeUf82tpYRQyhB", "type": "plugin.added", "properties": {"id": "openai-compatible"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9003l6o0YNJCtd7XLx", "type": "plugin.added", "properties": {"id": "openai"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9004EaswIaomnV5hkJ", "type": "plugin.added", "properties": {"id": "openrouter"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9005j9ncJ8EphPeu11", "type": "plugin.added", "properties": {"id": "perplexity"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9006q9PVd57YvWkMoc", "type": "plugin.added", "properties": {"id": "sap-ai-core"}}}
+{"t": 1790031002.105, "hook": "event", "event": {"id": "evt_0c62979f9007brAQBKf8WuqXFI", "type": "plugin.added", "properties": {"id": "togetherai"}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27001IZmHNK2sfZt66f", "type": "catalog.updated", "properties": {}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27002Vt6Tb7qHUWubhj", "type": "plugin.added", "properties": {"id": "vercel"}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27003dxlom6jztOA9jf", "type": "plugin.added", "properties": {"id": "venice"}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27004wIabcGQNGL3hee", "type": "plugin.added", "properties": {"id": "xai"}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27005eal0dWA68b0GLm", "type": "plugin.added", "properties": {"id": "zenmux"}}}
+{"t": 1790031002.151, "hook": "event", "event": {"id": "evt_0c6297a27006SHls116e2bioXy", "type": "plugin.added", "properties": {"id": "dynamic-provider"}}}
+{"t": 1790031002.152, "hook": "event", "event": {"id": "evt_0c6297a28001AOUQ70N0JYkZOO", "type": "plugin.added", "properties": {"id": "config-plugin"}}}
+{"t": 1790031002.152, "hook": "event", "event": {"id": "evt_0c6297a28002Zsj53uRMaeluy2", "type": "plugin.added", "properties": {"id": "config-provider"}}}
+{"t": 1790031002.152, "hook": "event", "event": {"id": "evt_0c6297a28003AVb5s2alOGSzGV", "type": "plugin.added", "properties": {"id": "variant"}}}
+{"t": 1790031002.152, "hook": "event", "event": {"id": "evt_0c6297a28004uo5Mu0PwyVxW2U", "type": "reference.updated", "properties": {}}}
+{"t": 1790031002.223, "hook": "event", "event": {"id": "evt_0c6297a6f001PKUWuPhT2r0i6l", "type": "integration.updated", "properties": {}}}
+{"t": 1790031002.278, "hook": "event", "event": {"id": "evt_0c6297aa6001ScWuaCJGMo44t5", "type": "catalog.updated", "properties": {}}}
+{"t": 1790031002.476, "hook": "event", "event": {"id": "evt_0c6297b6c001nPG9ENHgG1R5Ku", "type": "session.status", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "status": {"type": "busy"}}}}
+{"t": 1790031002.481, "hook": "chat.params", "input": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "agent": "build", "messageID": "msg_0c6297992001Q47Yw82pr6pxyA"}}
+{"t": 1790031003.391, "hook": "event", "event": {"type": "message.part.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "partID": "prt_0c6297efe001Ca7jj9SnmBHYXn", "partType": "step-start"}}}
+{"t": 1790031003.392, "hook": "event", "event": {"type": "message.part.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "partID": "prt_0c6297f00001uJtdXfO0dYDUo4", "partType": "text"}}}
+{"t": 1790031003.393, "hook": "event", "event": {"type": "message.part.delta", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "field": "text"}}}
+{"t": 1790031003.393, "hook": "event", "event": {"type": "message.part.delta", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "field": "text"}}}
+{"t": 1790031003.393, "hook": "event", "event": {"type": "message.part.delta", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "field": "text"}}}
+{"t": 1790031003.393, "hook": "experimental.text.complete", "input": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "partID": "prt_0c6297f00001uJtdXfO0dYDUo4"}}
+{"t": 1790031003.394, "hook": "event", "event": {"type": "message.part.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "partID": "prt_0c6297f00001uJtdXfO0dYDUo4", "partType": "text"}}}
+{"t": 1790031003.447, "hook": "event", "event": {"type": "message.part.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "messageID": "msg_0c629799c0012BGYkrsl2EjILX", "partID": "prt_0c6297f36001SzFtOd5SrkDZtF", "partType": "step-finish"}}}
+{"t": 1790031003.448, "hook": "event", "event": {"id": "evt_0c6297f38001mXqaOQ9OjWLynE", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "msg_0c629799c0012BGYkrsl2EjILX", "parentID": "msg_0c6297992001Q47Yw82pr6pxyA", "role": "assistant", "mode": "build", "agent": "build", "path": {"cwd": "/proj", "root": "/proj"}, "cost": 0.0007062, "tokens": {"total": 9301, "input": 80, "output": 5, "reasoning": 0, "cache": {"write": 0, "read": 9216}}, "modelID": "gpt-4o-mini", "providerID": "openai", "time": {"created": 1790031002012}, "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "finish": "stop"}}}}
+{"t": 1790031003.476, "hook": "event", "event": {"id": "evt_0c6297f53001Zt3QjN8YokVFQ4", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "msg_0c629799c0012BGYkrsl2EjILX", "parentID": "msg_0c6297992001Q47Yw82pr6pxyA", "role": "assistant", "mode": "build", "agent": "build", "path": {"cwd": "/proj", "root": "/proj"}, "cost": 0.0007062, "tokens": {"total": 9301, "input": 80, "output": 5, "reasoning": 0, "cache": {"write": 0, "read": 9216}}, "modelID": "gpt-4o-mini", "providerID": "openai", "time": {"created": 1790031002012, "completed": 1790031003475}, "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "finish": "stop"}}}}
+{"t": 1790031003.476, "hook": "event", "event": {"id": "evt_0c6297f54001gpJJSsS9cFbUpG", "type": "session.status", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "status": {"type": "busy"}}}}
+{"t": 1790031003.478, "hook": "event", "event": {"id": "evt_0c6297f560012OwW4X4l89wNoy", "type": "session.status", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "status": {"type": "idle"}}}}
+{"t": 1790031003.478, "hook": "event", "event": {"id": "evt_0c6297f560028zX041LhImnxq8", "type": "session.idle", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK"}}}
+{"t": 1790031003.48, "hook": "event", "event": {"id": "evt_0c6297f570016nyk2RgaT1AWmr", "type": "session.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"id": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "slug": "cosmic-mountain", "projectID": "global", "directory": "/proj", "path": "", "title": "pong", "agent": "build", "model": {"id": "gpt-4o-mini", "providerID": "openai"}, "version": "1.18.29", "summary": {"additions": 0, "deletions": 0, "files": 0}, "cost": 0.00352785, "tokens": {"input": 9387, "output": 93, "reasoning": 0, "cache": {"read": 27520, "write": 0}}, "time": {"created": 1790030975928, "updated": 1790031003479}}}}}
+{"t": 1790031003.48, "hook": "event", "event": {"id": "evt_0c6297f58001TrEfjMwysLtotd", "type": "session.diff", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "diff": []}}}
+{"t": 1790031003.503, "hook": "event", "event": {"id": "evt_0c6297f6e001lbVSy56wma6Ewd", "type": "message.updated", "properties": {"sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK", "info": {"role": "user", "time": {"created": 1790031002002}, "agent": "build", "model": {"providerID": "openai", "modelID": "gpt-4o-mini"}, "summary": {"diffs": []}, "id": "msg_0c6297992001Q47Yw82pr6pxyA", "sessionID": "ses_f39d6ec47ffeWwbQwGLUIkx5MK"}}}}

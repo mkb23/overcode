@@ -1,0 +1,51 @@
+
+
+  ┃                                                                                                                     pong
+  ┃  Reply with the single word pong and nothing else.
+  ┃                                                                                                                     Context
+                                                                                                                        9,314 tokens
+     pong                                                                                                               7% used
+                                                                                                                        $0.00 spent
+     ▣  Build · GPT-4o mini · 7.1s
+                                                                                                                        LSP
+  ┃                                                                                                                     LSPs are disabled
+  ┃  Use the read tool to read README.md and tell me its first line. Do not use bash.
+  ┃
+
+     → Read README.md [offset=1, limit=1]
+
+     The first line of README.md is:
+
+     # cap-project
+
+     ▣  Build · GPT-4o mini · 4.8s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃                                                                                                                     /private/var/folders/sh/
+  ┃                                                                                                                     tmpdirhash/T/cap-
+  ┃  Build · GPT-4o mini OpenAI                                                                                         proj-x:main
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /proj     9.3K (7%) · $0.00  ctrl+p commands    • OpenCode 1.18.29
+

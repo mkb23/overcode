@@ -1,0 +1,51 @@
+
+
+  ┃                                                                                                                     Delegate bash command output echo
+  ┃  Use the task tool with subagent_type general to run the bash command `echo child-ok` and report its output to      child-ok
+  ┃  me. Do not run it yourself; delegate it.
+  ┃                                                                                                                     Context
+                                                                                                                        0 tokens
+     ⠹ General Task — Run a simple bash command                                                                         0% used
+       ↳ 1 toolcall                                                                                                     $0.00 spent
+
+     ctrl+x down view subagents                                                                                         LSP
+                                                                                                                        LSPs are disabled
+     ▣  Build · GPT-4o mini
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃  △ Permission required
+  ┃    # Shell command
+  ┃
+  ┃  $ echo child-ok                                                                                                    /private/var/folders/sh/
+  ┃                                                                                                                     tmpdirhash/T/cap-
+  ┃                                                                                                                     proj-x:main
+  ┃   Allow once   Allow always   Reject                               ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃                                                                                                                     • OpenCode 1.18.29
+

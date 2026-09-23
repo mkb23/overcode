@@ -1,0 +1,51 @@
+
+user@host cap-proj-x % OVERCODE_SESSION_NAME=cap OVERCODE_SESSION_ID=de
+e5213a-5556-4229-b08c-8f82bb2c96c1 OVERCODE_TMUX_SESSION=capsess OVERCODE_BACKEN
+D=opencode OVERCODE_STATE_DIR=/var/folders/sh/tmpdirhash/T/c
+ap-state-5xvx8crc opencode
+                                   ▄
+  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+  ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+  Session   Delegate bash command output echo child-ok
+  Continue  opencode -s ses_f39d26d20ffetm0atU9BI9ug56
+
+user@host cap-proj-x %
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

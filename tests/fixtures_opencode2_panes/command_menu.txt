@@ -25,7 +25,7 @@
   ┃ /build-skill              Step-by-step guide for creating new Claude Code skills (slash commands). Use when buil ┃
   ┃ /cancel-ralph             Cancel active Ralph Wiggum loop                                                        ┃
   ┃ /cd                       Change working directory                                                               ┃
-  ┃ /cmr                      Load forecasts and responses, generate reports, and analyse alpha performance with Cus ┃
+  ┃ /changelog                Summarise recent commits into release notes, grouped by area, with links to the releva ┃
   ┃ /compact                  Compact session                                                                        ┃
   ┃ /connect                  Connect an integration                                                                 ┃
   ┃ /copy                     Copy session transcript                                                                ┃
