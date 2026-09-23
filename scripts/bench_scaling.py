@@ -1611,20 +1611,32 @@ def time_discover_session_ids(paths: FixturePaths, reps: int = 2) -> List[SiteRe
 
 
 def time_capture_selection(paths: FixturePaths, reps: int = 5) -> List[SiteResult]:
-    """``tui_logic.select_capture_sessions`` — panes the TUI fast path captures per 250 ms tick.
+    """The TUI fast path's tmux commands per 250 ms tick.
 
-    ``tmux``/``spawns`` are the capture-pane commands one tick issues (one per
-    chosen session). The count is the same with a fresh, slow or absent
-    daemon — the rotation no longer depends on daemon freshness.
+    Row 1: ``tui_logic.select_capture_sessions`` alone — the rotation's picks,
+    one capture-pane each, the same with a fresh, slow or absent daemon.
+    Rows 2-3: the picks after ``gate_capture_ids`` over one ``list-panes`` per
+    tick (R11): an idle fleet (no pane signature moves) and an all-active one
+    (every signature moves every tick). ``tmux`` counts the list-panes plus
+    the capture-panes a tick issues, at the worst tick of a rotation period,
+    once every session has been seen once.
     """
-    from overcode.tui_logic import capture_rotation_period, select_capture_sessions
+    from overcode.pane_capture_gate import PaneChangeTracker
+    from overcode.tmux_utils import PaneInfo
+    from overcode.tui_logic import (
+        capture_rotation_period,
+        gate_capture_ids,
+        select_capture_sessions,
+    )
 
-    ids = [s.id for s in live_sessions(paths)]
+    sessions = live_sessions(paths)
+    ids = [s.id for s in sessions]
+    windows = {s.id: s.tmux_window for s in sessions}
     focused = ids[0] if ids else None
     every = capture_rotation_period(max(0, len(ids) - 1))
     per_tick = max(len(select_capture_sessions(ids, focused, t)) for t in range(1, every + 1))
     ms = _ms(lambda: select_capture_sessions(ids, focused, 7), reps)
-    return [
+    results = [
         _result(
             "capture selection (per tick, any daemon state)",
             "TUI 250 ms fast",
@@ -1638,6 +1650,46 @@ def time_capture_selection(paths: FixturePaths, reps: int = 5) -> List[SiteResul
             ),
         )
     ]
+
+    versions: Counter = Counter()
+
+    def listing():
+        return {
+            w: PaneInfo(w, i + 1, 1000 + i, 1_700_000_000, versions[w], 0, 0, "claude", 0)
+            for i, w in enumerate(windows.values())
+        }
+
+    for label, active in (("idle fleet", False), ("all-active fleet", True)):
+        tracker = PaneChangeTracker()
+        worst, gate_ms = 0, 0.0
+        # Every session seen once, then a full rotation period at 250 ms ticks
+        for tick in range(1, 2 * every + 1):
+            if active:
+                versions.update(windows.values())
+            picks = select_capture_sessions(
+                ids, focused, tick, always_ids={sid for sid in ids if tick == 1}
+            )
+            panes = listing()
+            t0 = time.perf_counter()
+            kept = gate_capture_ids(picks, focused, windows, panes, tracker, tick * 0.25)
+            gate_ms = max(gate_ms, (time.perf_counter() - t0) * 1000)
+            if tick > every:
+                worst = max(worst, 1 + len(kept))
+        results.append(
+            _result(
+                f"capture gating (per tick, {label})",
+                "TUI 250 ms fast",
+                gate_ms,
+                1,
+                tmux_cmds=worst,
+                spawns=worst,
+                note=(
+                    f"{len(ids)} agents: 1 list-panes + {worst - 1} capture-pane/tick "
+                    f"({worst * 4}/s); rotation alone {per_tick}/tick ({per_tick * 4}/s)"
+                ),
+            )
+        )
+    return results
 
 
 # ---- daemon -----------------------------------------------------------------
@@ -1732,9 +1784,13 @@ def make_daemon(paths: FixturePaths, tmux: CountingTmux):
             status_detector=PollingStatusDetector(paths.tmux_session, tmux=tmux),
         )
     # The dispatcher built by __init__ gives the hook detector no tmux, which
-    # would fall back to a real capture-pane subprocess; rebuild it on the double.
+    # would fall back to a real capture-pane subprocess; rebuild it on the
+    # double, keeping the daemon's capture gate so the loop is the gated one.
     daemon.detector = StatusDetectorDispatcher(
-        paths.tmux_session, tmux=tmux, mode=daemon.detector.mode
+        paths.tmux_session,
+        tmux=tmux,
+        mode=daemon.detector.mode,
+        capture_gate=getattr(daemon, "_capture_gate", None),
     )
     daemon.log.console = Console(file=io.StringIO(), theme=DAEMON_THEME, force_terminal=True)
     daemon._legacy_windows_migrated = True
@@ -1819,7 +1875,25 @@ def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List
             with_flush(
                 lambda: produced.append(daemon._detect_and_enrich(sessions, datetime.now())[0])
             ),
-            note=f"{n} sessions, hooks mode; reads/writes are sessions.json, flush included",
+            note=(
+                f"{n} sessions, hooks mode; reads/writes are sessions.json, flush included; "
+                "first loop, so every pane is captured once"
+            ),
+        )
+        # The loops after: nothing moved (one list-panes, no capture-pane), and
+        # every pane moved (one list-panes plus a capture-pane per agent).
+        phase(
+            "daemon _detect_and_enrich (idle fleet, warm)",
+            "daemon 2 s",
+            with_flush(lambda: daemon._detect_and_enrich(sessions, datetime.now())),
+            note=f"{n} sessions, no pane or hook_state change since the previous loop",
+        )
+        tmux.bump()
+        phase(
+            "daemon _detect_and_enrich (all-active fleet, warm)",
+            "daemon 2 s",
+            with_flush(lambda: daemon._detect_and_enrich(sessions, datetime.now())),
+            note=f"{n} sessions, every pane signature moved since the previous loop",
         )
         daemon._last_resources_sync = None
         phase(

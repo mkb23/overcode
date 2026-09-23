@@ -160,6 +160,19 @@ class TestFastPathCaptures:
         assert row.tmux_cmds <= 1 + NON_FOCUSED_CAPTURES_PER_TICK
         assert row.ms_per_call < 0.5
 
+    def test_idle_fleet_costs_the_focused_capture_and_one_listing(self, capture_rows):
+        # was: 11 capture-pane/tick for panes that had not moved (R11);
+        # fixed: focused capture + 1 list-panes, non-focused only when their signature moved
+        row = capture_rows["capture gating (per tick, idle fleet)"]
+        assert row.tmux_cmds <= 2
+        assert row.ms_per_call < 1.0
+
+    def test_all_active_fleet_stays_within_the_rotation_cap(self, capture_rows):
+        from overcode.tui_logic import NON_FOCUSED_CAPTURES_PER_TICK
+
+        row = capture_rows["capture gating (per tick, all-active fleet)"]
+        assert row.tmux_cmds <= 2 + NON_FOCUSED_CAPTURES_PER_TICK
+
 
 class TestStatusBarWorker:
     def test_window_burn_warm_is_incremental(self, window_burn_rows):
@@ -263,20 +276,29 @@ class TestDaemonTick:
         # most of it the one parse + dump of the 11.7 MB file
         assert daemon_rows[self.SITE].ms_per_tick < 500.0
 
-    def test_tick_body_issues_at_most_one_tmux_call_per_agent(self, daemon_rows):
-        # today: one capture-pane per agent (R11 wants fewer; this pins no regression)
-        assert daemon_rows[self.SITE].tmux_cmds <= N_AGENTS
+    def test_first_loop_issues_at_most_one_capture_per_agent_plus_the_listing(self, daemon_rows):
+        # the first loop captures every pane once, after one list-panes for the session
+        assert daemon_rows[self.SITE].tmux_cmds <= N_AGENTS + 1
+
+    def test_idle_loop_costs_one_listing(self, daemon_rows):
+        # was: one capture-pane per agent per loop, changed or not (R11);
+        # fixed: one list-panes, and a capture only for a pane whose signature moved
+        assert daemon_rows["daemon _detect_and_enrich (idle fleet, warm)"].tmux_cmds <= 1
+
+    def test_all_active_loop_costs_the_listing_plus_a_capture_each(self, daemon_rows):
+        assert (
+            daemon_rows["daemon _detect_and_enrich (all-active fleet, warm)"].tmux_cmds
+            <= N_AGENTS + 1
+        )
 
     def test_publish_state_is_cheap(self, daemon_rows):
         assert daemon_rows["daemon _publish_state"].ms_per_call < 20.0
 
 
 class TestDaemonPeriodicSyncs:
-    @pytest.mark.xfail(
-        strict=True, reason="R7 not fixed yet: _sync_process_resources asks tmux for every pane pid"
-    )
     def test_process_resources_tmux_calls_bounded(self, daemon_rows):
-        # today: 50 get_pane_pid calls (3 tmux commands each on a fresh RealTmux)
+        # was: 50 get_pane_pid calls (3 tmux commands each on a fresh RealTmux);
+        # fixed (R7): one list-panes -s per tick, shared with the sandbox sync
         assert daemon_rows["daemon _sync_process_resources"].tmux_cmds <= 2
 
     def test_process_resources_one_ps_spawn(self, daemon_rows):
@@ -285,10 +307,8 @@ class TestDaemonPeriodicSyncs:
     def test_process_resources_writes_nothing_when_unchanged(self, daemon_rows):
         assert daemon_rows["daemon _sync_process_resources"].writes == 0
 
-    @pytest.mark.xfail(
-        strict=True, reason="R7 not fixed yet: _sync_sandbox_state asks tmux for every pane pid"
-    )
     def test_sandbox_state_tmux_calls_bounded(self, daemon_rows):
+        # was: 50 get_pane_pid calls; fixed (R7): the tick's one listing
         assert daemon_rows["daemon _sync_sandbox_state"].tmux_cmds <= 2
 
     def test_sandbox_state_at_most_ps_plus_lsof(self, daemon_rows):
