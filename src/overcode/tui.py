@@ -48,6 +48,54 @@ from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
 from .tmux_utils import get_pane_base_index, SSH_PROXY_WINDOW_PREFIX
 from .worker_guard import single_flight, worker_cancelled
+from .tui_helpers import (
+    format_duration,
+    get_git_diff_stats,
+    get_git_untracked_count,
+)
+from .tui_logic import (
+    sort_sessions,
+    filter_visible_sessions,
+    compute_child_counts,
+    compute_tree_metadata,
+    compute_stall_state,
+    should_send_stall_notification,
+    compute_active_session_names,
+    compute_session_widget_diff,
+    detect_display_changes,
+    select_capture_sessions,
+    windows_needing_resize,
+    should_scan_git,
+)
+from .tui_widgets import (
+    FullscreenPreview,
+    HelpOverlay,
+    PreviewPane,
+    DaemonPanel,
+    TuiLogPanel,
+    DaemonStatusBar,
+    StatusTimeline,
+    SessionSummary,
+    JobSummary,
+    CommandBar,
+    SummaryConfigModal,
+    NewAgentDefaultsModal,
+    TmuxConfigModal,
+    PassthruConfigModal,
+    NewAgentModal,
+    AgentSelectModal,
+    SisterSelectionModal,
+    InstructionHistoryModal,
+    JumpModal,
+    JumpCandidate,
+)
+from .tui_actions import (
+    NavigationActionsMixin,
+    ViewActionsMixin,
+    DaemonActionsMixin,
+    SessionActionsMixin,
+    InputActionsMixin,
+)
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -99,54 +147,6 @@ TIMER_PHASE_OFFSETS = {
     "sister_poll": 4.2,
     "heartbeat_flush": 4.5,
 }
-from .tui_helpers import (
-    format_duration,
-    get_git_diff_stats,
-    get_git_untracked_count,
-)
-from .tui_logic import (
-    sort_sessions,
-    filter_visible_sessions,
-    compute_child_counts,
-    compute_tree_metadata,
-    compute_stall_state,
-    should_send_stall_notification,
-    compute_active_session_names,
-    compute_session_widget_diff,
-    detect_display_changes,
-    select_capture_sessions,
-    windows_needing_resize,
-    should_scan_git,
-)
-from .tui_widgets import (
-    FullscreenPreview,
-    HelpOverlay,
-    PreviewPane,
-    DaemonPanel,
-    TuiLogPanel,
-    DaemonStatusBar,
-    StatusTimeline,
-    SessionSummary,
-    JobSummary,
-    CommandBar,
-    SummaryConfigModal,
-    NewAgentDefaultsModal,
-    TmuxConfigModal,
-    PassthruConfigModal,
-    NewAgentModal,
-    AgentSelectModal,
-    SisterSelectionModal,
-    InstructionHistoryModal,
-    JumpModal,
-    JumpCandidate,
-)
-from .tui_actions import (
-    NavigationActionsMixin,
-    ViewActionsMixin,
-    DaemonActionsMixin,
-    SessionActionsMixin,
-    InputActionsMixin,
-)
 
 
 class SupervisorTUI(
