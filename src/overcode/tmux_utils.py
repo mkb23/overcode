@@ -177,6 +177,51 @@ def list_panes(session: str, timeout: float = 5) -> Optional[Dict[str, PaneInfo]
     return parse_pane_listing(result.stdout.splitlines())
 
 
+def tui_pane_target(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The tmux pane id this process runs in, or None outside tmux.
+
+    tmux sets ``TMUX`` and ``TMUX_PANE`` in every pane's environment; a
+    pane id (``%12``) is a valid target for any tmux command and resolves
+    to the pane's own session, whichever session that is.
+    """
+    env = os.environ if environ is None else environ
+    if not env.get("TMUX"):
+        return None
+    pane = env.get("TMUX_PANE", "")
+    return pane if pane.startswith("%") else None
+
+
+def query_pane_attended(pane: str, timeout: float = 2) -> Optional[Tuple[str, int]]:
+    """``(session_name, attached_clients)`` for the session holding ``pane``.
+
+    ONE tmux command (``display-message -p``), the TUI's per-second
+    "is anyone looking" signal. None when tmux cannot answer — no server,
+    a timeout, or a pane that no longer exists (tmux 3.5 prints an empty
+    line with status 0 for an unresolvable ``-t``) — so the caller can
+    leave its state as it was rather than mistake silence for "detached".
+    """
+    try:
+        result = subprocess.run(
+            _build_tmux_cmd()
+            + ["display-message", "-p", "-t", pane, "#{session_name}\t#{session_attached}"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    line = result.stdout.rstrip("\n")
+    name, sep, attached = line.rpartition("\t")
+    if not sep or not name:
+        return None
+    try:
+        return name, int(attached)
+    except ValueError:
+        return None
+
+
 def list_pane_pids(session: str, timeout: float = 5) -> Optional[Dict[str, int]]:
     """``{window_name: pane_pid}`` for ``session`` from one ``list-panes -s``; None if unavailable."""
     panes = list_panes(session, timeout=timeout)

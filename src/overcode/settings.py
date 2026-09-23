@@ -742,6 +742,43 @@ def write_tui_heartbeat(session: str) -> None:
         pass  # Best effort
 
 
+# The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
+# client is attached to the pane it runs in (or while it runs outside tmux,
+# where nobody can tell). It is the monitor daemon's third "someone is
+# watching" signal, next to the keypress heartbeat above and the attached
+# count of the agents session: a TUI in another tmux session, or in a plain
+# terminal, is invisible to both, and without this touch the daemon would
+# stretch to its unattended interval under a dashboard someone is reading.
+# A touch is one utime, no content.
+TUI_ATTENDED_TOUCH_SECONDS = 5
+
+
+def get_tui_attended_path(session: str) -> Path:
+    """Path of the TUI's attended-liveness touch file for ``session``."""
+    return get_session_dir(session) / "tui_attended"
+
+
+def touch_tui_attended(session: str) -> None:
+    """Stamp the attended file's mtime to now (best effort)."""
+    path = get_tui_attended_path(session)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError:
+        pass  # Best effort
+
+
+def tui_attended_age_seconds(session: str, now: Optional[float] = None) -> Optional[float]:
+    """Seconds since the attended file was last touched; None when there is none."""
+    import time as _time
+
+    try:
+        mtime = get_tui_attended_path(session).stat().st_mtime
+    except OSError:
+        return None
+    return (now if now is not None else _time.time()) - mtime
+
+
 def get_tui_preferences_path(session: str) -> Path:
     """Get TUI preferences file path for a specific session."""
     return get_session_dir(session) / "tui_preferences.json"

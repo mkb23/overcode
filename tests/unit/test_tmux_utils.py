@@ -309,6 +309,72 @@ class TestParsePaneListing:
         ]
 
 
+class TestTuiPaneTarget:
+    def test_pane_id_from_the_tmux_environment(self):
+        from overcode.tmux_utils import tui_pane_target
+
+        assert tui_pane_target({"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%7"}) == "%7"
+
+    def test_none_outside_tmux_or_without_a_pane_id(self):
+        from overcode.tmux_utils import tui_pane_target
+
+        assert tui_pane_target({}) is None
+        assert tui_pane_target({"TMUX_PANE": "%7"}) is None  # TMUX unset: not inside tmux
+        assert tui_pane_target({"TMUX": "x", "TMUX_PANE": "7"}) is None
+
+
+class TestQueryPaneAttended:
+    """One display-message per call; None whenever tmux cannot answer."""
+
+    def test_one_command_returns_session_and_attached_count(self):
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="agents\t2\n")
+            assert query_pane_attended("%3") == ("agents", 2)
+        assert mock_run.call_count == 1
+        cmd = mock_run.call_args.args[0]
+        assert cmd[-5:] == ["display-message", "-p", "-t", "%3", "#{session_name}\t#{session_attached}"]
+
+    def test_zero_clients_and_a_tab_in_the_session_name(self):
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="odd\tname\t0\n")
+            assert query_pane_attended("%3") == ("odd\tname", 0)
+
+    def test_unresolvable_pane_is_none_not_zero(self):
+        """tmux 3.5 prints an empty line with status 0 for a target it cannot find."""
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="\n")
+            assert query_pane_attended("%999") is None
+            mock_run.return_value = MagicMock(returncode=0, stdout="agents\tnope\n")
+            assert query_pane_attended("%3") is None
+
+    def test_no_server_or_timeout_is_none(self):
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error connecting")
+            assert query_pane_attended("%3") is None
+        with patch(
+            "overcode.tmux_utils.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("tmux", 2),
+        ):
+            assert query_pane_attended("%3") is None
+
+    def test_respects_socket_env(self):
+        from overcode.tmux_utils import query_pane_attended
+
+        with patch.dict(os.environ, {"OVERCODE_TMUX_SOCKET": "sock"}):
+            with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="agents\t1\n")
+                query_pane_attended("%3")
+        assert mock_run.call_args.args[0][:3] == ["tmux", "-L", "sock"]
+
+
 class TestListPanes:
     """``list_panes`` / ``list_pane_pids``: one subprocess, None when tmux cannot answer."""
 

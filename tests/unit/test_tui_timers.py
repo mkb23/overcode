@@ -21,10 +21,13 @@ class TestCadences:
     def test_intervals_are_the_freshness_contract(self):
         """Never lowered to save CPU; a change here is a product decision."""
         assert TIMER_INTERVALS == {
+            "heartbeat_probe": 0.1,
             "fast_status": 0.25,
             "daemon_status": 1,
             "focused_job_pane": 1,
+            "attended_watch": 1,
             "focused_sister": 1.5,
+            "unattended_status": 2,
             "slow_stats": 5,
             "summarizer": 5,
             "refresh_jobs": 5,
@@ -71,19 +74,37 @@ class TestPhases:
             for b in names[i + 1 :]:
                 assert not (fire_times[a] & fire_times[b]), (a, b)
 
+    def test_no_two_timers_of_a_second_or_more_ever_coincide(self):
+        """Every >= 1 s timer is de-phased from every other one, over an hour
+        of fire times, and none lands on the 250 ms fast-status grid."""
+        fire_times = {}
+        for name, iv in TIMER_INTERVALS.items():
+            if iv < 1:
+                continue
+            delay = TIMER_PHASE_OFFSETS[name]
+            fire_times[name] = {round(delay + k * iv, 3) for k in range(int(3600 / iv) + 1)}
+        grid = {round(k * 0.25, 3) for k in range(4 * 3600 + 1)}
+        names = list(fire_times)
+        for i, a in enumerate(names):
+            assert not (fire_times[a] & grid), a
+            for b in names[i + 1 :]:
+                assert not (fire_times[a] & fire_times[b]), (a, b)
+
 
 class TestStartPeriodic:
-    def _app(self):
+    def _app(self, attended=True):
         app = SupervisorTUI.__new__(SupervisorTUI)
         app.set_timer = MagicMock()
         app.set_interval = MagicMock()
+        app.attended = attended
+        app._periodic_timers = {}
         return app
 
     def test_zero_offset_starts_the_interval_directly(self):
         app = self._app()
         cb = object()
-        app._start_periodic("slow_stats", cb)
-        app.set_interval.assert_called_once_with(5, cb)
+        app._start_periodic("fast_status", cb)
+        app.set_interval.assert_called_once_with(0.25, cb, pause=False)
         app.set_timer.assert_not_called()
 
     def test_offset_delays_the_first_tick_then_keeps_the_interval(self):
@@ -94,7 +115,7 @@ class TestStartPeriodic:
         delay, start = app.set_timer.call_args.args
         assert delay == 3.9
         start()  # the delayed callback installs the real interval
-        app.set_interval.assert_called_once_with(30, cb)
+        app.set_interval.assert_called_once_with(30, cb, pause=False)
 
     @pytest.mark.parametrize("name", sorted(TIMER_INTERVALS))
     def test_every_timer_starts_with_its_own_cadence(self, name):
@@ -103,4 +124,19 @@ class TestStartPeriodic:
         app._start_periodic(name, cb)
         if TIMER_PHASE_OFFSETS[name] > 0:
             app.set_timer.call_args.args[1]()
-        app.set_interval.assert_called_once_with(TIMER_INTERVALS[name], cb)
+        app.set_interval.assert_called_once_with(TIMER_INTERVALS[name], cb, pause=False)
+        assert app._periodic_timers[name] is app.set_interval.return_value
+
+    def test_a_timer_can_be_started_paused(self):
+        app = self._app()
+        app._start_periodic("unattended_status", object(), paused=True)
+        app.set_timer.call_args.args[1]()
+        assert app.set_interval.call_args.kwargs == {"pause": True}
+
+    def test_a_pausable_timer_started_while_unattended_starts_paused(self):
+        app = self._app(attended=False)
+        app._start_periodic("fast_status", object())
+        assert app.set_interval.call_args.kwargs == {"pause": True}
+        app._start_periodic("status_changes", object())  # not in the paused set
+        app.set_timer.call_args.args[1]()
+        assert app.set_interval.call_args.kwargs == {"pause": False}
