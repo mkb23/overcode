@@ -66,6 +66,13 @@ class TmuxInterface(Protocol):
         """Kill a tmux window."""
         ...
 
+    def rename_window(self, session: str, window: str, new_name: str) -> bool:
+        """Rename a tmux window.
+
+        Returns True if the window was renamed, False otherwise.
+        """
+        ...
+
     def kill_session(self, session: str) -> bool:
         """Kill an entire tmux session."""
         ...

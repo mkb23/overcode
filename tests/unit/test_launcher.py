@@ -13,6 +13,7 @@ from unittest.mock import ANY, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from overcode.exceptions import InvalidSessionNameError
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
@@ -2742,3 +2743,115 @@ class TestLaunchRestartDivergence:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRename:
+    """AgentLauncher.rename — stop, rekey state, relaunch under a new name."""
+
+    @pytest.fixture(autouse=True)
+    def _state_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        yield tmp_path
+
+    @staticmethod
+    def _launcher(tmp_path):
+        mock_tmux = MockTmux()
+        tm = TmuxManager("agents", tmux=mock_tmux)
+        sm = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        return AgentLauncher("agents", tm, sm), sm
+
+    def test_rename_live_agent(self, tmp_path):
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+        window = sess.tmux_window
+
+        assert launcher.rename(sess, "newname", graceful_exit_wait=0) is True
+
+        renamed = sm.get_session(sess.id)
+        assert renamed.name == "newname"
+        assert renamed.tmux_window != window
+        assert renamed.tmux_window.startswith("newname-")
+        # The window itself was renamed, not duplicated.
+        names = [w["name"] for w in launcher.tmux.list_windows()]
+        assert renamed.tmux_window in names
+        assert window not in names
+        # The relaunched agent must run under the new OVERCODE_SESSION_NAME:
+        # the relaunch replays via _send_launch_for_session, which reads the
+        # session record — so the record's name is the contract.
+        assert sm.get_session(sess.id).name == "newname"
+
+    def test_rename_moves_hook_state_files(self, tmp_path):
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+        hook_dir = tmp_path / "agents"
+        hook_dir.mkdir(exist_ok=True)
+        (hook_dir / "hook_state_oldname.json").write_text('{"event": "Stop"}')
+        (hook_dir / "hook_events_oldname.jsonl").write_text('{"event": "Stop"}\n')
+
+        assert launcher.rename(sess, "newname", graceful_exit_wait=0) is True
+
+        assert (hook_dir / "hook_state_newname.json").exists()
+        assert (hook_dir / "hook_events_newname.jsonl").exists()
+        assert not (hook_dir / "hook_state_oldname.json").exists()
+        assert not (hook_dir / "hook_events_oldname.jsonl").exists()
+
+    def test_rename_rejects_invalid_name(self, tmp_path):
+        launcher, _ = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+        with pytest.raises(InvalidSessionNameError):
+            launcher.rename(sess, "bad name!")
+
+    def test_rename_rejects_duplicate_name(self, tmp_path):
+        launcher, _ = self._launcher(tmp_path)
+        launcher.launch(name="first")
+        second = launcher.launch(name="second")
+        with pytest.raises(ValueError):
+            launcher.rename(second, "first")
+
+    def test_rename_dead_agent_without_window(self, tmp_path):
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+        launcher.tmux.kill_window(sess.tmux_window)
+
+        assert launcher.rename(sess, "newname") is True
+
+        renamed = sm.get_session(sess.id)
+        assert renamed.name == "newname"
+        # No window to rename — the record points at the label revive would
+        # recreate, so a later revive lands under the new name.
+        assert renamed.tmux_window.startswith("newname-")
+
+    def test_rename_window_rename_failure_leaves_state_intact(self, tmp_path):
+        """tmux rename failure → False, nothing renamed (fail-first ordering)."""
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+
+        original = launcher.tmux.rename_window
+        launcher.tmux.rename_window = lambda old, new: False
+
+        assert launcher.rename(sess, "newname", graceful_exit_wait=0) is False
+        launcher.tmux.rename_window = original
+
+        unchanged = sm.get_session(sess.id)
+        assert unchanged.name == "oldname"
+        assert unchanged.tmux_window == sess.tmux_window
+
+    def test_rename_duplicate_checked_atomically_at_commit(self, tmp_path):
+        """rename_session is the authority: even when the launcher's
+        upfront scan is stale, the locked commit refuses the duplicate and
+        rolls back the window rename."""
+        launcher, sm = self._launcher(tmp_path)
+        sess = launcher.launch(name="oldname")
+        other = launcher.launch(name="taken")
+
+        # Simulate a concurrent rename winning after the upfront scan: the
+        # other agent's name flips to the target inside the state store.
+        sm.rename_session(other.id, "newname")
+
+        with pytest.raises(ValueError):
+            launcher.rename(sess, "newname", graceful_exit_wait=0)
+
+        # Rollback: the window kept its old name, the record kept the old name.
+        names = [w["name"] for w in launcher.tmux.list_windows()]
+        assert sess.tmux_window in names
+        assert sm.get_session(sess.id).name == "oldname"

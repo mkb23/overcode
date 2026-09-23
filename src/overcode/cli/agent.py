@@ -880,6 +880,55 @@ def follow(
 
 
 @app.command()
+def rename(
+    name: Annotated[str, typer.Argument(help="Current name of agent")],
+    new_name: Annotated[str, typer.Argument(help="New name for the agent")],
+    session: SessionOption = "agents",
+):
+    """Rename an agent, preserving its conversation and history.
+
+    Stops the agent, renames its tmux window and hook-state files, then
+    relaunches it in place resuming the prior conversation. Status
+    detection, cost totals, and timeline continuity carry over through the
+    rekeyed telemetry files. For an agent without a live window, the record
+    and telemetry are renamed and a later `revive`/`restart` lands under
+    the new name.
+
+    Examples:
+        overcode agent rename bugfix-1 auth-refactor
+    """
+    from ..exceptions import InvalidSessionNameError
+    from ..launcher import AgentLauncher
+
+    launcher = AgentLauncher(session)
+    sess = launcher.sessions.get_session_by_name(name)
+    if not sess:
+        rprint(f"[red]Error: Agent '{name}' not found[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        renamed = launcher.rename(sess, new_name)
+    except InvalidSessionNameError:
+        rprint(
+            f"[red]Error: '{new_name}' is not a valid agent name "
+            f"(letters, digits, - and _ only, max 64 chars)[/red]"
+        )
+        raise typer.Exit(code=1)
+    except ValueError as exc:
+        rprint(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    if not renamed:
+        rprint(
+            f"[red]Error: failed to rename '{name}' "
+            "(tmux window rename failed — the agent is unchanged)[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    rprint(f"[green]Renamed agent: {name} → {new_name} (conversation preserved)[/green]")
+
+
+@app.command()
 def report(
     status: Annotated[
         str,

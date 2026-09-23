@@ -197,6 +197,19 @@ class RealTmux:
         except LibTmuxException:
             return False
 
+    def rename_window(self, session: str, window: str, new_name: str) -> bool:
+        """Rename a window via raw tmux command — robust against libtmux API drift."""
+        try:
+            # -t is session-qualified so the wrong session can never be touched.
+            self.server.cmd(
+                "rename-window",
+                "-t", f"{session}:{window}",
+                new_name,
+            )
+            return True
+        except (LibTmuxException, AttributeError):
+            return False
+
     def kill_session(self, session: str) -> bool:
         try:
             sess = self._get_session(session)

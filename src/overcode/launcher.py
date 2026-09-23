@@ -111,6 +111,7 @@ class AgentLauncher:
         """
         self.tmux = tmux_manager if tmux_manager else TmuxManager(tmux_session)
         self.sessions = session_manager if session_manager else SessionManager()
+        self.tmux_session = tmux_session
 
     # Maximum nesting depth for agent hierarchy (#244)
     MAX_HIERARCHY_DEPTH = 5
@@ -841,13 +842,112 @@ class AgentLauncher:
         self.sessions.update_stats(session.id, current_task="Restarting...")
         return True
 
+    def rename(
+        self,
+        session: Session,
+        new_name: str,
+        graceful_exit_wait: float = 3.0,
+    ) -> bool:
+        """Rename an agent, preserving its conversation and telemetry.
+
+        An agent's name is load-bearing: the tmux window name, the hook-state
+        files the telemetry plugin writes (``hook_state_<name>.json`` /
+        ``hook_events_<name>.jsonl``, keyed by the ``OVERCODE_SESSION_NAME``
+        baked into the running process), and the session record all use it.
+        Renaming therefore stops a live agent, rekeys every one of those,
+        and relaunches it in place — same window slot, same conversation
+        (resume, not fresh) — under the new name.
+
+        Ordering is fail-first: the step most likely to fail (the tmux
+        window rename) runs before any state changes, and the record rename
+        is a locked duplicate-check-and-write
+        (``SessionManager.rename_session``), so a concurrent rename cannot
+        create two agents with one name. On a duplicate at commit time the
+        window and hook files are rolled back before raising.
+
+        Args:
+            new_name: The new name; validated by ``validate_session_name``
+                and rejected when another agent already owns it.
+            graceful_exit_wait: Seconds to wait after the exit gesture
+                before relaunching (mirrors ``restart``).
+
+        Returns:
+            True if the rename completed. For a live agent this includes the
+            relaunch; when that send fails the record/state are already
+            renamed and ``False`` is returned — ``revive`` picks it up.
+
+        Raises:
+            InvalidSessionNameError: ``new_name`` fails the name pattern.
+            ValueError: another agent already owns ``new_name``.
+        """
+        validate_session_name(new_name)
+        # Fast duplicate rejection; the authoritative check runs under the
+        # session-state lock at commit time (rename_session below).
+        for other in self.sessions.list_sessions():
+            if other.id != session.id and other.name == new_name:
+                raise ValueError(f"an agent named '{new_name}' already exists")
+
+        window_exists = self.tmux.window_exists(session.tmux_window)
+        if window_exists:
+            self._send_graceful_exit(self.backend_for(session), session.tmux_window)
+            time.sleep(graceful_exit_wait)
+
+        new_window = f"{new_name}-{session.id[:4]}"
+        if window_exists and not self.tmux.rename_window(
+            session.tmux_window, new_window
+        ):
+            # Nothing else has been touched yet — the agent is stopped in
+            # its old (intact) window, so `restart` recovers under the old
+            # identity.
+            return False
+
+        # Rekey the hook-state files so status detection and the stats
+        # reader keep the agent's history under the new name — the relaunched
+        # plugin reads the previous state from the new path and carries
+        # `agent_session_ids` forward, keeping resume and cost totals intact.
+        from .hook_handler import _get_hook_state_path, _get_hook_event_log_path
+        moved = []
+        for build in (_get_hook_state_path, _get_hook_event_log_path):
+            old_path = build(self.tmux_session, session.name)
+            new_path = build(self.tmux_session, new_name)
+            if old_path.exists():
+                try:
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(old_path, new_path)
+                    moved.append((old_path, new_path))
+                except OSError:
+                    pass  # telemetry continuity is best-effort, not blocking
+
+        # Locked duplicate check + write: a concurrent rename of another
+        # agent to `new_name` cannot slip between check and update.
+        if not self.sessions.rename_session(
+            session.id, new_name, tmux_window=new_window
+        ):
+            # Lost the race — restore the pre-rename identity before bailing.
+            if window_exists:
+                self.tmux.rename_window(new_window, session.tmux_window)
+            for old_path, new_path in moved:
+                try:
+                    os.replace(new_path, old_path)
+                except OSError:
+                    pass
+            raise ValueError(f"an agent named '{new_name}' already exists")
+
+        if not window_exists:
+            return True
+
+        refreshed = self.sessions.get_session(session.id)
+        if not self._send_launch_for_session(refreshed, new_window, fresh=False):
+            return False
+        self.sessions.update_stats(session.id, current_task=f"Renamed to {new_name}")
+        return True
+
     def revive(
         self,
         session: Session,
         fresh: bool = False,
     ) -> bool:
         """Revive a terminated agent by creating a new tmux window and relaunching.
-
         Mirrors `restart` semantics (same full-context replay, same resume-by-default
         behavior) but creates a new tmux window because the original one is gone.
         If the original window still exists, degrades to restart so callers can

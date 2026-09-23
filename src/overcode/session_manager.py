@@ -1449,6 +1449,30 @@ class SessionManager:
             if session_id in state:
                 state[session_id].update(kwargs)
 
+    def rename_session(self, session_id: str, new_name: str, **fields) -> bool:
+        """Atomically rename a session: duplicate check and update in one
+        locked read-modify-write, so two concurrent renames cannot both win.
+
+        Args:
+            session_id: The session being renamed.
+            new_name: The new name; the write is refused (False) when any
+                OTHER session already owns it.
+            **fields: Additional fields to set in the same atomic write
+                (e.g. ``tmux_window`` alongside the rename).
+
+        Returns:
+            True when the record was renamed, False on a duplicate name.
+        """
+        with self._locked_state() as state:
+            if session_id not in state:
+                return False
+            for sid, record in state.items():
+                if sid != session_id and record.get("name") == new_name:
+                    return False
+            state[session_id].update(fields)
+            state[session_id]["name"] = new_name
+            return True
+
     def update_stats(self, session_id: str, **stats_kwargs):
         """Update session statistics"""
         with self._locked_state() as state:

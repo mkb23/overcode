@@ -3087,3 +3087,81 @@ class TestModelsCommands:
             result = runner.invoke(app, ["models", "refresh"])
         assert result.exit_code == 1
         assert "Refresh failed" in result.output
+class TestRenameCommand:
+    """`overcode agent rename` — the CLI wrapper around AgentLauncher.rename."""
+
+    @staticmethod
+    def _stub_launcher(monkeypatch, sess=None, rename_result=None):
+        """Patch the CLI's AgentLauncher with a stub; return its rename calls."""
+        calls = {}
+
+        class _Sessions:
+            def get_session_by_name(self, name):
+                return sess
+
+        class _Launcher:
+            def __init__(self, tmux_session="agents"):
+                self.sessions = _Sessions()
+
+            def rename(self, session, new_name, **kwargs):
+                calls["old"] = getattr(session, "name", session)
+                calls["new"] = new_name
+                if isinstance(rename_result, Exception):
+                    raise rename_result
+                return calls.get("succeed", True)
+
+        monkeypatch.setattr("overcode.launcher.AgentLauncher", _Launcher)
+        return calls
+
+    def test_rename_unknown_agent_errors(self, monkeypatch):
+        self._stub_launcher(monkeypatch, sess=None)
+        result = runner.invoke(app, ["rename", "ghost", "newname"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_rename_invalid_name_errors(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from overcode.exceptions import InvalidSessionNameError
+
+        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
+        self._stub_launcher(
+            monkeypatch, sess=sess,
+            rename_result=InvalidSessionNameError("bad name!"),
+        )
+        result = runner.invoke(app, ["rename", "ghost", "bad name!"])
+        assert result.exit_code == 1
+        assert "not a valid agent name" in strip_ansi(result.output)
+
+    def test_rename_duplicate_name_errors(self, monkeypatch):
+        from types import SimpleNamespace
+
+        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
+        self._stub_launcher(
+            monkeypatch, sess=sess,
+            rename_result=ValueError("an agent named 'first' already exists"),
+        )
+        result = runner.invoke(app, ["rename", "ghost", "first"])
+        assert result.exit_code == 1
+        assert "already exists" in strip_ansi(result.output)
+
+    def test_rename_launcher_failure_errors(self, monkeypatch):
+        """A launcher rename failure must not print success."""
+        from types import SimpleNamespace
+
+        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
+        calls = self._stub_launcher(monkeypatch, sess=sess)
+        calls["succeed"] = False
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        assert result.exit_code == 1
+        assert "failed to rename" in strip_ansi(result.output)
+
+    def test_rename_success(self, monkeypatch):
+        from types import SimpleNamespace
+
+        sess = SimpleNamespace(name="ghost", id="abc123", tmux_window="ghost-abc1")
+        calls = self._stub_launcher(monkeypatch, sess=sess)
+        result = runner.invoke(app, ["rename", "ghost", "auth-refactor"])
+        assert result.exit_code == 0
+        assert "Renamed agent: ghost" in strip_ansi(result.output)
+        assert calls == {"old": "ghost", "new": "auth-refactor"}

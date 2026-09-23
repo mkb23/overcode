@@ -314,6 +314,25 @@ class TmuxManager:
         except LibTmuxException:
             return []
 
+    def rename_window(self, window_name: str, new_name: str) -> bool:
+        """Rename a window, keeping 'automatic-rename' off (stable names)."""
+        if self._tmux:
+            return self._tmux.rename_window(self.session_name, window_name, new_name)
+
+        try:
+            if self._server is None:
+                return False
+            # Raw command: robust against libtmux API drift, and -t is
+            # session-qualified so the wrong session can never be touched.
+            self._server.cmd(
+                "rename-window",
+                "-t", f"{self.session_name}:{window_name}",
+                new_name,
+            )
+            return True
+        except Exception:
+            return False
+
     def kill_window(self, window_name: str) -> bool:
         """Kill a specific window"""
         if self._tmux:

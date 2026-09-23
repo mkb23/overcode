@@ -58,6 +58,14 @@ class MockTmux:
             return True
         return False
 
+    def rename_window(self, session: str, window: str, new_name: str) -> bool:
+        """Rename a window, preserving its pane content."""
+        windows = self.sessions.get(session)
+        if windows is None or window not in windows:
+            return False
+        windows[new_name] = windows.pop(window)
+        return True
+
     def kill_session(self, session: str) -> bool:
         if session in self.sessions:
             del self.sessions[session]
