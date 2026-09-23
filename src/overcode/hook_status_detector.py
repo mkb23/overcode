@@ -441,6 +441,9 @@ class HookStatusDetector:
         # Structured 2-column status detail, populated by detect_status and
         # consumed by the ⏰ column. Keyed by session name (#TBD).
         self._status_details: Dict[str, StatusDetail] = {}
+        # Parsed tail of each session's event log, keyed by the log's
+        # (st_mtime_ns, st_size, limit): an unchanged log costs one stat.
+        self._events_cache: Dict[str, tuple] = {}
 
         # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
@@ -471,6 +474,18 @@ class HookStatusDetector:
         middle of a line can leave one such line.
         """
         path = self._hook_event_log_path(session_name)
+        # The log changes only when a hook fires; between hooks the tail is
+        # re-read up to 4 Hz for the focused agent, so serve the parse from
+        # the last read when the file's stat signature is unchanged (R12).
+        try:
+            st = os.stat(path)
+        except OSError:
+            self._events_cache.pop(session_name, None)
+            return []
+        signature = (st.st_mtime_ns, st.st_size, limit)
+        cached = self._events_cache.get(session_name)
+        if cached is not None and cached[0] == signature:
+            return list(cached[1])
         # Read a bounded tail and grow it until it actually holds `limit` lines,
         # so the result is identical to reading the whole file while normally
         # staying O(window). Hook-event lines are usually a few hundred bytes,
@@ -511,7 +526,8 @@ class HookStatusDetector:
             except (TypeError, ValueError):
                 continue
             events.append(entry)
-        return events
+        self._events_cache[session_name] = (signature, events)
+        return list(events)
 
     def _most_recent_running_event_age(
         self, session_name: str, now: Optional[float] = None

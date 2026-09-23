@@ -1266,3 +1266,65 @@ class TestHookDetectorCaptureGate:
         ]
         assert run.call_args_list[1].args[0][-2:] == ["-S", "-40"]
         assert run.call_args.kwargs["timeout"] == 5
+
+
+class TestRecentEventsCache:
+    """_read_recent_events serves an unchanged log from its last parse (audit R12)."""
+
+    def _detector(self, tmp_path):
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True)
+        return HookStatusDetector("agents", state_dir=state_dir), state_dir
+
+    def test_unchanged_log_is_one_stat_and_no_open(self, tmp_path, monkeypatch):
+        import builtins
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("UserPromptSubmit", now - 2), ("PreToolUse", now - 1)])
+        first = detector._read_recent_events("a1")
+        assert [e["event"] for e in first] == ["UserPromptSubmit", "PreToolUse"]
+
+        opens = []
+        real_open = builtins.open
+
+        def counting_open(file, *args, **kwargs):
+            opens.append(str(file))
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", counting_open)
+        again = detector._read_recent_events("a1")
+        assert again == first
+        assert not [o for o in opens if "hook_events" in o]
+
+    def test_result_is_a_copy(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        _append_event_log(state_dir, "a1", [("PreToolUse", time.time())])
+        first = detector._read_recent_events("a1")
+        first.clear()
+        assert len(detector._read_recent_events("a1")) == 1
+
+    def test_appended_event_is_seen(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("PreToolUse", now - 1)])
+        assert len(detector._read_recent_events("a1")) == 1
+        with open(state_dir / "hook_events_a1.jsonl", "a") as f:
+            f.write(json.dumps({"event": "Stop", "timestamp": now}) + "\n")
+        events = detector._read_recent_events("a1")
+        assert [e["event"] for e in events] == ["PreToolUse", "Stop"]
+
+    def test_limit_is_part_of_the_key(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("PreToolUse", now - i) for i in range(5, 0, -1)])
+        assert len(detector._read_recent_events("a1")) == 5
+        assert len(detector._read_recent_events("a1", limit=2)) == 2
+        assert len(detector._read_recent_events("a1")) == 5
+
+    def test_missing_log_is_empty_and_forgets_the_cache(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        _append_event_log(state_dir, "a1", [("PreToolUse", time.time())])
+        assert len(detector._read_recent_events("a1")) == 1
+        (state_dir / "hook_events_a1.jsonl").unlink()
+        assert detector._read_recent_events("a1") == []
+        assert "a1" not in detector._events_cache
