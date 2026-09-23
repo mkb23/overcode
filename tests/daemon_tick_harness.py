@@ -174,14 +174,17 @@ def _fd_path(fd: int) -> Optional[str]:
 
 
 @contextlib.contextmanager
-def count_sessions_io(sessions_file: Path) -> Iterator[IoCounters]:
+def count_sessions_io(
+    sessions_file: Path, counters: Optional[IoCounters] = None
+) -> Iterator[IoCounters]:
     """Count opens-for-read of ``sessions_file`` and fsyncs onto it (or its temp).
 
     Independent of SessionManager's internals: a read is an ``open`` with a
     read or update mode on the file itself; a write is an ``os.fsync`` of a
     descriptor whose path is ``sessions.json`` or ``sessions.json.tmp.*``.
+    Pass ``counters`` to count into an object ``run_ticks`` also records into.
     """
-    counters = IoCounters()
+    counters = counters if counters is not None else IoCounters()
     target = os.fspath(sessions_file)
     orig_open, orig_io_open, orig_fsync = builtins.open, io.open, os.fsync
 
@@ -335,6 +338,7 @@ def make_daemon(state_dir: Path, tmux_session: str, detector, *, session_manager
         monitor_daemon.PresenceLogger = original_presence
     daemon.detector = detector
     daemon._hostname = "test-host"
+    daemon._relay_config = None  # never push anywhere from a test tick
     daemon.log.console = Console(file=io.StringIO(), theme=DAEMON_THEME, force_terminal=True)
     daemon._legacy_windows_migrated = True
     daemon.state.loop_count = 1

@@ -1772,24 +1772,40 @@ def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List
                 )
             )
 
+        # The tick stages its sessions.json changes and writes them once at
+        # its end (R5), so each phase is timed together with that flush: its
+        # reads/writes column is what the tick pays for the phase. Older
+        # code, which writes as it goes, has no flush.
+        flush = getattr(daemon, "_flush_pending_writes", None)
+
+        def with_flush(fn):
+            def run():
+                fn()
+                if flush is not None:
+                    flush()
+
+            return run
+
         produced: List[list] = []
         phase(
             "daemon _detect_and_enrich (steady state)",
             "daemon 2 s",
-            lambda: produced.append(daemon._detect_and_enrich(sessions, datetime.now())[0]),
-            note=f"{n} sessions, hooks mode; reads/writes are sessions.json",
+            with_flush(
+                lambda: produced.append(daemon._detect_and_enrich(sessions, datetime.now())[0])
+            ),
+            note=f"{n} sessions, hooks mode; reads/writes are sessions.json, flush included",
         )
         daemon._last_resources_sync = None
         phase(
             "daemon _sync_process_resources",
             "daemon 5 s",
-            lambda: daemon._sync_process_resources(sessions, datetime.now()),
+            with_flush(lambda: daemon._sync_process_resources(sessions, datetime.now())),
         )
         daemon._last_sandbox_sync = None
         phase(
             "daemon _sync_sandbox_state",
             "daemon 15 s",
-            lambda: daemon._sync_sandbox_state(sessions, datetime.now()),
+            with_flush(lambda: daemon._sync_sandbox_state(sessions, datetime.now())),
         )
         phase(
             "daemon _publish_state",
@@ -1802,13 +1818,13 @@ def time_daemon_phases(paths: FixturePaths, include_syncs: bool = False) -> List
             phase(
                 "daemon _sync_session_ids",
                 "daemon 10 s",
-                lambda: daemon._sync_session_ids(sessions, datetime.now()),
+                with_flush(lambda: daemon._sync_session_ids(sessions, datetime.now())),
             )
             daemon._last_stats_sync = None
             phase(
                 "daemon _sync_session_stats",
                 "daemon 60 s",
-                lambda: daemon._sync_session_stats(sessions, datetime.now()),
+                with_flush(lambda: daemon._sync_session_stats(sessions, datetime.now())),
             )
     return results
 

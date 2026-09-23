@@ -471,8 +471,10 @@ class TestSyncClaudeCodeStats:
         )
 
         # Verify update_stats was called with correct values
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         assert call_kwargs["interaction_count"] == 10
         assert call_kwargs["input_tokens"] == 5000
         assert call_kwargs["output_tokens"] == 2000
@@ -501,8 +503,9 @@ class TestSyncClaudeCodeStats:
 
         daemon.sync_claude_code_stats(mock_session)
 
-        # update_stats should not be called when stats are None
+        # Nothing is written or staged when stats are None
         daemon.session_manager.update_stats.assert_not_called()
+        assert not daemon._pending
 
     def test_handles_exception_gracefully(self, tmp_path, monkeypatch):
         """Should log warning and not raise on exception."""
@@ -601,8 +604,9 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "running", now)
 
-        # Should not call update_stats on first observation (just records baseline)
+        # Nothing written or staged on first observation (just records baseline)
         daemon.session_manager.update_stats.assert_not_called()
+        assert not daemon._pending
         # last_state_times should now have an entry
         assert session.id in daemon.last_state_times
 
@@ -622,8 +626,10 @@ class TestUpdateStateTime:
         daemon._update_state_time(session, "running", now)
 
         # update_stats should be called
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         # Green time should have increased by ~10 seconds
         assert call_kwargs["green_time_seconds"] > 100.0
 
@@ -641,8 +647,10 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "waiting_user", now)
 
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         # Non-green time should have increased
         assert call_kwargs["non_green_time_seconds"] > 50.0
 
@@ -663,8 +671,10 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "waiting_user", now)
 
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         assert call_kwargs["current_state"] == "waiting_user"
         # state_since should be updated to now (state changed)
         assert call_kwargs["state_since"] == now.isoformat()
@@ -735,7 +745,9 @@ class TestCheckAndSendHeartbeats:
         mock_send.assert_called_once_with(
             "test", 1, "continue working", send_enter=True
         )
-        daemon.session_manager.update_session.assert_called_once()
+        # The stamp is staged for the tick's single write (R5)
+        daemon.session_manager.update_session.assert_not_called()
+        assert daemon._pending.fields[session.id]["last_heartbeat_time"] is not None
 
     def test_does_not_send_heartbeat_when_not_due(self, tmp_path, monkeypatch):
         """Should not send heartbeat when interval has not elapsed."""

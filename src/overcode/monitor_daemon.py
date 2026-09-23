@@ -49,7 +49,7 @@ from .pid_utils import (
     acquire_daemon_lock,
     remove_pid_file,
 )
-from .session_manager import SessionIndex, SessionManager
+from .session_manager import PendingUpdates, SessionIndex, SessionManager
 from .settings import (
     DAEMON,
     DAEMON_VERSION,
@@ -70,6 +70,7 @@ from .status_constants import (
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
     STATUS_WAITING_HEARTBEAT,
+    STATUS_WAITING_OVERSIGHT,
     is_green_status,
 )
 from .status_detector import StatusDetector
@@ -319,6 +320,12 @@ class MonitorDaemon:
         self.previous_states: Dict[str, str] = {}
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
+
+        # Everything a tick wants persisted to sessions.json is staged here
+        # and written once at the end of the tick (audit R5); see
+        # _flush_pending_writes. Reads inside the tick go through
+        # self._pending.view(session) so they see the staged values.
+        self._pending: PendingUpdates = PendingUpdates()
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
@@ -446,7 +453,7 @@ class MonitorDaemon:
                 if op_duration > 0:
                     op_times.append(op_duration)
                     op_times = op_times[-100:]
-                    self.session_manager.update_stats(
+                    self._pending.update_stats(
                         session_id,
                         operation_times=op_times,
                         last_activity=now.isoformat()
@@ -603,7 +610,7 @@ class MonitorDaemon:
                 session.heartbeat_instruction,
                 send_enter=True,
             ):
-                self.session_manager.update_session(
+                self._pending.update_session(
                     session.id,
                     last_heartbeat_time=now.isoformat()
                 )
@@ -668,8 +675,8 @@ class MonitorDaemon:
             # Initialize state_since if never set (e.g., new session)
             state_since = now.isoformat()
 
-        # Save to session manager
-        self.session_manager.update_stats(
+        # Staged for the tick's single write
+        self._pending.update_stats(
             session_id,
             current_state=status,
             state_since=state_since,
@@ -769,9 +776,9 @@ class MonitorDaemon:
 
         # Update model/provider if detected
         if detected_model and detected_model != session.model:
-            self.session_manager.update_session(session.id, model=detected_model)
+            self._pending.update_session(session.id, model=detected_model)
         if detected_provider and detected_provider != session.provider:
-            self.session_manager.update_session(session.id, provider=detected_provider)
+            self._pending.update_session(session.id, provider=detected_provider)
 
         # Cost estimate
         from .settings import get_user_config, get_model_pricing
@@ -792,7 +799,7 @@ class MonitorDaemon:
             stats.input_tokens, stats.output_tokens,
             stats.cache_creation_tokens, stats.cache_read_tokens,
         )
-        self.session_manager.update_stats(
+        self._pending.update_stats(
             session.id,
             total_tokens=total_tokens,
             input_tokens=stats.input_tokens,
@@ -841,9 +848,9 @@ class MonitorDaemon:
             # across /clear (fixing cases where a bedrock agent switches
             # to Claude Max and vice versa).
             if stats.model and stats.model != session.model:
-                self.session_manager.update_session(session.id, model=stats.model)
+                self._pending.update_session(session.id, model=stats.model)
             if stats.provider and stats.provider != session.provider:
-                self.session_manager.update_session(session.id, provider=stats.provider)
+                self._pending.update_session(session.id, provider=stats.provider)
 
             # Cache last command for daemon state publishing
             if stats.last_command:
@@ -890,15 +897,15 @@ class MonitorDaemon:
                 )
                 if honors_launch_agent:
                     if not getattr(session, "agent_persona", None):
-                        self.session_manager.update_session(
+                        self._pending.update_session(
                             session.id, agent_persona=detected_agent
                         )
                 else:
-                    self.session_manager.update_session(
+                    self._pending.update_session(
                         session.id, agent_persona=detected_agent
                     )
 
-            self.session_manager.update_stats(
+            self._pending.update_stats(
                 session.id,
                 interaction_count=stats.interaction_count,
                 total_tokens=total_tokens,
@@ -969,7 +976,7 @@ class MonitorDaemon:
                 tmux.kill_window(self.tmux_session, session.tmux_window)
             except Exception:
                 pass  # Window may already be gone
-            self.session_manager.update_session_status(session.id, "terminated")
+            self._pending.update_session_status(session.id, "terminated")
             self.log.info(f"Auto-archived done agent: {session.name}")
 
     def _count_untracked_windows(self, sessions: list, tmux=None) -> int:
@@ -1015,12 +1022,12 @@ class MonitorDaemon:
                 now,
             ):
                 continue
-            self.session_manager.update_session(
+            self._pending.update_session(
                 session.id,
                 report_status="failure",
                 report_reason="Oversight timeout expired",
             )
-            self.session_manager.update_session_status(session.id, "done")
+            self._pending.update_session_status(session.id, "done")
             self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
 
     def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
@@ -1163,11 +1170,36 @@ class MonitorDaemon:
         self._sync_sandbox_state(sessions, now)
         self._sync_process_resources(sessions, now)
         self._dispatch_heartbeats(sessions)
-        session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
-        self._cleanup_stale(sessions)
-        self._publish_and_enforce(sessions, session_states, all_waiting)
+        try:
+            session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
+            self._cleanup_stale(sessions)
+            self._publish_and_enforce(sessions, session_states, all_waiting)
+        finally:
+            # One write for the whole tick, even when a phase raised: what
+            # was staged before the failure lands, as it did when each
+            # change was written as it was found.
+            self._flush_pending_writes()
         self._maybe_rotate_history(now)
         self._maybe_refresh_model_metadata(now)
+
+    def _flush_pending_writes(self) -> None:
+        """Commit this tick's staged mutations to sessions.json in one write.
+
+        Every phase stages what it wants persisted in ``self._pending``
+        (current task, state-time accumulators, git context, PR number,
+        loaded skills, model, tokens, CPU/RSS, heartbeat and oversight
+        stamps, terminal statuses). ``SessionManager.commit_pending``
+        rewrites the file once, and only if some staged value differs
+        from what is on disk; a tick with nothing staged does not open
+        it. The daemon's published state comes from memory, so this only
+        moves *when* sessions.json is written within the tick, not what it
+        says by the tick's end (audit R5).
+        """
+        pending = self._pending
+        if not pending:
+            return
+        self._pending = PendingUpdates()
+        self.session_manager.commit_pending(pending)
 
     def _maybe_rotate_history(self, now: datetime) -> None:
         """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
@@ -1292,7 +1324,7 @@ class MonitorDaemon:
             for session in sessions:
                 available = get_available_skills(session.start_directory)
                 if available != session.available_skills:
-                    self.session_manager.update_session(session.id, available_skills=available)
+                    self._pending.update_session(session.id, available_skills=available)
             self._last_skills_sync = now
 
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
@@ -1338,18 +1370,19 @@ class MonitorDaemon:
             if claude_pid is None:
                 # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
                 if session.cpu_percent or session.rss_bytes:
-                    self.session_manager.update_session(
+                    self._pending.update_session(
                         session.id, cpu_percent=0.0, rss_bytes=0,
                     )
                 continue
             cpu, rss = aggregate_tree(claude_pid, snapshot, children)
-            # Only write when the value moved meaningfully — avoids a JSON
+            # Only stage when the value moved meaningfully — avoids a JSON
             # write every 5s for an idle agent whose CPU is drifting by 0.1%.
+            # Everything staged lands in the tick's single write.
             if (
                 abs(cpu - session.cpu_percent) >= 1.0
                 or abs(rss - session.rss_bytes) >= 1024 * 1024  # 1 MiB
             ):
-                self.session_manager.update_session(
+                self._pending.update_session(
                     session.id, cpu_percent=cpu, rss_bytes=rss,
                 )
         self._last_resources_sync = now
@@ -1395,7 +1428,7 @@ class MonitorDaemon:
                 continue
             detected = states.get(session_pids[session.id])
             if detected != session.sandbox_enabled:
-                self.session_manager.update_session(session.id, sandbox_enabled=detected)
+                self._pending.update_session(session.id, sandbox_enabled=detected)
         self._last_sandbox_sync = now
 
     def _dispatch_heartbeats(self, sessions: list) -> None:
@@ -1421,8 +1454,13 @@ class MonitorDaemon:
         all_waiting_user = True
         if index is None:
             index = self._session_index()
+        pending = self._pending
 
-        for session in sessions:
+        for snapshot in sessions:
+            # Earlier phases of this tick may have staged changes for this
+            # session (a heartbeat stamp, tokens, a model, CPU); read through
+            # them, as the per-write path re-read the file after each.
+            session = pending.view(snapshot)
             pane_content = ""
             if session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
@@ -1437,13 +1475,13 @@ class MonitorDaemon:
                 if hasattr(self.detector, 'get_loaded_skills'):
                     new_skills = self.detector.get_loaded_skills(session.name)
                     if new_skills and sorted(new_skills) != sorted(session.loaded_skills):
-                        self.session_manager.update_session(session.id, loaded_skills=new_skills)
+                        pending.update_session(session.id, loaded_skills=new_skills)
 
                 # Extract PR number from pane content
                 if pane_content:
                     pr = extract_pr_number(pane_content)
                     if pr is not None and pr != session.pr_number:
-                        self.session_manager.update_session(session.id, pr_number=pr, pr_branch=session.branch)
+                        pending.update_session(session.id, pr_number=pr, pr_branch=session.branch)
 
             # Clear heartbeat tracking when session stops running
             if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
@@ -1451,25 +1489,24 @@ class MonitorDaemon:
                 self._heartbeat_start_pending.discard(session.id)
 
             # Refresh git context (branch may have changed)
-            git_changed = self.session_manager.refresh_git_context(session.id)
+            git_changed = self._refresh_git_context(session)
             if git_changed and session.pr_number is not None:
-                # Re-read session to get updated branch
-                refreshed = self.session_manager.get_session(session.id)
-                if refreshed and refreshed.branch is not None:
+                # The session as the file will show it: staged branch included
+                refreshed = pending.view(snapshot)
+                if refreshed.branch is not None:
                     # Clear if pr_branch not set (pre-migration) or branch mismatch
                     if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
-                        self.session_manager.update_session(session.id, pr_number=None, pr_branch=None)
+                        pending.update_session(session.id, pr_number=None, pr_branch=None)
 
             # Update current task in session
-            self.session_manager.update_stats(
+            pending.update_stats(
                 session.id,
                 current_task=activity[:100] if activity else ""
             )
 
-            # Reload session to get fresh stats
-            session = self.session_manager.get_session(session.id)
-            if session is None:
-                continue
+            # The session with everything staged so far applied — what the
+            # reload used to return after the writes above.
+            session = pending.view(snapshot)
 
             # Track stats and build state
             # Precedence: terminated > asleep > heartbeat variants > default (#399, #68, #171)
@@ -1497,11 +1534,12 @@ class MonitorDaemon:
             if (effective_status == STATUS_TERMINATED
                     and session.status != "terminated"
                     and not pane_content):
-                self.session_manager.update_session_status(session.id, "terminated")
+                if not self._is_waiting_on_oversight(session):
+                    pending.update_session_status(session.id, "terminated")
             # Un-persist terminated if agent is found alive (revival or false positive)
             elif (session.status == "terminated"
                     and effective_status != STATUS_TERMINATED):
-                self.session_manager.update_session_status(session.id, "running")
+                pending.update_session_status(session.id, "running")
 
             session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
@@ -1523,6 +1561,40 @@ class MonitorDaemon:
         self._compute_subtree_costs(session_states)
 
         return session_states, all_waiting_user
+
+    def _refresh_git_context(self, session) -> bool:
+        """Stage a changed repo/branch for ``session``; True if it changed.
+
+        What ``SessionManager.refresh_git_context`` did per session, minus
+        its rewrite of sessions.json: the change joins the tick's single
+        write. ``session`` is the tick's view (staged changes applied).
+        """
+        if not session.start_directory:
+            return False
+        repo_name, branch = self.session_manager.read_git_context(session)
+        if repo_name != session.repo_name or branch != session.branch:
+            self._pending.update_session(session.id, repo_name=repo_name, branch=branch)
+            return True
+        return False
+
+    def _is_waiting_on_oversight(self, session) -> bool:
+        """A child parked in waiting_oversight whose Stop hook has fired.
+
+        Its window is gone, so detection says terminated — but the TUI's
+        ``AgentLauncher.list_sessions`` re-asserts waiting_oversight for
+        exactly this case (parent set, Stop hook, no report) on its next
+        pass, and the two used to rewrite sessions.json in turn every 10 s
+        for as long as the child sat there (audit R5). The persisted status
+        stays waiting_oversight; the published status is terminated either
+        way, and the oversight timeout keeps applying to it.
+        """
+        if session.status != STATUS_WAITING_OVERSIGHT or session.parent_session_id is None:
+            return False
+        try:
+            hook_state = self.detector.hooks._read_hook_state(session.name)
+        except Exception:
+            return False
+        return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"
 
     def _log_hook_event(self, session, status: str, activity: str) -> None:
         """Log hook events to the daemon log when they change.

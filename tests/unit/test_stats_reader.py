@@ -456,8 +456,9 @@ class TestDaemonWithStatslessBackend:
 
         daemon.sync_agent_stats(session)
 
-        daemon.session_manager.update_stats.assert_called_once()
-        assert daemon.session_manager.update_stats.call_args[1]["input_tokens"] == 100
+        # Staged for the tick's single sessions.json write (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert daemon._pending.stats[session.id]["input_tokens"] == 100
 
 
 class TestUsageWidgetGate:

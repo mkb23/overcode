@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
-from dataclasses import MISSING, dataclass, asdict, field, fields
+from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 import time
 
@@ -394,6 +394,91 @@ def _accept_legacy_kwargs(init):
 
 Session.__init__ = _accept_legacy_kwargs(Session.__init__)
 
+_SESSION_FIELD_NAMES = frozenset(f.name for f in fields(Session))
+_STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
+
+
+def _with_legacy_keys(kwargs: Dict[str, object]) -> Dict[str, object]:
+    """The keys ``update_session`` writes for ``kwargs``.
+
+    A pre-Phase-6 name is folded onto its canonical field (the canonical
+    one wins when both are given), and every renamed field is written
+    under both names so a state file stays readable by an older overcode
+    for one release.
+    """
+    out = dict(kwargs)
+    for old_key, new_key in CANONICAL_SESSION_KEYS.items():
+        if old_key in out:
+            out.setdefault(new_key, out.pop(old_key))
+            out.pop(old_key, None)
+    for new_key, old_key in LEGACY_SESSION_KEYS.items():
+        if new_key in out:
+            out[old_key] = out[new_key]
+    return out
+
+
+class _StateTxn:
+    """What ``SessionManager._state_transaction`` yields: the parsed state and
+    whether it must be written back."""
+
+    __slots__ = ("state", "dirty")
+
+    def __init__(self, state: Dict[str, dict]):
+        self.state = state
+        self.dirty = False
+
+
+class PendingUpdates:
+    """A tick's worth of session mutations, committed in one read-modify-write.
+
+    The monitor daemon used to persist each change as it found it — the
+    current task, the state-time accumulators, a branch, a PR number, a
+    token count — and each was a full parse plus an fsync'd rewrite of
+    ``sessions.json`` under the exclusive lock, twice per agent per tick
+    (audit R5). The tick now stages everything here and
+    ``SessionManager.commit_pending`` writes the file once, and only when a
+    staged value differs from what is on disk.
+
+    Staged values are also what the rest of the tick reads: ``view``
+    returns a session with the staged changes applied, so code that used to
+    re-read the file to see its own earlier write sees the same values
+    from memory. ``update_session`` mirrors the manager's method, legacy
+    key aliasing included, so what lands on disk is identical.
+    """
+
+    def __init__(self) -> None:
+        self.fields: Dict[str, Dict[str, object]] = {}
+        self.stats: Dict[str, Dict[str, object]] = {}
+
+    def __bool__(self) -> bool:
+        return bool(self.fields or self.stats)
+
+    def update_session(self, session_id: str, **kwargs) -> None:
+        self.fields.setdefault(session_id, {}).update(_with_legacy_keys(kwargs))
+
+    def update_session_status(self, session_id: str, status: str) -> None:
+        self.update_session(session_id, status=status)
+
+    def update_stats(self, session_id: str, **stats_kwargs) -> None:
+        self.stats.setdefault(session_id, {}).update(stats_kwargs)
+
+    def view(self, session: Session) -> Session:
+        """``session`` with its staged changes applied.
+
+        A copy when anything is staged for it — the snapshot object is
+        never touched — and the object itself otherwise.
+        """
+        fields_ = self.fields.get(session.id)
+        stats_ = self.stats.get(session.id)
+        if not fields_ and not stats_:
+            return session
+        changes = {k: v for k, v in (fields_ or {}).items() if k in _SESSION_FIELD_NAMES}
+        if stats_:
+            changes["stats"] = replace(
+                session.stats, **{k: v for k, v in stats_.items() if k in _STATS_FIELD_NAMES}
+            )
+        return replace(session, **changes)
+
 
 class SessionIndex:
     """Parent/child lookups over one snapshot of the session table (#244).
@@ -662,11 +747,27 @@ class SessionManager:
         preventing TOCTOU race conditions. The yielded dict is written
         back to the state file when the context manager exits normally.
         """
+        with self._state_transaction() as txn:
+            yield txn.state
+            txn.dirty = True
+
+    @contextmanager
+    def _state_transaction(self):
+        """Read-modify-write under the exclusive lock, writing only if dirty.
+
+        Yields a ``_StateTxn`` whose ``state`` is the parsed file; the file
+        is rewritten (one dump, one fsync) on exit only if the caller set
+        ``dirty``. ``_locked_state`` always does; ``commit_pending`` does
+        only when a staged value differs from what is on disk, so a tick
+        with nothing to change costs a parse and no write.
+        """
         if not HAS_FCNTL:
             # No locking on Windows - fall back to read/modify/write
             _, state = self._read_state_file()
-            yield state
-            self._save_state(state)
+            txn = _StateTxn(state)
+            yield txn
+            if txn.dirty:
+                self._save_state(state)
             return
 
         max_retries = 5
@@ -696,17 +797,54 @@ class SessionManager:
                 raise StateWriteError(f"Failed to load state after {max_retries} attempts: {e}")
 
         try:
-            yield state
-            f.seek(0)
-            f.truncate()
-            json.dump(state, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+            txn = _StateTxn(state)
+            yield txn
+            if txn.dirty:
+                f.seek(0)
+                f.truncate()
+                json.dump(state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
         except (IOError, OSError) as e:
             raise StateWriteError(f"Failed to save state: {e}")
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             f.close()
+
+    def commit_pending(self, pending: "PendingUpdates") -> bool:
+        """Apply a tick's staged mutations in one read-modify-write.
+
+        Every staged field and stat is compared with the entry on disk and
+        the file is rewritten — one ``json.dump``, one fsync — only if at
+        least one differs. Entries that vanished since they were staged are
+        skipped, as ``update_session`` skips an unknown id. Returns True if
+        the file was written.
+        """
+        if not pending:
+            return False
+        with self._state_transaction() as txn:
+            state = txn.state
+            for session_id, values in pending.fields.items():
+                entry = state.get(session_id)
+                if entry is None:
+                    continue
+                for key, value in values.items():
+                    if key not in entry or entry[key] != value:
+                        entry[key] = value
+                        txn.dirty = True
+            for session_id, values in pending.stats.items():
+                entry = state.get(session_id)
+                if entry is None:
+                    continue
+                if 'stats' not in entry:
+                    entry['stats'] = SessionStats().to_dict()
+                    txn.dirty = True
+                stats = entry['stats']
+                for key, value in values.items():
+                    if key not in stats or stats[key] != value:
+                        stats[key] = value
+                        txn.dirty = True
+            return txn.dirty
 
     def _atomic_update(self, update_fn: Callable[[Dict[str, dict]], Dict[str, dict]]) -> None:
         """Atomically read, modify, and write state with exclusive lock held throughout.
@@ -828,6 +966,15 @@ class SessionManager:
             print(f"Warning: Could not detect git context: {e}")
             return None, None
 
+    def read_git_context(self, session: Session) -> tuple[Optional[str], Optional[str]]:
+        """``(repo_name, branch)`` of ``session``'s start directory right now.
+
+        The detection half of ``refresh_git_context`` with no write: the
+        daemon compares the answer with the session it holds and stages
+        the change for its per-tick commit.
+        """
+        return self._detect_git_context(session.start_directory)
+
     def refresh_git_context(self, session_id: str) -> bool:
         """Refresh git repo/branch info for a session.
 
@@ -841,7 +988,7 @@ class SessionManager:
         if not session or not session.start_directory:
             return False
 
-        repo_name, branch = self._detect_git_context(session.start_directory)
+        repo_name, branch = self.read_git_context(session)
 
         # Only update if something changed
         if repo_name != session.repo_name or branch != session.branch:
@@ -972,7 +1119,16 @@ class SessionManager:
         return self._snapshot()
 
     def update_session_status(self, session_id: str, status: str):
-        """Update session status"""
+        """Update session status.
+
+        A no-op — no lock, no rewrite — when the snapshot already shows
+        ``status``: the daemon and the TUI's launcher both re-assert a
+        terminal status every pass, and each assertion used to be a
+        full rewrite of the file.
+        """
+        session = self.get_session(session_id)
+        if session is not None and session.status == status:
+            return
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['status'] = status
@@ -1093,13 +1249,7 @@ class SessionManager:
         pre-Phase-6 key so a state file stays readable by an older overcode
         for one release; either name may be passed in.
         """
-        for old_key, new_key in CANONICAL_SESSION_KEYS.items():
-            if old_key in kwargs:
-                kwargs.setdefault(new_key, kwargs.pop(old_key))
-                kwargs.pop(old_key, None)
-        for new_key, old_key in LEGACY_SESSION_KEYS.items():
-            if new_key in kwargs:
-                kwargs[old_key] = kwargs[new_key]
+        kwargs = _with_legacy_keys(kwargs)
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id].update(kwargs)
@@ -1201,6 +1351,10 @@ class SessionManager:
         """
         session = self.get_session(session_id)
         if not session:
+            return
+        if session.active_agent_session_id == agent_session_id:
+            # The daemon re-binds the current id every 10 s per agent; a
+            # rebind to the id already on disk is not a write (audit R5).
             return
 
         with self._locked_state() as state:
