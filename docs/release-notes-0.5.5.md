@@ -74,4 +74,7 @@ prompt. The old name keeps working as an alias: `send`, `follow`, `kill`
 and the other commands still reach the agent and say it was renamed, so a
 parent or script still using the old name is not broken. A busy agent is
 refused unless you pass `--force`, because the restart would cancel its
-turn.
+turn. In the TUI, Ctrl+N opens a rename dialog for the focused agent, with a
+force toggle. The help overlay now also lists Ctrl+R (cycle focal repo),
+Ctrl+P (jump to agent) and J (jobs view), which were bound but missing from
+it.

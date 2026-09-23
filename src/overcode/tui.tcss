@@ -361,6 +361,22 @@ NewAgentModal.visible {
     display: block;
 }
 
+/* Rename Agent Modal (Ctrl+N, #478) */
+RenameAgentModal {
+    display: none;
+    layer: above;
+    offset: 4 10;
+    width: auto;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+RenameAgentModal.visible {
+    display: block;
+}
+
 /* Sister Selection Modal (#323) */
 SisterSelectionModal {
     display: none;

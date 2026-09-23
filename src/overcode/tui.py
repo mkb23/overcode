@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional
 import sys
+import threading
 import time
 
 from textual.app import App, ComposeResult
@@ -93,6 +94,7 @@ from .tui_widgets import (
     TmuxConfigModal,
     PassthruConfigModal,
     NewAgentModal,
+    RenameAgentModal,
     AgentSelectModal,
     SisterSelectionModal,
     InstructionHistoryModal,
@@ -259,6 +261,7 @@ class SupervisorTUI(
         ("x", "kill_focused", "Kill/Clean up"),
         ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
+        ("ctrl+n", "rename_focused", "Rename agent"),
         # Send Enter to focused agent (for approvals)
         ("enter", "send_enter_to_focused", "Send Enter"),
         # Send Escape to focused agent (for interrupting)
@@ -610,6 +613,7 @@ class SupervisorTUI(
         yield PassthruConfigModal(id="passthru-config-modal", classes="modal")
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
+        yield RenameAgentModal(id="rename-agent-modal", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
@@ -3770,6 +3774,73 @@ class SupervisorTUI(
 
     def on_new_agent_modal_cancelled(self, message: NewAgentModal.Cancelled) -> None:
         """Handle cancel from new-agent modal."""
+        self._dialog_did_close()
+
+    def on_rename_agent_modal_rename_requested(
+        self, message: RenameAgentModal.RenameRequested,
+    ) -> None:
+        """Rename the agent the dialog was opened for (#478).
+
+        Off the UI thread: a live agent is stopped, waited on (seconds) and
+        relaunched, and the busy check captures its pane.
+        """
+        self._dialog_did_close()
+        session = self.session_manager.get_session(message.session_id)
+        if session is None:
+            self.notify(f"Agent '{message.old_name}' no longer exists", severity="error")
+            return
+        self.notify(f"Renaming '{message.old_name}' → '{message.new_name}'...")
+        threading.Thread(
+            target=self._run_rename,
+            args=(session, message.new_name, message.force),
+            daemon=True,
+        ).start()
+
+    def _run_rename(self, session: "Session", new_name: str, force: bool) -> None:
+        """Worker thread for a TUI rename; reports back through notify."""
+        from .exceptions import AgentBusyError, InvalidSessionNameError
+        from .launcher import AgentLauncher
+
+        old_name = session.name
+        launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
+        try:
+            renamed = launcher.rename(session, new_name, force=force)
+        except AgentBusyError as e:
+            state = "could not be checked" if e.status == "unknown" else f"is busy ({e.status})"
+            self.call_from_thread(
+                self.notify,
+                f"'{old_name}' {state} — not renamed. Try when it is idle, or turn force on.",
+                severity="warning",
+            )
+            return
+        except (InvalidSessionNameError, ValueError) as e:
+            self.call_from_thread(self.notify, f"Rename failed: {e}", severity="error")
+            return
+        except Exception as e:  # never let a worker die silently
+            self.call_from_thread(self.notify, f"Rename failed: {e}", severity="error")
+            return
+
+        current = self.session_manager.get_session(session.id)
+        if renamed:
+            self.call_from_thread(
+                self.notify, f"Renamed '{old_name}' → '{new_name}'", severity="information",
+            )
+        elif current is not None and current.name == new_name:
+            self.call_from_thread(
+                self.notify,
+                f"Renamed to '{new_name}', but the relaunch failed — press R to restart it",
+                severity="warning",
+            )
+        else:
+            self.call_from_thread(
+                self.notify,
+                f"tmux refused the rename; '{old_name}' was restarted under its old name",
+                severity="error",
+            )
+        self.call_from_thread(self.refresh_sessions)
+
+    def on_rename_agent_modal_cancelled(self, message: RenameAgentModal.Cancelled) -> None:
+        """Handle cancel from the rename modal."""
         self._dialog_did_close()
 
     def on_command_bar_fork_requested(self, message: CommandBar.ForkRequested) -> None:

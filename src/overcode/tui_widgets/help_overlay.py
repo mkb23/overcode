@@ -35,6 +35,7 @@ class HelpOverlay(Static):
         row("j/↓", "Next agent", "k/↑", "Previous agent")
         row("b", "Jump to attention", "c", "Sync main + clear")
         row("h/?", "Toggle help", "q", "Quit / detach")
+        row("^P", "Jump to agent by name", "J", "Agents / jobs view")
         t.append("\n")
 
         section("VIEW")
@@ -61,7 +62,7 @@ class HelpOverlay(Static):
         row("i/:", "Send instruction", "o", "Set standing orders")
         row("a", "Edit annotation", "Enter", "Approve (send Enter)")
         row("1-5", "Send number", "Esc", "Interrupt agent")
-        row("n", "New agent (local/remote)", "", "")
+        row("n", "New agent (or remote)", "^N", "Rename agent")
         row("x", "Kill agent", "R", "Restart/revive agent")
         row("z", "Toggle sleep", "p", "Pause/resume heartbeat")
         row("V", "Edit agent value", "B", "Edit cost budget")
@@ -70,7 +71,7 @@ class HelpOverlay(Static):
         row("T", "Handover all (2x)", "I", "Instruction history")
         row("G", "New agent defaults", "U", "Sister visibility")
         row("^G", "Tmux toggle-key config", "^K", "Passthru key config")
-        row("^O", "Send Ctrl+O (passthru)")
+        row("^O", "Send Ctrl+O (passthru)", "^R", "Cycle focal repo")
         t.append("\n")
 
         section("DAEMON & SERVICES")

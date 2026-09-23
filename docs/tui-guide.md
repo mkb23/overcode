@@ -29,6 +29,8 @@ In the "status" and "value" sort modes the list re-orders itself as agents chang
 | `j` / `↓` | Move to next agent |
 | `k` / `↑` | Move to previous agent |
 | `b` | Jump to next agent needing attention |
+| `Ctrl+P` | Jump to an agent by name (fuzzy search) |
+| `J` | Switch between the agents and jobs views |
 
 ### View Controls
 
@@ -70,9 +72,10 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `I` | Browse instruction history |
 | `Enter` | Send Enter to agent (approve prompts) |
 | `1-5` | Send numbered option to agent |
-| `n` | Create new agent |
-| `N` | Create new remote agent (on sister) |
+| `n` | Create new agent (Host field picks local or a remote sister) |
 | `F` | Fork agent (with conversation context) |
+| `Ctrl+N` | Rename agent (keeps its conversation; the old name stays an alias) |
+| `Ctrl+R` | Cycle the focused agent's focal repo (multi-repo workspaces) |
 | `R` | Restart agent (double-press to confirm) |
 | `x` | Kill agent (double-press to confirm) |
 | `z` | Toggle sleep mode |

@@ -612,6 +612,37 @@ class SessionActionsMixin:
             app_ref=self,
         )
 
+    def action_rename_focused(self) -> None:
+        """Open the rename dialog for the focused agent (Ctrl+N, #478)."""
+        from ..tui_widgets import RenameAgentModal
+
+        focused = _get_focused_session(self)
+        if not focused:
+            self.notify("No agent focused", severity="warning")
+            return
+        session = focused.session
+        if self._is_remote(session):
+            # No sister API for it: the rename has to run where the agent does.
+            self.notify(
+                f"Rename remote agent '{session.name}' on its own machine "
+                f"(overcode rename)",
+                severity="warning",
+            )
+            return
+        try:
+            modal = self.query_one("#rename-agent-modal", RenameAgentModal)
+        except NoMatches:
+            self.notify("Rename modal not found", severity="error")
+            return
+        existing_names = {s.name for s in self.session_manager.list_sessions()}
+        self._dialog_will_open()
+        modal.show(
+            session_id=session.id,
+            name=session.name,
+            existing_names=existing_names,
+            app_ref=self,
+        )
+
     def _open_command_bar(
         self,
         mode: str | None = None,
