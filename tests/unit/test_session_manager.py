@@ -1718,11 +1718,19 @@ class TestStatGatedSessionCache:
         assert c.human_annotation == "changed"
         assert a[0].human_annotation == ""  # the old snapshot is untouched
 
-    def test_load_state_dict_is_not_mutated_by_object_construction(self, tmp_path):
+    def test_load_state_is_a_fresh_private_copy(self, tmp_path):
+        """The raw dict is not part of the snapshot: it is re-read on request
+        and a caller may mutate it without touching what other readers see."""
         sm, ids = self._manager_with_sessions(tmp_path)
+        _settle(sm.state_file)
+        reads = _count_reads(sm)
         sm.list_sessions()
         raw = sm._load_state()
         assert isinstance(raw[ids[0]]["stats"], dict)
+        raw[ids[0]]["name"] = "scribbled"
+        assert sm._load_state() is not raw
+        assert sm.get_session(ids[0]).name == "agent-0"
+        assert len(reads) == 3  # snapshot, then one per _load_state
 
     def test_from_dict_leaves_its_input_alone(self):
         data = {

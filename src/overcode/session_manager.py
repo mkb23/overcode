@@ -419,48 +419,48 @@ class SessionManager:
         self.state_file = self.state_dir / "sessions.json"
         self.archive_file = self.state_dir / "archive.json"
         self._skip_git_detection = skip_git_detection
-        # The last parse of each file plus the Session objects built from it,
-        # reused while the file's stat signature is unchanged (audit R4). Per
-        # instance: the daemon and each TUI hold their own manager, and the
-        # TUI's workers call list_sessions() five to six times a second
-        # against a file that changes only when something writes it.
-        self._state_cache: StatGatedCache[Tuple[Dict[str, dict], Dict[str, Session]]] = (
-            StatGatedCache()
-        )
-        self._archive_cache: StatGatedCache[Tuple[Dict[str, dict], Dict[str, Session]]] = (
-            StatGatedCache()
-        )
+        # The Session objects built from the last parse of each file, keyed
+        # by entry id and reused while the file's stat signature is unchanged
+        # (audit R4). Per instance: the daemon and each TUI hold their own
+        # manager, and the TUI's workers call list_sessions() five to six
+        # times a second against a file that changes only when something
+        # writes it.
+        self._state_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
+        self._archive_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
 
     def _load_state(self) -> Dict[str, dict]:
-        """Load all sessions from the state file, parsing only when it changed.
+        """Load all sessions from the state file as a fresh, private dict.
 
-        Returns the same dict as the previous call while ``sessions.json``
-        has the same stat signature (see :mod:`overcode.stat_gate`); that
-        dict is shared with every other reader of this manager and must not
-        be mutated. Writers go through :meth:`_locked_state`, which always
-        re-reads under the exclusive lock.
+        Uncached on purpose: a caller that wants the raw entries gets its own
+        copy to do with as it likes. Readers of ``Session`` objects go
+        through :meth:`_snapshot`, which parses only when ``sessions.json``
+        changed (see :mod:`overcode.stat_gate`); writers go through
+        :meth:`_locked_state`, which re-reads under the exclusive lock.
         """
-        return self._snapshot()[0]
+        return self._read_state_file()[1]
 
-    def _snapshot(self) -> Tuple[Dict[str, dict], Dict[str, Session]]:
-        """The parsed state file and the ``Session`` objects built from it.
+    def _snapshot(self) -> Dict[str, Session]:
+        """The ``Session`` objects built from the state file, by entry id.
 
-        Both are built once per change of ``sessions.json`` and handed to
-        every ``get_session`` / ``list_sessions`` call until the file
-        changes; a call in between costs one ``os.stat``.
+        Built once per change of ``sessions.json`` and handed to every
+        ``get_session`` / ``list_sessions`` call until the file changes; a
+        call in between costs one ``os.stat``.
         """
         return self._state_cache.get(self.state_file, self._parse_state_file)
 
-    def _parse_state_file(
-        self,
-    ) -> Tuple[Optional[FileSignature], Tuple[Dict[str, dict], Dict[str, Session]]]:
+    def _parse_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
         sig, state = self._read_state_file()
         by_id: Dict[str, Session] = {}
-        for key, data in state.items():
-            session = Session.from_dict(data)
+        # Pop each entry as its Session is built. The snapshot keeps the
+        # objects, not the raw dicts, and releasing those as we go keeps
+        # the cyclic GC's traversals during a 20,000-entry parse short:
+        # measured 8% off the cold parse at the power scale, and the
+        # retained snapshot is half the size.
+        for key in list(state):
+            session = Session.from_dict(state.pop(key))
             if session is not None:  # skips corrupted entries
                 by_id[key] = session
-        return sig, (state, by_id)
+        return sig, by_id
 
     def _read_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
         """Read and parse the state file under a shared lock — uncached.
@@ -882,11 +882,11 @@ class SessionManager:
         through ``update_session`` / ``update_stats`` (which rewrite the file
         and so invalidate the snapshot) rather than by assigning to it.
         """
-        return self._snapshot()[1].get(session_id)
+        return self._snapshot().get(session_id)
 
     def get_session_by_name(self, name: str) -> Optional[Session]:
         """Get a session by name (same shared snapshot as ``get_session``)."""
-        for session in self._snapshot()[1].values():
+        for session in self._snapshot().values():
             if session.name == name:
                 return session
         return None
@@ -898,7 +898,7 @@ class SessionManager:
         every other reader until ``sessions.json`` changes — see
         ``get_session`` for the read-only contract.
         """
-        return list(self._snapshot()[1].values())
+        return list(self._snapshot().values())
 
     def update_session_status(self, session_id: str, status: str):
         """Update session status"""
@@ -928,18 +928,18 @@ class SessionManager:
             self._archive_session(archived_data)
 
     def _load_archive(self) -> Dict[str, dict]:
-        """Load archived sessions — the shared, read-only parse (see ``_load_state``)."""
-        return self._archive_snapshot()[0]
+        """Load archived sessions as a fresh, private dict (see ``_load_state``)."""
+        return self._read_archive_file()[1]
 
-    def _archive_snapshot(self) -> Tuple[Dict[str, dict], Dict[str, Session]]:
+    def _archive_snapshot(self) -> Dict[str, Session]:
+        """The archived ``Session`` objects by entry id, rebuilt when archive.json changes."""
         return self._archive_cache.get(self.archive_file, self._parse_archive_file)
 
-    def _parse_archive_file(
-        self,
-    ) -> Tuple[Optional[FileSignature], Tuple[Dict[str, dict], Dict[str, Session]]]:
+    def _parse_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
         sig, archive = self._read_archive_file()
         by_id: Dict[str, Session] = {}
-        for key, data in archive.items():
+        for key in list(archive):
+            data = archive.pop(key)
             try:
                 # Handle end_time field that's not in Session dataclass
                 data_copy = data.copy()
@@ -952,7 +952,7 @@ class SessionManager:
                 by_id[key] = session
             except (KeyError, TypeError):
                 continue
-        return sig, (archive, by_id)
+        return sig, by_id
 
     def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
         """Read and parse the archive file under a shared lock — uncached."""
@@ -999,8 +999,7 @@ class SessionManager:
 
     def _archive_session(self, session_data: dict):
         """Add a session to the archive."""
-        # A private copy to modify: the cached parse is shared and read-only.
-        _, archive = self._read_archive_file()
+        archive = self._load_archive()  # a private copy to modify
         archive[session_data['id']] = session_data
         self._save_archive(archive)
 
@@ -1010,11 +1009,11 @@ class SessionManager:
         Same sharing contract as ``list_sessions``: the objects are reused
         until ``archive.json`` changes.
         """
-        return list(self._archive_snapshot()[1].values())
+        return list(self._archive_snapshot().values())
 
     def get_archived_session(self, session_id: str) -> Optional[Session]:
         """Get an archived session by ID (shared snapshot, see ``get_session``)."""
-        return self._archive_snapshot()[1].get(session_id)
+        return self._archive_snapshot().get(session_id)
 
     def update_session(self, session_id: str, **kwargs):
         """Update session fields.
