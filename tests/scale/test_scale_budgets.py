@@ -162,11 +162,9 @@ class TestFastPathCaptures:
 
 
 class TestStatusBarWorker:
-    @pytest.mark.xfail(
-        strict=True, reason="R1 not fixed yet: compute_window_burn re-parses every transcript"
-    )
     def test_window_burn_warm_is_incremental(self, window_burn_rows):
-        # today: 117 ms per pass over 50 MB, once a second
+        # was: 117 ms per pass over 50 MB, once a second (every transcript re-parsed);
+        # fixed (R1): one stat per file, appended bytes only, ~4 ms
         assert window_burn_rows["compute_window_burn (warm, no file changed)"].ms_per_call < 20.0
 
     def test_status_history_warm_read_is_cheap(self, status_history_rows):
@@ -194,20 +192,14 @@ class TestStatusBarWorker:
 
 
 class TestStatsSweep:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R8/R3 not fixed yet: 5 s sweep re-parses history.jsonl and scans it per session",
-    )
     def test_sweep_warm_is_cheap(self, stats_sweep_rows):
-        # today: 53 ms per sweep with nothing changed (fresh HistoryFile + O(H) per session)
+        # was: 53 ms per sweep with nothing changed (fresh HistoryFile + O(H) per session);
+        # fixed (R3/R8): shared HistoryFile, indexed lookups, incremental transcripts, ~6 ms
         assert stats_sweep_rows["stats sweep get_stats (warm, nothing changed)"].ms_per_tick < 20.0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R8/R3 not fixed yet: 5 s sweep re-parses history.jsonl and the touched transcript whole",
-    )
     def test_sweep_with_one_appended_transcript_is_cheap(self, stats_sweep_rows):
-        # today: 55 ms; fixed: the history parse is gated and only the appended bytes are read
+        # was: 55 ms; fixed (R3/R8): the history parse is gated and only the appended
+        # bytes of the touched transcript are read, ~6 ms
         assert (
             stats_sweep_rows["stats sweep get_stats (warm, one transcript appended)"].ms_per_tick
             < 25.0
@@ -244,12 +236,9 @@ class TestTimeline:
 
 
 class TestSessionIdDiscovery:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R8 not fixed yet: discover_session_ids parses history.jsonl and realpaths every entry",
-    )
     def test_discover_warm_is_cheap(self, discover_rows):
-        # today: 42 ms per zero-token agent every 10 s at 20k history lines
+        # was: 42 ms per zero-token agent every 10 s at 20k history lines;
+        # fixed (R8): memoised per session on history's stat signature, ~0.02 ms
         assert discover_rows["discover_session_ids (warm, history unchanged)"].ms_per_call < 5.0
 
 
