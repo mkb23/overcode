@@ -201,7 +201,9 @@ class TestCalculateInterval:
     """Test calculate_interval method."""
 
     def test_always_returns_fast_interval(self, tmp_path, monkeypatch):
-        """Monitor daemon always uses fast interval."""
+        """Monitor daemon always uses the fast interval while attended (agent
+        state never changes it; only nobody watching does, see
+        test_daemon_unattended)."""
         from overcode.monitor_daemon import MonitorDaemon, INTERVAL_FAST
 
         monkeypatch.setattr('overcode.monitor_daemon.ensure_session_dir', lambda x: tmp_path)
@@ -308,6 +310,59 @@ class TestMonitorDaemonState:
         )
 
         assert state.is_stale() is False
+
+    # -- slow-but-alive daemon (audit R6) ------------------------------------
+
+    def _state_aged(self, seconds, **kw):
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        t = (datetime.now() - timedelta(seconds=seconds)).isoformat()
+        return MonitorDaemonState(pid=1, status="active", last_loop_time=t, **kw)
+
+    def test_slow_tick_widens_the_freshness_window(self):
+        """A 2 s-interval daemon whose ticks take 8 s publishes every ~10 s."""
+        # Without the duration the TUI's 5 s buffer declares this dead
+        assert self._state_aged(9, current_interval=2).is_stale(buffer_seconds=5.0) is True
+        # With it the state is fresh: 2 + 8 + 5 = 15 s window
+        slow = self._state_aged(9, current_interval=2, last_tick_duration_seconds=8.0)
+        assert slow.is_stale(buffer_seconds=5.0) is False
+
+    def test_slow_tick_still_goes_stale_past_the_window(self):
+        slow = self._state_aged(16, current_interval=2, last_tick_duration_seconds=8.0)
+        assert slow.is_stale(buffer_seconds=5.0) is True
+
+    def test_expected_publish_gap_is_interval_plus_tick(self):
+        s = self._state_aged(0, current_interval=2, last_tick_duration_seconds=8.5)
+        assert s.expected_publish_gap() == 10.5
+
+    def test_zero_or_bad_duration_keeps_old_behaviour(self):
+        """Old state files (no field) and garbage values fall back to interval + buffer."""
+        assert self._state_aged(0, current_interval=2).expected_publish_gap() == 2.0
+        bad = self._state_aged(0, current_interval=2, last_tick_duration_seconds=-3.0)
+        assert bad.expected_publish_gap() == 2.0
+        assert self._state_aged(8, current_interval=2).is_stale(buffer_seconds=5.0) is True
+        assert self._state_aged(6, current_interval=2).is_stale(buffer_seconds=5.0) is False
+
+    def test_tick_fields_round_trip_and_default_when_absent(self, tmp_path):
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        state = self._state_aged(
+            0,
+            current_interval=2,
+            last_tick_duration_seconds=7.25,
+            tick_started_at="2026-09-23T10:00:00",
+        )
+        path = tmp_path / "state.json"
+        state.save(path)
+        loaded = MonitorDaemonState.load(path)
+        assert loaded.last_tick_duration_seconds == 7.25
+        assert loaded.tick_started_at == "2026-09-23T10:00:00"
+        # A state file written by an older daemon has neither key
+        legacy = MonitorDaemonState.from_dict(
+            {"pid": 1, "last_loop_time": datetime.now().isoformat()}
+        )
+        assert legacy.last_tick_duration_seconds == 0.0
+        assert legacy.tick_started_at is None
 
 
 class TestCreateMonitorLogger:
@@ -418,8 +473,10 @@ class TestSyncClaudeCodeStats:
         )
 
         # Verify update_stats was called with correct values
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         assert call_kwargs["interaction_count"] == 10
         assert call_kwargs["input_tokens"] == 5000
         assert call_kwargs["output_tokens"] == 2000
@@ -448,8 +505,9 @@ class TestSyncClaudeCodeStats:
 
         daemon.sync_claude_code_stats(mock_session)
 
-        # update_stats should not be called when stats are None
+        # Nothing is written or staged when stats are None
         daemon.session_manager.update_stats.assert_not_called()
+        assert not daemon._pending
 
     def test_handles_exception_gracefully(self, tmp_path, monkeypatch):
         """Should log warning and not raise on exception."""
@@ -548,8 +606,9 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "running", now)
 
-        # Should not call update_stats on first observation (just records baseline)
+        # Nothing written or staged on first observation (just records baseline)
         daemon.session_manager.update_stats.assert_not_called()
+        assert not daemon._pending
         # last_state_times should now have an entry
         assert session.id in daemon.last_state_times
 
@@ -569,8 +628,10 @@ class TestUpdateStateTime:
         daemon._update_state_time(session, "running", now)
 
         # update_stats should be called
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         # Green time should have increased by ~10 seconds
         assert call_kwargs["green_time_seconds"] > 100.0
 
@@ -588,8 +649,10 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "waiting_user", now)
 
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         # Non-green time should have increased
         assert call_kwargs["non_green_time_seconds"] > 50.0
 
@@ -610,8 +673,10 @@ class TestUpdateStateTime:
 
         daemon._update_state_time(session, "waiting_user", now)
 
-        daemon.session_manager.update_stats.assert_called_once()
-        call_kwargs = daemon.session_manager.update_stats.call_args[1]
+        # Staged for the tick's single write, not written per session (R5)
+        daemon.session_manager.update_stats.assert_not_called()
+        assert list(daemon._pending.stats) == ["sess-1"]
+        call_kwargs = daemon._pending.stats["sess-1"]
         assert call_kwargs["current_state"] == "waiting_user"
         # state_since should be updated to now (state changed)
         assert call_kwargs["state_since"] == now.isoformat()
@@ -682,7 +747,9 @@ class TestCheckAndSendHeartbeats:
         mock_send.assert_called_once_with(
             "test", 1, "continue working", send_enter=True
         )
-        daemon.session_manager.update_session.assert_called_once()
+        # The stamp is staged for the tick's single write (R5)
+        daemon.session_manager.update_session.assert_not_called()
+        assert daemon._pending.fields[session.id]["last_heartbeat_time"] is not None
 
     def test_does_not_send_heartbeat_when_not_due(self, tmp_path, monkeypatch):
         """Should not send heartbeat when interval has not elapsed."""
@@ -1028,6 +1095,84 @@ class TestPublishState:
             daemon._publish_state([])
 
         mock_relay.assert_called_once()
+
+    def test_publishes_last_tick_duration(self, tmp_path, monkeypatch):
+        """The measured tick duration lands in the state file (rounded to ms)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon._last_tick_duration_seconds = 7.123456
+
+        daemon._publish_state([])
+
+        with open(tmp_path / "state.json") as f:
+            data = json.load(f)
+        assert data["last_tick_duration_seconds"] == 7.123
+        assert daemon.state.last_tick_duration_seconds == 7.123
+
+    def test_publishes_zero_duration_before_first_tick_completes(self, tmp_path, monkeypatch):
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        daemon._publish_state([])
+        with open(tmp_path / "state.json") as f:
+            assert json.load(f)["last_tick_duration_seconds"] == 0.0
+
+
+class TestTickTiming:
+    """_tick measures its own wall time and stamps when it started (R6)."""
+
+    def _make_daemon(self):
+        from overcode.monitor_daemon import MonitorDaemon
+        from overcode.monitor_daemon_state import MonitorDaemonState
+
+        with patch.object(MonitorDaemon, "__init__", lambda self: None):
+            daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon.state = MonitorDaemonState()
+        daemon._last_tick_duration_seconds = 0.0
+        return daemon
+
+    def test_tick_records_duration_and_start(self):
+        import time as _time
+
+        daemon = self._make_daemon()
+        now = datetime(2026, 9, 23, 10, 0, 0)
+        with patch.object(daemon, "_tick_phases", side_effect=lambda _now: _time.sleep(0.02)):
+            daemon._tick(now)
+
+        assert daemon.state.tick_started_at == now.isoformat()
+        assert daemon._last_tick_duration_seconds >= 0.02
+
+    def test_duration_is_recorded_even_when_a_phase_raises(self):
+        daemon = self._make_daemon()
+        with patch.object(daemon, "_tick_phases", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                daemon._tick(datetime.now())
+        assert daemon._last_tick_duration_seconds >= 0.0
+
+    def test_next_tick_publishes_previous_duration(self, tmp_path, monkeypatch):
+        """Tick N publishes mid-way, so tick N+1 is the first to carry N's duration."""
+        import time as _time
+
+        daemon = self._make_daemon()
+        daemon.tmux_session = "test"
+        daemon.state_path = tmp_path / "state.json"
+        daemon.presence = Mock()
+        daemon.presence.available = False
+        daemon.presence.get_current_state.return_value = (None, None, False)
+        monkeypatch.setattr(
+            "overcode.monitor_daemon.get_supervisor_stats_path", lambda x: tmp_path / "sup.json"
+        )
+        published = []
+
+        def phases(_now):
+            _time.sleep(0.02)
+            with patch.object(daemon, "_maybe_push_to_relay"):
+                daemon._publish_state([])
+            published.append(daemon.state.last_tick_duration_seconds)
+
+        with patch.object(daemon, "_tick_phases", side_effect=phases):
+            daemon._tick(datetime.now())
+            daemon._tick(datetime.now())
+
+        assert published[0] == 0.0
+        assert published[1] >= 0.02
 
 
 class TestMaybePushToRelay:
@@ -1390,6 +1535,53 @@ class TestComputeSubtreeCosts:
         daemon._compute_subtree_costs([orphan])
         assert orphan.subtree_cost_usd == 0.0
 
+    def test_self_parent_cycle_terminates(self):
+        """A duplicate name whose entry names itself as parent must not recurse forever."""
+        daemon = self._make_daemon()
+        a1 = self._make_state("dup", 1.00)
+        a2 = self._make_state("dup", 2.00, parent_name="dup")  # same name, parent = itself
+        daemon._compute_subtree_costs([a1, a2])
+        # by_name keeps the last entry; its subtree is itself, counted once
+        assert a2.subtree_cost_usd == 2.00
+
+    def test_duplicate_sibling_names_count_the_kept_entry_once(self):
+        """Duplicate names among siblings (acyclic) changed with the visited set.
+
+        ``by_name`` keeps the *last* entry for a name, and ``children_map``
+        lists the name once per child. The pre-visited-set code summed the
+        kept entry once per listing (parent 1 + 5 + 5 = 11, never seeing the
+        first ``x``); with the visited set the kept entry is counted once
+        (1 + 5 = 6). Neither counts the shadowed first ``x``; that needs
+        id-keyed links and is out of scope. This pins the current number so
+        a change is deliberate.
+        """
+        daemon = self._make_daemon()
+        parent = self._make_state("p", 1.00)
+        x_first = self._make_state("x", 2.00, parent_name="p")
+        x_last = self._make_state("x", 5.00, parent_name="p")
+        daemon._compute_subtree_costs([parent, x_first, x_last])
+        assert parent.subtree_cost_usd == 6.00
+        assert x_first.subtree_cost_usd == 0.0
+        assert x_last.subtree_cost_usd == 0.0
+
+    def test_two_node_cycle_counts_each_member_once(self):
+        daemon = self._make_daemon()
+        a = self._make_state("a", 1.00, parent_name="b")
+        b = self._make_state("b", 2.00, parent_name="a")
+        daemon._compute_subtree_costs([a, b])
+        assert a.subtree_cost_usd == 3.00
+        assert b.subtree_cost_usd == 3.00
+
+    def test_cycle_does_not_corrupt_an_unrelated_tree(self):
+        daemon = self._make_daemon()
+        a = self._make_state("a", 1.00, parent_name="b")
+        b = self._make_state("b", 2.00, parent_name="a")
+        parent = self._make_state("parent", 4.00)
+        child = self._make_state("child", 0.50, parent_name="parent")
+        daemon._compute_subtree_costs([a, b, parent, child])
+        assert parent.subtree_cost_usd == 4.50
+        assert child.subtree_cost_usd == 0.0
+
 
 class TestPrBranchMismatchClearing:
     """Test that PR is cleared when agent switches branches."""
@@ -1582,40 +1774,39 @@ class TestPrBranchMismatchClearing:
 class TestCountUntrackedWindows:
     """Test _count_untracked_windows method (#344)."""
 
-    def _make_daemon(self):
+    def _make_daemon(self, tmux=None):
+        """A bare daemon; ``tmux`` is its persistent client (the count reads it)."""
         from overcode.monitor_daemon import MonitorDaemon
         with patch.object(MonitorDaemon, '__init__', lambda self: None):
             daemon = MonitorDaemon.__new__(MonitorDaemon)
             daemon.tmux_session = "agents"
+            daemon._tmux = tmux
             return daemon
 
     def test_no_untracked_windows(self):
         """Returns 0 when all windows are tracked."""
-        daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
         session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'agent1'},
         ]
 
-        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
-            result = daemon._count_untracked_windows([session])
-            assert result == 0
+        daemon = self._make_daemon(tmux=mock_tmux)
+        assert daemon._count_untracked_windows([session]) == 0
 
     def test_untracked_windows_detected(self):
         """Returns count of windows not tracked by any session."""
-        daemon = self._make_daemon()
         session = MagicMock()
         session.status = "running"
         session.tmux_window = "agent1"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'agent1'},
@@ -1623,52 +1814,118 @@ class TestCountUntrackedWindows:
             {'index': '3', 'name': 'rogue2'},
         ]
 
-        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
-            result = daemon._count_untracked_windows([session])
-            assert result == 2
+        daemon = self._make_daemon(tmux=mock_tmux)
+        assert daemon._count_untracked_windows([session]) == 2
 
     def test_window_0_excluded(self):
         """Window 0 (default shell) is never counted as untracked."""
-        daemon = self._make_daemon()
-
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
         ]
 
-        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
-            result = daemon._count_untracked_windows([])
-            assert result == 0
+        daemon = self._make_daemon(tmux=mock_tmux)
+        assert daemon._count_untracked_windows([]) == 0
 
     def test_terminated_sessions_not_tracked(self):
         """Terminated sessions don't count as tracked windows."""
-        daemon = self._make_daemon()
         session = MagicMock()
         session.status = "terminated"
         session.tmux_window = "orphan"
 
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = True
+        mock_tmux.has_session.return_value = True
         mock_tmux.list_windows.return_value = [
             {'index': '0', 'name': 'bash'},
             {'index': '1', 'name': 'orphan'},
         ]
 
-        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
-            result = daemon._count_untracked_windows([session])
-            assert result == 1
+        daemon = self._make_daemon(tmux=mock_tmux)
+        assert daemon._count_untracked_windows([session]) == 1
 
     def test_session_not_exists_returns_zero(self):
         """Returns 0 when tmux session doesn't exist."""
-        daemon = self._make_daemon()
-
         mock_tmux = MagicMock()
-        mock_tmux.session_exists.return_value = False
+        mock_tmux.has_session.return_value = False
 
-        with patch('overcode.implementations.RealTmux', return_value=mock_tmux):
-            result = daemon._count_untracked_windows([])
-            assert result == 0
+        daemon = self._make_daemon(tmux=mock_tmux)
+        assert daemon._count_untracked_windows([]) == 0
+
+    def test_counts_against_the_fake_tmux(self):
+        """Works on a real ``TmuxInterface`` implementation, not just MagicMock.
+
+        MagicMock answers any attribute, which is how the old call to a
+        non-existent ``session_exists`` method passed these tests while
+        raising AttributeError (swallowed, count 0) against ``RealTmux``.
+        """
+        from overcode.mocks import MockTmux
+
+        daemon = self._make_daemon()
+        tmux = MockTmux()
+        tmux.new_session("agents")
+        tmux.new_window("agents", "bash")  # index 0: default shell, never counted
+        tmux.new_window("agents", "agent1")  # index 1: tracked
+        tmux.new_window("agents", "rogue")  # index 2: untracked
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = "agent1"
+
+        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+
+    def test_fake_tmux_without_the_session_returns_zero(self):
+        from overcode.mocks import MockTmux
+
+        daemon = self._make_daemon()
+        assert daemon._count_untracked_windows([], tmux=MockTmux()) == 0
+
+    def test_overcode_owned_windows_are_not_untracked(self):
+        """Parity with cleanup --untracked (#344): the count must never advertise
+        a cleanup that would kill the TUI's dead-window placeholder (#457),
+        the supervisor daemon's claude window or an SSH proxy window — none
+        of which is tracked in sessions.json.
+        """
+        from overcode.mocks import MockTmux
+        from overcode.tmux_utils import (
+            DAEMON_CLAUDE_WINDOW_NAME,
+            EMPTY_PLACEHOLDER_WINDOW,
+            SSH_PROXY_WINDOW_PREFIX,
+        )
+
+        daemon = self._make_daemon()
+        tmux = MockTmux()
+        tmux.new_session("agents")
+        tmux.new_window("agents", "bash")  # index 0
+        tmux.new_window("agents", "agent1")  # tracked
+        tmux.new_window("agents", EMPTY_PLACEHOLDER_WINDOW)
+        tmux.new_window("agents", DAEMON_CLAUDE_WINDOW_NAME)
+        tmux.new_window("agents", f"{SSH_PROXY_WINDOW_PREFIX}desktop:remote1")
+        tmux.new_window("agents", "rogue")
+        session = MagicMock()
+        session.status = "running"
+        session.tmux_window = "agent1"
+
+        assert daemon._count_untracked_windows([session], tmux=tmux) == 1
+
+    def test_count_uses_the_shared_predicate(self):
+        """Both paths must go through tmux_utils.untracked_window_names."""
+        import inspect
+        from overcode import launcher, monitor_daemon
+
+        assert "untracked_window_names(" in inspect.getsource(
+            monitor_daemon.MonitorDaemon._count_untracked_windows
+        )
+        assert "untracked_window_names(" in inspect.getsource(
+            launcher.AgentLauncher.list_sessions
+        )
+
+    def test_tmux_interface_has_no_session_exists(self):
+        """Guard against the bug coming back: the protocol spells it has_session."""
+        from overcode.implementations import RealTmux
+        from overcode.protocols import TmuxInterface
+
+        assert hasattr(TmuxInterface, "has_session")
+        assert not hasattr(RealTmux, "session_exists")
 
 
 class TestMaybeRotateHistory:

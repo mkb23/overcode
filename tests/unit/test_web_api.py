@@ -1338,4 +1338,6 @@ class TestGetRawTimelineData:
             get_raw_timeline_data("my-session", hours=6.0)
 
             mock_path.assert_called_once_with("my-session")
-            mock_history.assert_called_once_with(hours=6.0, history_file="/fake/session/path")
+            mock_history.assert_called_once_with(
+                hours=6.0, history_file="/fake/session/path", carry=True
+            )

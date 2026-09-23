@@ -386,20 +386,23 @@ class TestAppendHookEvent:
         assert json.loads(log.read_text().splitlines()[-1])["event"] == "PostToolUse"
 
     def test_rotation_truncates_large_log(self, monkeypatch, tmp_path):
-        """Log rotation keeps tail when file grows past the threshold (#448)."""
+        """Log rotation keeps the tail when the file grows past the threshold (#448)."""
         import overcode.hook_handler as hh
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         # Shrink thresholds so the test is fast.
         monkeypatch.setattr(hh, "_EVENT_LOG_ROTATE_BYTES", 2048)
-        monkeypatch.setattr(hh, "_EVENT_LOG_KEEP_LINES", 10)
+        monkeypatch.setattr(hh, "_EVENT_LOG_KEEP_BYTES", 1024)
         for _ in range(100):
             append_hook_event("PreToolUse", "agents", "a1", tool_name="Read")
         path = tmp_path / "agents" / "hook_events_a1.jsonl"
         lines = path.read_text().splitlines()
-        # After rotation, only the trailing _EVENT_LOG_KEEP_LINES plus a few
-        # post-rotation appends should remain — never the full 100.
+        # After rotation, only the trailing _EVENT_LOG_KEEP_BYTES of whole
+        # lines plus the post-rotation appends remain — never the full 100.
         assert len(lines) < 100
         assert len(lines) >= 10
+        assert path.stat().st_size <= 2048 + 200
+        for line in lines:
+            json.loads(line)  # every kept line is whole
 
     def test_event_log_path_respects_state_dir(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / "custom"))
@@ -760,3 +763,113 @@ class TestInterruptEvent:
             handle_hook_event()
         data = json.loads((tmp_path / "agents" / "hook_state_test-agent.json").read_text())
         assert data["event"] == "Interrupt"
+
+
+class TestEventLogBytes:
+    """The event log stores what its readers use and is bounded by bytes (audit R12)."""
+
+    def test_consumed_input_fields_are_kept_and_strings_cut(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        long_command = "echo " + "x" * 5000
+        append_hook_event(
+            "PreToolUse", "agents", "a1", tool_name="Bash",
+            tool_input={"command": long_command, "run_in_background": True, "timeout": 5},
+        )
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        entry = json.loads(path.read_text().splitlines()[-1])
+        assert entry["tool_input"]["command"] == long_command[:256]
+        assert entry["tool_input"]["run_in_background"] is True
+        assert "timeout" not in entry["tool_input"]
+        assert json.loads(entry["tool_input"]["_preview"]) == {"timeout": 5}
+        assert len(path.read_bytes()) < 600
+
+    def test_edit_bodies_become_a_preview(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        body = {"file_path": "/repo/a.py", "old_string": "a" * 20_000, "new_string": "b" * 20_000}
+        append_hook_event("PreToolUse", "agents", "a1", tool_name="Edit", tool_input=body)
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        entry = json.loads(path.read_text().splitlines()[-1])
+        assert set(entry["tool_input"]) == {"_preview"}
+        assert entry["tool_input"]["_preview"].startswith('{"file_path": "/repo/a.py"')
+        assert len(entry["tool_input"]["_preview"]) == 256
+        assert len(path.read_bytes()) < 400
+
+    def test_obligation_fields_survive(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        append_hook_event(
+            "PreToolUse", "agents", "a1", tool_name="CronCreate",
+            tool_input={"id": "c1", "schedule": "*/5 * * * *", "prompt": "check", "extra": [1]},
+        )
+        append_hook_event(
+            "PreToolUse", "agents", "a1", tool_name="ScheduleWakeup",
+            tool_input={"delaySeconds": 90, "reason": "poll"},
+        )
+        append_hook_event(
+            "PreToolUse", "agents", "a1", tool_name="Skill", tool_input={"skill": "overcode"},
+        )
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        cron, wake, skill = [json.loads(l)["tool_input"] for l in path.read_text().splitlines()]
+        assert cron["id"] == "c1" and cron["schedule"] == "*/5 * * * *" and cron["prompt"] == "check"
+        assert cron["_preview"] == '{"extra": [1]}'
+        assert wake["delaySeconds"] == 90 and wake["_preview"] == '{"reason": "poll"}'
+        assert skill == {"skill": "overcode"}
+
+    def test_snapshot_keeps_the_whole_input(self, monkeypatch, tmp_path):
+        """The consumers of tool_input read hook_state; it is not compacted."""
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        body = {"command": "x" * 1000, "timeout": 5}
+        write_hook_state("PreToolUse", "agents", "a1", tool_name="Bash", tool_input=body)
+        snap = json.loads((tmp_path / "agents" / "hook_state_a1.json").read_text())
+        assert snap["tool_input"] == body
+
+    def test_rotation_keeps_the_last_keep_bytes_of_whole_lines(self, monkeypatch, tmp_path):
+        import overcode.hook_handler as hh
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        path.parent.mkdir(parents=True)
+        lines = [json.dumps({"event": "PreToolUse", "timestamp": float(i), "pad": "p" * 90}) + "\n"
+                 for i in range(2000)]
+        path.write_text("".join(lines))
+        size = path.stat().st_size
+        assert size > hh._EVENT_LOG_ROTATE_BYTES
+
+        hh._rotate_event_log(path)
+
+        kept = path.read_bytes()
+        assert len(kept) <= hh._EVENT_LOG_KEEP_BYTES
+        assert kept.endswith(b"\n")
+        kept_lines = kept.decode().splitlines()
+        first = json.loads(kept_lines[0])  # a whole line: the partial head was dropped
+        assert [json.loads(l)["timestamp"] for l in kept_lines] == list(
+            range(int(first["timestamp"]), 2000)
+        )
+        assert not list(path.parent.glob("*.tmp"))
+
+    def test_rotation_is_not_per_event_once_lines_are_long(self, monkeypatch, tmp_path):
+        """The 200-line rule rewrote a long-lined file on every append; bytes do not."""
+        import overcode.hook_handler as hh
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        replaced = []
+        real_replace = os.replace
+
+        def counting_replace(src, dst):
+            replaced.append(dst)
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(hh.os, "replace", counting_replace)
+        big = {"command": "c" * 7000}  # 7 KB inputs: 200 lines would be 1.4 MB
+        for _ in range(400):
+            append_hook_event("PreToolUse", "agents", "a1", tool_name="Bash", tool_input=big)
+        path = tmp_path / "agents" / "hook_events_a1.jsonl"
+        # ~300 B per line after compaction: a rotation every ~120 appends, not every one
+        assert len(replaced) <= 5, len(replaced)
+        assert path.stat().st_size <= hh._EVENT_LOG_ROTATE_BYTES + 1024
+        assert all(json.loads(l) for l in path.read_text().splitlines())
+
+    def test_rotation_leaves_a_single_oversized_line_alone(self, monkeypatch, tmp_path):
+        import overcode.hook_handler as hh
+        path = tmp_path / "hook_events_a1.jsonl"
+        path.write_bytes(b"{" + b"x" * (hh._EVENT_LOG_KEEP_BYTES + 10))
+        before = path.read_bytes()
+        hh._rotate_event_log(path)
+        assert path.read_bytes() == before

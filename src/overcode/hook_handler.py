@@ -328,24 +328,86 @@ def _get_hook_event_log_path(tmux_session: str, session_name: str) -> Path:
     return base / tmux_session / f"hook_events_{session_name}.jsonl"
 
 
-# Rotate the event log when it grows past this (roughly). We keep the tail
-# so recent-activity lookups stay cheap.
+# Rotate the event log when it grows past _EVENT_LOG_ROTATE_BYTES, down to
+# the last _EVENT_LOG_KEEP_BYTES of whole lines (audit R12). Both are bytes:
+# the old rule triggered on bytes but trimmed to 200 lines, so once lines
+# averaged over 512 B the trimmed file was still over the trigger and every
+# append rewrote it whole — a 1.4 MB file per tool call, inside Claude
+# Code's synchronous hook path. Keeping less than the trigger leaves room
+# for ~36 KB of appends between rotations, and a rotation reads 64 KB.
+# The detector reads a ~200 KB tail, so the kept tail is always whole.
 _EVENT_LOG_ROTATE_BYTES = 100 * 1024
-_EVENT_LOG_KEEP_LINES = 200
+_EVENT_LOG_KEEP_BYTES = 64 * 1024
+
+# The event log carries only what its readers use (audit R12): the detector
+# reads ``event`` and ``timestamp``; every consumer of a tool's input reads
+# the snapshot (hook_state), where it stays whole. These are the input
+# fields those consumers read — obligation kind/label/eta and CronDelete
+# targets (_update_obligations), the foreground classifier, sleep
+# detection and the Bash activity line (hook_status_detector), and the
+# Skill accumulator — kept so the log can answer the same questions;
+# strings are cut to _EVENT_LOG_INPUT_CHARS and everything else becomes a
+# preview of the same length, so a Write/Edit body never lands in the log.
+_EVENT_LOG_INPUT_FIELDS = (
+    "command",
+    "prompt",
+    "run_in_background",
+    "delaySeconds",
+    "schedule",
+    "cron",
+    "id",
+    "cron_id",
+    "skill",
+)
+_EVENT_LOG_INPUT_CHARS = 256
+
+
+def _compact_tool_input(tool_input: dict | None) -> dict | None:
+    """The event-log form of a tool input: consumed fields plus a preview."""
+    if not isinstance(tool_input, dict):
+        return tool_input
+    compact: dict = {}
+    for key in _EVENT_LOG_INPUT_FIELDS:
+        if key not in tool_input:
+            continue
+        value = tool_input[key]
+        if isinstance(value, str) and len(value) > _EVENT_LOG_INPUT_CHARS:
+            value = value[:_EVENT_LOG_INPUT_CHARS]
+        compact[key] = value
+    rest = {k: v for k, v in tool_input.items() if k not in compact}
+    if rest:
+        try:
+            preview = json.dumps(rest, default=str)
+        except (TypeError, ValueError):
+            preview = repr(rest)
+        compact["_preview"] = preview[:_EVENT_LOG_INPUT_CHARS]
+    return compact
 
 
 def _rotate_event_log(path: Path) -> None:
-    """Truncate the event log to the last N lines when it grows too big."""
+    """Truncate the event log to its last _EVENT_LOG_KEEP_BYTES of whole lines.
+
+    Reads only the tail it keeps (seek from the end, drop the partial first
+    line) and swaps it in with write-temp + os.replace, so a reader sees
+    the old file or the new one, whole.
+    """
     try:
-        with open(path) as f:
-            lines = f.readlines()
+        with open(path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            if size <= _EVENT_LOG_KEEP_BYTES:
+                return
+            f.seek(size - _EVENT_LOG_KEEP_BYTES)
+            tail = f.read()
     except OSError:
         return
-    if len(lines) <= _EVENT_LOG_KEEP_LINES:
-        return
+    newline = tail.find(b"\n")
+    if newline == -1:
+        return  # one line longer than the whole tail: nothing whole to keep
+    tail = tail[newline + 1:]
     tmp = path.with_suffix(".jsonl.tmp")
     try:
-        tmp.write_text("".join(lines[-_EVENT_LOG_KEEP_LINES:]))
+        with open(tmp, "wb") as f:
+            f.write(tail)
         os.replace(tmp, path)
     except OSError:
         # Best-effort; leave the file alone if rotation fails.
@@ -368,6 +430,10 @@ def append_hook_event(
     Overwrite-based state files hide fast event bursts (PreToolUse →
     PostToolUse → Stop within a single poll); the log preserves them so
     the detector can keep the agent marked RUNNING across short Stops.
+
+    ``tool_input`` is stored compacted (_compact_tool_input): the fields
+    its consumers read, strings cut to 256 chars, and a preview of the
+    rest. The snapshot (write_hook_state) keeps the whole input.
     """
     path = _get_hook_event_log_path(tmux_session, session_name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -376,7 +442,7 @@ def append_hook_event(
     if tool_name is not None:
         entry["tool_name"] = tool_name
     if tool_input is not None:
-        entry["tool_input"] = tool_input
+        entry["tool_input"] = _compact_tool_input(tool_input)
 
     line = json.dumps(entry) + "\n"
     # O_APPEND writes are atomic on POSIX for payloads under PIPE_BUF (4KB

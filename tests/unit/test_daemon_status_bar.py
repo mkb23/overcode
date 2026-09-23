@@ -87,6 +87,8 @@ def _make_monitor_state(**overrides):
         relay_enabled=False,
         relay_last_status="disabled",
         untracked_window_count=0,
+        tick_started_at=None,
+        last_tick_duration_seconds=0.0,
     )
     defaults.update(overrides)
     mock = MagicMock(spec=MonitorDaemonState)
@@ -246,6 +248,30 @@ class TestDaemonStatusBarRenderRunning:
         assert "Monitor:" in plain
         assert "#42" in plain
         assert "@10s" in plain
+        assert "daemon slow" not in plain
+
+    def test_render_slow_tick_indicator(self):
+        """A tick longer than the interval is shown, not mistaken for 'stopped'."""
+        state = _make_monitor_state(
+            loop_count=42, current_interval=2, last_tick_duration_seconds=7.26
+        )
+        widget = _make_bare_status_bar(monitor_state=state)
+        plain = widget.render().plain
+        assert "#42" in plain
+        assert "daemon slow (7.3s tick)" in plain
+        assert "stopped" not in plain.split("Supervisor")[0]
+
+    def test_render_tick_within_interval_shows_nothing(self):
+        state = _make_monitor_state(current_interval=2, last_tick_duration_seconds=1.9)
+        widget = _make_bare_status_bar(monitor_state=state)
+        assert "daemon slow" not in widget.render().plain
+
+    def test_render_tolerates_missing_duration_attribute(self):
+        """State from an older daemon (or a bare mock) has no usable duration."""
+        state = _make_monitor_state(current_interval=2)
+        state.last_tick_duration_seconds = MagicMock()  # not a number
+        widget = _make_bare_status_bar(monitor_state=state)
+        assert "daemon slow" not in widget.render().plain
 
     def test_render_supervisor_running_ready(self):
         state = _make_monitor_state(
@@ -891,3 +917,67 @@ class TestDaemonStatusBarSpinWithSisters:
         assert "Spin:" in plain
         # Only local: 1/1
         assert "1/1" in plain
+
+
+# ---------------------------------------------------------------------------
+# fetch_volatile_state reuses the caller's session list (audit R4)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchVolatileStateSessions:
+    """The 1 Hz worker reads sessions.json once: the list it already holds
+    feeds the burn window instead of a second list_sessions() call."""
+
+    def _bar_with_manager(self):
+        bar = _make_bare_status_bar()
+        bar._session_manager = MagicMock()
+        mine = MagicMock(tmux_session="agents")
+        other = MagicMock(tmux_session="elsewhere")
+        return bar, mine, other
+
+    @patch("overcode.tui_logic.compute_window_burn", return_value="burn")
+    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
+    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
+    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
+    @patch(
+        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
+        return_value=False,
+    )
+    def test_given_sessions_are_used_without_a_second_read(self, _sup, _summ, _web, _url, burn):
+        bar, mine, other = self._bar_with_manager()
+        bar.fetch_volatile_state(
+            baseline_minutes=60, active_session_names=[], sessions=[mine, other]
+        )
+        bar._session_manager.list_sessions.assert_not_called()
+        # Filtered to this tmux session, exactly as the old in-function read was
+        assert burn.call_args.args[0] == [mine]
+        assert bar._burn_stats == "burn"
+
+    @patch("overcode.tui_logic.compute_window_burn", return_value="burn")
+    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
+    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
+    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
+    @patch(
+        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
+        return_value=False,
+    )
+    def test_sessions_are_loaded_when_omitted(self, _sup, _summ, _web, _url, burn):
+        bar, mine, other = self._bar_with_manager()
+        bar._session_manager.list_sessions.return_value = [mine, other]
+        bar.fetch_volatile_state(baseline_minutes=60, active_session_names=[])
+        bar._session_manager.list_sessions.assert_called_once_with()
+        assert burn.call_args.args[0] == [mine]
+
+    @patch("overcode.tui_logic.compute_window_burn")
+    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
+    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
+    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
+    @patch(
+        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
+        return_value=False,
+    )
+    def test_no_window_means_no_burn_even_with_sessions(self, _sup, _summ, _web, _url, burn):
+        bar, mine, other = self._bar_with_manager()
+        bar.fetch_volatile_state(baseline_minutes=0, active_session_names=[], sessions=[mine])
+        burn.assert_not_called()
+        assert bar._burn_stats is None

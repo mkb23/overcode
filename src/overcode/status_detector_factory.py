@@ -16,6 +16,7 @@ from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from .protocols import StatusDetectorProtocol
 
 if TYPE_CHECKING:
+    from .pane_capture_gate import PaneCaptureGate
     from .protocols import TmuxInterface
     from .session_manager import Session
     from .status_patterns import StatusPatterns
@@ -92,14 +93,20 @@ class StatusDetectorDispatcher:
         polling_detector: Optional[StatusDetectorProtocol] = None,
         hook_detector: Optional[StatusDetectorProtocol] = None,
         mode: str = "polling",
+        capture_gate: Optional["PaneCaptureGate"] = None,
     ):
         self.tmux_session = tmux_session
         self._tmux = tmux
+        # One pane_capture_gate.PaneCaptureGate for every detector this
+        # dispatcher holds or creates, so the caller's per-loop capture plan
+        # covers every backend's pair.
+        self._capture_gate = capture_gate
         from .backends import DEFAULT_BACKEND
         from .status_detector import PollingStatusDetector
         from .hook_status_detector import HookStatusDetector
         self.polling = polling_detector or PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
         self.hooks = hook_detector or HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+        self._install_gate(self.polling, self.hooks)
         # Detector pairs keyed by backend name. Injected/explicitly-patterned
         # detectors own the default backend slot.
         self._pairs: Dict[str, Tuple[StatusDetectorProtocol, StatusDetectorProtocol]] = {
@@ -145,9 +152,16 @@ class StatusDetectorDispatcher:
         hooks = HookStatusDetector(self.tmux_session, tmux=self._tmux, patterns=patterns)
         polling.capture_lines = self.capture_lines
         hooks.capture_lines = self.capture_lines
+        self._install_gate(polling, hooks)
         pair = (polling, hooks)
         self._pairs[backend_name] = pair
         return pair
+
+    def _install_gate(self, *detectors: StatusDetectorProtocol) -> None:
+        if self._capture_gate is None:
+            return
+        for detector in detectors:
+            detector.capture_gate = self._capture_gate
 
     def resolve_mode(self, session: "Session") -> str:
         """Detection mode this session will be watched with."""

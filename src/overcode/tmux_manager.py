@@ -11,15 +11,16 @@ import libtmux
 from libtmux.exc import LibTmuxException
 from libtmux._internal.query_list import ObjectDoesNotExist
 
-if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
-
-
 # Window name reserved for the dead-window placeholder (#457). Lives on the
 # agents tmux session so the TUI can fall back to it when select_window
 # fails for a missing/terminated agent window. Lowercase + dashed so it's
-# clearly distinct from agent windows in tmux's window list.
-EMPTY_PLACEHOLDER_WINDOW = "oc-empty"
+# clearly distinct from agent windows in tmux's window list. Defined in
+# tmux_utils beside the other overcode-owned window names so the
+# untracked-window checks skip it; re-exported here for existing callers.
+from .tmux_utils import EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
+
+if TYPE_CHECKING:
+    from .interfaces import TmuxInterface
 
 
 class TmuxManager:

@@ -463,9 +463,9 @@ def history(
     sessions = SessionManager()
 
     if name:
-        # Show specific archived session
-        archived = sessions.list_archived_sessions()
-        session = next((s for s in archived if s.name == name), None)
+        # Show specific archived session: stream the archive (one record
+        # at a time, file order) instead of materialising every entry.
+        session = next((s for s in sessions.iter_archived_sessions() if s.name == name), None)
         if not session:
             rprint(f"[red]✗[/red] No archived session named '[bold]{name}[/bold]'")
             raise typer.Exit(1)

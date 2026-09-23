@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from overcode.status_detector_factory import create_status_detector, StatusDetectorDispatcher
+from overcode.mocks import MockTmux
 
 
 class TestCreateStatusDetector:
@@ -173,3 +174,33 @@ class TestStatusDetectorDispatcher:
         dispatcher.mode = "hooks"
         status, _, _ = dispatcher.detect_status(session)
         assert status == "running"
+
+
+class TestDispatcherCaptureGate:
+    def test_gate_installed_on_default_and_lazily_created_pairs(self):
+        from overcode.pane_capture_gate import PaneCaptureGate
+
+        gate = PaneCaptureGate()
+        dispatcher = StatusDetectorDispatcher("agents", tmux=MockTmux(), capture_gate=gate)
+        assert dispatcher.polling.capture_gate is gate
+        assert dispatcher.hooks.capture_gate is gate
+        polling, hooks = dispatcher._pair_for("codex")
+        assert polling.capture_gate is gate and hooks.capture_gate is gate
+
+    def test_no_gate_by_default(self):
+        dispatcher = StatusDetectorDispatcher("agents", tmux=MockTmux())
+        assert dispatcher.polling.capture_gate is None
+        assert dispatcher.hooks.capture_gate is None
+        polling, hooks = dispatcher._pair_for("codex")
+        assert polling.capture_gate is None and hooks.capture_gate is None
+
+    def test_injected_detectors_get_the_gate(self):
+        from overcode.pane_capture_gate import PaneCaptureGate
+        from overcode.status_detector import PollingStatusDetector
+
+        gate = PaneCaptureGate()
+        polling = PollingStatusDetector("agents", tmux=MockTmux())
+        dispatcher = StatusDetectorDispatcher(
+            "agents", polling_detector=polling, capture_gate=gate
+        )
+        assert polling.capture_gate is gate

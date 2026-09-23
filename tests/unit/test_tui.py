@@ -1561,6 +1561,7 @@ class TestRecordHeartbeat:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.1  # 100ms ago
 
@@ -1576,6 +1577,7 @@ class TestRecordHeartbeat:
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = 0
 
@@ -1589,6 +1591,7 @@ class TestRecordHeartbeat:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.1
 
@@ -1597,6 +1600,68 @@ class TestRecordHeartbeat:
         after = time.monotonic()
 
         assert before <= app._heartbeat_last <= after
+
+
+class TestHeartbeatProbeGrowth:
+    """The probe buffer must not grow when disabled, and is capped as a backstop.
+
+    With event_loop_timing_enabled: false the flush timer is never scheduled,
+    yet _mark_event was still appending ~10 rows/s from the apply callbacks:
+    >100 MB RSS after ~15 h of TUI uptime, >1 GB after a week (audit R17).
+    """
+
+    def _app(self, enabled):
+        from overcode.tui import SupervisorTUI
+        import time
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = enabled
+        app._heartbeat_log = []
+        app._heartbeat_last = time.monotonic() - 0.05
+        return app
+
+    def test_mark_event_is_a_no_op_when_disabled(self):
+        app = self._app(enabled=False)
+        for _ in range(1000):
+            app._mark_event("apply_status_start")
+        assert app._heartbeat_log == []
+
+    def test_record_heartbeat_is_a_no_op_when_disabled(self):
+        app = self._app(enabled=False)
+        before = app._heartbeat_last
+        app._record_heartbeat()
+        assert app._heartbeat_log == []
+        assert app._heartbeat_last == before
+
+    def test_missing_flag_counts_as_disabled(self):
+        """Lightweight doubles built via __new__ never grow a buffer."""
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_log = []
+        app._mark_event("x")
+        assert app._heartbeat_log == []
+
+    def test_buffer_is_capped_when_enabled(self):
+        from overcode.tui import HEARTBEAT_LOG_MAX_ENTRIES
+
+        app = self._app(enabled=True)
+        for i in range(HEARTBEAT_LOG_MAX_ENTRIES + 500):
+            app._mark_event(f"ev{i}")
+        assert len(app._heartbeat_log) <= HEARTBEAT_LOG_MAX_ENTRIES
+        # Newest rows survive; the oldest half was dropped at the cap
+        assert app._heartbeat_log[-1][2] == f"ev{HEARTBEAT_LOG_MAX_ENTRIES + 499}"
+        assert app._heartbeat_log[0][2] != "ev0"
+
+    def test_cap_drops_oldest_half_once_not_per_row(self):
+        from overcode.tui import HEARTBEAT_LOG_MAX_ENTRIES
+
+        app = self._app(enabled=True)
+        app._heartbeat_log = [("t", "0.0", f"ev{i}") for i in range(HEARTBEAT_LOG_MAX_ENTRIES)]
+        app._mark_event("new")
+        assert len(app._heartbeat_log) == HEARTBEAT_LOG_MAX_ENTRIES // 2 + 1
+        assert app._heartbeat_log[0][2] == f"ev{HEARTBEAT_LOG_MAX_ENTRIES // 2}"
+        assert app._heartbeat_log[-1][2] == "new"
 
 
 class TestMarkEvent:
@@ -1608,6 +1673,7 @@ class TestMarkEvent:
         import time
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = time.monotonic() - 0.05
 
@@ -1622,6 +1688,7 @@ class TestMarkEvent:
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI.__new__(SupervisorTUI)
+        app._heartbeat_enabled = True
         app._heartbeat_log = []
         app._heartbeat_last = 0
 
@@ -1727,62 +1794,6 @@ class TestFlushHeartbeat:
 
         # Should not raise
         app._flush_heartbeat()
-
-
-class TestInvalidateSessionsCache:
-    """Test _invalidate_sessions_cache method."""
-
-    def test_resets_cache_time_to_zero(self):
-        """Should set _sessions_cache_time to 0."""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        app._sessions_cache_time = 12345.0
-
-        app._invalidate_sessions_cache()
-
-        assert app._sessions_cache_time == 0
-
-
-class TestGetCachedSessions:
-    """Test _get_cached_sessions method."""
-
-    def test_returns_cached_data_within_ttl(self):
-        """Should return cached data if TTL has not expired."""
-        import time as time_mod
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        mock_session = Mock()
-        mock_session.id = "s1"
-        app._sessions_cache = {"s1": mock_session}
-        app._sessions_cache_time = time_mod.time()  # Just now
-        app._sessions_cache_ttl = 1.0
-        app.session_manager = Mock()
-
-        result = app._get_cached_sessions()
-
-        assert result == {"s1": mock_session}
-        app.session_manager.list_sessions.assert_not_called()
-
-    def test_reloads_after_ttl_expires(self):
-        """Should reload from session_manager when TTL is expired."""
-        from overcode.tui import SupervisorTUI
-
-        app = SupervisorTUI.__new__(SupervisorTUI)
-        app._sessions_cache = {}
-        app._sessions_cache_time = 0  # Expired
-        app._sessions_cache_ttl = 1.0
-
-        s1 = Mock()
-        s1.id = "session1"
-        app.session_manager = Mock()
-        app.session_manager.list_sessions.return_value = [s1]
-
-        result = app._get_cached_sessions()
-
-        assert "session1" in result
-        app.session_manager.list_sessions.assert_called_once()
 
 
 class TestCalculateSafeBreakDuration:
@@ -2260,20 +2271,25 @@ class TestMeanSpinFromHistory:
         assert mean_spin == pytest.approx(2.0, rel=0.01)  # All running = 2 agents
 
     def test_half_running(self):
-        """Half running samples should give mean_spin = num_agents * 0.5."""
+        """Running for half the covered time should give mean_spin = num_agents * 0.5.
+
+        Rows stand until the agent's next row (change-only logging plus a
+        keepalive), so the fixture is a keepalive row per minute: running
+        from -10 to -5, waiting from -5 to now.
+        """
         from overcode.tui_logic import calculate_mean_spin_from_history
 
         now = datetime.now()
         history = [
-            (now - timedelta(minutes=5), "agent1", "running", "working"),
-            (now - timedelta(minutes=5), "agent1", "waiting_user", "idle"),
+            (now - timedelta(minutes=m), "agent1", "running" if m > 5 else "waiting_user", "x")
+            for m in range(10, 0, -1)
         ]
 
         mean_spin, count = calculate_mean_spin_from_history(
             history, ["agent1"], 15, now
         )
 
-        assert count == 2
+        assert count == 10
         assert mean_spin == pytest.approx(0.5, rel=0.01)
 
 

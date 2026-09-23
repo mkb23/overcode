@@ -379,9 +379,12 @@ def get_timeline_data(tmux_session: str, hours: float = 3.0, slots: int = 60) ->
         "status_colors": {k: get_web_color(get_status_color(k)) for k in AGENT_TIMELINE_CHARS},
     }
 
-    # Get agent history from session-specific file
+    # Get agent history from session-specific file. The carry (each agent's
+    # last row at or before the cutoff) lands in slot 0 — ``now`` was taken
+    # before the read, so the reader's cutoff is not before ours — and
+    # build_timeline_slots forward-fills from it.
     history_path = get_agent_history_path(tmux_session)
-    all_history = read_agent_status_history(hours=hours, history_file=history_path)
+    all_history = read_agent_status_history(hours=hours, history_file=history_path, carry=True)
 
     # Group by agent
     agent_histories: Dict[str, List] = {}
@@ -424,7 +427,10 @@ def get_raw_timeline_data(tmux_session: str, hours: float = 3.0) -> Dict[str, An
 
     Unlike get_timeline_data() which pre-computes fixed-width slots, this
     returns the raw entries so callers (e.g. sister TUIs) can re-slot at
-    their own dynamic terminal width.
+    their own dynamic terminal width. Entries are the rows as written —
+    each valid for its agent until the agent's next entry — led by the
+    carry (the state at the window's cutoff), so the sister's forward-fill
+    starts at its left edge too.
 
     Args:
         tmux_session: tmux session name
@@ -434,7 +440,7 @@ def get_raw_timeline_data(tmux_session: str, hours: float = 3.0) -> Dict[str, An
         Dictionary with raw timeline entries per agent
     """
     history_path = get_agent_history_path(tmux_session)
-    all_history = read_agent_status_history(hours=hours, history_file=history_path)
+    all_history = read_agent_status_history(hours=hours, history_file=history_path, carry=True)
 
     agents: Dict[str, list] = {}
     for ts, agent, status, activity, *_ in all_history:
@@ -596,8 +602,10 @@ def get_analytics_timeline(
     # scans rotated agent_status_history.*.csv.gz files rather than
     # read_agent_status_history() (active-file-only, used by the 3h/24h
     # windowed callers).
+    # Events are segments — the page draws each until the agent's next —
+    # so the carry (each agent's state at ``start``) opens the first one.
     history_path = get_agent_history_path(tmux_session)
-    all_history = read_agent_status_history_range(start, end, history_path)
+    all_history = read_agent_status_history_range(start, end, history_path, carry=True)
 
     # Filter to time range (already applied by read_agent_status_history_range,
     # kept here as a cheap defensive no-op) and group by agent
@@ -769,9 +777,13 @@ def _calculate_presence_efficiency(
 
     hours = (end - start).total_seconds() / 3600.0
 
-    # Get agent status history from session-specific file
+    # Get agent status history from session-specific file. The sampler
+    # below takes each agent's most recent row at or before a sample time,
+    # so the carry — each agent's state at the reader's cutoff, which is
+    # not before ``start`` when ``end`` is now — survives the range filter
+    # and answers the samples before the agent's first in-range row.
     history_path = get_agent_history_path(tmux_session)
-    agent_history = read_agent_status_history(hours=hours, history_file=history_path)
+    agent_history = read_agent_status_history(hours=hours, history_file=history_path, carry=True)
 
     # Get presence history: list of (timestamp, state)
     presence_history = read_presence_history(hours=hours)

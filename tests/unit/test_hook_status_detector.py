@@ -1229,6 +1229,107 @@ class TestSynthesizeStatusDetailFromLegacy:
         assert synthesize_status_detail_from_legacy(STATUS_ASLEEP) is None
 
 
+class TestHookDetectorCaptureGate:
+    """get_pane_content consults an installed PaneCaptureGate; the raw capture is unchanged."""
+
+    def test_gate_serves_cached_text_for_an_unchanged_pane(self, tmp_path):
+        from overcode.pane_capture_gate import PaneCaptureGate
+
+        state_dir = tmp_path / "sessions" / "agents"
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "first")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        assert detector.capture_gate is None
+        gate = PaneCaptureGate()
+        detector.capture_gate = gate
+        gate.begin_loop()
+        gate.plan(1, True)
+        assert detector.get_pane_content(1) == "first"
+        mock_tmux.set_pane_content("agents", 1, "second")
+        gate.begin_loop()
+        gate.plan(1, False)
+        assert detector.get_pane_content(1) == "first"
+        assert gate.raw_captures == 1 and gate.served_from_cache == 1
+
+    def test_subprocess_fallback_command_is_unchanged(self, tmp_path):
+        """Without a tmux interface the raw capture is the same plain
+        ``capture-pane -p -S -N`` (no -e), gated or not."""
+        from unittest.mock import MagicMock, patch
+
+        state_dir = tmp_path / "sessions" / "agents"
+        detector = HookStatusDetector("agents", state_dir=state_dir)
+        with patch("overcode.hook_status_detector.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0, stdout="pane\n")
+            assert detector.get_pane_content("w1") == "pane\n"
+            assert detector.get_pane_content("w1", num_lines=40) == "pane\n"
+        assert run.call_args_list[0].args[0][-6:] == [
+            "capture-pane", "-t", "agents:w1", "-p", "-S", f"-{detector.capture_lines}",
+        ]
+        assert run.call_args_list[1].args[0][-2:] == ["-S", "-40"]
+        assert run.call_args.kwargs["timeout"] == 5
+
+
+class TestRecentEventsCache:
+    """_read_recent_events serves an unchanged log from its last parse (audit R12)."""
+
+    def _detector(self, tmp_path):
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True)
+        return HookStatusDetector("agents", state_dir=state_dir), state_dir
+
+    def test_unchanged_log_is_one_stat_and_no_open(self, tmp_path, monkeypatch):
+        import builtins
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("UserPromptSubmit", now - 2), ("PreToolUse", now - 1)])
+        first = detector._read_recent_events("a1")
+        assert [e["event"] for e in first] == ["UserPromptSubmit", "PreToolUse"]
+
+        opens = []
+        real_open = builtins.open
+
+        def counting_open(file, *args, **kwargs):
+            opens.append(str(file))
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", counting_open)
+        again = detector._read_recent_events("a1")
+        assert again == first
+        assert not [o for o in opens if "hook_events" in o]
+
+    def test_result_is_a_copy(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        _append_event_log(state_dir, "a1", [("PreToolUse", time.time())])
+        first = detector._read_recent_events("a1")
+        first.clear()
+        assert len(detector._read_recent_events("a1")) == 1
+
+    def test_appended_event_is_seen(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("PreToolUse", now - 1)])
+        assert len(detector._read_recent_events("a1")) == 1
+        with open(state_dir / "hook_events_a1.jsonl", "a") as f:
+            f.write(json.dumps({"event": "Stop", "timestamp": now}) + "\n")
+        events = detector._read_recent_events("a1")
+        assert [e["event"] for e in events] == ["PreToolUse", "Stop"]
+
+    def test_limit_is_part_of_the_key(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        now = time.time()
+        _append_event_log(state_dir, "a1", [("PreToolUse", now - i) for i in range(5, 0, -1)])
+        assert len(detector._read_recent_events("a1")) == 5
+        assert len(detector._read_recent_events("a1", limit=2)) == 2
+        assert len(detector._read_recent_events("a1")) == 5
+
+    def test_missing_log_is_empty_and_forgets_the_cache(self, tmp_path):
+        detector, state_dir = self._detector(tmp_path)
+        _append_event_log(state_dir, "a1", [("PreToolUse", time.time())])
+        assert len(detector._read_recent_events("a1")) == 1
+        (state_dir / "hook_events_a1.jsonl").unlink()
+        assert detector._read_recent_events("a1") == []
+        assert "a1" not in detector._events_cache
+
+
 class TestDeadShellDetection:
     """An agent CLI that exits without a SessionEnd hook (#474).
 

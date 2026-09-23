@@ -249,6 +249,22 @@ def should_auto_archive(
         return False
 
 
+def should_archive_terminated(
+    terminated_since: datetime,
+    now: datetime,
+    grace_seconds: float,
+) -> bool:
+    """Whether a terminated session has sat in sessions.json for the grace.
+
+    Pure function. ``terminated_since`` is when the daemon first saw the
+    session's status as terminated; a negative ``grace_seconds`` disables
+    archiving altogether.
+    """
+    if grace_seconds < 0:
+        return False
+    return (now - terminated_since).total_seconds() >= grace_seconds
+
+
 def should_enforce_oversight_timeout(
     status: str,
     policy: Optional[str],

@@ -1,8 +1,9 @@
 """
 Unit tests for StatusTimeline widget.
 
-Tests the label/timeline width calculations, timeline building logic,
-and rendering in isolation without requiring a running Textual application.
+Tests the label/timeline width calculations and rendering in isolation
+without requiring a running Textual application (slot building itself is
+tui_helpers.build_timeline_slots, tested in test_tui_helpers.py).
 """
 
 import pytest
@@ -134,77 +135,6 @@ class TestTimelineWidth:
         widget = _make_bare_timeline()
         width = widget.timeline_width
         assert width == widget.DEFAULT_TIMELINE  # 60
-
-
-# ===========================================================================
-# _build_timeline
-# ===========================================================================
-
-
-class TestBuildTimeline:
-    """Tests for StatusTimeline._build_timeline."""
-
-    def test_empty_history_returns_dashes(self):
-        widget = _make_bare_timeline()
-        # Use a fixed timeline_width for predictability
-        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=10):
-            result = widget._build_timeline([], lambda s: "X")
-        assert result == "─" * 10
-
-    def test_single_event_at_recent_time(self):
-        """A single event within the timeline window should appear."""
-        now = datetime.now()
-        history = [(now - timedelta(minutes=5), "active")]
-        widget = _make_bare_timeline(timeline_hours=1.0)
-        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=60):
-            result = widget._build_timeline(history, lambda s: "A")
-        # Should have exactly one 'A' character
-        assert result.count("A") == 1
-        assert len(result) == 60
-
-    def test_event_before_window_excluded(self):
-        """Events before the timeline window should be excluded."""
-        now = datetime.now()
-        history = [(now - timedelta(hours=5), "old_event")]
-        widget = _make_bare_timeline(timeline_hours=1.0)
-        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=60):
-            result = widget._build_timeline(history, lambda s: "X")
-        assert "X" not in result
-
-    def test_multiple_events(self):
-        """Multiple events should appear in the timeline."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=50), "state1"),
-            (now - timedelta(minutes=30), "state2"),
-            (now - timedelta(minutes=10), "state3"),
-        ]
-
-        def state_to_char(s):
-            return {"state1": "1", "state2": "2", "state3": "3"}[s]
-
-        widget = _make_bare_timeline(timeline_hours=1.0)
-        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=60):
-            result = widget._build_timeline(history, state_to_char)
-        assert "1" in result
-        assert "2" in result
-        assert "3" in result
-        assert len(result) == 60
-
-    def test_state_to_char_function_called(self):
-        """The state_to_char function should be called with the state value."""
-        now = datetime.now()
-        history = [(now - timedelta(minutes=30), 42)]
-        calls = []
-
-        def recorder(s):
-            calls.append(s)
-            return "X"
-
-        widget = _make_bare_timeline(timeline_hours=1.0)
-        with patch.object(type(widget), 'timeline_width', new_callable=PropertyMock, return_value=60):
-            widget._build_timeline(history, recorder)
-        assert 42 in calls
 
 
 # ===========================================================================

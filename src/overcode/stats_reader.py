@@ -11,8 +11,7 @@ zeros.  See ``docs/design/agent-agnostic-backends-opencode.md`` §2.1, §5.
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from .history_reader import AgentSessionStats
 
@@ -120,6 +119,15 @@ class ClaudeStatsReader:
 
     backend_name = "claude-code"
 
+    # Per overcode session: the inputs the last discovery scan saw and its
+    # answer. The scan is O(history.jsonl) and runs every 10 s for each
+    # agent whose owned ids produced no tokens (audit R8); while history
+    # and the ownership picture are unchanged its answer cannot differ.
+    _DISCOVERY_MEMO_MAX = 4096
+
+    def __init__(self) -> None:
+        self._discovery_memo: Dict[str, Tuple[tuple, DiscoveredSessionIds]] = {}
+
     def get_stats(
         self, session: Any, *, history_file: Any = None
     ) -> Optional[AgentSessionStats]:
@@ -147,33 +155,50 @@ class ClaudeStatsReader:
         the agent's actual sessionIds are unknown.  This scans all history
         entries matching the directory+timestamp and adopts any sessionId
         not already owned by another agent.
+
+        Reads the shared, mtime-gated ``history_reader._default_history``
+        (a fresh ``HistoryFile`` per call re-parsed the whole file), resolves
+        each distinct project string once (``resolve_project_path``), and
+        remembers its answer per session keyed on everything it depends on
+        — history.jsonl's stat signature, the resolved directory, ``since``,
+        the session's own ids and the ids every other session owns — so a
+        call with nothing changed is a stat and a dict lookup.
         """
-        from .claude_pid import is_session_id_owned_by_others
-        from .history_reader import HistoryFile
+        from . import history_reader
 
         if not session.start_directory:
             return DiscoveredSessionIds()
 
-        hf = HistoryFile()
-        session_dir = str(Path(session.start_directory).resolve())
+        hf = history_reader._default_history
+        session_dir = history_reader.resolve_project_path(session.start_directory)
         session_start_ms = int(since.timestamp() * 1000)
-        owned_ids = set(session.agent_session_ids or [])
+        owned_ids = frozenset(session.agent_session_ids or [])
+        # is_session_id_owned_by_others(sid, session.id, all_sessions), as a set
+        others_owned = frozenset(
+            sid
+            for other in all_sessions
+            if other.id != session.id
+            for sid in (getattr(other, "agent_session_ids", None) or [])
+        )
+        signature = hf.signature()
+        key = (signature, session_dir, session_start_ms, owned_ids, others_owned)
+        memo = self._discovery_memo.get(session.id)
+        if signature is not None and memo is not None and memo[0] == key:
+            return DiscoveredSessionIds(ids=list(memo[1].ids), latest=memo[1].latest)
 
+        resolve = history_reader.resolve_project_path
         discovered: List[str] = []
         latest_id = None
         latest_ts = 0
-        for entry in hf.read_all():
+        for entry in hf.iter_entries():
             if entry.timestamp_ms < session_start_ms:
                 continue
             if not entry.project or not entry.session_id:
                 continue
-            entry_dir = str(Path(entry.project).resolve())
-            if entry_dir != session_dir:
+            if resolve(entry.project) != session_dir:
                 continue
             sid = entry.session_id
-            if sid in owned_ids:
-                continue
-            if is_session_id_owned_by_others(sid, session.id, all_sessions):
+            if sid in owned_ids or sid in others_owned:
                 continue
             if sid not in discovered:
                 discovered.append(sid)
@@ -181,7 +206,12 @@ class ClaudeStatsReader:
                 latest_ts = entry.timestamp_ms
                 latest_id = sid
 
-        return DiscoveredSessionIds(ids=discovered, latest=latest_id)
+        result = DiscoveredSessionIds(ids=discovered, latest=latest_id)
+        if signature is not None:
+            if len(self._discovery_memo) >= self._DISCOVERY_MEMO_MAX:
+                self._discovery_memo.clear()
+            self._discovery_memo[session.id] = (key, result)
+        return DiscoveredSessionIds(ids=list(discovered), latest=latest_id)
 
     def get_window_token_usage(
         self, session: Any, since: datetime

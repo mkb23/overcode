@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
@@ -49,7 +49,7 @@ from .pid_utils import (
     acquire_daemon_lock,
     remove_pid_file,
 )
-from .session_manager import SessionManager
+from .session_manager import PendingUpdates, SessionIndex, SessionManager
 from .settings import (
     DAEMON,
     DAEMON_VERSION,
@@ -60,8 +60,10 @@ from .settings import (
     get_activity_signal_path,
     get_supervisor_stats_path,
     get_tui_heartbeat_path,
+    tui_attended_age_seconds,
+    TUI_ATTENDED_TOUCH_SECONDS,
 )
-from .config import get_relay_config
+from .config import get_monitor_daemon_config, get_relay_config
 from .status_constants import (
     STATUS_ASLEEP,
     STATUS_DONE,
@@ -70,12 +72,14 @@ from .status_constants import (
     STATUS_RUNNING_HEARTBEAT,
     STATUS_TERMINATED,
     STATUS_WAITING_HEARTBEAT,
+    STATUS_WAITING_OVERSIGHT,
     is_green_status,
 )
+from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_detector import StatusDetector
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_history import log_agent_status
+from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .monitor_daemon_core import (
     calculate_time_accumulation,
     calculate_cost_estimate,
@@ -85,10 +89,19 @@ from .monitor_daemon_core import (
     parse_datetime_safe,
     is_heartbeat_eligible,
     is_heartbeat_due,
+    should_archive_terminated,
     should_auto_archive,
     should_enforce_oversight_timeout,
 )
-from .tmux_utils import send_text_to_tmux_window
+from .tmux_utils import (
+    PaneInfo,
+    pane_for_window,
+    send_text_to_tmux_window,
+    untracked_window_names,
+)
+
+if TYPE_CHECKING:
+    from .protocols import TmuxInterface
 
 
 # Check for macOS presence APIs (optional)
@@ -110,6 +123,16 @@ except ImportError:
 INTERVAL_FAST = DAEMON.interval_fast    # When active or agents working
 INTERVAL_SLOW = DAEMON.interval_slow    # When all agents need user input
 INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
+INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attendance)
+
+# A TUI touches its attended file every TUI_ATTENDED_TOUCH_SECONDS while a
+# client is attached to it; three missed touches and it is not there.
+TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
+
+# The every-60-loops housekeeping (done-agent auto-archive, untracked window
+# count, terminated-session archive) was 120 s of wall clock at the 2 s
+# loop; it is a wall-clock cadence now so the unattended loop keeps it.
+HOUSEKEEPING_INTERVAL_SECONDS = 60 * DAEMON.interval_fast
 
 
 # Create PID helper functions using factory
@@ -272,11 +295,22 @@ class MonitorDaemon:
         tmux_session: str = "agents",
         session_manager: Optional[SessionManager] = None,
         status_detector: Optional[StatusDetector] = None,
+        tmux: Optional["TmuxInterface"] = None,
     ):
         self.tmux_session = tmux_session
 
         # Ensure session directory exists
         ensure_session_dir(tmux_session)
+
+        # One tmux client for the daemon's lifetime (audit R7). The periodic
+        # syncs used to build a fresh RealTmux each, so its 30 s cache never
+        # hit and every pane-pid lookup was list-sessions + list-windows +
+        # list-panes. Injected by tests and the bench.
+        if tmux is None:
+            from .implementations import RealTmux
+
+            tmux = RealTmux()
+        self._tmux = tmux
 
         # Session-specific paths
         self.pid_path = get_monitor_daemon_pid_path(tmux_session)
@@ -287,10 +321,17 @@ class MonitorDaemon:
         self.session_manager = session_manager or SessionManager()
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
+        # Capture gating (audit R11): each loop plans, from the tick's pane
+        # listing, which panes changed and captures only those; the
+        # detectors read the rest from the gate's cache. See _plan_captures.
+        self._capture_gate = PaneCaptureGate()
+        self._pane_tracker = PaneChangeTracker()
+        self._loop_clock = time.monotonic  # the keepalive's clock; tests freeze it
         self.detector = StatusDetectorDispatcher(
             tmux_session,
             polling_detector=status_detector,
             mode=detection_mode,
+            capture_gate=self._capture_gate,
         )
 
         # Hostname for history disambiguation
@@ -311,10 +352,39 @@ class MonitorDaemon:
             daemon_version=DAEMON_VERSION,
         )
 
+        # Wall time of the previous complete tick, published so consumers can
+        # size their staleness window (MonitorDaemonState.is_stale).
+        self._last_tick_duration_seconds: float = 0.0
+
+        # This tmux session's panes from one ``list-panes -s`` per tick
+        # (``_panes_at``): pid per window for the 5 s / 15 s syncs, and the
+        # attached-client count. None when the listing failed.
+        self._pane_table: Optional[Dict[str, PaneInfo]] = None
+        self._pane_table_at: Optional[datetime] = None
+        self.session_attached: Optional[int] = None
+
         # Per-session tracking
         self.previous_states: Dict[str, str] = {}
         self.last_state_times: Dict[str, datetime] = {}
         self.operation_start_times: Dict[str, datetime] = {}
+
+        # agent_status_history.csv is written on change (audit R10): per
+        # session id, the (status, activity) pair last logged and when, so
+        # a row goes out when the pair moves, when the last row is a
+        # keepalive old, and the first time this daemon sees the session.
+        self._last_logged: Dict[str, Tuple[str, str]] = {}
+        self._last_keepalive: Dict[str, datetime] = {}
+
+        # Everything a tick wants persisted to sessions.json is staged here
+        # and written once at the end of the tick (audit R5); see
+        # _flush_pending_writes. Reads inside the tick go through
+        # self._pending.view(session) so they see the staged values.
+        self._pending: PendingUpdates = PendingUpdates()
+
+        # When each terminated entry in sessions.json was first seen so by
+        # this daemon (any tmux session); after the configured grace the
+        # every-60-loops housekeeping moves it to the archive.
+        self._terminated_since: Dict[str, datetime] = {}
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
@@ -355,6 +425,15 @@ class MonitorDaemon:
         self._model_metadata_backoff_until: Optional[datetime] = None
         self._model_metadata_failure_backoff = 6 * 3600  # seconds
 
+        # Loop interval while nobody is watching (config.yaml
+        # monitor_daemon.interval_unattended_seconds; read once, like relay).
+        self._interval_unattended: int = get_monitor_daemon_config()["interval_unattended"]
+
+        # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
+        # after the first tick (loop 60 at 2 s used to be 2 minutes in), then
+        # every interval, whatever the loop length.
+        self._last_housekeeping: Optional[datetime] = None
+
         # Relay configuration (for pushing state to cloud)
         self._relay_config = get_relay_config()
         self._last_relay_push = datetime.min
@@ -375,9 +454,7 @@ class MonitorDaemon:
     def _migrate_legacy_window_ids(self, sessions: list) -> None:
         """Migrate legacy digit-string tmux_window values to actual window names."""
         try:
-            from .implementations import RealTmux
-            tmux = RealTmux()
-            tmux_windows = tmux.list_windows(self.tmux_session)
+            tmux_windows = self._tmux.list_windows(self.tmux_session)
             if not tmux_windows:
                 return
             index_to_name = {str(w['index']): w['name'] for w in tmux_windows}
@@ -390,20 +467,30 @@ class MonitorDaemon:
         except Exception as e:
             self.log.warning(f"Legacy window migration failed: {e}")
 
-    def _get_parent_name(self, session) -> Optional[str]:
-        """Get the name of a session's parent, if any (#244)."""
-        if not session.parent_session_id:
-            return None
-        parent = self.session_manager.get_session(session.parent_session_id)
-        return parent.name if parent else None
+    def _session_index(self) -> SessionIndex:
+        """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
+        return SessionIndex(self.session_manager.sessions_by_id())
 
-    def track_session_stats(self, session, status: str) -> SessionDaemonState:
+    def _get_parent_name(self, session, index: Optional[SessionIndex] = None) -> Optional[str]:
+        """Get the name of a session's parent, if any (#244)."""
+        return (index or self._session_index()).parent_name(session)
+
+    def track_session_stats(
+        self, session, status: str, index: Optional[SessionIndex] = None
+    ) -> SessionDaemonState:
         """Track session state and build SessionDaemonState.
 
         Returns the session state for inclusion in MonitorDaemonState.
+
+        ``index`` is the tick's ``SessionIndex``; the hierarchy fields
+        (parent name, depth, children count) are looked up in it instead of
+        being recomputed from the session table per session. Callers
+        without one get an index over the current snapshot.
         """
         session_id = session.id
         now = datetime.now()
+        if index is None:
+            index = self._session_index()
 
         # Get previous status
         prev_status = self.previous_states.get(session_id, status)
@@ -432,7 +519,7 @@ class MonitorDaemon:
                 if op_duration > 0:
                     op_times.append(op_duration)
                     op_times = op_times[-100:]
-                    self.session_manager.update_stats(
+                    self._pending.update_stats(
                         session_id,
                         operation_times=op_times,
                         last_activity=now.isoformat()
@@ -516,10 +603,10 @@ class MonitorDaemon:
             # Cost budget (#173)
             cost_budget_usd=session.cost_budget_usd,
             budget_exceeded=_is_budget_exceeded(session, stats),
-            # Agent hierarchy (#244)
-            parent_name=self._get_parent_name(session),
-            depth=self.session_manager.compute_depth(session),
-            children_count=len(self.session_manager.get_children(session.id)),
+            # Agent hierarchy (#244), from the tick's index
+            parent_name=index.parent_name(session),
+            depth=index.depth(session),
+            children_count=index.children_count(session.id),
             # Oversight system
             oversight_policy=getattr(session, 'oversight_policy', 'wait') or 'wait',
             oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
@@ -589,7 +676,7 @@ class MonitorDaemon:
                 session.heartbeat_instruction,
                 send_enter=True,
             ):
-                self.session_manager.update_session(
+                self._pending.update_session(
                     session.id,
                     last_heartbeat_time=now.isoformat()
                 )
@@ -654,8 +741,8 @@ class MonitorDaemon:
             # Initialize state_since if never set (e.g., new session)
             state_since = now.isoformat()
 
-        # Save to session manager
-        self.session_manager.update_stats(
+        # Staged for the tick's single write
+        self._pending.update_stats(
             session_id,
             current_state=status,
             state_since=state_since,
@@ -755,9 +842,9 @@ class MonitorDaemon:
 
         # Update model/provider if detected
         if detected_model and detected_model != session.model:
-            self.session_manager.update_session(session.id, model=detected_model)
+            self._pending.update_session(session.id, model=detected_model)
         if detected_provider and detected_provider != session.provider:
-            self.session_manager.update_session(session.id, provider=detected_provider)
+            self._pending.update_session(session.id, provider=detected_provider)
 
         # Cost estimate
         from .settings import get_user_config, get_model_pricing
@@ -778,7 +865,7 @@ class MonitorDaemon:
             stats.input_tokens, stats.output_tokens,
             stats.cache_creation_tokens, stats.cache_read_tokens,
         )
-        self.session_manager.update_stats(
+        self._pending.update_stats(
             session.id,
             total_tokens=total_tokens,
             input_tokens=stats.input_tokens,
@@ -827,9 +914,9 @@ class MonitorDaemon:
             # across /clear (fixing cases where a bedrock agent switches
             # to Claude Max and vice versa).
             if stats.model and stats.model != session.model:
-                self.session_manager.update_session(session.id, model=stats.model)
+                self._pending.update_session(session.id, model=stats.model)
             if stats.provider and stats.provider != session.provider:
-                self.session_manager.update_session(session.id, provider=stats.provider)
+                self._pending.update_session(session.id, provider=stats.provider)
 
             # Cache last command for daemon state publishing
             if stats.last_command:
@@ -876,15 +963,15 @@ class MonitorDaemon:
                 )
                 if honors_launch_agent:
                     if not getattr(session, "agent_persona", None):
-                        self.session_manager.update_session(
+                        self._pending.update_session(
                             session.id, agent_persona=detected_agent
                         )
                 else:
-                    self.session_manager.update_session(
+                    self._pending.update_session(
                         session.id, agent_persona=detected_agent
                     )
 
-            self.session_manager.update_stats(
+            self._pending.update_stats(
                 session.id,
                 interaction_count=stats.interaction_count,
                 total_tokens=total_tokens,
@@ -906,18 +993,75 @@ class MonitorDaemon:
         """Calculate median operation time."""
         return calculate_median(operation_times)
 
-    def calculate_interval(self, sessions: list, all_waiting_user: bool) -> int:
+    def attendance(self) -> str:
+        """``"attended"`` or ``"unattended"``: is anyone watching this fleet?
+
+        Unattended only when all three say nobody is: this tick's pane
+        listing counted no client attached to the agents tmux session
+        (``session_attached``; an unknown count — listing failed — counts
+        as attended), the TUI keypress heartbeat is not fresh
+        (PresenceComponent's 60 s window), and no TUI has touched its
+        attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
+        TUI in another tmux session or a plain terminal has — the first
+        two cannot see it — and the web server makes the same touch when
+        it serves a status request (the dashboard's 5 s poll, a sister
+        TUI's), so the daemon never slows under a dashboard someone is
+        reading, in whatever form. The daemon's own relay push reads the
+        same status data without touching: it is not a reader.
+        """
+        attached = self.session_attached
+        if attached is None or attached > 0:
+            return "attended"
+        if self.presence._is_tui_active():
+            return "attended"
+        age = tui_attended_age_seconds(self.tmux_session)
+        if age is not None and age <= TUI_ATTENDED_FRESHNESS:
+            return "attended"
+        return "unattended"
+
+    def calculate_interval(
+        self, sessions: list, all_waiting_user: bool, unattended: bool = False
+    ) -> int:
         """Calculate appropriate loop interval.
 
-        The monitor daemon always uses a fixed 10s interval to maintain
-        high-resolution monitoring data. Variable frequency logic is only
-        used by the supervisor daemon.
+        The monitor daemon runs at the fixed fast interval whenever anyone
+        is watching, for consistent monitoring resolution (variable
+        frequency by agent state is the supervisor daemon's). While
+        ``unattended`` (see :meth:`attendance`) it stretches to the
+        configured unattended interval: status history is written on
+        change, so the timeline it keeps for the user's return has no holes
+        at that resolution, and heartbeats, oversight timeouts and the
+        housekeeping are wall-clock, so nothing drifts with the loop.
         """
-        # Always use fast interval for consistent monitoring resolution
+        if unattended:
+            return self._interval_unattended
         return INTERVAL_FAST
 
+    def _housekeeping_due(self, now: datetime) -> bool:
+        """Wall-clock replacement for ``loop_count % 60 == 0``.
+
+        The first tick starts the clock (the loop-count rule first fired
+        two minutes in, not on loop 1); after that every
+        HOUSEKEEPING_INTERVAL_SECONDS, at the 2 s loop and the unattended
+        one alike. Tests move ``_last_housekeeping`` back to force a pass.
+        """
+        last = self._last_housekeeping
+        if last is None:
+            self._last_housekeeping = now
+            return False
+        if (now - last).total_seconds() >= HOUSEKEEPING_INTERVAL_SECONDS:
+            self._last_housekeeping = now
+            return True
+        return False
+
     def _interruptible_sleep(self, total_seconds: int) -> None:
-        """Sleep with activity signal checking."""
+        """Sleep with activity signal checking.
+
+        The signal (a TUI keypress, or a TUI re-attaching) ends the sleep
+        and puts the next loop on the fast interval, so an unattended
+        daemon is back within a second of the user's return; a bare
+        ``tmux attach`` with no TUI is seen by the next tick's listing.
+        """
         chunk_size = 1
         elapsed = 0
 
@@ -930,6 +1074,7 @@ class MonitorDaemon:
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
                 self.state.current_interval = INTERVAL_FAST
+                self.state.interval_mode = "attended"
                 self.state.save(self.state_path)
                 return
 
@@ -955,30 +1100,36 @@ class MonitorDaemon:
                 tmux.kill_window(self.tmux_session, session.tmux_window)
             except Exception:
                 pass  # Window may already be gone
-            self.session_manager.update_session_status(session.id, "terminated")
+            self._pending.update_session_status(session.id, "terminated")
             self.log.info(f"Auto-archived done agent: {session.name}")
 
-    def _count_untracked_windows(self, sessions: list) -> int:
+    def _count_untracked_windows(self, sessions: list, tmux=None) -> int:
         """Count tmux windows not tracked by any active session (#344).
 
-        Returns count of windows that exist in tmux but aren't tracked
-        (excluding window 0 which is the default shell).
+        Uses the same predicate as ``overcode cleanup --untracked``
+        (``tmux_utils.untracked_window_names``): window 0, live agents'
+        windows and overcode's own windows (the dead-window placeholder,
+        the supervisor daemon's claude window, SSH proxy windows) are not
+        untracked, so the count never advertises a cleanup that would kill
+        them.
+
+        Args:
+            sessions: Sessions from the current tick.
+            tmux: A ``TmuxInterface``; the daemon's own client when None.
+                Injectable so the count can be tested against a fake tmux —
+                the previous code called a ``session_exists`` method that
+                ``RealTmux`` never had, so it raised on every run and the
+                ``except`` below silently reported 0 untracked windows forever.
         """
         try:
-            from .implementations import RealTmux
-            tmux = RealTmux()
-            if not tmux.session_exists(self.tmux_session):
+            if tmux is None:
+                tmux = self._tmux
+            if not tmux.has_session(self.tmux_session):
                 return 0
             tmux_windows = tmux.list_windows(self.tmux_session)
             active_sessions = [s for s in sessions if s.status != "terminated"]
             tracked_windows = {s.tmux_window for s in active_sessions}
-            count = 0
-            for window_info in tmux_windows:
-                w_name = window_info['name']
-                window_idx = int(window_info['index'])
-                if window_idx != 0 and w_name not in tracked_windows:
-                    count += 1
-            return count
+            return len(untracked_window_names(tmux_windows, tracked_windows))
         except Exception:
             return 0
 
@@ -993,12 +1144,12 @@ class MonitorDaemon:
                 now,
             ):
                 continue
-            self.session_manager.update_session(
+            self._pending.update_session(
                 session.id,
                 report_status="failure",
                 report_reason="Oversight timeout expired",
             )
-            self.session_manager.update_session_status(session.id, "done")
+            self._pending.update_session_status(session.id, "done")
             self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
 
     def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
@@ -1009,6 +1160,10 @@ class MonitorDaemon:
         presence_state, presence_idle, _ = self.presence.get_current_state()
 
         self.state.last_loop_time = now.isoformat()
+        # getattr: test doubles built via __new__ skip __init__
+        self.state.last_tick_duration_seconds = round(
+            getattr(self, "_last_tick_duration_seconds", 0.0), 3
+        )
         self.state.sessions = session_states
         self.state.presence_available = self.presence.available
         self.state.presence_state = presence_state
@@ -1099,7 +1254,22 @@ class MonitorDaemon:
     # ------------------------------------------------------------------
 
     def _tick(self, now: datetime) -> None:
-        """Execute one monitoring loop iteration."""
+        """Execute one monitoring loop iteration.
+
+        Times itself: the duration is published by the *next* tick's
+        ``_publish_state`` (this tick publishes mid-way, before it knows its
+        own length) so consumers can widen their staleness window instead of
+        treating a slow tick as a dead daemon.
+        """
+        tick_t0 = time.monotonic()
+        self.state.tick_started_at = now.isoformat()
+        try:
+            self._tick_phases(now)
+        finally:
+            self._last_tick_duration_seconds = time.monotonic() - tick_t0
+
+    def _tick_phases(self, now: datetime) -> None:
+        """The phases of one tick, in order."""
         # Re-read the fleet default detection mode (the legacy global
         # detection_mode file). Per-agent overrides are resolved inside the
         # dispatcher, on top of this default.
@@ -1108,8 +1278,11 @@ class MonitorDaemon:
         if self.detector.mode != current_mode:
             self.detector.mode = current_mode
             self.log.info(f"Fleet detection mode changed to: {current_mode}")
-        sessions = [s for s in self.session_manager.list_sessions()
-                    if s.tmux_session == self.tmux_session]
+        # One snapshot per tick: the index answers every parent/child lookup
+        # the tick makes, and ``sessions`` is this tmux session's slice of it
+        # in file order (what list_sessions() would return, filtered).
+        index = self._session_index()
+        sessions = [s for s in index.by_id.values() if s.tmux_session == self.tmux_session]
         if not self._legacy_windows_migrated:
             self._migrate_legacy_window_ids(sessions)
             self._legacy_windows_migrated = True
@@ -1119,11 +1292,36 @@ class MonitorDaemon:
         self._sync_sandbox_state(sessions, now)
         self._sync_process_resources(sessions, now)
         self._dispatch_heartbeats(sessions)
-        session_states, all_waiting = self._detect_and_enrich(sessions, now)
-        self._cleanup_stale(sessions)
-        self._publish_and_enforce(sessions, session_states, all_waiting)
+        try:
+            session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
+            self._cleanup_stale(sessions)
+            self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
+        finally:
+            # One write for the whole tick, even when a phase raised: what
+            # was staged before the failure lands, as it did when each
+            # change was written as it was found.
+            self._flush_pending_writes()
         self._maybe_rotate_history(now)
         self._maybe_refresh_model_metadata(now)
+
+    def _flush_pending_writes(self) -> None:
+        """Commit this tick's staged mutations to sessions.json in one write.
+
+        Every phase stages what it wants persisted in ``self._pending``
+        (current task, state-time accumulators, git context, PR number,
+        loaded skills, model, tokens, CPU/RSS, heartbeat and oversight
+        stamps, terminal statuses). ``SessionManager.commit_pending``
+        rewrites the file once, and only if some staged value differs
+        from what is on disk; a tick with nothing staged does not open
+        it. The daemon's published state comes from memory, so this only
+        moves *when* sessions.json is written within the tick, not what it
+        says by the tick's end (audit R5).
+        """
+        pending = self._pending
+        if not pending:
+            return
+        self._pending = PendingUpdates()
+        self.session_manager.commit_pending(pending)
 
     def _maybe_rotate_history(self, now: datetime) -> None:
         """Rotate/compress agent_status_history.csv and prune old archives (#465, #468).
@@ -1248,8 +1446,33 @@ class MonitorDaemon:
             for session in sessions:
                 available = get_available_skills(session.start_directory)
                 if available != session.available_skills:
-                    self.session_manager.update_session(session.id, available_skills=available)
+                    self._pending.update_session(session.id, available_skills=available)
             self._last_skills_sync = now
+
+    def _panes_at(self, now: datetime) -> Optional[Dict[str, PaneInfo]]:
+        """This tmux session's panes, listed once per ``now`` (one tmux command).
+
+        Every phase of a tick is called with the tick's ``now``, so the 5 s
+        process-resources sync and the 15 s sandbox sync share one
+        ``list-panes -s`` instead of asking tmux for each agent's pane pid
+        (three commands each on a fresh ``RealTmux``, audit R7). A pane's pid
+        never changes for the life of its window, and a window that is gone
+        is simply absent from the listing. None when the listing failed
+        (tmux down, session gone): callers then skip every session, as they
+        did when ``get_pane_pid`` returned None. ``session_attached`` is
+        kept from the same listing for :meth:`attendance`, and reset to
+        None — unknown, which attendance() treats as attended — when the
+        listing failed, so tmux going away after a reading of 0 does not
+        leave the loop on the unattended interval on a stale count.
+        """
+        if self._pane_table_at != now:
+            self._pane_table_at = now
+            self._pane_table = self._tmux.list_panes(self.tmux_session)
+            if self._pane_table:
+                self.session_attached = next(iter(self._pane_table.values())).session_attached
+            else:
+                self.session_attached = None
+        return self._pane_table
 
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
         """Sample CPU and RSS for each agent's claude process tree.
@@ -1267,7 +1490,6 @@ class MonitorDaemon:
             find_agent_process, session_process_argv_markers,
             session_process_basenames,
         )
-        from .implementations import RealTmux
         from .process_resources import (
             snapshot_processes, build_children_index, aggregate_tree,
         )
@@ -1280,32 +1502,33 @@ class MonitorDaemon:
         # shape doctor expects is derived on the fly.
         children = build_children_index(snapshot)
         argv_by_pid = {pid: info.argv for pid, info in snapshot.items()}
-        tmux = RealTmux()
+        panes = self._panes_at(now) or {}
         for session in sessions:
             if getattr(session, "is_remote", False):
                 continue
-            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
-            if pane_pid is None:
+            pane = pane_for_window(panes, session.tmux_window)
+            if pane is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
                 session_process_argv_markers(session),
             )
             if claude_pid is None:
                 # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
                 if session.cpu_percent or session.rss_bytes:
-                    self.session_manager.update_session(
+                    self._pending.update_session(
                         session.id, cpu_percent=0.0, rss_bytes=0,
                     )
                 continue
             cpu, rss = aggregate_tree(claude_pid, snapshot, children)
-            # Only write when the value moved meaningfully — avoids a JSON
+            # Only stage when the value moved meaningfully — avoids a JSON
             # write every 5s for an idle agent whose CPU is drifting by 0.1%.
+            # Everything staged lands in the tick's single write.
             if (
                 abs(cpu - session.cpu_percent) >= 1.0
                 or abs(rss - session.rss_bytes) >= 1024 * 1024  # 1 MiB
             ):
-                self.session_manager.update_session(
+                self._pending.update_session(
                     session.id, cpu_percent=cpu, rss_bytes=rss,
                 )
         self._last_resources_sync = now
@@ -1318,7 +1541,6 @@ class MonitorDaemon:
             _snapshot_process_table, _build_child_index, find_agent_process,
             session_process_argv_markers, session_process_basenames,
         )
-        from .implementations import RealTmux
         from .sandbox_detect import detect_sandbox_states
 
         rows = _snapshot_process_table()
@@ -1326,7 +1548,7 @@ class MonitorDaemon:
             self._last_sandbox_sync = now
             return
         children, argv_by_pid = _build_child_index(rows)
-        tmux = RealTmux()
+        panes = self._panes_at(now) or {}
         # Gather all local claude PIDs with one lsof call (#451 optimization).
         session_pids: dict = {}  # session.id -> claude_pid
         for session in sessions:
@@ -1336,11 +1558,11 @@ class MonitorDaemon:
             # backends that have a sandbox toggle.
             if not session_supports(session, BackendCapability.SANDBOX_PROBE):
                 continue
-            pane_pid = tmux.get_pane_pid(self.tmux_session, session.tmux_window)
-            if pane_pid is None:
+            pane = pane_for_window(panes, session.tmux_window)
+            if pane is None:
                 continue
             claude_pid, _ = find_agent_process(
-                pane_pid, children, argv_by_pid, session_process_basenames(session),
+                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
                 session_process_argv_markers(session),
             )
             if claude_pid is not None:
@@ -1351,7 +1573,7 @@ class MonitorDaemon:
                 continue
             detected = states.get(session_pids[session.id])
             if detected != session.sandbox_enabled:
-                self.session_manager.update_session(session.id, sandbox_enabled=detected)
+                self._pending.update_session(session.id, sandbox_enabled=detected)
         self._last_sandbox_sync = now
 
     def _dispatch_heartbeats(self, sessions: list) -> None:
@@ -1362,16 +1584,29 @@ class MonitorDaemon:
         # Track pending heartbeat starts for timeline marker
         self._heartbeat_start_pending.update(self._heartbeat_triggered_sessions)
 
-    def _detect_and_enrich(self, sessions: list, now: datetime) -> tuple:
+    def _detect_and_enrich(
+        self, sessions: list, now: datetime, index: Optional[SessionIndex] = None
+    ) -> tuple:
         """Detect status and build SessionDaemonState for each session.
+
+        ``index`` is the tick's ``SessionIndex`` (built over the snapshot
+        ``sessions`` came from); one is built here when the caller has none.
 
         Returns:
             (session_states, all_waiting_user) tuple
         """
         session_states = []
         all_waiting_user = True
+        if index is None:
+            index = self._session_index()
+        pending = self._pending
+        self._plan_captures(sessions, now)
 
-        for session in sessions:
+        for snapshot in sessions:
+            # Earlier phases of this tick may have staged changes for this
+            # session (a heartbeat stamp, tokens, a model, CPU); read through
+            # them, as the per-write path re-read the file after each.
+            session = pending.view(snapshot)
             pane_content = ""
             if session.status == "done":
                 status, activity = STATUS_DONE, "Completed"
@@ -1386,13 +1621,13 @@ class MonitorDaemon:
                 if hasattr(self.detector, 'get_loaded_skills'):
                     new_skills = self.detector.get_loaded_skills(session.name)
                     if new_skills and sorted(new_skills) != sorted(session.loaded_skills):
-                        self.session_manager.update_session(session.id, loaded_skills=new_skills)
+                        pending.update_session(session.id, loaded_skills=new_skills)
 
                 # Extract PR number from pane content
                 if pane_content:
                     pr = extract_pr_number(pane_content)
                     if pr is not None and pr != session.pr_number:
-                        self.session_manager.update_session(session.id, pr_number=pr, pr_branch=session.branch)
+                        pending.update_session(session.id, pr_number=pr, pr_branch=session.branch)
 
             # Clear heartbeat tracking when session stops running
             if status != STATUS_RUNNING and session.id in self._sessions_running_from_heartbeat:
@@ -1400,25 +1635,24 @@ class MonitorDaemon:
                 self._heartbeat_start_pending.discard(session.id)
 
             # Refresh git context (branch may have changed)
-            git_changed = self.session_manager.refresh_git_context(session.id)
+            git_changed = self._refresh_git_context(session)
             if git_changed and session.pr_number is not None:
-                # Re-read session to get updated branch
-                refreshed = self.session_manager.get_session(session.id)
-                if refreshed and refreshed.branch is not None:
+                # The session as the file will show it: staged branch included
+                refreshed = pending.view(snapshot)
+                if refreshed.branch is not None:
                     # Clear if pr_branch not set (pre-migration) or branch mismatch
                     if refreshed.pr_branch is None or refreshed.branch != refreshed.pr_branch:
-                        self.session_manager.update_session(session.id, pr_number=None, pr_branch=None)
+                        pending.update_session(session.id, pr_number=None, pr_branch=None)
 
             # Update current task in session
-            self.session_manager.update_stats(
+            pending.update_stats(
                 session.id,
                 current_task=activity[:100] if activity else ""
             )
 
-            # Reload session to get fresh stats
-            session = self.session_manager.get_session(session.id)
-            if session is None:
-                continue
+            # The session with everything staged so far applied — what the
+            # reload used to return after the writes above.
+            session = pending.view(snapshot)
 
             # Track stats and build state
             # Precedence: terminated > asleep > heartbeat variants > default (#399, #68, #171)
@@ -1446,23 +1680,37 @@ class MonitorDaemon:
             if (effective_status == STATUS_TERMINATED
                     and session.status != "terminated"
                     and not pane_content):
-                self.session_manager.update_session_status(session.id, "terminated")
+                if not self._is_waiting_on_oversight(session):
+                    pending.update_session_status(session.id, "terminated")
             # Un-persist terminated if agent is found alive (revival or false positive)
             elif (session.status == "terminated"
                     and effective_status != STATUS_TERMINATED):
-                self.session_manager.update_session_status(session.id, "running")
+                pending.update_session_status(session.id, "running")
 
-            session_state = self.track_session_stats(session, effective_status)
+            session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
             session_states.append(session_state)
 
-            # Log status history to session-specific file
-            log_agent_status(
-                session.name, effective_status, activity,
-                history_file=self.history_path,
-                session_id=session.id,
-                hostname=self._hostname,
-            )
+            # Log status history to session-specific file — on change, on
+            # keepalive, and on first sight; a row stands until the next.
+            if status_row_due(
+                self._last_logged.get(session.id),
+                self._last_keepalive.get(session.id),
+                effective_status,
+                activity,
+                now,
+                STATUS_HISTORY_KEEPALIVE_SECONDS,
+            ):
+                log_agent_status(
+                    session.name, effective_status, activity,
+                    history_file=self.history_path,
+                    session_id=session.id,
+                    hostname=self._hostname,
+                )
+                self._last_logged[session.id] = (
+                    effective_status, activity[:100] if activity else ""
+                )
+                self._last_keepalive[session.id] = now
 
             # Track if any session is not waiting for user
             if status != "waiting_user":
@@ -1472,6 +1720,89 @@ class MonitorDaemon:
         self._compute_subtree_costs(session_states)
 
         return session_states, all_waiting_user
+
+    def _plan_captures(self, sessions: list, now: datetime) -> None:
+        """Decide which panes this loop captures; the rest come from the gate's cache.
+
+        The tick's one ``list-panes -s`` (``_panes_at``) carries every
+        window's change signature. A pane is captured when that signature
+        moved since its last capture, when its hook_state file did (so a
+        status transition in hooks mode is always paired with fresh pane
+        text), for one follow-up loop after a change (the polling
+        detector's running-to-waiting step is "content unchanged since last
+        time"), when it was never captured, or when its last capture is
+        older than the keepalive — the bound on the listing's same-second
+        blind spot (pane_capture_gate). Without a listing (tmux down, session
+        gone) nothing is planned and every read is a raw capture: the loop
+        as it was before gating. Idle agents therefore cost no capture-pane
+        at all, and a changed pane is captured on the very next loop.
+        """
+        gate = self._capture_gate
+        gate.begin_loop()
+        panes = self._panes_at(now)
+        if panes is None:
+            return
+        tracker = self._pane_tracker
+        clock = self._loop_clock()
+        for session in sessions:
+            if session.status == "done":
+                continue
+            pane = pane_for_window(panes, session.tmux_window)
+            signature = pane.signature if pane is not None else None
+            capture = tracker.due(
+                session.id, signature, self._hook_state_stamp(session.name), clock
+            )
+            gate.plan(session.tmux_window, capture)
+
+    def _hook_state_stamp(self, session_name: str) -> Optional[tuple]:
+        """(mtime_ns, size) of the session's hook_state file; None without one.
+
+        The file the hook detector reads for status: any hook event rewrites
+        it, so its stat moving is the signal that the pane must be re-read
+        for the event's enrichment even if the listing saw no pane change.
+        """
+        path_of = getattr(getattr(self.detector, "hooks", None), "_hook_state_path", None)
+        if path_of is None:
+            return None
+        try:
+            st = os.stat(path_of(session_name))
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def _refresh_git_context(self, session) -> bool:
+        """Stage a changed repo/branch for ``session``; True if it changed.
+
+        What ``SessionManager.refresh_git_context`` did per session, minus
+        its rewrite of sessions.json: the change joins the tick's single
+        write. ``session`` is the tick's view (staged changes applied).
+        """
+        if not session.start_directory:
+            return False
+        repo_name, branch = self.session_manager.read_git_context(session)
+        if repo_name != session.repo_name or branch != session.branch:
+            self._pending.update_session(session.id, repo_name=repo_name, branch=branch)
+            return True
+        return False
+
+    def _is_waiting_on_oversight(self, session) -> bool:
+        """A child parked in waiting_oversight whose Stop hook has fired.
+
+        Its window is gone, so detection says terminated — but the TUI's
+        ``AgentLauncher.list_sessions`` re-asserts waiting_oversight for
+        exactly this case (parent set, Stop hook, no report) on its next
+        pass, and the two used to rewrite sessions.json in turn every 10 s
+        for as long as the child sat there (audit R5). The persisted status
+        stays waiting_oversight; the published status is terminated either
+        way, and the oversight timeout keeps applying to it.
+        """
+        if session.status != STATUS_WAITING_OVERSIGHT or session.parent_session_id is None:
+            return False
+        try:
+            hook_state = self.detector.hooks._read_hook_state(session.name)
+        except Exception:
+            return False
+        return isinstance(hook_state, dict) and hook_state.get("event") == "Stop"
 
     def _log_hook_event(self, session, status: str, activity: str) -> None:
         """Log hook events to the daemon log when they change.
@@ -1494,22 +1825,31 @@ class MonitorDaemon:
             )
 
     def _compute_subtree_costs(self, session_states):
-        """Compute subtree cost (self + all descendants) for each parent agent."""
+        """Compute subtree cost (self + all descendants) for each parent agent.
+
+        Agents are linked by *name*, and names are not guaranteed unique: a
+        duplicate name whose entry lists itself (or an ancestor) as parent
+        forms a cycle in ``children_map``. Each walk carries a ``visited`` set
+        so such a cycle counts every member once instead of recursing until
+        the daemon dies with RecursionError.
+        """
         by_name = {s.name: s for s in session_states}
         children_map = {}
         for s in session_states:
             if s.parent_name and s.parent_name in by_name:
                 children_map.setdefault(s.parent_name, []).append(s.name)
 
-        def _sum(name):
+        def _sum(name, visited):
+            visited.add(name)
             total = by_name[name].estimated_cost_usd
             for child in children_map.get(name, []):
-                total += _sum(child)
+                if child not in visited:
+                    total += _sum(child, visited)
             return total
 
         for s in session_states:
             if children_map.get(s.name):
-                s.subtree_cost_usd = _sum(s.name)
+                s.subtree_cost_usd = _sum(s.name, set())
 
     def _cleanup_stale(self, sessions: list) -> None:
         """Remove stale tracking entries for deleted sessions."""
@@ -1520,11 +1860,65 @@ class MonitorDaemon:
         stale_ids = set(self.previous_states.keys()) - current_session_ids
         for stale_id in stale_ids:
             del self.previous_states[stale_id]
+        for stale_id in set(self._last_logged) - current_session_ids:
+            del self._last_logged[stale_id]
+            self._last_keepalive.pop(stale_id, None)
+        self._pane_tracker.forget(current_session_ids)
+        self._capture_gate.forget({s.tmux_window for s in sessions})
 
-    def _publish_and_enforce(self, sessions: list, session_states: list, all_waiting_user: bool) -> None:
-        """Publish state, enforce policies, and log summary."""
-        # Calculate interval
-        interval = self.calculate_interval(sessions, all_waiting_user)
+    def _archive_terminated_sessions(self, all_sessions, now: datetime) -> None:
+        """Stage terminated entries that have outstayed the grace for the archive.
+
+        Runs from the every-60-loops housekeeping over every entry in
+        sessions.json, whatever its tmux session: an entry left behind by
+        a tmux session with no daemon would otherwise stay forever, and
+        every TUI and daemon on the host parses the file whole. The clock
+        starts when this daemon first sees the entry terminated (a restart
+        starts it again, so an entry waits at most one extra grace) and is
+        dropped for an entry that is revived or removed. The move itself is
+        part of the tick's single commit, with the record ``overcode
+        cleanup`` writes.
+        """
+        from .config import get_session_archive_config
+
+        grace = get_session_archive_config()["terminated_grace_seconds"]
+        seen = set()
+        for session in all_sessions:
+            if session.status != STATUS_TERMINATED:
+                continue
+            seen.add(session.id)
+            since = self._terminated_since.setdefault(session.id, now)
+            if should_archive_terminated(since, now, grace):
+                self._pending.archive_session(session.id)
+                del self._terminated_since[session.id]
+                self.log.info(f"Archived terminated session: {session.name}")
+        for session_id in [sid for sid in self._terminated_since if sid not in seen]:
+            del self._terminated_since[session_id]
+
+    def _publish_and_enforce(
+        self,
+        sessions: list,
+        session_states: list,
+        all_waiting_user: bool,
+        index: Optional[SessionIndex] = None,
+        now: Optional[datetime] = None,
+    ) -> None:
+        """Publish state, enforce policies, and log summary.
+
+        ``index`` is the tick's ``SessionIndex`` over the whole session
+        table (every tmux session); the terminated-session archive pass
+        walks it. Without one, that pass reads the manager's snapshot.
+        ``now`` is the tick's clock (the housekeeping cadence runs on it).
+        """
+        if now is None:
+            now = datetime.now()
+        # Interval for the sleep that follows this tick, published with the
+        # state so consumers size their staleness window to it.
+        mode = self.attendance()
+        interval = self.calculate_interval(sessions, all_waiting_user, mode == "unattended")
+        if mode != self.state.interval_mode:
+            self.log.info(f"Loop interval: {mode} ({interval}s)")
+        self.state.interval_mode = mode
         self.state.current_interval = interval
 
         # Update status based on state
@@ -1543,9 +1937,14 @@ class MonitorDaemon:
 
         # Auto-archive "done" agents after 1 hour (#244)
         # Count untracked tmux windows every 2 minutes (#344)
-        if self.state.loop_count % 60 == 0:
+        # Move terminated sessions to the archive once past their grace
+        if self._housekeeping_due(now):
             self._auto_archive_done_agents(sessions)
             self.state.untracked_window_count = self._count_untracked_windows(sessions)
+            all_sessions = (
+                index.by_id.values() if index is not None else self.session_manager.list_sessions()
+            )
+            self._archive_terminated_sessions(all_sessions, now)
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

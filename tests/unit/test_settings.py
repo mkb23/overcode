@@ -193,6 +193,31 @@ class TestOvercodePaths:
         assert paths.agent_history == paths.base_dir / "agent_status_history.csv"
 
 
+class TestTuiAttendedTouch:
+    """The TUI's attended-liveness file: an mtime the daemon reads, no content."""
+
+    def test_touch_creates_and_ages(self, tmp_path, monkeypatch):
+        from overcode import settings
+
+        monkeypatch.setattr(settings, "get_session_dir", lambda s: tmp_path / s)
+        assert settings.tui_attended_age_seconds("agents") is None
+        settings.touch_tui_attended("agents")
+        path = settings.get_tui_attended_path("agents")
+        assert path == tmp_path / "agents" / "tui_attended" and path.exists()
+        assert path.read_bytes() == b""
+        age = settings.tui_attended_age_seconds("agents")
+        assert 0 <= age < 5
+        assert settings.tui_attended_age_seconds("agents", now=path.stat().st_mtime + 42) == 42
+
+    def test_touch_is_best_effort(self, tmp_path, monkeypatch):
+        from overcode import settings
+
+        blocker = tmp_path / "file"
+        blocker.write_text("x")
+        monkeypatch.setattr(settings, "get_session_dir", lambda s: blocker / s)
+        settings.touch_tui_attended("agents")  # parent is a file: swallowed
+
+
 class TestDaemonSettings:
     """Test DaemonSettings dataclass."""
 

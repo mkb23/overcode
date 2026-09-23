@@ -490,7 +490,29 @@ class TestCalculateSpinStats:
 
 
 class TestCalculateMeanSpinFromHistory:
-    """Tests for history-based mean spin calculation."""
+    """Tests for history-based mean spin calculation.
+
+    Rows are written on change plus a keepalive (audit R10), so each row
+    stands for its agent until the agent's next row; the mean is time-
+    weighted over what the rows cover, scaled to the agent count. Fixtures
+    are built from segments — (agent, from_minutes_ago, to_minutes_ago,
+    status) — expanded into a keepalive row per minute, as the daemon
+    writes them.
+    """
+
+    NOW = datetime(2026, 9, 23, 12, 0, 0)
+
+    def _row(self, minutes_ago, agent, status):
+        return (self.NOW - timedelta(minutes=minutes_ago), agent, status, "")
+
+    def _rows(self, *segments):
+        """Keepalive rows every minute over each (agent, from, to, status) segment."""
+        rows = []
+        for agent, from_min, to_min, status in segments:
+            for m in range(from_min, to_min, -1):
+                rows.append(self._row(m, agent, status))
+        rows.sort(key=lambda r: r[0])
+        return rows
 
     def test_empty_history_returns_zero(self):
         """Empty history should return 0.0 with 0 samples."""
@@ -498,108 +520,168 @@ class TestCalculateMeanSpinFromHistory:
             history=[],
             agent_names=["agent1", "agent2"],
             baseline_minutes=30,
+            now=self.NOW,
         )
         assert mean_spin == 0.0
         assert sample_count == 0
 
     def test_zero_baseline_returns_zero(self):
         """baseline_minutes=0 should return 0.0 (instantaneous mode)."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=5), "agent1", "running", ""),
-        ]
         mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
+            history=[self._row(5, "agent1", "running")],
             agent_names=["agent1"],
             baseline_minutes=0,
+            now=self.NOW,
+        )
+        assert mean_spin == 0.0
+        assert sample_count == 0
+
+    def test_empty_agent_names_returns_zero(self):
+        """Empty agent_names list should return 0."""
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history=[self._row(5, "agent1", "running")],
+            agent_names=[],
+            baseline_minutes=30,
+            now=self.NOW,
         )
         assert mean_spin == 0.0
         assert sample_count == 0
 
     def test_all_running_returns_agent_count(self):
-        """If all samples are running, mean_spin should equal num_agents."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=10), "agent1", "running", ""),
-            (now - timedelta(minutes=10), "agent2", "running", ""),
-            (now - timedelta(minutes=5), "agent1", "running", ""),
-            (now - timedelta(minutes=5), "agent2", "running", ""),
-        ]
+        """Agents running for the whole window: mean_spin equals num_agents."""
+        history = self._rows(("agent1", 35, 0, "running"), ("agent2", 35, 0, "running"))
         mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
-            agent_names=["agent1", "agent2"],
-            baseline_minutes=30,
-            now=now,
+            history, ["agent1", "agent2"], baseline_minutes=30, now=self.NOW
         )
-        assert mean_spin == 2.0  # 100% of 2 agents
-        assert sample_count == 4
+        assert mean_spin == pytest.approx(2.0)
+        assert sample_count == 60  # rows inside the window only: 30 per agent
+
+    def test_rows_stand_until_the_agents_next_row(self):
+        """One agent green for the first 10 of 30 minutes -> 1/3 of an agent."""
+        history = self._rows(("agent1", 30, 20, "running"), ("agent1", 20, 0, "waiting_user"))
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(1 / 3)
+        assert sample_count == 30
+
+    def test_a_change_row_between_keepalives_counts_from_its_own_time(self):
+        """Green from -30 to -12:30, then idle: 17.5 of 30 minutes."""
+        history = self._rows(("agent1", 30, 12, "running"), ("agent1", 12, 0, "waiting_user"))
+        history.append((self.NOW - timedelta(minutes=12, seconds=30), "agent1", "waiting_user", ""))
+        history.sort(key=lambda r: r[0])
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(17.5 / 30)
 
     def test_half_running_returns_half_agents(self):
-        """If 50% of samples are running, mean_spin should be 0.5 * num_agents."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=10), "agent1", "running", ""),
-            (now - timedelta(minutes=10), "agent2", "waiting_user", ""),
-            (now - timedelta(minutes=5), "agent1", "waiting_user", ""),
-            (now - timedelta(minutes=5), "agent2", "running", ""),
-        ]
-        mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
-            agent_names=["agent1", "agent2"],
-            baseline_minutes=30,
-            now=now,
+        """Two agents each green half the window -> mean_spin 1.0."""
+        history = self._rows(
+            ("agent1", 30, 15, "running"),
+            ("agent1", 15, 0, "waiting_user"),
+            ("agent2", 30, 15, "waiting_user"),
+            ("agent2", 15, 0, "running"),
         )
-        assert mean_spin == 1.0  # 50% of 2 agents = 1.0
-        assert sample_count == 4
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1", "agent2"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(1.0)
+        assert sample_count == 60
+
+    def test_rows_before_the_cutoff_set_the_state_at_the_edge(self):
+        """Pre-cutoff rows are not samples but cover the window from its start."""
+        history = self._rows(("agent1", 35, 15, "running"), ("agent1", 15, 0, "waiting_user"))
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(0.5)  # green from the cutoff to -15 min
+        assert sample_count == 30
 
     def test_filters_by_agent_names(self):
-        """Should only include samples from specified agents."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=10), "agent1", "running", ""),
-            (now - timedelta(minutes=10), "agent2", "running", ""),  # excluded
-            (now - timedelta(minutes=5), "agent1", "running", ""),
-        ]
+        """Should only include rows from specified agents."""
+        history = self._rows(("agent1", 30, 0, "running"), ("agent2", 30, 0, "waiting_user"))
         mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
-            agent_names=["agent1"],  # only agent1
-            baseline_minutes=30,
-            now=now,
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
         )
-        assert mean_spin == 1.0  # 100% of 1 agent
-        assert sample_count == 2
+        assert mean_spin == pytest.approx(1.0)
+        assert sample_count == 30
 
     def test_filters_by_time_window(self):
-        """Should only include samples within the baseline window."""
-        now = datetime.now()
+        """Rows far before the window are neither samples nor coverage."""
         history = [
-            (now - timedelta(minutes=60), "agent1", "running", ""),  # outside 30m window
-            (now - timedelta(minutes=10), "agent1", "waiting_user", ""),  # inside
-            (now - timedelta(minutes=5), "agent1", "waiting_user", ""),  # inside
+            self._row(60, "agent1", "running"),       # outside the 30 m window and its validity
+            self._row(10, "agent1", "waiting_user"),  # inside
+            self._row(5, "agent1", "waiting_user"),   # inside
         ]
         mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
-            agent_names=["agent1"],
-            baseline_minutes=30,  # only last 30 minutes
-            now=now,
-        )
-        assert mean_spin == 0.0  # 0% running
-        assert sample_count == 2  # only 2 samples in window
-
-    def test_empty_agent_names_returns_zero(self):
-        """Empty agent_names list should return 0."""
-        now = datetime.now()
-        history = [
-            (now - timedelta(minutes=5), "agent1", "running", ""),
-        ]
-        mean_spin, sample_count = calculate_mean_spin_from_history(
-            history=history,
-            agent_names=[],  # no agents
-            baseline_minutes=30,
-            now=now,
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
         )
         assert mean_spin == 0.0
-        assert sample_count == 0
+        assert sample_count == 2
+
+    def test_rows_after_now_are_ignored(self):
+        history = [
+            self._row(10, "agent1", "waiting_user"),
+            self._row(-5, "agent1", "running"),  # five minutes in the future
+        ]
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == 0.0
+        assert sample_count == 1
+
+    def test_an_agent_that_appears_mid_window_is_weighted_by_its_coverage(self):
+        """The share is of the covered agent-time, as the row fraction was.
+
+        agent1 idle for 30 min, agent2 running for its last 10: green 10 of
+        40 covered minutes, scaled to 2 agents -> 0.5 (not 10/60 of 2).
+        """
+        history = self._rows(("agent1", 30, 0, "waiting_user"), ("agent2", 10, 0, "running"))
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["agent1", "agent2"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(0.5)
+
+    def test_a_row_with_no_successor_stands_for_at_most_the_validity(self):
+        """A daemon gap longer than SPIN_ROW_VALIDITY_SECONDS is 'no samples'."""
+        from overcode.tui_logic import SPIN_ROW_VALIDITY_SECONDS
+        assert SPIN_ROW_VALIDITY_SECONDS < 10 * 60
+        history = [self._row(30, "agent1", "running")]  # then nothing for the rest of the window
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        # Covered time is only the validity; it was all green.
+        assert mean_spin == pytest.approx(1.0)
+        assert sample_count == 1
+
+        # An idle row after the gap: the gap between them counts for neither,
+        # and each row covers its validity -> half green.
+        history.append(self._row(10, "agent1", "waiting_user"))
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(0.5)
+
+    def test_fixed_interval_rows_give_the_row_fraction(self):
+        """Row-per-tick data (the old file) reproduces the old row fraction."""
+        history = []
+        for k in range(0, 900):  # a row every 2 s for 30 minutes
+            status = "running" if k < 300 else "waiting_user"
+            history.append((self.NOW - timedelta(minutes=30) + timedelta(seconds=2 * k), "agent1", status, ""))
+        mean_spin, sample_count = calculate_mean_spin_from_history(
+            history, ["agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert sample_count == 900
+        assert mean_spin == pytest.approx(300 / 900, abs=2 / 1800)
+
+    def test_agent_names_membership_is_a_set(self):
+        """An agent listed twice still counts as two in the scale factor."""
+        history = self._rows(("agent1", 30, 0, "running"))
+        mean_spin, _ = calculate_mean_spin_from_history(
+            history, ["agent1", "agent1"], baseline_minutes=30, now=self.NOW
+        )
+        assert mean_spin == pytest.approx(2.0)
 
 
 class TestCalculateGreenPercentage:

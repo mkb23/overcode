@@ -69,6 +69,11 @@ class PollingStatusDetector:
         # Use provided patterns or default
         self.patterns = patterns or get_patterns()
 
+        # Optional pane_capture_gate.PaneCaptureGate: when set, get_pane_content
+        # asks it whether the caller's loop planned a fresh capture-pane for the
+        # window and otherwise serves the text of the last one (audit R11).
+        self.capture_gate = None
+
         # Track previous content per session for change detection
         self._previous_content: dict[int, str] = {}  # window -> content hash
         self._content_changed: dict[int, bool] = {}  # window -> changed flag
@@ -93,7 +98,11 @@ class PollingStatusDetector:
             num_lines: Lines to return. 0 (default) uses self.capture_lines.
         """
         effective_lines = num_lines or self.capture_lines
-        content = self.tmux.capture_pane(self.tmux_session, window, lines=effective_lines + 50)
+        gate = self.capture_gate
+        if gate is not None:
+            content = gate.capture(window, effective_lines + 50, self._capture_raw)
+        else:
+            content = self._capture_raw(window, effective_lines + 50)
         if content is None:
             return None
 
@@ -101,6 +110,10 @@ class PollingStatusDetector:
         lines = content.rstrip().split('\n')
         meaningful_lines = lines[-effective_lines:] if len(lines) > effective_lines else lines
         return '\n'.join(meaningful_lines)
+
+    def _capture_raw(self, window: str, lines: int) -> Optional[str]:
+        """One capture-pane, ``lines`` deep, through the tmux interface."""
+        return self.tmux.capture_pane(self.tmux_session, window, lines=lines)
 
     def detect_status(self, session, num_lines: int = 0) -> Tuple[str, str, str]:
         """

@@ -17,6 +17,7 @@ from .settings import (
     get_web_server_pid_path,
     get_web_server_port_path,
     ensure_session_dir,
+    touch_tui_attended,
 )
 from .config import get_web_api_key, get_web_allow_control
 from .pid_utils import is_process_running, stop_process
@@ -153,6 +154,7 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         # Dynamic route: /api/agents/{name}/status
         if path.startswith("/api/agents/") and path.endswith("/status"):
             name = path.split("/")[3]
+            touch_tui_attended(self.tmux_session)  # a sister TUI's focused-agent poll
             agent_data = get_single_agent_status(self.tmux_session, name)
             if agent_data is not None:
                 self._serve_json(agent_data)
@@ -209,6 +211,12 @@ class OvercodeHandler(BaseHTTPRequestHandler):
         self._serve_content(CHARTJS_JS, "application/javascript", "public, max-age=31536000")
 
     def _serve_api_status(self, query) -> None:
+        # Someone is reading the fleet through this server — the dashboard's
+        # 5 s poll, a sister TUI's 10 s one. The touch the TUI makes while
+        # attended keeps the monitor daemon on its fast loop for them too
+        # (the daemon's own relay push calls get_status_data directly and
+        # must not count as a reader, which is why this lives in the handler).
+        touch_tui_attended(self.tmux_session)
         self._serve_json(get_status_data(self.tmux_session))
 
     def _serve_analytics_sessions(self, query) -> None:

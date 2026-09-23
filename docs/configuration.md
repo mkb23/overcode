@@ -87,6 +87,16 @@ history_retention:
   event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
   event_loop_timing_enabled: true # false disables the heartbeat probe entirely
 
+# When terminated agents leave sessions.json for archive.jsonl
+# See "Session Archive" below
+session_archive:
+  terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+
+# Monitor daemon loop interval while nobody is watching
+# See "Unattended Low-Power Mode" below
+monitor_daemon:
+  interval_unattended_seconds: 10
+
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
 sisters:
@@ -281,8 +291,11 @@ These persist across TUI restarts.
 
 ### Session Data
 ```
+~/.overcode/sessions/
+├── sessions.json                        # Live sessions (all tmux sessions), plus terminated ones for the grace
+├── archive.jsonl                        # Archived sessions, one JSON record per line, append-only
+└── archive.json.migrated                # The pre-JSONL archive, kept after its one-time migration
 ~/.overcode/sessions/{session}/
-├── sessions.json                        # Active sessions list
 ├── {agent-id}.json                      # Individual agent state
 ├── agent_status_history.csv             # Status timeline (active window)
 ├── agent_status_history.<ts>.csv.gz     # Rotated archives (#468)
@@ -342,6 +355,92 @@ history_retention:
 
 `overcode doctor` flags either file (including archives, combined) once it
 exceeds 5GB (sized above an intentional 18-month archive set), naming the path and the config knob to fix it.
+
+## Session Archive
+
+`sessions.json` is one file for every agent overcode has launched on the
+machine, across all tmux sessions, and every TUI worker and daemon tick
+parses it whole while every write rewrites it whole. Left alone it grows
+with every agent ever launched: a killed agent stays in it as
+`status: terminated` until `overcode cleanup` moves it to the archive.
+
+The monitor daemon now does that move itself. Once a session's status has
+been `terminated` for `terminated_grace_seconds` (default one hour; the
+check runs every 60 daemon loops, so allow up to two minutes on top) the
+daemon removes it from `sessions.json` and appends it to `archive.jsonl`
+with the same record `overcode cleanup` writes (`end_time`, `status:
+archived`). Any daemon does this for terminated entries in any tmux
+session, so entries left behind by a tmux session that no longer has a
+daemon are cleared too. During the grace the TUI's "show killed" ghost
+rows (`g`) still list the agent, and `overcode revive` can still find it;
+after it, the agent is in the archive (`overcode history`).
+
+```yaml
+session_archive:
+  terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+```
+
+`archive.jsonl` holds one JSON record per line and is append-only, so
+archiving an agent costs one line regardless of how many are archived
+already (the previous `archive.json` was rewritten whole on every
+archive). An existing `archive.json` is migrated into `archive.jsonl` the
+first time the archive is touched and renamed to `archive.json.migrated`.
+Everything that reads the archive (`overcode history`, the web analytics
+endpoints, `overcode export`) reads the JSONL.
+
+## Unattended Low-Power Mode
+
+Nothing used to be gated on anyone watching: the TUI captured panes four
+times a second and the monitor daemon looped every 2 s whether or not a
+tmux client was attached, the screen was locked or the laptop lid was
+shut. Both now notice when nobody is looking, and both come straight back
+when someone is.
+
+**The TUI** watches whether a tmux client is attached to the pane it runs
+in (one `tmux display-message` a second, or for free from the pane listing
+its fast path already issues). While none is, every pane capture, the
+stats sweep, the timeline read, the AI summaries, the sister polls, the
+jobs and sessions refreshes and the resize sweep are paused; the only
+thing left running is a 2 s read of the daemon's published state, which
+keeps the stall bell and the macOS notifications working from the
+daemon's status with no capture. The moment a client attaches (or a key is
+pressed) every timer resumes and one full refresh runs. Nothing changes
+while you are attached, and a TUI run outside tmux can't tell, so it
+always behaves as attended (and keeps telling the daemon so — see the
+touch below).
+
+**The monitor daemon** stretches its loop from `interval_fast` (2 s) to
+`interval_unattended_seconds` (default 10 s) when all three of these say
+nobody is watching: no client is attached to the agents tmux session, no
+TUI keypress heartbeat is fresh (60 s), and nothing has touched the
+`tui_attended` file in the last 15 s. An attended TUI touches it every
+5 s — including one in another tmux session or in a plain terminal, which
+the first two signals cannot see — and the web server touches it whenever
+it serves a status request, so a fleet watched through the browser
+dashboard or a sister TUI stays on the fast loop too. It returns to the
+fast interval within one loop of a client attaching, and within about two
+seconds of a TUI re-attaching or a key being pressed (the activity signal
+ends the sleep at its next 1 s chunk). The published state
+carries `interval_mode` (`attended` / `unattended`) and the TUI's daemon
+status bar shows `(unattended)` next to the interval when the daemon is
+still in that mode — normally only for the loop after you return.
+
+What the coarser loop does *not* change: `agent_status_history.csv` is
+written on change (plus a 60 s keepalive), so the timeline you come back
+to has no holes at 10 s resolution; heartbeats, oversight timeouts and the
+every-two-minutes housekeeping (done-agent auto-archive, untracked window
+count, terminated-session archive) are all wall-clock and keep their
+cadence. The daemon's own relay push reads the same status data without
+counting as a watcher.
+
+```yaml
+monitor_daemon:
+  interval_unattended_seconds: 10  # loop while nobody is watching; must be >= 2 (interval_fast)
+```
+
+Read when the daemon starts: after changing it, restart the daemon with
+`overcode monitor-daemon stop` then `overcode monitor-daemon start`, or
+press `\` (Restart monitor) in the TUI.
 
 ## Pricing Configuration
 

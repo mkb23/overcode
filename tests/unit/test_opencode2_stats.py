@@ -462,9 +462,13 @@ class TestDaemonAgentPersonaSync:
         return reader
 
     def _persona_calls(self, daemon):
+        # The persona is staged for the tick's single sessions.json write
+        # (R5), in the shape update_session used to be called with.
+        assert daemon.session_manager.update_session.call_args_list == []
         return [
-            call for call in daemon.session_manager.update_session.call_args_list
-            if "agent_persona" in call.kwargs
+            call(sid, agent_persona=fields["agent_persona"])
+            for sid, fields in daemon._pending.fields.items()
+            if "agent_persona" in fields
         ]
 
     def test_empty_persona_is_persisted_from_reader(self, db, tmp_path, monkeypatch):

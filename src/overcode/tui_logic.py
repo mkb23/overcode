@@ -9,10 +9,16 @@ No side effects, no mutations of input data.
 """
 
 from datetime import datetime, timedelta
-from typing import List, Set, Optional, TypeVar, Protocol, Tuple
+from typing import List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
+from .settings import DAEMON
 from .status_constants import is_green_status
+from .tmux_utils import pane_for_window
+
+if TYPE_CHECKING:
+    from .pane_capture_gate import PaneChangeTracker
+    from .tmux_utils import PaneInfo
 
 
 class SessionLike(Protocol):
@@ -443,6 +449,13 @@ def calculate_spin_stats(
     )
 
 
+# A history row stands for its agent until the agent's next row (rows are
+# written on change plus a keepalive, audit R10), or for this long when none
+# follows: two keepalives. A daemon gap longer than that counts as "no
+# samples", the way it did with a row per tick.
+SPIN_ROW_VALIDITY_SECONDS = 2 * DAEMON.status_history_keepalive_seconds
+
+
 def calculate_mean_spin_from_history(
     history: list,
     agent_names: List[str],
@@ -454,8 +467,17 @@ def calculate_mean_spin_from_history(
     This provides a time-windowed average of how many agents were running,
     as opposed to the cumulative calculation in calculate_spin_stats().
 
+    Time-weighted: each row stands for its agent from its timestamp until
+    the agent's next row (or SPIN_ROW_VALIDITY_SECONDS, or ``now``), clipped
+    to the window, and the mean is the green share of that covered time
+    scaled to the agent count. With a row per agent per tick this is the
+    old "fraction of samples that were running" to within one tick; with
+    change-only logging it is the same number from far fewer rows. Rows
+    before the cutoff set each agent's state at the window's left edge.
+
     Args:
-        history: List of (timestamp, agent, status, activity) tuples from CSV
+        history: List of (timestamp, agent, status, ...) tuples from CSV,
+            oldest first; rows before the cutoff are welcome
         agent_names: List of active (non-sleeping) agent names to include
         baseline_minutes: Minutes back from now (0 = instantaneous, not used)
         now: Reference time (defaults to datetime.now())
@@ -463,7 +485,8 @@ def calculate_mean_spin_from_history(
     Returns:
         Tuple of (mean_spin, sample_count) where:
         - mean_spin: Average number of agents in "running" state during window
-        - sample_count: Total samples in the window (0 if no data)
+        - sample_count: Rows inside the window for the named agents (0 if no
+          data; the status bar's has-data gate)
     """
     if now is None:
         now = datetime.now()
@@ -472,27 +495,47 @@ def calculate_mean_spin_from_history(
         return (0.0, 0)
 
     cutoff = now - timedelta(minutes=baseline_minutes)
+    names = set(agent_names)
+    validity = timedelta(seconds=SPIN_ROW_VALIDITY_SECONDS)
 
-    # Filter to window and active agents only
-    window_history = [
-        (ts, agent, status)
-        for ts, agent, status, *_ in history
-        if cutoff <= ts <= now and agent in agent_names
-    ]
+    green_seconds = 0.0
+    covered_seconds = 0.0
+    sample_count = 0
+    # Per agent: (timestamp, is_green) of its latest row seen so far
+    open_rows: dict = {}
 
-    if not window_history:
-        return (0.0, 0)
+    def close(agent: str, until: datetime) -> None:
+        nonlocal green_seconds, covered_seconds
+        ts, is_green = open_rows[agent]
+        end = min(until, ts + validity)
+        start = max(ts, cutoff)
+        if end > start:
+            seconds = (end - start).total_seconds()
+            covered_seconds += seconds
+            if is_green:
+                green_seconds += seconds
 
-    running_count = sum(1 for _, _, status in window_history if is_green_status(status))
-    total_count = len(window_history)
+    for ts, agent, status, *_ in history:
+        if agent not in names or ts > now:
+            continue
+        if ts >= cutoff:
+            sample_count += 1
+        if agent in open_rows:
+            close(agent, ts)
+        open_rows[agent] = (ts, is_green_status(status))
+    for agent in open_rows:
+        close(agent, now)
 
-    # mean_spin = (fraction of samples that were "running") * num_agents
+    if sample_count == 0 or covered_seconds <= 0:
+        return (0.0, sample_count)
+
+    # mean_spin = (green share of the covered agent-time) * num_agents
     # This gives "average number of agents running at any point in time"
-    # Example: 2 agents, 50% of samples are "running" -> mean_spin = 1.0
+    # Example: 2 agents, running half the time each -> mean_spin = 1.0
     num_agents = len(agent_names)
-    mean_spin = (running_count / total_count) * num_agents if total_count > 0 else 0.0
+    mean_spin = (green_seconds / covered_seconds) * num_agents
 
-    return (mean_spin, total_count)
+    return (mean_spin, sample_count)
 
 
 @dataclass
@@ -920,27 +963,108 @@ def calculate_human_interaction_count(
 NON_FOCUSED_CAPTURE_EVERY = 4  # ticks; at 250ms that's ~1 Hz per agent
 
 
+NON_FOCUSED_CAPTURES_PER_TICK = 12  # the rotation period grows past this many per tick
+
+
+def capture_rotation_period(
+    n_nonfocused: int,
+    min_every: int = NON_FOCUSED_CAPTURE_EVERY,
+    max_per_tick: int = NON_FOCUSED_CAPTURES_PER_TICK,
+) -> int:
+    """Ticks between two captures of the same non-focused session.
+
+    1-in-``min_every`` (about 1 Hz at 250 ms ticks) until that would put more
+    than ``max_per_tick`` non-focused captures on one tick; past that the
+    period grows with N so a tick issues at most ~``1 + max_per_tick``
+    capture-pane commands whatever the fleet size: 48 agents -> every 4
+    (13/tick), 50 -> every 5 (11/tick), 200 -> every 17 (13/tick). The tmux
+    server is single-threaded and shared by every overcode process on the
+    host, so the per-tick command count is what has to be bounded; each
+    non-focused status is still refreshed every ``every`` * 250 ms.
+    """
+    every = max(1, min_every)
+    if n_nonfocused > 0:
+        every = max(every, -(-n_nonfocused // max(1, max_per_tick)))  # ceil
+    return every
+
+
 def select_capture_sessions(
     session_ids: List[str],
     focused_id: Optional[str],
     tick: int,
-    daemon_known_ids: Set[str],
-    every: int = NON_FOCUSED_CAPTURE_EVERY,
+    always_ids: Set[str] = frozenset(),
+    every: Optional[int] = None,
 ) -> Set[str]:
     """Pick which sessions get a tmux capture on this fast-path tick.
 
-    Always: the focused session, and any session the daemon isn't reporting
-    on (its status would otherwise be unknown). Everyone else is captured on
-    a rotating 1-in-``every`` slot so the per-tick tmux command count stays
-    roughly ``1 + N/every`` instead of ``N``.
+    Always: the focused session, and ``always_ids`` (sessions never captured
+    yet, so their pane-derived columns fill in on first sight — at most one
+    extra capture per session lifetime). Everyone else is captured on a
+    rotating 1-in-``every`` slot (``capture_rotation_period`` when ``every``
+    is None), *whether or not the daemon is reporting on them*: daemon
+    freshness decides where a skipped session's status comes from (the
+    daemon, or its last known value), never how many panes a tick captures.
+    The previous design captured every session on every tick as soon as the
+    daemon looked stale — 4N capture-pane/s on the shared tmux server, 200/s
+    at 50 agents — and a daemon tick slower than 5 s was enough to trip it.
     """
+    n_nonfocused = sum(1 for sid in session_ids if sid != focused_id)
+    if every is None:
+        every = capture_rotation_period(n_nonfocused)
     every = max(1, every)
     slot = tick % every
     chosen: Set[str] = set()
     for i, sid in enumerate(session_ids):
-        if sid == focused_id or sid not in daemon_known_ids or i % every == slot:
+        if sid == focused_id or sid in always_ids or i % every == slot:
             chosen.add(sid)
     return chosen
+
+
+def gate_worth_a_listing(n_nonfocused: int, every: Optional[int] = None) -> bool:
+    """Whether one ``list-panes`` per tick can save the fast path a command.
+
+    The listing costs one command and can only remove the rotation's
+    non-focused picks, so it pays when the rotation would issue more than
+    one of them per tick: ``ceil(n_nonfocused / every) > 1``. Below that
+    (up to ``every`` non-focused agents) the rotation runs as it is.
+    """
+    if every is None:
+        every = capture_rotation_period(n_nonfocused)
+    return n_nonfocused > max(1, every)
+
+
+def gate_capture_ids(
+    capture_ids: Set[str],
+    focused_id: Optional[str],
+    windows: Mapping[str, str],
+    panes: Optional[Mapping[str, "PaneInfo"]],
+    tracker: "PaneChangeTracker",
+    now: float,
+) -> Set[str]:
+    """Drop the rotation's non-focused picks whose pane has not changed (audit R11).
+
+    ``panes`` is this tick's ``list-panes -s`` (window name -> PaneInfo);
+    a pick stays when the tracker finds its signature moved since the
+    session's last capture, when it was never captured, for the one
+    follow-up capture after a change, or on the keepalive (see
+    pane_capture_gate). The focused session always stays — captured every
+    tick, unconditionally — and its signature is recorded so its record is
+    current when focus moves on. ``windows`` maps session id to tmux window;
+    a session without one, or absent from the listing, has signature None
+    (window gone): captured once, then only when it reappears. With no
+    listing (``panes`` None, tmux could not answer) every pick stands and
+    the tick is the plain rotation.
+    """
+    if panes is None:
+        return set(capture_ids)
+    kept: Set[str] = set()
+    for sid in capture_ids:
+        window = windows.get(sid)
+        info = pane_for_window(panes, window) if window is not None else None
+        signature = info.signature if info is not None else None
+        if tracker.due(sid, signature, None, now) or sid == focused_id:
+            kept.add(sid)
+    return kept
 
 
 def windows_needing_resize(

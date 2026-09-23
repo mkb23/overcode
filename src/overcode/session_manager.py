@@ -5,15 +5,17 @@ Session state management for Overcode.
 import functools
 import json
 import os
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Callable, Dict, List, Optional
-from dataclasses import MISSING, dataclass, asdict, field, fields
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 import time
 
 from .exceptions import StateWriteError
+from .stat_gate import FileSignature, StatGatedCache
 
 
 _HEADS_PREFIX = "ref: refs/heads/"
@@ -326,6 +328,8 @@ class Session:
 
         Returns None if required fields are missing or data is corrupt.
         Uses dataclasses.fields() to auto-detect required fields and valid keys.
+        Never mutates ``data``: ``SessionManager`` hands the same parsed dict
+        to every reader until the state file changes.
         """
         cls_fields = fields(cls)
 
@@ -337,21 +341,20 @@ class Session:
         if not all(k in data for k in required):
             return None
 
-        # Backward compat: migrate stats.model → session.model
-        if 'stats' in data and isinstance(data['stats'], dict):
-            stats_model = data['stats'].get('model')
-            if stats_model and not data.get('model'):
-                data['model'] = stats_model
-
-        # Handle stats separately (nested dataclass needs manual conversion)
-        if 'stats' in data and isinstance(data['stats'], dict):
-            data['stats'] = SessionStats.from_dict(data['stats'])
-        elif 'stats' not in data:
-            data['stats'] = SessionStats()
-
         # Filter to only known fields
         valid_fields = {f.name for f in cls_fields}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
+
+        # Handle stats separately (nested dataclass needs manual conversion)
+        if 'stats' in data and isinstance(data['stats'], dict):
+            stats_data = data['stats']
+            # Backward compat: migrate stats.model → session.model
+            stats_model = stats_data.get('model')
+            if stats_model and not data.get('model'):
+                filtered['model'] = stats_model
+            filtered['stats'] = SessionStats.from_dict(stats_data)
+        elif 'stats' not in data:
+            filtered['stats'] = SessionStats()
 
         # Backward compat: convert int tmux_window to str
         if 'tmux_window' in filtered and isinstance(filtered['tmux_window'], int):
@@ -391,6 +394,201 @@ def _accept_legacy_kwargs(init):
 
 Session.__init__ = _accept_legacy_kwargs(Session.__init__)
 
+_SESSION_FIELD_NAMES = frozenset(f.name for f in fields(Session))
+_STATS_FIELD_NAMES = frozenset(f.name for f in fields(SessionStats))
+
+
+def _with_legacy_keys(kwargs: Dict[str, object]) -> Dict[str, object]:
+    """The keys ``update_session`` writes for ``kwargs``.
+
+    A pre-Phase-6 name is folded onto its canonical field (the canonical
+    one wins when both are given), and every renamed field is written
+    under both names so a state file stays readable by an older overcode
+    for one release.
+    """
+    out = dict(kwargs)
+    for old_key, new_key in CANONICAL_SESSION_KEYS.items():
+        if old_key in out:
+            out.setdefault(new_key, out.pop(old_key))
+            out.pop(old_key, None)
+    for new_key, old_key in LEGACY_SESSION_KEYS.items():
+        if new_key in out:
+            out[old_key] = out[new_key]
+    return out
+
+
+class _StateTxn:
+    """What ``SessionManager._state_transaction`` yields: the parsed state and
+    whether it must be written back."""
+
+    __slots__ = ("state", "dirty")
+
+    def __init__(self, state: Dict[str, dict]):
+        self.state = state
+        self.dirty = False
+
+
+class PendingUpdates:
+    """A tick's worth of session mutations, committed in one read-modify-write.
+
+    The monitor daemon used to persist each change as it found it — the
+    current task, the state-time accumulators, a branch, a PR number, a
+    token count — and each was a full parse plus an fsync'd rewrite of
+    ``sessions.json`` under the exclusive lock, twice per agent per tick
+    (audit R5). The tick now stages everything here and
+    ``SessionManager.commit_pending`` writes the file once, and only when a
+    staged value differs from what is on disk.
+
+    Staged values are also what the rest of the tick reads: ``view``
+    returns a session with the staged changes applied, so code that used to
+    re-read the file to see its own earlier write sees the same values
+    from memory. ``update_session`` mirrors the manager's method, legacy
+    key aliasing included, so what lands on disk is identical.
+    """
+
+    def __init__(self) -> None:
+        self.fields: Dict[str, Dict[str, object]] = {}
+        self.stats: Dict[str, Dict[str, object]] = {}
+        self.archive: List[str] = []  # ids to move from the live file to the archive
+
+    def __bool__(self) -> bool:
+        return bool(self.fields or self.stats or self.archive)
+
+    def archive_session(self, session_id: str) -> None:
+        """Stage moving ``session_id`` to the archive (the ``delete_session`` record)."""
+        if session_id not in self.archive:
+            self.archive.append(session_id)
+
+    def update_session(self, session_id: str, **kwargs) -> None:
+        self.fields.setdefault(session_id, {}).update(_with_legacy_keys(kwargs))
+
+    def update_session_status(self, session_id: str, status: str) -> None:
+        self.update_session(session_id, status=status)
+
+    def update_stats(self, session_id: str, **stats_kwargs) -> None:
+        self.stats.setdefault(session_id, {}).update(stats_kwargs)
+
+    def view(self, session: Session) -> Session:
+        """``session`` with its staged changes applied.
+
+        A copy when anything is staged for it — the snapshot object is
+        never touched — and the object itself otherwise.
+        """
+        fields_ = self.fields.get(session.id)
+        stats_ = self.stats.get(session.id)
+        if not fields_ and not stats_:
+            return session
+        changes = {k: v for k, v in (fields_ or {}).items() if k in _SESSION_FIELD_NAMES}
+        if stats_:
+            changes["stats"] = replace(
+                session.stats, **{k: v for k, v in stats_.items() if k in _STATS_FIELD_NAMES}
+            )
+        return replace(session, **changes)
+
+
+class SessionIndex:
+    """Parent/child lookups over one snapshot of the session table (#244).
+
+    The monitor daemon publishes ``parent_name``, ``depth`` and
+    ``children_count`` for every session every tick. Answering those through
+    ``get_session`` / ``compute_depth`` / ``get_children`` costs, per session,
+    a stat per ancestor and a scan of every entry (``get_children`` walks the
+    whole table), so a tick was O(agents x entries) even with nothing
+    changed (audit R5). Built once per tick from the snapshot the tick
+    already holds, each answer is a dict lookup; the values are exactly what
+    the per-call methods return over the same snapshot, and
+    ``SessionManager.get_parent_chain`` is this class's walk.
+    """
+
+    def __init__(self, by_id: Mapping[str, "Session"]):
+        self.by_id = by_id
+        self._children_count: Optional[Counter] = None
+
+    @classmethod
+    def of(cls, sessions: Iterable["Session"]) -> "SessionIndex":
+        return cls({s.id: s for s in sessions})
+
+    def parent_name(self, session: "Session") -> Optional[str]:
+        """Name of ``session``'s parent, or None for a root or a missing parent."""
+        if not session.parent_session_id:
+            return None
+        parent = self.by_id.get(session.parent_session_id)
+        return parent.name if parent else None
+
+    def parent_chain(self, session_id: str) -> List["Session"]:
+        """Ancestors from the immediate parent up to the root (cycle-safe)."""
+        chain: List[Session] = []
+        current_id = session_id
+        visited = set()
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            session = self.by_id.get(current_id)
+            if not session or not session.parent_session_id:
+                break
+            parent = self.by_id.get(session.parent_session_id)
+            if parent:
+                chain.append(parent)
+                current_id = parent.id
+            else:
+                break
+        return chain
+
+    def depth(self, session: "Session") -> int:
+        """Depth in the hierarchy (0 = root), as ``compute_depth`` reports it."""
+        return len(self.parent_chain(session.id))
+
+    def children_count(self, session_id: str) -> int:
+        """``len(get_children(session_id))``; the count is built on first use."""
+        if self._children_count is None:
+            self._children_count = Counter(
+                s.parent_session_id for s in self.by_id.values() if s.parent_session_id
+            )
+        return self._children_count.get(session_id, 0)
+
+
+def _archive_record(line: bytes) -> Optional[dict]:
+    """The record on one archive line, or None for a blank or damaged line."""
+    if not line.strip():
+        return None
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(record, dict) and isinstance(record.get("id"), str):
+        return record
+    return None
+
+
+def _parse_archive_lines(data: bytes) -> Tuple[Dict[str, dict], int]:
+    """Records by id from archive bytes, and the offset after the last complete line.
+
+    Bytes after the final newline are an unfinished line (a crashed
+    append) and are left for the next read. A repeated id keeps the last
+    record at the position of the first, as ``json.load`` of the old dict
+    did.
+    """
+    records: Dict[str, dict] = {}
+    end = data.rfind(b"\n") + 1
+    for line in data[:end].split(b"\n"):
+        record = _archive_record(line)
+        if record is not None:
+            records[record["id"]] = record
+    return records, end
+
+
+def _archived_session(record: dict) -> Optional["Session"]:
+    """The ``Session`` for an archive record, with ``end_time`` kept as an attribute."""
+    try:
+        data = dict(record)
+        end_time = data.pop('end_time', None)  # not a Session field
+        session = Session.from_dict(data)
+        if session is None:
+            return None
+        session._end_time = end_time  # type: ignore
+        return session
+    except (KeyError, TypeError):
+        return None
+
 
 class SessionManager:
     """Manages session state persistence.
@@ -415,16 +613,71 @@ class SessionManager:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "sessions.json"
-        self.archive_file = self.state_dir / "archive.json"
+        # Append-only, one JSON record per line; a legacy archive.json is
+        # migrated into it on first access (see _migrate_legacy_archive).
+        self.archive_file = self.state_dir / "archive.jsonl"
+        self.legacy_archive_file = self.state_dir / "archive.json"
+        # (inode, byte offset after the last complete line, Session by id)
+        # of the last archive parse: the file only grows, so the next parse
+        # reads from the offset and reuses those objects.
+        self._archive_tail: Tuple[Optional[int], int, Dict[str, Session]] = (None, 0, {})
         self._skip_git_detection = skip_git_detection
+        # The Session objects built from the last parse of each file, keyed
+        # by entry id and reused while the file's stat signature is unchanged
+        # (audit R4). Per instance: the daemon and each TUI hold their own
+        # manager, and the TUI's workers call list_sessions() five to six
+        # times a second against a file that changes only when something
+        # writes it.
+        self._state_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
+        self._archive_cache: StatGatedCache[Dict[str, Session]] = StatGatedCache()
 
     def _load_state(self) -> Dict[str, dict]:
-        """Load all sessions from state file with file locking.
+        """Load all sessions from the state file as a fresh, private dict.
+
+        Uncached on purpose: a caller that wants the raw entries gets its own
+        copy to do with as it likes. Readers of ``Session`` objects go
+        through :meth:`_snapshot`, which parses only when ``sessions.json``
+        changed (see :mod:`overcode.stat_gate`); writers go through
+        :meth:`_locked_state`, which re-reads under the exclusive lock.
+        """
+        return self._read_state_file()[1]
+
+    def _snapshot(self) -> Dict[str, Session]:
+        """The ``Session`` objects built from the state file, by entry id.
+
+        Built once per change of ``sessions.json`` and handed to every
+        ``get_session`` / ``list_sessions`` call until the file changes; a
+        call in between costs one ``os.stat``.
+        """
+        return self._state_cache.get(self.state_file, self._parse_state_file)
+
+    def _parse_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
+        sig, state = self._read_state_file()
+        by_id: Dict[str, Session] = {}
+        # Pop each entry as its Session is built. The snapshot keeps the
+        # objects, not the raw dicts, and releasing those as we go keeps
+        # the cyclic GC's traversals during a 20,000-entry parse short:
+        # measured 8% off the cold parse at the power scale, and the
+        # retained snapshot is half the size.
+        for key in list(state):
+            session = Session.from_dict(state.pop(key))
+            if session is not None:  # skips corrupted entries
+                by_id[key] = session
+        return sig, by_id
+
+    def _read_state_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
+        """Read and parse the state file under a shared lock — uncached.
+
+        Also returns the ``fstat`` signature of the bytes parsed, taken while
+        the shared lock is held so an in-place writer cannot slip between
+        the two; it is ``None`` whenever the result did not come from one
+        clean read of the file (missing file, backup restore, give-up after
+        retries), so the caller never remembers such a result.
 
         On JSON corruption, attempts to restore from backup automatically.
         """
         if not self.state_file.exists():
-            return {}
+            return None, {}
 
         max_retries = 5
         retry_delay = 0.1
@@ -436,12 +689,14 @@ class SessionManager:
                         # Acquire shared lock for reading
                         fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                         try:
-                            return json.load(f)
+                            sig = FileSignature.of(os.fstat(f.fileno()))
+                            return sig, json.load(f)
                         finally:
                             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                     else:
                         # No locking on Windows
-                        return json.load(f)
+                        sig = FileSignature.of(os.fstat(f.fileno()))
+                        return sig, json.load(f)
             except json.JSONDecodeError as e:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
@@ -453,21 +708,21 @@ class SessionManager:
                     # Try loading the restored file
                     try:
                         with open(self.state_file, 'r') as f:
-                            return json.load(f)
+                            return None, json.load(f)
                     except json.JSONDecodeError:
                         print("Warning: Backup file also corrupted, starting fresh")
-                        return {}
+                        return None, {}
                 else:
                     print("Warning: No backup available, starting fresh")
-                    return {}
+                    return None, {}
             except IOError as e:
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
                 print(f"Warning: Could not load state file: {e}")
-                return {}
+                return None, {}
 
-        return {}
+        return None, {}
 
     def _backup_state(self) -> None:
         """Create a backup of the current state file before writing."""
@@ -549,11 +804,27 @@ class SessionManager:
         preventing TOCTOU race conditions. The yielded dict is written
         back to the state file when the context manager exits normally.
         """
+        with self._state_transaction() as txn:
+            yield txn.state
+            txn.dirty = True
+
+    @contextmanager
+    def _state_transaction(self):
+        """Read-modify-write under the exclusive lock, writing only if dirty.
+
+        Yields a ``_StateTxn`` whose ``state`` is the parsed file; the file
+        is rewritten (one dump, one fsync) on exit only if the caller set
+        ``dirty``. ``_locked_state`` always does; ``commit_pending`` does
+        only when a staged value differs from what is on disk, so a tick
+        with nothing to change costs a parse and no write.
+        """
         if not HAS_FCNTL:
             # No locking on Windows - fall back to read/modify/write
-            state = self._load_state()
-            yield state
-            self._save_state(state)
+            _, state = self._read_state_file()
+            txn = _StateTxn(state)
+            yield txn
+            if txn.dirty:
+                self._save_state(state)
             return
 
         max_retries = 5
@@ -583,17 +854,70 @@ class SessionManager:
                 raise StateWriteError(f"Failed to load state after {max_retries} attempts: {e}")
 
         try:
-            yield state
-            f.seek(0)
-            f.truncate()
-            json.dump(state, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
+            txn = _StateTxn(state)
+            yield txn
+            if txn.dirty:
+                f.seek(0)
+                f.truncate()
+                json.dump(state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
         except (IOError, OSError) as e:
             raise StateWriteError(f"Failed to save state: {e}")
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             f.close()
+
+    def commit_pending(self, pending: "PendingUpdates") -> bool:
+        """Apply a tick's staged mutations in one read-modify-write.
+
+        Every staged field and stat is compared with the entry on disk and
+        the file is rewritten — one ``json.dump``, one fsync — only if at
+        least one differs. Entries that vanished since they were staged are
+        skipped, as ``update_session`` skips an unknown id. Entries staged
+        for the archive leave the live file in the same write and are
+        appended to the archive once the lock is released, with the record
+        ``delete_session`` writes. Returns True if the file was written.
+        """
+        if not pending:
+            return False
+        archived: List[dict] = []
+        with self._state_transaction() as txn:
+            state = txn.state
+            for session_id in pending.archive:
+                entry = state.pop(session_id, None)
+                if entry is None:
+                    continue  # already gone (cleanup, or another daemon's archive pass)
+                record = entry.copy()
+                record['end_time'] = datetime.now().isoformat()
+                record['status'] = 'archived'
+                archived.append(record)
+                txn.dirty = True
+            for session_id, values in pending.fields.items():
+                entry = state.get(session_id)
+                if entry is None:
+                    continue
+                for key, value in values.items():
+                    if key not in entry or entry[key] != value:
+                        entry[key] = value
+                        txn.dirty = True
+            for session_id, values in pending.stats.items():
+                entry = state.get(session_id)
+                if entry is None:
+                    continue
+                if 'stats' not in entry:
+                    entry['stats'] = SessionStats().to_dict()
+                    txn.dirty = True
+                stats = entry['stats']
+                for key, value in values.items():
+                    if key not in stats or stats[key] != value:
+                        stats[key] = value
+                        txn.dirty = True
+            written = txn.dirty
+        # Archive after the lock is released (separate file, separate lock)
+        if archived:
+            self._append_archive_records(archived)
+        return written
 
     def _atomic_update(self, update_fn: Callable[[Dict[str, dict]], Dict[str, dict]]) -> None:
         """Atomically read, modify, and write state with exclusive lock held throughout.
@@ -715,6 +1039,15 @@ class SessionManager:
             print(f"Warning: Could not detect git context: {e}")
             return None, None
 
+    def read_git_context(self, session: Session) -> tuple[Optional[str], Optional[str]]:
+        """``(repo_name, branch)`` of ``session``'s start directory right now.
+
+        The detection half of ``refresh_git_context`` with no write: the
+        daemon compares the answer with the session it holds and stages
+        the change for its per-tick commit.
+        """
+        return self._detect_git_context(session.start_directory)
+
     def refresh_git_context(self, session_id: str) -> bool:
         """Refresh git repo/branch info for a session.
 
@@ -728,7 +1061,7 @@ class SessionManager:
         if not session or not session.start_directory:
             return False
 
-        repo_name, branch = self._detect_git_context(session.start_directory)
+        repo_name, branch = self.read_git_context(session)
 
         # Only update if something changed
         if repo_name != session.repo_name or branch != session.branch:
@@ -823,29 +1156,52 @@ class SessionManager:
         return session
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID"""
-        state = self._load_state()
-        if session_id in state:
-            return Session.from_dict(state[session_id])
-        return None
+        """Get a session by ID.
+
+        The object is shared with every other reader of this manager until
+        ``sessions.json`` changes — a read-only snapshot. Persist changes
+        through ``update_session`` / ``update_stats`` (which rewrite the file
+        and so invalidate the snapshot) rather than by assigning to it.
+        """
+        return self._snapshot().get(session_id)
 
     def get_session_by_name(self, name: str) -> Optional[Session]:
-        """Get a session by name"""
-        state = self._load_state()
-        for session_data in state.values():
-            if session_data['name'] == name:
-                return Session.from_dict(session_data)
+        """Get a session by name (same shared snapshot as ``get_session``)."""
+        for session in self._snapshot().values():
+            if session.name == name:
+                return session
         return None
 
     def list_sessions(self) -> List[Session]:
-        """List all sessions (skips corrupted entries)"""
-        state = self._load_state()
-        sessions = [Session.from_dict(data) for data in state.values()]
-        # Filter out None (corrupted sessions)
-        return [s for s in sessions if s is not None]
+        """List all sessions (skips corrupted entries).
+
+        A new list each call, of ``Session`` objects that are shared with
+        every other reader until ``sessions.json`` changes — see
+        ``get_session`` for the read-only contract.
+        """
+        return list(self._snapshot().values())
+
+    def sessions_by_id(self) -> Mapping[str, Session]:
+        """Every session keyed by id — the snapshot itself, in file order.
+
+        The same objects ``list_sessions`` returns, without the list copy; the
+        daemon builds its per-tick ``SessionIndex`` on it. Read-only, as for
+        ``get_session``: the mapping is replaced, never mutated, when
+        ``sessions.json`` changes.
+        """
+        return self._snapshot()
 
     def update_session_status(self, session_id: str, status: str):
-        """Update session status"""
+        """Update session status.
+
+        A no-op — no lock, no rewrite — when the snapshot already shows
+        ``status``: the daemon and the TUI's launcher both re-assert a
+        terminal status every pass, and each assertion used to be a
+        full rewrite of the file.
+        """
+        session = self.get_session(session_id)
+        if session is not None and session.status == status:
+            return
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id]['status'] = status
@@ -871,84 +1227,215 @@ class SessionManager:
         if archived_data is not None:
             self._archive_session(archived_data)
 
+    # =========================================================================
+    # Archive: archive.jsonl, one record per line, append-only
+    # =========================================================================
+    #
+    # archive.json was a dict rewritten whole on every archive: archiving one
+    # session cost a parse and an indent=2 dump of every session ever
+    # archived, and the daemon now archives on its own (terminated sessions
+    # after a grace), so that cost would have run on a timer. A line per
+    # record makes an archive O(record) and a read O(what was appended).
+
     def _load_archive(self) -> Dict[str, dict]:
-        """Load archived sessions."""
-        if not self.archive_file.exists():
-            return {}
+        """Load archived sessions as a fresh, private dict (see ``_load_state``)."""
+        return self._read_archive_file()[1]
 
+    def _migrate_legacy_archive(self) -> None:
+        """One-time, idempotent move of a legacy ``archive.json`` into the JSONL.
+
+        One ``exists()`` per archive access. The legacy records are
+        appended in their dict order under the JSONL's exclusive lock
+        (two processes migrating at once serialise; the second finds the
+        file gone) and the legacy file is renamed ``archive.json.migrated``;
+        an unreadable one becomes ``archive.json.unreadable`` and is left
+        for the user. Should an older overcode write archive.json again, it
+        is migrated again — the reader keeps the last record per id, which
+        is what the dict did.
+        """
+        if not self.legacy_archive_file.exists():
+            return
+        with self._archive_appender(migrate=False) as f:
+            self._migrate_legacy_archive_into(f)
+
+    def _migrate_legacy_archive_into(self, f) -> None:
+        legacy = self.legacy_archive_file
+        if not legacy.exists():  # re-checked under the lock
+            return
         try:
-            with open(self.archive_file, 'r') as f:
-                if HAS_FCNTL:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                    try:
-                        return json.load(f)
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                else:
-                    return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-
-    def _save_archive(self, archive: Dict[str, dict]):
-        """Save archived sessions."""
-        import threading
-        if HAS_FCNTL:
-            temp_suffix = f'.tmp.{os.getpid()}.{threading.get_ident()}'
-            temp_file = self.archive_file.with_suffix(temp_suffix)
+            with open(legacy, 'r') as lf:
+                records = json.load(lf)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: could not migrate {legacy}: {e}")
             try:
-                with open(temp_file, 'w') as f:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    try:
-                        json.dump(archive, f, indent=2)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                temp_file.rename(self.archive_file)
+                legacy.rename(legacy.with_name(legacy.name + ".unreadable"))
+            except OSError:
+                pass
+            return
+        if isinstance(records, dict):
+            self._write_archive_lines(f, [r for r in records.values() if isinstance(r, dict)])
+        try:
+            legacy.rename(legacy.with_name(legacy.name + ".migrated"))
+        except OSError:
+            pass
+
+    @contextmanager
+    def _archive_appender(self, migrate: bool = True):
+        """The JSONL open for appending, under its exclusive lock."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.archive_file, 'a+b') as f:
+            if HAS_FCNTL:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                if migrate:
+                    self._migrate_legacy_archive_into(f)
+                yield f
             finally:
-                if temp_file.exists():
-                    temp_file.unlink()
-        else:
-            with open(self.archive_file, 'w') as f:
-                json.dump(archive, f, indent=2)
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _write_archive_lines(f, records: Iterable[dict]) -> None:
+        """Append ``records`` as lines and fsync once.
+
+        A crash mid-append leaves a line without its newline; the reader
+        skips that line and the next append terminates it first, so one
+        record is lost rather than two merged.
+        """
+        f.seek(0, os.SEEK_END)
+        if f.tell() > 0:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                f.write(b"\n")
+        for record in records:
+            f.write((json.dumps(record) + "\n").encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
+
+    def _append_archive_records(self, records: List[dict]) -> None:
+        """Add ``records`` to the archive: one lock, one fsync for all of them."""
+        if not records:
+            return
+        with self._archive_appender() as f:
+            self._write_archive_lines(f, records)
 
     def _archive_session(self, session_data: dict):
         """Add a session to the archive."""
-        archive = self._load_archive()
-        archive[session_data['id']] = session_data
-        self._save_archive(archive)
+        self._append_archive_records([session_data])
+
+    def _read_archive_bytes(self) -> Tuple[Optional[os.stat_result], bytes, int]:
+        """``(fstat, bytes from offset, offset)`` of the archive under a shared lock.
+
+        ``offset`` is the previous parse's end when the file is the same
+        inode and has not shrunk — the archive only grows, so everything
+        before it was parsed already — and 0 otherwise.
+        """
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return None, b"", 0
+        prev_ino, prev_offset, _ = self._archive_tail
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    st = os.fstat(f.fileno())
+                    offset = prev_offset if (st.st_ino == prev_ino and st.st_size >= prev_offset) else 0
+                    f.seek(offset)
+                    return st, f.read(), offset
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return None, b"", 0
+
+    def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
+        """Read and parse the whole archive under a shared lock — uncached raw records."""
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return None, {}
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    sig = FileSignature.of(os.fstat(f.fileno()))
+                    data = f.read()
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return None, {}
+        return sig, _parse_archive_lines(data)[0]
+
+    def _archive_snapshot(self) -> Dict[str, Session]:
+        """The archived ``Session`` objects by entry id, extended when archive.jsonl grows."""
+        return self._archive_cache.get(self.archive_file, self._parse_archive_file)
+
+    def _parse_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
+        """The stat-gated cache's reader: parses only the lines appended since last time.
+
+        Objects for records parsed before are reused (the same sharing
+        contract as the live snapshot); a shrunk or replaced file is parsed
+        from the start.
+        """
+        st, data, offset = self._read_archive_bytes()
+        if st is None:
+            return None, {}
+        _, _, prev_by_id = self._archive_tail
+        by_id: Dict[str, Session] = dict(prev_by_id) if offset else {}
+        records, end = _parse_archive_lines(data)
+        for key, record in records.items():
+            session = _archived_session(record)
+            if session is not None:
+                by_id[key] = session
+        self._archive_tail = (st.st_ino, offset + end, by_id)
+        return FileSignature.of(st), by_id
 
     def list_archived_sessions(self) -> List[Session]:
-        """List all archived sessions (skips corrupted entries)."""
-        archive = self._load_archive()
-        sessions = []
-        for data in archive.values():
-            try:
-                # Handle end_time field that's not in Session dataclass
-                data_copy = data.copy()
-                end_time = data_copy.pop('end_time', None)
-                session = Session.from_dict(data_copy)
-                if session is None:
-                    continue
-                # Store end_time as attribute for display
-                session._end_time = end_time  # type: ignore
-                sessions.append(session)
-            except (KeyError, TypeError):
+        """List all archived sessions (skips corrupted entries).
+
+        Same sharing contract as ``list_sessions``: the objects are reused
+        until ``archive.jsonl`` changes, and then for every record that was
+        already there.
+        """
+        return list(self._archive_snapshot().values())
+
+    def iter_archived_sessions(self) -> Iterator[Session]:
+        """Archived sessions one at a time, in file order.
+
+        For a caller that only needs a filter (``overcode history <name>``)
+        and need not hold every record at once: the bytes are read under
+        the shared lock, each record is built as the caller advances, and
+        nothing is cached. Every line is yielded, so a re-migrated
+        duplicate id appears twice where ``list_archived_sessions`` keeps
+        the last record.
+        """
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    data = f.read()
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return
+        for line in data[: data.rfind(b"\n") + 1].split(b"\n"):
+            record = _archive_record(line)
+            if record is None:
                 continue
-        return sessions
+            session = _archived_session(record)
+            if session is not None:
+                yield session
 
     def get_archived_session(self, session_id: str) -> Optional[Session]:
-        """Get an archived session by ID."""
-        archive = self._load_archive()
-        if session_id in archive:
-            data = archive[session_id].copy()
-            end_time = data.pop('end_time', None)
-            session = Session.from_dict(data)
-            if session is None:
-                return None
-            session._end_time = end_time  # type: ignore
-            return session
-        return None
+        """Get an archived session by ID (shared snapshot, see ``get_session``)."""
+        return self._archive_snapshot().get(session_id)
 
     def update_session(self, session_id: str, **kwargs):
         """Update session fields.
@@ -957,13 +1444,7 @@ class SessionManager:
         pre-Phase-6 key so a state file stays readable by an older overcode
         for one release; either name may be passed in.
         """
-        for old_key, new_key in CANONICAL_SESSION_KEYS.items():
-            if old_key in kwargs:
-                kwargs.setdefault(new_key, kwargs.pop(old_key))
-                kwargs.pop(old_key, None)
-        for new_key, old_key in LEGACY_SESSION_KEYS.items():
-            if new_key in kwargs:
-                kwargs[old_key] = kwargs[new_key]
+        kwargs = _with_legacy_keys(kwargs)
         with self._locked_state() as state:
             if session_id in state:
                 state[session_id].update(kwargs)
@@ -1066,6 +1547,10 @@ class SessionManager:
         session = self.get_session(session_id)
         if not session:
             return
+        if session.active_agent_session_id == agent_session_id:
+            # The daemon re-binds the current id every 10 s per agent; a
+            # rebind to the id already on disk is not a write (audit R5).
+            return
 
         with self._locked_state() as state:
             if session_id in state:
@@ -1103,23 +1588,10 @@ class SessionManager:
     def get_parent_chain(self, session_id: str) -> List[Session]:
         """Walk up from session to root, returning list of ancestors.
 
-        Returns list ordered from immediate parent to root.
+        Returns list ordered from immediate parent to root, over one
+        snapshot (see ``SessionIndex.parent_chain``).
         """
-        chain = []
-        current_id = session_id
-        visited = set()  # Cycle protection
-        while current_id and current_id not in visited:
-            visited.add(current_id)
-            session = self.get_session(current_id)
-            if not session or not session.parent_session_id:
-                break
-            parent = self.get_session(session.parent_session_id)
-            if parent:
-                chain.append(parent)
-                current_id = parent.id
-            else:
-                break
-        return chain
+        return SessionIndex(self._snapshot()).parent_chain(session_id)
 
     def compute_depth(self, session: Session) -> int:
         """Compute depth of a session in the hierarchy (0 = root)."""

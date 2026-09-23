@@ -156,10 +156,29 @@ class DaemonSettings:
     interval_fast: int = 2       # When active or agents working
     interval_slow: int = 300     # When all agents need user input (5 min)
     interval_idle: int = 3600    # When no agents at all (1 hour)
+    # Loop interval while nobody is watching: no client attached to the
+    # agents tmux session, no fresh TUI keypress heartbeat and no TUI
+    # touching its attended file (config.yaml
+    # monitor_daemon.interval_unattended_seconds overrides). Status history
+    # is written on change, so the timeline stays gap-free at this
+    # resolution; heartbeats and oversight timeouts are wall-clock.
+    interval_unattended: int = 10
 
     # Daemon Claude settings
     daemon_claude_timeout: int = 300  # Max wait for daemon claude (5 min)
     daemon_claude_poll: int = 5       # Poll interval for daemon claude
+
+    # How long a terminated session stays in sessions.json before the
+    # monitor daemon moves it to the archive (config.yaml
+    # session_archive.terminated_grace_seconds overrides; negative = never).
+    terminated_archive_grace_seconds: int = 3600
+
+    # agent_status_history.csv is written on change (audit R10): a row when
+    # an agent's (status, activity) pair moves, and otherwise one keepalive
+    # row per this many seconds, so a reader can tell "unchanged" from "no
+    # daemon" and every live agent has a row within a keepalive of any
+    # window's cutoff.
+    status_history_keepalive_seconds: int = 60
 
     # Default tmux session name
     default_tmux_session: str = "agents"
@@ -728,6 +747,45 @@ def write_tui_heartbeat(session: str) -> None:
         heartbeat_path.write_text(datetime.now().isoformat())
     except OSError:
         pass  # Best effort
+
+
+# The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
+# client is attached to the pane it runs in (or while it runs outside tmux,
+# where nobody can tell), and the web server touches it whenever it serves
+# a status request (the dashboard's poll, a sister TUI's). It is the monitor
+# daemon's third "someone is watching" signal, next to the keypress
+# heartbeat above and the attached count of the agents session: a TUI in
+# another tmux session or a plain terminal, a browser, a sister — all are
+# invisible to both, and without this touch the daemon would stretch to its
+# unattended interval under a dashboard someone is reading. A touch is one
+# utime, no content.
+TUI_ATTENDED_TOUCH_SECONDS = 5
+
+
+def get_tui_attended_path(session: str) -> Path:
+    """Path of the TUI's attended-liveness touch file for ``session``."""
+    return get_session_dir(session) / "tui_attended"
+
+
+def touch_tui_attended(session: str) -> None:
+    """Stamp the attended file's mtime to now (best effort)."""
+    path = get_tui_attended_path(session)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError:
+        pass  # Best effort
+
+
+def tui_attended_age_seconds(session: str, now: Optional[float] = None) -> Optional[float]:
+    """Seconds since the attended file was last touched; None when there is none."""
+    import time as _time
+
+    try:
+        mtime = get_tui_attended_path(session).stat().st_mtime
+    except OSError:
+        return None
+    return (now if now is not None else _time.time()) - mtime
 
 
 def get_tui_preferences_path(session: str) -> Path:
