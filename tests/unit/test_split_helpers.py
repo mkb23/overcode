@@ -61,6 +61,83 @@ class TestAcquireSetupLock:
         # No lock to begin with — release should not raise.
         split_mod._release_setup_lock()
 
+    def test_release_leaves_foreign_lock_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        other_pid = str(os.getpid() + 1)
+        lock_path.write_text(other_pid)
+        split_mod._release_setup_lock()
+        assert lock_path.read_text() == other_pid
+
+
+class TestExecTmuxAttach:
+
+    def test_lock_released_before_exec(self, tmp_path, monkeypatch):
+        """Regression: exec replaces the process, so the lock must be
+        released *before* it. Otherwise the lock outlives setup and pins the
+        PID of the attached tmux client, blocking later `overcode tmux`."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
+        lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
+        assert split_mod._acquire_setup_lock() is True
+        assert lock_path.exists()
+
+        seen = {}
+
+        def fake_execvp(file, args):
+            seen["file"] = file
+            seen["args"] = list(args)
+            seen["lock_present_at_exec"] = lock_path.exists()
+            raise SystemExit(0)  # stand-in for "never returns"
+
+        monkeypatch.setattr(split_mod.os, "execvp", fake_execvp)
+        with pytest.raises(SystemExit):
+            split_mod._exec_tmux_attach("overcode")
+
+        assert seen["file"] == "tmux"
+        assert seen["args"] == ["tmux", "attach-session", "-t", "overcode"]
+        assert seen["lock_present_at_exec"] is False
+        assert not lock_path.exists()
+
+    def test_failed_exec_does_not_release_another_processes_lock(self, tmp_path, monkeypatch):
+        """Regression: the helper releases the lock and then exec raises, so
+        `_tmux_layout`'s `finally:` releases a second time. If another
+        `overcode tmux` acquired the lock in between, that second release
+        must leave it in place."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
+        lock_path = tmp_path / ".overcode" / "tmux-setup.lock"
+        other_pid = str(os.getpid() + 1)
+        assert split_mod._acquire_setup_lock() is True
+
+        def fake_execvp(file, args):
+            assert not lock_path.exists()  # released before exec
+            lock_path.write_text(other_pid)  # a second invocation grabs it...
+            raise FileNotFoundError("tmux")  # ...then exec fails
+
+        monkeypatch.setattr(split_mod.os, "execvp", fake_execvp)
+        with pytest.raises(FileNotFoundError):
+            try:
+                split_mod._exec_tmux_attach("overcode")
+            finally:
+                split_mod._release_setup_lock()  # mirrors _tmux_layout's finally
+        assert lock_path.read_text() == other_pid
+
+    def test_respects_tmux_socket_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "oc-test")
+        seen = {}
+
+        def fake_execvp(file, args):
+            seen["args"] = list(args)
+            raise SystemExit(0)
+
+        monkeypatch.setattr(split_mod.os, "execvp", fake_execvp)
+        with pytest.raises(SystemExit):
+            split_mod._exec_tmux_attach("agents")
+        assert seen["args"] == ["tmux", "-L", "oc-test", "attach-session", "-t", "agents"]
+
 
 class TestLinkedSessionName:
 
@@ -514,3 +591,97 @@ class TestScrollKeybindings:
         assert failures == []
         for key in ("WheelUpPane", "WheelDownPane", "PPage", "NPage"):
             assert f"-T root {key}" in listed.replace("  ", " ") or key in listed
+
+
+class TestRelaunchSwitchesCallerClient:
+    """`overcode tmux` re-run from inside tmux while the split is healthy.
+
+    The caller's client must be switched to the split window whenever its
+    TTY is known and is not one of the split window's own panes, regardless
+    of whether another real client is already attached to ``overcode``.
+    """
+
+    SPLIT_PANE_TTYS = ["/dev/pts/20", "/dev/pts/21"]  # top monitor, nested bottom
+
+    def _run(self, monkeypatch, *, caller_tty: str, clients: list[str]):
+        calls: list[tuple[str, ...]] = []
+        printed: list[str] = []
+
+        def fake_tmux(*args, **_kw):
+            calls.append(args)
+            return MagicMock(returncode=0)
+
+        def fake_tmux_output(*args):
+            if args[0] == "list-panes":
+                return "\n".join(self.SPLIT_PANE_TTYS) + "\n"
+            if args[0] == "list-clients":
+                return "\n".join(clients) + ("\n" if clients else "")
+            if args[0] == "display-message":
+                return caller_tty
+            raise AssertionError(f"unexpected _tmux_output{args}")
+
+        monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+        monkeypatch.setattr(split_mod, "_tmux", fake_tmux)
+        monkeypatch.setattr(split_mod, "_tmux_output", fake_tmux_output)
+        monkeypatch.setattr(split_mod, "_setup_linked_session", lambda s: "oc-view-agents")
+        monkeypatch.setattr(split_mod, "_setup_keybindings", lambda **_kw: None)
+        monkeypatch.setattr(split_mod, "_get_first_agent_window", lambda s: None)
+        monkeypatch.setattr(split_mod, "_find_overcode_cmd", lambda: "overcode")
+        monkeypatch.setattr(split_mod, "_find_existing_split_window", lambda s: "@7")
+        monkeypatch.setattr(split_mod, "_is_split_window_healthy", lambda w: True)
+        monkeypatch.setattr(split_mod, "get_pane_base_index", lambda: 0)
+        monkeypatch.setattr(split_mod.time, "sleep", lambda _s: None)
+
+        split_mod._tmux_layout_locked("agents", 33, printed.append)
+        return calls, printed
+
+    @staticmethod
+    def _switches(calls):
+        return [c for c in calls if c[0] == "switch-client"]
+
+    @staticmethod
+    def _respawns(calls):
+        return [c for c in calls if c[0] == "respawn-pane"]
+
+    def test_caller_on_other_window_of_overcode_is_switched(self, monkeypatch):
+        # A real client (the caller) is already on the overcode session, plus
+        # the nested bottom-pane client. Caller must still be moved to the
+        # split *window*.
+        calls, printed = self._run(
+            monkeypatch,
+            caller_tty="/dev/pts/13\n",
+            clients=["/dev/pts/13", "/dev/pts/21"],
+        )
+        assert self._switches(calls) == [
+            ("switch-client", "-c", "/dev/pts/13", "-t", "overcode:overcode-tmux"),
+        ]
+        assert len(self._respawns(calls)) == 1
+        assert any("Switched to existing" in p for p in printed)
+
+    def test_caller_from_agents_session_is_switched(self, monkeypatch):
+        # No real client on overcode yet (only the nested one).
+        calls, _ = self._run(
+            monkeypatch,
+            caller_tty="/dev/pts/13",
+            clients=["/dev/pts/21"],
+        )
+        assert self._switches(calls) == [
+            ("switch-client", "-c", "/dev/pts/13", "-t", "overcode:overcode-tmux"),
+        ]
+
+    def test_caller_inside_nested_pane_is_left_alone(self, monkeypatch):
+        # Caller's client TTY is the bottom pane's TTY — switching it would
+        # nest overcode inside itself (#387).
+        calls, _ = self._run(
+            monkeypatch,
+            caller_tty="/dev/pts/21",
+            clients=["/dev/pts/13", "/dev/pts/21"],
+        )
+        assert self._switches(calls) == []
+        assert len(self._respawns(calls)) == 1
+
+    def test_unknown_client_without_real_client_prints_hint(self, monkeypatch):
+        calls, printed = self._run(monkeypatch, caller_tty="", clients=["/dev/pts/21"])
+        assert self._switches(calls) == []
+        assert self._respawns(calls) == []
+        assert any("switch-client -t overcode" in p for p in printed)

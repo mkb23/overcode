@@ -72,9 +72,40 @@ def _acquire_setup_lock() -> bool:
 
 
 def _release_setup_lock() -> None:
-    """Release the setup lock."""
+    """Release the setup lock, but only if this process still owns it.
+
+    Release is ownership-aware because it can legitimately run twice: once in
+    `_exec_tmux_attach` just before exec, and again from the outer `finally:`
+    in `_tmux_layout` if that exec raises. Between the two, another
+    `overcode tmux` may have acquired the lock; unlinking unconditionally
+    would delete *its* lock and let a third invocation run setup concurrently.
+    """
     lock_path = Path.home() / ".overcode" / "tmux-setup.lock"
-    lock_path.unlink(missing_ok=True)
+    try:
+        holder = lock_path.read_text().strip()
+    except FileNotFoundError:
+        return  # already released, or never acquired
+    if holder == str(os.getpid()):
+        lock_path.unlink(missing_ok=True)
+
+
+def _exec_tmux_attach(oc_session: str) -> None:
+    """Release the setup lock, then replace this process with `tmux attach`.
+
+    `os.execvp` never returns, so any `finally:` that would normally release
+    the lock is skipped. Worse, the PID recorded in the lock file becomes the
+    long-lived tmux client, so the stale-lock check treats it as a genuine
+    holder for as long as the client stays attached and every later
+    `overcode tmux` is refused. Always go through this helper to exec.
+
+    If exec itself fails, the caller's `finally:` releases again; that is
+    safe because `_release_setup_lock` only removes a lock this PID owns.
+    """
+    from ..tmux_utils import _build_tmux_cmd
+
+    _release_setup_lock()
+    _cmd = [*_build_tmux_cmd(), "attach-session", "-t", oc_session]
+    os.execvp("tmux", _cmd)
 
 
 def _find_overcode_cmd() -> str:
@@ -785,22 +816,22 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     if existing:
         if _is_split_window_healthy(existing):
             if in_tmux:
-                # Check if a real (non-nested) client is already on overcode.
-                # If so, no switch needed — the user is already there or
-                # another terminal has it open.  Switching blindly can
-                # accidentally move the bottom pane's nested client from
-                # oc-view-agents to overcode, creating a recursive display
+                # Move the caller's own client to the split window — but
+                # never the bottom pane's nested client. Switching that one
+                # from oc-view-agents to overcode creates a recursive display
                 # that collapses the window.
                 #
                 # Detect nested clients by comparing client TTYs against
                 # pane TTYs in the split window (#387). A nested tmux
                 # client's TTY matches one of the pane TTYs.
-                pane_ttys = set(
-                    _tmux_output(
+                pane_ttys = {
+                    tty.strip()
+                    for tty in _tmux_output(
                         "list-panes", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}",
                         "-F", "#{pane_tty}",
                     ).splitlines()
-                )
+                    if tty.strip()
+                }
                 oc_clients = _tmux_output(
                     "list-clients", "-t", oc_session,
                     "-F", "#{client_tty}",
@@ -810,29 +841,33 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
                     for tty in oc_clients.splitlines()
                     if tty.strip()
                 )
-                if not has_real_client:
-                    # No real client on overcode yet — switch the caller's
-                    client_tty = _tmux_output(
-                        "display-message", "-p", "#{client_tty}",
-                    )
-                    if client_tty:
-                        _tmux("switch-client", "-c", client_tty,
-                              "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}")
-                    else:
-                        # Can't determine client — tell user how to get there
-                        rprint(f"[green]Split layout is running.[/green] Switch to it with:")
-                        rprint(f"  tmux switch-client -t {oc_session}")
-                        return
+                client_tty = _tmux_output(
+                    "display-message", "-p", "#{client_tty}",
+                ).strip()
+                if client_tty and client_tty not in pane_ttys:
+                    # The caller may already be attached to the overcode
+                    # session but sitting on another window (e.g. an agent
+                    # window opened there), so always target the split
+                    # window explicitly rather than just the session.
+                    _tmux("switch-client", "-c", client_tty,
+                          "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}")
+                elif client_tty:
+                    # Caller is inside the nested bottom pane — it's already
+                    # looking at the split; leave the client alone.
+                    pass
+                elif not has_real_client:
+                    # Can't determine client — tell user how to get there
+                    rprint(f"[green]Split layout is running.[/green] Switch to it with:")
+                    rprint(f"  tmux switch-client -t {oc_session}")
+                    return
             else:
-                # Respawn before attach — execlp replaces this process
+                # Respawn before attach — exec replaces this process
                 _tmux("respawn-pane", "-k",
                       "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}",
                       monitor_cmd)
                 rprint(f"[green]Attaching to existing {SPLIT_WINDOW_NAME} window (monitor restarted)...[/green]")
                 time.sleep(0.2)
-                from ..tmux_utils import _build_tmux_cmd
-                _cmd = [*_build_tmux_cmd(), "attach-session", "-t", oc_session]
-                os.execvp("tmux", _cmd)
+                _exec_tmux_attach(oc_session)
             # Always restart the monitor so code changes take effect
             _tmux("respawn-pane", "-k",
                   "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}",
@@ -1004,6 +1039,4 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
         # Attach to the session (replaces this process)
         rprint(f"[green]Attaching to split layout...[/green]")
         time.sleep(0.2)
-        from ..tmux_utils import _build_tmux_cmd
-        _cmd = [*_build_tmux_cmd(), "attach-session", "-t", oc_session]
-        os.execvp("tmux", _cmd)
+        _exec_tmux_attach(oc_session)
