@@ -227,12 +227,9 @@ class TestTimeline:
     def test_presence_warm_read_is_a_cache_hit(self, presence_rows):
         assert presence_rows["presence read (warm, unchanged)"].ms_per_call < 1.0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R13 not fixed yet: presence CSV re-parsed whole after every appended row",
-    )
     def test_presence_read_after_append_is_incremental(self, presence_rows):
-        # today: 29 ms (43k rows re-parsed) every minute the daemon appends a row
+        # was: 29 ms (43k rows re-parsed) every minute the daemon appends a row;
+        # fixed (R13): the reader seeks to the window and parses its ~180 rows
         assert presence_rows["presence read (one row appended)"].ms_per_call < 5.0
 
     def test_timeline_slot_build_is_cheap(self, timeline_rows):

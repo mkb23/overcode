@@ -397,11 +397,93 @@ _presence_cache_mtime: float = 0.0
 _presence_cache_size: int = 0
 _presence_cache_hours: float = 0.0
 
+# First guess at the bytes a window occupies (audit R13): a row is
+# "<iso timestamp>,<state>,<idle>.<d>,<0|1>,<0|1>\n", 40-50 bytes, one per
+# sample_interval. The tail read seeks back by twice that and widens if
+# the guess was short, so the constant only sets how often it widens.
+_PRESENCE_ROW_BYTES_ESTIMATE = 64
+
+# presence_log.csv is not rotated, on purpose. Its growth is ~15 MB a year
+# per daemon (one row a minute) and the reader below is O(window), so
+# size no longer costs anything per read. Rotating it the way
+# agent_status_history.csv is rotated (write-temp + os.replace of the
+# active file) would not be safe here: PresenceLogger._run holds its CSV
+# handle open for the process lifetime, and every daemon on the host
+# plus a standalone ``overcode presence`` appends to this one file, so a
+# replace would leave each open writer appending to the orphaned inode
+# and lose its rows; it would also need an archive-aware range reader for
+# the analytics date ranges (the status history has one; presence has
+# only this windowed reader). Doing it properly means reopening per row
+# under a cross-process lock and a presence range reader — a separate
+# change, not a reader fix.
+
+
+def _read_presence_tail(
+    path: str,
+    cutoff: dt.datetime,
+    size: int,
+    hours: float,
+    sample_interval: int = DEFAULT_SAMPLE_INTERVAL,
+) -> list[tuple[dt.datetime, int]]:
+    """Rows with ``ts >= cutoff`` from the tail of the log, oldest first.
+
+    Seeks back from the end by an estimate of the window's bytes, drops
+    the partial line the seek landed in, and parses forward; if the first
+    row it finds is still inside the window the estimate was short and
+    the tail doubles, down to the start of the file. Rows are appended in
+    time order by each writer, so a tail whose first row is older than the
+    cutoff holds every row inside the window: the full parse's result at
+    O(window) rather than O(file). Columns are found by name from the
+    header, as the DictReader did.
+    """
+    rows_in_window = hours * 3600.0 / max(sample_interval, 1)
+    window = int(rows_in_window * _PRESENCE_ROW_BYTES_ESTIMATE * 2) + 4096
+    with open(path, 'rb') as f:
+        header = f.readline().decode('utf-8', errors='replace').strip().split(',')
+        data_start = f.tell()
+        try:
+            ts_col = header.index('timestamp')
+            state_col = header.index('state')
+        except ValueError:
+            return []
+        while True:
+            start = max(data_start, size - window)
+            f.seek(start)
+            chunk = f.read()
+            if start > data_start:
+                newline = chunk.find(b'\n')
+                chunk = chunk[newline + 1:] if newline != -1 else b''
+            rows = list(csv.reader(chunk.decode('utf-8', errors='replace').splitlines()))
+            first_ts = None
+            for row in rows:
+                try:
+                    first_ts = dt.datetime.fromisoformat(row[ts_col])
+                    break
+                except (ValueError, IndexError):
+                    continue
+            if start == data_start or (first_ts is not None and first_ts < cutoff):
+                break
+            window *= 2
+
+    history: list[tuple[dt.datetime, int]] = []
+    for row in rows:
+        try:
+            ts = dt.datetime.fromisoformat(row[ts_col])
+            if ts >= cutoff:
+                history.append((ts, int(row[state_col])))
+        except (ValueError, IndexError):
+            continue
+    return history
+
 
 def read_presence_history(hours: float = 3.0) -> list[tuple[dt.datetime, int]]:
     """Read presence history from CSV file.
 
-    Uses mtime+size cache to avoid re-parsing unchanged files.
+    Uses mtime+size cache to avoid re-parsing unchanged files, and reads
+    only the tail that covers the window (_read_presence_tail) — the
+    daemon appends a row a minute, so the cache misses every minute and
+    the whole-file parse it used to do grew with the daemon's uptime
+    (audit R13).
 
     Args:
         hours: How many hours of history to read (default 3)
@@ -427,21 +509,10 @@ def read_presence_history(hours: float = 3.0) -> list[tuple[dt.datetime, int]]:
         return _presence_cache
 
     cutoff = dt.datetime.now() - dt.timedelta(hours=hours)
-    history = []
-
     try:
-        with open(log_path, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    ts = dt.datetime.fromisoformat(row['timestamp'])
-                    if ts >= cutoff:
-                        state = int(row['state'])
-                        history.append((ts, state))
-                except (ValueError, KeyError):
-                    continue
+        history = _read_presence_tail(log_path, cutoff, stat.st_size, hours)
     except (OSError, IOError):
-        pass
+        history = []
 
     _presence_cache = history
     _presence_cache_mtime = stat.st_mtime

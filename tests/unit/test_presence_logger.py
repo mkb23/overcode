@@ -433,3 +433,165 @@ class TestLogWriting:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# =============================================================================
+# Tail read (audit R13): O(window), same rows as the whole-file parse
+# =============================================================================
+
+
+def _write_presence(path, rows):
+    """rows: (datetime, state) in file order; the other columns are filler."""
+    with open(path, "w", newline="") as f:
+        f.write("timestamp,state,idle_seconds,locked,inferred_sleep\n")
+        for ts, state in rows:
+            f.write(f"{ts.isoformat()},{state},{1.0 + state:.1f},0,0\n")
+
+
+def _full_parse(path, hours, now):
+    import csv
+    import datetime as dt
+
+    cutoff = now - dt.timedelta(hours=hours)
+    out = []
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            try:
+                ts = dt.datetime.fromisoformat(row["timestamp"])
+                if ts >= cutoff:
+                    out.append((ts, int(row["state"])))
+            except (ValueError, KeyError):
+                continue
+    return out
+
+
+class TestReadPresenceHistoryTail:
+    """The reader parses only the tail that covers the window."""
+
+    @pytest.fixture
+    def big_log(self, tmp_path, monkeypatch):
+        import datetime as dt
+        from overcode import presence_logger
+
+        # A row a minute for ~14 days, oldest first, 30 s off the minute so
+        # no row sits exactly on a window's cutoff (the reader's ``now`` is
+        # a few ms after the fixture's).
+        now = dt.datetime.now()
+        rows = [
+            (now - dt.timedelta(minutes=20_000 - k, seconds=30), k % 5) for k in range(20_000)
+        ]
+        log = tmp_path / "presence_log.csv"
+        _write_presence(log, rows)
+        monkeypatch.setattr(presence_logger, "default_log_path", lambda: str(log))
+        monkeypatch.setattr(presence_logger, "_presence_cache_mtime", 0.0)
+        return log, now
+
+    @pytest.mark.parametrize("hours", [0.25, 3.0, 24.0, 100_000.0])
+    def test_equals_the_full_parse(self, big_log, hours):
+        from overcode import presence_logger
+
+        log, now = big_log
+        presence_logger._presence_cache_hours = -1.0
+        assert read_presence_history(hours=hours) == _full_parse(log, hours, now)
+
+    def test_reads_a_fraction_of_the_file(self, big_log, monkeypatch):
+        import builtins
+        from overcode import presence_logger
+
+        log, now = big_log
+        size = log.stat().st_size
+        read_bytes = []
+        real_open = builtins.open
+
+        class _Counting:
+            def __init__(self, f):
+                self._f = f
+
+            def read(self, *a):
+                data = self._f.read(*a)
+                read_bytes.append(len(data))
+                return data
+
+            def __getattr__(self, name):
+                return getattr(self._f, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return self._f.__exit__(*a)
+
+        def counting_open(file, *a, **k):
+            f = real_open(file, *a, **k)
+            return _Counting(f) if str(file) == str(log) else f
+
+        monkeypatch.setattr(builtins, "open", counting_open)
+        presence_logger._presence_cache_hours = -1.0
+        rows = read_presence_history(hours=3.0)
+        assert len(rows) == 179  # 3 h of rows 30 s off the minute
+        assert sum(read_bytes) < size / 20, (sum(read_bytes), size)
+
+    def test_widens_when_the_estimate_is_short(self, big_log, monkeypatch):
+        from overcode import presence_logger
+
+        log, now = big_log
+        monkeypatch.setattr(presence_logger, "_PRESENCE_ROW_BYTES_ESTIMATE", 1)
+        presence_logger._presence_cache_hours = -1.0
+        assert read_presence_history(hours=3.0) == _full_parse(log, 3.0, now)
+
+    def test_partial_first_line_is_dropped(self, tmp_path, monkeypatch):
+        """Whatever byte the seek lands on, no row is mis-parsed."""
+        import datetime as dt
+        from overcode import presence_logger
+
+        now = dt.datetime.now()
+        rows = [(now - dt.timedelta(minutes=600 - k, seconds=30), k % 5) for k in range(600)]
+        log = tmp_path / "presence_log.csv"
+        _write_presence(log, rows)
+        monkeypatch.setattr(presence_logger, "default_log_path", lambda: str(log))
+        for estimate in range(1, 40, 3):
+            monkeypatch.setattr(presence_logger, "_PRESENCE_ROW_BYTES_ESTIMATE", estimate)
+            presence_logger._presence_cache_hours = -1.0
+            assert read_presence_history(hours=1.0) == _full_parse(log, 1.0, now), estimate
+
+    def test_appended_row_is_seen(self, big_log):
+        import datetime as dt
+        from overcode import presence_logger
+
+        log, now = big_log
+        presence_logger._presence_cache_hours = -1.0
+        before = read_presence_history(hours=1.0)
+        with open(log, "a", newline="") as f:
+            f.write(f"{(now + dt.timedelta(seconds=1)).isoformat()},4,1.0,0,0\n")
+        presence_logger._presence_cache_mtime = 0.0  # the mtime may not have moved within a tick
+        after = read_presence_history(hours=1.0)
+        assert after[:-1] == before
+        assert after[-1][1] == 4
+
+    def test_columns_are_found_by_header_name(self, tmp_path, monkeypatch):
+        import datetime as dt
+        from overcode import presence_logger
+
+        now = dt.datetime.now()
+        log = tmp_path / "presence_log.csv"
+        with open(log, "w", newline="") as f:
+            f.write("state,idle_seconds,timestamp\n")
+            f.write(f"3,10.5,{now.isoformat()}\n")
+        monkeypatch.setattr(presence_logger, "default_log_path", lambda: str(log))
+        presence_logger._presence_cache_hours = -1.0
+        assert read_presence_history(hours=1.0) == [(now, 3)]
+
+    def test_header_only_and_missing_columns_are_empty(self, tmp_path, monkeypatch):
+        import datetime as dt
+        from overcode import presence_logger
+
+        log = tmp_path / "presence_log.csv"
+        log.write_text("timestamp,state,idle_seconds,locked,inferred_sleep\n")
+        monkeypatch.setattr(presence_logger, "default_log_path", lambda: str(log))
+        presence_logger._presence_cache_hours = -1.0
+        assert read_presence_history(hours=1.0) == []
+
+        log.write_text(f"when,state\n{dt.datetime.now().isoformat()},3\n")
+        presence_logger._presence_cache_hours = -1.0
+        presence_logger._presence_cache_mtime = 0.0
+        assert read_presence_history(hours=1.0) == []
