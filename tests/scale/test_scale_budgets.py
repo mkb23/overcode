@@ -248,26 +248,19 @@ class TestSessionIdDiscovery:
 class TestDaemonTick:
     SITE = "daemon _detect_and_enrich (steady state)"
 
-    @pytest.mark.xfail(
-        strict=True, reason="R5 not fixed yet: sessions.json rewritten twice per agent per tick"
-    )
     def test_at_most_one_sessions_json_write_per_tick(self, daemon_rows):
-        # today: 100 fsync'd rewrites of an 11.7 MB file per tick
+        # was: 100 fsync'd rewrites of an 11.7 MB file per tick;
+        # fixed (R5): every change is staged and committed once at the end of the tick
         assert daemon_rows[self.SITE].writes <= 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R5 not fixed yet: sessions.json re-read several times per agent per tick",
-    )
     def test_at_most_two_sessions_json_reads_per_tick(self, daemon_rows):
-        # today: 340 opens per tick (6-8 per agent)
+        # was: 340 opens per tick (6-8 per agent); fixed (R5): the commit's own
+        # read-modify-write, then one re-parse of the snapshot after the write
         assert daemon_rows[self.SITE].reads <= 2
 
-    @pytest.mark.xfail(
-        strict=True, reason="R5 not fixed yet: tick body is agents x sessions.json size"
-    )
     def test_tick_body_fits_the_interval(self, daemon_rows):
-        # today: 27.5 s per 2 s tick for 50 agents at 2,000 entries
+        # was: 27.5 s per 2 s tick for 50 agents at 2,000 entries; fixed (R5): ~310 ms,
+        # most of it the one parse + dump of the 11.7 MB file
         assert daemon_rows[self.SITE].ms_per_tick < 500.0
 
     def test_tick_body_issues_at_most_one_tmux_call_per_agent(self, daemon_rows):

@@ -289,7 +289,7 @@ These persist across TUI restarts.
 ~/.overcode/sessions/
 ├── sessions.json                        # Live sessions (all tmux sessions), plus terminated ones for the grace
 ├── archive.jsonl                        # Archived sessions, one JSON record per line, append-only
-├── archive.json.migrated                # The pre-JSONL archive, kept after its one-time migration
+└── archive.json.migrated                # The pre-JSONL archive, kept after its one-time migration
 ~/.overcode/sessions/{session}/
 ├── {agent-id}.json                      # Individual agent state
 ├── agent_status_history.csv             # Status timeline (active window)
