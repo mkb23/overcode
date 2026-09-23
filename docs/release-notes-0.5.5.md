@@ -59,3 +59,10 @@ event at all, now shows as *terminated*: the detector sees the bare shell
 prompt in its pane. Recorded event streams from opencode v1.18.29 and a
 reference description of the expected behaviour
 (`tests/opencode_oracle.py`) now check the plugin on every test run.
+
+Re-running `overcode tmux` works again (#480). The setup lock used to be
+left behind when the command handed off to `tmux attach`, pinned to the
+attached client's PID, so every later `overcode tmux` was refused until
+that client detached. The lock is now released before the hand-off.
+Running the command from another window of the `overcode` session now
+also moves you to the split window, as it said it did.
