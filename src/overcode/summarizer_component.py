@@ -12,7 +12,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from .status_constants import DEFAULT_CAPTURE_LINES
 from .summarizer_client import SummarizerClient
@@ -94,6 +94,12 @@ class SummarizerComponent:
         # Content hashes for change detection (avoid API calls when nothing changed)
         self._last_content_hash: Dict[str, int] = {}
 
+        # Where the next update() pass starts. A pass cut short by
+        # should_stop resumes here, so a fleet too large to cover in one
+        # pass is visited round-robin instead of re-summarising the same
+        # first agents every tick while the tail starves.
+        self._next_index: int = 0
+
         # Stats
         self.total_calls = 0
         self.total_tokens = 0
@@ -110,11 +116,17 @@ class SummarizerComponent:
         """Check if summarizer is currently enabled."""
         return self.config.enabled and self._client is not None
 
-    def update(self, sessions) -> Dict[str, AgentSummary]:
+    def update(
+        self, sessions, should_stop: Optional[Callable[[], bool]] = None
+    ) -> Dict[str, AgentSummary]:
         """Update summaries for all sessions.
 
         Args:
             sessions: List of Session objects from SessionManager
+            should_stop: Optional callable checked between agents; when it
+                returns True the pass stops early. Summaries already produced
+                are kept and the next pass resumes from the agent that was
+                about to run, so every agent still gets its turn.
 
         Returns:
             Dict mapping session_id to AgentSummary
@@ -122,8 +134,15 @@ class SummarizerComponent:
         if not self.enabled:
             return self.summaries
 
-        for session in sessions:
-            self._update_session(session)
+        count = len(sessions)
+        start = self._next_index % count if count else 0
+        for offset in range(count):
+            if should_stop is not None and should_stop():
+                self._next_index = (start + offset) % count
+                break
+            self._update_session(sessions[(start + offset) % count])
+        else:
+            self._next_index = start
 
         return self.summaries
 

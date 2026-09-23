@@ -324,6 +324,103 @@ class TestSummarizerComponentMethods:
 
         assert result == {"test-id": AgentSummary(text="existing")}
 
+
+class TestUpdatePassCancellation:
+    """update() checks should_stop between agents and resumes round-robin.
+
+    The TUI runs a pass every 5 s in an exclusive thread worker; a new tick
+    cancels the previous one. One HTTP call per agent means a 50-agent pass
+    outlasts the tick, so a cancelled pass must keep what it produced and
+    the next pass must carry on from where it stopped — otherwise the first
+    few agents would be re-summarised every tick and the rest never.
+    """
+
+    def _component(self):
+        with patch.object(SummarizerClient, "is_available", return_value=True):
+            with patch("overcode.summarizer_component.SummarizerClient"):
+                component = SummarizerComponent(
+                    tmux_session="test", config=SummarizerConfig(enabled=True)
+                )
+        assert component.enabled
+        return component
+
+    def _sessions(self, n):
+        sessions = []
+        for i in range(n):
+            s = MagicMock()
+            s.id = f"s{i}"
+            sessions.append(s)
+        return sessions
+
+    def test_full_pass_visits_every_agent_in_order(self):
+        component = self._component()
+        visited = []
+        component._update_session = lambda s: visited.append(s.id)
+        component.update(self._sessions(5))
+        assert visited == ["s0", "s1", "s2", "s3", "s4"]
+        component.update(self._sessions(5))
+        assert visited[5:] == ["s0", "s1", "s2", "s3", "s4"]
+
+    def test_stops_early_keeps_progress_and_resumes(self):
+        component = self._component()
+        visited = []
+        component._update_session = lambda s: visited.append(s.id)
+        calls = {"n": 0}
+
+        def stop_after_two():
+            calls["n"] += 1
+            return calls["n"] > 2  # checked before each agent: allow two
+
+        component.update(self._sessions(5), should_stop=stop_after_two)
+        assert visited == ["s0", "s1"]
+
+        # Next tick: no cancellation — the pass resumes at s2 and wraps
+        component.update(self._sessions(5))
+        assert visited[2:] == ["s2", "s3", "s4", "s0", "s1"]
+
+    def test_every_agent_gets_a_turn_under_constant_cancellation(self):
+        """Two agents per pass, five agents: three passes cover the fleet."""
+        component = self._component()
+        visited = []
+        component._update_session = lambda s: visited.append(s.id)
+        for _ in range(3):
+            calls = {"n": 0}
+
+            def stop_after_two():
+                calls["n"] += 1
+                return calls["n"] > 2
+
+            component.update(self._sessions(5), should_stop=stop_after_two)
+        assert set(visited) == {"s0", "s1", "s2", "s3", "s4"}
+        assert visited == ["s0", "s1", "s2", "s3", "s4", "s0"]
+
+    def test_stop_before_first_agent_does_nothing_and_keeps_cursor(self):
+        component = self._component()
+        visited = []
+        component._update_session = lambda s: visited.append(s.id)
+        component.update(self._sessions(3), should_stop=lambda: True)
+        assert visited == []
+        component.update(self._sessions(3))
+        assert visited == ["s0", "s1", "s2"]
+
+    def test_empty_fleet_is_fine(self):
+        component = self._component()
+        assert component.update([], should_stop=lambda: True) == {}
+
+    def test_cursor_survives_a_shrinking_fleet(self):
+        component = self._component()
+        visited = []
+        component._update_session = lambda s: visited.append(s.id)
+        calls = {"n": 0}
+
+        def stop_after_four():
+            calls["n"] += 1
+            return calls["n"] > 4
+
+        component.update(self._sessions(6), should_stop=stop_after_four)  # cursor -> 4
+        component.update(self._sessions(2))  # 4 % 2 == 0: full pass, no IndexError
+        assert visited[4:] == ["s0", "s1"]
+
     def test_get_summary_returns_existing(self):
         """Should return existing summary for session."""
         component = SummarizerComponent(

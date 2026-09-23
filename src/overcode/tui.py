@@ -47,6 +47,7 @@ from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
 from .tmux_utils import get_pane_base_index
+from .worker_guard import single_flight, worker_cancelled
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -334,9 +335,12 @@ class SupervisorTUI(
         self._sessions_cache: dict[str, Session] = {}
         self._sessions_cache_time: float = 0
         self._sessions_cache_ttl: float = 1.0  # 1 second TTL
-        # Flags to prevent overlapping async updates (fast and slow paths are independent)
+        # Flag to prevent overlapping fast-path updates. It is checked on the
+        # main thread before a worker is even submitted, and the fast path
+        # is deliberately not coupled to any other worker group. Every other
+        # periodic thread worker carries @single_flight (worker_guard) so a
+        # slow tick is skipped rather than stacked.
         self._status_update_in_progress = False
-        self._stats_update_in_progress = False
         # Fast-path tick counter and last captured pane text per session.
         # Non-focused agents are captured round-robin (see
         # tui_logic.select_capture_sessions); on ticks they're skipped, the
@@ -640,6 +644,7 @@ class SupervisorTUI(
         self._fetch_daemon_status_async()
 
     @work(thread=True, exclusive=True, group="daemon_status")
+    @single_flight("daemon_status")
     def _fetch_daemon_status_async(self) -> None:
         """Fetch daemon status off the main thread, then apply to UI."""
         try:
@@ -740,6 +745,7 @@ class SupervisorTUI(
         self._fetch_timeline_async()
 
     @work(thread=True, exclusive=True, group="timeline")
+    @single_flight("timeline")
     def _fetch_timeline_async(self) -> None:
         """Read timeline CSV data off the main thread, then apply to UI."""
         try:
@@ -828,6 +834,7 @@ class SupervisorTUI(
         self._resize_agent_windows_async()
 
     @work(thread=True, exclusive=True, group="agent_resize")
+    @single_flight("agent_resize")
     def _resize_agent_windows_async(self) -> None:
         """Worker: read bottom-pane size, then resize each agent window."""
         import subprocess
@@ -877,6 +884,8 @@ class SupervisorTUI(
         except (subprocess.SubprocessError, OSError):
             pass  # Unknown sizes → resize everything, as before
         for window in windows_needing_resize(current_sizes, windows, width, height):
+            if worker_cancelled():
+                return  # a newer resize pass (or shutdown) superseded this one
             target = f"{sync_session}:{window}"
             try:
                 subprocess.run(
@@ -901,6 +910,7 @@ class SupervisorTUI(
         self._fetch_sessions_async()
 
     @work(thread=True, exclusive=True, group="refresh_sessions")
+    @single_flight("refresh_sessions")
     def _fetch_sessions_async(self) -> None:
         """Read session list off the main thread, then apply to UI."""
         sessions = self.launcher.list_sessions()
@@ -1547,6 +1557,7 @@ class SupervisorTUI(
             self._status_update_in_progress = False
 
     @work(thread=True, exclusive=True, group="slow_stats")
+    @single_flight("slow_stats")
     def _update_stats_async(self) -> None:
         """Slow path: fetch claude stats + git diff every 5s.
 
@@ -1557,88 +1568,82 @@ class SupervisorTUI(
         Uses a shared HistoryFile so history.jsonl is parsed at most once
         per cycle, regardless of how many sessions are checked.
         """
-        if self._stats_update_in_progress:
+        widgets = list(self.query(SessionSummary))
+        if not widgets:
             return
-        self._stats_update_in_progress = True
-        try:
-            widgets = list(self.query(SessionSummary))
-            if not widgets:
-                return
 
-            fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
+        fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
 
-            sessions_to_check = []
-            for widget in widgets:
-                session = fresh_sessions.get(widget.session.id, widget.session)
-                sessions_to_check.append((widget.session.id, session))
+        sessions_to_check = []
+        for widget in widgets:
+            session = fresh_sessions.get(widget.session.id, widget.session)
+            sessions_to_check.append((widget.session.id, session))
 
-            # Single HistoryFile shared across all sessions — parse once, reuse N times
-            history_file = HistoryFile()
+        # Single HistoryFile shared across all sessions — parse once, reuse N times
+        history_file = HistoryFile()
 
-            sessions = [s for _, s in sessions_to_check]
+        sessions = [s for _, s in sessions_to_check]
 
-            # Git diff/untracked scans: once per distinct directory (agents
-            # commonly share a repo) and only every Nth sweep — they walk the
-            # working tree, which is the expensive part of this path.
-            from .tui_helpers import effective_git_directory
-            git_by_dir: dict = {}
-            run_git = should_scan_git(self._stats_sweep)
-            self._stats_sweep += 1
-            if run_git:
-                git_dirs = sorted({
-                    d for d in (
-                        effective_git_directory(s) for s in sessions if not s.is_remote
-                    ) if d
-                })
+        # Git diff/untracked scans: once per distinct directory (agents
+        # commonly share a repo) and only every Nth sweep — they walk the
+        # working tree, which is the expensive part of this path.
+        from .tui_helpers import effective_git_directory
+        git_by_dir: dict = {}
+        run_git = should_scan_git(self._stats_sweep)
+        self._stats_sweep += 1
+        if run_git:
+            git_dirs = sorted({
+                d for d in (
+                    effective_git_directory(s) for s in sessions if not s.is_remote
+                ) if d
+            })
 
-                def scan_git(directory):
-                    try:
-                        return (get_git_diff_stats(directory), get_git_untracked_count(directory))
-                    except Exception:
-                        return (None, None)
-
-                if git_dirs:
-                    with ThreadPoolExecutor(max_workers=min(8, len(git_dirs))) as executor:
-                        git_by_dir = dict(zip(git_dirs, executor.map(scan_git, git_dirs)))
-
-            def fetch_stats(session):
+            def scan_git(directory):
                 try:
-                    if session.is_remote:
-                        return (
-                            synthesize_remote_stats(session),
-                            session.remote_git_diff,
-                            session.remote_git_untracked,
-                        )
-                    claude_stats = stats_reader_for_session(session).get_stats(
-                        session, history_file=history_file
-                    )
-                    # (None, None) on non-git sweeps → widgets keep prior values
-                    git_diff, git_untracked = git_by_dir.get(
-                        effective_git_directory(session), (None, None)
-                    )
-                    return (claude_stats, git_diff, git_untracked)
+                    return (get_git_diff_stats(directory), get_git_untracked_count(directory))
                 except Exception:
-                    return (None, None, None)
+                    return (None, None)
 
-            with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
-                results = list(executor.map(fetch_stats, sessions))
+            if git_dirs:
+                with ThreadPoolExecutor(max_workers=min(8, len(git_dirs))) as executor:
+                    git_by_dir = dict(zip(git_dirs, executor.map(scan_git, git_dirs)))
 
-            stats_results = {}
-            git_diff_results = {}
-            git_untracked_results = {}
-            for (session_id, _), (claude_stats, git_diff, git_untracked) in zip(sessions_to_check, results):
-                stats_results[session_id] = claude_stats
-                git_diff_results[session_id] = git_diff
-                git_untracked_results[session_id] = git_untracked
+        def fetch_stats(session):
+            try:
+                if session.is_remote:
+                    return (
+                        synthesize_remote_stats(session),
+                        session.remote_git_diff,
+                        session.remote_git_untracked,
+                    )
+                claude_stats = stats_reader_for_session(session).get_stats(
+                    session, history_file=history_file
+                )
+                # (None, None) on non-git sweeps → widgets keep prior values
+                git_diff, git_untracked = git_by_dir.get(
+                    effective_git_directory(session), (None, None)
+                )
+                return (claude_stats, git_diff, git_untracked)
+            except Exception:
+                return (None, None, None)
 
-            self.call_from_thread(
-                self._apply_stats_results,
-                stats_results,
-                git_diff_results,
-                git_untracked_results,
-            )
-        finally:
-            self._stats_update_in_progress = False
+        with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
+            results = list(executor.map(fetch_stats, sessions))
+
+        stats_results = {}
+        git_diff_results = {}
+        git_untracked_results = {}
+        for (session_id, _), (claude_stats, git_diff, git_untracked) in zip(sessions_to_check, results):
+            stats_results[session_id] = claude_stats
+            git_diff_results[session_id] = git_diff
+            git_untracked_results[session_id] = git_untracked
+
+        self.call_from_thread(
+            self._apply_stats_results,
+            stats_results,
+            git_diff_results,
+            git_untracked_results,
+        )
 
     # ── Sister integration (#245) ──────────────────────────────────────
 
@@ -1647,6 +1652,7 @@ class SupervisorTUI(
         self._poll_sisters_async()
 
     @work(thread=True, exclusive=True, group="sister_poll")
+    @single_flight("sister_poll")
     def _poll_sisters_async(self) -> None:
         """Fetch remote sessions from all sisters."""
         remote = self._sister_poller.poll_all()
@@ -1689,6 +1695,7 @@ class SupervisorTUI(
         )
 
     @work(thread=True, exclusive=True, group="focused_sister_poll")
+    @single_flight("focused_sister_poll")
     def _poll_focused_sister_async(
         self, source_url: str, source_api_key: str, agent_name: str, session_id: str
     ) -> None:
@@ -1948,7 +1955,8 @@ class SupervisorTUI(
                 widget.refresh()
         self._mark_event("apply_stats_end")
 
-    @work(thread=True, exclusive=True, name="summarizer")
+    @work(thread=True, exclusive=True, group="summarizer", name="summarizer")
+    @single_flight("summarizer")
     def _update_summaries_async(self) -> None:
         """Background thread for AI summarization.
 
@@ -1997,8 +2005,11 @@ class SupervisorTUI(
         if not sessions:
             return
 
-        # Update summaries (this makes API calls)
-        summaries = self._summarizer.update(sessions)
+        # Update summaries (this makes API calls). One HTTP round trip per
+        # agent: a 50-agent pass outlasts the 5 s tick, so the component
+        # checks the cancel flag between agents, stops early (keeping the
+        # summaries it did produce) and resumes from that agent next tick.
+        summaries = self._summarizer.update(sessions, should_stop=worker_cancelled)
 
         # Apply to widgets on main thread
         self.call_from_thread(self._apply_summaries, summaries)
@@ -2764,6 +2775,7 @@ class SupervisorTUI(
         return list(self.query(JobSummary))
 
     @work(thread=True, exclusive=True, group="refresh_jobs")
+    @single_flight("refresh_jobs")
     def _refresh_jobs(self) -> None:
         """Refresh jobs list from state file."""
         try:
@@ -3513,6 +3525,7 @@ class SupervisorTUI(
             self.notify("Failed to start Monitor Daemon", severity="warning")
 
     @work(thread=True, exclusive=True, group="ssh_provision")
+    @single_flight("ssh_provision")
     def _provision_ssh_sisters(self) -> None:
         """Provision SSH-configured sisters in a background thread.
 
@@ -3529,6 +3542,8 @@ class SupervisorTUI(
             return
 
         for sister in sisters_with_ssh:
+            if worker_cancelled():
+                return
             try:
                 # Extract port from sister URL
                 from urllib.parse import urlparse
