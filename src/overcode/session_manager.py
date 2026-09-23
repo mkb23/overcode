@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 import time
@@ -449,9 +449,15 @@ class PendingUpdates:
     def __init__(self) -> None:
         self.fields: Dict[str, Dict[str, object]] = {}
         self.stats: Dict[str, Dict[str, object]] = {}
+        self.archive: List[str] = []  # ids to move from the live file to the archive
 
     def __bool__(self) -> bool:
-        return bool(self.fields or self.stats)
+        return bool(self.fields or self.stats or self.archive)
+
+    def archive_session(self, session_id: str) -> None:
+        """Stage moving ``session_id`` to the archive (the ``delete_session`` record)."""
+        if session_id not in self.archive:
+            self.archive.append(session_id)
 
     def update_session(self, session_id: str, **kwargs) -> None:
         self.fields.setdefault(session_id, {}).update(_with_legacy_keys(kwargs))
@@ -540,6 +546,50 @@ class SessionIndex:
         return self._children_count.get(session_id, 0)
 
 
+def _archive_record(line: bytes) -> Optional[dict]:
+    """The record on one archive line, or None for a blank or damaged line."""
+    if not line.strip():
+        return None
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(record, dict) and isinstance(record.get("id"), str):
+        return record
+    return None
+
+
+def _parse_archive_lines(data: bytes) -> Tuple[Dict[str, dict], int]:
+    """Records by id from archive bytes, and the offset after the last complete line.
+
+    Bytes after the final newline are an unfinished line (a crashed
+    append) and are left for the next read. A repeated id keeps the last
+    record at the position of the first, as ``json.load`` of the old dict
+    did.
+    """
+    records: Dict[str, dict] = {}
+    end = data.rfind(b"\n") + 1
+    for line in data[:end].split(b"\n"):
+        record = _archive_record(line)
+        if record is not None:
+            records[record["id"]] = record
+    return records, end
+
+
+def _archived_session(record: dict) -> Optional["Session"]:
+    """The ``Session`` for an archive record, with ``end_time`` kept as an attribute."""
+    try:
+        data = dict(record)
+        end_time = data.pop('end_time', None)  # not a Session field
+        session = Session.from_dict(data)
+        if session is None:
+            return None
+        session._end_time = end_time  # type: ignore
+        return session
+    except (KeyError, TypeError):
+        return None
+
+
 class SessionManager:
     """Manages session state persistence.
 
@@ -563,7 +613,14 @@ class SessionManager:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / "sessions.json"
-        self.archive_file = self.state_dir / "archive.json"
+        # Append-only, one JSON record per line; a legacy archive.json is
+        # migrated into it on first access (see _migrate_legacy_archive).
+        self.archive_file = self.state_dir / "archive.jsonl"
+        self.legacy_archive_file = self.state_dir / "archive.json"
+        # (inode, byte offset after the last complete line, Session by id)
+        # of the last archive parse: the file only grows, so the next parse
+        # reads from the offset and reuses those objects.
+        self._archive_tail: Tuple[Optional[int], int, Dict[str, Session]] = (None, 0, {})
         self._skip_git_detection = skip_git_detection
         # The Session objects built from the last parse of each file, keyed
         # by entry id and reused while the file's stat signature is unchanged
@@ -817,13 +874,25 @@ class SessionManager:
         Every staged field and stat is compared with the entry on disk and
         the file is rewritten — one ``json.dump``, one fsync — only if at
         least one differs. Entries that vanished since they were staged are
-        skipped, as ``update_session`` skips an unknown id. Returns True if
-        the file was written.
+        skipped, as ``update_session`` skips an unknown id. Entries staged
+        for the archive leave the live file in the same write and are
+        appended to the archive once the lock is released, with the record
+        ``delete_session`` writes. Returns True if the file was written.
         """
         if not pending:
             return False
+        archived: List[dict] = []
         with self._state_transaction() as txn:
             state = txn.state
+            for session_id in pending.archive:
+                entry = state.pop(session_id, None)
+                if entry is None:
+                    continue  # already gone (cleanup, or another daemon's archive pass)
+                record = entry.copy()
+                record['end_time'] = datetime.now().isoformat()
+                record['status'] = 'archived'
+                archived.append(record)
+                txn.dirty = True
             for session_id, values in pending.fields.items():
                 entry = state.get(session_id)
                 if entry is None:
@@ -844,7 +913,11 @@ class SessionManager:
                     if key not in stats or stats[key] != value:
                         stats[key] = value
                         txn.dirty = True
-            return txn.dirty
+            written = txn.dirty
+        # Archive after the lock is released (separate file, separate lock)
+        if archived:
+            self._append_archive_records(archived)
+        return written
 
     def _atomic_update(self, update_fn: Callable[[Dict[str, dict]], Dict[str, dict]]) -> None:
         """Atomically read, modify, and write state with exclusive lock held throughout.
@@ -1154,89 +1227,211 @@ class SessionManager:
         if archived_data is not None:
             self._archive_session(archived_data)
 
+    # =========================================================================
+    # Archive: archive.jsonl, one record per line, append-only
+    # =========================================================================
+    #
+    # archive.json was a dict rewritten whole on every archive: archiving one
+    # session cost a parse and an indent=2 dump of every session ever
+    # archived, and the daemon now archives on its own (terminated sessions
+    # after a grace), so that cost would have run on a timer. A line per
+    # record makes an archive O(record) and a read O(what was appended).
+
     def _load_archive(self) -> Dict[str, dict]:
         """Load archived sessions as a fresh, private dict (see ``_load_state``)."""
         return self._read_archive_file()[1]
 
-    def _archive_snapshot(self) -> Dict[str, Session]:
-        """The archived ``Session`` objects by entry id, rebuilt when archive.json changes."""
-        return self._archive_cache.get(self.archive_file, self._parse_archive_file)
+    def _migrate_legacy_archive(self) -> None:
+        """One-time, idempotent move of a legacy ``archive.json`` into the JSONL.
 
-    def _parse_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
-        sig, archive = self._read_archive_file()
-        by_id: Dict[str, Session] = {}
-        for key in list(archive):
-            data = archive.pop(key)
-            try:
-                # Handle end_time field that's not in Session dataclass
-                data_copy = data.copy()
-                end_time = data_copy.pop('end_time', None)
-                session = Session.from_dict(data_copy)
-                if session is None:
-                    continue
-                # Store end_time as attribute for display
-                session._end_time = end_time  # type: ignore
-                by_id[key] = session
-            except (KeyError, TypeError):
-                continue
-        return sig, by_id
+        One ``exists()`` per archive access. The legacy records are
+        appended in their dict order under the JSONL's exclusive lock
+        (two processes migrating at once serialise; the second finds the
+        file gone) and the legacy file is renamed ``archive.json.migrated``;
+        an unreadable one becomes ``archive.json.unreadable`` and is left
+        for the user. Should an older overcode write archive.json again, it
+        is migrated again — the reader keeps the last record per id, which
+        is what the dict did.
+        """
+        if not self.legacy_archive_file.exists():
+            return
+        with self._archive_appender(migrate=False) as f:
+            self._migrate_legacy_archive_into(f)
 
-    def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
-        """Read and parse the archive file under a shared lock — uncached."""
-        if not self.archive_file.exists():
-            return None, {}
-
+    def _migrate_legacy_archive_into(self, f) -> None:
+        legacy = self.legacy_archive_file
+        if not legacy.exists():  # re-checked under the lock
+            return
         try:
-            with open(self.archive_file, 'r') as f:
-                if HAS_FCNTL:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                    try:
-                        sig = FileSignature.of(os.fstat(f.fileno()))
-                        return sig, json.load(f)
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                else:
-                    sig = FileSignature.of(os.fstat(f.fileno()))
-                    return sig, json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return None, {}
-
-    def _save_archive(self, archive: Dict[str, dict]):
-        """Save archived sessions."""
-        import threading
-        if HAS_FCNTL:
-            temp_suffix = f'.tmp.{os.getpid()}.{threading.get_ident()}'
-            temp_file = self.archive_file.with_suffix(temp_suffix)
+            with open(legacy, 'r') as lf:
+                records = json.load(lf)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: could not migrate {legacy}: {e}")
             try:
-                with open(temp_file, 'w') as f:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    try:
-                        json.dump(archive, f, indent=2)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                temp_file.rename(self.archive_file)
+                legacy.rename(legacy.with_name(legacy.name + ".unreadable"))
+            except OSError:
+                pass
+            return
+        if isinstance(records, dict):
+            self._write_archive_lines(f, [r for r in records.values() if isinstance(r, dict)])
+        try:
+            legacy.rename(legacy.with_name(legacy.name + ".migrated"))
+        except OSError:
+            pass
+
+    @contextmanager
+    def _archive_appender(self, migrate: bool = True):
+        """The JSONL open for appending, under its exclusive lock."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.archive_file, 'a+b') as f:
+            if HAS_FCNTL:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                if migrate:
+                    self._migrate_legacy_archive_into(f)
+                yield f
             finally:
-                if temp_file.exists():
-                    temp_file.unlink()
-        else:
-            with open(self.archive_file, 'w') as f:
-                json.dump(archive, f, indent=2)
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _write_archive_lines(f, records: Iterable[dict]) -> None:
+        """Append ``records`` as lines and fsync once.
+
+        A crash mid-append leaves a line without its newline; the reader
+        skips that line and the next append terminates it first, so one
+        record is lost rather than two merged.
+        """
+        f.seek(0, os.SEEK_END)
+        if f.tell() > 0:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                f.write(b"\n")
+        for record in records:
+            f.write((json.dumps(record) + "\n").encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
+
+    def _append_archive_records(self, records: List[dict]) -> None:
+        """Add ``records`` to the archive: one lock, one fsync for all of them."""
+        if not records:
+            return
+        with self._archive_appender() as f:
+            self._write_archive_lines(f, records)
 
     def _archive_session(self, session_data: dict):
         """Add a session to the archive."""
-        archive = self._load_archive()  # a private copy to modify
-        archive[session_data['id']] = session_data
-        self._save_archive(archive)
+        self._append_archive_records([session_data])
+
+    def _read_archive_bytes(self) -> Tuple[Optional[os.stat_result], bytes, int]:
+        """``(fstat, bytes from offset, offset)`` of the archive under a shared lock.
+
+        ``offset`` is the previous parse's end when the file is the same
+        inode and has not shrunk — the archive only grows, so everything
+        before it was parsed already — and 0 otherwise.
+        """
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return None, b"", 0
+        prev_ino, prev_offset, _ = self._archive_tail
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    st = os.fstat(f.fileno())
+                    offset = prev_offset if (st.st_ino == prev_ino and st.st_size >= prev_offset) else 0
+                    f.seek(offset)
+                    return st, f.read(), offset
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return None, b"", 0
+
+    def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
+        """Read and parse the whole archive under a shared lock — uncached raw records."""
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return None, {}
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    sig = FileSignature.of(os.fstat(f.fileno()))
+                    data = f.read()
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return None, {}
+        return sig, _parse_archive_lines(data)[0]
+
+    def _archive_snapshot(self) -> Dict[str, Session]:
+        """The archived ``Session`` objects by entry id, extended when archive.jsonl grows."""
+        return self._archive_cache.get(self.archive_file, self._parse_archive_file)
+
+    def _parse_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, Session]]:
+        """The stat-gated cache's reader: parses only the lines appended since last time.
+
+        Objects for records parsed before are reused (the same sharing
+        contract as the live snapshot); a shrunk or replaced file is parsed
+        from the start.
+        """
+        st, data, offset = self._read_archive_bytes()
+        if st is None:
+            return None, {}
+        _, _, prev_by_id = self._archive_tail
+        by_id: Dict[str, Session] = dict(prev_by_id) if offset else {}
+        records, end = _parse_archive_lines(data)
+        for key, record in records.items():
+            session = _archived_session(record)
+            if session is not None:
+                by_id[key] = session
+        self._archive_tail = (st.st_ino, offset + end, by_id)
+        return FileSignature.of(st), by_id
 
     def list_archived_sessions(self) -> List[Session]:
         """List all archived sessions (skips corrupted entries).
 
         Same sharing contract as ``list_sessions``: the objects are reused
-        until ``archive.json`` changes.
+        until ``archive.jsonl`` changes, and then for every record that was
+        already there.
         """
         return list(self._archive_snapshot().values())
+
+    def iter_archived_sessions(self) -> Iterator[Session]:
+        """Archived sessions one at a time, in file order.
+
+        For a caller that only needs a filter (``overcode history <name>``)
+        and need not hold every record at once: the bytes are read under
+        the shared lock, each record is built as the caller advances, and
+        nothing is cached. Every line is yielded, so a re-migrated
+        duplicate id appears twice where ``list_archived_sessions`` keeps
+        the last record.
+        """
+        self._migrate_legacy_archive()
+        if not self.archive_file.exists():
+            return
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    data = f.read()
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return
+        for line in data[: data.rfind(b"\n") + 1].split(b"\n"):
+            record = _archive_record(line)
+            if record is None:
+                continue
+            session = _archived_session(record)
+            if session is not None:
+                yield session
 
     def get_archived_session(self, session_id: str) -> Optional[Session]:
         """Get an archived session by ID (shared snapshot, see ``get_session``)."""

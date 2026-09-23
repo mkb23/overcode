@@ -2718,19 +2718,21 @@ class TestHistoryExtended:
 
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.list_archived_sessions.return_value = [mock_session]
+            # A named lookup streams the archive instead of listing it
+            mock_sm.iter_archived_sessions.return_value = iter([mock_session])
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["history", "old-agent"])
             assert result.exit_code == 0
             assert "old-agent" in result.output
             assert "Stats" in result.output
+            mock_sm.list_archived_sessions.assert_not_called()
 
     def test_history_agent_not_found(self):
         """History errors when agent not in archive."""
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
-            mock_sm.list_archived_sessions.return_value = []
+            mock_sm.iter_archived_sessions.return_value = iter([])
             mock_sm_cls.return_value = mock_sm
 
             result = runner.invoke(app, ["history", "missing"])

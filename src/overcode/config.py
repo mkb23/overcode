@@ -624,6 +624,37 @@ def get_model_metadata_config() -> dict:
     }
 
 
+def get_session_archive_config() -> dict:
+    """How long terminated sessions stay in sessions.json before being archived.
+
+    sessions.json is the shared, whole-file-rewritten state every TUI and
+    daemon parses; the monitor daemon moves entries whose status has been
+    ``terminated`` for longer than the grace to the append-only
+    ``archive.jsonl`` (the same record ``overcode cleanup`` writes), so the
+    live file stays the size of the live fleet. The TUI's "show terminated"
+    ghosts keep showing a killed agent for the whole grace.
+
+    Config format in ~/.overcode/config.yaml:
+        session_archive:
+          terminated_grace_seconds: 3600   # -1 (or any negative) disables automatic archiving
+
+    Returns:
+        Dict with ``terminated_grace_seconds`` (float); a missing or invalid
+        entry falls back to ``settings.DAEMON.terminated_archive_grace_seconds``.
+    """
+    from .settings import DAEMON
+
+    cfg = _get_config_value("session_archive", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    default = float(DAEMON.terminated_archive_grace_seconds)
+    try:
+        grace = float(cfg.get("terminated_grace_seconds", default))
+    except (TypeError, ValueError):
+        grace = default
+    return {"terminated_grace_seconds": grace}
+
+
 def get_sisters_config() -> List[dict]:
     """Get sister instance configuration for cross-machine monitoring.
 

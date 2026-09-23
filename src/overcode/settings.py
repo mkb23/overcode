@@ -161,6 +161,11 @@ class DaemonSettings:
     daemon_claude_timeout: int = 300  # Max wait for daemon claude (5 min)
     daemon_claude_poll: int = 5       # Poll interval for daemon claude
 
+    # How long a terminated session stays in sessions.json before the
+    # monitor daemon moves it to the archive (config.yaml
+    # session_archive.terminated_grace_seconds overrides; negative = never).
+    terminated_archive_grace_seconds: int = 3600
+
     # Default tmux session name
     default_tmux_session: str = "agents"
 

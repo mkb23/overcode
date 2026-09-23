@@ -86,6 +86,7 @@ from .monitor_daemon_core import (
     parse_datetime_safe,
     is_heartbeat_eligible,
     is_heartbeat_due,
+    should_archive_terminated,
     should_auto_archive,
     should_enforce_oversight_timeout,
 )
@@ -326,6 +327,11 @@ class MonitorDaemon:
         # _flush_pending_writes. Reads inside the tick go through
         # self._pending.view(session) so they see the staged values.
         self._pending: PendingUpdates = PendingUpdates()
+
+        # When each terminated entry in sessions.json was first seen so by
+        # this daemon (any tmux session); after the configured grace the
+        # every-60-loops housekeeping moves it to the archive.
+        self._terminated_since: Dict[str, datetime] = {}
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
         self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
 
@@ -1173,7 +1179,7 @@ class MonitorDaemon:
         try:
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
-            self._publish_and_enforce(sessions, session_states, all_waiting)
+            self._publish_and_enforce(sessions, session_states, all_waiting, index)
         finally:
             # One write for the whole tick, even when a phase raised: what
             # was staged before the failure lands, as it did when each
@@ -1653,8 +1659,48 @@ class MonitorDaemon:
         for stale_id in stale_ids:
             del self.previous_states[stale_id]
 
-    def _publish_and_enforce(self, sessions: list, session_states: list, all_waiting_user: bool) -> None:
-        """Publish state, enforce policies, and log summary."""
+    def _archive_terminated_sessions(self, all_sessions, now: datetime) -> None:
+        """Stage terminated entries that have outstayed the grace for the archive.
+
+        Runs from the every-60-loops housekeeping over every entry in
+        sessions.json, whatever its tmux session: an entry left behind by
+        a tmux session with no daemon would otherwise stay forever, and
+        every TUI and daemon on the host parses the file whole. The clock
+        starts when this daemon first sees the entry terminated (a restart
+        starts it again, so an entry waits at most one extra grace) and is
+        dropped for an entry that is revived or removed. The move itself is
+        part of the tick's single commit, with the record ``overcode
+        cleanup`` writes.
+        """
+        from .config import get_session_archive_config
+
+        grace = get_session_archive_config()["terminated_grace_seconds"]
+        seen = set()
+        for session in all_sessions:
+            if session.status != STATUS_TERMINATED:
+                continue
+            seen.add(session.id)
+            since = self._terminated_since.setdefault(session.id, now)
+            if should_archive_terminated(since, now, grace):
+                self._pending.archive_session(session.id)
+                del self._terminated_since[session.id]
+                self.log.info(f"Archived terminated session: {session.name}")
+        for session_id in [sid for sid in self._terminated_since if sid not in seen]:
+            del self._terminated_since[session_id]
+
+    def _publish_and_enforce(
+        self,
+        sessions: list,
+        session_states: list,
+        all_waiting_user: bool,
+        index: Optional[SessionIndex] = None,
+    ) -> None:
+        """Publish state, enforce policies, and log summary.
+
+        ``index`` is the tick's ``SessionIndex`` over the whole session
+        table (every tmux session); the terminated-session archive pass
+        walks it. Without one, that pass reads the manager's snapshot.
+        """
         # Calculate interval
         interval = self.calculate_interval(sessions, all_waiting_user)
         self.state.current_interval = interval
@@ -1675,9 +1721,14 @@ class MonitorDaemon:
 
         # Auto-archive "done" agents after 1 hour (#244)
         # Count untracked tmux windows every 2 minutes (#344)
+        # Move terminated sessions to the archive once past their grace
         if self.state.loop_count % 60 == 0:
             self._auto_archive_done_agents(sessions)
             self.state.untracked_window_count = self._count_untracked_windows(sessions)
+            all_sessions = (
+                index.by_id.values() if index is not None else self.session_manager.list_sessions()
+            )
+            self._archive_terminated_sessions(all_sessions, datetime.now())
 
         # Log summary
         green = sum(1 for s in session_states if s.current_status == STATUS_RUNNING)

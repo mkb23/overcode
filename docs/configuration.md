@@ -87,6 +87,11 @@ history_retention:
   event_loop_timing_cap_mb: 100   # hard cap for diagnostics/event_loop_timing.csv
   event_loop_timing_enabled: true # false disables the heartbeat probe entirely
 
+# When terminated agents leave sessions.json for archive.jsonl
+# See "Session Archive" below
+session_archive:
+  terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+
 # Sister instances for cross-machine monitoring
 # See docs/advanced-features.md for setup guide
 sisters:
@@ -281,8 +286,11 @@ These persist across TUI restarts.
 
 ### Session Data
 ```
+~/.overcode/sessions/
+├── sessions.json                        # Live sessions (all tmux sessions), plus terminated ones for the grace
+├── archive.jsonl                        # Archived sessions, one JSON record per line, append-only
+├── archive.json.migrated                # The pre-JSONL archive, kept after its one-time migration
 ~/.overcode/sessions/{session}/
-├── sessions.json                        # Active sessions list
 ├── {agent-id}.json                      # Individual agent state
 ├── agent_status_history.csv             # Status timeline (active window)
 ├── agent_status_history.<ts>.csv.gz     # Rotated archives (#468)
@@ -342,6 +350,38 @@ history_retention:
 
 `overcode doctor` flags either file (including archives, combined) once it
 exceeds 5GB (sized above an intentional 18-month archive set), naming the path and the config knob to fix it.
+
+## Session Archive
+
+`sessions.json` is one file for every agent overcode has launched on the
+machine, across all tmux sessions, and every TUI worker and daemon tick
+parses it whole while every write rewrites it whole. Left alone it grows
+with every agent ever launched: a killed agent stays in it as
+`status: terminated` until `overcode cleanup` moves it to the archive.
+
+The monitor daemon now does that move itself. Once a session's status has
+been `terminated` for `terminated_grace_seconds` (default one hour; the
+check runs every 60 daemon loops, so allow up to two minutes on top) the
+daemon removes it from `sessions.json` and appends it to `archive.jsonl`
+with the same record `overcode cleanup` writes (`end_time`, `status:
+archived`). Any daemon does this for terminated entries in any tmux
+session, so entries left behind by a tmux session that no longer has a
+daemon are cleared too. During the grace the TUI's "show killed" ghost
+rows (`g`) still list the agent, and `overcode revive` can still find it;
+after it, the agent is in the archive (`overcode history`).
+
+```yaml
+session_archive:
+  terminated_grace_seconds: 3600  # 1 hour; negative disables automatic archiving
+```
+
+`archive.jsonl` holds one JSON record per line and is append-only, so
+archiving an agent costs one line regardless of how many are archived
+already (the previous `archive.json` was rewritten whole on every
+archive). An existing `archive.json` is migrated into `archive.jsonl` the
+first time the archive is touched and renamed to `archive.json.migrated`.
+Everything that reads the archive (`overcode history`, the web analytics
+endpoints, `overcode export`) reads the JSONL.
 
 ## Pricing Configuration
 

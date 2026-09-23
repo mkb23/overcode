@@ -1781,19 +1781,20 @@ class TestStatGatedArchiveCache:
         s2 = sm.create_session(name="b", tmux_session="agents", tmux_window="w", command=[])
         sm.delete_session(s1.id)
         _settle(sm.archive_file)
-        reads = _count_reads(sm, "_read_archive_file")
+        parses = _count_reads(sm, "_parse_archive_file")
         archived = sm.list_archived_sessions()
         assert [s.id for s in archived] == [s1.id]
         assert archived[0]._end_time is not None
         assert sm.get_archived_session(s1.id) is archived[0]
         assert sm.list_archived_sessions()[0] is archived[0]
-        assert len(reads) == 1
+        assert len(parses) == 1
 
         fresh = SessionManager(state_dir=tmp_path, skip_git_detection=True)
         assert _dicts(sm.list_archived_sessions()) == _dicts(fresh.list_archived_sessions())
 
-        sm.delete_session(s2.id)  # its read-modify-write uses the uncached reader
+        sm.delete_session(s2.id)  # an append: no read of the archive
         _settle(sm.archive_file)
         assert [s.id for s in sm.list_archived_sessions()] == [s1.id, s2.id]
+        assert sm.list_archived_sessions()[0] is archived[0]  # the earlier record is reused
         assert _dicts(sm.list_archived_sessions()) == _dicts(fresh.list_archived_sessions())
-        assert len(reads) == 3  # one for the append, one re-parse, none for the rest
+        assert len(parses) == 2  # one incremental parse of the appended line, none for the rest
