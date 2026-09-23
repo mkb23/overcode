@@ -751,12 +751,14 @@ def write_tui_heartbeat(session: str) -> None:
 
 # The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
 # client is attached to the pane it runs in (or while it runs outside tmux,
-# where nobody can tell). It is the monitor daemon's third "someone is
-# watching" signal, next to the keypress heartbeat above and the attached
-# count of the agents session: a TUI in another tmux session, or in a plain
-# terminal, is invisible to both, and without this touch the daemon would
-# stretch to its unattended interval under a dashboard someone is reading.
-# A touch is one utime, no content.
+# where nobody can tell), and the web server touches it whenever it serves
+# a status request (the dashboard's poll, a sister TUI's). It is the monitor
+# daemon's third "someone is watching" signal, next to the keypress
+# heartbeat above and the attached count of the agents session: a TUI in
+# another tmux session or a plain terminal, a browser, a sister — all are
+# invisible to both, and without this touch the daemon would stretch to its
+# unattended interval under a dashboard someone is reading. A touch is one
+# utime, no content.
 TUI_ATTENDED_TOUCH_SECONDS = 5
 
 

@@ -27,7 +27,13 @@ from overcode.monitor_daemon import (
     MonitorDaemon,
 )
 from overcode.monitor_daemon_state import MonitorDaemonState
-from overcode.settings import DAEMON, touch_tui_attended, write_tui_heartbeat
+from overcode.settings import (
+    DAEMON,
+    touch_tui_attended,
+    tui_attended_age_seconds,
+    write_tui_heartbeat,
+)
+from overcode.tmux_utils import PaneInfo
 
 START = datetime(2026, 9, 23, 12, 0, 0)
 
@@ -125,6 +131,39 @@ class TestAttendance:
         daemon = _daemon(root)
         daemon.session_attached = None
         assert daemon.attendance() == "attended"
+
+    def test_a_failed_listing_forgets_the_last_count(self, root):
+        """tmux going away after a reading of 0 must not leave the loop slow on
+        a stale count: the tick's listing resets it to unknown."""
+        daemon = _daemon(root)
+        daemon._tmux.list_panes.return_value = {"w": PaneInfo("w", 1, 10, 5, 0, 0, 0, "claude", 0)}
+        daemon._panes_at(START)
+        assert daemon.session_attached == 0 and daemon.attendance() == "unattended"
+        daemon._tmux.list_panes.return_value = None  # tmux down, session gone
+        daemon._panes_at(START + timedelta(seconds=2))
+        assert daemon.session_attached is None and daemon.attendance() == "attended"
+        daemon._tmux.list_panes.return_value = {}  # no answer either
+        daemon._panes_at(START + timedelta(seconds=4))
+        assert daemon.session_attached is None
+        daemon._tmux.list_panes.return_value = {"w": PaneInfo("w", 1, 10, 5, 0, 0, 0, "claude", 1)}
+        daemon._panes_at(START + timedelta(seconds=6))
+        assert daemon.session_attached == 1
+
+    def test_the_relay_push_is_not_a_reader(self, root):
+        """The daemon's own get_status_data call for the relay must not touch
+        the attended file, or the daemon would keep itself attended; the
+        touch belongs to the web server's request handlers."""
+        daemon = _daemon(root)
+        daemon._relay_config = {"url": "http://relay.test/push", "api_key": "k", "interval": 30}
+        daemon._last_relay_push = datetime.now() - timedelta(hours=1)
+        with (
+            patch("overcode.web_api.get_monitor_daemon_state", return_value=None),
+            patch("urllib.request.urlopen") as urlopen,
+        ):
+            urlopen.return_value.__enter__.return_value.status = 200
+            daemon._maybe_push_to_relay()
+        assert daemon.state.relay_last_status == "ok"
+        assert tui_attended_age_seconds("agents") is None
 
     def test_nobody_is_unattended(self, root):
         daemon = _daemon(root)

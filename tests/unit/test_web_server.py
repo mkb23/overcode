@@ -383,6 +383,48 @@ class TestOvercodeHandlerRoutes:
         assert int(query.get("slots", [60])[0]) == 30
 
 
+class TestStatusRequestsTouchTheAttendedFile:
+    """A status request is someone watching: it makes the monitor daemon's
+    "attended" touch, so a fleet read only through the browser or a sister
+    TUI keeps its fast-loop statuses. Other routes are no sign of a watcher."""
+
+    def test_api_status_touches_before_serving(self):
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.tmux_session = "agents"
+        with (
+            patch("overcode.web_server.get_status_data", return_value={"agents": []}),
+            patch("overcode.web_server.touch_tui_attended") as touch,
+        ):
+            OvercodeHandler._serve_api_status(handler, {})
+        touch.assert_called_once_with("agents")
+        handler._serve_json.assert_called_once_with({"agents": []})
+
+    def test_single_agent_status_touches_even_for_an_unknown_agent(self):
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.path = "/api/agents/x/status"
+        handler.tmux_session = "agents"
+        with (
+            patch("overcode.web_server.get_web_api_key", return_value=None),
+            patch("overcode.web_server.get_single_agent_status", return_value=None),
+            patch("overcode.web_server.touch_tui_attended") as touch,
+        ):
+            OvercodeHandler.do_GET(handler)
+        touch.assert_called_once_with("agents")
+        handler.send_error.assert_called_once_with(404, "Agent 'x' not found")
+
+    def test_other_routes_do_not_touch(self):
+        handler = MagicMock(spec=OvercodeHandler)
+        handler.tmux_session = "agents"
+        with (
+            patch("overcode.web_server.get_web_api_key", return_value=None),
+            patch("overcode.web_server.touch_tui_attended") as touch,
+        ):
+            for path in ("/api/timeline", "/health", "/dashboard", "/api/analytics/stats"):
+                handler.path = path
+                OvercodeHandler.do_GET(handler)
+        touch.assert_not_called()
+
+
 class TestOvercodeHandlerRouteDispatching:
     """Tests that OvercodeHandler.do_GET dispatches to correct methods."""
 

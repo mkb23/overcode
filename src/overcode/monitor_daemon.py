@@ -1003,9 +1003,11 @@ class MonitorDaemon:
         (PresenceComponent's 60 s window), and no TUI has touched its
         attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
         TUI in another tmux session or a plain terminal has — the first
-        two cannot see it — so the daemon never slows under a dashboard
-        someone is reading. Web dashboard and sister readers carry no
-        signal and are not covered.
+        two cannot see it — and the web server makes the same touch when
+        it serves a status request (the dashboard's 5 s poll, a sister
+        TUI's), so the daemon never slows under a dashboard someone is
+        reading, in whatever form. The daemon's own relay push reads the
+        same status data without touching: it is not a reader.
         """
         attached = self.session_attached
         if attached is None or attached > 0:
@@ -1458,13 +1460,18 @@ class MonitorDaemon:
         is simply absent from the listing. None when the listing failed
         (tmux down, session gone): callers then skip every session, as they
         did when ``get_pane_pid`` returned None. ``session_attached`` is
-        kept from the same listing for consumers that want it.
+        kept from the same listing for :meth:`attendance`, and reset to
+        None — unknown, which attendance() treats as attended — when the
+        listing failed, so tmux going away after a reading of 0 does not
+        leave the loop on the unattended interval on a stale count.
         """
         if self._pane_table_at != now:
             self._pane_table_at = now
             self._pane_table = self._tmux.list_panes(self.tmux_session)
             if self._pane_table:
                 self.session_attached = next(iter(self._pane_table.values())).session_attached
+            else:
+                self.session_attached = None
         return self._pane_table
 
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
