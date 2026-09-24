@@ -9,7 +9,7 @@ No side effects, no mutations of input data.
 """
 
 from datetime import datetime, timedelta
-from typing import List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from .settings import DAEMON
@@ -88,7 +88,7 @@ def _remote_sort_key(s) -> tuple:
     return (1 if is_remote else 0, host.lower())
 
 
-def sort_sessions_alphabetical(sessions: List[T], parent_id_fn=None) -> List[T]:
+def sort_sessions_alphabetical(sessions: List[T], parent_id_fn=None, reverse=False) -> List[T]:
     """Sort sessions alphabetically by name, keeping siblings grouped under parents.
 
     Args:
@@ -102,10 +102,11 @@ def sort_sessions_alphabetical(sessions: List[T], parent_id_fn=None) -> List[T]:
         sessions,
         key=lambda s: (s.name.lower(),),
         parent_id_fn=parent_id_fn,
+        reverse=reverse,
     )
 
 
-def sort_sessions_by_status(sessions: List[S], parent_id_fn=None) -> List[S]:
+def sort_sessions_by_status(sessions: List[S], parent_id_fn=None, reverse=False) -> List[S]:
     """Sort sessions by status priority, keeping siblings grouped under parents.
 
     Roots are sorted by status, then children are sorted by status under
@@ -128,10 +129,11 @@ def sort_sessions_by_status(sessions: List[S], parent_id_fn=None) -> List[S]:
             s.name.lower()
         ),
         parent_id_fn=parent_id_fn,
+        reverse=reverse,
     )
 
 
-def sort_sessions_by_value(sessions: List[S], parent_id_fn=None) -> List[S]:
+def sort_sessions_by_value(sessions: List[S], parent_id_fn=None, reverse=False) -> List[S]:
     """Sort sessions by value (priority) descending, keeping siblings grouped.
 
     Roots are sorted by value, then children are sorted by value under
@@ -152,20 +154,26 @@ def sort_sessions_by_value(sessions: List[S], parent_id_fn=None) -> List[S]:
             s.name.lower()
         ),
         parent_id_fn=parent_id_fn,
+        reverse=reverse,
     )
 
 
-def _tree_aware_sort(sessions, key, parent_id_fn=None):
+def _tree_aware_sort(sessions, key=None, parent_id_fn=None, reverse=False, order=None):
     """Sort sessions preserving tree hierarchy: roots sorted by key, children sorted under parent.
 
     Args:
         sessions: List of session objects
         key: Sort key function for ordering within each level
         parent_id_fn: Function to get parent_session_id from a session.
+        reverse: Reverse the key order (#487).
+        order: Instead of key/reverse, a function that returns one level's
+            sessions in order (used by column sorts, which put unknowns last).
 
     Returns:
         New sorted list
     """
+    if order is None:
+        order = lambda items: sorted(items, key=key, reverse=reverse)
     if parent_id_fn is None:
         parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
 
@@ -180,9 +188,9 @@ def _tree_aware_sort(sessions, key, parent_id_fn=None):
             children_map.setdefault(pid, []).append(s)
 
     # Sort roots by the provided key (local and remote intermixed)
-    roots.sort(key=key)
-    for kids in children_map.values():
-        kids.sort(key=key)
+    roots = order(roots)
+    for pid, kids in children_map.items():
+        children_map[pid] = order(kids)
 
     # DFS from roots
     result = []
@@ -241,27 +249,96 @@ def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
     return result
 
 
-def sort_sessions(sessions: List[S], mode: str) -> List[S]:
+def sort_sessions_by_column(
+    sessions: List[T], values: Dict[str, Any], descending: bool, parent_id_fn=None,
+) -> List[T]:
+    """Sort by per-session column values, keeping siblings grouped (#487).
+
+    `values` maps session id to the column's sort key. Sessions with no
+    value (None or missing) go last in either direction; ties keep name
+    order, as do values that cannot be compared with each other.
+    """
+    def order(items):
+        items = sorted(items, key=lambda s: s.name.lower())
+        present = [s for s in items if values.get(s.id) is not None]
+        missing = [s for s in items if values.get(s.id) is None]
+        try:
+            present.sort(key=lambda s: values[s.id], reverse=descending)
+        except TypeError:
+            present.sort(key=lambda s: str(values[s.id]), reverse=descending)
+        return present + missing
+
+    return _tree_aware_sort(sessions, parent_id_fn=parent_id_fn, order=order)
+
+
+def sort_sessions(
+    sessions: List[S], mode: str, reverse: bool = False,
+    values: Optional[Dict[str, Any]] = None,
+) -> List[S]:
     """Sort sessions based on the specified mode.
 
     Args:
         sessions: List of session objects
-        mode: One of "alphabetical", "by_status", "by_value", "by_tree"
+        mode: One of "alphabetical", "by_status", "by_value", "by_tree", or
+            "col:<column id>" to sort by a summary column (#487)
+        reverse: Flip the mode's natural direction (ignored for by_tree)
+        values: For "col:" modes, session id -> the column's sort key
 
     Returns:
         New sorted list (does not mutate input)
     """
     if mode == "alphabetical":
-        return sort_sessions_alphabetical(sessions)
+        return sort_sessions_alphabetical(sessions, reverse=reverse)
     elif mode == "by_status":
-        return sort_sessions_by_status(sessions)
+        return sort_sessions_by_status(sessions, reverse=reverse)
     elif mode == "by_value":
-        return sort_sessions_by_value(sessions)
+        return sort_sessions_by_value(sessions, reverse=reverse)
     elif mode == "by_tree":
         return sort_sessions_by_tree(sessions)
+    elif mode.startswith(COLUMN_SORT_PREFIX):
+        return sort_sessions_by_column(
+            sessions, values or {}, sort_descending(mode, reverse),
+        )
     else:
         # Default to alphabetical for unknown modes
         return sort_sessions_alphabetical(sessions)
+
+
+# Column sorts (#487). Three header columns are the named presets, so
+# clicking Name, Status or Value selects the same order `overcode list
+# --sort` knows; every other sortable column is "col:<id>".
+COLUMN_SORT_PREFIX = "col:"
+PRESET_FOR_COLUMN = {
+    "agent_name": "alphabetical",
+    "status_symbol": "by_status",
+    "agent_value": "by_value",
+}
+
+
+def sort_mode_for_column(column_id: str) -> str:
+    """The sort_mode that sorts by a column."""
+    return PRESET_FOR_COLUMN.get(column_id, COLUMN_SORT_PREFIX + column_id)
+
+
+def sort_column_for_mode(mode: str) -> Optional[str]:
+    """The column a sort_mode sorts by; None for tree order."""
+    if mode.startswith(COLUMN_SORT_PREFIX):
+        return mode[len(COLUMN_SORT_PREFIX):]
+    for col_id, preset in PRESET_FOR_COLUMN.items():
+        if preset == mode:
+            return col_id
+    return None
+
+
+def sort_descending(mode: str, reverse: bool) -> bool:
+    """Whether a sort_mode currently runs largest-first (drawn ▼)."""
+    col_id = sort_column_for_mode(mode)
+    if col_id is None:
+        return False
+    from .summary_columns import COLUMNS_BY_ID
+    col = COLUMNS_BY_ID.get(col_id)
+    natural = col.sort_desc if col is not None else False
+    return natural != reverse
 
 
 def filter_visible_sessions(
@@ -374,29 +451,11 @@ def get_sort_mode_display_name(mode: str) -> str:
         "by_value": "By Value (priority)",
         "by_tree": "By Tree (hierarchy)",
     }
+    if mode.startswith(COLUMN_SORT_PREFIX):
+        from .summary_columns import COLUMNS_BY_ID
+        col = COLUMNS_BY_ID.get(mode[len(COLUMN_SORT_PREFIX):])
+        return col.name if col is not None and col.name else mode
     return mode_names.get(mode, mode)
-
-
-def cycle_sort_mode(current_mode: str, available_modes: List[str]) -> str:
-    """Get the next sort mode in the cycle.
-
-    Args:
-        current_mode: Current sort mode
-        available_modes: List of available sort modes
-
-    Returns:
-        Next sort mode in the cycle
-    """
-    if not available_modes:
-        return current_mode
-
-    try:
-        current_idx = available_modes.index(current_mode)
-    except ValueError:
-        current_idx = -1
-
-    new_idx = (current_idx + 1) % len(available_modes)
-    return available_modes[new_idx]
 
 
 @dataclass

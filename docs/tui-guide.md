@@ -16,9 +16,17 @@ overcode supervisor   # Monitor with supervisor daemon
 ### Agent List
 Shows all agents as single-line summaries with live status, metrics, and a content area. Press `m` to toggle the preview pane, which shows the focused agent's terminal output below the list.
 
-When using "Tree" sort mode (`S`), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
+When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
-In the "status" and "value" sort modes the list re-orders itself as agents change state. The highlight follows the *agent*, not the row, so the selected agent — and the tmux pane synced to it — stay the same when a row moves (#471).
+### Sorting and Column Headers
+
+Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
+
+From the keyboard, `S` opens the command palette on sort choices: every sortable column plus Tree order. Type a few letters of the column's name or its header code (`cpu`, `tok`, `git`) and press `Enter`; choosing the current sort again reverses it, and `Tab` does the same while keeping the picker open. "Reverse sort" in the `/` palette flips the current direction. The sort is saved in `tui_preferences.json`.
+
+Hover a column header to see what the column means. In the column configurator (`C`), the highlighted column's description shows above the list — the keyboard route to the same help. `L` hides or shows the header row.
+
+In sorts driven by live data (status, value, CPU, time in state…) the list re-orders itself as agents change. The highlight follows the *agent*, not the row, so the selected agent — and the tmux pane synced to it — stay the same when a row moves (#471).
 
 ## Keyboard Shortcuts
 
@@ -51,7 +59,7 @@ In the "status" and "value" sort modes the list re-orders itself as agents chang
 |-----|--------|
 | `s` | Cycle summary detail: low → med → high → full |
 | `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat |
-| `S` | Cycle sort mode: alphabetical → status → value → tree |
+| `S` | Sort by any column or tree order (picker; choosing the current sort reverses it) |
 | `$` | Cycle cost display (tokens / dollars / joules) |
 | `C` | Open column configuration |
 | `L` | Toggle column headers |
@@ -212,7 +220,7 @@ If you prefer not to use `overcode tmux`, you can set up a split manually:
 
 ## Copy Mode
 
-The TUI captures mouse events for interaction. To select and copy text:
+The TUI captures mouse events for interaction (row selection, header click-to-sort and tooltips, preview scrolling). To select and copy text:
 
 1. Press `y` to enter copy mode (disables mouse capture)
 2. Select text with your mouse
@@ -229,10 +237,10 @@ Organize agents by priority:
 
 1. Press `V` on an agent to set its priority value (default: 1000)
 2. Higher values = higher priority
-3. Press `S` to cycle to "value" sort mode
+3. Press `S` and pick "Agent Value" (or click the `VAL` header)
 4. Agents with higher values appear first
 
-You can also sort by status (stalled agents first) or alphabetically.
+You can sort by any other column the same way — status (stalled agents first), name, cost, CPU and so on.
 
 ## Tips
 

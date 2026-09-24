@@ -100,6 +100,7 @@ from .tui_widgets import (
     SisterSelectionModal,
     InstructionHistoryModal,
     CommandPalette,
+    ColumnHeader,
     JumpCandidate,
 )
 from .tui_actions import (
@@ -307,8 +308,8 @@ class SupervisorTUI(
         ("D", "toggle_show_done", "Show done"),
         # Collapse/expand children in tree view (#244)
         ("X", "toggle_collapse_children", "Collapse children"),
-        # Sort mode cycle (#61)
-        ("S", "cycle_sort_mode", "Sort mode"),
+        # Sort picker: the palette on sort choices (#61, #487)
+        ("S", "choose_sort", "Sort by…"),
         # Edit agent value (#61)
         ("V", "edit_agent_value", "Edit value"),
         # Cost budget (#173)
@@ -360,8 +361,6 @@ class SupervisorTUI(
     TIMELINE_PRESETS = [1, 3, 6, 12, 24]
     # Summary detail levels: low (minimal), med (timing), high (all metrics), full (everything)
     SUMMARY_LEVELS = ["low", "med", "high", "full"]
-    # Sort modes (#61)
-    SORT_MODES = ["alphabetical", "by_status", "by_value", "by_tree"]
     # Summary content modes: what to show in the summary line (#74)
     SUMMARY_CONTENT_MODES = ["ai_short", "ai_long", "orders", "annotation", "heartbeat", "last_command"]
 
@@ -598,7 +597,7 @@ class SupervisorTUI(
         yield StatusTimeline([], tmux_session=self.tmux_session, id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
         yield TuiLogPanel(tmux_session=self.tmux_session, id="tui-log-panel")
-        yield Static("", id="column-headers")
+        yield ColumnHeader("", id="column-headers")
         yield ScrollableContainer(id="sessions-container")
         yield ScrollableContainer(id="jobs-container")
         yield PreviewPane(id="preview-pane")
@@ -1452,8 +1451,32 @@ class SupervisorTUI(
         """
         if selected_id is None:
             selected_id = self._selected_session_id()
-        self.sessions = sort_sessions(self.sessions, self._prefs.sort_mode)
+        self.sessions = sort_sessions(
+            self.sessions, self._prefs.sort_mode,
+            reverse=self._prefs.sort_reversed,
+            values=self._column_sort_values(self._prefs.sort_mode),
+        )
         self._reanchor_selection(selected_id)
+
+    def _column_sort_values(self, mode: str) -> Optional[dict]:
+        """For a column sort (#487), each agent's sort key, read from its
+        row widget's ColumnContext — the same data the row draws, so the
+        order matches what is on screen. Agents without a widget yet (just
+        launched) have no value and sort last until the next refresh."""
+        from .tui_logic import COLUMN_SORT_PREFIX
+        from .summary_columns import COLUMNS_BY_ID
+        if not mode.startswith(COLUMN_SORT_PREFIX):
+            return None
+        col = COLUMNS_BY_ID.get(mode[len(COLUMN_SORT_PREFIX):])
+        if col is None or col.sort_key is None:
+            return None
+        values = {}
+        for w in self.query(SessionSummary):
+            try:
+                values[w.session.id] = col.sort_key(w._build_column_context())
+            except Exception:
+                values[w.session.id] = None
+        return values
 
     def _get_focused_widget(self) -> "SessionSummary | None":
         """Get the selected session widget using focused_session_index.
@@ -3326,13 +3349,14 @@ class SupervisorTUI(
     def _update_column_headers(self) -> None:
         """Update the column headers widget based on current state."""
         try:
-            header_widget = self.query_one("#column-headers", Static)
+            header_widget = self.query_one("#column-headers", ColumnHeader)
             if not self._prefs.show_column_headers:
                 header_widget.display = False
                 return
             header_widget.display = True
 
             if self.tui_mode == "jobs":
+                header_widget.set_columns([], [])
                 from rich.text import Text
                 # Compute name width from current jobs (same logic as _apply_jobs)
                 nw = max((len(j.name) for j in self.jobs), default=12)
@@ -3349,18 +3373,27 @@ class SupervisorTUI(
                 header_widget.update(header)
                 return
 
-            from .summary_columns import render_header_cells, resolve_column_visible
+            from .summary_columns import SUMMARY_COLUMNS, render_header_cells, resolve_column_visible
+            from .tui_logic import sort_column_for_mode, sort_descending
             level = self.SUMMARY_LEVELS[self.summary_level_index]
             overrides = self._current_column_overrides(level)
 
             def col_filter(col):
                 return resolve_column_visible(col, level, overrides)
 
+            sort_col = sort_column_for_mode(self._prefs.sort_mode)
+            desc = sort_descending(self._prefs.sort_mode, self._prefs.sort_reversed)
             header_line = render_header_cells(
                 column_filter=col_filter,
                 column_widths=self.column_widths,
+                sort_column=sort_col,
+                sort_descending=desc,
             )
             header_widget.update(header_line)
+            header_widget.set_columns(
+                [c.id for c in SUMMARY_COLUMNS if col_filter(c)],
+                self.column_widths, sort_col, desc,
+            )
         except NoMatches:
             pass
 
@@ -4453,6 +4486,7 @@ class SupervisorTUI(
             mode,
             agents=self._palette_agents(),
             tags=self._palette_tags(),
+            sorts=self._palette_sorts(),
             keymap=keys_by_action(self.BINDINGS),
             recent=self._prefs.recent_commands,
             app_ref=self,
@@ -4474,6 +4508,10 @@ class SupervisorTUI(
                 status_style=color,
             ))
         return candidates
+
+    def _palette_sorts(self) -> list:
+        from .command_palette import sort_choices
+        return sort_choices(self._prefs.sort_mode, self._prefs.sort_reversed)
 
     def _palette_tags(self) -> list:
         # Count tags over all sessions (not just visible) so the user can
@@ -4540,6 +4578,30 @@ class SupervisorTUI(
                 return
             self.screen.set_focus(palette)
             palette.refresh()
+
+    def on_command_palette_sort_chosen(self, message: CommandPalette.SortChosen) -> None:
+        """A sort picked in the S picker (#487). With Tab the palette stays
+        open, and its rows are refreshed so the lit row and arrow follow."""
+        if not message.keep_open:
+            self._dialog_did_close()
+        self.set_sort_mode(message.mode)
+        if message.keep_open:
+            try:
+                palette = self.query_one("#command-palette", CommandPalette)
+            except NoMatches:
+                return
+            palette.update_sorts(self._palette_sorts())
+
+    def on_column_header_clicked(self, message: ColumnHeader.Clicked) -> None:
+        """Click a header to sort by it; click it again to reverse (#487)."""
+        from .summary_columns import COLUMNS_BY_ID
+        from .tui_logic import sort_mode_for_column
+        col = COLUMNS_BY_ID.get(message.column_id)
+        if col is None or col.sort_key is None:
+            name = col.name if col is not None else message.column_id
+            self.notify(f"{name} is not sortable", severity="information")
+            return
+        self.set_sort_mode(sort_mode_for_column(message.column_id))
 
     def on_command_palette_closed(self, message: CommandPalette.Closed) -> None:
         self._dialog_did_close()

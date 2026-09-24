@@ -288,6 +288,12 @@ class SummaryColumn:
     header: str = ""  # Short header label for column header row (e.g., "UPT", "TOK")
     name: str = ""  # Human-readable display name for config modal
     cli_only: bool = False  # True for synthetic aggregate lines used only by the CLI
+    # Header tooltip and C-modal help line (#477); set from COLUMN_HELP below
+    description: str = ""
+    # Sort value for this column (#487); None = not sortable. Rows whose key
+    # is None always sort last. Set from COLUMN_SORT below.
+    sort_key: Optional[Callable[[ColumnContext], object]] = None
+    sort_desc: bool = False  # Natural direction: True = largest first
 
 
 # ---------------------------------------------------------------------------
@@ -1328,7 +1334,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="expand_icon", group="identity", detail_levels=ALL, render=render_expand_icon,
                   name="Expand"),
     SummaryColumn(id="agent_name", group="identity", detail_levels=ALL, render=render_agent_name,
-                  name="Agent Name"),
+                  header="NAME", name="Agent Name"),
     SummaryColumn(id="host", group="sisters", detail_levels=ALL, render=render_host,
                   label="Host", render_plain=render_host_plain, header="HST", name="Host"),
 
@@ -1458,6 +1464,206 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="agent_value", group="priority", detail_levels=ALL, render=render_agent_value,
                   label="Value", render_plain=render_value_plain, header="VAL", name="Agent Value"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Column help (#477) and sort order (#487)
+# ---------------------------------------------------------------------------
+# Kept beside the registry rather than in each SummaryColumn(...) call so the
+# column list above stays scannable. A test asserts every TUI column has a
+# description, so a new column cannot ship without one.
+
+COLUMN_HELP: dict[str, str] = {
+    "status_symbol": "What the agent is doing: running, waiting for you, stalled, asleep, done",
+    "unvisited_alert": "Flags an agent that stalled and you haven't looked at since",
+    "time_in_state": "How long the agent has been in its current status",
+    "sleep_countdown": "Status detail: current tool, subagents, sleep wake-up estimate",
+    "expand_icon": "Fold marker for tree view",
+    "agent_name": "Agent name (tree connectors show parent/child in tree sort)",
+    "host": "Machine the agent runs on (shown when sister hosts are configured)",
+    "repo_name": "Git repository the agent is working in",
+    "branch": "Git branch checked out in the agent's working directory",
+    "git_diff": "Uncommitted changes: files changed, lines added, lines removed",
+    "git_untracked": "Untracked files in the working tree (work not yet added to git)",
+    "pr_number": "Open pull request for the agent's branch",
+    "uptime": "Time since the agent was launched",
+    "running_time": "Total time spent working (green) since launch",
+    "stalled_time": "Total time spent waiting or stalled (non-green) since launch",
+    "sleep_time": "Total time spent asleep",
+    "active_pct": "Share of awake time spent working rather than waiting",
+    "token_count": "Total tokens used (input + output + cache)",
+    "joules": "Estimated energy used, converted from cost",
+    "cost": "Estimated spend in dollars, from token usage and model pricing",
+    "budget": "Cost budget set for this agent (B to edit)",
+    "subtree_cost": "Cost of this agent plus all its children",
+    "burn_rate": "Spend rate over the timeline window (units follow $)",
+    "context_usage": "How full the model's context window is",
+    "model": "Model the agent is running",
+    "provider": "API provider (web or Bedrock)",
+    "backend": "Agent CLI: cc Claude Code, oc opencode, cx codex, gk grok, hm hermes",
+    "median_work_time": "Median length of a work cycle between human prompts",
+    "cpu_pct": "CPU used by the agent's process tree (over 100% = several cores)",
+    "ram": "Resident memory of the agent's process tree",
+    "subagent_count": "Subagents running right now",
+    "bash_count": "Background shell commands running right now",
+    "child_count": "Overcode child agents launched by this agent",
+    "permission_mode": "Permission mode: normal, auto-accept, permissive or bypass",
+    "agent_teams": "Agent teams enabled",
+    "wrapper": "Launch wrapper (e.g. devcontainer) and sandbox badge",
+    "allowed_tools": "Tools the agent was launched with permission to use",
+    "loaded_skills": "Skills the agent has loaded this session",
+    "available_skills": "Skills installed and available to the agent",
+    "enhanced_context": "Enhanced context hook on (^T to toggle)",
+    "human_count": "Prompts sent by a human",
+    "robot_count": "Prompts sent by the supervisor (steers)",
+    "standing_orders": "Standing orders: ✓ complete, preset name, 📋 custom, ➖ none",
+    "heartbeat": "Heartbeat interval and next send time (⏸ paused)",
+    "oversight_countdown": "Time left before an oversight timeout fires",
+    "agent_value": "Priority value (V to edit; 1000 is neutral)",
+}
+
+
+def _age_seconds(when) -> Optional[float]:
+    """Seconds since a datetime or ISO string; None when unknown."""
+    if not when:
+        return None
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except (ValueError, TypeError):
+            return None
+    return (datetime.now() - when).total_seconds()
+
+
+def _lower(s) -> Optional[str]:
+    return s.lower() if s and s not in ("-", "n/a") else None
+
+
+def _sort_active_pct(ctx: ColumnContext) -> Optional[float]:
+    active = ctx.green_time + ctx.non_green_time
+    return ctx.green_time / active if active > 0 else None
+
+
+def _sort_context_usage(ctx: ColumnContext) -> Optional[float]:
+    cs = ctx.claude_stats
+    if cs is None or cs.current_context_tokens <= 0 or not cs.max_context_tokens:
+        return None
+    return cs.current_context_tokens / cs.max_context_tokens
+
+
+def _sort_burn_rate(ctx: ColumnContext) -> Optional[float]:
+    burn = ctx.window_burn
+    if burn is None or burn.window_hours <= 0:
+        return None
+    # Sort by what the column shows: tokens/h in token mode, else $/h
+    return burn.tokens_per_hour if ctx.show_cost == "tokens" else burn.cost_per_hour
+
+
+def _sort_model(ctx: ColumnContext) -> Optional[str]:
+    if not ctx.model:
+        return None
+    from .history_reader import model_short_name
+    return model_short_name(ctx.model).lower()
+
+
+def _sort_backend(ctx: ColumnContext) -> str:
+    from .backends import session_backend_name
+    return session_backend_name(ctx.session)
+
+
+def _sort_heartbeat(ctx: ColumnContext) -> Optional[tuple]:
+    s = ctx.session
+    if not s.heartbeat_enabled:
+        return None
+    return (bool(s.heartbeat_paused), s.heartbeat_frequency_seconds)
+
+
+def _sort_oversight(ctx: ColumnContext) -> Optional[str]:
+    return ctx.oversight_deadline or None
+
+
+def _if_stats(fn: Callable[[ColumnContext], object]) -> Callable[[ColumnContext], object]:
+    """Sort key that is None for backends reporting no stats (the column shows '-')."""
+    return lambda ctx: fn(ctx) if ctx.claude_stats is not None else None
+
+
+# id -> (sort key, natural direction is descending). Absent = not sortable.
+# agent_name / status_symbol / agent_value have keys here too, but the TUI
+# sorts them with the tree-aware presets in tui_logic (alphabetical,
+# by_status, by_value) so they keep their established tie-breaks.
+COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
+    "status_symbol": (lambda ctx: ctx.stats.current_state, False),
+    "unvisited_alert": (lambda ctx: int(ctx.is_unvisited_stalled), True),
+    "time_in_state": (lambda ctx: _age_seconds(ctx.status_changed_at), True),
+    "agent_name": (lambda ctx: ctx.session.name.lower(), False),
+    "host": (lambda ctx: _lower(ctx.source_host or ctx.local_hostname), False),
+    "repo_name": (lambda ctx: _lower(ctx.repo_name), False),
+    "branch": (lambda ctx: _lower(ctx.branch), False),
+    "git_diff": (lambda ctx: (ctx.git_diff_stats[0], ctx.git_diff_stats[1] + ctx.git_diff_stats[2])
+                 if ctx.git_diff_stats else None, True),
+    "git_untracked": (lambda ctx: ctx.git_untracked_count, True),
+    "pr_number": (lambda ctx: ctx.pr_number, True),
+    "uptime": (lambda ctx: _age_seconds(ctx.session.start_time), True),
+    "running_time": (lambda ctx: ctx.green_time, True),
+    "stalled_time": (lambda ctx: ctx.non_green_time, True),
+    "sleep_time": (lambda ctx: ctx.sleep_time, True),
+    "active_pct": (_sort_active_pct, True),
+    "token_count": (_if_stats(lambda ctx: ctx.claude_stats.total_tokens), True),
+    "joules": (_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd), True),
+    "cost": (_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd), True),
+    "budget": (lambda ctx: ctx.session.cost_budget_usd or None, True),
+    "subtree_cost": (lambda ctx: ctx.subtree_cost_usd or None, True),
+    "burn_rate": (_sort_burn_rate, True),
+    "context_usage": (_sort_context_usage, True),
+    "model": (_sort_model, False),
+    "provider": (lambda ctx: getattr(ctx.session, 'provider', 'web') or 'web', False),
+    "backend": (_sort_backend, False),
+    "median_work_time": (_if_stats(lambda ctx: ctx.median_work), True),
+    "cpu_pct": (lambda ctx: getattr(ctx.session, 'cpu_percent', 0.0) or 0.0, True),
+    "ram": (lambda ctx: getattr(ctx.session, 'rss_bytes', 0) or 0, True),
+    "subagent_count": (lambda ctx: ctx.live_subagent_count, True),
+    "bash_count": (lambda ctx: ctx.background_bash_count, True),
+    "child_count": (lambda ctx: ctx.child_count, True),
+    "permission_mode": (lambda ctx: ctx.session.permissiveness_mode, False),
+    "agent_teams": (lambda ctx: int(bool(ctx.session.agent_teams)), True),
+    "wrapper": (lambda ctx: render_wrapper_plain(ctx), False),
+    "loaded_skills": (lambda ctx: len(ctx.session.loaded_skills or []), True),
+    "available_skills": (lambda ctx: len(ctx.session.available_skills or []), True),
+    "enhanced_context": (lambda ctx: int(bool(ctx.session.enhanced_context_enabled)), True),
+    "human_count": (_if_stats(lambda ctx: max(0, ctx.claude_stats.interaction_count
+                                              - ctx.stats.steers_count)), True),
+    "robot_count": (lambda ctx: ctx.stats.steers_count, True),
+    "standing_orders": (lambda ctx: (not ctx.session.standing_orders_complete,)
+                        if ctx.session.standing_instructions else None, True),
+    "heartbeat": (_sort_heartbeat, False),
+    "oversight_countdown": (_sort_oversight, False),
+    "agent_value": (lambda ctx: ctx.session.agent_value, True),
+}
+
+for _col in SUMMARY_COLUMNS:
+    _col.description = COLUMN_HELP.get(_col.id, "")
+    if _col.id in COLUMN_SORT:
+        _col.sort_key, _col.sort_desc = COLUMN_SORT[_col.id]
+del _col
+
+COLUMNS_BY_ID: dict[str, SummaryColumn] = {c.id: c for c in SUMMARY_COLUMNS}
+
+
+def column_at(x: int, column_ids: List[str], column_widths: List[int]) -> Optional[str]:
+    """The column under cell offset `x` of an aligned row, or None.
+
+    `column_ids` and `column_widths` are parallel: the visible columns in
+    order and their widths from compute_column_widths(). Zero-width columns
+    are never hit. Used by the header row for hover and click (#477, #487).
+    """
+    if x < 0:
+        return None
+    edge = 0
+    for col_id, w in zip(column_ids, column_widths):
+        edge += w
+        if x < edge:
+            return col_id
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1707,6 +1913,8 @@ def align_summary_rows(cell_rows: "List[List[Text]]") -> "List[Text]":
 def render_header_cells(
     column_filter: Optional[Callable[[SummaryColumn], bool]] = None,
     column_widths: Optional["List[int]"] = None,
+    sort_column: Optional[str] = None,
+    sort_descending: bool = False,
 ) -> "Text":
     """Render a column header row using short header labels.
 
@@ -1714,6 +1922,8 @@ def render_header_cells(
         column_filter: Same filter used for data rows — ensures headers align.
         column_widths: Per-column widths from compute_column_widths(). Headers
             are truncated to fit but never contribute to width computation.
+        sort_column: Column the list is sorted by; its header is drawn bold
+            with ▼ (descending) or ▲ (ascending) at the end (#487).
 
     Returns:
         A single Text line with dim-styled abbreviated headers.
@@ -1727,18 +1937,25 @@ def render_header_cells(
             if not column_filter(col):
                 continue
         header = " " + col.header if col.header else ""
+        style = "dim"
+        if col.id == sort_column:
+            header = (header or " ") + ("▼" if sort_descending else "▲")
+            style = "bold"
         if column_widths and col_idx < len(column_widths):
             w = column_widths[col_idx]
-            # Truncate header to column width
+            # Truncate header to column width, keeping the sort arrow
             if cell_len(header) > w:
-                header = header[:w]
+                if col.id == sort_column and w > 0:
+                    header = header[:w - 1] + header[-1]
+                else:
+                    header = header[:w]
             # Pad to column width
             pad = w - cell_len(header)
-            line.append(header, style="dim")
+            line.append(header, style=style)
             if pad > 0:
                 line.append(" " * pad, style="dim")
         else:
-            line.append(header, style="dim")
+            line.append(header, style=style)
         col_idx += 1
     return line
 

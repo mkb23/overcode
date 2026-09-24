@@ -375,52 +375,73 @@ class TestToggleHideAsleep:
         assert "visible" in mock_tui.notify.call_args[0][0]
 
 
-class TestCycleSortMode:
-    """Test action_cycle_sort_mode method."""
+class TestSetSortMode:
+    """set_sort_mode: the shared entry point for header clicks, S and the palette (#487)."""
 
-    @patch("overcode.tui_logic.get_sort_mode_display_name", return_value="By Status")
-    @patch("overcode.tui_logic.cycle_sort_mode", return_value="by_status")
-    def test_cycles_sort_mode(self, mock_cycle, mock_display_name):
-        """Should cycle sort mode and refresh."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        widget1 = MagicMock()
-        widget1.session.id = "s1"
-
+    @staticmethod
+    def _tui(mode="alphabetical", reversed_=False):
         mock_tui = MagicMock()
         mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "alphabetical"
-        mock_tui.SORT_MODES = ["alphabetical", "by_status", "by_value"]
-        mock_tui.focused_session_index = 0
-        mock_tui._get_widgets_in_session_order.return_value = [widget1]
+        mock_tui._prefs.sort_mode = mode
+        mock_tui._prefs.sort_reversed = reversed_
+        return mock_tui
 
-        ViewActionsMixin.action_cycle_sort_mode(mock_tui)
-
-        mock_cycle.assert_called_once_with("alphabetical", ["alphabetical", "by_status", "by_value"])
-        assert mock_tui._prefs.sort_mode == "by_status"
-        mock_tui._save_prefs.assert_called_once()
-        mock_tui._sort_sessions.assert_called_once()
-        mock_tui.update_session_widgets.assert_called_once()
-        mock_tui._update_subtitle.assert_called_once()
-        assert "By Status" in mock_tui.notify.call_args[0][0]
-
-    @patch("overcode.tui_logic.get_sort_mode_display_name", return_value="By Status")
-    @patch("overcode.tui_logic.cycle_sort_mode", return_value="by_status")
-    def test_delegates_focus_tracking_to_update_session_widgets(self, mock_cycle, mock_display_name):
-        """Should delegate focus tracking to update_session_widgets (preserve_focus)."""
+    def test_new_mode_sets_natural_direction(self):
         from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui("alphabetical", reversed_=True)
+        ViewActionsMixin.set_sort_mode(tui, "col:cpu_pct")
+        assert tui._prefs.sort_mode == "col:cpu_pct"
+        assert tui._prefs.sort_reversed is False
+        tui._save_prefs.assert_called_once()
+        tui._sort_sessions.assert_called_once()
+        tui.update_session_widgets.assert_called_once()
+        tui._update_column_headers.assert_called_once()
+        assert tui.notify.call_args[0][0] == "Sort: CPU % ▼"
 
-        mock_tui = MagicMock()
-        mock_tui._prefs = MagicMock()
-        mock_tui._prefs.sort_mode = "alphabetical"
-        mock_tui.SORT_MODES = ["alphabetical", "by_status", "by_value"]
-        mock_tui.focused_session_index = 0
+    def test_same_mode_again_reverses(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui("col:cpu_pct")
+        ViewActionsMixin.set_sort_mode(tui, "col:cpu_pct")
+        assert tui._prefs.sort_reversed is True
+        assert tui.notify.call_args[0][0] == "Sort: CPU % ▲"
+        ViewActionsMixin.set_sort_mode(tui, "col:cpu_pct")
+        assert tui._prefs.sort_reversed is False
 
-        ViewActionsMixin.action_cycle_sort_mode(mock_tui)
+    def test_tree_has_no_direction(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui("by_tree")
+        ViewActionsMixin.set_sort_mode(tui, "by_tree")
+        assert tui._prefs.sort_reversed is False
+        assert tui.notify.call_args[0][0] == "Sort: By Tree (hierarchy)"
 
-        # Focus tracking is now handled internally by update_session_widgets
-        mock_tui.update_session_widgets.assert_called_once()
-        mock_tui._sort_sessions.assert_called_once()
+    def test_reverse_sort_action(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui("by_status")
+        tui.set_sort_mode = MagicMock()
+        ViewActionsMixin.action_reverse_sort(tui)
+        tui.set_sort_mode.assert_called_once_with("by_status")
+
+    def test_reverse_sort_in_tree_mode_just_notifies(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui("by_tree")
+        tui.set_sort_mode = MagicMock()
+        ViewActionsMixin.action_reverse_sort(tui)
+        tui.set_sort_mode.assert_not_called()
+        tui.notify.assert_called_once()
+
+    def test_choose_sort_opens_palette_on_sort(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui()
+        tui.tui_mode = "agents"
+        ViewActionsMixin.action_choose_sort(tui)
+        tui._open_palette.assert_called_once_with("sort")
+
+    def test_choose_sort_ignored_in_jobs_view(self):
+        from overcode.tui_actions.view import ViewActionsMixin
+        tui = self._tui()
+        tui.tui_mode = "jobs"
+        ViewActionsMixin.action_choose_sort(tui)
+        tui._open_palette.assert_not_called()
 
 
 class TestBaselineBack:

@@ -142,6 +142,26 @@ def _web_state(app: Any) -> StateView:
         return _toggle(None)
 
 
+def _sort_state(app: Any) -> StateView:
+    prefs = getattr(app, "_prefs", None)
+    if prefs is None:
+        return StateView(("?",), None)
+    from .tui_logic import get_sort_mode_display_name, sort_descending
+    label = get_sort_mode_display_name(prefs.sort_mode)
+    if prefs.sort_mode != "by_tree":
+        label += " ▼" if sort_descending(prefs.sort_mode, prefs.sort_reversed) else " ▲"
+    return StateView((label,), 0)
+
+
+def _sort_direction_state(app: Any) -> StateView:
+    prefs = getattr(app, "_prefs", None)
+    options = ("▲ asc", "▼ desc")
+    if prefs is None or prefs.sort_mode == "by_tree":
+        return StateView(options, None, "tree order" if prefs is not None else "")
+    from .tui_logic import sort_descending
+    return StateView(options, int(sort_descending(prefs.sort_mode, prefs.sort_reversed)))
+
+
 def _notifications_state(app: Any) -> StateView:
     options = ("off", "sound", "banner", "both")
     try:
@@ -226,10 +246,9 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _cycle(("short", "context", "orders", "note", "heartbeat", "command"),
                                 getattr(app, "summary_content_mode", None),
                                 app.SUMMARY_CONTENT_MODES)),
-    _C("cycle_sort_mode", "Sort agents", "Display", "order",
-       state=lambda app: _cycle(("name", "status", "value", "tree"),
-                                getattr(getattr(app, "_prefs", None), "sort_mode", None),
-                                app.SORT_MODES)),
+    _C("choose_sort", "Sort agents by…", "Display", "order column", state=_sort_state),
+    _C("reverse_sort", "Reverse sort", "Display", "order direction ascending descending flip",
+       state=_sort_direction_state),
     _C("toggle_cost_display", "Cost units", "Display", "tokens dollars joules energy money",
        state=_cost_state),
     _C("cycle_timeline_hours", "Timeline scope", "Display", "hours range window",
@@ -302,7 +321,84 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
 )
 
 # Commands the palette handles itself by switching list rather than closing.
-MODE_SWITCHES = {"jump_to_agent": "agents", "filter_by_tag": "tags"}
+MODE_SWITCHES = {"jump_to_agent": "agents", "filter_by_tag": "tags", "choose_sort": "sort"}
+
+
+# ---------------------------------------------------------------------------
+# Sort choices (#487)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SortChoice:
+    """One row of the sort picker (S): a column, or tree order.
+
+    `descending` is the direction choosing it would sort — the current
+    direction for the active row, since choosing it again reverses.
+    """
+    mode: str
+    name: str
+    header: str = ""
+    description: str = ""
+    active: bool = False
+    descending: bool = False
+
+
+TREE_CHOICE_DESCRIPTION = "Parents with their children indented beneath (X folds)"
+
+
+def sort_choices(sort_mode: str, sort_reversed: bool) -> List[SortChoice]:
+    """Every sortable column in list order, then tree order."""
+    from .summary_columns import SUMMARY_COLUMNS
+    from .tui_logic import sort_descending, sort_mode_for_column
+
+    choices: List[SortChoice] = []
+    for col in SUMMARY_COLUMNS:
+        if col.sort_key is None or col.cli_only:
+            continue
+        mode = sort_mode_for_column(col.id)
+        active = mode == sort_mode
+        choices.append(SortChoice(
+            mode=mode, name=col.name or col.id, header=col.header,
+            description=col.description, active=active,
+            descending=sort_descending(mode, sort_reversed) if active else col.sort_desc,
+        ))
+    choices.append(SortChoice(
+        mode="by_tree", name="Tree", description=TREE_CHOICE_DESCRIPTION,
+        active=sort_mode == "by_tree",
+    ))
+    return choices
+
+
+def filter_sort_choices(choices: Sequence[SortChoice], query: str) -> List[Tuple[SortChoice, Tuple[int, ...]]]:
+    """Choices matching `query`, best first, with name positions to light.
+
+    Each word must match the name (fuzzily, as commands do) or appear in
+    the header code or description; an exact header ("cpu", "tok") ranks
+    first.
+    """
+    query = query.strip()
+    if not query:
+        return [(c, ()) for c in choices]
+    words = query.split()
+    scored = []
+    for i, c in enumerate(choices):
+        total, positions = 0, set()
+        for w in words:
+            m = fuzzy_match(w, c.name)
+            if c.header and w.lower() == c.header.lower():
+                total += 2000
+            elif m is not None:
+                total += m[0]
+                positions.update(m[1])
+            elif w.lower() in f"{c.header} {c.description}".lower():
+                total += 300
+            else:
+                total = None
+                break
+        if total is not None:
+            scored.append((-total, i, c, tuple(sorted(positions))))
+    scored.sort(key=lambda t: (t[0], t[1]))
+    return [(c, pos) for _, _, c, pos in scored]
 
 
 # ---------------------------------------------------------------------------

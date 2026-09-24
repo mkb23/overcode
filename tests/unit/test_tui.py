@@ -2002,25 +2002,6 @@ class TestTuiLogicAdditional:
         from overcode.tui_logic import get_sort_mode_display_name
         assert get_sort_mode_display_name("custom_mode") == "custom_mode"
 
-    def test_cycle_sort_mode_normal(self):
-        """Should cycle to next mode."""
-        from overcode.tui_logic import cycle_sort_mode
-        modes = ["a", "b", "c"]
-        assert cycle_sort_mode("a", modes) == "b"
-        assert cycle_sort_mode("b", modes) == "c"
-        assert cycle_sort_mode("c", modes) == "a"  # wraps
-
-    def test_cycle_sort_mode_unknown_current(self):
-        """Should go to first mode if current is unknown."""
-        from overcode.tui_logic import cycle_sort_mode
-        modes = ["a", "b", "c"]
-        assert cycle_sort_mode("unknown", modes) == "a"
-
-    def test_cycle_sort_mode_empty_list(self):
-        """Should return current mode if list is empty."""
-        from overcode.tui_logic import cycle_sort_mode
-        assert cycle_sort_mode("current", []) == "current"
-
 
 class TestComputeTreeMetadata:
     """Additional tests for compute_tree_metadata."""
@@ -2367,6 +2348,7 @@ class TestSortSessionsKeepsSelection:
         tui.focused_session_index = focused_index
         tui._suppress_focus_watcher = False
         tui._prefs.sort_mode = sort_mode
+        tui._prefs.sort_reversed = False
         widgets = [SimpleNamespace(session=s) for s in sessions]
 
         def widgets_in_order():
@@ -2374,7 +2356,8 @@ class TestSortSessionsKeepsSelection:
             return sorted(widgets, key=lambda w: order.get(w.session.id, 999))
 
         tui._get_widgets_in_session_order = widgets_in_order
-        for name in ("_selected_session_id", "_reanchor_selection", "_sort_sessions"):
+        for name in ("_selected_session_id", "_reanchor_selection", "_sort_sessions",
+                     "_column_sort_values"):
             setattr(tui, name, MethodType(getattr(SupervisorTUI, name), tui))
         return tui
 
@@ -2420,6 +2403,33 @@ class TestSortSessionsKeepsSelection:
         tui.sessions = [alpha, bravo]
         tui._sort_sessions(selected_id="id-charlie")
         assert tui.focused_session_index == 2
+
+    def test_column_sort_moves_the_highlight_with_the_agent(self):
+        """#487 column sorts (e.g. CPU) re-order on live values; the
+        highlight must follow the agent exactly as for by_status (#471)."""
+        alpha, bravo, charlie = self._session("alpha"), self._session("bravo"), self._session("charlie")
+        tui = self._tui([alpha, bravo, charlie], focused_index=0, sort_mode="col:cpu_pct")
+        cpu = {"id-alpha": 90.0, "id-bravo": 50.0, "id-charlie": 10.0}
+        tui._column_sort_values = lambda mode: dict(cpu)
+        tui._sort_sessions()
+        assert [s.name for s in tui.sessions] == ["alpha", "bravo", "charlie"]
+        assert tui._selected_session_id() == "id-alpha"
+        # alpha goes idle, charlie spikes: alpha drops to the bottom row
+        cpu.update({"id-alpha": 1.0, "id-charlie": 200.0})
+        tui._sort_sessions()
+        assert [s.name for s in tui.sessions] == ["charlie", "bravo", "alpha"]
+        assert tui.focused_session_index == 2
+        assert tui._selected_session_id() == "id-alpha"
+
+    def test_reversing_a_column_sort_keeps_the_agent(self):
+        alpha, bravo = self._session("alpha"), self._session("bravo")
+        tui = self._tui([alpha, bravo], focused_index=0, sort_mode="col:cpu_pct")
+        tui._column_sort_values = lambda mode: {"id-alpha": 90.0, "id-bravo": 10.0}
+        tui._sort_sessions()
+        tui._prefs.sort_reversed = True
+        tui._sort_sessions()
+        assert [s.name for s in tui.sessions] == ["bravo", "alpha"]
+        assert tui._selected_session_id() == "id-alpha"
 
     def test_alphabetical_is_unaffected(self):
         alpha, bravo = self._session("alpha"), self._session("bravo")

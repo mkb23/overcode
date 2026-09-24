@@ -20,7 +20,10 @@ from overcode.tui_logic import (
     sort_sessions,
     filter_visible_sessions,
     get_sort_mode_display_name,
-    cycle_sort_mode,
+    sort_sessions_by_column,
+    sort_mode_for_column,
+    sort_column_for_mode,
+    sort_descending,
     calculate_spin_stats,
     calculate_mean_spin_from_history,
     calculate_green_percentage,
@@ -403,28 +406,72 @@ class TestGetSortModeDisplayName:
         assert get_sort_mode_display_name("custom") == "custom"
 
 
-class TestCycleSortMode:
-    """Tests for sort mode cycling."""
+class TestColumnSort:
+    """Sorting by any summary column (#487)."""
 
-    def test_cycles_to_next(self):
-        """Should cycle to next mode."""
-        modes = ["a", "b", "c"]
-        assert cycle_sort_mode("a", modes) == "b"
-        assert cycle_sort_mode("b", modes) == "c"
+    @staticmethod
+    def _s(name, parent=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(id=name, name=name, parent_session_id=parent)
 
-    def test_wraps_around(self):
-        """Should wrap around to first mode."""
-        modes = ["a", "b", "c"]
-        assert cycle_sort_mode("c", modes) == "a"
+    def test_descending_with_unknowns_last(self):
+        a, b, c, d = (self._s(n) for n in "abcd")
+        values = {"a": 5, "b": None, "c": 50}  # d missing
+        out = sort_sessions_by_column([a, b, c, d], values, descending=True)
+        assert [s.name for s in out] == ["c", "a", "b", "d"]
 
-    def test_unknown_mode_starts_at_first(self):
-        """Unknown current mode should start at first."""
-        modes = ["a", "b", "c"]
-        assert cycle_sort_mode("unknown", modes) == "a"
+    def test_ascending_keeps_unknowns_last(self):
+        a, b, c = (self._s(n) for n in "abc")
+        out = sort_sessions_by_column([a, b, c], {"a": 5, "c": 1}, descending=False)
+        assert [s.name for s in out] == ["c", "a", "b"]
 
-    def test_empty_modes_returns_current(self):
-        """Empty modes list should return current mode."""
-        assert cycle_sort_mode("current", []) == "current"
+    def test_ties_keep_name_order_either_way(self):
+        x, y, z = self._s("x"), self._s("y"), self._s("z")
+        values = {"x": 1, "y": 1, "z": 2}
+        assert [s.name for s in sort_sessions_by_column([z, y, x], values, True)] == ["z", "x", "y"]
+        assert [s.name for s in sort_sessions_by_column([z, y, x], values, False)] == ["x", "y", "z"]
+
+    def test_children_stay_under_parent(self):
+        p1, p2 = self._s("p1"), self._s("p2")
+        k1, k2 = self._s("k1", parent="p1"), self._s("k2", parent="p1")
+        values = {"p1": 1, "p2": 9, "k1": 3, "k2": 7}
+        out = sort_sessions_by_column([p1, k1, k2, p2], values, descending=True)
+        assert [s.name for s in out] == ["p2", "p1", "k2", "k1"]
+
+    def test_mixed_types_do_not_crash(self):
+        a, b = self._s("a"), self._s("b")
+        out = sort_sessions_by_column([a, b], {"a": "x", "b": 3}, descending=False)
+        assert {s.name for s in out} == {"a", "b"}
+
+    def test_sort_sessions_dispatches_column_mode(self):
+        a, b = self._s("a"), self._s("b")
+        out = sort_sessions([a, b], "col:cpu_pct", values={"a": 1.0, "b": 90.0})
+        assert [s.name for s in out] == ["b", "a"]  # CPU is largest-first
+        out = sort_sessions([a, b], "col:cpu_pct", reverse=True, values={"a": 1.0, "b": 90.0})
+        assert [s.name for s in out] == ["a", "b"]
+
+    def test_presets_reverse(self):
+        a, b = self._s("alpha"), self._s("bravo")
+        assert [s.name for s in sort_sessions([a, b], "alphabetical", reverse=True)] == ["bravo", "alpha"]
+
+    def test_mode_mapping(self):
+        assert sort_mode_for_column("agent_name") == "alphabetical"
+        assert sort_mode_for_column("status_symbol") == "by_status"
+        assert sort_mode_for_column("agent_value") == "by_value"
+        assert sort_mode_for_column("cpu_pct") == "col:cpu_pct"
+        assert sort_column_for_mode("col:cpu_pct") == "cpu_pct"
+        assert sort_column_for_mode("by_status") == "status_symbol"
+        assert sort_column_for_mode("by_tree") is None
+
+    def test_descending_follows_column_and_reverse(self):
+        assert sort_descending("col:cpu_pct", False) is True
+        assert sort_descending("col:cpu_pct", True) is False
+        assert sort_descending("alphabetical", False) is False
+        assert sort_descending("by_value", False) is True
+        assert sort_descending("by_tree", True) is False
+
+    def test_display_name_for_column_mode(self):
+        assert get_sort_mode_display_name("col:cpu_pct") == "CPU %"
 
 
 class TestCalculateSpinStats:

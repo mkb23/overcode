@@ -811,7 +811,8 @@ class TUIPreferences:
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
     show_done: bool = False  # show "done" child agents (#244)
-    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value (#61)
+    sort_mode: str = "alphabetical"  # alphabetical, by_status, by_value, by_tree (#61), col:<id> (#487)
+    sort_reversed: bool = False  # flip the sort column's natural direction (#487)
     summary_content_mode: str = "ai_short"  # ai_short, ai_long, orders, annotation, heartbeat (#98, #171)
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)

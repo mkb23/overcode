@@ -247,25 +247,49 @@ class ViewActionsMixin:
         else:
             self.notify(f"Sleeping agents visible ({asleep_count})", severity="information")
 
-    def action_cycle_sort_mode(self) -> None:
-        """Cycle through sort modes (#61)."""
-        from ..tui_logic import cycle_sort_mode, get_sort_mode_display_name
+    def action_choose_sort(self) -> None:
+        """Open the palette on sort choices: any column, or tree (#61, #487)."""
+        if self.tui_mode == "jobs":
+            return
+        self._open_palette("sort")
 
-        # Use extracted logic for cycling
-        self._prefs.sort_mode = cycle_sort_mode(self._prefs.sort_mode, self.SORT_MODES)
+    def action_reverse_sort(self) -> None:
+        """Flip the current sort's direction (#487)."""
+        if self._prefs.sort_mode == "by_tree":
+            self.notify("Tree order has no direction", severity="information")
+            return
+        self.set_sort_mode(self._prefs.sort_mode)
+
+    def set_sort_mode(self, mode: str) -> None:
+        """Sort by `mode`; choosing the current sort again reverses it.
+
+        The one entry point for header clicks, the S picker and the palette
+        (#487), so all three agree on what "again" means.
+        """
+        from ..tui_logic import get_sort_mode_display_name, sort_descending
+
+        if mode == self._prefs.sort_mode and mode != "by_tree":
+            self._prefs.sort_reversed = not self._prefs.sort_reversed
+        else:
+            self._prefs.sort_mode = mode
+            self._prefs.sort_reversed = False
         self._save_prefs()
 
         # Re-sort and refresh (update_session_widgets handles focus preservation)
         self._sort_sessions()
         self.update_session_widgets()
+        self._update_column_headers()
         self._update_subtitle()
 
-        self.notify(f"Sort: {get_sort_mode_display_name(self._prefs.sort_mode)}", severity="information")
+        label = get_sort_mode_display_name(self._prefs.sort_mode)
+        if mode != "by_tree":
+            label += " ▼" if sort_descending(mode, self._prefs.sort_reversed) else " ▲"
+        self.notify(f"Sort: {label}", severity="information")
 
     def action_toggle_collapse_children(self) -> None:
         """Toggle collapse/expand children for the focused parent in tree view (#244)."""
         if self._prefs.sort_mode != "by_tree":
-            self.notify("Collapse only works in tree sort mode (press S)", severity="warning")
+            self.notify("Collapse only works in tree sort mode (press S, pick Tree)", severity="warning")
             return
 
         focused_widget = self._get_focused_widget()

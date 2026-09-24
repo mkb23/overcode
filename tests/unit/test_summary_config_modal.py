@@ -368,7 +368,7 @@ class TestTUIHeaderSync:
 
         captured = {}
 
-        def fake_render_header_cells(column_filter, column_widths):
+        def fake_render_header_cells(column_filter, column_widths, **kwargs):
             from overcode.summary_columns import SUMMARY_COLUMNS
             captured["visible"] = [c.id for c in SUMMARY_COLUMNS if column_filter(c)]
             from rich.text import Text

@@ -182,11 +182,33 @@ class SummaryConfigModal(ModalBase):
 
         return None
 
+    _HELP_LINES = 2
+
+    def _help_lines(self) -> List[str]:
+        """The cursor column's description, wrapped to the grid's width."""
+        import textwrap
+        desc = ""
+        if self._flat_rows:
+            row_type, row_id = self._flat_rows[self.cursor_pos]
+            if row_type == "column":
+                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
+                if col is not None:
+                    head = f"{col.header}: " if col.header else ""
+                    desc = head + col.description
+        width = 2 * self._LEFT_COL_WIDTH
+        lines = textwrap.wrap(desc, width, max_lines=self._HELP_LINES, placeholder="…")
+        return lines + [""] * (self._HELP_LINES - len(lines))
+
     def render(self) -> Text:
         """Render the modal content in two side-by-side columns (#443)."""
         text = Text()
         text.append(f"Column Configuration ({self.level})\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  a:accept  q:cancel  r:reset\n\n", style="dim")
+        text.append("j/k:move  space:toggle  a:accept  q:cancel  r:reset\n", style="dim")
+        # What the highlighted column means (#477) — the keyboard route to
+        # the header tooltips. Fixed at two lines so the grid doesn't jump.
+        for line in self._help_lines():
+            text.append(line + "\n", style="italic")
+        text.append("\n")
 
         breakpoint = self._column_breakpoint
         left_rows = [self._render_row(i) for i in range(breakpoint)]

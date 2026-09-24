@@ -116,7 +116,7 @@ class TestRank:
         assert _titles("sum")[:2] == ["Summary detail", "Summary content"]
 
     def test_exact_key_ranks_first_case_sensitively(self):
-        assert _titles("S")[0] == "Sort agents"
+        assert _titles("S")[0] == "Sort agents by…"
         assert _titles("s")[0] == "Summary detail"
 
     def test_symbol_keys_find_their_command(self):

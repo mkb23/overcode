@@ -47,7 +47,7 @@ class HelpOverlay(Static):
         section("DISPLAY")
         row("s", "Summary detail  (low → med → high → full)")
         row("l", "Content  (short → ctx → orders → note → heartbeat)")
-        row("S", "Sort  (alpha → status → value → tree)")
+        row("S", "Sort by any column or tree  (or click a header)")
         row("$", "Cycle tokens / $ / joules")
         row("C", "Column config", "L", "Column headers")
         row("t", "Timeline", "d", "Daemon panel")

@@ -4,7 +4,9 @@ Command palette — one fuzzy picker for agents, tags and commands (#482).
 Ctrl+P opens it on agents (as the old jump modal did, #420), `/` opens it
 on commands, and `>` typed into an empty agent query switches to commands
 the way VSCode's quick-open does; backspace past the `>` switches back.
-`T` opens it on tags (#357).
+`T` opens it on tags (#357), and `S` on sort choices (#487): every
+sortable column plus tree order, where choosing the current sort again
+reverses it.
 
 Command rows show the command, the states it cycles between with the
 current one lit, and its key, so the palette doubles as a way to learn
@@ -26,8 +28,8 @@ from textual import events
 from textual.message import Message
 
 from ..command_palette import (
-    CATEGORIES, COMMANDS, MODE_SWITCHES, OFF_ON, Match, PaletteCommand, StateView,
-    rank_commands,
+    CATEGORIES, COMMANDS, MODE_SWITCHES, OFF_ON, Match, PaletteCommand, SortChoice,
+    StateView, filter_sort_choices, rank_commands,
 )
 from .jump_modal import JumpCandidate, filter_candidates
 from .modal_base import ModalBase
@@ -49,8 +51,10 @@ PLACEHOLDERS = {
     "commands": "search commands, or type a key to see what it does",
     "agents": "filter agents by name, repo or branch",
     "tags": "filter tags",
+    "sort": "filter columns by name, header or meaning",
 }
-TITLES = {"commands": "Commands", "agents": "Jump to agent", "tags": "Filter by tag"}
+TITLES = {"commands": "Commands", "agents": "Jump to agent", "tags": "Filter by tag",
+          "sort": "Sort agents by"}
 MAX_ROWS = 16      # tallest the list gets; shorter terminals get fewer
 MAX_WIDTH = 88
 RECENT_SHOWN = 3
@@ -62,7 +66,8 @@ class _Row:
     header: str = ""
     match: Optional[Match] = None              # commands mode
     cand: Optional[JumpCandidate] = None       # agents / tags mode
-    positions: Tuple[int, ...] = ()            # highlighted chars of cand.name
+    sort: Optional[SortChoice] = None          # sort mode
+    positions: Tuple[int, ...] = ()            # highlighted chars of cand.name / sort.name
 
 
 class CommandPalette(ModalBase):
@@ -88,6 +93,13 @@ class CommandPalette(ModalBase):
             super().__init__()
             self.tag = tag
 
+    class SortChosen(Message):
+        """A sort was picked (#487); the app reverses it if already current."""
+        def __init__(self, mode: str, keep_open: bool) -> None:
+            super().__init__()
+            self.mode = mode
+            self.keep_open = keep_open
+
     class Closed(Message):
         pass
 
@@ -97,6 +109,7 @@ class CommandPalette(ModalBase):
         self.text: str = ""  # what the user typed (Widget.query is taken)
         self._agents: List[JumpCandidate] = []
         self._tags: List[JumpCandidate] = []
+        self._sorts: List[SortChoice] = []
         self._keymap: Dict[str, List[str]] = {}
         self._recent: List[str] = []
         self._rows: List[_Row] = []
@@ -116,12 +129,14 @@ class CommandPalette(ModalBase):
         *,
         agents: Sequence[JumpCandidate] = (),
         tags: Sequence[JumpCandidate] = (),
+        sorts: Sequence[SortChoice] = (),
         keymap: Optional[Dict[str, List[str]]] = None,
         recent: Sequence[str] = (),
         app_ref: Optional[Any] = None,
     ) -> None:
         self._agents = list(agents)
         self._tags = list(tags)
+        self._sorts = list(sorts)
         self._keymap = dict(keymap or {})
         self._recent = list(recent)
         self._title_width = max(cell_len(c.title) for c in COMMANDS)
@@ -131,7 +146,7 @@ class CommandPalette(ModalBase):
         self._save_focus(app_ref)
         self._switch(mode)
         self._show()
-        self._select(0)
+        self._select(self._default_index())
 
     def relayout(self) -> None:
         """Size and centre the palette for the current terminal."""
@@ -147,11 +162,25 @@ class CommandPalette(ModalBase):
         self.styles.offset = (max(0, (screen_w - width) // 2), top)
         self._fit_height()
 
+    def update_sorts(self, sorts: Sequence[SortChoice]) -> None:
+        """New sort choices after one was run with the palette kept open,
+        so the active row and its arrow move; keeps the query and the
+        selected row."""
+        self._sorts = list(sorts)
+        if self.mode == "sort":
+            index = self.selected_index
+            self._recompute()
+            self._select(index)
+
+    @property
+    def _has_tip(self) -> bool:
+        return self.mode in ("commands", "sort")
+
     @property
     def _chrome(self) -> int:
         """Rows around the list: border, query, rule — plus rule and tip
-        line in commands mode."""
-        return 6 if self.mode == "commands" else 4
+        line in commands and sort mode."""
+        return 6 if self._has_tip else 4
 
     def _fit_height(self) -> None:
         """Commands fill the palette; agents and tags take only the rows
@@ -159,6 +188,8 @@ class CommandPalette(ModalBase):
         palette keeps still while you type."""
         if self.mode == "commands":
             need = self._max_list_height
+        elif self.mode == "sort":
+            need = len(self._sorts)
         else:
             need = len(self._agents if self.mode == "agents" else self._tags)
         self._list_height = max(3, min(self._max_list_height, need))
@@ -176,6 +207,7 @@ class CommandPalette(ModalBase):
             "commands": "↵ run · esc close",
             "agents": "↵ jump · > commands · esc close",
             "tags": "↵ filter · > commands · esc close",
+            "sort": "> commands · esc close",
         }[mode]
         self._recompute()
         self.relayout()
@@ -188,6 +220,8 @@ class CommandPalette(ModalBase):
                 rows = [_Row(match=m) for m in matches]
             else:
                 rows = self._grouped(matches)
+        elif self.mode == "sort":
+            rows = [_Row(sort=c, positions=pos) for c, pos in filter_sort_choices(self._sorts, self.text)]
         else:
             cands = self._agents if self.mode == "agents" else self._tags
             q = self.text.lower()
@@ -198,7 +232,17 @@ class CommandPalette(ModalBase):
         self._rows = rows
         self._items = [i for i, r in enumerate(rows) if not r.header]
         self._scroll = 0
-        self._select(0)
+        self._select(self._default_index())
+
+    def _default_index(self) -> int:
+        """Where the selection starts: the current sort in the unfiltered
+        sort list, so Enter reverses it and arrows move from it; else the
+        top (best) row."""
+        if self.mode == "sort" and not self.text.strip():
+            for n, i in enumerate(self._items):
+                if self._rows[i].sort is not None and self._rows[i].sort.active:
+                    return n
+        return 0
 
     def _grouped(self, matches: List[Match]) -> List[_Row]:
         by_action = {m.command.action: m for m in matches}
@@ -287,6 +331,11 @@ class CommandPalette(ModalBase):
         row = self.selected_row
         if row is None:
             return
+        if row.sort is not None:
+            if not keep_open:
+                self._hide()
+            self.post_message(self.SortChosen(row.sort.mode, keep_open))
+            return
         if row.cand is not None:
             if self.mode == "agents":
                 self._hide()
@@ -298,7 +347,7 @@ class CommandPalette(ModalBase):
         cmd = row.match.command
         if cmd.action in MODE_SWITCHES:
             target = MODE_SWITCHES[cmd.action]
-            if (self._agents if target == "agents" else self._tags):
+            if {"agents": self._agents, "tags": self._tags, "sort": self._sorts}[target]:
                 self._switch(target)
                 return
         keep_open = keep_open and cmd.repeatable
@@ -327,14 +376,15 @@ class CommandPalette(ModalBase):
         if not self._rows:
             empty = {"commands": "No matching commands",
                      "agents": "No matching agents" if self.text else "No agents",
-                     "tags": "No matching tags"}[self.mode]
+                     "tags": "No matching tags",
+                     "sort": "No matching columns"}[self.mode]
             out.append(f"  {empty}\n", style=f"italic {MUTED}")
             visible = [None]
         out.append("\n" * (self._list_height - len(visible)))
 
-        if self.mode == "commands":
+        if self._has_tip:
             out.append("─" * w + "\n", style=MUTED)
-            out.append_text(self._tip_line(w))
+            out.append_text(self._sort_tip_line(w) if self.mode == "sort" else self._tip_line(w))
         return out
 
     def _query_line(self, w: int) -> Text:
@@ -346,7 +396,8 @@ class CommandPalette(ModalBase):
         if not self.text:
             line.append(PLACEHOLDERS[self.mode], style=f"italic {STATE_OTHER}")
         n = len(self._items)
-        total = {"commands": len(COMMANDS), "agents": len(self._agents), "tags": len(self._tags)}[self.mode]
+        total = {"commands": len(COMMANDS), "agents": len(self._agents), "tags": len(self._tags),
+                 "sort": len(self._sorts)}[self.mode]
         count = f"{n}/{total}" if self.text else f"{total}"
         right = Text(count, style=MUTED)
         return _spread(line, right, w)
@@ -361,6 +412,8 @@ class CommandPalette(ModalBase):
         line.append("▌" if selected else " ", style=f"bold {ACCENT}")
         if row.cand is not None:
             return self._cand_line(line, row, selected, w)
+        if row.sort is not None:
+            return self._sort_line(line, row, selected, w)
 
         cmd = row.match.command
         title = _highlight(cmd.title, row.match.positions, "bold" if selected else "")
@@ -384,6 +437,47 @@ class CommandPalette(ModalBase):
             line.append("  " + " · ".join(meta), style=MUTED)
         return _pad(_fit(line, w), w)
 
+    def _sort_line(self, line: Text, row: _Row, selected: bool, w: int) -> Text:
+        """Name, header code, direction and meaning; the current sort is
+        lit and says so."""
+        c = row.sort
+        line.append_text(_fit(_highlight(c.name, row.positions, "bold" if selected else ""), 20))
+        line.append_text(_fit(Text(c.header, style=KEY), 5))
+        if c.mode == "by_tree":
+            arrow = " "
+        else:
+            arrow = "▼" if c.descending else "▲"
+        if c.active:
+            line.append(f" {arrow} sorted ", style=STATE_CUR)
+        else:
+            line.append(f" {arrow}        ", style=STATE_OTHER)
+        line.append_text(Text(c.description, style=MUTED))
+        return _pad(_fit(line, w), w)
+
+    def _sort_tip_line(self, w: int) -> Text:
+        row = self.selected_row
+        tip = Text()
+        if row is None or row.sort is None:
+            tip.append("Or click a column header to sort by it", style=MUTED)
+            return _pad(_fit(tip, w), w)
+        c = row.sort
+        if c.mode == "by_tree":
+            tip.append("↵ ", style="bold")
+            tip.append("tree order" + (" (current)" if c.active else ""), style=MUTED)
+        elif c.active:
+            flip = "▲ ascending" if c.descending else "▼ descending"
+            tip.append("↵ ", style="bold")
+            tip.append(f"reverse to {flip}", style=MUTED)
+        else:
+            way = "▼ largest first" if c.descending else "▲ smallest / A→Z first"
+            tip.append("↵ ", style="bold")
+            tip.append(f"sort {way}", style=MUTED)
+        tip.append("  · or click its header", style=MUTED)
+        hints = Text()
+        hints.append("⇥", style="bold")
+        hints.append(" keep open", style=MUTED)
+        return _spread(_fit(tip, w - cell_len(hints.plain) - 2), hints, w)
+
     def _tip_line(self, w: int) -> Text:
         row = self.selected_row
         tip = Text()
@@ -398,7 +492,8 @@ class CommandPalette(ModalBase):
             tip.append("press ", style=MUTED)
             tip.append_text(_keycaps(keys))
             if cmd.action in MODE_SWITCHES:
-                tip.append(f"  lists {MODE_SWITCHES[cmd.action]} here", style=MUTED)
+                listed = {"sort": "sort choices"}.get(MODE_SWITCHES[cmd.action], MODE_SWITCHES[cmd.action])
+                tip.append(f"  lists {listed} here", style=MUTED)
         else:
             tip.append("palette only", style=f"italic {MUTED}")
         state = self._state(cmd) if cmd.state is not None else None

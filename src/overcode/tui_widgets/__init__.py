@@ -26,6 +26,7 @@ from .instruction_history_modal import InstructionHistoryModal
 from .new_agent_modal import NewAgentModal
 from .jump_modal import JumpCandidate
 from .command_palette import CommandPalette
+from .column_header import ColumnHeader
 from .rename_agent_modal import RenameAgentModal
 from .job_summary import JobSummary
 
@@ -49,6 +50,7 @@ __all__ = [
     "InstructionHistoryModal",
     "NewAgentModal",
     "CommandPalette",
+    "ColumnHeader",
     "JumpCandidate",
     "RenameAgentModal",
     "JobSummary",
