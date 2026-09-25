@@ -572,6 +572,23 @@ def _kill_split_window(window_id: str) -> None:
     _tmux("kill-window", "-t", window_id)
 
 
+def _unzoom_split_window(oc_session: str) -> None:
+    """Clear a leftover pane zoom on the split window so both panes show.
+
+    The TUI zooms its pane to hide the bottom terminal while a dialog or
+    sister view is open (``tui.py`` ``_dialog_will_open``). If the monitor
+    exits or is killed while zoomed — ``q`` from a dialog, a crash, or the
+    ``respawn-pane -k`` relaunch below — tmux keeps the zoom, and the
+    relaunched split shows only the monitor: the integrated terminal pane is
+    still there but hidden. ``resize-pane -Z`` toggles, so only run it when
+    the window really is zoomed.
+    """
+    target = f"{oc_session}:{SPLIT_WINDOW_NAME}"
+    zoomed = _tmux_output("display-message", "-p", "-t", target, "#{window_zoomed_flag}")
+    if zoomed == "1":
+        _tmux("resize-pane", "-Z", "-t", target)
+
+
 def _find_existing_split_window(tmux_session: str) -> str | None:
     """Find the split window in a tmux session, if it exists.
 
@@ -815,6 +832,10 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     existing = _find_existing_split_window(oc_session)
     if existing:
         if _is_split_window_healthy(existing):
+            # Whatever path we take below, the relaunch must show both panes;
+            # a zoom left behind by the previous monitor would hide the
+            # bottom terminal pane.
+            _unzoom_split_window(oc_session)
             if in_tmux:
                 # Move the caller's own client to the split window — but
                 # never the bottom pane's nested client. Switching that one

@@ -4,7 +4,7 @@ The full `overcode tmux` command reaches deep into tmux state and can only
 be exercised in an integration test. These tests target the helpers that
 can be unit-tested without a live tmux server: the setup lock, the toggle-
 key picker, the linked-session name derivation, the overcode-bin discovery,
-the split-window parsers, and the resize-ratio cycle.
+the split-window parsers, the split-window unzoom, and the resize-ratio cycle.
 """
 
 import os
@@ -591,6 +591,50 @@ class TestScrollKeybindings:
         assert failures == []
         for key in ("WheelUpPane", "WheelDownPane", "PPage", "NPage"):
             assert f"-T root {key}" in listed.replace("  ", " ") or key in listed
+
+
+class TestUnzoomSplitWindow:
+    """Relaunching onto an existing split must clear a leftover pane zoom.
+
+    The TUI zooms its pane while a dialog or sister view is open; if the
+    monitor exits (or is respawned) in that state the zoom survives and the
+    relaunched split shows only the monitor, hiding the bottom terminal pane.
+    """
+
+    @staticmethod
+    def _fake_tmux(zoomed_flag: str):
+        calls = []
+
+        def _tmux(*args, capture=True):
+            calls.append(args)
+            stdout = f"{zoomed_flag}\n" if args[0] == "display-message" else ""
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
+
+        return _tmux, calls
+
+    def test_unzooms_zoomed_split_window(self, monkeypatch):
+        fake, calls = self._fake_tmux("1")
+        monkeypatch.setattr(split_mod, "_tmux", fake)
+        split_mod._unzoom_split_window("overcode")
+        resizes = [c for c in calls if c[0] == "resize-pane"]
+        assert len(resizes) == 1
+        assert "-Z" in resizes[0]
+        assert f"overcode:{split_mod.SPLIT_WINDOW_NAME}" in resizes[0]
+
+    def test_leaves_unzoomed_window_alone(self, monkeypatch):
+        # resize-pane -Z toggles, so running it blindly would zoom a healthy
+        # split and cause the very bug this guards against.
+        fake, calls = self._fake_tmux("0")
+        monkeypatch.setattr(split_mod, "_tmux", fake)
+        split_mod._unzoom_split_window("overcode")
+        assert not [c for c in calls if c[0] == "resize-pane"]
+
+    def test_tolerates_missing_window(self, monkeypatch):
+        # display-message fails (empty stdout) when the window is gone.
+        def _tmux(*args, capture=True):
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="")
+        monkeypatch.setattr(split_mod, "_tmux", _tmux)
+        split_mod._unzoom_split_window("overcode")  # must not raise
 
 
 class TestRelaunchSwitchesCallerClient:

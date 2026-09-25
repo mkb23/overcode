@@ -1561,6 +1561,13 @@ class SupervisorTUI(
             return
         if self.tui_mode == "jobs":
             return
+        self._unzoom_tui_pane()
+
+    def _unzoom_tui_pane(self) -> None:
+        """Clear the tmux zoom on the TUI pane, if set, revealing the bottom pane.
+
+        ``resize-pane -Z`` toggles, so check ``window_zoomed_flag`` first.
+        """
         import subprocess
         target = self._tui_pane_target()
         info = subprocess.run(
@@ -1601,17 +1608,7 @@ class SupervisorTUI(
         self.preview_visible = False
         # Unzoom — but only if no dialog is holding the zoom open
         if not self._any_dialog_visible():
-            import subprocess
-            target = self._tui_pane_target()
-            info = subprocess.run(
-                [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
-                capture_output=True, text=True,
-            )
-            if info.returncode == 0 and info.stdout.strip() == "1":
-                subprocess.run(
-                    [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
-                    capture_output=True,
-                )
+            self._unzoom_tui_pane()
 
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
@@ -4891,6 +4888,15 @@ class SupervisorTUI(
     def on_unmount(self) -> None:
         """Clean up terminal state on exit"""
         import sys
+        # A dialog/sister-view zoom must not outlive the viewer. After exit
+        # the pane holds at a relaunch prompt (cli/split.py _hold_wrapper) or
+        # is respawned by `overcode tmux`; a leftover zoom would keep the
+        # bottom terminal pane hidden behind the monitor.
+        if self.compact:
+            try:
+                self._unzoom_tui_pane()
+            except Exception:
+                pass
         # Clean up SSH proxy windows
         self._cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)
