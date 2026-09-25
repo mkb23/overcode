@@ -261,6 +261,7 @@ class ClaudeStatsReader:
         current_context = 0
         detected_model = None
         detected_provider = None
+        detected_effort = None
         all_work_times: List[float] = []
 
         for sid in (session.agent_session_ids or [active_sid]):
@@ -289,12 +290,16 @@ class ClaudeStatsReader:
                     detected_model = usage["model"]
                 if usage["provider"]:
                     detected_provider = usage["provider"]
+                if usage.get("effort"):
+                    detected_effort = usage.get("effort")
             elif usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
             if usage["model"] and not detected_model:
                 detected_model = usage["model"]
             if usage["provider"] and not detected_provider:
                 detected_provider = usage["provider"]
+            if usage.get("effort") and not detected_effort:
+                detected_effort = usage.get("effort")
 
         if total_input + total_output == 0:
             return None
@@ -309,6 +314,7 @@ class ClaudeStatsReader:
             current_context_tokens=current_context,
             model=detected_model,
             provider=detected_provider,
+            effort=detected_effort,
         )
 
 

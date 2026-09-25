@@ -225,6 +225,10 @@ class ColumnContext:
     model: str = ""  # Model short name or full name
     any_has_model: bool = False  # True if any agent has a model set
 
+    # Reasoning effort (#497)
+    effort: str = ""  # Verbatim from the backend ("high", "xhigh", "none", …)
+    any_has_effort: bool = False  # True if any agent has an effort detected
+
     # Provider
     any_has_provider: bool = False  # True if any agent uses non-web provider
 
@@ -571,6 +575,45 @@ def render_model_plain(ctx: ColumnContext) -> Optional[str]:
         return None
     from .history_reader import model_short_name
     return model_short_name(ctx.model)
+
+
+# Reasoning effort vocabulary across harnesses, weakest first (#497).
+# Claude Code: low/medium/high/xhigh/max; codex adds minimal; hermes adds
+# none; grok and opencode (as a model variant) use subsets. Unknown words
+# still render (truncated) — they just sort below every known level.
+EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultracode")
+_EFFORT_SHORT = {"minimal": "min", "medium": "med", "ultracode": "ultra"}
+
+
+def effort_short_name(effort: str) -> str:
+    """Display form of an effort level, at most 5 chars ("medium" -> "med")."""
+    effort = effort.strip().lower()
+    return _EFFORT_SHORT.get(effort, effort)[:5]
+
+
+def render_effort(ctx: ColumnContext) -> ColumnOutput:
+    """Reasoning effort. Only visible when any agent has one detected.
+
+    ALIGNMENT: width 6 (space + 5) — "xhigh", "ultra" are the widest.
+    Brightness climbs with the level so a fleet's heavy thinkers stand out.
+    """
+    if not ctx.effort:
+        return [("     -", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    level = ctx.effort.strip().lower()
+    rank = EFFORT_LEVELS.index(level) if level in EFFORT_LEVELS else -1
+    if rank >= EFFORT_LEVELS.index("xhigh"):
+        style = f"bold yellow{ctx.bg}"
+    elif rank == EFFORT_LEVELS.index("high"):
+        style = f"bold cyan{ctx.bg}"
+    elif rank == EFFORT_LEVELS.index("medium") or rank < 0:
+        style = f"cyan{ctx.bg}"
+    else:
+        style = f"dim cyan{ctx.bg}"
+    return [(f" {effort_short_name(ctx.effort):>5}", ctx.mono(style, "bold"))]
+
+
+def render_effort_plain(ctx: ColumnContext) -> Optional[str]:
+    return ctx.effort or None
 
 
 def render_context_usage(ctx: ColumnContext) -> ColumnOutput:
@@ -1398,6 +1441,10 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Model", render_plain=render_model_plain,
                   visible=lambda ctx: ctx.any_has_model,
                   placeholder_width=8, header="MDL", name="Model"),
+    SummaryColumn(id="effort", group="context", detail_levels=MED_PLUS, render=render_effort,
+                  label="Effort", render_plain=render_effort_plain,
+                  visible=lambda ctx: ctx.any_has_effort,
+                  placeholder_width=6, header="EFF", name="Effort"),
     SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
                   label="Provider", render_plain=render_provider_plain,
                   visible=lambda ctx: ctx.any_has_provider,
@@ -1499,6 +1546,7 @@ COLUMN_HELP: dict[str, str] = {
     "burn_rate": "Spend rate over the timeline window (units follow $)",
     "context_usage": "How full the model's context window is",
     "model": "Model the agent is running",
+    "effort": "Reasoning effort the model is running at (low, med, high, xhigh, max…)",
     "provider": "API provider (web or Bedrock)",
     "backend": "Agent CLI: cc Claude Code, oc opencode, cx codex, gk grok, hm hermes",
     "median_work_time": "Median length of a work cycle between human prompts",
@@ -1566,6 +1614,13 @@ def _sort_model(ctx: ColumnContext) -> Optional[str]:
     return model_short_name(ctx.model).lower()
 
 
+def _sort_effort(ctx: ColumnContext) -> Optional[int]:
+    if not ctx.effort:
+        return None
+    level = ctx.effort.strip().lower()
+    return EFFORT_LEVELS.index(level) if level in EFFORT_LEVELS else -1
+
+
 def _sort_backend(ctx: ColumnContext) -> str:
     from .backends import session_backend_name
     return session_backend_name(ctx.session)
@@ -1616,6 +1671,7 @@ COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
     "burn_rate": (_sort_burn_rate, True),
     "context_usage": (_sort_context_usage, True),
     "model": (_sort_model, False),
+    "effort": (_sort_effort, True),
     "provider": (lambda ctx: getattr(ctx.session, 'provider', 'web') or 'web', False),
     "backend": (_sort_backend, False),
     "median_work_time": (_if_stats(lambda ctx: ctx.median_work), True),
@@ -1679,6 +1735,7 @@ def build_cli_context(
     any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
     pr_number: Optional[int] = None, any_has_pr: bool = False,
     any_has_model: bool = False,
+    any_has_effort: bool = False,
     any_has_provider: bool = False,
     mixed_backends: bool = False,
     any_has_cpu: bool = False, any_has_ram: bool = False,
@@ -1766,6 +1823,8 @@ def build_cli_context(
         any_has_pr=any_has_pr,
         model=getattr(session, 'model', '') or '',
         any_has_model=any_has_model,
+        effort=getattr(session, 'effort', '') or '',
+        any_has_effort=any_has_effort,
         any_has_provider=any_has_provider,
         mixed_backends=mixed_backends,
         any_has_cpu=any_has_cpu,

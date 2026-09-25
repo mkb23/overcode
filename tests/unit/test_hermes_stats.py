@@ -54,9 +54,10 @@ T0 = LAUNCH.timestamp() + 21  # session started 21s after launch
 CWD = "/tmp/probe-hermes"
 
 
-def anchor(prompt_tokens: int) -> str:
+def anchor(prompt_tokens: int, reasoning=None) -> str:
     return json.dumps({
         "max_iterations": 500,
+        "reasoning_config": reasoning if reasoning is not None else {"enabled": True, "effort": "medium"},
         "_usage_anchor": {"prompt_tokens": prompt_tokens, "completion_tokens": 42},
     })
 
@@ -69,12 +70,12 @@ def make_db(path: Path) -> sqlite3.Connection:
 
 def add_session(conn, sid, *, started=T0, cwd=CWD, source="cli", parent=None,
                 inp=12786, out=559, cache=36224, reasoning=384, cost=0.0,
-                cost_status="unknown", model="gpt-5-mini", prompt_tokens=12256):
+                cost_status="unknown", model="gpt-5-mini", prompt_tokens=12256, reasoning_config=None):
     conn.execute(
         "INSERT INTO sessions (id, source, model, model_config, parent_session_id, started_at, "
         "input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, "
         "cwd, estimated_cost_usd, cost_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (sid, source, model, anchor(prompt_tokens), parent, started, inp, out, cache, 0,
+        (sid, source, model, anchor(prompt_tokens, reasoning_config), parent, started, inp, out, cache, 0,
          reasoning, cwd, cost, cost_status),
     )
 
@@ -150,10 +151,18 @@ class TestGetStats:
         assert stats.cache_read_tokens == 36224
         assert stats.cache_creation_tokens == 0
         assert stats.model == "gpt-5-mini"
+        assert stats.effort == "medium"
         assert stats.current_context_tokens == 12256
         assert stats.interaction_count == 2
         assert stats.work_times == [9.0, 4.0]
         assert stats.provider is None
+
+    def test_reasoning_disabled_reads_as_none_effort(self, db):
+        conn, path = db
+        add_session(conn, "20260917_131721_8f80ea", reasoning_config={"enabled": False, "effort": "medium"})
+        conn.commit()
+        stats = HermesStatsReader(path).get_stats(session(agent_session_ids=["20260917_131721_8f80ea"]))
+        assert stats.effort == "none"
 
     def test_falls_back_to_directory_and_launch_time(self, db):
         conn, path = db

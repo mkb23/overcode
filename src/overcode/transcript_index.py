@@ -16,7 +16,7 @@ One :class:`TranscriptIndex` per transcript path keeps:
   re-read from byte zero;
 * one fold state per ``since`` filter that
   :func:`~overcode.history_reader.read_session_file_stats` was asked for
-  (additive token totals, last-wins model/provider/context, the previous
+  (additive token totals, last-wins model/provider/effort/context, the previous
   user-prompt time and the work-time list) — exactly what
   ``_parse_session_lines`` accumulates, kept incrementally;
 * for window queries, one entry per assistant message that carries a
@@ -114,6 +114,7 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
+        "effort": None,
     }, []
 
 
@@ -156,7 +157,8 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 
 
 # A parsed line, as far as the readers care:
-#   ("a", key_or_None, input, output, cache_creation, cache_read, model, provider)
+#   ("a", key_or_None, input, output, cache_creation, cache_read, model, provider,
+#    effort)
 #       an assistant message with a usage block; key is the timestamp key or
 #       None when the timestamp is missing or unparseable
 #   ("u", key, datetime)
@@ -213,6 +215,7 @@ def parse_line(
                 pass
         msg_id = message.get("id")
         provider = provider_of(msg_id) if isinstance(msg_id, str) else None
+        effort = data.get("effort")
         return (
             "a",
             key,
@@ -222,6 +225,7 @@ def parse_line(
             cache_read,
             message.get("model"),
             provider,
+            effort if isinstance(effort, str) else None,
         )
     if msg_type == "user":
         message = data.get("message", {})
@@ -293,6 +297,8 @@ def fold_event(
                 totals["model"] = event[6]
             if event[7]:
                 totals["provider"] = event[7]
+            if event[8]:
+                totals["effort"] = event[8]
         return last_prompt
     key, prompt_time = event[1], event[2]
     if since_key is not None and key < since_key:

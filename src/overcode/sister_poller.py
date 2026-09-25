@@ -282,6 +282,7 @@ def _agent_to_session(
         last_heartbeat_time=agent.get("last_heartbeat_time"),
         # Model and provider
         model=agent.get("model") or None,
+        effort=agent.get("effort") or None,
         provider=agent.get("provider", "web") or "web",
         # Agent CLI backend. Pre-backend sisters report nothing, so the
         # default stands in — see design §3, consequence 5. Serialized

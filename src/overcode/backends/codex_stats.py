@@ -165,6 +165,7 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
         "cache_write_tokens": 0,
         "current_context_tokens": 0,
         "model": None,
+        "effort": None,
         "interaction_count": 0,
         "model_context_window": None,
     }
@@ -224,6 +225,17 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
                     model = settings.get("model")
             if model:
                 out["model"] = model
+            # Reasoning effort (#497): `effort` on the turn context, with the
+            # collaboration-mode settings' `reasoning_effort` as fallback —
+            # the same two places the model lives.
+            effort = payload.get("effort")
+            if not effort:
+                collab = payload.get("collaboration_mode")
+                settings = collab.get("settings") if isinstance(collab, dict) else None
+                if isinstance(settings, dict):
+                    effort = settings.get("reasoning_effort")
+            if effort and isinstance(effort, str):
+                out["effort"] = effort
             continue
 
         if etype == "response_item" and payload.get("type") == "message" and payload.get("role") == "user":
@@ -412,6 +424,7 @@ class CodexStatsReader:
             work_times=[],
             current_context_tokens=scan["current_context_tokens"],
             model=scan["model"],
+            effort=scan["effort"],
             # Deliberately None — see OpencodeStatsReader's identical
             # comment: `provider` is overcode's API-transport discriminator,
             # not the model's vendor.

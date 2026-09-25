@@ -80,6 +80,7 @@ class SessionSummary(Static, can_focus=True):
         # Two-column status model (#TBD). Populated by detect_status; consumed by the ⏰ column.
         self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
+        self.any_has_effort: bool = False  # True if any agent has an effort detected (#497)
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
         self.mixed_backends: bool = False  # True if the fleet spans >1 agent CLI
         self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
@@ -417,6 +418,9 @@ class SessionSummary(Static, can_focus=True):
             # Model
             model=s.model or "",
             any_has_model=self.any_has_model,
+            # Reasoning effort (#497)
+            effort=getattr(s, 'effort', None) or "",
+            any_has_effort=self.any_has_effort,
             # Provider
             any_has_provider=self.any_has_provider,
             # Agent CLI backend

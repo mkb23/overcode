@@ -262,6 +262,27 @@ def _parse_model(raw: Any) -> Optional[str]:
     return model_id or None
 
 
+def _parse_variant(raw: Any) -> Optional[str]:
+    """The model ``variant`` from opencode's ``model`` JSON, or None (#497).
+
+    opencode expresses reasoning effort as a model variant ("low", "high",
+    "max", …); "default" means none was chosen and reads as unknown.
+    """
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(raw, dict):
+        return None
+    variant = raw.get("variant")
+    if not isinstance(variant, str) or not variant or variant == "default":
+        return None
+    return variant
+
+
 def _as_int(value: Any) -> int:
     try:
         return int(value or 0)
@@ -666,6 +687,7 @@ class OpencodeStatsReader:
             cache_creation = 0
             cache_read = 0
             model = None
+            effort = None
             for row in rows:
                 input_tokens += _as_int(row["tokens_input"])
                 # opencode bills reasoning as output and reports it separately;
@@ -679,6 +701,10 @@ class OpencodeStatsReader:
                 parsed_model = _parse_model(row["model"])
                 if parsed_model:
                     model = parsed_model
+                # Reasoning effort is the model variant, when set (#497)
+                parsed_effort = _parse_variant(row["model"])
+                if parsed_effort:
+                    effort = parsed_effort
 
             row_ids = [row["id"] for row in rows]
             active_id = row_ids[-1] if row_ids else None
@@ -693,6 +719,7 @@ class OpencodeStatsReader:
                 work_times=scan["work_times"],
                 current_context_tokens=scan["current_context_tokens"],
                 model=model,
+                effort=effort,
                 # opencode's own denominator, so CTX% matches its console (#469)
                 reported_context_window=opencode_context_limit(model),
                 # Deliberately None: `provider` is overcode's API-transport

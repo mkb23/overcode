@@ -410,6 +410,10 @@ class AgentSessionStats:
     background_task_count: int = 0  # Number of background/farm tasks (#177)
     model: Optional[str] = None  # Most recently seen model name (#272)
     provider: Optional[str] = None  # Detected API provider ("web" or "bedrock")
+    # Most recently seen reasoning effort, verbatim from the backend's own
+    # store ("low"/"medium"/"high"/"xhigh"/"max"/… — vocabularies differ
+    # per harness) (#497)
+    effort: Optional[str] = None
     agent: Optional[str] = None  # detected agent persona, opencode2's NULL-row fallback
     last_command: Optional[str] = None  # Most recent user prompt text
     # The backend's *own* context window for this session, when it has one
@@ -484,6 +488,7 @@ def synthesize_remote_stats(session) -> "AgentSessionStats":
         work_times=[mwt] if mwt > 0 else [],
         current_context_tokens=rds.get('current_context_tokens', 0),
         model=rds.get('model'),
+        effort=rds.get('effort'),
         last_command=rds.get('last_command'),
     )
 
@@ -948,6 +953,7 @@ def _parse_session_lines(
         "current_context_tokens": 0,
         "model": None,
         "provider": None,
+        "effort": None,
     }
 
     user_prompt_times: List[datetime] = []
@@ -1008,6 +1014,11 @@ def _parse_session_lines(
                         detected = provider_from_message_id(message.get("id"))
                         if detected:
                             totals["provider"] = detected
+                        # Reasoning effort in force for this turn (#497) —
+                        # a top-level field on the assistant record.
+                        effort = data.get("effort")
+                        if effort and isinstance(effort, str):
+                            totals["effort"] = effort
 
             elif msg_type == "user":
                 # Check if this is an actual user prompt (not a tool result)
@@ -1127,6 +1138,7 @@ def read_session_stats_from_content(
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
             "current_context_tokens": 0, "model": None, "provider": None,
+            "effort": None,
         }
         return defaults, []
 
@@ -1242,6 +1254,7 @@ def get_session_stats(
     current_context = 0
     detected_model: Optional[str] = None
     detected_provider: Optional[str] = None
+    detected_effort: Optional[str] = None
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
@@ -1276,6 +1289,8 @@ def get_session_stats(
                     detected_model = usage["model"]
                 if usage["provider"]:
                     detected_provider = usage["provider"]
+                if usage.get("effort"):
+                    detected_effort = usage.get("effort")
         else:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
@@ -1283,6 +1298,8 @@ def get_session_stats(
                 detected_model = usage["model"]
             if usage["provider"]:
                 detected_provider = usage["provider"]
+            if usage.get("effort"):
+                detected_effort = usage.get("effort")
 
         # Collect work times from this session file
         all_work_times.extend(work_times)
@@ -1335,6 +1352,7 @@ def get_session_stats(
         background_task_count=background_task_count,
         model=detected_model,
         provider=detected_provider,
+        effort=detected_effort,
         last_command=last_command,
     )
 

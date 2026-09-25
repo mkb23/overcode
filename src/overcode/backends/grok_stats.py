@@ -51,7 +51,7 @@ expects is a ``schema_findings()`` doctor warning, not a crash.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 from ..stats_reader import (
@@ -196,15 +196,20 @@ def _scan_updates(path: Path, *, since_ts: Optional[float] = None) -> Dict[str, 
     return out
 
 
-def _read_model(session_dir_path: Path) -> Optional[str]:
+def _read_model_and_effort(session_dir_path: Path) -> Tuple[Optional[str], Optional[str]]:
+    """``current_model_id`` and ``reasoning_effort`` (#497) from summary.json."""
     try:
         summary = json.loads((session_dir_path / "summary.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
-        return None
+        return None, None
     if not isinstance(summary, dict):
-        return None
+        return None, None
     model = summary.get("current_model_id")
-    return model if isinstance(model, str) and model else None
+    effort = summary.get("reasoning_effort")
+    return (
+        model if isinstance(model, str) and model else None,
+        effort if isinstance(effort, str) and effort else None,
+    )
 
 
 def _count_prompts(project_dir_path: Path, session_id: str) -> int:
@@ -313,7 +318,7 @@ class GrokStatsReader:
         if session_path is None:
             return None
         scan = _scan_updates(session_path / "updates.jsonl")
-        model = _read_model(session_path)
+        model, effort = _read_model_and_effort(session_path)
         proj = self._project_dir(session)
         session_id = session_path.name
         interaction_count = _count_prompts(proj, session_id) if proj is not None else 0
@@ -337,6 +342,7 @@ class GrokStatsReader:
             work_times=[],
             current_context_tokens=scan["current_context_tokens"],
             model=model,
+            effort=effort,
             # Deliberately None — see OpencodeStatsReader's identical
             # comment: `provider` is overcode's API-transport discriminator,
             # not the model's vendor.

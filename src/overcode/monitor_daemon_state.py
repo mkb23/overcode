@@ -139,6 +139,7 @@ class SessionDaemonState:
 
     # Model and provider
     model: Optional[str] = None  # Model (e.g. "sonnet", "openai/gpt-4o-mini")
+    effort: Optional[str] = None  # Reasoning effort, e.g. "high" (#497)
     provider: str = "web"  # API provider: "web" or "bedrock"
     backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
     # Serialized BackendCapability member names for ``backend``. Published so

@@ -16,6 +16,8 @@ from overcode.summary_columns import (
     SummaryColumn,
     SUMMARY_COLUMNS,
     render_status_symbol,
+    render_effort,
+    render_effort_plain,
     render_unvisited_alert,
     render_time_in_state,
     render_sleep_countdown,
@@ -745,6 +747,46 @@ class TestRenderContextUsage:
         ctx = _make_ctx(claude_stats=stats)
         result = render_context_usage(ctx)
         assert "📚  -%" in result[0][0]
+
+
+class TestRenderEffort:
+    """Reasoning effort column (#497)."""
+
+    def test_dash_when_unknown(self):
+        result = render_effort(_make_ctx(effort=""))
+        assert result[0][0] == "     -"
+
+    @pytest.mark.parametrize("effort,shown", [
+        ("low", "low"), ("medium", "med"), ("high", "high"), ("xhigh", "xhigh"),
+        ("max", "max"), ("minimal", "min"), ("none", "none"), ("ultracode", "ultra"),
+        ("somethingnew", "somet"),
+    ])
+    def test_fixed_width_short_names(self, effort, shown):
+        text = render_effort(_make_ctx(effort=effort))[0][0]
+        assert len(text) == 6  # ALIGNMENT: matches placeholder_width
+        assert text.strip() == shown
+
+    def test_heavier_effort_is_brighter(self):
+        assert "yellow" in render_effort(_make_ctx(effort="xhigh"))[0][1]
+        assert "bold cyan" in render_effort(_make_ctx(effort="high"))[0][1]
+        assert "dim" in render_effort(_make_ctx(effort="low"))[0][1]
+
+    def test_plain_is_verbatim(self):
+        assert render_effort_plain(_make_ctx(effort="xhigh")) == "xhigh"
+        assert render_effort_plain(_make_ctx(effort="")) is None
+
+    def test_hidden_until_some_agent_has_effort(self):
+        col = next(c for c in SUMMARY_COLUMNS if c.id == "effort")
+        assert not col.visible(_make_ctx(any_has_effort=False))
+        assert col.visible(_make_ctx(any_has_effort=True))
+
+    def test_sorts_by_level_not_alphabetically(self):
+        from overcode.summary_columns import COLUMN_SORT
+        key, descending = COLUMN_SORT["effort"]
+        assert descending
+        ranks = [key(_make_ctx(effort=e)) for e in ("low", "medium", "high", "xhigh", "max")]
+        assert ranks == sorted(ranks)
+        assert key(_make_ctx(effort="")) is None
 
 
 class TestRenderCost:

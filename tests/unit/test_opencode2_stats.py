@@ -99,7 +99,7 @@ def db(tmp_path, monkeypatch):
                 {
                     "time": {"created": 1789492181926, "completed": 1789492182604},
                     "agent": "build",
-                    "model": {"id": "acme-llm-1", "providerID": "acme"},
+                    "model": {"id": "acme-llm-1", "providerID": "acme", "variant": "high"},
                     "cost": 0.0134,
                     "finish": "tool-calls",
                     "tokens": {
@@ -139,12 +139,24 @@ def test_get_stats_reads_v2_tables(db):
     # NULL), model in the qualified provider/id form like the v1 reader.
     assert stats.model == "acme/acme-llm-1"
     assert stats.agent == "build"
+    # Reasoning effort is opencode's model variant (#497)
+    assert stats.effort == "high"
     assert stats.interaction_count == 1
     # v2's assistant data carries no tokens.total; the context column is
     # the processed prompt (input + cache read + cache write) of the
     # newest assistant turn.
     assert stats.current_context_tokens == 9773
     assert stats.work_times == pytest.approx([0.678])
+
+
+def test_parse_variant_treats_default_as_unknown():
+    from overcode.backends.opencode_stats import _parse_variant
+
+    assert _parse_variant('{"id": "m", "providerID": "p", "variant": "max"}') == "max"
+    assert _parse_variant({"id": "m", "variant": "default"}) is None
+    assert _parse_variant({"id": "m"}) is None
+    assert _parse_variant("not json") is None
+    assert _parse_variant(None) is None
 
 
 def test_database_path_honours_data_dir(monkeypatch, tmp_path):
@@ -429,6 +441,7 @@ class TestDaemonAgentPersonaSync:
         session.tmux_session = "test"
         session.wrapper = None
         session.model = None
+        session.effort = None
         session.provider = None
         session.agent_session_ids = [SID]
         session.active_agent_session_id = SID
@@ -470,6 +483,16 @@ class TestDaemonAgentPersonaSync:
             for sid, fields in daemon._pending.fields.items()
             if "agent_persona" in fields
         ]
+
+    def test_detected_effort_is_persisted(self, db, tmp_path, monkeypatch):
+        # #497: the reader's effort (opencode's model variant) is staged
+        # onto the session record, like the model.
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = self._make_session(agent_persona=None)
+
+        self._run_sync(daemon, session, db, monkeypatch)
+
+        assert daemon._pending.fields["sess-1"]["effort"] == "high"
 
     def test_empty_persona_is_persisted_from_reader(self, db, tmp_path, monkeypatch):
         daemon = self._make_daemon(tmp_path, monkeypatch)

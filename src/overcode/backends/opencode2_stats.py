@@ -64,6 +64,7 @@ from .opencode_stats import (
     _launch_ms,
     _optional_ms,
     _parse_model,
+    _parse_variant,
     _placeholders,
     _table_columns,
     connect,
@@ -207,15 +208,21 @@ def fetch_rows_for_directory(
     return conn.execute(sql, (*candidates, since_ms)).fetchall()
 
 
-def _row_identities(rows: Sequence[sqlite3.Row]) -> Tuple[Optional[str], Optional[str]]:
-    """(model, agent) taken from the ACTIVE session row (newest-updated last).
+def _row_identities(
+    rows: Sequence[sqlite3.Row],
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """(model, agent, effort) taken from the ACTIVE session row (newest-updated last).
 
     Only ``rows[-1]`` — the session the agent is in right now — is read:
     after ``/new`` an older tracked session's row-level identities must
     not suppress the active session's.
     """
     active = rows[-1]
-    return _parse_model(active["model"]), (active["agent"] or None)
+    return (
+        _parse_model(active["model"]),
+        (active["agent"] or None),
+        _parse_variant(active["model"]),
+    )
 
 
 def _scan_sql(ids: Sequence[str]) -> Tuple[str, List[Any]]:
@@ -275,6 +282,7 @@ def _parse_session_message_record(
         "created": _optional_ms(times.get("created")),
         "completed": _optional_ms(times.get("completed")),
         "model": _parse_model(envelope.get("model")),
+        "effort": _parse_variant(envelope.get("model")),
         "agent": agent if isinstance(agent, str) and agent else None,
     }
     in_flight = mtype == "assistant" and record["completed"] is None
@@ -305,6 +313,7 @@ def _scan_messages(
         "current_context_tokens": 0,
         "window": empty_window_usage(),
         "model": None,
+        "effort": None,
         "agent": None,
     }
     ids = [sid for sid in session_ids if sid]
@@ -352,6 +361,8 @@ def _scan_messages(
         if active_id is not None and session_id == active_id:
             if out["model"] is None and record["model"]:
                 out["model"] = record["model"]
+            if out["effort"] is None and record["effort"]:
+                out["effort"] = record["effort"]
             if out["agent"] is None and record["agent"]:
                 out["agent"] = record["agent"]
 
@@ -464,7 +475,7 @@ class Opencode2StatsReader:
                 cache_read += _as_int(row["tokens_cache_read"])
                 cache_creation += _as_int(row["tokens_cache_write"])
 
-            row_model, row_agent = _row_identities(rows)
+            row_model, row_agent, row_effort = _row_identities(rows)
             row_ids = [row["id"] for row in rows]
             scan = _scan_messages(conn, row_ids, row_ids[-1])
 
@@ -484,6 +495,9 @@ class Opencode2StatsReader:
                 # agent wins, the newest assistant message is the
                 # NULL-row fallback.
                 agent=row_agent or scan["agent"],
+                # Reasoning effort is opencode's model variant (#497);
+                # same precedence as model.
+                effort=row_effort or scan["effort"],
                 # Deliberately None: `provider` is overcode's API-transport
                 # discriminator ("web"/"bedrock"), not opencode's model
                 # provider, and writing opencode's provider id into it

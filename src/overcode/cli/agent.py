@@ -572,6 +572,7 @@ def list_agents(
     from ..backends import session_backend_name
     mixed_backends = len({session_backend_name(s) for s in sessions}) > 1
     any_has_model = any(getattr(s, 'model', None) for s in sessions)
+    any_has_effort = any(getattr(s, 'effort', None) for s in sessions)
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
     max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
@@ -709,6 +710,7 @@ def list_agents(
             pr_number=getattr(sess, 'pr_number', None),
             any_has_pr=any_has_pr,
             any_has_model=any_has_model,
+            any_has_effort=any_has_effort,
             any_has_provider=any_has_provider,
             mixed_backends=mixed_backends,
             monochrome=False,

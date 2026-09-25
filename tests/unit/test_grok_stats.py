@@ -92,11 +92,12 @@ def write_jsonl(path: Path, entries: list) -> Path:
     return path
 
 
-def write_summary(path: Path, model="grok-4.6") -> Path:
+def write_summary(path: Path, model="grok-4.6", effort="high") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "info": {"id": SID, "cwd": PROJECT_DIR},
         "current_model_id": model,
+        "reasoning_effort": effort,
         "num_messages": 10,
     }))
     return path
@@ -187,6 +188,9 @@ class TestGetStats:
 
     def test_model_from_summary_json(self, reader):
         assert reader.get_stats(make_session()).model == "grok-4.6"
+
+    def test_effort_from_summary_json(self, reader):
+        assert reader.get_stats(make_session()).effort == "high"
 
     def test_provider_is_left_alone(self, reader):
         assert reader.get_stats(make_session()).provider is None

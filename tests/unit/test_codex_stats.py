@@ -56,12 +56,13 @@ def token_count_event(
     }
 
 
-def turn_context_event(model="gpt-5.6-sol"):
+def turn_context_event(model="gpt-5.6-sol", effort="high"):
     return {
         "type": "turn_context",
         "payload": {
             "model": model,
-            "collaboration_mode": {"settings": {"model": model}},
+            "effort": effort,
+            "collaboration_mode": {"settings": {"model": model, "reasoning_effort": effort}},
         },
     }
 
@@ -180,6 +181,20 @@ class TestGetStats:
 
     def test_model_from_turn_context(self, reader):
         assert reader.get_stats(make_session()).model == "gpt-5.6-sol"
+
+    def test_effort_from_turn_context(self, reader):
+        assert reader.get_stats(make_session()).effort == "high"
+
+    def test_latest_turn_context_effort_wins_with_settings_fallback(self, tmp_path):
+        root = tmp_path / "sessions"
+        later = turn_context_event(effort="xhigh")
+        del later["payload"]["effort"]  # only the collaboration-mode copy
+        write_rollout(
+            rollout_path(root, SID),
+            [session_meta_line(), turn_context_event(effort="low"), user_turn_item(),
+             later, token_count_event()],
+        )
+        assert CodexStatsReader(sessions_dir=root).get_stats(make_session()).effort == "xhigh"
 
     def test_provider_is_left_alone(self, reader):
         # `provider` is overcode's API-transport discriminator, not the

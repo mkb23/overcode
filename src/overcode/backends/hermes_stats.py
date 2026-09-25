@@ -279,6 +279,26 @@ def _context_tokens(row: sqlite3.Row) -> int:
     return _as_int(anchor.get("prompt_tokens"))
 
 
+def _effort(row: sqlite3.Row) -> Optional[str]:
+    """Reasoning effort (#497), from ``model_config.reasoning_config``.
+
+    Reasoning switched off reads as "none" — Hermes's own word for it.
+    """
+    try:
+        config = json.loads(row["model_config"] or "{}")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    reasoning = config.get("reasoning_config")
+    if not isinstance(reasoning, dict):
+        return None
+    if reasoning.get("enabled") is False:
+        return "none"
+    effort = reasoning.get("effort")
+    return effort if isinstance(effort, str) and effort else None
+
+
 def _hook_state_path(session: Any) -> Optional[Path]:
     """Where the plugin (via hook-handler) publishes this agent's hook state."""
     tmux_session = getattr(session, "tmux_session", None)
@@ -455,6 +475,7 @@ class HermesStatsReader:
                 # child, or the only one).
                 current_context_tokens=_context_tokens(rows[-1]),
                 model=model,
+                effort=_effort(rows[-1]),
                 # Hermes's own denominator when the user pinned one (#469);
                 # otherwise overcode's model tables, which agree with
                 # Hermes's catalogue for the models checked at verification.

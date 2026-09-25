@@ -46,11 +46,14 @@ def _iso_z(dt_local: datetime) -> str:
     return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
 
 
-def _assistant(ts: datetime, inp=100, out=20, cc=0, cr=1000, model="claude-opus-4-6", mid="msg_01"):
+def _assistant(ts: datetime, inp=100, out=20, cc=0, cr=1000, model="claude-opus-4-6", mid="msg_01",
+               effort=None):
+    extra = {"effort": effort} if effort is not None else {}
     return json.dumps(
         {
             "type": "assistant",
             "timestamp": _iso_z(ts),
+            **extra,
             "message": {
                 "model": model,
                 "id": mid,
@@ -415,6 +418,41 @@ class TestIdentity:
         _check(index, path, SINCES, WINDOWS)
         w.append(_user(T0 + timedelta(hours=2), "z" * 700))  # no newline
         _check(index, path, SINCES, WINDOWS)
+
+
+class TestEffort:
+    """Reasoning effort (#497): last-wins, only from messages with usage."""
+
+    def test_latest_effort_wins_and_index_matches_full_parse(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        w = _Writer(path)
+        index = TranscriptIndex(str(path))
+        w.write(
+            _assistant(T0, effort="medium") + "\n"
+            + _assistant(T0 + timedelta(minutes=1)) + "\n"
+        )
+        _check(index, path, SINCES, [])
+        assert index.stats(None)[0]["effort"] == "medium"
+        w.append(_assistant(T0 + timedelta(minutes=2), effort="xhigh") + "\n")
+        _check(index, path, SINCES, [])
+        assert index.stats(None)[0]["effort"] == "xhigh"
+
+    def test_zero_usage_message_does_not_set_effort(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        w = _Writer(path)
+        index = TranscriptIndex(str(path))
+        w.write(
+            _assistant(T0, effort="high") + "\n"
+            + _assistant(T0 + timedelta(minutes=1), inp=0, out=0, cr=0, effort="low") + "\n"
+        )
+        _check(index, path, SINCES, [])
+        assert index.stats(None)[0]["effort"] == "high"
+
+    def test_no_effort_field_is_none(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write(_assistant(T0) + "\n")
+        assert TranscriptIndex(str(path)).stats(None)[0]["effort"] is None
+        assert full_stats(path)[0]["effort"] is None
 
 
 class TestSinceStates:

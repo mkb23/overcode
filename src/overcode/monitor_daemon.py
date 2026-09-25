@@ -593,6 +593,7 @@ class MonitorDaemon:
             running_from_heartbeat=running_from_heartbeat,
             waiting_for_heartbeat=waiting_for_heartbeat,
             model=session.model,
+            effort=getattr(session, 'effort', None),
             provider=session.provider,
             backend=getattr(session, 'backend', None) or 'claude-code',
             backend_capabilities=capability_names(session_capabilities(session)),
@@ -845,6 +846,8 @@ class MonitorDaemon:
             self._pending.update_session(session.id, model=detected_model)
         if detected_provider and detected_provider != session.provider:
             self._pending.update_session(session.id, provider=detected_provider)
+        if stats.effort and stats.effort != session.effort:
+            self._pending.update_session(session.id, effort=stats.effort)
 
         # Cost estimate
         from .settings import get_user_config, get_model_pricing
@@ -917,6 +920,8 @@ class MonitorDaemon:
                 self._pending.update_session(session.id, model=stats.model)
             if stats.provider and stats.provider != session.provider:
                 self._pending.update_session(session.id, provider=stats.provider)
+            if stats.effort and stats.effort != session.effort:
+                self._pending.update_session(session.id, effort=stats.effort)
 
             # Cache last command for daemon state publishing
             if stats.last_command:

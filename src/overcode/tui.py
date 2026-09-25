@@ -2462,6 +2462,7 @@ class SupervisorTUI(
             s.model
             for s in self.sessions
         )
+        any_has_effort = any(getattr(s, 'effort', None) for s in self.sessions)
 
         # Check if any agent uses a non-web provider
         any_has_provider = any(
@@ -2556,6 +2557,7 @@ class SupervisorTUI(
                     widget.any_has_status_detail = any_has_status_detail
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
+                    widget.any_has_effort = any_has_effort
                     widget.any_has_provider = any_has_provider
                     widget.mixed_backends = mixed_backends
                     widget.any_has_cpu = any_has_cpu
@@ -2623,6 +2625,7 @@ class SupervisorTUI(
                 widget.any_has_status_detail = any_has_status_detail
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
+                widget.any_has_effort = any_has_effort
                 widget.any_has_provider = any_has_provider
                 widget.mixed_backends = mixed_backends
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
