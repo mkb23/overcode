@@ -12,6 +12,7 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -58,33 +59,33 @@ class NewAgentDefaultsModal(ModalBase):
     def _row_count(self) -> int:
         return len(_OPTIONS) + 1
 
+    TITLE = "New agent defaults"
+    WIDTH = 92
+    _LABEL_W = 22
+
+    _TIPS = [
+        "New agents skip permission prompts",
+        "New agents can run agent teams",
+        "Agent CLI new agents launch with; (unset) uses the built-in default",
+    ]
+
+    def hints(self) -> str:
+        return ds.hints(("space", "change"), ("a", "save"), ("esc", "cancel"))
+
     def render(self) -> Text:
-        text = Text()
-        text.append("New Agent Defaults\n", style="bold cyan")
-        text.append("j/k:move  space:toggle/cycle  a:apply  q:cancel\n\n", style="dim")
-
-        for i, (label, key) in enumerate(_OPTIONS):
-            is_selected = i == self.selected_index
-            is_enabled = self.defaults.get(key, False)
-
-            if is_selected:
-                text.append("> ", style="bold cyan")
-            else:
-                text.append("  ", style="")
-
-            if is_enabled:
-                text.append("[x] ", style="bold green")
-            else:
-                text.append("[ ] ", style="dim")
-
-            style = "bold" if is_selected else ""
-            text.append(f"{label}\n", style=style)
-
-        is_selected = self._backend_row() == self.selected_index
-        text.append("> " if is_selected else "  ", style="bold cyan" if is_selected else "")
-        style = "bold" if is_selected else ""
-        text.append(f"Backend: {self.backend_value}\n", style=style)
-
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
+        rows = [(label, ("off", "on"), "on" if self.defaults.get(key, False) else "off")
+                for label, key in _OPTIONS]
+        rows.append(("Backend", tuple(self.backend_options), self.backend_value))
+        for i, (label, opts, current) in enumerate(rows):
+            sel = i == self.selected_index
+            line = ds.item(sel)
+            line.append_text(ds.fit(Text(label, style="bold" if sel else ds.TEXT), self._LABEL_W))
+            line.append_text(ds.options(opts, current, w - 1 - self._LABEL_W))
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
+        text.append_text(ds.tip(w, Text(self._TIPS[self.selected_index], style=ds.MUTED)))
         return text
 
     def on_key(self, event: events.Key) -> None:

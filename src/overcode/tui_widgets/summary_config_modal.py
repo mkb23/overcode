@@ -1,9 +1,13 @@
 """
 Summary line configuration modal for TUI.
 
-Groups with individual columns shown inline.
-Edits per-level column overrides (low/med/high).
-Updates live summary lines as you toggle groups/columns.
+Edits per-level column overrides (low/med/high), updating the live
+summary lines as you toggle groups and columns.
+
+It is also the guide to the columns (#490): every column is listed under
+its group with the header code it shows above the summary line, what it
+looks like for the focused agent, and what it means; the foot explains
+the highlighted one in full.
 """
 
 import logging
@@ -13,12 +17,12 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
-logger = logging.getLogger(__name__)
-
 from ..summary_groups import SUMMARY_GROUPS, SUMMARY_GROUPS_BY_ID
-from ..summary_columns import SUMMARY_COLUMNS, SummaryColumn, resolve_column_visible
+from ..summary_columns import COLUMNS_BY_ID, SUMMARY_COLUMNS, SummaryColumn, resolve_column_visible
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
+logger = logging.getLogger(__name__)
 
 # Build group -> columns mapping. Excludes CLI-only synthetic columns —
 # they never render in the TUI and aren't user-togglable, so surfacing
@@ -32,11 +36,32 @@ def _columns_by_group() -> Dict[str, List[SummaryColumn]]:
     return result
 
 
+def _sample(col: SummaryColumn, ctx: Any) -> Optional[Text]:
+    """What `col` shows for the agent behind `ctx`, trimmed of alignment
+    padding and row colours; None when it doesn't apply to that agent."""
+    try:
+        if col.visible is not None and not col.visible(ctx):
+            return None
+        segments = col.render(ctx)
+    except Exception as e:
+        logger.debug("Column %s failed to render a sample: %s", col.id, e)
+        return None
+    text = Text()
+    for seg, style in segments or ():
+        # Drop the row background the summary line paints behind each cell
+        text.append(seg, style=(style or "").split(" on ")[0])
+    # Trim the alignment padding
+    lead = len(text.plain) - len(text.plain.lstrip())
+    text = text[lead:]
+    text.rstrip()
+    return text
+
+
 class SummaryConfigModal(ModalBase):
     """Modal dialog for configuring per-level column visibility.
 
-    Groups with individual columns always shown.
-    Navigate with j/k, toggle with space.
+    One scrolling list: each group's header (space toggles the group),
+    then its columns. Navigate with j/k, toggle with space.
     """
 
     class ConfigChanged(Message):
@@ -51,8 +76,15 @@ class SummaryConfigModal(ModalBase):
         """Message sent when modal is cancelled."""
         pass
 
-    # Two-column layout — left column width in cells (#443)
-    _LEFT_COL_WIDTH = 32
+    TITLE = "Columns"
+    WIDTH = 120
+    _NAME_W = 20
+    _HEADER_W = 7
+    _SAMPLE_W = 16
+    _TIP_LINES = 2
+    # Rows around the list: the table heading and its rule, then the rule
+    # and tip lines at the foot — plus the border
+    _CHROME = 2 + 1 + _TIP_LINES + 2
 
     def __init__(self, current_config: dict = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -60,11 +92,19 @@ class SummaryConfigModal(ModalBase):
         self.overrides: Dict[str, bool] = {}
         self.original_overrides: Dict[str, bool] = {}
         self.cursor_pos: int = 0
+        self._scroll: int = 0
         self._cols_by_group = _columns_by_group()
         self._flat_rows: List[Tuple[str, str]] = []
-        # Index where the right column starts — everything < breakpoint is left (#443)
-        self._column_breakpoint: int = 0
+        # What each column shows for one agent, so the list doubles as a
+        # guide to the summary line (#490); filled in by show()
+        self._samples: Dict[str, Optional[Text]] = {}
+        self._sample_agent: str = ""
         self._rebuild_flat_rows()
+
+    def update_frame(self) -> None:
+        self.border_title = f"Columns · {self.level} detail"
+        self.border_subtitle = ds.hints(
+            ("space", "show/hide"), ("a", "save"), ("r", "reset"), ("esc", "cancel"))
 
     def _rebuild_flat_rows(self) -> None:
         """Rebuild flattened row list — all groups and columns shown."""
@@ -74,24 +114,78 @@ class SummaryConfigModal(ModalBase):
             for col in self._cols_by_group.get(group.id, []):
                 rows.append(("column", col.id))
         self._flat_rows = rows
-        # Split at the group boundary that best balances column height (#443).
-        # Walking groups in order, cut as soon as the running total crosses
-        # half — keeps a group and its columns together in the same column.
-        half = len(rows) / 2
-        running = 0
-        breakpoint = len(rows)
-        for group in SUMMARY_GROUPS:
-            group_size = 1 + len(self._cols_by_group.get(group.id, []))
-            if running >= half:
-                breakpoint = running
-                break
-            running += group_size
-        else:
-            breakpoint = running
-        self._column_breakpoint = breakpoint
         # Clamp cursor
         if self._flat_rows:
             self.cursor_pos = min(self.cursor_pos, len(self._flat_rows) - 1)
+
+    # -- samples ------------------------------------------------------------
+
+    def _load_samples(self) -> None:
+        """Render every column for the focused agent (else the first), to
+        show beside its name what it looks like on the summary line."""
+        self._samples = {}
+        self._sample_agent = ""
+        app = self._app_ref
+        if app is None:
+            return
+        try:
+            from .session_summary import SessionSummary
+            widget = app.focused if isinstance(app.focused, SessionSummary) else None
+            if widget is None:
+                widget = next(iter(app.query(SessionSummary)), None)
+            if widget is None:
+                return
+            ctx = widget._build_column_context()
+            self._sample_agent = widget.session.name
+        except Exception as e:
+            logger.debug("No agent to sample columns from: %s", e)
+            return
+        for col in SUMMARY_COLUMNS:
+            self._samples[col.id] = _sample(col, ctx)
+
+    # -- sizing -------------------------------------------------------------
+
+    # Agent rows kept in view above the dialog, to watch toggles land (#449)
+    _KEEP_AGENTS = 3
+    _MIN_LIST = 8
+
+    def relayout(self) -> None:
+        """Sit at the foot of the screen rather than near the top, so the
+        column headers and the first agents stay visible above it: toggles
+        show on them live."""
+        super().relayout()
+        try:
+            screen_h = self.app.size.height
+            container = self.app.query_one("#sessions-container")
+            keep = container.region.y + self._KEEP_AGENTS
+        except Exception:
+            return
+        room = screen_h - 1 - keep - self._CHROME   # 1: the footer
+        if room < self._MIN_LIST:
+            room = screen_h - 2 - self._CHROME       # too short: use it all
+        self._list_room = max(3, room)
+        height = self._list_height + self._CHROME
+        x = self.styles.offset.x.value
+        self.styles.offset = (int(x), max(0, screen_h - 1 - height))
+
+    @property
+    def _list_height(self) -> int:
+        room = getattr(self, "_list_room", None)
+        if room is None:
+            room = getattr(self, "_screen_height", 40) - 4 - self._CHROME
+        return max(3, min(len(self._flat_rows), room))
+
+    def _ensure_visible(self) -> None:
+        h = self._list_height
+        # Keep a group's header in view above its first column
+        top = self.cursor_pos
+        if top > 0 and self._flat_rows[top - 1][0] == "group" and self._flat_rows[top][0] == "column":
+            top -= 1
+        if top < self._scroll:
+            self._scroll = top
+        elif self.cursor_pos >= self._scroll + h:
+            self._scroll = self.cursor_pos - h + 1
+        self._scroll = max(0, min(self._scroll, len(self._flat_rows) - h))
 
     def _col_effective(self, col_id: str) -> bool:
         """Get effective visibility for a column at current level."""
@@ -120,120 +214,123 @@ class SummaryConfigModal(ModalBase):
         return "mixed"
 
     def _render_row(self, index: int) -> Optional[Text]:
-        """Render a single flat-row (group or column) as one Text line (no newline)."""
+        """One list row, `inner_width` wide: a group header, or a column
+        with its header code, a sample and what it means."""
+        w = self.inner_width
         row_type, row_id = self._flat_rows[index]
-        is_cursor = index == self.cursor_pos
-        prefix = "> " if is_cursor else "  "
-        cursor_style = "bold cyan" if is_cursor else ""
-        line = Text()
+        sel = index == self.cursor_pos
 
         if row_type == "group":
             group = SUMMARY_GROUPS_BY_ID.get(row_id)
             if group is None:
                 return None
-            is_identity = group.always_visible
             state = self._group_state(row_id)
+            lead = ds.check({"all": True, "none": False}.get(state), locked=group.always_visible)
+            return ds.section(group.name, w, selected=sel, lead=lead)
 
-            if state == "all":
-                check = "[x]"
-                check_style = "bold green" if not is_identity else "dim green"
-            elif state == "none":
-                check = "[ ]"
-                check_style = "dim"
+        col = COLUMNS_BY_ID.get(row_id)
+        if col is None:
+            return None
+        is_on = self._col_effective(row_id)
+        is_default = self._col_default(row_id)
+        locked = col.group == "identity"
+
+        line = ds.item(sel)
+        line.append("  ")  # indent under the group
+        line.append_text(ds.check(is_on, locked=locked))
+        if is_on != is_default:
+            line.append("+" if is_on else "−", style=f"bold {ds.ACCENT}")
+        else:
+            line.append(" ")
+        line.append(" ")
+        name_style = "bold" if sel else (ds.TEXT if is_on else ds.MUTED)
+        line.append_text(ds.fit(Text(col.name or col.id, style=name_style), self._NAME_W))
+        line.append_text(ds.fit(Text(col.header, style=ds.KEY if is_on else ds.STATE_OTHER), self._HEADER_W))
+        if self._samples:
+            line.append_text(ds.fit(self._sample_text(row_id), self._SAMPLE_W))
+            line.append("  ")
+        line.append(col.description, style=ds.MUTED)
+        return ds.finish(line, w)
+
+    def _sample_text(self, col_id: str) -> Text:
+        sample = self._samples.get(col_id)
+        if sample is None:
+            return Text("n/a", style=f"italic {ds.STATE_OTHER}")
+        return sample.copy() if sample.plain.strip() else Text("–", style=ds.STATE_OTHER)
+
+    def _heading(self) -> Text:
+        """Names the table's columns."""
+        line = Text(" " * 6)
+        line.append(f"{'column':<{self._NAME_W}}{'header':<{self._HEADER_W}}", style=ds.MUTED)
+        if self._samples:
+            line.append_text(ds.fit(Text(f"for {self._sample_agent}", style=ds.MUTED), self._SAMPLE_W))
+            line.append("  ")
+        line.append("what it shows", style=ds.MUTED)
+        return ds.finish(line, self.inner_width)
+
+    def _tip(self) -> List[Text]:
+        """The highlighted row explained: its full description, then its
+        defaults, whether it sorts, and what the markers mean."""
+        w = self.inner_width
+        if not self._flat_rows:
+            return ds.wrap("", w, self._TIP_LINES)
+        row_type, row_id = self._flat_rows[self.cursor_pos]
+        facts = Text(style=ds.MUTED)
+        if row_type == "group":
+            group = SUMMARY_GROUPS_BY_ID.get(row_id)
+            cols = self._cols_by_group.get(row_id, [])
+            on = sum(1 for c in cols if self._col_effective(c.id))
+            lines = ds.wrap(f"{group.name if group else row_id}: {on} of {len(cols)} columns shown", w, 1)
+            if group is not None and group.always_visible:
+                facts.append("Always shown")
             else:
-                check = "[-]"
-                check_style = "bold yellow"
+                facts.append("space shows or hides the whole group")
+            return lines + [ds.finish(facts, w)]
 
-            line.append(prefix, style=cursor_style)
-            line.append(check, style=check_style if not is_identity else "dim")
-            line.append(" ", style="")
-            name_style = "bold" if is_cursor else ("dim" if is_identity else "")
-            line.append(group.name, style=name_style)
-            return line
-
-        elif row_type == "column":
-            col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
-            if col is None:
-                return None
-            is_on = self._col_effective(row_id)
-            is_default = self._col_default(row_id)
-            is_identity = col.group == "identity"
-
-            check = "[x]" if is_on else "[ ]"
-            check_style = "bold green" if is_on else "dim"
-
-            marker = ""
-            if is_on and not is_default:
-                marker = " +"
-            elif not is_on and is_default:
-                marker = " -"
-
-            display_name = col.name or col.id
-
-            line.append(prefix, style=cursor_style)
-            line.append("     ", style="")  # indent under group
-            line.append(check, style=check_style if not is_identity else "dim")
-            line.append(" ", style="")
-            name_style = "bold" if is_cursor else ("dim" if is_identity else "")
-            line.append(display_name, style=name_style)
-            if marker:
-                line.append(marker, style="bold cyan" if marker == " +" else "bold red")
-            return line
-
-        return None
-
-    _HELP_LINES = 2
-
-    def _help_lines(self) -> List[str]:
-        """The cursor column's description, wrapped to the grid's width."""
-        import textwrap
-        desc = ""
-        if self._flat_rows:
-            row_type, row_id = self._flat_rows[self.cursor_pos]
-            if row_type == "column":
-                col = next((c for c in SUMMARY_COLUMNS if c.id == row_id), None)
-                if col is not None:
-                    head = f"{col.header}: " if col.header else ""
-                    desc = head + col.description
-        width = 2 * self._LEFT_COL_WIDTH
-        lines = textwrap.wrap(desc, width, max_lines=self._HELP_LINES, placeholder="…")
-        return lines + [""] * (self._HELP_LINES - len(lines))
+        col = COLUMNS_BY_ID[row_id]
+        head = f"{col.header} · " if col.header else ""
+        lines = ds.wrap(f"{head}{col.name or col.id} — {col.description}", w, self._TIP_LINES - 1)
+        levels = [lv for lv in ("low", "med", "high", "full") if lv in col.detail_levels or lv == "full"]
+        facts.append("default at " + " ".join(levels))
+        if col.group == "identity":
+            facts.append(" · always shown")
+        elif self._col_effective(row_id) != self._col_default(row_id):
+            facts.append(f" · you turned it {'on' if self._col_effective(row_id) else 'off'} at {self.level}",
+                         style=ds.ACCENT)
+        if col.sort_key is not None:
+            facts.append(" · sort with S or click its header")
+        if col.visible is not None:
+            facts.append(" · appears only when it applies")
+        return lines + [ds.finish(facts, w)]
 
     def render(self) -> Text:
-        """Render the modal content in two side-by-side columns (#443)."""
-        text = Text()
-        text.append(f"Column Configuration ({self.level})\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  a:accept  q:cancel  r:reset\n", style="dim")
-        # What the highlighted column means (#477) — the keyboard route to
-        # the header tooltips. Fixed at two lines so the grid doesn't jump.
-        for line in self._help_lines():
-            text.append(line + "\n", style="italic")
+        """The columns as one scrolling table, grouped, with the
+        highlighted one explained at the foot (#490)."""
+        w = self.inner_width
+        self._ensure_visible()
+        text = Text(no_wrap=True, overflow="crop")
+        text.append_text(self._heading())
         text.append("\n")
+        text.append_text(ds.rule(w))
 
-        breakpoint = self._column_breakpoint
-        left_rows = [self._render_row(i) for i in range(breakpoint)]
-        right_rows = [self._render_row(i) for i in range(breakpoint, len(self._flat_rows))]
-        left_rows = [r for r in left_rows if r is not None]
-        right_rows = [r for r in right_rows if r is not None]
+        h = self._list_height
+        for i in range(self._scroll, min(len(self._flat_rows), self._scroll + h)):
+            row = self._render_row(i)
+            if row is not None:
+                text.append("\n")
+                text.append_text(row)
 
-        max_lines = max(len(left_rows), len(right_rows))
-        for i in range(max_lines):
-            if i < len(left_rows):
-                left = left_rows[i]
-                pad = max(0, self._LEFT_COL_WIDTH - len(left.plain))
-                text.append(left)
-                if pad:
-                    text.append(" " * pad)
-            else:
-                text.append(" " * self._LEFT_COL_WIDTH)
-
-            text.append("  ")  # inter-column separator
-
-            if i < len(right_rows):
-                text.append(right_rows[i])
-
+        text.append("\n")
+        text.append_text(ds.rule(w))
+        more = len(self._flat_rows) - h
+        if more > 0:
+            # How far down the list, set into the rule's right end
+            pos = f" {self._scroll + 1}–{self._scroll + h} of {len(self._flat_rows)} "
+            text.right_crop(len(pos))
+            text.append(pos, style=ds.MUTED)
+        for line in self._tip():
             text.append("\n")
-
+            text.append_text(line)
         return text
 
     def _update_live_summaries(self) -> None:
@@ -347,11 +444,8 @@ class SummaryConfigModal(ModalBase):
         self.overrides = dict(overrides)
         self.original_overrides = dict(overrides)
         self.cursor_pos = 0
+        self._scroll = 0
         self._rebuild_flat_rows()
         self._save_focus(app_ref)
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except (AttributeError, Exception) as e:
-            logger.debug("Failed to focus modal: %s", e)
+        self._load_samples()
+        self._show()

@@ -211,7 +211,7 @@ class TestNewAgentModalState:
         from rich.text import Text
         result = modal.render()
         assert isinstance(result, Text)
-        assert "New Agent" in result.plain
+        assert modal.TITLE == "New agent"
         assert "Host" in result.plain
         assert "Directory" in result.plain
 

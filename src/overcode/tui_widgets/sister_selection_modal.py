@@ -11,6 +11,7 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -48,65 +49,59 @@ class SisterSelectionModal(ModalBase):
         self._disabled: Set[str] = set()
         self._original_disabled: Set[str] = set()
 
+    TITLE = "Sister instances"
+    WIDTH = 92
+
+    def hints(self) -> str:
+        return ds.hints(("space", "show/hide"), ("r", "restart daemon"), ("a", "apply"), ("esc", "cancel"))
+
     def render(self) -> Text:
-        text = Text()
-        text.append("Sister Instances\n", style="bold cyan")
-        text.append("j/k:move  space:toggle  r:restart daemon  a:apply  q:cancel\n\n", style="dim")
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
 
         if not self._sisters:
-            text.append("  No sisters configured.\n", style="dim")
-            text.append("  Add sisters in ~/.overcode/config.yaml\n", style="dim")
+            text.append_text(ds.finish(Text("  No sisters configured.", style=f"italic {ds.MUTED}"), w))
+            text.append("\n")
+            text.append_text(ds.tip(w, Text("Add sisters in ~/.overcode/config.yaml", style=ds.MUTED)))
             return text
 
+        name_w = max(len(s["name"]) for s in self._sisters) + 2
         for i, sister in enumerate(self._sisters):
-            is_selected = i == self.selected_index
+            sel = i == self.selected_index
             is_enabled = sister["name"] not in self._disabled
-            is_reachable = sister.get("reachable", False)
-            daemon_running = sister.get("daemon_running", False)
-
-            prefix = "> " if is_selected else "  "
-            check = "[x]" if is_enabled else "[ ]"
-            check_style = "bold green" if is_enabled else "dim"
-
-            text.append(prefix, style="bold cyan" if is_selected else "")
-            text.append(check, style=check_style)
-            text.append(" ", style="")
-
-            name_style = "bold" if is_selected else ""
-            text.append(sister["name"], style=name_style)
+            line = ds.item(sel)
+            line.append_text(ds.check(is_enabled))
+            line.append(" ")
+            name_style = "bold" if sel else (ds.TEXT if is_enabled else ds.STATE_OTHER)
+            line.append(f"{sister['name']:<{name_w}}", style=name_style)
 
             # Health indicators
-            if not is_reachable:
-                text.append("  unreachable", style="bold red")
+            if not sister.get("reachable", False):
+                line.append("unreachable", style=f"bold {ds.ERROR}")
                 error = sister.get("last_error", "")
                 if error:
-                    # Truncate long errors
-                    short = error[:60] + "..." if len(error) > 60 else error
-                    text.append(f" ({short})", style="dim red")
+                    line.append(f"  {error}", style=ds.MUTED)
             else:
-                # Web server is reachable
-                text.append("  web:", style="dim")
-                text.append("ok", style="green")
-
-                # Daemon status
-                text.append("  daemon:", style="dim")
-                if daemon_running:
-                    text.append("ok", style="green")
+                line.append("web ", style=ds.MUTED)
+                line.append("ok", style=ds.STATE_ON)
+                line.append("  daemon ", style=ds.MUTED)
+                if sister.get("daemon_running", False):
+                    line.append("ok", style=ds.STATE_ON)
                 else:
-                    text.append("down", style="bold red")
-
-                # Agent counts
+                    line.append("down", style=f"bold {ds.ERROR}")
                 green = sister.get("green_agents", 0)
                 total = sister.get("total_agents", 0)
-                text.append(f"  {green}/{total} agents", style="dim")
-
-                # Version
+                line.append(f"  {green}/{total} agents working", style=ds.MUTED)
                 version = sister.get("version", "")
                 if version:
-                    text.append(f"  v{version}", style="dim")
+                    line.append(f"  v{version}", style=ds.MUTED)
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
 
-            text.append("\n", style="")
-
+        shown = len(self._sisters) - len(self._disabled & {s["name"] for s in self._sisters})
+        text.append_text(ds.tip(w, Text(
+            f"Ticked sisters' agents are listed here ({shown} of {len(self._sisters)})",
+            style=ds.MUTED)))
         return text
 
     def on_key(self, event: events.Key) -> None:

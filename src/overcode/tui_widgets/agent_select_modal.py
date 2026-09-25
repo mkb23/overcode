@@ -10,6 +10,7 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -35,25 +36,26 @@ class AgentSelectModal(ModalBase):
         super().__init__(*args, **kwargs)
         self._agents: List[str] = []
 
+    TITLE = "Agent persona"
+    WIDTH = 56
+
+    def hints(self) -> str:
+        return ds.hints(("↵", "select"), ("esc", "skip"))
+
     def render(self) -> Text:
-        text = Text()
-        text.append("Select Agent\n", style="bold cyan")
-        text.append("j/k:move  enter:select  q:skip\n\n", style="dim")
-
-        # First option is always "(none) — backend default"
-        options = ["(none) \u2014 backend default"] + self._agents
-
-        for i, label in enumerate(options):
-            is_selected = i == self.selected_index
-
-            if is_selected:
-                text.append("> ", style="bold cyan")
-            else:
-                text.append("  ", style="")
-
-            style = "bold" if is_selected else ""
-            text.append(f"{label}\n", style=style)
-
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
+        # First option is always "(none)": the backend's default agent
+        options = [("(none)", "backend default")] + [(a, "") for a in self._agents]
+        for i, (label, note) in enumerate(options):
+            sel = i == self.selected_index
+            line = ds.item(sel)
+            line.append(label, style="bold" if sel else ds.TEXT)
+            if note:
+                line.append(f"  {note}", style=ds.MUTED)
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
+        text.rstrip()
         return text
 
     def on_key(self, event: events.Key) -> None:

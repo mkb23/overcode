@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import events
 from textual.message import Message
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -41,39 +42,36 @@ class PassthruConfigModal(ModalBase):
         # Working copy of {slot: target} the user is editing
         self._working: dict[str, str] = {}
 
-    def render(self) -> Text:
-        text = Text()
-        text.append("Passthru Keys\n", style="bold cyan")
-        text.append(
-            "j/k:move  space/enter:toggle  w:save  q:cancel\n",
-            style="dim",
-        )
-        text.append(
-            "(advanced remaps and extra slots: edit ~/.overcode/config.yaml)\n\n",
-            style="dim",
-        )
+    TITLE = "Passthru keys"
+    WIDTH = 76
 
+    def hints(self) -> str:
+        return ds.hints(("space", "toggle"), ("w", "save"), ("esc", "cancel"))
+
+    def render(self) -> Text:
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
+        slot_w = max((len(s) for s, _ in self._slots), default=6) + 2
         for i, (slot, default_target) in enumerate(self._slots):
-            is_selected = i == self.selected_index
+            sel = i == self.selected_index
             is_enabled = slot in self._working
             current = self._working.get(slot, default_target)
-            remapped = is_enabled and current != default_target
-
-            prefix = "> " if is_selected else "  "
-            text.append(prefix, style="bold cyan" if is_selected else "")
-            mark = "☒" if is_enabled else "☐"
-            mark_style = "bold green" if is_enabled else "dim"
-            text.append(f"{mark} ", style=mark_style)
-            row_style = "bold" if is_selected else ""
-            text.append(f"{slot}", style=row_style)
-            if remapped:
-                text.append(f"  → {current}", style="yellow")
-            elif is_enabled:
-                text.append(f"  → {current}", style="dim")
+            line = ds.item(sel)
+            line.append_text(ds.check(is_enabled))
+            line.append(" ")
+            line.append(f"{slot:<{slot_w}}", style=ds.KEY if is_enabled else ds.STATE_OTHER)
+            if not is_enabled:
+                line.append("not forwarded", style=f"italic {ds.STATE_OTHER}")
             else:
-                text.append("  (disabled)", style="dim")
-            text.append("\n", style="")
-
+                remapped = current != default_target
+                line.append("→ sends ", style=ds.MUTED)
+                line.append(current, style=ds.WARN if remapped else ds.TEXT)
+                if remapped:
+                    line.append("  remapped", style=ds.MUTED)
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
+        text.append_text(ds.tip(w, Text("Ticked keys go to the focused agent · remaps: ~/.overcode/config.yaml",
+                                        style=ds.MUTED)))
         return text
 
     def on_key(self, event: events.Key) -> None:
@@ -128,11 +126,5 @@ class PassthruConfigModal(ModalBase):
             if slot not in DEFAULT_PASSTHRU_KEYS:
                 self._slots.append((slot, target))
         self._working = dict(active)
-        self.selected_index = 0
         self._save_focus(app_ref)
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except Exception:
-            pass
+        self._show()

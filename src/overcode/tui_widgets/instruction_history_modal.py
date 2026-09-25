@@ -13,6 +13,7 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 MAX_HISTORY = 10
@@ -25,14 +26,6 @@ class HistoryEntry:
     text: str
     agent_name: str
     timestamp: float = field(default_factory=time.time)
-
-    @property
-    def preview(self) -> str:
-        """Single-line preview, truncated to 60 chars."""
-        oneline = self.text.replace("\n", " \u21b5 ")
-        if len(oneline) > 60:
-            return oneline[:57] + "..."
-        return oneline
 
     @property
     def age(self) -> str:
@@ -69,32 +62,37 @@ class InstructionHistoryModal(ModalBase):
         super().__init__(*args, **kwargs)
         self._entries: List[HistoryEntry] = []
 
+    TITLE = "Instruction history"
+    WIDTH = 96
+    _TIP_LINES = 2
+
+    def hints(self) -> str:
+        return ds.hints(("↵", "send to focused agent"), ("esc", "close"))
+
     def render(self) -> Text:
-        text = Text()
-        text.append("Instruction History\n", style="bold cyan")
-        text.append("j/k:move  enter:reinject  q:close\n\n", style="dim")
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
 
         if not self._entries:
-            text.append("  (no instructions sent yet)\n", style="dim italic")
+            text.append_text(ds.finish(Text("  No instructions sent yet", style=f"italic {ds.MUTED}"), w))
             return text
 
+        name_w = min(20, max(len(e.agent_name) for e in self._entries) + 2)
         for i, entry in enumerate(self._entries):
-            is_selected = i == self.selected_index
+            sel = i == self.selected_index
+            line = ds.item(sel)
+            line.append_text(ds.fit(Text(entry.agent_name, style=f"bold {ds.ACCENT}" if sel else ds.ACCENT), name_w))
+            line.append(f"{entry.age:>8}  ", style=ds.MUTED)
+            line.append(entry.text.replace("\n", " ↵ "), style="bold" if sel else ds.TEXT)
+            text.append_text(ds.finish(line, w))
+            text.append("\n")
 
-            if is_selected:
-                text.append("> ", style="bold cyan")
-            else:
-                text.append("  ", style="")
-
-            # Agent name + age
-            text.append(f"{entry.agent_name}", style="bold magenta" if is_selected else "magenta")
-            text.append(f"  {entry.age}\n", style="dim")
-
-            # Instruction preview (indented)
-            indent = "    " if is_selected else "    "
-            style = "bold" if is_selected else ""
-            text.append(f"{indent}{entry.preview}\n", style=style)
-
+        # The whole of the highlighted instruction, which the row cuts short
+        text.append_text(ds.rule(w))
+        full = self._entries[self.selected_index].text.replace("\n", " ↵ ")
+        for line in ds.wrap(full, w, self._TIP_LINES, style=ds.MUTED):
+            text.append("\n")
+            text.append_text(line)
         return text
 
     def on_key(self, event: events.Key) -> None:

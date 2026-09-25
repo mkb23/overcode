@@ -24,6 +24,7 @@ from textual import events
 from textual.message import Message
 
 from ..exceptions import InvalidSessionNameError
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -92,54 +93,47 @@ class RenameAgentModal(ModalBase):
 
     # ── render ───────────────────────────────────────────────────────────
 
-    def render(self) -> Text:
-        t = Text()
-        t.append("Rename Agent\n", style="bold cyan")
-        t.append("enter:rename  tab:field  space:force  esc:cancel\n\n", style="dim")
+    TITLE = "Rename agent"
+    WIDTH = 72
 
-        t.append("  ")
-        t.append(f"{'Agent':<{self.LABEL_W}}", style="dim")
-        t.append(f"{self.old_name}\n", style="dim")
+    def hints(self) -> str:
+        return ds.hints(("↵", "rename"), ("tab", "field"), ("esc", "cancel"))
+
+    def render(self) -> Text:
+        w = self.inner_width
+        t = Text(no_wrap=True, overflow="crop")
+
+        line = Text(" ")
+        line.append(f"{'Agent':<{self.LABEL_W}}", style=ds.MUTED)
+        line.append(self.old_name, style=ds.MUTED)
+        t.append_text(ds.finish(line, w))
+        t.append("\n")
 
         on_name = self.selected_index == 0
-        t.append("> " if on_name else "  ", style="bold cyan" if on_name else "")
-        t.append(f"{'New name':<{self.LABEL_W}}", style="bold" if on_name else "dim")
-        self._render_value(t, cursor=on_name)
+        line = ds.item(on_name)
+        line.append(f"{'New name':<{self.LABEL_W}}", style="bold" if on_name else ds.TEXT)
+        line.append_text(ds.text_value(self.value, self.cursor if on_name else None))
+        t.append_text(ds.finish(line, w))
         t.append("\n")
 
         on_force = self.selected_index == 1
-        t.append("> " if on_force else "  ", style="bold cyan" if on_force else "")
-        t.append(f"{'Force':<{self.LABEL_W}}", style="bold" if on_force else "dim")
-        for opt, active in (("off", not self.force), ("on", self.force)):
-            if active:
-                t.append(f" {opt} ", style="reverse bold" if on_force else "reverse")
-            else:
-                t.append(f" {opt} ", style="dim")
-            t.append(" ")
-        t.append("\n\n")
+        line = ds.item(on_force)
+        line.append(f"{'Force':<{self.LABEL_W}}", style="bold" if on_force else ds.TEXT)
+        line.append_text(ds.options(("off", "on"), "on" if self.force else "off"))
+        t.append_text(ds.finish(line, w))
+        t.append("\n")
 
         problem = self.error()
         if problem:
-            t.append(f"  {problem}\n", style="red")
+            note = Text(problem, style=ds.ERROR)
         elif self.force:
-            t.append("  restarts it even mid-turn — the turn is cancelled\n", style="yellow")
+            note = Text("restarts it even mid-turn — the turn is cancelled", style=ds.WARN)
         else:
-            t.append("  a busy agent is refused unless force is on\n", style="dim")
-        t.append("  the old name keeps working as an alias\n", style="dim")
+            note = Text("a busy agent is refused unless force is on", style=ds.MUTED)
+        t.append_text(ds.tip(w, note))
+        t.append("\n")
+        t.append_text(ds.finish(Text("the old name keeps working as an alias", style=ds.MUTED), w))
         return t
-
-    def _render_value(self, t: Text, cursor: bool) -> None:
-        val = self.value
-        if not cursor:
-            t.append(val or "(none)", style="" if val else "dim")
-            return
-        pos = min(self.cursor, len(val))
-        t.append(val[:pos])
-        if pos < len(val):
-            t.append(val[pos], style="reverse")
-            t.append(val[pos + 1:])
-        else:
-            t.append(" ", style="reverse")
 
     # ── keys ─────────────────────────────────────────────────────────────
 

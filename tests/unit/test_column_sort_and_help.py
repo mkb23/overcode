@@ -190,14 +190,32 @@ class TestConfigModalHelp:
         from overcode.tui_widgets.summary_config_modal import SummaryConfigModal
         modal = SummaryConfigModal()
         modal.level = "full"
-        idx = modal._flat_rows.index(("column", "cpu_pct"))
-        modal.cursor_pos = idx
-        lines = modal._help_lines()
-        assert len(lines) == modal._HELP_LINES
-        assert lines[0].startswith("CPU: CPU used")
+        modal.cursor_pos = modal._flat_rows.index(("column", "cpu_pct"))
+        lines = [t.plain for t in modal._tip()]
+        assert len(lines) == modal._TIP_LINES
+        assert lines[0].startswith("CPU · CPU % — CPU used")
+        assert "sort with S" in lines[1]
 
-    def test_group_row_shows_blank_lines(self):
+    def test_every_row_lists_header_and_description(self):
+        """The configurator is the guide to the columns (#490)."""
+        from overcode.summary_columns import COLUMNS_BY_ID
         from overcode.tui_widgets.summary_config_modal import SummaryConfigModal
         modal = SummaryConfigModal()
-        modal.cursor_pos = 0  # first row is a group
-        assert modal._help_lines() == [""] * modal._HELP_LINES
+        modal.WIDTH = 240  # room for the longest description
+        modal._inner_width = 236
+        for i, (kind, col_id) in enumerate(modal._flat_rows):
+            if kind != "column":
+                continue
+            col = COLUMNS_BY_ID[col_id]
+            row = modal._render_row(i).plain
+            assert col.header in row and col.description in row, col_id
+
+    def test_group_row_tip_counts_columns(self):
+        from overcode.tui_widgets.summary_config_modal import SummaryConfigModal
+        modal = SummaryConfigModal()
+        modal.level = "full"
+        modal.cursor_pos = modal._flat_rows.index(("group", "git"))
+        lines = [t.plain for t in modal._tip()]
+        assert len(lines) == modal._TIP_LINES
+        assert lines[0].startswith("Git: ")
+        assert "columns shown" in lines[0]

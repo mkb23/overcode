@@ -32,20 +32,12 @@ from ..command_palette import (
     StateView, filter_sort_choices, rank_commands,
 )
 from .jump_modal import JumpCandidate, filter_candidates
+from .dialog_style import (
+    ACCENT, KEY, MATCH, MUTED, SEL_BG, STATE_CUR, STATE_ON, STATE_OTHER,
+    fit as _fit, highlight as _highlight, keycaps as _keycaps, pad as _pad, spread as _spread,
+)
 from .modal_base import ModalBase
 
-
-# Colours tuned against the TUI's dark surface; the selected-row blue is
-# the same one the jobs list uses.
-SEL_BG = "#2d4a5a"
-ACCENT = "#5fafd7"
-KEY = "bold #ffaf5f"                    # keys in the list
-KEYCAP = "bold #101010 on #ffaf5f"      # the key in the tip line
-STATE_ON = "bold #87d787"               # a toggle that is on
-STATE_CUR = "bold #5fafd7"              # the current step of a cycle
-STATE_OTHER = "#626262"
-MATCH = "bold #ffd75f"
-MUTED = "#8a8a8a"
 
 PLACEHOLDERS = {
     "commands": "search commands, or type a key to see what it does",
@@ -526,41 +518,6 @@ class CommandPalette(ModalBase):
 # Text helpers
 # ---------------------------------------------------------------------------
 
-def _pad(text: Text, width: int) -> Text:
-    gap = width - cell_len(text.plain)
-    if gap > 0:
-        text.append(" " * gap)
-    return text
-
-
-def _fit(text: Text, width: int) -> Text:
-    """Truncate to `width` cells with an ellipsis, then pad to it."""
-    if cell_len(text.plain) > width:
-        text = text.copy()
-        text.truncate(max(0, width - 1), overflow="crop")
-        text.append("…", style=MUTED)
-    return _pad(text, width)
-
-
-def _spread(left: Text, right: Text, width: int) -> Text:
-    """left, then right flush against the right edge."""
-    gap = width - cell_len(left.plain) - cell_len(right.plain)
-    if gap < 1:
-        left = _fit(left, max(0, width - cell_len(right.plain) - 1))
-        gap = 1
-    left.append(" " * gap)
-    left.append_text(right)
-    return left
-
-
-def _highlight(s: str, positions: Sequence[int], style: str) -> Text:
-    text = Text(s, style=style)
-    for p in positions:
-        if 0 <= p < len(s):
-            text.stylize(MATCH, p, p + 1)
-    return text
-
-
 def _keys(keys: Sequence[str], lit: bool = False) -> Text:
     """A row's keys as plain coloured text; `lit` when the query named one."""
     text = Text()
@@ -568,16 +525,6 @@ def _keys(keys: Sequence[str], lit: bool = False) -> Text:
         if i:
             text.append(" ")
         text.append(k, style=MATCH if lit else KEY)
-    return text
-
-
-def _keycaps(keys: Sequence[str]) -> Text:
-    """Keys drawn as caps — used once, in the tip line, where they stand out."""
-    text = Text()
-    for i, k in enumerate(keys):
-        if i:
-            text.append(" or ", style=MUTED)
-        text.append(f" {k} ", style=KEYCAP)
     return text
 
 

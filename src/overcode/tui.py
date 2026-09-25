@@ -1134,12 +1134,12 @@ class SupervisorTUI(
     def on_resize(self) -> None:
         """Handle terminal resize events"""
         self._update_capture_lines()
-        try:
-            palette = self.query_one("#command-palette", CommandPalette)
-            if palette.has_class("visible"):
-                palette.relayout()
-        except NoMatches:
-            pass
+        # Re-centre open dialogs — after the refresh, since app.size still
+        # holds the old size while this handler runs
+        from .tui_widgets.modal_base import ModalBase
+        for dialog in self.query(ModalBase):
+            if dialog.has_class("visible"):
+                self.call_after_refresh(dialog.relayout)
         self.refresh()
         self.update_session_widgets()
         # Cascade to nested agent tmux windows in compact (split) mode so
@@ -3306,7 +3306,7 @@ class SupervisorTUI(
         Deliberately short. The palette lists every command with its key
         and state, so the footer's job is to send people there (#482).
         """
-        from .tui_widgets.command_palette import KEY, KEYCAP
+        from .tui_widgets.dialog_style import KEY, KEYCAP
         if self.tui_mode == "jobs":
             keys = [("J", "Agents"), ("j/k", "Jobs"), ("x", "Kill"), ("c", "Clear done")]
         else:

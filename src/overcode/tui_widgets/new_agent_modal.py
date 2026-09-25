@@ -23,6 +23,7 @@ from textual.message import Message
 from textual import events
 from rich.text import Text
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 logger = logging.getLogger(__name__)
@@ -184,9 +185,8 @@ class NewAgentModal(ModalBase):
         self._editing = False
         self._cursor = 0
         self._save_focus(app_ref)
-        self._show()
         # Start with name field selected (host and directory are usually fine)
-        self.selected_index = 2
+        self._show(2)
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -213,11 +213,13 @@ class NewAgentModal(ModalBase):
         self._editing = True
         self._edit_snapshot = f.value
         self._cursor = len(f.value)
+        self.update_frame()
         self.refresh()
 
     def _confirm_edit(self, advance: bool = True) -> None:
         f = self._cur
         self._editing = False
+        self.update_frame()
         # If name was manually edited, clear auto flag
         if f.key == "name" and f.value != self._edit_snapshot:
             f.auto = False
@@ -229,6 +231,7 @@ class NewAgentModal(ModalBase):
     def _cancel_edit(self) -> None:
         self._cur.value = self._edit_snapshot
         self._editing = False
+        self.update_frame()
         self.refresh()
 
     def _cycle(self, f: FormField) -> None:
@@ -320,66 +323,54 @@ class NewAgentModal(ModalBase):
 
     # ── render ───────────────────────────────────────────────────────────
 
+    TITLE = "New agent"
+    WIDTH = 96
     LABEL_W = 12  # fixed label column width
 
-    def render(self) -> Text:
-        t = Text()
-        t.append("New Agent\n", style="bold cyan")
+    # What each field means, shown in the tip line for the highlighted one
+    _TIPS = {
+        "host": "Machine to launch on: this one or a sister",
+        "directory": "Working directory; ~ expands, and a missing local directory is created",
+        "name": "Agent name; follows the directory until you edit it",
+        "agent": "Agent persona to launch as (from the backend's agents directory)",
+        "perms": "bypass skips every permission prompt",
+        "teams": "Let the agent run agent teams",
+        "provider": "API provider for Claude Code: Anthropic (web) or Bedrock",
+        "backend": "Agent CLI to launch",
+        "wrapper": "Launch wrapper script, e.g. devcontainer; empty for none",
+        "backend_args": "Extra arguments for the agent CLI, shell-quoted",
+    }
+
+    def hints(self) -> str:
         if self._editing:
-            t.append("type to edit  enter:confirm  esc:cancel\n\n", style="dim")
-        else:
-            t.append("j/k:move  enter:edit  space:toggle  a:launch  q:cancel\n\n", style="dim")
+            return ds.hints(("↵", "confirm"), ("esc", "undo edit"))
+        return ds.hints(("↵", "edit / change"), ("a", "launch"), ("esc", "cancel"))
+
+    def render(self) -> Text:
+        w = self.inner_width
+        t = Text(no_wrap=True, overflow="crop")
+        value_w = w - 1 - self.LABEL_W
 
         for i, f in enumerate(self.fields):
             sel = i == self.selected_index
             editing = sel and self._editing
-
-            # Cursor prefix
-            t.append("> " if sel else "  ", style="bold cyan" if sel else "")
-
-            # Label
-            t.append(f"{f.label:<{self.LABEL_W}}", style="bold" if sel else "dim")
-
-            # Value
-            if editing:
-                self._render_editable(t, f)
-            elif f.type == "text":
-                val = f.value or "(none)"
-                style = "" if sel else "dim" if not f.value else ""
-                t.append(val, style=style)
-            elif f.type in ("toggle", "select"):
-                self._render_option(t, f, sel)
-
+            line = ds.item(sel)
+            line.append(f"{f.label:<{self.LABEL_W}}", style="bold" if sel else ds.MUTED)
+            if f.type == "text":
+                line.append_text(ds.text_value(f.value, self._cursor if editing else None))
+            else:
+                line.append_text(ds.options(f.options, f.value, value_w))
+            t.append_text(ds.finish(line, w))
             t.append("\n")
 
-        return t
-
-    def _render_editable(self, t: Text, f: FormField) -> None:
-        """Render a text field in edit mode with a block cursor."""
-        val = f.value
-        pos = min(self._cursor, len(val))
-
-        # Text before cursor
-        if pos > 0:
-            t.append(val[:pos])
-
-        # Cursor character (reverse video)
-        if pos < len(val):
-            t.append(val[pos], style="reverse")
-            t.append(val[pos + 1:])
-        else:
-            t.append(" ", style="reverse")  # cursor at end
-
-    def _render_option(self, t: Text, f: FormField, selected: bool) -> None:
-        """Render a toggle/select field showing all options."""
-        for j, opt in enumerate(f.options):
-            is_active = opt == f.value
-            if is_active:
-                t.append(f" {opt} ", style="reverse bold" if selected else "reverse")
+        if self.fields:
+            f = self._cur
+            if self._editing:
+                note = Text("type to edit · ← → home end move", style=ds.MUTED)
             else:
-                t.append(f" {opt} ", style="dim")
-            if j < len(f.options) - 1:
-                t.append(" ", style="")
+                note = Text(self._TIPS.get(f.key, ""), style=ds.MUTED)
+            t.append_text(ds.tip(w, note))
+        return t
 
     # ── key handling ─────────────────────────────────────────────────────
 

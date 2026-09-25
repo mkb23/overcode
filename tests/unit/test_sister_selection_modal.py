@@ -118,8 +118,8 @@ class TestSisterSelectionModal:
         assert "macbook" in plain
         assert "desktop" in plain
         assert "server" in plain
-        assert "[x]" in plain  # enabled sisters
-        assert "[ ]" in plain  # disabled sister
+        assert "✓ macbook" in plain  # enabled sisters
+        assert "· desktop" in plain  # disabled sister
 
     def test_render_empty_sisters(self, modal):
         modal.show([], set())
@@ -164,7 +164,7 @@ class TestSisterSelectionModal:
         modal.show(SISTERS, set())
         text = modal.render()
         plain = text.plain
-        assert "daemon:" in plain
+        assert "daemon ok" in plain
         assert "unreachable" in plain  # server
 
     def test_empty_sisters_only_allows_cancel(self, modal):

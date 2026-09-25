@@ -47,20 +47,6 @@ def make_entries(n):
 class TestHistoryEntry:
     """Tests for the HistoryEntry dataclass."""
 
-    def test_preview_short_text(self):
-        e = HistoryEntry(text="hello world", agent_name="a")
-        assert e.preview == "hello world"
-
-    def test_preview_multiline(self):
-        e = HistoryEntry(text="line1\nline2\nline3", agent_name="a")
-        assert "↵" in e.preview
-        assert "\n" not in e.preview
-
-    def test_preview_truncates_long_text(self):
-        e = HistoryEntry(text="x" * 100, agent_name="a")
-        assert len(e.preview) <= 60
-        assert e.preview.endswith("...")
-
     def test_age_seconds(self):
         e = HistoryEntry(text="t", agent_name="a", timestamp=time.time() - 30)
         assert "s ago" in e.age
@@ -154,10 +140,19 @@ class TestRender:
 
     def test_render_empty(self, modal):
         text = modal.render()
-        assert "no instructions sent yet" in text.plain
+        assert "No instructions sent yet" in text.plain
 
     def test_render_with_entries(self, modal):
         modal._entries = make_entries(2)
         text = modal.render()
         assert "agent-0" in text.plain
         assert "instruction 0" in text.plain
+
+    def test_render_shows_whole_selected_instruction(self, modal):
+        """Rows cut long instructions short; the foot shows all of the
+        highlighted one."""
+        modal._entries = [HistoryEntry(text="word " * 30 + "END", agent_name="a")]
+        modal._inner_width = 100
+        plain = modal.render().plain
+        assert plain.count("END") == 1
+        assert plain.rstrip().endswith("END")

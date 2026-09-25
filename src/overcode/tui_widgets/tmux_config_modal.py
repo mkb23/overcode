@@ -11,6 +11,7 @@ from rich.text import Text
 from textual import events
 from textual.message import Message
 
+from . import dialog_style as ds
 from .modal_base import ModalBase
 
 
@@ -39,25 +40,26 @@ class TmuxConfigModal(ModalBase):
         self.current_key: Optional[str] = None
         self._choices: list[tuple[str, str]] = []
 
+    TITLE = "Tmux pane-toggle key"
+    WIDTH = 68
+
+    def hints(self) -> str:
+        return ds.hints(("↵", "choose"), ("esc", "cancel"))
+
     def render(self) -> Text:
-        text = Text()
-        text.append("Tmux Pane-Toggle Key\n", style="bold cyan")
-        text.append("j/k:move  space/enter:select  q:cancel\n\n", style="dim")
-
+        w = self.inner_width
+        text = Text(no_wrap=True, overflow="crop")
         for i, (label, key) in enumerate(self._choices):
-            is_selected = i == self.selected_index
+            sel = i == self.selected_index
             is_current = key == self.current_key
-
-            prefix = "> " if is_selected else "  "
-            text.append(prefix, style="bold cyan" if is_selected else "")
-            mark = "●" if is_current else "○"
-            text.append(f"{mark} ", style="bold green" if is_current else "dim")
-            row_style = "bold" if is_selected else ""
-            text.append(label, style=row_style)
-            if is_current:
-                text.append("  (current)", style="dim")
-            text.append("\n", style="")
-
+            line = ds.item(sel)
+            line.append("● " if is_current else "○ ", style=ds.STATE_ON if is_current else ds.STATE_OTHER)
+            line.append(label, style="bold" if sel else ds.TEXT)
+            right = Text("current ", style=ds.MUTED) if is_current else Text()
+            text.append_text(ds.spread(line, right, w) if right.plain else ds.finish(line, w))
+            text.append("\n")
+        text.append_text(ds.tip(w, Text("Switches between the TUI and the agent terminal (split mode)",
+                                        style=ds.MUTED)))
         return text
 
     def on_key(self, event: events.Key) -> None:
@@ -103,9 +105,4 @@ class TmuxConfigModal(ModalBase):
                 self.selected_index = i
                 break
         self._save_focus(app_ref)
-        self.refresh()
-        self.add_class("visible")
-        try:
-            self.focus()
-        except Exception:
-            pass
+        self._show(self.selected_index)
