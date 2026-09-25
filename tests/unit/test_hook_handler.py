@@ -725,16 +725,29 @@ class TestSessionStartRecordsSessionId:
         assert data["event"] == "UserPromptSubmit"
         assert data["agent_session_id"] == "sid-1"
 
-    def test_non_session_start_events_never_record_session_id(self, monkeypatch, tmp_path):
-        # Claude's stdin also carries session_id — must never leak into
-        # agent_session_ids for any event other than SessionStart, or every
-        # existing Claude Code hook state file would gain a new field.
+    def test_every_event_records_session_id(self, monkeypatch, tmp_path):
+        # Claude never sends SessionStart to overcode, so waiting for one
+        # meant its id was only ever the launch-time prescribed value. Every
+        # event carries the id, so every event records it.
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "Stop", "session_id": "should-not-be-recorded",
+            "hook_event_name": "Stop", "session_id": "sid-from-stop",
         })
         data = self._state(tmp_path)
-        assert "agent_session_id" not in data
-        assert "agent_session_ids" not in data
+        assert data["agent_session_id"] == "sid-from-stop"
+        assert data["agent_session_ids"] == ["sid-from-stop"]
+
+    def test_context_reset_moves_the_recorded_id(self, monkeypatch, tmp_path):
+        # /clear mints a new session id mid-flight; the newest one must win,
+        # because that is the conversation `restart --resume` has to land in.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "UserPromptSubmit", "session_id": "before-clear",
+        })
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+        })
+        data = self._state(tmp_path)
+        assert data["agent_session_id"] == "after-clear"
+        assert data["agent_session_ids"] == ["before-clear", "after-clear"]
 
     def test_a_second_session_start_appends_without_duplicating(self, monkeypatch, tmp_path):
         self._send(tmp_path, monkeypatch, {
@@ -749,6 +762,267 @@ class TestSessionStartRecordsSessionId:
         data = self._state(tmp_path)
         assert data["agent_session_ids"] == ["sid-1", "sid-2"]
         assert data["agent_session_id"] == "sid-1"
+
+
+class TestAgentSessionIdSync:
+    """A reset conversation must reach sessions.json, because `restart`
+    relaunches with `--resume <active_agent_session_id>` and a stale value
+    silently drops everything the agent did after the reset.
+
+    Every case here drives `handle_hook_event` and asserts the persisted
+    session record, so the contract under test is the restart-visible
+    behaviour rather than any particular helper.
+    """
+
+    def _send(self, tmp_path, monkeypatch, payload, agent="test-agent"):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", agent)
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps(payload)
+            handle_hook_event()
+
+    def _registered_agent(self, tmp_path, monkeypatch, launch_sid="launch-time-sid"):
+        """Create a real overcode session record for the agent under test."""
+        from overcode.session_manager import SessionManager
+
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        sm = SessionManager(skip_git_detection=True)
+        created = sm.create_session(
+            name="test-agent", tmux_session="agents", tmux_window="test-agent-1",
+            command=["claude"],
+        )
+        # Mirrors what the launcher records for a fresh launch (launcher.py):
+        # the prescribed id is both owned and active.
+        sm.add_agent_session_id(created.id, launch_sid)
+        sm.set_active_agent_session_id(created.id, launch_sid)
+        return created.id
+
+    def _record(self, tmp_path):
+        from overcode.session_manager import SessionManager
+
+        return SessionManager(skip_git_detection=True).get_session_by_name("test-agent")
+
+    def test_a_reset_repoints_the_record(self, monkeypatch, tmp_path):
+        self._registered_agent(tmp_path, monkeypatch)
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+        })
+        record = self._record(tmp_path)
+        assert record.active_agent_session_id == "after-clear"
+        assert "after-clear" in record.agent_session_ids
+
+    def test_the_replaced_id_is_kept_in_the_history(self, monkeypatch, tmp_path):
+        # History is what later events compare against, and it is also the
+        # precise filter stats/history lookup uses, so the outgoing id must
+        # survive the move.
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "after-clear",
+        })
+        assert self._record(tmp_path).agent_session_ids == ["before-clear", "after-clear"]
+
+    def test_unchanged_id_leaves_the_record_alone(self, monkeypatch, tmp_path):
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="sid-1")
+        for event in ("UserPromptSubmit", "PostToolUse", "Stop"):
+            self._send(tmp_path, monkeypatch, {
+                "hook_event_name": event, "session_id": "sid-1",
+            })
+        record = self._record(tmp_path)
+        assert record.active_agent_session_id == "sid-1"
+        assert record.agent_session_ids == ["sid-1"]
+
+    def test_payload_without_session_id_leaves_the_record_alone(self, monkeypatch, tmp_path):
+        self._registered_agent(tmp_path, monkeypatch)
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "Stop"})
+        assert self._record(tmp_path).active_agent_session_id == "launch-time-sid"
+
+    def test_an_unregistered_agent_is_tolerated(self, monkeypatch, tmp_path):
+        # Hooks also fire for agents overcode does not manage; that must not
+        # raise (a failing hook takes the agent's turn with it) and must not
+        # invent a record.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "orphan-sid",
+        })
+        assert self._record(tmp_path) is None
+
+    def test_a_failed_write_is_retried_on_the_next_event(self, monkeypatch, tmp_path):
+        from overcode.session_manager import SessionManager
+
+        self._registered_agent(tmp_path, monkeypatch)
+
+        # Fail the durable write once, at the SessionManager boundary.
+        real_advance = SessionManager.advance_active_agent_session_id
+        calls = {"n": 0}
+
+        def flaky(self, session_id, agent_session_id, ordinal=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("session store unavailable")
+            return real_advance(self, session_id, agent_session_id, ordinal=ordinal)
+
+        monkeypatch.setattr(
+            SessionManager, "advance_active_agent_session_id", flaky
+        )
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+        })
+        assert self._record(tmp_path).active_agent_session_id == "launch-time-sid"
+
+        # Nothing recorded the attempt as done, so the next event tries again.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "after-clear",
+        })
+        assert self._record(tmp_path).active_agent_session_id == "after-clear"
+
+    def test_a_superseded_id_does_not_drag_the_record_backwards(self, monkeypatch, tmp_path):
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+        })
+        assert self._record(tmp_path).active_agent_session_id == "after-clear"
+
+        # An event that was in flight across the reset still carries the old
+        # id. Acting on it would point restart at a conversation the agent has
+        # already left.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "before-clear",
+        })
+        assert self._record(tmp_path).active_agent_session_id == "after-clear"
+
+    def test_a_stale_event_does_not_poison_the_hook_snapshot(self, monkeypatch, tmp_path):
+        # The hook-state id is what CodexStatsReader treats as current, so a
+        # superseded event must not land there either.
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+        })
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "before-clear",
+        })
+        state = json.loads(
+            (tmp_path / "agents" / "hook_state_test-agent.json").read_text()
+        )
+        assert state["agent_session_id"] == "after-clear"
+        assert self._record(tmp_path).active_agent_session_id == "after-clear"
+
+    def test_an_older_unseen_id_is_rejected_by_age(self, monkeypatch, tmp_path):
+        # Two resets in quick succession: the newer id can take the lock first,
+        # leaving the older id unseen. History ordering cannot catch that, so
+        # the transcript's age decides.
+        older = tmp_path / "older.jsonl"
+        newer = tmp_path / "newer.jsonl"
+        older.write_text("{}")
+        newer.write_text("{}")
+        os.utime(older, (1_000_000, 1_000_000))
+        os.utime(newer, (2_000_000, 2_000_000))
+
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="launch-time-sid")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse",
+            "session_id": "reset-b",
+            "transcript_path": str(newer),
+        })
+        assert self._record(tmp_path).active_agent_session_id == "reset-b"
+
+        # reset-a was never recorded, so only its age marks it as the older
+        # conversation.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop",
+            "session_id": "reset-a",
+            "transcript_path": str(older),
+        })
+        assert self._record(tmp_path).active_agent_session_id == "reset-b"
+
+    def test_advance_reports_the_id_the_record_holds(self, monkeypatch, tmp_path):
+        # The caller writes this id into hook state, so it has to come from
+        # inside the transaction rather than from a pre-lock snapshot.
+        from overcode.session_manager import SessionManager
+
+        overcode_id = self._registered_agent(tmp_path, monkeypatch, launch_sid="sid-a")
+        sm = SessionManager(skip_git_detection=True)
+
+        # A relaunch sets the active id without any age, so it starts out
+        # unordered — and an age arriving later settles it.
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-a") == (
+            "current_unordered", "sid-a",
+        )
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-a", ordinal=100.0) == (
+            "advanced", "sid-a",
+        )
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-a") == (
+            "current", "sid-a",
+        )
+        # sid-b with no age of its own cannot be ordered against sid-a's, so
+        # it advances unconfirmed; with an age it advances outright.
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-b") == (
+            "advanced_unordered", "sid-b",
+        )
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-b", ordinal=200.0) == (
+            "advanced", "sid-b",
+        )
+        # sid-a is now in history and no longer newest, so it is refused — and
+        # the current id comes back with the refusal.
+        assert sm.advance_active_agent_session_id(overcode_id, "sid-a") == (
+            "superseded", "sid-b",
+        )
+        assert sm.advance_active_agent_session_id("no-such-session", "sid-c") == (
+            "unknown", None,
+        )
+
+    def test_an_unorderable_advance_stays_retryable(self, monkeypatch, tmp_path):
+        # Once the record carries ordering metadata, an event that cannot be
+        # ordered against it is recorded (staleness is the worse failure) but
+        # not confirmed, so a later orderable event gets to re-decide.
+        transcript = tmp_path / "a.jsonl"
+        transcript.write_text("{}")
+        os.utime(transcript, (1_000_000, 1_000_000))
+
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="launch-time-sid")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "PostToolUse",
+            "session_id": "reset-a",
+            "transcript_path": str(transcript),
+        })
+        assert self._record(tmp_path).active_agent_session_ordinal == 1_000_000
+        assert self._record(tmp_path).active_agent_session_unordered is False
+
+        # No transcript path: recorded, but flagged as unordered rather than
+        # silently treated as the confirmed newest conversation.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop", "session_id": "reset-b",
+        })
+        record = self._record(tmp_path)
+        assert record.active_agent_session_id == "reset-b"
+        assert record.active_agent_session_unordered is True
+        assert record.active_agent_session_ordinal is None
+
+        # The same id arriving with an age settles it, so "unconfirmed" is
+        # recoverable rather than permanent.
+        later = tmp_path / "b.jsonl"
+        later.write_text("{}")
+        os.utime(later, (3_000_000, 3_000_000))
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "Stop",
+            "session_id": "reset-b",
+            "transcript_path": str(later),
+        })
+        record = self._record(tmp_path)
+        assert record.active_agent_session_unordered is False
+        assert record.active_agent_session_ordinal == 3_000_000
+
+    def test_history_is_not_truncated(self, monkeypatch, tmp_path):
+        # agent_session_ids is the precise filter for transcript, stats and
+        # pid-ownership lookup, so a long-lived agent must not lose old ids.
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="sid-0")
+        for i in range(1, 30):
+            self._send(tmp_path, monkeypatch, {
+                "hook_event_name": "Stop", "session_id": f"sid-{i}",
+            })
+        record = self._record(tmp_path)
+        assert record.agent_session_ids == [f"sid-{i}" for i in range(30)]
+        assert record.active_agent_session_id == "sid-29"
+
 
 
 class TestInterruptEvent:

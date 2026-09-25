@@ -707,13 +707,19 @@ either one):
   scrape the pane for an "interrupted" marker to downgrade a stuck
   `running`; codex's hook stdin says so directly, so the event→status map
   alone does the downgrade — no pane read needed.
-- **`SessionStart`** is how overcode learns the codex session id. Codex has
-  no `--session-id`-shaped flag, so — unlike Claude, which prescribes the id
-  up front — this hook event is the *only* channel; its `session_id` field
-  is folded into `hook_state_<agent>.json`'s `agent_session_ids` /
-  `agent_session_id`, which is what makes restart-resume and fork target the
-  right conversation and is also `CodexStatsReader`'s primary lookup key
-  (below).
+- **`SessionStart`** is where overcode learns codex's *first* session id.
+  Codex has no `--session-id`-shaped flag, so — unlike Claude, which
+  prescribes the id up front — this is the only event that can introduce it.
+  It is not the only channel for recording one, though: `handle_hook_event`
+  reads `session_id` off *every* hook event that carries one, for every
+  backend, and folds it into `hook_state_<agent>.json`'s `agent_session_ids`
+  / `agent_session_id`. That is what makes restart-resume and fork target the
+  right conversation, and it is also `CodexStatsReader`'s primary lookup key
+  (below). Reading it from every event matters because a prescribed id does
+  not stay current: `/clear` (and auto-compaction) mint a new one mid-session,
+  and a changed id is mirrored into `sessions.json` so
+  `restart --resume` lands in the conversation the agent is actually in
+  rather than the one it was launched with.
 
 ---
 
@@ -814,10 +820,13 @@ writing.
 | interactions | `response_item` messages where `role=="user"` **and** `internal_chat_message_metadata_passthrough.content_item_kinds` contains `"user.text"` — excludes injected `<environment_context>`/skills/permissions scaffolding, which carries its own kind tags instead |
 | cost | **not a dash — a list-price estimate, not a billed figure.** codex is subscription/API billed with no local per-turn charge (matches Claude's transcript, which also carries none), so there is nothing to compare an estimate against. `pricing.py`'s `MODEL_PRICING` table carries a `gpt-5.6-sol` entry (codex's account-default model — Appendix A), sourced from OpenAI's own pricing docs and standard-tier/short-context only (batch/flex/fast-mode and long-context tiers aren't modelled, since overcode has no signal for which tier a turn ran under). A codex turn on a different model than `gpt-5.6-sol` still falls back to your configured *default* per-token price (`settings.get_model_pricing`), the same behaviour every backend gets for an unrecognized model — live-verified during Phase 2 smoke testing. Either way the column always shows a real dollar figure, never a dash; treat it as informative, not as billing-accurate |
 
-Rows are located by the codex session id `SessionStart`'s hook recorded into
+Rows are located by the codex session id recorded into
 `hook_state_<agent>.json` (`agent_session_id` / `agent_session_ids` — the
 exact field names and mechanism opencode's plugin also writes, since both
-ride the same `hook_handler.write_hook_state()` code path). Without a
+ride the same `hook_handler.write_hook_state()` code path). `SessionStart` is
+where codex's first id arrives, but the id is re-read from every hook event
+that carries one, and the snapshot names whichever conversation the session
+record currently points at — so a reset mid-session moves it too. Without a
 recorded id — hooks never fired, or the state file predates this phase — it
 falls back to matching `session_meta.cwd` against the agent's working
 directory within a few calendar days of its launch time, the same

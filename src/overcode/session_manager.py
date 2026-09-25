@@ -200,6 +200,12 @@ class Session:
     # Replaced (not appended) when /clear creates a new session.
     # Used for context window calculation — only the active session matters.
     active_agent_session_id: Optional[str] = None
+    # Age of the conversation behind active_agent_session_id (its transcript's
+    # mtime), and whether that age is actually known. Used by
+    # advance_active_agent_session_id to order a delayed hook event whose id it
+    # has never seen before.
+    active_agent_session_ordinal: float | None = None
+    active_agent_session_unordered: bool = False
 
     # Heartbeat configuration (#171)
     heartbeat_enabled: bool = False
@@ -1632,6 +1638,11 @@ class SessionManager:
         Unlike add_agent_session_id which accumulates, this replaces the
         active session. After /clear the backend starts a new session and
         only that session's context window is relevant.
+
+        Carries no ordering information, so any age recorded for the previous
+        conversation is dropped rather than left attached to a different id —
+        a relaunch sets the active id this way, and a stale age would then be
+        compared against the new conversation.
         """
         session = self.get_session(session_id)
         if not session:
@@ -1645,6 +1656,126 @@ class SessionManager:
             if session_id in state:
                 state[session_id]['active_agent_session_id'] = agent_session_id
                 state[session_id]['active_claude_session_id'] = agent_session_id
+                state[session_id].pop('active_agent_session_ordinal', None)
+                state[session_id]['active_agent_session_unordered'] = True
+
+    def advance_active_agent_session_id(
+        self, session_id: str, agent_session_id: str, ordinal: float | None = None
+    ) -> tuple[str, str | None]:
+        """Move the active backend session id forward, atomically.
+
+        A backend mints a new session id whenever the agent resets its context
+        (`/clear`, auto-compaction), and `restart` relaunches with
+        `--resume <active_agent_session_id>`, so this field has to follow the
+        conversation the agent is actually in.
+
+        The ordering check, the history append and the active-id write all
+        happen inside one `_locked_state` transaction, so the decision is made
+        against the same state it is written to. Hook invocations for one agent
+        can overlap, and doing this as separate locked updates let a stale one
+        land after a newer one.
+
+        ``ordinal`` is a caller-supplied age for the conversation behind
+        ``agent_session_id`` — the modification time of its transcript. It is
+        recorded alongside the active id and compared on the next call, which
+        is what lets a delayed hook be recognised as stale even when its id has
+        never been seen before and lock acquisition happens out of event order.
+        Callers that cannot supply one degrade to the history-ordering check
+        alone.
+
+        Returns ``(outcome, active_agent_session_id)`` where the second element
+        is the id the record holds when the transaction ends — read inside the
+        lock, so callers never have to fall back on a pre-transaction snapshot
+        that a concurrent hook may already have replaced. Outcomes:
+
+            "advanced"           — the record now names ``agent_session_id``
+            "advanced_unordered" — advanced, but its age could not be compared
+                                   against the previous conversation's, so the
+                                   record is flagged unordered and the caller
+                                   should treat the sync as unconfirmed
+            "current"            — it already did, with a known age
+            "current_unordered"  — it already did, but the age is still
+                                   unknown, so a later event carrying one can
+                                   still settle it
+            "superseded"         — ``agent_session_id`` is an older
+                                   conversation the agent has left; ignored
+            "unknown"            — no such session
+        """
+        with self._locked_state() as state:
+            entry = state.get(session_id)
+            if entry is None:
+                return "unknown", None
+
+            ids = entry.get('agent_session_ids')
+            if ids is None:
+                ids = list(entry.get('claude_session_ids') or [])
+            active = (
+                entry.get('active_agent_session_id')
+                or entry.get('active_claude_session_id')
+            )
+
+            unordered = bool(entry.get('active_agent_session_unordered'))
+
+            if active == agent_session_id:
+                # Re-evaluation of an earlier unordered advance: the same id
+                # arriving with an age attached is what settles it, which is
+                # what makes "unconfirmed" recoverable rather than permanent.
+                if unordered and ordinal is not None:
+                    entry['active_agent_session_ordinal'] = ordinal
+                    entry['active_agent_session_unordered'] = False
+                    return "advanced", active
+                if unordered:
+                    return "current_unordered", active
+                return "current", active
+
+            # Ids are appended the first time they are seen, so one that is
+            # already recorded and is no longer the newest belongs to a
+            # conversation already left behind — a hook event in flight across
+            # a reset carries exactly that.
+            if agent_session_id in ids and ids[-1] != agent_session_id:
+                return "superseded", active
+
+            # Age check, for a delayed hook whose id has never been seen: two
+            # resets in quick succession can have the newer id take the lock
+            # first, and history ordering alone would then accept the older id
+            # as new. Comparing recorded ages catches it whichever order the
+            # locks are acquired in.
+            active_ordinal = entry.get('active_agent_session_ordinal')
+            has_active_ordinal = isinstance(active_ordinal, (int, float))
+            comparable = ordinal is not None and has_active_ordinal
+            if comparable and ordinal < active_ordinal:
+                return "superseded", active
+            # Equal ages order nothing: two different conversations with the
+            # same transcript mtime cannot be told apart, so accept the move
+            # but do not claim it was confirmed.
+            ages_tied = comparable and ordinal == active_ordinal
+
+            # Keep the outgoing id in the history so the ordering check above
+            # can recognise it as superseded next time. A fresh launch only
+            # sets it active, so it is not necessarily there yet.
+            if active and active not in ids:
+                ids.append(active)
+            if agent_session_id not in ids:
+                ids.append(agent_session_id)
+
+            entry['agent_session_ids'] = ids
+            entry['claude_session_ids'] = ids
+            entry['active_agent_session_id'] = agent_session_id
+            entry['active_claude_session_id'] = agent_session_id
+            confirmed = ordinal is not None and not ages_tied
+            if confirmed:
+                entry['active_agent_session_ordinal'] = ordinal
+            else:
+                # Nothing to order the next event against. Drop any inherited
+                # age rather than comparing a new conversation against an older
+                # one's, and flag the record so a later event carrying an age
+                # re-evaluates instead of inheriting this uncertainty forever.
+                entry.pop('active_agent_session_ordinal', None)
+            entry['active_agent_session_unordered'] = not confirmed
+
+            if not confirmed:
+                return "advanced_unordered", agent_session_id
+            return "advanced", agent_session_id
 
     # Pre-Phase-6 method names.
     add_claude_session_id = add_agent_session_id

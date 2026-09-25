@@ -19,7 +19,14 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:  # pragma: no cover - Windows
+    HAS_FCNTL = False
 
 logger = logging.getLogger(__name__)
 
@@ -236,10 +243,11 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("SessionEnd", "overcode hook-handler"),
 ]
 
-# Codex has no --session-id-shaped flag (design doc §2.2/§2.4), so it needs
-# two events Claude never registers: SessionStart (to learn the session id
-# the hook-handler can't otherwise discover) and Interrupt (codex's own
-# Escape-to-interrupt signal, see _HOOK_STATUS_MAP in hook_status_detector.py).
+# Codex needs two events Claude does not register: SessionStart (codex has no
+# --session-id-shaped flag, design doc §2.2/§2.4, so this is where its first
+# session id arrives — Claude's id is read off every event instead, see
+# handle_hook_event) and Interrupt (codex's own Escape-to-interrupt signal,
+# see _HOOK_STATUS_MAP in hook_status_detector.py).
 # codex's PreCompact/PostCompact/SubagentStart/SubagentStop exist but have no
 # overcode-side meaning yet, so they are deliberately not registered.
 CODEX_HOOK_EVENTS: tuple[str, ...] = (
@@ -253,10 +261,12 @@ CODEX_HOOK_EVENTS: tuple[str, ...] = (
     "SessionEnd",
 )
 
-# Hook-state fields codex's SessionStart carries that Claude's stdin has no
-# equivalent for. Capped the same way opencode's JS plugin caps
-# agent_session_ids, so a long-lived agent that keeps starting new
-# conversations doesn't grow the state file without bound.
+# Retention window for the hook-state session-id history. Every backend that
+# sends a session id on its hook events gets one recorded (see
+# handle_hook_event); codex's SessionStart is simply where its first one
+# arrives. Capped the same way opencode's JS plugin caps agent_session_ids, so
+# a long-lived agent that keeps starting new conversations doesn't grow the
+# state file without bound.
 _MAX_AGENT_SESSION_IDS = 20
 
 
@@ -501,6 +511,143 @@ def _peek_active_prompt_id(tmux_session: str, session_name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _get_hook_state_lock_path(tmux_session: str, session_name: str) -> Path:
+    """Sibling lock file guarding one agent's hook-state read-modify-write."""
+    state_path = _get_hook_state_path(tmux_session, session_name)
+    return state_path.with_name(state_path.name + ".lock")
+
+
+@contextmanager
+def _locked_hook_state(tmux_session: str, session_name: str):
+    """Serialize one agent's hook-state cycle and yield the current snapshot.
+
+    Hook invocations for an agent can overlap — two claude processes exist
+    briefly across a restart — and the session-id decision is a read-modify-
+    write over this file: peek what is already durable, settle the id against
+    the session record, write the result. Without a lock an older event can
+    land its snapshot after a newer one and leave `agent_session_id` naming a
+    conversation the agent has left, which is what `CodexStatsReader` reads as
+    current.
+
+    Yields the parsed snapshot (``{}`` when absent or unreadable) so the cycle
+    reads the file once. Degrades to no locking where fcntl is unavailable,
+    matching SessionManager._locked_state.
+    """
+    state_path = _get_hook_state_path(tmux_session, session_name)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load() -> dict:
+        try:
+            loaded = json.loads(state_path.read_text())
+            return loaded if isinstance(loaded, dict) else {}
+        except (json.JSONDecodeError, FileNotFoundError, OSError):
+            return {}
+
+    if not HAS_FCNTL:
+        yield _load()
+        return
+
+    lock_path = _get_hook_state_lock_path(tmux_session, session_name)
+    handle = None
+    try:
+        # Held past this block deliberately: the flock lives as long as the
+        # yield below, so it cannot be a `with`.
+        handle = open(lock_path, "a+")  # noqa: SIM115
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError as e:
+        logger.debug("Hook-state lock unavailable for %s: %s", session_name, e)
+        if handle is not None:
+            handle.close()
+            handle = None
+    try:
+        yield _load()
+    finally:
+        if handle is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            handle.close()
+
+
+def _session_ordinal(transcript_path: str | None) -> float | None:
+    """Age of the conversation behind a hook event, or None if unknowable.
+
+    The transcript's modification time orders two conversations even when the
+    hook events carrying them arrive out of order — a reset starts a new
+    transcript, so the newer conversation always has the newer file.
+    """
+    if not transcript_path or not isinstance(transcript_path, str):
+        return None
+    try:
+        return Path(transcript_path).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _sync_agent_session_id(
+    session_name: str, session_id: str, transcript_path: str | None = None
+) -> tuple[str, bool]:
+    """Point the session record at the conversation the agent is actually in.
+
+    ``restart`` relaunches with ``--resume <active_agent_session_id>``, so a
+    record left on a pre-``/clear`` id costs the agent everything it did after
+    the reset.
+
+    Returns ``(effective_session_id, durable)``:
+
+    * ``effective_session_id`` is the id the record holds when the transaction
+      ends, read inside its lock. A rejected event therefore reports the
+      current conversation rather than its own, and never a pre-lock snapshot
+      that a concurrent hook may already have replaced — the caller writes this
+      into hook state, which readers treat as current.
+    * ``durable`` is False when an error stopped the write, and also when the
+      advance could not be ordered against the record's existing ordering
+      metadata, so the synced marker is left alone and a later event
+      re-evaluates.
+
+    Never raises: a hook that fails takes the agent's turn with it, and a
+    bookkeeping miss is not worth that.
+    """
+    try:
+        from .session_manager import SessionManager
+
+        sm = SessionManager()
+        session = sm.get_session_by_name(session_name)
+        if not session:
+            # Not an overcode-managed agent, or not registered yet. Nothing to
+            # write, and retrying would never change that.
+            return session_id, True
+
+        outcome, current = sm.advance_active_agent_session_id(
+            session.id, session_id, ordinal=_session_ordinal(transcript_path)
+        )
+        effective = current or session_id
+
+        if outcome == "superseded":
+            logger.debug(
+                "Ignoring superseded agent session id %s for %s (current is %s)",
+                session_id, session_name, effective,
+            )
+            return effective, True
+        if outcome in ("advanced_unordered", "current_unordered"):
+            # Recorded, because leaving the pointer on a conversation the agent
+            # has left is the worse failure, but not confirmed: no transcript
+            # was available to prove this event is the newer one, so a later
+            # orderable event gets to re-decide.
+            logger.debug(
+                "Agent session id %s for %s is recorded but unordered (%s)",
+                session_id, session_name, outcome,
+            )
+            return effective, False
+        return effective, True
+    except Exception as e:  # noqa: BLE001 — a hook must never fail the agent's turn
+        logger.debug(
+            "Failed to sync agent session id %s for %s: %s", session_id, session_name, e
+        )
+        return session_id, False
+
+
 def write_hook_state(
     event: str,
     tmux_session: str,
@@ -510,17 +657,21 @@ def write_hook_state(
     tool_use_id: str | None = None,
     session_id: str | None = None,
     active_prompt_id: str | None = None,
+    synced_session_id: str | None = None,
+    prev_state: dict | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
 
     Writes to ~/.overcode/sessions/{tmux_session}/hook_state_{session_name}.json
 
-    ``session_id`` is codex-only (Claude's stdin carries one too, but it is
-    never passed here for Claude — see ``handle_hook_event``): when given, it
-    is folded into ``agent_session_ids``/``agent_session_id`` the same way
-    opencode's bundled plugin records its own ids, so a backend-neutral
+    ``session_id`` is recorded for every backend that sends one (all of them
+    do, on every event): it is folded into
+    ``agent_session_ids``/``agent_session_id`` the same way opencode's
+    bundled plugin records its own ids, so a backend-neutral
     ``CodexStatsReader``-style reader can find the right transcript file
-    without directory+time guessing.
+    without directory+time guessing. ``handle_hook_event`` additionally
+    mirrors a *changed* id into the session record, which is what keeps
+    ``restart`` resuming the conversation the agent is actually in.
 
     ``active_prompt_id`` is grok-only: set on ``UserPromptSubmit`` to the
     turn's ``promptId``, then preserved across later events (mirroring
@@ -537,13 +688,15 @@ def write_hook_state(
     prev_agent_session_ids: list[str] = []
     prev_active_agent_session_id: str | None = None
     prev_active_prompt_id: str | None = None
+    prev_synced_agent_session_id: str | None = None
     try:
-        prev = json.loads(state_path.read_text())
+        prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
         prev_skills = prev.get("loaded_skills", [])
         prev_obligations = prev.get("pending_obligations", []) or []
         prev_agent_session_ids = prev.get("agent_session_ids", []) or []
         prev_active_agent_session_id = prev.get("agent_session_id")
         prev_active_prompt_id = prev.get("active_prompt_id")
+        prev_synced_agent_session_id = prev.get("agent_session_id_synced")
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -594,6 +747,13 @@ def write_hook_state(
     foreground = _compute_foreground(event, tool_name, tool_input)
     if foreground is not None:
         state["foreground"] = foreground
+
+    # Only a confirmed session-store write advances this; otherwise it is
+    # carried forward so the next event retries. Written here, in the single
+    # per-event hook-state write, so nothing else has to rewrite this file.
+    synced = synced_session_id or prev_synced_agent_session_id
+    if synced:
+        state["agent_session_id_synced"] = synced
 
     state_path.write_text(json.dumps(state))
 
@@ -827,11 +987,22 @@ def handle_hook_event() -> None:
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
     tool_use_id = data.get("tool_use_id")
-    # Claude's stdin also carries session_id, but only codex's SessionStart
-    # (the one event Claude never sends — it prescribes --session-id at
-    # launch instead) needs it recorded: codex has no such flag, so this is
-    # the only way overcode learns which rollout file is this agent's own.
-    session_id = data.get("session_id") if event == "SessionStart" else None
+    # Every backend's hook payload carries the session id on every event
+    # (live-verified on Claude Code 2.1.258: UserPromptSubmit, PostToolUse
+    # and Stop all include it), so record it unconditionally rather than
+    # only on SessionStart.
+    #
+    # Prescribing `--session-id` at launch is not enough to keep knowing it.
+    # `--resume <id>` does preserve the id, but `/clear` mints a brand-new
+    # one (SessionStart fires with source="clear" and a new id, and the
+    # transcript moves to a new file); auto-compaction does the same. From
+    # that moment the launch-time id in sessions.json is stale, and because
+    # `restart` relaunches with `--resume <active_agent_session_id>` the
+    # agent silently comes back at its pre-reset history — losing however
+    # much work happened after the reset. Reading the id off each event and
+    # syncing it below (see _sync_agent_session_id) makes the record
+    # self-healing within one tool call of any reset.
+    session_id = data.get("session_id")
 
     # Stale-turn protection (grok only): a StopCancelled/StopFailure report
     # is dispatched off grok's own command loop and can arrive after the
@@ -847,14 +1018,37 @@ def handle_hook_event() -> None:
         if active_prompt_id and active_prompt_id != prompt_id:
             return
 
-    # Write state file for status detection (snapshot) and append to the
-    # event log (#448 — preserves bursts hidden by overwrite).
-    write_hook_state(
-        event, tmux_session, session_name,
-        tool_name=tool_name, tool_input=tool_input, tool_use_id=tool_use_id,
-        session_id=session_id,
-        active_prompt_id=(prompt_id if event == "UserPromptSubmit" else None),
-    )
+    # One locked cycle per event over this agent's hook state: read it once,
+    # settle the session id against the session record, then write. The id in
+    # this snapshot is what CodexStatsReader and the monitor treat as current,
+    # so an older event must not be able to write it after a newer one has
+    # moved on — hence the lock rather than two independent read/writes.
+    with _locked_hook_state(tmux_session, session_name) as prev_state:
+        effective_session_id = session_id
+        synced_session_id = None
+        if session_id:
+            if session_id == prev_state.get("agent_session_id_synced"):
+                # Already known durable, and no newer id has been recorded
+                # under this lock, so the session store stays out of the
+                # steady-state path.
+                synced_session_id = session_id
+            else:
+                effective_session_id, durable = _sync_agent_session_id(
+                    session_name, session_id, data.get("transcript_path")
+                )
+                if durable:
+                    synced_session_id = effective_session_id
+
+        # Write state file for status detection (snapshot) and append to the
+        # event log (#448 — preserves bursts hidden by overwrite).
+        write_hook_state(
+            event, tmux_session, session_name,
+            tool_name=tool_name, tool_input=tool_input, tool_use_id=tool_use_id,
+            session_id=effective_session_id,
+            active_prompt_id=(prompt_id if event == "UserPromptSubmit" else None),
+            synced_session_id=synced_session_id,
+            prev_state=prev_state,
+        )
     append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
 
     # For UserPromptSubmit, check budget and output enhanced context
@@ -868,8 +1062,15 @@ def handle_hook_event() -> None:
             if session_data and session_data.get("budget_exceeded", False):
                 budget = session_data.get("cost_budget_usd", 0)
                 cost = session_data.get("estimated_cost_usd", 0)
-                # Overwrite hook state so status detector shows error, not stuck green (#428)
-                write_hook_state("UserPromptSubmitRejected", tmux_session, session_name)
+                # Overwrite hook state so status detector shows error, not stuck green (#428).
+                # Same per-agent lock as the main cycle: this is another
+                # read-modify-write of the snapshot, and an overlapping hook
+                # must not interleave with it.
+                with _locked_hook_state(tmux_session, session_name) as rejected_prev:
+                    write_hook_state(
+                        "UserPromptSubmitRejected", tmux_session, session_name,
+                        prev_state=rejected_prev,
+                    )
                 append_hook_event("UserPromptSubmitRejected", tmux_session, session_name)
                 print(
                     f"Budget exceeded (${cost:.2f} / ${budget:.2f}). Prompt blocked.",
