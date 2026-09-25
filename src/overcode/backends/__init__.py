@@ -20,6 +20,7 @@ from .grok import GrokBackend
 from .hermes import HermesBackend
 from .opencode import OpencodeBackend
 from .opencode2 import Opencode2Backend
+from .shell import ShellBackend, is_shell_session
 
 DEFAULT_BACKEND = "claude-code"
 
@@ -30,6 +31,7 @@ _BACKENDS: Dict[str, AgentBackend] = {
     CodexBackend.name: CodexBackend(),
     GrokBackend.name: GrokBackend(),
     HermesBackend.name: HermesBackend(),
+    ShellBackend.name: ShellBackend(),
 }
 
 
@@ -158,6 +160,7 @@ __all__ = [
     "HermesBackend",
     "OpencodeBackend",
     "Opencode2Backend",
+    "ShellBackend",
     "DEFAULT_BACKEND",
     "DialogRule",
     "KeyPress",
@@ -166,6 +169,7 @@ __all__ = [
     "capabilities_from_names",
     "capability_names",
     "get_backend",
+    "is_shell_session",
     "list_backends",
     "register_backend",
     "session_backend_name",

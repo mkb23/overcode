@@ -24,11 +24,38 @@ if TYPE_CHECKING:
 VALID_MODES = ("hooks", "polling")
 
 
+def _polling_detector(
+    tmux_session: str,
+    tmux: Optional["TmuxInterface"],
+    patterns: Optional["StatusPatterns"],
+    backend_name: Optional[str] = None,
+) -> StatusDetectorProtocol:
+    """The polling detector for a backend.
+
+    A backend whose status can't come from pane text (the plain shell,
+    #496) supplies its own through an optional
+    ``make_polling_detector(tmux_session, tmux=, patterns=)``; every other
+    backend is scraped by ``PollingStatusDetector`` with its patterns.
+    """
+    if backend_name:
+        from .backends import UnknownBackendError, get_backend
+        try:
+            backend = get_backend(backend_name)
+        except UnknownBackendError:
+            backend = None
+        make = getattr(backend, "make_polling_detector", None)
+        if make is not None:
+            return make(tmux_session, tmux=tmux, patterns=patterns)
+    from .status_detector import PollingStatusDetector
+    return PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+
+
 def create_status_detector(
     tmux_session: str,
     strategy: str = "polling",
     tmux: Optional["TmuxInterface"] = None,
     patterns: Optional["StatusPatterns"] = None,
+    backend_name: Optional[str] = None,
 ) -> StatusDetectorProtocol:
     """Create a status detector for the given strategy.
 
@@ -37,6 +64,8 @@ def create_status_detector(
         strategy: "polling" or "hooks"
         tmux: Optional TmuxInterface for dependency injection
         patterns: Optional StatusPatterns for polling detector
+        backend_name: Optional backend, for one that supplies its own
+            polling detector (see ``_polling_detector``)
 
     Returns:
         A StatusDetectorProtocol implementation
@@ -45,8 +74,7 @@ def create_status_detector(
         from .hook_status_detector import HookStatusDetector
         return HookStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
 
-    from .status_detector import PollingStatusDetector
-    return PollingStatusDetector(tmux_session, tmux=tmux, patterns=patterns)
+    return _polling_detector(tmux_session, tmux, patterns, backend_name)
 
 
 def resolve_session_detection_mode(session: "Session", fleet_mode: str = "polling") -> str:
@@ -144,11 +172,10 @@ class StatusDetectorDispatcher:
             return pair
 
         from .status_patterns import get_patterns
-        from .status_detector import PollingStatusDetector
         from .hook_status_detector import HookStatusDetector
 
         patterns = get_patterns(backend_name)
-        polling = PollingStatusDetector(self.tmux_session, tmux=self._tmux, patterns=patterns)
+        polling = _polling_detector(self.tmux_session, self._tmux, patterns, backend_name)
         hooks = HookStatusDetector(self.tmux_session, tmux=self._tmux, patterns=patterns)
         polling.capture_lines = self.capture_lines
         hooks.capture_lines = self.capture_lines

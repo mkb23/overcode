@@ -1315,6 +1315,7 @@ BACKEND_BADGES = {
     "codex": "cx",
     "grok": "gk",
     "hermes": "hm",
+    "shell": "sh",
 }
 
 

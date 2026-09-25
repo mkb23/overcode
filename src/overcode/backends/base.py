@@ -108,7 +108,7 @@ class LaunchSpec:
 class AgentBackend(Protocol):
     """Adapter for one agent CLI."""
 
-    name: str                       # "claude-code" | "opencode" | "opencode2" | "codex" | "grok" | "hermes"
+    name: str                       # "claude-code" | "opencode" | "opencode2" | "codex" | "grok" | "hermes" | "shell"
     display_name: str
     binary: str                     # for dependency_check + doctor process matching
     version_args: Sequence[str]

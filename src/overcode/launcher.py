@@ -34,6 +34,7 @@ from .backends.claude_code import (  # noqa: F401  (compat re-export)
     _build_launch_settings,
     _resolve_overcode_bin,
 )
+from .backends.shell import SHELL_BACKEND
 from .tmux_manager import TmuxManager, EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 from .tmux_utils import (
     send_text_to_tmux_window,
@@ -375,6 +376,13 @@ class AgentLauncher:
             print(f"Cannot launch: invalid provider '{provider}'. Use: web, bedrock")
             return None
 
+        # A plain shell (#496) has no agent CLI to wrap — a wrapper, whether
+        # passed, inherited from a parent or a config default, would be
+        # handed `exec <shell>` — and no one to read standing instructions.
+        is_shell = agent_backend.name == SHELL_BACKEND
+        if is_shell:
+            wrapper = None
+
         # Resolve wrapper if specified
         resolved_wrapper = None
         if wrapper:
@@ -424,7 +432,7 @@ class AgentLauncher:
         # plumbed through Session + _send_launch_for_session + metadata,
         # never re-implemented per caller.
         # command is left empty; the helper fills it in via update_session.
-        default_instructions = get_default_standing_instructions()
+        default_instructions = "" if is_shell else get_default_standing_instructions()
         metadata = self._build_session_metadata(
             name=name, tmux_window=window_name, command=[],
             start_directory=start_directory, session_id=session_id,
@@ -884,6 +892,7 @@ class AgentLauncher:
             ),
             tmux=self.tmux._tmux,
             patterns=get_patterns(session_backend_name(session)),
+            backend_name=session_backend_name(session),
         )
         status, _, _ = detector.detect_status(session)
         return status

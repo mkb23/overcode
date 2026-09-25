@@ -177,7 +177,8 @@ def find_agent_process(
 ) -> tuple[Optional[int], str]:
     """Find the agent CLI process in the tmux pane's process tree.
 
-    Returns (pid, argv) of the first descendant whose argv's first token
+    Returns (pid, argv) of the first process — the pane's own, then its
+    descendants — whose argv's first token
     basename is one of `expected_basenames` (defaulting to the default
     backend's, i.e. `claude`) — or whose argv contains one of
     `expected_argv_markers`, for a backend that runs under an interpreter
@@ -194,7 +195,10 @@ def find_agent_process(
         expected_basenames = get_backend().process_basenames
     wanted = set(expected_basenames)
     markers = [m for m in (expected_argv_markers or ()) if m]
-    for pid in get_descendant_pids(pane_pid, children):
+    # The pane's own process first: a plain-shell row (#496) `exec`s its
+    # shell, so the pane root *is* the process. For an agent the root is
+    # the window's login shell, which no agent backend's basenames name.
+    for pid in [pane_pid] + get_descendant_pids(pane_pid, children):
         argv = argv_by_pid.get(pid, "")
         if not argv:
             continue

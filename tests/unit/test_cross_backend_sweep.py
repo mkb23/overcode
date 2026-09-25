@@ -31,7 +31,7 @@ from overcode.session_manager import Session, SessionStats
 from overcode.summary_columns import BACKEND_BADGES, _backend_badge
 from overcode.tui_widgets.new_agent_modal import NewAgentModal
 
-EXPECTED_BACKENDS = {"claude-code", "opencode", "opencode2", "codex", "grok", "hermes"}
+EXPECTED_BACKENDS = {"claude-code", "opencode", "opencode2", "codex", "grok", "hermes", "shell"}
 
 runner = CliRunner()
 

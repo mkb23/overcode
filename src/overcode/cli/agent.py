@@ -247,7 +247,7 @@ def launch(
     backend: Annotated[
         Optional[str],
         # -b is already --budget, so the backend picker takes -B.
-        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, opencode2, codex, grok, or hermes"),
+        typer.Option("--backend", "-B", help="Agent CLI backend: claude-code (default), opencode, opencode2, codex, grok, hermes, or shell (a plain $SHELL terminal; -p is typed as a command)"),
     ] = None,
     wrapper: Annotated[
         Optional[str],
@@ -1265,6 +1265,7 @@ def show(
                 sess, resolve_detection_mode(session)
             ),
             patterns=get_patterns(session_backend_name(sess)),
+            backend_name=session_backend_name(sess),
         )
         status, activity, pane_content_raw = detector.detect_status(sess)
 

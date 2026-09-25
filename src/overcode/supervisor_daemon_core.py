@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from .backends import DEFAULT_BACKEND
+from .backends.shell import SHELL_BACKEND
 from .status_constants import get_status_emoji, is_green_status
 
 
@@ -82,10 +83,11 @@ def filter_non_green_sessions(
     - Sessions with names in exclude_names (e.g., 'daemon_claude')
     - Asleep sessions
     - Sessions with DO_NOTHING standing orders
+    - Plain-shell rows (#496): a terminal, not an agent to instruct
 
     Args:
         sessions: List of session dicts with 'current_status', 'name',
-                 'is_asleep', 'standing_instructions'
+                 'is_asleep', 'standing_instructions', optionally 'backend'
         exclude_names: Optional list of session names to always exclude
 
     Returns:
@@ -101,6 +103,10 @@ def filter_non_green_sessions(
 
         # Skip excluded names (e.g., daemon_claude)
         if s.get("name") in exclude_names:
+            continue
+
+        # Skip plain shells — anything typed there runs as a command (#496)
+        if s.get("backend") == SHELL_BACKEND:
             continue
 
         # Skip asleep sessions

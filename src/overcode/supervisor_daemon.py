@@ -699,11 +699,13 @@ class SupervisorDaemon:
         - The daemon_claude session itself
         - Asleep sessions (#70)
         - Sessions with DO_NOTHING standing orders (#70)
+        - Plain-shell rows (#496)
         """
         # Convert to dicts for pure function
         session_dicts = [
             {
                 "name": s.name,
+                "backend": s.backend,
                 "current_status": s.current_status,
                 "is_asleep": s.is_asleep,
                 "budget_exceeded": s.budget_exceeded,
