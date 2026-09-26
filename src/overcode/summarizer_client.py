@@ -33,53 +33,19 @@ import urllib.request
 from typing import Optional
 
 from .config import get_summarizer_config
+from .summarizer_prompts import (
+    DEFAULT_PROMPT_CONTEXT,
+    DEFAULT_PROMPT_SHORT,
+    load_prompt,
+    render_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
-# Short summary prompt - focuses on IMMEDIATE ACTION (verb-first, what's happening this second)
-SUMMARIZE_PROMPT_SHORT = """What is the agent doing RIGHT NOW? Answer with the immediate action only.
-
-## Terminal (last {lines} lines):
-{pane_content}
-
-## Previous:
-{previous_summary}
-
-FORMAT: Start with a verb. Examples:
-- "reading src/auth.py"
-- "running pytest -v"
-- "waiting for approval"
-- "writing migration file"
-- "editing line 45"
-
-RULES:
-- Verb first, always (reading/writing/running/waiting/editing/fixing)
-- Name the specific file or command if visible
-- Max 40 chars
-- If unchanged: UNCHANGED"""
-
-# Context summary prompt - focuses on THE TASK (noun-first, the feature/bug/goal)
-SUMMARIZE_PROMPT_CONTEXT = """What TASK or FEATURE is being worked on? Not the current action - the goal.
-
-## Terminal (last {lines} lines):
-{pane_content}
-
-## Previous:
-{previous_summary}
-
-FORMAT: Describe the task/feature/bug. Examples:
-- "JWT auth migration"
-- "user search pagination"
-- "fix: race condition in queue"
-- "PR #42 review comments"
-- "new settings dark mode"
-
-RULES:
-- Noun/task first (not a verb like "implementing")
-- Include ticket/PR numbers if mentioned
-- Focus on WHAT is being built/fixed, not HOW
-- Max 60 chars
-- If unchanged: UNCHANGED"""
+# The prompts live in summarizer_prompts (editable in ~/.overcode/prompts/,
+# #491); these names are the built-in defaults, kept for importers.
+SUMMARIZE_PROMPT_SHORT = DEFAULT_PROMPT_SHORT
+SUMMARIZE_PROMPT_CONTEXT = DEFAULT_PROMPT_CONTEXT
 
 
 class SummarizerClient:
@@ -119,8 +85,9 @@ class SummarizerClient:
         lines: int = 200,
         max_tokens: int = 150,
         mode: str = "short",
+        prompt_template: Optional[str] = None,
     ) -> Optional[str]:
-        """Get summary from GPT-4o-mini.
+        """Get a summary from the configured model.
 
         Args:
             pane_content: Terminal pane content to summarize
@@ -129,6 +96,8 @@ class SummarizerClient:
             lines: Number of lines being summarized (for prompt context)
             max_tokens: Maximum tokens in response
             mode: "short" for current activity, "context" for wider context
+            prompt_template: Use this template instead of the saved/default
+                prompt for ``mode`` (the prompt lab's unsaved draft)
 
         Returns:
             New summary text, "UNCHANGED" if no update needed, or None on error
@@ -136,14 +105,15 @@ class SummarizerClient:
         if not self.available:
             return None
 
-        # Select prompt based on mode
-        prompt_template = SUMMARIZE_PROMPT_CONTEXT if mode == "context" else SUMMARIZE_PROMPT_SHORT
+        if prompt_template is None:
+            prompt_template = load_prompt("context" if mode == "context" else "short")
 
-        prompt = prompt_template.format(
+        prompt = render_prompt(
+            prompt_template,
             lines=lines,
             pane_content=pane_content,
             status=current_status,
-            previous_summary=previous_summary or "(no previous summary)",
+            previous_summary=previous_summary,
         )
 
         if self.api_type == "anthropic":

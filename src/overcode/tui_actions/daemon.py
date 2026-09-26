@@ -104,6 +104,64 @@ class DaemonActionsMixin:
 
         self.update_daemon_status()
 
+    def action_open_summary_prompt_lab(self) -> None:
+        """Open the summary prompt editor with live results (#491)."""
+        from ..prompt_lab import LabSample, PromptLabRunner, pick_samples
+        from ..summarizer_client import SummarizerClient
+        from ..tui_widgets import SummaryPromptLab
+
+        try:
+            lab = self.query_one("#summary-prompt-lab", SummaryPromptLab)
+        except NoMatches:
+            return
+        summarizer = self._summarizer
+
+        if getattr(self, "_prompt_lab_runner", None) is None:
+            def add_cost(usd: float) -> None:
+                # Lab calls are real spend: they count toward the cap
+                summarizer.total_cost_usd += usd
+
+            self._prompt_lab_runner = PromptLabRunner(
+                capture=summarizer._capture_pane,
+                make_client=SummarizerClient,
+                lines=summarizer.config.lines,
+                on_cost=add_cost,
+            )
+
+        def blocked():
+            cap = summarizer.config.cost_cap
+            if summarizer.cost_cap_hit or (cap > 0 and summarizer.total_cost_usd >= cap):
+                return f"summarizer cost cap (${cap:.2f}) reached — restart the TUI to reset"
+            return None
+
+        def samples(mode: str) -> list:
+            sessions = [
+                w.session for w in self._get_widgets_in_session_order()
+                if not self._is_remote(w.session)
+            ]
+            focused = self._get_focused_widget()
+            focused_id = focused.session.id if focused is not None else None
+            out = []
+            for s in pick_samples(sessions, focused_id):
+                live = self._summaries.get(s.id)
+                out.append(LabSample(
+                    session_id=s.id,
+                    name=s.name,
+                    window=s.tmux_window,
+                    status=getattr(s.stats, "current_state", "unknown") or "unknown",
+                    live=(live.context if mode == "context" else live.text) if live else "",
+                ))
+            return out
+
+        self._dialog_will_open()
+        lab.show(
+            runner=self._prompt_lab_runner,
+            samples=samples,
+            available=SummarizerClient.is_available(),
+            blocked=blocked,
+            app_ref=self,
+        )
+
     def action_toggle_summarizer(self) -> None:
         """Toggle the AI Summarizer on/off."""
         from ..summarizer_client import SummarizerClient

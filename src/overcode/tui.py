@@ -96,6 +96,7 @@ from .tui_widgets import (
     PassthruConfigModal,
     NewAgentModal,
     RenameAgentModal,
+    SummaryPromptLab,
     AgentSelectModal,
     SisterSelectionModal,
     InstructionHistoryModal,
@@ -614,6 +615,8 @@ class SupervisorTUI(
         # Modal for new agent creation (unified form)
         yield NewAgentModal(id="new-agent-modal", classes="modal")
         yield RenameAgentModal(id="rename-agent-modal", classes="modal")
+        # Summarizer prompt editor with live results (#491)
+        yield SummaryPromptLab(id="summary-prompt-lab", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)
@@ -1136,9 +1139,8 @@ class SupervisorTUI(
         self._update_capture_lines()
         # Re-centre open dialogs — after the refresh, since app.size still
         # holds the old size while this handler runs
-        from .tui_widgets.modal_base import ModalBase
-        for dialog in self.query(ModalBase):
-            if dialog.has_class("visible"):
+        for dialog in self.query(".modal.visible"):
+            if hasattr(dialog, "relayout"):
                 self.call_after_refresh(dialog.relayout)
         self.refresh()
         self.update_session_widgets()
@@ -3899,6 +3901,10 @@ class SupervisorTUI(
                 severity="error",
             )
         self.call_from_thread(self.refresh_sessions)
+
+    def on_summary_prompt_lab_closed(self, message: SummaryPromptLab.Closed) -> None:
+        """The prompt lab closed (#491)."""
+        self._dialog_did_close()
 
     def on_rename_agent_modal_cancelled(self, message: RenameAgentModal.Cancelled) -> None:
         """Handle cancel from the rename modal."""

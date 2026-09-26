@@ -364,6 +364,22 @@ summarizer:
   api_key_var: YOUR_API_KEY_VAR
 ```
 
+### Prompts
+
+The two summaries each have a prompt: **short** (what the agent is doing right now) and **context** (the task it is working on). Once saved, they live in `~/.overcode/prompts/summary-short.md` and `summary-context.md`; until then the built-in defaults are used. Edits are picked up on the next summary, with no restart.
+
+Prompts can use `{pane_content}`, `{lines}`, `{previous_summary}` and `{status}`; any other braces are left as typed.
+
+To tune them, open **AI summary prompts…** from the command palette (`/`). The top half edits the prompt; the bottom half shows what it produces for up to six live agents (the focused one first), re-run about every 2 seconds once you stop typing, next to each agent's current live summary. A call is only made when the draft or that agent's terminal changed, and lab calls count toward the summarizer's cost cap.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+S` | Save (saving the built-in text removes the file) |
+| `Ctrl+T` | Switch between the short and context prompts |
+| `Ctrl+R` | Revert to the saved prompt |
+| `Ctrl+L` | Load the built-in default |
+| `Esc` | Close (twice if there are unsaved edits) |
+
 ### Cost
 
 The summarizer only runs when enabled and the TUI is open. It makes requests every few seconds, so costs are minimal with GPT-4o-mini but can add up with larger models.

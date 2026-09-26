@@ -28,6 +28,7 @@ from .jump_modal import JumpCandidate
 from .command_palette import CommandPalette
 from .column_header import ColumnHeader
 from .rename_agent_modal import RenameAgentModal
+from .summary_prompt_lab import SummaryPromptLab
 from .job_summary import JobSummary
 
 __all__ = [
@@ -53,5 +54,6 @@ __all__ = [
     "ColumnHeader",
     "JumpCandidate",
     "RenameAgentModal",
+    "SummaryPromptLab",
     "JobSummary",
 ]

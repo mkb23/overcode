@@ -266,6 +266,28 @@ SessionSummary:focus.compact-mode {
     display: block;
 }
 
+/* Summary prompt lab (#491): a container dialog — head, editor, results */
+#summary-prompt-lab {
+    layout: vertical;
+}
+
+#summary-prompt-lab Static {
+    height: auto;
+    width: 100%;
+}
+
+#summary-prompt-lab TextArea {
+    height: 12;
+    border: none;
+    padding: 0 1;
+    background: #1c1c1c;
+    margin: 0 0 1 0;
+}
+
+#summary-prompt-lab TextArea:focus {
+    border: none;
+}
+
 /* Jobs container — hidden by default, shown when tui_mode == "jobs" */
 #jobs-container {
     display: none;
