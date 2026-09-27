@@ -661,16 +661,20 @@ def _sync_agent_session_id(
                 session_id, session_name, effective,
             )
             return effective, True
-        if outcome in ("advanced_unordered", "current_unordered"):
+        if outcome == "advanced_unordered":
             # Recorded, because leaving the pointer on a conversation the agent
             # has left is the worse failure, but not confirmed: no transcript
             # was available to prove this event is the newer one, so a later
             # orderable event gets to re-decide.
             logger.debug(
-                "Agent session id %s for %s is recorded but unordered (%s)",
-                session_id, session_name, outcome,
+                "Agent session id %s for %s is recorded but unordered",
+                session_id, session_name,
             )
             return effective, False
+        # "current_unordered" counts as synced (#501): the record already names
+        # this id, and this event had no age to settle it with. A backend that
+        # never sends a transcript path (hermes) would otherwise go back to the
+        # session store on every hook event for the agent's whole life.
         return effective, True
     except Exception as e:  # noqa: BLE001 — a hook must never fail the agent's turn
         logger.debug(

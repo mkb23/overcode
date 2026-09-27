@@ -1718,7 +1718,11 @@ class SessionManager:
                                    introduce one; ignored
             "unknown"            — no such session
         """
-        with self._locked_state() as state:
+        # Written only when the entry changes (#501): the hook handler calls
+        # this on events whose id may already be current, and a rewrite of
+        # sessions.json per hook event is the audit's R5 shape.
+        with self._state_transaction() as txn:
+            state = txn.state
             entry = state.get(session_id)
             if entry is None:
                 return "unknown", None
@@ -1738,6 +1742,7 @@ class SessionManager:
                 # arriving with an age attached is what settles it, which is
                 # what makes "unconfirmed" recoverable rather than permanent.
                 if unordered and ordinal is not None:
+                    txn.dirty = True
                     entry['active_agent_session_ordinal'] = ordinal
                     entry['active_agent_session_unordered'] = False
                     return "advanced", active
@@ -1749,6 +1754,7 @@ class SessionManager:
             if known and allow_return:
                 # An explicit resume of a conversation this agent already
                 # owns: history order says nothing about which one is live.
+                txn.dirty = True
                 entry['active_agent_session_id'] = agent_session_id
                 entry['active_claude_session_id'] = agent_session_id
                 if ordinal is not None:
@@ -1791,6 +1797,7 @@ class SessionManager:
             if agent_session_id not in ids:
                 ids.append(agent_session_id)
 
+            txn.dirty = True
             entry['agent_session_ids'] = ids
             entry['claude_session_ids'] = ids
             entry['active_agent_session_id'] = agent_session_id

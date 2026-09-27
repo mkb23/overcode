@@ -1031,6 +1031,51 @@ class TestAgentSessionIdSync:
         assert record.agent_session_ids == [f"sid-{i}" for i in range(30)]
         assert record.active_agent_session_id == "sid-29"
 
+    # ── #501: the session store is written only when something changes ──
+
+    def _count_writes(self, monkeypatch):
+        """Every sessions.json rewrite ends in an fsync: count those."""
+        writes = {"n": 0}
+        real_fsync = os.fsync
+
+        def counting_fsync(fd):
+            writes["n"] += 1
+            return real_fsync(fd)
+
+        monkeypatch.setattr("overcode.session_manager.os.fsync", counting_fsync)
+        return writes
+
+    def test_events_without_a_transcript_stop_touching_the_store(self, monkeypatch, tmp_path):
+        # hermes sends no transcript_path, so its id is never "ordered". Its
+        # steady state must still settle into the synced fast path.
+        from overcode.session_manager import SessionManager
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="sid-1")
+        calls = {"n": 0}
+        real = SessionManager.advance_active_agent_session_id
+
+        def counting(self, *a, **k):
+            calls["n"] += 1
+            return real(self, *a, **k)
+
+        monkeypatch.setattr(SessionManager, "advance_active_agent_session_id", counting)
+        for _ in range(5):
+            self._send(tmp_path, monkeypatch, {"hook_event_name": "PostToolUse", "session_id": "sid-1"})
+        assert calls["n"] == 1
+
+    def test_no_change_means_no_write(self, monkeypatch, tmp_path):
+        from overcode.session_manager import SessionManager
+        sid = self._registered_agent(tmp_path, monkeypatch, launch_sid="a")
+        sm = SessionManager(skip_git_detection=True)
+        sm.advance_active_agent_session_id(sid, "b", ordinal=2.0)
+        path = sm.state_file
+        before = path.stat().st_mtime_ns, path.read_bytes()
+        writes = self._count_writes(monkeypatch)
+        assert sm.advance_active_agent_session_id(sid, "b", ordinal=3.0)[0] == "current"
+        assert sm.advance_active_agent_session_id(sid, "a")[0] == "superseded"
+        assert sm.advance_active_agent_session_id(sid, "stranger", allow_new=False)[0] == "rejected"
+        assert writes["n"] == 0
+        assert path.read_bytes() == before[1]
+
     # ── #500: which events may move the record ────────────────────────
 
     def test_a_nested_cli_cannot_take_the_record_over(self, monkeypatch, tmp_path):
