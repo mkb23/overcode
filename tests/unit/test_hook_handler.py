@@ -617,9 +617,16 @@ class TestCodexHookEvents:
     def test_does_not_leak_into_claudes_own_hook_list(self):
         # OVERCODE_HOOKS is what claude_code.py's --settings injection reads
         # — codex-only events must never end up registered for Claude.
+        # (Claude's SessionStart is added separately, with a matcher: #500.)
         claude_events = {event for event, _cmd in OVERCODE_HOOKS}
         assert "SessionStart" not in claude_events
         assert "Interrupt" not in claude_events
+
+    def test_claude_session_start_never_fires_on_startup(self):
+        # A nested `claude -p` starts with source "startup": never registered.
+        from overcode.backends.claude_code import _build_launch_settings
+        groups = _build_launch_settings("/bin/overcode")["hooks"]["SessionStart"]
+        assert [g["matcher"] for g in groups] == ["clear|resume"]
 
 
 class TestDialectNormalization:
@@ -806,7 +813,7 @@ class TestAgentSessionIdSync:
     def test_a_reset_repoints_the_record(self, monkeypatch, tmp_path):
         self._registered_agent(tmp_path, monkeypatch)
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "after-clear",
         })
         record = self._record(tmp_path)
         assert record.active_agent_session_id == "after-clear"
@@ -818,7 +825,7 @@ class TestAgentSessionIdSync:
         # survive the move.
         self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "Stop", "session_id": "after-clear",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "after-clear",
         })
         assert self._record(tmp_path).agent_session_ids == ["before-clear", "after-clear"]
 
@@ -855,21 +862,22 @@ class TestAgentSessionIdSync:
         real_advance = SessionManager.advance_active_agent_session_id
         calls = {"n": 0}
 
-        def flaky(self, session_id, agent_session_id, ordinal=None):
+        def flaky(self, session_id, agent_session_id, ordinal=None, **allow):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise OSError("session store unavailable")
-            return real_advance(self, session_id, agent_session_id, ordinal=ordinal)
+            return real_advance(self, session_id, agent_session_id, ordinal=ordinal, **allow)
 
         monkeypatch.setattr(
             SessionManager, "advance_active_agent_session_id", flaky
         )
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "after-clear",
         })
         assert self._record(tmp_path).active_agent_session_id == "launch-time-sid"
 
-        # Nothing recorded the attempt as done, so the next event tries again.
+        # The reset's id is left pending, so the next event carrying it may
+        # still introduce it, although it is not itself a reset.
         self._send(tmp_path, monkeypatch, {
             "hook_event_name": "Stop", "session_id": "after-clear",
         })
@@ -878,7 +886,7 @@ class TestAgentSessionIdSync:
     def test_a_superseded_id_does_not_drag_the_record_backwards(self, monkeypatch, tmp_path):
         self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "after-clear",
         })
         assert self._record(tmp_path).active_agent_session_id == "after-clear"
 
@@ -895,7 +903,7 @@ class TestAgentSessionIdSync:
         # superseded event must not land there either.
         self._registered_agent(tmp_path, monkeypatch, launch_sid="before-clear")
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse", "session_id": "after-clear",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "after-clear",
         })
         self._send(tmp_path, monkeypatch, {
             "hook_event_name": "Stop", "session_id": "before-clear",
@@ -919,7 +927,7 @@ class TestAgentSessionIdSync:
 
         self._registered_agent(tmp_path, monkeypatch, launch_sid="launch-time-sid")
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": "SessionStart", "source": "clear",
             "session_id": "reset-b",
             "transcript_path": str(newer),
         })
@@ -928,7 +936,7 @@ class TestAgentSessionIdSync:
         # reset-a was never recorded, so only its age marks it as the older
         # conversation.
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "Stop",
+            "hook_event_name": "SessionStart", "source": "clear",
             "session_id": "reset-a",
             "transcript_path": str(older),
         })
@@ -980,7 +988,7 @@ class TestAgentSessionIdSync:
 
         self._registered_agent(tmp_path, monkeypatch, launch_sid="launch-time-sid")
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": "SessionStart", "source": "clear",
             "session_id": "reset-a",
             "transcript_path": str(transcript),
         })
@@ -990,7 +998,7 @@ class TestAgentSessionIdSync:
         # No transcript path: recorded, but flagged as unordered rather than
         # silently treated as the confirmed newest conversation.
         self._send(tmp_path, monkeypatch, {
-            "hook_event_name": "Stop", "session_id": "reset-b",
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "reset-b",
         })
         record = self._record(tmp_path)
         assert record.active_agent_session_id == "reset-b"
@@ -1017,12 +1025,66 @@ class TestAgentSessionIdSync:
         self._registered_agent(tmp_path, monkeypatch, launch_sid="sid-0")
         for i in range(1, 30):
             self._send(tmp_path, monkeypatch, {
-                "hook_event_name": "Stop", "session_id": f"sid-{i}",
+                "hook_event_name": "SessionStart", "source": "clear", "session_id": f"sid-{i}",
             })
         record = self._record(tmp_path)
         assert record.agent_session_ids == [f"sid-{i}" for i in range(30)]
         assert record.active_agent_session_id == "sid-29"
 
+    # ── #500: which events may move the record ────────────────────────
+
+    def test_a_nested_cli_cannot_take_the_record_over(self, monkeypatch, tmp_path):
+        # A `claude -p` (or grok, hermes) run inside the agent's shell inherits
+        # OVERCODE_SESSION_NAME. Its events carry its own id; none may move
+        # the record, and the hook snapshot keeps naming the agent's own.
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="parent")
+        for payload in (
+            {"hook_event_name": "SessionStart", "source": "startup", "session_id": "nested"},
+            {"hook_event_name": "SessionStart", "session_id": "nested"},
+            {"hook_event_name": "UserPromptSubmit", "session_id": "nested"},
+            {"hook_event_name": "PostToolUse", "session_id": "nested"},
+            {"hook_event_name": "Stop", "session_id": "nested"},
+        ):
+            self._send(tmp_path, monkeypatch, payload)
+        record = self._record(tmp_path)
+        assert record.active_agent_session_id == "parent"
+        assert "nested" not in record.agent_session_ids
+        state = json.loads((tmp_path / "agents" / "hook_state_test-agent.json").read_text())
+        assert state["agent_session_id"] == "parent"
+        assert "nested" not in state.get("agent_session_ids", [])
+
+        # The agent's own events still count as current afterwards.
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "Stop", "session_id": "parent"})
+        assert self._record(tmp_path).active_agent_session_id == "parent"
+
+    def test_the_first_id_comes_from_session_start(self, monkeypatch, tmp_path):
+        # codex has no prescribed id: its first SessionStart (source startup)
+        # is how the record learns one.
+        from overcode.session_manager import SessionManager
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        SessionManager(skip_git_detection=True).create_session(
+            name="test-agent", tmux_session="agents", tmux_window="w", command=["codex"])
+        self._send(tmp_path, monkeypatch, {"hook_event_name": "Stop", "session_id": "early"})
+        assert self._record(tmp_path).active_agent_session_id is None
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "source": "startup", "session_id": "first"})
+        assert self._record(tmp_path).active_agent_session_id == "first"
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "source": "startup", "session_id": "nested"})
+        assert self._record(tmp_path).active_agent_session_id == "first"
+
+    def test_resume_returns_to_an_owned_conversation(self, monkeypatch, tmp_path):
+        # A → /clear → B → /resume A: history order would call A superseded.
+        self._registered_agent(tmp_path, monkeypatch, launch_sid="a")
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "b"})
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "source": "resume", "session_id": "a"})
+        assert self._record(tmp_path).active_agent_session_id == "a"
+        # …but resume can't introduce a conversation the agent never owned.
+        self._send(tmp_path, monkeypatch, {
+            "hook_event_name": "SessionStart", "source": "resume", "session_id": "stranger"})
+        assert self._record(tmp_path).active_agent_session_id == "a"
 
 
 class TestInterruptEvent:

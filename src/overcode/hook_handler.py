@@ -232,6 +232,13 @@ def _update_obligations(
 
 
 # All hooks that overcode installs for Claude Code (via --settings).
+# Claude also gets SessionStart, but only for these sources (a matcher on the
+# --settings registration; see claude_code._build_launch_settings): /clear and
+# /resume are how a Claude agent changes conversation, and "startup" is left
+# out so a nested `claude -p` never fires it (#500). Not in OVERCODE_HOOKS,
+# whose (event, command) pairs the legacy global `hooks install` also writes.
+CLAUDE_SESSION_START_MATCHER = "clear|resume"
+
 OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("UserPromptSubmit", "overcode hook-handler"),
     ("PreToolUse", "overcode hook-handler"),
@@ -585,9 +592,18 @@ def _session_ordinal(transcript_path: str | None) -> float | None:
         return None
 
 
+# SessionStart sources that mean "this agent is now in a different
+# conversation" (#500). Anything else — startup, or no source at all — is a
+# process starting, which may be a nested agent CLI that inherited this
+# agent's OVERCODE_* env, so it may only supply an agent's first id.
+_RESET_SOURCES = frozenset({"clear", "compact"})
+_RESUME_SOURCE = "resume"
+
+
 def _sync_agent_session_id(
-    session_name: str, session_id: str, transcript_path: str | None = None
-) -> tuple[str, bool]:
+    session_name: str, session_id: str, transcript_path: str | None = None,
+    event: str | None = None, source: str | None = None, retry_new: bool = False,
+) -> tuple[str | None, bool]:
     """Point the session record at the conversation the agent is actually in.
 
     ``restart`` relaunches with ``--resume <active_agent_session_id>``, so a
@@ -601,6 +617,11 @@ def _sync_agent_session_id(
       current conversation rather than its own, and never a pre-lock snapshot
       that a concurrent hook may already have replaced — the caller writes this
       into hook state, which readers treat as current.
+    * Only ``event``/``source`` can move the record to an id it has never
+      seen: SessionStart from a reset, or the agent's first id. Other events
+      are nested agent CLIs as far as the record is concerned (#500) and
+      report the record's current id instead. ``retry_new`` re-allows an id
+      whose reset did not land durably (see handle_hook_event).
     * ``durable`` is False when an error stopped the write, and also when the
       advance could not be ordered against the record's existing ordering
       metadata, so the synced marker is left alone and a later event
@@ -619,9 +640,19 @@ def _sync_agent_session_id(
             # write, and retrying would never change that.
             return session_id, True
 
+        is_start = event == "SessionStart"
         outcome, current = sm.advance_active_agent_session_id(
-            session.id, session_id, ordinal=_session_ordinal(transcript_path)
+            session.id, session_id, ordinal=_session_ordinal(transcript_path),
+            allow_new=(is_start and source in _RESET_SOURCES) or retry_new,
+            allow_first=is_start,
+            allow_return=is_start and source == _RESUME_SOURCE,
         )
+        if outcome == "rejected":
+            logger.debug(
+                "Ignoring session id %s for %s from %s (source %s): not a reset",
+                session_id, session_name, event, source,
+            )
+            return current, True
         effective = current or session_id
 
         if outcome == "superseded":
@@ -658,6 +689,7 @@ def write_hook_state(
     session_id: str | None = None,
     active_prompt_id: str | None = None,
     synced_session_id: str | None = None,
+    pending_session_id: str | None = None,
     prev_state: dict | None = None,
 ) -> None:
     """Write hook state JSON for status detection.
@@ -754,6 +786,8 @@ def write_hook_state(
     synced = synced_session_id or prev_synced_agent_session_id
     if synced:
         state["agent_session_id_synced"] = synced
+    if pending_session_id:
+        state["agent_session_id_pending"] = pending_session_id
 
     state_path.write_text(json.dumps(state))
 
@@ -1002,6 +1036,11 @@ def handle_hook_event() -> None:
     # much work happened after the reset. Reading the id off each event and
     # syncing it below (see _sync_agent_session_id) makes the record
     # self-healing within one tool call of any reset.
+    #
+    # Which ids may *move* the record is narrower (#500): a nested agent CLI
+    # run inside this agent's shell inherits OVERCODE_SESSION_NAME and would
+    # otherwise take the record over. Only SessionStart from a reset (or an
+    # agent's first id) introduces a new one; see _sync_agent_session_id.
     session_id = data.get("session_id")
 
     # Stale-turn protection (grok only): a StopCancelled/StopFailure report
@@ -1026,6 +1065,9 @@ def handle_hook_event() -> None:
     with _locked_hook_state(tmux_session, session_name) as prev_state:
         effective_session_id = session_id
         synced_session_id = None
+        # A reset whose write didn't land durably leaves its id pending, so a
+        # later event carrying it may still introduce it (#500).
+        pending_session_id = prev_state.get("agent_session_id_pending")
         if session_id:
             if session_id == prev_state.get("agent_session_id_synced"):
                 # Already known durable, and no newer id has been recorded
@@ -1033,11 +1075,17 @@ def handle_hook_event() -> None:
                 # steady-state path.
                 synced_session_id = session_id
             else:
+                is_reset = (event == "SessionStart"
+                            and data.get("source") in _RESET_SOURCES)
+                retry = session_id == pending_session_id
                 effective_session_id, durable = _sync_agent_session_id(
-                    session_name, session_id, data.get("transcript_path")
+                    session_name, session_id, data.get("transcript_path"),
+                    event=event, source=data.get("source"), retry_new=retry,
                 )
                 if durable:
                     synced_session_id = effective_session_id
+                if is_reset or retry:
+                    pending_session_id = None if durable else session_id
 
         # Write state file for status detection (snapshot) and append to the
         # event log (#448 — preserves bursts hidden by overwrite).
@@ -1047,6 +1095,7 @@ def handle_hook_event() -> None:
             session_id=effective_session_id,
             active_prompt_id=(prompt_id if event == "UserPromptSubmit" else None),
             synced_session_id=synced_session_id,
+            pending_session_id=pending_session_id,
             prev_state=prev_state,
         )
     append_hook_event(event, tmux_session, session_name, tool_name=tool_name, tool_input=tool_input)
@@ -1069,6 +1118,7 @@ def handle_hook_event() -> None:
                 with _locked_hook_state(tmux_session, session_name) as rejected_prev:
                     write_hook_state(
                         "UserPromptSubmitRejected", tmux_session, session_name,
+                        pending_session_id=rejected_prev.get("agent_session_id_pending"),
                         prev_state=rejected_prev,
                     )
                 append_hook_event("UserPromptSubmitRejected", tmux_session, session_name)

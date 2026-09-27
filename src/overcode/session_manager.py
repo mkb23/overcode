@@ -1660,7 +1660,8 @@ class SessionManager:
                 state[session_id]['active_agent_session_unordered'] = True
 
     def advance_active_agent_session_id(
-        self, session_id: str, agent_session_id: str, ordinal: float | None = None
+        self, session_id: str, agent_session_id: str, ordinal: float | None = None,
+        *, allow_new: bool = True, allow_first: bool = False, allow_return: bool = False,
     ) -> tuple[str, str | None]:
         """Move the active backend session id forward, atomically.
 
@@ -1674,6 +1675,20 @@ class SessionManager:
         against the same state it is written to. Hook invocations for one agent
         can overlap, and doing this as separate locked updates let a stale one
         land after a newer one.
+
+        Which moves are allowed is the caller's to say, from the event (#500):
+
+        ``allow_new``    — may move to an id this record has never seen (an
+                           explicit reset: SessionStart with source clear or
+                           compact). False for ordinary events, so a nested
+                           agent CLI inheriting this agent's env cannot take
+                           the record over.
+        ``allow_first``  — may take an unseen id when the record has no active
+                           id yet (the first id of a backend with no
+                           prescribed launch id, e.g. codex).
+        ``allow_return`` — may move back to an id already in the history (an
+                           explicit resume), which otherwise is refused as
+                           superseded.
 
         ``ordinal`` is a caller-supplied age for the conversation behind
         ``agent_session_id`` — the modification time of its transcript. It is
@@ -1699,6 +1714,8 @@ class SessionManager:
                                    still settle it
             "superseded"         — ``agent_session_id`` is an older
                                    conversation the agent has left; ignored
+            "rejected"           — an unseen id from an event not allowed to
+                                   introduce one; ignored
             "unknown"            — no such session
         """
         with self._locked_state() as state:
@@ -1728,12 +1745,28 @@ class SessionManager:
                     return "current_unordered", active
                 return "current", active
 
+            known = agent_session_id in ids
+            if known and allow_return:
+                # An explicit resume of a conversation this agent already
+                # owns: history order says nothing about which one is live.
+                entry['active_agent_session_id'] = agent_session_id
+                entry['active_claude_session_id'] = agent_session_id
+                if ordinal is not None:
+                    entry['active_agent_session_ordinal'] = ordinal
+                else:
+                    entry.pop('active_agent_session_ordinal', None)
+                entry['active_agent_session_unordered'] = ordinal is None
+                return ("advanced" if ordinal is not None else "advanced_unordered"), agent_session_id
+
             # Ids are appended the first time they are seen, so one that is
             # already recorded and is no longer the newest belongs to a
             # conversation already left behind — a hook event in flight across
             # a reset carries exactly that.
-            if agent_session_id in ids and ids[-1] != agent_session_id:
+            if known and ids[-1] != agent_session_id:
                 return "superseded", active
+
+            if not known and not (allow_new or (allow_first and not active)):
+                return "rejected", active
 
             # Age check, for a delayed hook whose id has never been seen: two
             # resets in quick succession can have the newer id take the lock

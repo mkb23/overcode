@@ -44,7 +44,7 @@ def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False
     permissions so agents don't depend on user-level settings.json
     containing these entries.
     """
-    from ..hook_handler import OVERCODE_HOOKS
+    from ..hook_handler import CLAUDE_SESSION_START_MATCHER, OVERCODE_HOOKS
     from ..cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
 
     # Build hooks dict: event -> [matcher group]
@@ -54,6 +54,11 @@ def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False
             "matcher": "",
             "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
         })
+    # Conversation switches only (/clear, /resume), never startup (#500).
+    hooks["SessionStart"] = [{
+        "matcher": CLAUDE_SESSION_START_MATCHER,
+        "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
+    }]
 
     perms = list(OVERCODE_SAFE_PERMS)
     if include_punchy_perms:

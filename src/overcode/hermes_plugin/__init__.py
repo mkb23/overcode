@@ -142,7 +142,9 @@ def translate_on_session_start(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any
     # hook_handler records it into agent_session_ids for the stats reader.
     if not kwargs.get("session_id"):
         return None
-    return _payload("SessionStart", kwargs)
+    # "startup": may only supply the agent's first id, so a nested hermes
+    # inheriting this agent's env can't take its record over (#500).
+    return _payload("SessionStart", kwargs, source="startup")
 
 
 def translate_on_session_reset(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -151,7 +153,7 @@ def translate_on_session_reset(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any
     new_id = kwargs.get("new_session_id") or kwargs.get("session_id")
     if not new_id:
         return None
-    return _payload("SessionStart", {**kwargs, "session_id": new_id})
+    return _payload("SessionStart", {**kwargs, "session_id": new_id}, source="clear")
 
 
 def translate_pre_llm_call(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:

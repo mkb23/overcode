@@ -38,12 +38,15 @@ class TestTranslation:
         assert out["hook_event_name"] == "SessionStart"
         assert out["session_id"] == SID
         assert "cwd" in out
+        # startup: may only give an agent its first id (#500)
+        assert out["source"] == "startup"
 
     def test_session_reset_reports_the_new_id(self):
         out = plugin.translate_on_session_reset(kw(reason="new_session"))
         assert out == {**out, "hook_event_name": "SessionStart", "session_id": SID}
         gateway = plugin.translate_on_session_reset(kw(old_session_id="old", new_session_id="new"))
         assert gateway["session_id"] == "new"
+        assert out["source"] == gateway["source"] == "clear"  # a reset moves the record (#500)
 
     def test_pre_llm_call_is_user_prompt_submit(self):
         out = plugin.translate_pre_llm_call(kw(task_id=SID, turn_id=TURN, user_message="hi", is_first_turn=True))
