@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 OVERAGENT_BACKEND = "overagent"
-DEFAULT_NAME = "overcode"
+DEFAULT_NAME = "overagent"
 PERSONA_SKILLS = ("overcode", "delegating-to-agents", "overcode-configurator")
 
 DOCS_URL = "https://github.com/mkb23/overcode/tree/main/docs"

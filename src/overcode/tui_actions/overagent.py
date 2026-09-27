@@ -3,7 +3,7 @@ The `e` key: open the overagent (#484).
 
 Focuses the most recent overagent row; in `overcode tmux` split mode the
 bottom pane follows it and gets the keyboard, so you can type to it at
-once. With none running, launches one named "overcode" in ~/.overcode.
+once. With none running, launches one named "overagent" in ~/.overcode.
 """
 
 from __future__ import annotations

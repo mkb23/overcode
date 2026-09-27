@@ -513,7 +513,16 @@ def render_expand_icon(ctx: ColumnContext) -> ColumnOutput:
         return [("  ", ctx.status_color)]
 
 
-render_agent_name = _make_simple_render("display_name", colored_style="bold cyan")
+_render_plain_agent_name = _make_simple_render("display_name", colored_style="bold cyan")
+# The overagent's name stands out from every agent's (#484): its own colour,
+# underlined in monochrome where colour isn't available.
+_render_overagent_name = _make_simple_render("display_name", colored_style="bold #ff87ff",
+                                             mono_style="bold underline")
+
+def render_agent_name(ctx: ColumnContext) -> ColumnOutput:
+    if getattr(ctx.session, "backend", None) == "overagent":
+        return _render_overagent_name(ctx)
+    return _render_plain_agent_name(ctx)
 
 
 def render_repo_name(ctx: ColumnContext) -> ColumnOutput:

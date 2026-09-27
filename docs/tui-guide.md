@@ -296,8 +296,10 @@ what you could be doing faster, or to change things ("hide cost and show
 branch", "sort by status", "restart every dead agent").
 
 It is an ordinary agent row, launched with the `overagent` backend the first
-time you press `e` (in `~/.overcode`, named `overcode`). Later presses focus
-it; in `overcode tmux` the bottom pane switches to it and takes the keyboard.
+time you press `e`, in `~/.overcode`, named `overagent`. Its name is pink in
+the list (underlined in monochrome) so it stands out from your agents. Later
+presses focus it; in `overcode tmux` the bottom pane switches to it and takes
+the keyboard.
 You can also start one yourself: `overcode launch -n helper -B overagent`.
 
 What it can do without asking: read overcode's state, change what the TUI

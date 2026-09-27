@@ -21,7 +21,7 @@ LOCKED = "#626262"
 
 class JourneyPanel(ModalBase):
     TITLE = "Your overcode journey"
-    WIDTH = 104
+    WIDTH = 150
 
     class TryRequested(Message):
         def __init__(self, action: str) -> None:
@@ -114,25 +114,47 @@ class JourneyPanel(ModalBase):
         lines.append(ds.rule(w))
         legend = "  ".join(f"{g} {lvl}" for lvl, g in _GLYPHS.items())
         lines.append(Text(f"  Capabilities   {legend}   · not trackable", style=ds.MUTED))
+        lines.extend(self._capability_grid(j, w))
+        return lines
+
+    # Capability cells: a fixed width, so every category's columns line up.
+    CAT_WIDTH = 16
+    CELL_MAX = 38
+
+    def _capability_grid(self, j: Any, w: int) -> List[Text]:
+        def cell_text(c) -> tuple:
+            m = j.mastery[c.id]
+            glyph = _GLYPHS[m.level] if c.tracked else "·"
+            key = c.keys[0] if (m.level == "unaware" and c.keys and c.tracked) else ""
+            return glyph, c.title, key, m.level
+
+        cells = [cell_text(c) for c in j.catalog]
+        natural = max((len(g) + 1 + len(title) + (len(k) + 1 if k else 0) for g, title, k, _ in cells),
+                      default=10) + 2
+        cols = max(1, (w - self.CAT_WIDTH) // max(12, min(self.CELL_MAX, natural)))
+        cell_w = (w - self.CAT_WIDTH) // cols  # spread the columns over the whole width
+
         by_cat: dict = {}
         for c in j.catalog:
             by_cat.setdefault(c.category, []).append(c)
+        out: List[Text] = []
         for cat, cs in by_cat.items():
-            line = Text(f"  {cat:<14}", style=ds.ACCENT)
-            for c in cs:
-                m = j.mastery[c.id]
-                glyph = _GLYPHS[m.level] if c.tracked else "·"
-                style = {"fluent": GOOD, "habitual": GOOD, "tried": ds.TEXT}.get(m.level, ds.MUTED)
-                piece = Text(f"{glyph} {c.title}", style=style)
-                if m.level == "unaware" and c.keys and c.tracked:
-                    piece.append(f" {c.keys[0]}", style=ds.KEY)
-                piece.append("   ")
-                if line.cell_len + piece.cell_len > w:
-                    lines.append(line)
-                    line = Text(" " * 16)
-                line.append_text(piece)
-            lines.append(line)
-        return lines
+            for start in range(0, len(cs), cols):
+                line = Text(f"  {cat:<{self.CAT_WIDTH - 2}}" if start == 0 else " " * self.CAT_WIDTH,
+                            style=ds.ACCENT)
+                for c in cs[start:start + cols]:
+                    glyph, title, key, level = cell_text(c)
+                    style = {"fluent": GOOD, "habitual": GOOD, "tried": ds.TEXT}.get(level, ds.MUTED)
+                    room = cell_w - 2 - len(glyph) - 1 - (len(key) + 1 if key else 0)
+                    if len(title) > room:
+                        title = title[:max(1, room - 1)] + "…"
+                    piece = Text(f"{glyph} {title}", style=style)
+                    if key:
+                        piece.append(f" {key}", style=ds.KEY)
+                    piece.append(" " * max(0, cell_w - piece.cell_len))
+                    line.append_text(piece)
+                out.append(line)
+        return out
 
     def _row(self, mark: str, name: str, why: str, style: str, j: Any,
              key_for: Optional[str] = None) -> Text:
