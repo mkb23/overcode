@@ -145,6 +145,16 @@ overcode activity summary --json          # last 7 days; --since 24h / 30d / all
   `palette_misses` (searches that found nothing: missing feature or
   missing word), `help_lookups`, `dialogs` (cancelled a lot = confusing).
 
+```bash
+overcode journey --json                   # tracks, what's next, the hard way, every capability's level
+overcode view toggle open_journey         # open the journey panel (u) for them
+overcode activity stream --detail rollup  # only when they ask you to watch: attach with Monitor
+```
+
+When they ask what to learn next, answer from `journey --json`: the first
+`next` item of the track they are in, why it matters, and `view point` at
+its key. Watching with `activity stream` is opt-in: only when asked.
+
 These signals are experimental. Say what you saw ("you opened the palette
 for the timeline 11 times this week; it's `t`"), not what they must feel.
 Lead with one suggestion, not a list. If they ask for more, give more.

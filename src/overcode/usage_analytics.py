@@ -285,3 +285,37 @@ def _via_mix(a: ActionUse) -> str:
     parts = [f"{via} {n * 100 // u}%" for via, n in a.by_via.most_common()
              if via not in ("agent", "auto") and u]
     return " · ".join(parts)
+
+
+# ── live stream helpers (overcode activity stream) ─────────────────────
+
+def is_significant(rec: dict) -> bool:
+    """Worth an agent's attention as it happens: not every key and click."""
+    kind = rec.get("kind")
+    if kind == "action":
+        return rec.get("via") not in ("auto", "agent") and not rec.get("ns")
+    if kind == "dialog":
+        return rec.get("phase") == "cancel"
+    return kind in ("nudge", "cli", "recording", "palette_query") and not (
+        kind == "palette_query" and rec.get("n", 1) != 0)
+
+
+def digest_line(records: list, window_s: float, bound_keys: frozenset = frozenset()) -> dict:
+    """One digest for a window of records, with a sentence an agent can quote."""
+    s = summarize(records, bound_keys)
+    user_actions = [(n, a.user_uses) for n, a in s.actions.items() if a.user_uses]
+    user_actions.sort(key=lambda x: -x[1])
+    top = ", ".join(f"{n} ×{c}" for n, c in user_actions[:5]) or "nothing"
+    span = f"{int(window_s // 60)}m" if window_s >= 60 else f"{int(window_s)}s"
+    parts = [f"In the last {span}: {s.keys} keys, {s.clicks} clicks; most used {top}."]
+    if s.phantom_keys:
+        parts.append("Pressed with no effect: " + ", ".join(f"{k} ×{n}" for k, n in s.phantom_keys.most_common(3)) + ".")
+    if s.palette_misses:
+        parts.append("Searched the palette and found nothing: " + ", ".join(list(s.palette_misses)[:3]) + ".")
+    cancels = {n: c.get("cancel", 0) for n, c in s.dialogs.items() if c.get("cancel")}
+    if cancels:
+        parts.append("Cancelled: " + ", ".join(f"{n} ×{c}" for n, c in cancels.items()) + ".")
+    if s.walks:
+        parts.append(f"Walked the list with j/k {s.walks}× ({s.walk_keys} keys).")
+    return {"type": "rollup", "at": int(time.time() * 1000), "window_s": int(window_s),
+            "description": " ".join(parts), "summary": s.to_dict()}

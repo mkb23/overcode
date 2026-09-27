@@ -530,6 +530,14 @@ The raw records as JSON lines, newest last.
 overcode activity keys --since 30m --kinds key,action
 ```
 
+### `overcode activity stream`
+
+Follow the log live as JSON lines, for an agent's Monitor tool. `--detail
+rollup` (default) prints one digest per `--rollup-interval` (15m) with a
+one-sentence `description`, and nothing while idle. `significant` adds
+actions, cancelled dialogs, tips and CLI calls as they happen. `verbose`
+adds every key and click.
+
 ### `overcode activity path`
 
 Where the usage log lives.

@@ -7,6 +7,12 @@ Parts: [00 overview](00_overview.md) · [01 usage log](01_usage_log.md) · [02 l
 
 ## 4. Phasing
 
+**Built on `feature/483-484-journey-overagent` (2026-09-27):** P0's #493 fix
+(066ed6b; the help overlay is still hand-written), P1 (81cbebb), P4 (9d54560),
+P5 (1076fd7), P2 (d85aed9), P3 (b823a90) and P6's `activity stream` and journey `a` →
+overagent. Still open: P7, generating help from the catalog, the help glow,
+session mining, and calibrating thresholds from real data.
+
 | phase | ships | size | depends on |
 |---|---|---|---|
 | **P0** | #493 applied · help overlay generated from the catalog | S | — |

@@ -148,3 +148,24 @@ class TestRender:
         assert "Most used" in text and "Keys pressed that do nothing" in text and "experimental" in text
         d = s.to_dict()
         assert d["tui_runs"] == 1 and d["experimental"]["phantom_keys"] == {"v": 1}
+
+
+class TestStreamHelpers:
+    def test_significant(self):
+        from overcode.usage_analytics import is_significant
+        assert is_significant({"kind": "action", "via": "key", "action": "x"})
+        assert not is_significant({"kind": "action", "via": "auto"})
+        assert not is_significant({"kind": "action", "via": "key", "ns": "Input"})
+        assert not is_significant({"kind": "key", "key": "j"})
+        assert is_significant({"kind": "dialog", "phase": "cancel"})
+        assert not is_significant({"kind": "dialog", "phase": "open"})
+        assert is_significant({"kind": "palette_query", "n": 0})
+        assert not is_significant({"kind": "palette_query", "n": 3})
+        assert is_significant({"kind": "nudge", "outcome": "shown"})
+
+    def test_digest(self):
+        from overcode.usage_analytics import digest_line
+        log = _Log().key("v").pressed("t", "toggle_timeline").pressed("t", "toggle_timeline")
+        d = digest_line(log.records, 900)
+        assert d["type"] == "rollup" and "toggle_timeline ×2" in d["description"]
+        assert "v ×1" in d["description"] and d["window_s"] == 900

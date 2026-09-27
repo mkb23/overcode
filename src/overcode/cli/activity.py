@@ -96,3 +96,72 @@ def journey(
         typer.echo(json.dumps(j.to_dict(), indent=2, ensure_ascii=False))
     else:
         typer.echo(render_journey(j))
+
+
+@activity_app.command("stream")
+def activity_stream(
+    detail: Annotated[str, typer.Option("--detail", help="rollup | significant | verbose")] = "rollup",
+    interval: Annotated[str, typer.Option("--rollup-interval", help="Digest every… (15m, 1h)")] = "15m",
+):
+    """Follow the usage log live, as JSON lines (for an agent's Monitor tool).
+
+    rollup (default) prints one digest per interval, and nothing while idle.
+    significant adds actions, dialogs cancelled, nudges and CLI calls as they
+    happen; verbose adds every key and click.
+    """
+    import time as _time
+    from ..activity_log import activity_path_for, get_activity_dir
+    from ..usage_analytics import digest_line, is_significant, parse_since
+
+    if detail not in ("rollup", "significant", "verbose"):
+        raise typer.BadParameter("detail is rollup, significant or verbose")
+    try:
+        every = parse_since(interval)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
+
+    def emit(obj: dict) -> None:
+        typer.echo(json.dumps(obj, ensure_ascii=False))
+        import sys
+        sys.stdout.flush()
+
+    bound, _ = _tui_keymaps()
+    emit({"type": "start", "at": int(_time.time() * 1000), "detail": detail,
+          "description": f"Watching {get_activity_dir()} ({detail}, digest every {interval})"})
+    path = activity_path_for(_time.time() * 1000)
+    offset = path.stat().st_size if path.exists() else 0  # from now on, no history
+    window: list = []
+    next_digest = _time.monotonic() + every
+    try:
+        while True:
+            current = activity_path_for(_time.time() * 1000)
+            if current != path:  # a new month
+                path, offset = current, 0
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            if size < offset:
+                offset = 0
+            if size > offset:
+                with open(path, "rb") as f:
+                    f.seek(offset)
+                    data = f.read()
+                end = data.rfind(b"\n") + 1
+                offset += end
+                for line in data[:end].splitlines():
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    window.append(rec)
+                    if detail == "verbose" or (detail == "significant" and is_significant(rec)):
+                        emit({"type": "event", **rec})
+            if _time.monotonic() >= next_digest:
+                if window:
+                    emit(digest_line(window, every, bound))
+                window = []
+                next_digest = _time.monotonic() + every
+            _time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
