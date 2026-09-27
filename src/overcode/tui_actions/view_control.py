@@ -249,19 +249,47 @@ class ViewControlMixin:
             "recent_actions": list(self._recent_actions),
         }
 
+    def _view_signature(self) -> tuple:
+        """Everything the view state depends on, cheaply: the state is rebuilt only when it moves."""
+        widgets = self._get_widgets_in_session_order()
+        focused = self._get_focused_widget()
+        return (
+            self.summary_level_index, self.focused_session_index, len(widgets),
+            focused.session.id if focused is not None else None,
+            getattr(focused, "detected_status", None) if focused is not None else None,
+            self._prefs.sort_mode, self._prefs.sort_reversed, self.tag_filter,
+            repr(self._prefs.column_config), repr(self.uniform_columns),
+            bool(self.show_terminated), bool(self.hide_asleep), bool(self.show_done),
+            getattr(self, "tui_mode", ""), len(self._recent_actions),
+            self._recent_actions[-1]["t"] if self._recent_actions else None,
+            getattr(self, "_activity_dialog", None),
+        )
+
     def _publish_view_state(self, force: bool = False) -> None:
+        """Rewrite tui_view_state.json when the view changed; otherwise only touch it
+        every few seconds, so a reader can tell the TUI is alive."""
+        now = time.time()
+        path = view_state_path(self.tmux_session)
+        try:
+            sig = self._view_signature()
+        except Exception:
+            return
+        if not force and sig == getattr(self, "_view_sig_last", None):
+            if now - self._view_state_written_at >= STATE_KEEPALIVE_SECONDS:
+                self._view_state_written_at = now
+                try:
+                    os.utime(path)
+                except OSError:
+                    self._view_sig_last = None  # gone: rewrite next tick
+            return
         try:
             state = self._view_state()
         except Exception:
             return
-        now = time.time()
-        if not force and state == self._view_state_last \
-                and now - self._view_state_written_at < STATE_KEEPALIVE_SECONDS:
-            return
+        self._view_sig_last = sig
         self._view_state_last = state
         self._view_state_written_at = now
         try:
-            write_json_atomic(view_state_path(self.tmux_session),
-                              {**state, "pid": os.getpid(), "updated": round(now, 2)})
+            write_json_atomic(path, {**state, "pid": os.getpid(), "updated": round(now, 2)})
         except OSError:
             pass

@@ -61,9 +61,14 @@ def write_json_atomic(path: Path, data: dict) -> None:
 
 
 def read_view_state(session: str) -> Optional[dict]:
+    """The TUI's view state. `updated` is the later of its write and its last touch:
+    an unchanged view is only touched, as a liveness signal."""
+    path = view_state_path(session)
     try:
-        return json.loads(view_state_path(session).read_text())
-    except (OSError, ValueError):
+        state = json.loads(path.read_text())
+        state["updated"] = max(state.get("updated", 0), path.stat().st_mtime)
+        return state
+    except (OSError, ValueError, AttributeError):
         return None
 
 

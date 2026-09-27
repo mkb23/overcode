@@ -178,11 +178,14 @@ def main_callback(ctx: typer.Context):
 def _record_cli_use() -> None:
     """Log this command to the usage log (#483). Never lets a failure through."""
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "hook-handler":
+        return  # every tool call of every agent: not even an import
     try:
         from ..activity_log import record_cli_invocation
         groups = {g.name for g in app.registered_groups if g.name}
         commands = groups | {c.name or c.callback.__name__.replace("_", "-")
                              for c in app.registered_commands if c.callback}
-        record_cli_invocation(sys.argv[1:], groups, commands)
+        hidden = {c.name for c in app.registered_commands if c.hidden and c.name}
+        record_cli_invocation(sys.argv[1:], groups, commands, hidden)
     except Exception:
         pass

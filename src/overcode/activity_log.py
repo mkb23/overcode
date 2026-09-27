@@ -157,8 +157,10 @@ class ActivityRecorder:
         return written
 
 
-# Commands overcode runs itself (hook handlers fire on every tool call).
-_INTERNAL_COMMANDS = frozenset({"hooks", "monitor-daemon", "supervisor-daemon", "heartbeat"})
+# Commands overcode runs itself; hidden commands are added at call time.
+# hook-handler fires on every tool call of every agent: it must cost nothing.
+_INTERNAL_COMMANDS = frozenset({"hook-handler", "hooks", "monitor-daemon", "supervisor-daemon",
+                                "heartbeat", "tmux-resize"})
 
 
 def cli_command_path(argv: list[str], groups: frozenset[str] | set[str],
@@ -181,14 +183,17 @@ def cli_command_path(argv: list[str], groups: frozenset[str] | set[str],
 
 
 def record_cli_invocation(argv: list[str], groups: frozenset[str] | set[str] = frozenset(),
-                          commands: frozenset[str] | set[str] | None = None) -> None:
+                          commands: frozenset[str] | set[str] | None = None,
+                          internal: frozenset[str] | set[str] = frozenset()) -> None:
     """One `cli` record per overcode command: the command path and flag names, never values.
 
     Calls made by an agent overcode launched (OVERCODE_SESSION_NAME set) are
     marked via=agent so they never count as the user's own use.
     """
     cmd = cli_command_path(argv, groups, commands)
-    if not cmd or cmd.split()[0] in _INTERNAL_COMMANDS or not recording_enabled():
+    words = cmd.split()
+    if (not cmd or words[0] in _INTERNAL_COMMANDS or words[0] in internal
+            or any(w.startswith("_") for w in words) or not recording_enabled()):
         return
     flags = sorted({a.split("=", 1)[0] for a in argv if a.startswith("-")})
     rec = ActivityRecorder(tmux_session=os.environ.get("OVERCODE_TMUX_SESSION", ""), enabled=True)

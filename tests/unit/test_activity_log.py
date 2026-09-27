@@ -177,6 +177,9 @@ class TestCliRecord:
         monkeypatch.setattr("overcode.activity_log.get_activity_dir", lambda: tmp_path)
         record_cli_invocation(["hooks", "handle"], self.GROUPS)
         record_cli_invocation(["monitor-daemon", "run"], self.GROUPS)
+        record_cli_invocation(["hook-handler"], self.GROUPS)
+        record_cli_invocation(["set-budget", "a", "1"], self.GROUPS, internal={"set-budget"})
+        record_cli_invocation(["jobs", "_complete", "x"], self.GROUPS | {"jobs"})
         assert _read(tmp_path) == []
 
     def test_off_records_nothing(self, tmp_path, monkeypatch):
