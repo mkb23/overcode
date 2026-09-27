@@ -364,6 +364,7 @@ class TestTUIHeaderSync:
         # tui_mode is a Textual reactive — bypass the descriptor's setter by
         # writing directly to the internal storage slot.
         app._reactive_tui_mode = "list"
+        app.uniform_columns = {}
 
         app._prefs = MagicMock()
         app._prefs.show_column_headers = True

@@ -95,6 +95,7 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.auto_accept_mode = False
     widget.pr_number = None
     widget.any_has_pr = False
+    widget.uniform_columns = {}
     widget.is_unvisited_stalled = False
     widget.monochrome = False
     widget.show_cost = "tokens"

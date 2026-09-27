@@ -84,6 +84,8 @@ class SessionSummary(Static, can_focus=True):
         self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_effort: bool = False  # True if any agent has an effort detected (#497)
+        # Columns every row shows the same value in — hidden (set by TUI)
+        self.uniform_columns: dict = {}
         self.any_has_provider: bool = False  # True if any agent uses non-web provider
         self.mixed_backends: bool = False  # True if the fleet spans >1 agent CLI
         self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
@@ -125,7 +127,8 @@ class SessionSummary(Static, can_focus=True):
 
     def column_visible(self, col: SummaryColumn) -> bool:
         """Check if a column is visible at the current detail level with overrides."""
-        return resolve_column_visible(col, self.summary_detail, self.column_overrides)
+        return resolve_column_visible(col, self.summary_detail, self.column_overrides,
+                                      self.uniform_columns)
 
     def on_click(self) -> None:
         """Handle click — mark stalled agent as visited."""

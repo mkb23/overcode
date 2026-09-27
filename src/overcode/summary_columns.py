@@ -298,6 +298,9 @@ class SummaryColumn:
     # is None always sort last. Set from COLUMN_SORT below.
     sort_key: Optional[Callable[[ColumnContext], object]] = None
     sort_desc: bool = False  # Natural direction: True = largest first
+    # Hidden while every row shows the same value (uniform_columns); set
+    # from HIDE_WHEN_UNIFORM below
+    hide_when_uniform: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1697,10 +1700,22 @@ COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
     "agent_value": (lambda ctx: ctx.session.agent_value, True),
 }
 
+# Columns that say nothing when every agent shows the same value — one
+# host, one model, one repo… They hide until the fleet differs; a column
+# the user switched on explicitly stays. (backend has its own older gate,
+# mixed_backends, which hides its placeholder too.)
+HIDE_WHEN_UNIFORM = frozenset({
+    "host", "backend", "provider", "model", "effort",
+    "permission_mode", "wrapper", "repo_name", "branch",
+})
+
 for _col in SUMMARY_COLUMNS:
     _col.description = COLUMN_HELP.get(_col.id, "")
     if _col.id in COLUMN_SORT:
         _col.sort_key, _col.sort_desc = COLUMN_SORT[_col.id]
+    if _col.id in HIDE_WHEN_UNIFORM:
+        _col.hide_when_uniform = True
+        _col.description = (_col.description + " Hidden while every agent shows the same value.").strip()
 del _col
 
 COLUMNS_BY_ID: dict[str, SummaryColumn] = {c.id: c for c in SUMMARY_COLUMNS}
@@ -1841,17 +1856,45 @@ def build_cli_context(
     )
 
 
-def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict) -> bool:
+def resolve_column_visible(col: SummaryColumn, level: str, overrides: dict,
+                           uniform: Optional[dict] = None) -> bool:
     """Determine if a column is visible at a given level with user overrides.
 
     - full: default True for all columns, but explicit False overrides still apply
     - low/med/high: start from col.detail_levels default, then apply overrides
+    - a column in ``uniform`` (see uniform_columns) is hidden unless the
+      user switched it on explicitly
     """
     base = True if level == "full" else level in col.detail_levels
     col_override = overrides.get(col.id)
     if col_override is not None:
         return col_override
+    if uniform and col.id in uniform:
+        return False
     return base
+
+
+def uniform_columns(contexts: "List[ColumnContext]") -> dict:
+    """``{column id: shared value}`` for hide-when-uniform columns whose
+    value is the same on every row.
+
+    Needs two or more rows: a lone agent keeps its details. The value is
+    the column's plain text, so rows that differ only in styling count as
+    the same; None (nothing to show) is a value like any other.
+    """
+    if len(contexts) < 2:
+        return {}
+    shared = {}
+    for col in SUMMARY_COLUMNS:
+        if not col.hide_when_uniform or col.render_plain is None:
+            continue
+        try:
+            values = {col.render_plain(ctx) for ctx in contexts}
+        except Exception:
+            continue
+        if len(values) == 1:
+            shared[col.id] = values.pop()
+    return shared
 
 
 def render_summary_cells(

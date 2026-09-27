@@ -410,6 +410,9 @@ class SupervisorTUI(
         self.max_name_width: int = 10
         self.all_names_match_repos: bool = False
         self.column_widths: list = []  # Per-cell column widths for alignment
+        # {column id: value} for columns every row shows the same value in —
+        # hidden, with the value noted in the header row (uniform_columns)
+        self.uniform_columns: dict = {}
         self._column_widths_dirty: bool = True  # Recompute on first render
         # Live overrides while the C-modal is open — header/width lookups use
         # these instead of the persisted prefs so toggling updates everything
@@ -2665,10 +2668,19 @@ class SupervisorTUI(
         # Reorder widgets to match display_sessions order
         # This must run after any structural changes AND after sort mode changes
         self._reorder_session_widgets(container)
+        self._update_uniform_columns()
         # Recompute cell column widths for alignment after structural changes
         self._column_widths_dirty = True
         self._recompute_cell_column_widths()
         self._restore_focus_in_update(_focused_session_id, _focus_was_on_session)
+
+    def _update_uniform_columns(self) -> None:
+        """Hide the columns every shown agent has the same value in."""
+        from .summary_columns import uniform_columns
+        widgets = [w for w in self.query(SessionSummary) if w.display]
+        self.uniform_columns = uniform_columns([w._build_column_context() for w in widgets])
+        for widget in self.query(SessionSummary):
+            widget.uniform_columns = self.uniform_columns
 
     def _restore_focus_in_update(self, focused_session_id: str | None, focus_was_on_session: bool) -> None:
         """Restore focused_session_index after update_session_widgets DOM mutations.
@@ -3380,13 +3392,15 @@ class SupervisorTUI(
                 header_widget.update(header)
                 return
 
-            from .summary_columns import SUMMARY_COLUMNS, render_header_cells, resolve_column_visible
+            from .summary_columns import (
+                COLUMNS_BY_ID, SUMMARY_COLUMNS, render_header_cells, resolve_column_visible,
+            )
             from .tui_logic import sort_column_for_mode, sort_descending
             level = self.SUMMARY_LEVELS[self.summary_level_index]
             overrides = self._current_column_overrides(level)
 
             def col_filter(col):
-                return resolve_column_visible(col, level, overrides)
+                return resolve_column_visible(col, level, overrides, self.uniform_columns)
 
             sort_col = sort_column_for_mode(self._prefs.sort_mode)
             desc = sort_descending(self._prefs.sort_mode, self._prefs.sort_reversed)
@@ -3396,6 +3410,15 @@ class SupervisorTUI(
                 sort_column=sort_col,
                 sort_descending=desc,
             )
+            # What the hidden same-for-everyone columns would have said
+            shared = [
+                f"{COLUMNS_BY_ID[cid].header or cid} {value}"
+                for cid, value in self.uniform_columns.items()
+                if value and col_filter(COLUMNS_BY_ID[cid]) is False
+                and resolve_column_visible(COLUMNS_BY_ID[cid], level, overrides)
+            ]
+            if shared:
+                header_line.append("   all: " + " · ".join(shared), style="dim")
             header_widget.update(header_line)
             header_widget.set_columns(
                 [c.id for c in SUMMARY_COLUMNS if col_filter(c)],

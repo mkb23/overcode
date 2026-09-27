@@ -682,7 +682,7 @@ def list_agents(
         return augment_with_legacy_heartbeat(_get_status_detail(sess), status)
 
     # Second pass: build contexts and collect cells for auto-alignment
-    all_cells = []
+    row_contexts = []
     activities = []
     for sess, status, activity, claude_stats, git_diff, git_untracked in session_data:
         meta = tree_meta.get(sess.id)
@@ -734,12 +734,18 @@ def list_agents(
         available = name_width - len(indent)
         ctx.display_name = (indent + sess.name[:available]).ljust(name_width)
 
-        all_cells.append(render_summary_cells(ctx))
+        row_contexts.append(ctx)
         activities.append(activity)
+
+    # Columns every row has the same value in say nothing: hide them, as
+    # the TUI does, and note the shared values under the table
+    from ..summary_columns import COLUMNS_BY_ID, uniform_columns
+    shared = uniform_columns(row_contexts)
+    col_filter = lambda col: detail in col.detail_levels and col.id not in shared
+    all_cells = [render_summary_cells(ctx, column_filter=col_filter) for ctx in row_contexts]
 
     # Auto-align columns across all rows, then append activity
     widths = compute_column_widths(all_cells)
-    col_filter = lambda col: detail in col.detail_levels
     header = render_header_cells(column_filter=col_filter, column_widths=widths)
     header.truncate(console.width, pad=False)
     console.print(header, no_wrap=True)
@@ -749,6 +755,10 @@ def list_agents(
         line.append(activity)
         line.truncate(console.width, pad=False)
         console.print(line, no_wrap=True)
+    notes = [f"{COLUMNS_BY_ID[cid].header or cid} {value}" for cid, value in shared.items()
+             if value and detail in COLUMNS_BY_ID[cid].detail_levels]
+    if notes:
+        console.print("all: " + " · ".join(notes), style="dim", no_wrap=True)
 
     # Warn if the terminal is too narrow to render the data columns — the
     # right side is silently truncated otherwise, hiding metrics (#459).

@@ -1642,3 +1642,38 @@ class TestStatslessBackendRow:
                     f"{render.__name__} rendered a misleading number: {text!r}"
                 )
                 assert "$" not in text
+
+
+class TestUniformColumns:
+    """Columns every row shows the same value in hide themselves."""
+
+    def test_same_host_on_every_row_is_uniform(self):
+        from overcode.summary_columns import uniform_columns
+        rows = [_make_ctx(has_sisters=True, local_hostname="shirka.local") for _ in range(3)]
+        assert uniform_columns(rows)["host"] == "shirka.local"
+
+    def test_differing_values_are_not_uniform(self):
+        from overcode.summary_columns import uniform_columns
+        rows = [_make_ctx(repo_name="overcode"), _make_ctx(repo_name="shirka")]
+        assert "repo_name" not in uniform_columns(rows)
+        assert "branch" in uniform_columns(rows)  # both on main
+
+    def test_a_lone_agent_keeps_its_columns(self):
+        from overcode.summary_columns import uniform_columns
+        assert uniform_columns([_make_ctx()]) == {}
+
+    def test_only_opted_in_columns_are_considered(self):
+        from overcode.summary_columns import HIDE_WHEN_UNIFORM, uniform_columns
+        rows = [_make_ctx(), _make_ctx()]
+        assert set(uniform_columns(rows)) <= HIDE_WHEN_UNIFORM
+
+    def test_uniform_column_is_hidden(self):
+        from overcode.summary_columns import COLUMNS_BY_ID, resolve_column_visible
+        host = COLUMNS_BY_ID["host"]
+        assert resolve_column_visible(host, "full", {}) is True
+        assert resolve_column_visible(host, "full", {}, {"host": "shirka.local"}) is False
+
+    def test_explicitly_enabled_column_stays(self):
+        from overcode.summary_columns import COLUMNS_BY_ID, resolve_column_visible
+        host = COLUMNS_BY_ID["host"]
+        assert resolve_column_visible(host, "full", {"host": True}, {"host": "shirka.local"}) is True
