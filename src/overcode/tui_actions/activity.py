@@ -98,9 +98,11 @@ class ActivityMixin:
                     via, key = "key", self._activity_binding_key
                 else:
                     via, key = self._take_activity_via(), None
-                self._activity.record(
-                    "action", action=_action_name(action), via=via, key=key,
-                    ok=bool(handled), ns=ns)
+                name = _action_name(action)
+                self._activity.record("action", action=name, via=via, key=key,
+                                      ok=bool(handled), ns=ns)
+                if ns is None and via != "auto":
+                    self.note_recent_action(name, via)
                 self.call_after_refresh(self._activity_settle)
         except Exception:
             pass

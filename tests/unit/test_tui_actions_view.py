@@ -137,6 +137,7 @@ class TestCycleSummary:
         mock_tui.query.return_value = [widget1]
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.column_config = {}
+        mock_tui._set_summary_level = lambda level: ViewActionsMixin._set_summary_level(mock_tui, level)
 
         ViewActionsMixin.action_cycle_summary(mock_tui)
 
@@ -157,6 +158,7 @@ class TestCycleSummary:
         mock_tui.query.return_value = []
         mock_tui._prefs = MagicMock()
         mock_tui._prefs.column_config = {}
+        mock_tui._set_summary_level = lambda level: ViewActionsMixin._set_summary_level(mock_tui, level)
 
         ViewActionsMixin.action_cycle_summary(mock_tui)
 

@@ -113,6 +113,12 @@ activity_app = typer.Typer(
 )
 app.add_typer(activity_app, name="activity")
 
+view_app = typer.Typer(
+    help="Change what the running TUI shows: columns, sort, detail, filter, focus (#484)",
+    no_args_is_help=True,
+)
+app.add_typer(view_app, name="view")
+
 # Console for rich output
 console = Console()
 # Notices that must not mix into output a script may parse

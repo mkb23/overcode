@@ -124,10 +124,13 @@ class ViewActionsMixin:
 
     def action_cycle_summary(self) -> None:
         """Cycle through summary detail levels (low, med, high, full)."""
-        from ..tui_widgets import SessionSummary
         new_idx = (self.summary_level_index + 1) % len(self.SUMMARY_LEVELS)
-        new_level = self.SUMMARY_LEVELS[new_idx]
-        self.summary_level_index = new_idx
+        self._set_summary_level(self.SUMMARY_LEVELS[new_idx])
+
+    def _set_summary_level(self, new_level: str) -> None:
+        """Show the rows at one detail level (s, overcode view detail)."""
+        from ..tui_widgets import SessionSummary
+        self.summary_level_index = self.SUMMARY_LEVELS.index(new_level)
 
         # Push the right per-level overrides to each widget
         overrides = self._prefs.column_config.get(new_level, {})

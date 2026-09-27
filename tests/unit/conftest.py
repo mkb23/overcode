@@ -29,6 +29,7 @@ _CLASSES_NEEDING_ISOLATION = frozenset({
     "TestCommandBarWithSessions",
     "TestUniqueAgentName",
     "TestActivityPilot",
+    "TestViewControlPilot",
 })
 
 

@@ -30,6 +30,7 @@ from . import parallelism  # noqa: F401
 from . import tags  # noqa: F401
 from . import focal  # noqa: F401
 from . import activity  # noqa: F401
+from . import view  # noqa: F401
 
 
 def main():

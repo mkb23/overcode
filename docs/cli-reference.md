@@ -536,6 +536,36 @@ Where the usage log lives.
 
 ---
 
+## View Commands
+
+Change what the running TUI shows, from a script or an agent (#484). Each
+command is queued for the TUI, applied through the same code as its own keys
+and dialogs, and acknowledged: the result or the error is printed, and the
+exit code is 0 (applied), 1 (refused) or 2 (no TUI running). `--json` prints
+the raw acknowledgement.
+
+```bash
+overcode view state                          # focused agent, level, columns, sort, filters, dialog
+overcode view columns list [--level med]     # every column, its description, shown or not
+overcode view columns hide cost joules       # ids, names or headers; current level unless --level
+overcode view columns show branch --level med
+overcode view columns reset                  # back to the level's defaults
+overcode view sort cost --desc               # any sortable column, or: tree
+overcode view detail high                    # low, med, high, full
+overcode view filter backend | --clear       # by tag
+overcode view focus my-agent
+overcode view actions                        # every palette action id, with keys
+overcode view toggle toggle_timeline         # run any palette action by id
+overcode view point jump_to_attention        # show the user its key
+overcode view notify "Restarted 3 agents"
+```
+
+An unknown name fails the whole command and says what would work (`unknown
+column 'brnch' — did you mean branch?`). Commands from an agent overcode
+launched are logged as the agent's, never as your own use.
+
+---
+
 ## Model Metadata Commands
 
 The catalog behind the `CTX%` and `$` columns — see

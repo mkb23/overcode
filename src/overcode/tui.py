@@ -112,6 +112,7 @@ from .tui_actions import (
     InputActionsMixin,
 )
 from .tui_actions.activity import ActivityMixin
+from .tui_actions.view_control import ViewControlMixin
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -138,6 +139,7 @@ TIMER_INTERVALS = {
     "refresh_jobs": 5,
     "heartbeat_flush": 5,
     "activity_flush": 2,
+    "view_control": 1,
     "status_changes": 5,
     "refresh_sessions": 10,
     "sister_poll": 10,
@@ -176,6 +178,7 @@ TIMER_PHASE_OFFSETS = {
     "sister_poll": 4.2,
     "heartbeat_flush": 4.6,
     "activity_flush": 1.95,
+    "view_control": 1.05,
 }
 
 # Timers paused while no tmux client is attached to the pane the TUI runs
@@ -213,6 +216,7 @@ RUNS_ONLY_WHEN_UNATTENDED = frozenset({"unattended_status"})
 
 class SupervisorTUI(
     ActivityMixin,
+    ViewControlMixin,
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
@@ -392,6 +396,7 @@ class SupervisorTUI(
         super().__init__()
         self.tmux_session = tmux_session
         self._init_activity()  # usage log (#483)
+        self._init_view_control()  # overcode view (#484)
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
@@ -739,6 +744,7 @@ class SupervisorTUI(
         if self._prefs.status_change_logging:
             self._start_periodic("status_changes", self._flush_status_changes)
         self._start_periodic("activity_flush", self._flush_activity)
+        self._start_periodic("view_control", self._view_control_tick)
         self.record_activity("tui", phase="start", version=__version__,
                              size=f"{self.size.width}x{self.size.height}",
                              compact=self.compact or None)
@@ -4250,9 +4256,14 @@ class SupervisorTUI(
 
     def on_summary_config_modal_config_changed(self, message: SummaryConfigModal.ConfigChanged) -> None:
         """Handle column configuration changes from modal (#178)."""
-        level = message.level
-        if message.overrides:
-            self._prefs.column_config[level] = message.overrides
+        self._apply_column_config(message.level, message.overrides)
+        self.notify(f"Column config saved for {message.level}", severity="information")
+        self._dialog_did_close()
+
+    def _apply_column_config(self, level: str, overrides: dict) -> None:
+        """Save one level's column overrides and redraw with them (C dialog, overcode view)."""
+        if overrides:
+            self._prefs.column_config[level] = overrides
         elif level in self._prefs.column_config:
             # Empty overrides after reset — remove the key
             del self._prefs.column_config[level]
@@ -4267,9 +4278,6 @@ class SupervisorTUI(
         self._live_column_overrides = None
         self._column_widths_dirty = True
         self._recompute_cell_column_widths()
-
-        self.notify(f"Column config saved for {level}", severity="information")
-        self._dialog_did_close()
 
     def on_summary_config_modal_cancelled(self, message: SummaryConfigModal.Cancelled) -> None:
         """Handle modal cancellation (#178)."""
@@ -4605,6 +4613,8 @@ class SupervisorTUI(
         """
         self.record_activity("action", action=message.action, via="palette",
                              q=message.query or None, rank=message.rank)
+        if self._activity.active:
+            self.note_recent_action(message.action, "palette")
         recent = [message.action] + [a for a in self._prefs.recent_commands if a != message.action]
         self._prefs.recent_commands = recent[:10]
         self._save_prefs()
