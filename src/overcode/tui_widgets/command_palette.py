@@ -68,11 +68,14 @@ class CommandPalette(ModalBase):
     class CommandChosen(Message):
         """`focus_target` is what had focus before the palette opened: the
         app focuses it for the run, since actions act on the focused agent."""
-        def __init__(self, action: str, keep_open: bool, focus_target: Any = None) -> None:
+        def __init__(self, action: str, keep_open: bool, focus_target: Any = None,
+                     query: str = "", rank: Optional[int] = None) -> None:
             super().__init__()
             self.action = action
             self.keep_open = keep_open
             self.focus_target = focus_target
+            self.query = query  # what was typed, and the pick's place in the results
+            self.rank = rank
 
     class AgentChosen(Message):
         def __init__(self, session_id: str) -> None:
@@ -223,6 +226,10 @@ class CommandPalette(ModalBase):
                 rows.append(_Row(cand=c, positions=pos))
         self._rows = rows
         self._items = [i for i, r in enumerate(rows) if not r.header]
+        if self.text.strip():
+            record = getattr(self.app, "record_activity", None)
+            if record is not None:
+                record("palette_query", q=self.text, mode=self.mode, n=len(self._items))
         self._scroll = 0
         self._select(self._default_index())
 
@@ -346,7 +353,8 @@ class CommandPalette(ModalBase):
         target = self._previous_focus
         if not keep_open:
             self._hide()
-        self.post_message(self.CommandChosen(cmd.action, keep_open, target))
+        self.post_message(self.CommandChosen(cmd.action, keep_open, target, self.text,
+                                             self.selected_index if self.text.strip() else None))
 
     def _close(self) -> None:
         self._hide()

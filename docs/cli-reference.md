@@ -504,6 +504,38 @@ overcode config path
 
 ---
 
+## Activity Commands
+
+What the [usage log](configuration.md#usage-log) has recorded about how you
+use overcode (#483).
+
+### `overcode activity summary`
+
+Most-used actions and how you reach them (key, palette, click), plus
+experimental signals: keys you press that do nothing, palette picks of
+actions that have a key, long j/k walks, toggles undone within 3 s, dialog
+cancels, palette searches that found nothing.
+
+```bash
+overcode activity summary              # last 7 days
+overcode activity summary --since all
+overcode activity summary --json       # for scripts and agents
+```
+
+### `overcode activity keys`
+
+The raw records as JSON lines, newest last.
+
+```bash
+overcode activity keys --since 30m --kinds key,action
+```
+
+### `overcode activity path`
+
+Where the usage log lives.
+
+---
+
 ## Model Metadata Commands
 
 The catalog behind the `CTX%` and `$` columns — see

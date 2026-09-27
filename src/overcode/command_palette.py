@@ -270,6 +270,10 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("toggle_emoji_free", "Emoji-free", "Display", "ascii",
        state=lambda app: _toggle(getattr(app, "emoji_free", None))),
     _C("open_column_config", "Configure columns…", "Display", "fields"),
+    _C("toggle_activity_recording", "Record activity (usage log)", "Settings",
+       "privacy pause telemetry journey keys incognito",
+       state=lambda app: _toggle(None if not getattr(app, "_activity", None) or not app._activity.enabled
+                                 else not app._activity.paused)),
 
     # Agent — acts on the focused agent
     _C("new_agent", "New agent…", "Agent", "launch create start remote"),

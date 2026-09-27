@@ -28,6 +28,7 @@ _CLASSES_NEEDING_ISOLATION = frozenset({
     "TestCommandBarIntegration",
     "TestCommandBarWithSessions",
     "TestUniqueAgentName",
+    "TestActivityPilot",
 })
 
 
@@ -48,6 +49,19 @@ def no_real_daemons(monkeypatch):
 
     monkeypatch.setattr(overcode.pid_utils, "spawn_daemon", fake_spawn_daemon)
     monkeypatch.setattr(overcode.tui, "spawn_daemon", fake_spawn_daemon)
+
+
+@pytest.fixture(autouse=True)
+def activity_log_in_tmp(monkeypatch, tmp_path_factory):
+    """Unit tests never write the real usage log (#483).
+
+    OVERCODE_ACTIVITY=0 (tests/conftest.py) is not enough on its own: some
+    tests clear every OVERCODE_* variable. Tests that check the log's
+    location patch get_activity_dir themselves, over this.
+    """
+    import overcode.activity_log
+    d = tmp_path_factory.mktemp("activity")
+    monkeypatch.setattr(overcode.activity_log, "get_activity_dir", lambda: d)
 
 
 def _daemon_children() -> list[str]:

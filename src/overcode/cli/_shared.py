@@ -107,6 +107,12 @@ models_app = typer.Typer(
 )
 app.add_typer(models_app, name="models")
 
+activity_app = typer.Typer(
+    help="Your own usage of overcode: keys, actions, dialogs, CLI calls (#483)",
+    no_args_is_help=True,
+)
+app.add_typer(activity_app, name="activity")
+
 # Console for rich output
 console = Console()
 # Notices that must not mix into output a script may parse
@@ -155,7 +161,22 @@ def _parse_duration(s: str) -> float:
 @app.callback(invoke_without_command=True)
 def main_callback(ctx: typer.Context):
     """Launch the TUI monitor when no command is given."""
+    if ctx.invoked_subcommand is not None:
+        _record_cli_use()
     if ctx.invoked_subcommand is None:
         from ..tui import run_tui
 
         run_tui("agents")
+
+
+def _record_cli_use() -> None:
+    """Log this command to the usage log (#483). Never lets a failure through."""
+    import sys
+    try:
+        from ..activity_log import record_cli_invocation
+        groups = {g.name for g in app.registered_groups if g.name}
+        commands = groups | {c.name or c.callback.__name__.replace("_", "-")
+                             for c in app.registered_commands if c.callback}
+        record_cli_invocation(sys.argv[1:], groups, commands)
+    except Exception:
+        pass

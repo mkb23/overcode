@@ -9,6 +9,12 @@ import subprocess
 import os
 from pathlib import Path
 
+# Tests never write the user's usage log (#483): pilot-driven keys and test
+# CLI calls would otherwise count as the developer's own use. Subprocesses
+# (the CLI, the TUI under tmux) inherit this. Tests of the recorder pass
+# enabled=True or a temp directory explicitly.
+os.environ["OVERCODE_ACTIVITY"] = "0"
+
 
 def pytest_configure(config):
     """Configure pytest for E2E tests"""

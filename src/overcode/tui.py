@@ -111,6 +111,7 @@ from .tui_actions import (
     SessionActionsMixin,
     InputActionsMixin,
 )
+from .tui_actions.activity import ActivityMixin
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -136,6 +137,7 @@ TIMER_INTERVALS = {
     "summarizer": 5,
     "refresh_jobs": 5,
     "heartbeat_flush": 5,
+    "activity_flush": 2,
     "status_changes": 5,
     "refresh_sessions": 10,
     "sister_poll": 10,
@@ -173,6 +175,7 @@ TIMER_PHASE_OFFSETS = {
     "timeline": 3.9,
     "sister_poll": 4.2,
     "heartbeat_flush": 4.6,
+    "activity_flush": 1.95,
 }
 
 # Timers paused while no tmux client is attached to the pane the TUI runs
@@ -209,6 +212,7 @@ RUNS_ONLY_WHEN_UNATTENDED = frozenset({"unattended_status"})
 
 
 class SupervisorTUI(
+    ActivityMixin,
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
@@ -387,6 +391,7 @@ class SupervisorTUI(
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, initial_jobs_mode: bool = False):
         super().__init__()
         self.tmux_session = tmux_session
+        self._init_activity()  # usage log (#483)
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
@@ -733,6 +738,10 @@ class SupervisorTUI(
             self._start_periodic("heartbeat_flush", self._flush_heartbeat)
         if self._prefs.status_change_logging:
             self._start_periodic("status_changes", self._flush_status_changes)
+        self._start_periodic("activity_flush", self._flush_activity)
+        self.record_activity("tui", phase="start", version=__version__,
+                             size=f"{self.size.width}x{self.size.height}",
+                             compact=self.compact or None)
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -878,6 +887,9 @@ class SupervisorTUI(
         if attended == self.attended:
             return
         self.attended = attended
+        self.record_activity("tui", phase="attach" if attended else "detach")
+        if not attended:
+            self._flush_activity()
         self._on_attended_changed(attended)
 
     def _on_attended_changed(self, attended: bool) -> None:
@@ -4591,6 +4603,8 @@ class SupervisorTUI(
         through run_action: check_action blocks every action while a modal
         is visible, which the palette still is when kept open (Tab).
         """
+        self.record_activity("action", action=message.action, via="palette",
+                             q=message.query or None, rank=message.rank)
         recent = [message.action] + [a for a in self._prefs.recent_commands if a != message.action]
         self._prefs.recent_commands = recent[:10]
         self._save_prefs()
@@ -4630,6 +4644,8 @@ class SupervisorTUI(
         """Click a header to sort by it; click it again to reverse (#487)."""
         from .summary_columns import COLUMNS_BY_ID
         from .tui_logic import sort_mode_for_column
+        self.record_activity("action", action="sort_by_column", via="click",
+                             column=message.column_id)
         col = COLUMNS_BY_ID.get(message.column_id)
         if col is None or col.sort_key is None:
             name = col.name if col is not None else message.column_id
@@ -4940,6 +4956,8 @@ class SupervisorTUI(
         self._summarizer.stop()
 
         # Flush remaining diagnostic data
+        self.record_activity("tui", phase="stop")
+        self._flush_activity()
         self._flush_heartbeat()
         if self._prefs.status_change_logging:
             self._flush_status_changes()

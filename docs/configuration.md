@@ -125,6 +125,7 @@ skill_emoji:
 |----------|-------------|---------|
 | `OVERCODE_DIR` | Base data directory | `~/.overcode` |
 | `OVERCODE_STATE_DIR` | Session state directory | `~/.overcode/sessions` |
+| `OVERCODE_ACTIVITY` | `0` turns the [usage log](#usage-log) off | on |
 
 ### Claude Command
 
@@ -387,6 +388,32 @@ archive). An existing `archive.json` is migrated into `archive.jsonl` the
 first time the archive is touched and renamed to `archive.json.migrated`.
 Everything that reads the archive (`overcode history`, the web analytics
 endpoints, `overcode export`) reads the JSONL.
+
+## Usage Log
+
+The TUI records how you use overcode, for the learning journey (#483): every
+key, the action it ran and how you reached it (key, palette or click),
+dialogs opened and closed, palette searches, and the `overcode` commands you
+run. `overcode activity summary` shows what it has seen.
+
+Records go to `~/.overcode/activity/YYYY-MM.jsonl`, one JSON object per line.
+Nothing leaves the machine.
+
+What is never recorded: anything you type to an agent. In the command bar's
+send, standing-orders and heartbeat-instruction modes, keys are logged as
+`<c>` with no character, and pastes anywhere are logged by length only.
+Overcode's own metadata is recorded in full: tag and agent names,
+annotations, palette searches. CLI records keep the command and flag names,
+never their values. Commands run by agents overcode launched are marked
+`via: agent` and don't count as yours.
+
+```yaml
+activity:
+  record: true   # false turns it off; no record is created at all
+```
+
+`OVERCODE_ACTIVITY=0` turns it off too (the test suite sets this), and the
+palette command **Record activity** pauses it for the current TUI run.
 
 ## Unattended Low-Power Mode
 

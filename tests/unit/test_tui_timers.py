@@ -37,6 +37,7 @@ class TestCadences:
             "summarizer": 5,
             "refresh_jobs": 5,
             "heartbeat_flush": 5,
+            "activity_flush": 2,
             "status_changes": 5,
             "refresh_sessions": 10,
             "sister_poll": 10,

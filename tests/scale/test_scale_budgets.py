@@ -313,3 +313,31 @@ class TestDaemonPeriodicSyncs:
 
     def test_sandbox_state_writes_nothing_when_unchanged(self, daemon_rows):
         assert daemon_rows["daemon _sync_sandbox_state"].writes == 0
+
+
+class TestActivityLogBudget:
+    """The usage log (#483) must not eat the #486 TUI CPU win."""
+
+    def test_record_key_is_a_list_append(self, tmp_path):
+        import time
+        from overcode.activity_log import ActivityRecorder
+        rec = ActivityRecorder("agents", directory=tmp_path, enabled=True)
+        n = 5000
+        start = time.perf_counter()
+        for i in range(n):
+            rec.record_key("j", "j", "list", True)
+        per_call_us = (time.perf_counter() - start) / n * 1e6
+        # Measured ~0.9 µs on an M-series Mac (2026-09).
+        assert per_call_us < 20.0
+
+    def test_flush_of_a_busy_second_is_cheap(self, tmp_path):
+        import time
+        from overcode.activity_log import ActivityRecorder
+        rec = ActivityRecorder("agents", directory=tmp_path, enabled=True)
+        rec.flush()  # nothing buffered: no directory work
+        for _ in range(100):
+            rec.record_key("j", "j", "list", True)
+        start = time.perf_counter()
+        rec.flush()
+        ms = (time.perf_counter() - start) * 1000
+        assert ms < 5.0
