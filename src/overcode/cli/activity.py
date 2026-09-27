@@ -41,12 +41,12 @@ def activity_summary(
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output")] = False,
 ):
     """How you use overcode: most-used actions and how you reach them, plus experimental signals."""
-    from ..activity_log import iter_records
-    from ..usage_analytics import render_summary, summarize
+    from ..activity_log import summarize_log
+    from ..usage_analytics import render_summary
 
     start = _window(since)
     bound, keys_by_action = _tui_keymaps()
-    s = summarize(iter_records(since_ms=start), bound, keys_by_action, since=start)
+    s = summarize_log(start, bound, keys_by_action)
     if as_json:
         typer.echo(json.dumps(s.to_dict(), indent=2))
     else:
@@ -59,7 +59,7 @@ def activity_keys(
     limit: Annotated[int, typer.Option("--limit", help="Most recent N records")] = 200,
     kinds: Annotated[Optional[str], typer.Option("--kinds", help="Comma list, e.g. key,action")] = None,
 ):
-    """The raw records, newest last, as JSON lines."""
+    """The raw records, newest last, as JSON lines (kept for the last 14 days)."""
     from collections import deque
     from ..activity_log import iter_records
 

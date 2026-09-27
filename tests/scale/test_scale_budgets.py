@@ -341,3 +341,36 @@ class TestActivityLogBudget:
         rec.flush()
         ms = (time.perf_counter() - start) * 1000
         assert ms < 5.0
+
+    def test_a_year_of_heavy_use_reads_quickly_in_little_memory(self, tmp_path):
+        """365 day summaries + 14 raw days at 2,000 records a day (#483 rollup).
+
+        Measured 2026-09 on an M-series Mac: ~260 ms, ~0.9 MB peak, 400 KB of
+        rollups on disk.
+        """
+        import json
+        import time
+        import tracemalloc
+        from overcode.activity_log import activity_path_for, compact, summarize_log
+        day_ms = 86_400_000
+        now = time.time() * 1000
+        for k in range(380):
+            t0 = now - k * day_ms - 3_600_000
+            with open(activity_path_for(t0, tmp_path), "w") as f:
+                for i in range(1000):
+                    t = t0 + i * 20_000
+                    f.write(json.dumps({"t": t, "sid": f"s{k}", "kind": "key", "key": "j",
+                                        "ctx": "list", "dt": 300}) + "\n")
+                    f.write(json.dumps({"t": t + 5, "sid": f"s{k}", "kind": "action",
+                                        "action": "focus_next_session", "via": "key"}) + "\n")
+        compact(now, tmp_path)
+        assert sum(p.stat().st_size for p in (tmp_path / "rollup").iterdir()) < 2_000_000
+        tracemalloc.start()
+        start = time.perf_counter()
+        s = summarize_log(None, directory=tmp_path, now_ms=now)
+        ms = (time.perf_counter() - start) * 1000
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        assert s.records == 380 * 2000
+        assert ms < 1500
+        assert peak < 20_000_000

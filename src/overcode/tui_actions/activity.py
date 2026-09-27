@@ -179,9 +179,22 @@ class ActivityMixin:
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
+    # Roll days older than two weeks into day summaries this often, so the
+    # log stays small for someone who never opens the journey.
+    _COMPACT_EVERY_S = 6 * 3600
+    _activity_compacted_at: float = 0.0
+
     def _flush_activity(self) -> None:
         try:
             self._activity.flush()
+        except Exception:
+            pass
+        try:
+            now = time.monotonic()
+            if self._activity.enabled and now - self._activity_compacted_at >= self._COMPACT_EVERY_S:
+                self._activity_compacted_at = now
+                from ..activity_log import compact
+                self.run_worker(compact, thread=True, group="activity-compact", exclusive=False)
         except Exception:
             pass
 

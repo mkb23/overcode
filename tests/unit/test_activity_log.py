@@ -10,7 +10,9 @@ from overcode.activity_log import (
     ActivityRecorder,
     activity_path_for,
     cli_command_path,
+    compact,
     iter_records,
+    summarize_log,
     record_cli_invocation,
     recording_enabled,
 )
@@ -165,12 +167,20 @@ class TestCliRecord:
         assert r["flags"] == ["--prompt", "-n", "-p"]
         assert "secret" not in json.dumps(r) and "fred" not in json.dumps(r)
 
-    def test_agent_calls_are_marked_agent(self, tmp_path, monkeypatch):
+    def test_agent_calls_are_only_counted(self, tmp_path, monkeypatch):
+        # An agent polling the CLI must not fill the log: a count per command per day.
         monkeypatch.setenv("OVERCODE_ACTIVITY", "1")
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "child")
         monkeypatch.setattr("overcode.activity_log.get_activity_dir", lambda: tmp_path)
-        record_cli_invocation(["list"], self.GROUPS)
-        assert _read(tmp_path)[0]["via"] == "agent"
+        for _ in range(50):
+            record_cli_invocation(["list"], self.GROUPS)
+        record_cli_invocation(["config", "show"], self.GROUPS)
+        assert _read(tmp_path) == []
+        (counts,) = [json.loads(p.read_text()) for p in (tmp_path / "agent-cli").iterdir()]
+        assert counts == {"list": 50, "config show": 1}
+        s = summarize_log(directory=tmp_path)
+        assert s.cli["list"] == 50 and s.actions["cli:list"].by_via == {"agent": 50}
+        assert s.actions["cli:list"].user_uses == 0
 
     def test_internal_commands_are_not_recorded(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OVERCODE_ACTIVITY", "1")
@@ -291,3 +301,110 @@ class TestActivityPilot:
         records = _read(tmp_path)
         assert records[-1]["kind"] == "recording" and records[-1]["phase"] == "pause"
         assert not any(r["kind"] == "key" and r["key"] == "d" for r in records)
+
+
+
+class TestRollup:
+    """Fine detail for RAW_DAYS, then one summary per day (rollup/YYYY-MM.json)."""
+
+    DAY = 86_400_000
+
+    def _write_day(self, directory, t_ms, records):
+        # One TUI run per day. Day summaries split a run at midnight, which
+        # only matters for a walk or an undone toggle that spans it.
+        path = activity_path_for(t_ms, directory)
+        with open(path, "a") as f:
+            for i, r in enumerate(records):
+                f.write(json.dumps({"t": t_ms + i, "sid": path.name, **r}) + "\n")
+        return path
+
+    def _walk(self, n=8):
+        return [r for _ in range(n) for r in (
+            {"kind": "key", "key": "j", "ctx": "list", "dt": 50},
+            {"kind": "action", "action": "focus_next_session", "via": "key"})]
+
+    def test_old_days_become_summaries_and_totals_are_unchanged(self, tmp_path):
+        now = time.time() * 1000
+        old = self._write_day(tmp_path, now - 20 * self.DAY, self._walk()
+                              + [{"kind": "key", "key": "z", "ctx": "list"}])
+        new = self._write_day(tmp_path, now - 1 * self.DAY, self._walk(3))
+        before = summarize_log(directory=tmp_path, bound_keys=frozenset({"j"}), now_ms=now - 30 * self.DAY)
+        assert old.exists()  # nothing was old enough then
+
+        after = summarize_log(directory=tmp_path, bound_keys=frozenset({"j"}), now_ms=now)
+        assert not old.exists() and new.exists()
+        assert list((tmp_path / "rollup").iterdir())
+        for field in ("records", "keys", "walks", "walk_keys", "active_minutes"):
+            assert getattr(after, field) == getattr(before, field), field
+        assert after.actions["focus_next_session"].uses == 11
+        assert after.phantom_keys == {"z": 1}  # bindings applied when read, not when rolled up
+        assert summarize_log(directory=tmp_path, bound_keys=frozenset({"j", "z"}),
+                             now_ms=now).phantom_keys == {}
+
+    def test_compaction_is_idempotent(self, tmp_path):
+        from overcode.activity_log import _add_to_rollup
+        from overcode.usage_analytics import fold
+        now = time.time() * 1000
+        old = self._write_day(tmp_path, now - 20 * self.DAY, self._walk())
+        records = list(iter_records(_paths=[old]))
+        day = old.name.split(".")[0]
+        # A crash after the rollup was written but before the day file went.
+        _add_to_rollup(tmp_path, day, old.name, lambda: fold(records))
+        compact(now, tmp_path)
+        assert summarize_log(directory=tmp_path, now_ms=now).actions["focus_next_session"].uses == 8
+
+    def test_windows_count_only_their_days(self, tmp_path):
+        now = time.time() * 1000
+        self._write_day(tmp_path, now - 40 * self.DAY, self._walk(1))
+        self._write_day(tmp_path, now - 20 * self.DAY, self._walk(2))
+        self._write_day(tmp_path, now - 2 * self.DAY, self._walk(4))
+        use = lambda since: summarize_log(since_ms=since, directory=tmp_path, now_ms=now) \
+            .actions["focus_next_session"].uses
+        assert use(None) == 7
+        assert use(now - 30 * self.DAY) == 6
+        assert use(now - 7 * self.DAY) == 4
+
+    def test_legacy_month_files_roll_up_by_day_once_old(self, tmp_path):
+        now = time.time() * 1000
+        from datetime import datetime
+        old_t = now - 70 * self.DAY
+        month = datetime.fromtimestamp(old_t / 1000).strftime("%Y-%m")
+        legacy = tmp_path / f"{month}.jsonl"
+        legacy.write_text("".join(json.dumps({"t": old_t + i * self.DAY / 4, "sid": "s", **r}) + "\n"
+                                  for i, r in enumerate(self._walk(2))))
+        assert [r["kind"] for r in iter_records(directory=tmp_path)][:1] == ["key"]
+        s = summarize_log(directory=tmp_path, now_ms=now)
+        assert not legacy.exists()
+        assert s.actions["focus_next_session"].uses == 2
+
+    def test_agent_counts_roll_up_too(self, tmp_path):
+        from overcode.activity_log import count_agent_cli
+        now = time.time() * 1000
+        for _ in range(3):
+            count_agent_cli("list", now_ms=now - 20 * self.DAY, directory=tmp_path)
+        count_agent_cli("list", now_ms=now, directory=tmp_path)
+        s = summarize_log(directory=tmp_path, now_ms=now)
+        assert s.cli["list"] == 4
+        assert len(list((tmp_path / "agent-cli").iterdir())) == 1
+
+    def test_a_damaged_rollup_is_skipped(self, tmp_path):
+        now = time.time() * 1000
+        self._write_day(tmp_path, now - 20 * self.DAY, self._walk(1))
+        summarize_log(directory=tmp_path, now_ms=now)
+        (rollup,) = (tmp_path / "rollup").iterdir()
+        data = json.loads(rollup.read_text())
+        data["days"]["2001-01-01"] = {"sources": ["x"], "state": {"actions": 5}}
+        rollup.write_text(json.dumps(data))
+        s = summarize_log(directory=tmp_path, now_ms=now)
+        assert s.actions["focus_next_session"].uses == 1
+        rollup.write_text("{not json")
+        summarize_log(directory=tmp_path, now_ms=now)  # never raises
+
+    def test_only_the_activity_directory_is_touched(self, tmp_path):
+        activity = tmp_path / "activity"
+        activity.mkdir()
+        (tmp_path / "2001-01-01.jsonl").write_text("{}\n")  # outside: must survive
+        now = time.time() * 1000
+        self._write_day(activity, now - 20 * self.DAY, self._walk(1))
+        compact(now, activity)
+        assert (tmp_path / "2001-01-01.jsonl").exists()

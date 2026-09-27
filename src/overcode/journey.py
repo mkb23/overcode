@@ -515,9 +515,8 @@ def journey_settings() -> tuple[float, float]:
 
 def load_journey(keys_by_action: dict, bound_keys: frozenset) -> Journey:
     """The whole journey from the usage log and state files: the one loader every surface uses."""
-    from .activity_log import iter_records
-    from .usage_analytics import summarize
-    summary = summarize(iter_records(), bound_keys, keys_by_action)
+    from .activity_log import summarize_log
+    summary = summarize_log(None, bound_keys, keys_by_action)
     grace, step = journey_settings()
     return compute_journey(summary, gather_residue(), keys_by_action,
                            grace_days=grace, step_days=step)

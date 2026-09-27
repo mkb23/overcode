@@ -396,16 +396,26 @@ key, the action it ran and how you reached it (key, palette or click),
 dialogs opened and closed, palette searches, and the `overcode` commands you
 run. `overcode activity summary` shows what it has seen.
 
-Records go to `~/.overcode/activity/YYYY-MM.jsonl`, one JSON object per line.
-Nothing leaves the machine.
+Records go to `~/.overcode/activity/YYYY-MM-DD.jsonl`, one JSON object per
+line. Nothing leaves the machine.
+
+Full records are kept for 14 days. After that each day is folded into a
+day summary (counts per action, key, dialog and so on) in
+`activity/rollup/YYYY-MM.json`, and the day's records are deleted. That keeps
+the log to about two weeks of records plus a few KB per day, so the journey
+stays quick to open. `overcode activity keys` shows only the last 14 days;
+`overcode activity summary --since` and the journey read both. Only files
+under `activity/` are touched: the status history and other logs keep their
+own retention (see [History Retention](#history-retention)).
 
 What is never recorded: anything you type to an agent. In the command bar's
 send, standing-orders and heartbeat-instruction modes, keys are logged as
 `<c>` with no character, and pastes anywhere are logged by length only.
 Overcode's own metadata is recorded in full: tag and agent names,
 annotations, palette searches. CLI records keep the command and flag names,
-never their values. Commands run by agents overcode launched are marked
-`via: agent` and don't count as yours.
+never their values. Commands run by agents overcode launched are only
+counted, per command per day, in `activity/agent-cli/`, and never count as
+yours.
 
 ```yaml
 activity:

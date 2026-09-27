@@ -6,7 +6,8 @@ noticing, until real data shows it fires at a plausible rate and the nudges
 it drives get engaged (docs/design/483-484/01_usage_log.md, "Proving the
 signals"). The summary labels them so.
 
-Records come from activity_log.iter_records(); nothing here reads files.
+Records come from activity_log (iter_records, or summarize_log for day
+summaries plus recent records); nothing here reads files.
 """
 
 from __future__ import annotations
@@ -68,6 +69,10 @@ class Summary:
     clicks: int = 0
     actions: dict[str, ActionUse] = field(default_factory=dict)
     blocked: Counter = field(default_factory=Counter)
+    # Keys pressed in the list that no action claimed. Which of them are
+    # phantoms depends on what the TUI binds *now*, so finish() derives
+    # phantom_keys from this; stored summaries keep the raw counts.
+    unclaimed_keys: Counter = field(default_factory=Counter)
     phantom_keys: Counter = field(default_factory=Counter)
     toggle_regret: Counter = field(default_factory=Counter)
     dialogs: dict[str, Counter] = field(default_factory=dict)
@@ -114,20 +119,27 @@ class Summary:
 def summarize(records: Iterable[dict], bound_keys: frozenset[str] = frozenset(),
               keys_by_action: Optional[dict[str, list[str]]] = None,
               since: Optional[float] = None) -> Summary:
-    """Fold records into a Summary, one record at a time.
-
-    Records are never held: each TUI run (sid) keeps only the little state
-    its signals need, so memory does not grow with the log. A
-    record whose fields have unexpected types is skipped, not fatal.
+    """Fold records into a finished Summary (fold, then finish).
 
     bound_keys: keys the TUI binds, so an unhandled key that is bound anyway
     (a modal's own key, say) is never counted as a phantom.
     keys_by_action: for "picked in the palette although it has a key".
     """
+    return finish(fold(records, since=since), bound_keys, keys_by_action)
+
+
+def fold(records: Iterable[dict], since: Optional[float] = None) -> Summary:
+    """Fold records into an unfinished Summary, one record at a time.
+
+    Records are never held: each TUI run (sid) keeps only the little state
+    its signals need, so memory does not grow with the log. A record whose
+    fields have unexpected types is skipped, not fatal. Nothing here depends
+    on the TUI's current key bindings, so a folded Summary can be stored and
+    merged with others (the usage log's day rollups) and finished later.
+    """
     s = Summary(since_ms=since)
     runs: dict[str, _RunFolder] = {}
     minutes: set[int] = set()
-    keymap = keys_by_action or {}
     for r in records:
         if not isinstance(r, dict):
             continue
@@ -144,18 +156,97 @@ def summarize(records: Iterable[dict], bound_keys: frozenset[str] = frozenset(),
             sid = str(r.get("sid", ""))
             run = runs.get(sid)
             if run is None:
-                run = runs[sid] = _RunFolder(s, bound_keys, keymap)
+                run = runs[sid] = _RunFolder(s)
             run.feed(r)
         except (TypeError, ValueError, AttributeError, KeyError):
             continue
     s.active_minutes = len(minutes)
     for run in runs.values():
         run.finish()
+    return s
+
+
+def finish(s: Summary, bound_keys: frozenset[str] = frozenset(),
+           keys_by_action: Optional[dict[str, list[str]]] = None) -> Summary:
+    """The signals that depend on today's bindings, and the palette-miss cleanup."""
+    keymap = keys_by_action or {}
+    s.phantom_keys = Counter({k: n for k, n in s.unclaimed_keys.items() if k not in bound_keys})
+    s.palette_picks_with_key = Counter({
+        name: a.by_via["palette"] for name, a in s.actions.items()
+        if a.by_via.get("palette") and keymap.get(name)})
     # A miss is the query as finally typed: drop prefixes of a longer miss.
-    for q in list(s.palette_misses):
-        if any(o != q and o.startswith(q) for o in s.palette_misses):
+    # Sorted, any longer query starting with q comes straight after q.
+    ordered = sorted(s.palette_misses)
+    for q, nxt in zip(ordered, ordered[1:]):
+        if nxt.startswith(q):
             del s.palette_misses[q]
     return s
+
+
+# Cancel durations kept per dialog when summaries are merged: enough for a median.
+MAX_CANCEL_SAMPLES = 500
+
+_COUNTERS = ("blocked", "unclaimed_keys", "toggle_regret", "help_lookups", "palette_misses",
+             "hesitations", "cli", "contexts")
+_INTS = ("records", "tui_runs", "keys", "clicks", "walks", "walk_keys", "active_minutes")
+
+
+def merge(into: Summary, other: Summary) -> Summary:
+    """Add an unfinished Summary into another (both from fold or from_state)."""
+    for name in _INTS:
+        setattr(into, name, getattr(into, name) + getattr(other, name))
+    for name in _COUNTERS:
+        getattr(into, name).update(getattr(other, name))
+    for name, a in other.actions.items():
+        mine = into.actions.setdefault(name, ActionUse())
+        mine.uses += a.uses
+        mine.by_via.update(a.by_via)
+        for t in (a.first_t, a.last_t):
+            if t is not None:
+                mine.first_t = t if mine.first_t is None else min(mine.first_t, t)
+                mine.last_t = t if mine.last_t is None else max(mine.last_t, t)
+    for name, c in other.dialogs.items():
+        into.dialogs.setdefault(name, Counter()).update(c)
+    for name, v in other.dialog_cancel_ms.items():
+        kept = into.dialog_cancel_ms.setdefault(name, [])
+        kept.extend(v)
+        del kept[:-MAX_CANCEL_SAMPLES]
+    return into
+
+
+def to_state(s: Summary) -> dict:
+    """An unfinished Summary as plain JSON, for the usage log's rollups."""
+    return {
+        **{name: getattr(s, name) for name in _INTS},
+        **{name: dict(getattr(s, name)) for name in _COUNTERS},
+        "actions": {n: {"uses": a.uses, "by_via": dict(a.by_via),
+                        "first_t": a.first_t, "last_t": a.last_t}
+                    for n, a in s.actions.items()},
+        "dialogs": {n: dict(c) for n, c in s.dialogs.items()},
+        "dialog_cancel_ms": {n: v[-MAX_CANCEL_SAMPLES:] for n, v in s.dialog_cancel_ms.items()},
+    }
+
+
+def from_state(d: dict) -> Summary:
+    """The inverse of to_state. Raises ValueError on a malformed state."""
+    try:
+        s = Summary(since_ms=None)
+        for name in _INTS:
+            setattr(s, name, int(d.get(name, 0)))
+        for name in _COUNTERS:
+            getattr(s, name).update({str(k): int(n) for k, n in (d.get(name) or {}).items()})
+        for n, a in (d.get("actions") or {}).items():
+            s.actions[str(n)] = ActionUse(
+                uses=int(a["uses"]),
+                by_via=Counter({str(k): int(v) for k, v in a["by_via"].items()}),
+                first_t=_num_or_none(a.get("first_t")), last_t=_num_or_none(a.get("last_t")))
+        for n, c in (d.get("dialogs") or {}).items():
+            s.dialogs[str(n)] = Counter({str(k): int(v) for k, v in c.items()})
+        for n, v in (d.get("dialog_cancel_ms") or {}).items():
+            s.dialog_cancel_ms[str(n)] = [float(x) for x in v]
+        return s
+    except (TypeError, KeyError, AttributeError) as e:
+        raise ValueError(f"bad summary state: {e}") from e
 
 
 def _num(v: object) -> float:
@@ -177,11 +268,8 @@ def _count_use(use: ActionUse, via: str, t: Optional[float]) -> None:
 class _RunFolder:
     """One TUI run's records, fed in order, folded straight into the Summary."""
 
-    def __init__(self, s: Summary, bound_keys: frozenset[str],
-                 keys_by_action: dict[str, list[str]]) -> None:
+    def __init__(self, s: Summary) -> None:
         self.s = s
-        self.bound_keys = bound_keys
-        self.keys_by_action = keys_by_action
         self.pending_key: Optional[str] = None   # last list-context key not yet claimed by an action
         self.last_toggle: Optional[tuple[str, float]] = None
         self.help_closed_t: Optional[float] = None
@@ -189,8 +277,8 @@ class _RunFolder:
         self.last_key_dt: Optional[float] = None
 
     def _settle_pending(self) -> None:
-        if self.pending_key is not None and self.pending_key not in self.bound_keys:
-            self.s.phantom_keys[self.pending_key] += 1
+        if self.pending_key is not None:
+            self.s.unclaimed_keys[self.pending_key] += 1
         self.pending_key = None
 
     def _end_walk(self) -> None:
@@ -234,8 +322,6 @@ class _RunFolder:
                 s.blocked[name] += 1
             if via == "key" and self.last_key_dt is not None and self.last_key_dt >= HESITATION_MS:
                 s.hesitations[name] += 1
-            if via == "palette" and self.keys_by_action.get(name):
-                s.palette_picks_with_key[name] += 1
             if name in WALK_ACTIONS and via == "key":
                 self.walk_run += 1
             else:
