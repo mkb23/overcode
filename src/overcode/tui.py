@@ -113,6 +113,7 @@ from .tui_actions import (
 )
 from .tui_actions.activity import ActivityMixin
 from .tui_actions.view_control import ViewControlMixin
+from .tui_actions.overagent import OveragentMixin
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -217,6 +218,7 @@ RUNS_ONLY_WHEN_UNATTENDED = frozenset({"unattended_status"})
 class SupervisorTUI(
     ActivityMixin,
     ViewControlMixin,
+    OveragentMixin,
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
@@ -272,6 +274,7 @@ class SupervisorTUI(
         ("x", "kill_focused", "Kill/Clean up"),
         ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
+        ("e", "open_overagent", "Overagent"),
         ("ctrl+n", "rename_focused", "Rename agent"),
         # Send Enter to focused agent (for approvals)
         ("enter", "send_enter_to_focused", "Send Enter"),

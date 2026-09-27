@@ -39,6 +39,7 @@ In sorts driven by live data (status, value, CPU, time in state…) the list re-
 | `b` | Jump to next agent needing attention |
 | `Ctrl+P` | Jump to an agent by name (fuzzy search) |
 | `J` | Switch between the agents and jobs views |
+| `e` | Open the [overagent](#the-overagent): ask overcode for help, advice or changes |
 
 ### View Controls
 
@@ -241,6 +242,28 @@ Organize agents by priority:
 4. Agents with higher values appear first
 
 You can sort by any other column the same way — status (stalled agents first), name, cost, CPU and so on.
+
+## The Overagent
+
+Press `e` to talk to overcode itself. The overagent is a Claude Code agent
+that knows overcode: ask it how to do something, why a column says `n/a`,
+what you could be doing faster, or to change things ("hide cost and show
+branch", "sort by status", "restart every dead agent").
+
+It is an ordinary agent row, launched with the `overagent` backend the first
+time you press `e` (in `~/.overcode`, named `overcode`). Later presses focus
+it; in `overcode tmux` the bottom pane switches to it and takes the keyboard.
+You can also start one yourself: `overcode launch -n helper -B overagent`.
+
+What it can do without asking: read overcode's state, change what the TUI
+shows (`overcode view`, see the [CLI reference](cli-reference.md#view-commands)),
+read your usage summary, and edit `~/.overcode/config.yaml`. Everything else
+(kill, restart, launch, send, budgets) asks first, and it never runs with
+permissions bypassed. It resolves "this" from what you have focused, and
+when it suggests a key it lights it up in your TUI.
+
+It loads the `overcode-configurator` skill, which the backend installs into
+`~/.claude/skills` when missing or stale, with the other bundled skills.
 
 ## Tips
 

@@ -20,6 +20,7 @@ from .grok import GrokBackend
 from .hermes import HermesBackend
 from .opencode import OpencodeBackend
 from .opencode2 import Opencode2Backend
+from .overagent import OveragentBackend
 from .shell import ShellBackend, is_shell_session
 
 DEFAULT_BACKEND = "claude-code"
@@ -32,6 +33,7 @@ _BACKENDS: Dict[str, AgentBackend] = {
     GrokBackend.name: GrokBackend(),
     HermesBackend.name: HermesBackend(),
     ShellBackend.name: ShellBackend(),
+    OveragentBackend.name: OveragentBackend(),
 }
 
 

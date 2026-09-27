@@ -1319,6 +1319,7 @@ BACKEND_BADGES = {
     "grok": "gk",
     "hermes": "hm",
     "shell": "sh",
+    "overagent": "oa",
 }
 
 

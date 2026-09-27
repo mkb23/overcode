@@ -24,7 +24,9 @@ import typer
 
 from ._shared import view_app
 
-SessionOpt = Annotated[str, typer.Option("--session", hidden=True, help="Tmux session")]
+SessionOpt = Annotated[str, typer.Option(
+    "--session", hidden=True, envvar="OVERCODE_TMUX_SESSION",
+    help="Tmux session (default: the one this agent runs in, else 'agents')")]
 JsonOpt = Annotated[bool, typer.Option("--json", help="Print the raw ack as JSON")]
 
 
@@ -215,3 +217,17 @@ def view_point(
     if not as_json:
         keys = ", ".join(r.get("keys", [])) or "no key; palette only"
         typer.echo(f"✓ pointed at {action} ({keys})")
+
+
+from ._shared import app  # noqa: E402
+
+
+@app.command("docs")
+def docs(
+    what: Annotated[str, typer.Argument(help="'path' prints where the docs are")] = "path",
+):
+    """Where overcode's docs are: a directory in a source checkout, else the URL."""
+    from ..overagent import docs_location
+    if what != "path":
+        raise typer.BadParameter("only 'path' is supported")
+    typer.echo(docs_location())
