@@ -589,7 +589,7 @@ class TestUnattendedStatusPath:
         assert w.is_unvisited_stalled is True
         assert app._previous_statuses["s1"] == "waiting_user"
         w.apply_status_no_refresh.assert_called_once()
-        w.refresh.assert_called_once()
+        w.refresh_if_changed.assert_called_once()
 
 
 class TestPhaseOffsetsOfTheNewTimers:

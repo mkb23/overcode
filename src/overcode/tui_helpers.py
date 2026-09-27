@@ -265,8 +265,8 @@ def get_git_untracked_count(directory: str) -> Optional[int]:
     """
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            cwd=directory,
+            # -C, not cwd=: a cwd forces fork+exec over posix_spawn (spawn.py)
+            ["git", "-C", directory, "ls-files", "--others", "--exclude-standard"],
             capture_output=True,
             text=True,
             timeout=2,
@@ -292,8 +292,8 @@ def get_git_diff_stats(directory: str) -> Optional[Tuple[int, int, int]]:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--stat", "HEAD"],
-            cwd=directory,
+            # -C, not cwd=: a cwd forces fork+exec over posix_spawn (spawn.py)
+            ["git", "-C", directory, "diff", "--stat", "HEAD"],
             capture_output=True,
             text=True,
             timeout=2,

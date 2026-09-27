@@ -2025,6 +2025,10 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # tmux many times a second: start it with posix_spawn (#486)
+    from . import spawn
+    spawn.install()
+
     daemon = MonitorDaemon(tmux_session=args.session)
     daemon.run(check_interval=args.interval)
     return 0

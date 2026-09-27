@@ -951,9 +951,10 @@ class SupervisorTUI(
         of re-attaching.
         """
         prefs_changed = False
+        focused_id = self._selected_session_id()
         for widget in self.query(SessionSummary):
             status = statuses.get(widget.session.id)
-            if status is not None and self._track_stall(widget, status):
+            if status is not None and self._track_stall(widget, status, focused_id):
                 prefs_changed = True
         if prefs_changed:
             self._save_prefs()
@@ -2099,7 +2100,7 @@ class SupervisorTUI(
 
     # ── End sister integration ────────────────────────────────────────
 
-    def _track_stall(self, widget: "SessionSummary", status: str) -> bool:
+    def _track_stall(self, widget: "SessionSummary", status: str, focused_id=...) -> bool:
         """Stall bookkeeping for one agent's newly observed ``status``.
 
         Transition tracking, the debounced new-stall decision, the unvisited
@@ -2108,7 +2109,9 @@ class SupervisorTUI(
         drawing it. Shared with the unattended 2 s path, which feeds it the
         daemon's status so bells and notifications keep working while no
         client is attached. Returns True if the persisted preferences
-        (visited stalled agents) changed.
+        (visited stalled agents) changed. Callers looping over every agent
+        pass ``focused_id`` (the focused session's id, or None) so the
+        focused widget is looked up once per pass, not once per agent.
         """
         session_id = widget.session.id
         prefs_changed = False
@@ -2170,8 +2173,9 @@ class SupervisorTUI(
 
         # Auto-dismiss bell after 5s if this agent is already being viewed
         if stall.is_unvisited_stalled and self.preview_visible:
-            focused = self._get_focused_widget()
-            if focused is not None and focused.session.id == session_id:
+            if focused_id is ...:
+                focused_id = self._selected_session_id()
+            if focused_id == session_id:
                 self._schedule_bell_dismiss(session_id)
         elif not stall.is_unvisited_stalled and session_id in self._bell_dismiss_timers:
             # Bell cleared by other means — cancel pending timer
@@ -2191,6 +2195,7 @@ class SupervisorTUI(
         any_has_subtree_cost = bool(subtree_costs)
 
         widgets = list(self.query(SessionSummary))
+        focused_id = self._selected_session_id()
 
         for widget in widgets:
             session_id = widget.session.id
@@ -2226,7 +2231,7 @@ class SupervisorTUI(
             if session_id in status_results:
                 status, activity, content = status_results[session_id]
 
-                if self._track_stall(widget, status):
+                if self._track_stall(widget, status, focused_id):
                     prefs_changed = True
 
                 # Diagnostic: log every color-changing status transition
@@ -2260,7 +2265,7 @@ class SupervisorTUI(
         # Recompute column widths before refreshing widgets for alignment
         self._recompute_cell_column_widths()
         for widget in widgets:
-            widget.refresh()
+            widget.refresh_if_changed()
 
         if prefs_changed:
             self._save_prefs()
@@ -4945,6 +4950,10 @@ def run_tui(
 
     # Force terminal size detection
     os.environ.setdefault('TERM', 'xterm-256color')
+
+    # tmux/git many times a second: start them with posix_spawn (#486)
+    from . import spawn
+    spawn.install()
 
     app = SupervisorTUI(tmux_session, diagnostics=diagnostics, initial_jobs_mode=initial_jobs_mode)
 

@@ -54,6 +54,9 @@ class SessionSummary(Static, can_focus=True):
 
     def __init__(self, session: Session, status_detector: StatusDetectorProtocol, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # The row as last drawn, so the 250 ms tick can skip rows that would
+        # draw the same (refresh_if_changed, #486)
+        self._last_rendered: Optional[Text] = None
         self.session = session
         self.status_detector = status_detector
         # Initialize from session status (for terminated) or persisted state
@@ -473,6 +476,25 @@ class SessionSummary(Static, can_focus=True):
 
     def render(self) -> Text:
         """Render single-line session summary."""
+        text = self._render_row()
+        self._last_rendered = text
+        return text
+
+    def refresh_if_changed(self) -> bool:
+        """Refresh only if the row would now draw differently.
+
+        Building the row's Text is ~40% of a refresh; Textual turning it into
+        strips and compositing is the rest, so an unchanged row (most of them,
+        most ticks) skips that. Comparing against what render() last returned
+        means whatever changed the row — status, a ticking duration, focus,
+        width — still shows on the same tick.
+        """
+        if self._last_rendered is not None and self._render_row() == self._last_rendered:
+            return False
+        self.refresh()
+        return True
+
+    def _render_row(self) -> Text:
         import shutil
         term_width = shutil.get_terminal_size().columns
         ctx = self._build_column_context()

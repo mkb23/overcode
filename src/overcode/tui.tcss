@@ -219,11 +219,6 @@ CommandBar.visible {
     display: block;
 }
 
-/* Child content widget grows to fit all lines (container scrolls) */
-#preview-content {
-    height: auto;
-}
-
 /* Focused indicator in list mode and compact (tmux split) mode */
 SessionSummary:focus.list-mode,
 SessionSummary:focus.compact-mode {

@@ -311,3 +311,44 @@ class TestScrapedRecapFromStats:
 
     def test_strips_whitespace(self):
         assert _scraped_recap_from_stats(_make_stats(current_task="  Wrote file.py  ")) == "Wrote file.py"
+
+
+class TestRefreshIfChanged:
+    """#486: the 250 ms tick refreshes only rows that would draw differently."""
+
+    @staticmethod
+    def _widget(row_text):
+        from rich.text import Text
+        widget = _make_bare_widget(_last_rendered=None)
+        widget.refresh = MagicMock()
+        widget._render_row = MagicMock(side_effect=lambda: Text(row_text[0]))
+        return widget
+
+    def test_first_tick_refreshes(self):
+        widget = self._widget(["row"])
+        assert widget.refresh_if_changed() is True
+        widget.refresh.assert_called_once()
+
+    def test_unchanged_row_is_skipped(self):
+        widget = self._widget(["row"])
+        widget.render()  # what is on screen
+        assert widget.refresh_if_changed() is False
+        widget.refresh.assert_not_called()
+
+    def test_changed_row_refreshes(self):
+        text = ["  7s working"]
+        widget = self._widget(text)
+        widget.render()
+        text[0] = "  8s working"
+        assert widget.refresh_if_changed() is True
+        widget.refresh.assert_called_once()
+
+    def test_compares_against_what_render_last_drew(self):
+        # A refresh from elsewhere (focus, resize) redraws the row; the
+        # next tick compares against that drawing
+        text = ["a"]
+        widget = self._widget(text)
+        widget.render()
+        text[0] = "b"
+        widget.render()
+        assert widget.refresh_if_changed() is False
