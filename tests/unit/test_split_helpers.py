@@ -647,7 +647,8 @@ class TestRelaunchSwitchesCallerClient:
 
     SPLIT_PANE_TTYS = ["/dev/pts/20", "/dev/pts/21"]  # top monitor, nested bottom
 
-    def _run(self, monkeypatch, *, caller_tty: str, clients: list[str]):
+    def _run(self, monkeypatch, *, caller_tty: str, clients: list[str],
+             terminal_features: str = "xterm*:clipboard\n"):
         calls: list[tuple[str, ...]] = []
         printed: list[str] = []
 
@@ -662,6 +663,8 @@ class TestRelaunchSwitchesCallerClient:
                 return "\n".join(clients) + ("\n" if clients else "")
             if args[0] == "display-message":
                 return caller_tty
+            if args[:3] == ("show", "-gv", "terminal-features"):
+                return terminal_features
             raise AssertionError(f"unexpected _tmux_output{args}")
 
         monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1,0")
@@ -729,3 +732,20 @@ class TestRelaunchSwitchesCallerClient:
         assert self._switches(calls) == []
         assert self._respawns(calls) == []
         assert any("switch-client -t overcode" in p for p in printed)
+
+    @staticmethod
+    def _sync_appends(calls):
+        return [c for c in calls if c[:3] == ("set", "-as", "terminal-features")]
+
+    def test_sync_feature_appended_when_missing(self, monkeypatch):
+        calls, _ = self._run(monkeypatch, caller_tty="/dev/pts/13", clients=[])
+        assert self._sync_appends(calls) == [("set", "-as", "terminal-features", ",*:sync")]
+
+    def test_sync_feature_not_appended_again(self, monkeypatch):
+        # `set -as` adds a new array entry on every call; re-running
+        # `overcode tmux` must not pile up duplicate *:sync entries.
+        calls, _ = self._run(
+            monkeypatch, caller_tty="/dev/pts/13", clients=[],
+            terminal_features="xterm*:clipboard\n*:sync\n",
+        )
+        assert self._sync_appends(calls) == []

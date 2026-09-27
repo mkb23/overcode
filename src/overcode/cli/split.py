@@ -794,7 +794,9 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     _tmux("set", "-g", "focus-events", "on")
     # Enable synchronized output (DEC mode 2026) — batches screen updates
     # so the terminal renders them atomically, preventing mid-redraw tearing.
-    _tmux("set", "-as", "terminal-features", ",*:sync")
+    # `set -as` appends a new array entry on every call, so only add it once.
+    if "*:sync" not in _tmux_output("show", "-gv", "terminal-features"):
+        _tmux("set", "-as", "terminal-features", ",*:sync")
 
     # Create (or find) the linked session for the bottom pane
     linked = _setup_linked_session(session)
