@@ -1487,6 +1487,44 @@ class SessionManager:
             if session is not None:
                 yield session
 
+    def archived_sessions_since(
+        self, offset: int = 0, inode: Optional[int] = None
+    ) -> Tuple[List[Session], int, Optional[int], bool]:
+        """Sessions appended to the archive after byte ``offset``, for incremental readers.
+
+        The archive is append-only, so a reader that remembers where it
+        stopped (and the file's inode) only ever parses new lines. Returns
+        ``(sessions, new_offset, inode, reset)``; ``reset`` is True when the
+        file was replaced or shrank since, in which case it was read from the
+        start and the caller must drop what it had. Every line is returned,
+        as in ``iter_archived_sessions``.
+        """
+        self._migrate_legacy_archive()
+        try:
+            with open(self.archive_file, 'rb') as f:
+                if HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    st = os.fstat(f.fileno())
+                    reset = inode != st.st_ino or offset > st.st_size
+                    start = 0 if reset else offset
+                    f.seek(start)
+                    data = f.read()
+                finally:
+                    if HAS_FCNTL:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return [], 0, None, inode is not None
+        end = data.rfind(b"\n") + 1
+        sessions = []
+        for line in data[:end].split(b"\n"):
+            record = _archive_record(line)
+            if record is not None:
+                session = _archived_session(record)
+                if session is not None:
+                    sessions.append(session)
+        return sessions, start + end, st.st_ino, reset
+
     def get_archived_session(self, session_id: str) -> Optional[Session]:
         """Get an archived session by ID (shared snapshot, see ``get_session``)."""
         return self._archive_snapshot().get(session_id)

@@ -209,3 +209,58 @@ class TestJourneyPanelPilot:
             await pilot.press("escape")
             await pilot.pause()
             assert not app.query_one("#journey-panel").has_class("visible")
+
+
+class TestArchiveResidue:
+    """The archive is read incrementally: 20k sessions must not be rebuilt per `u`."""
+
+    def _sm(self, tmp_path, monkeypatch):
+        from overcode.session_manager import SessionManager
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        return SessionManager(skip_git_detection=True)
+
+    def _archive(self, sm, name, **fields):
+        s = sm.create_session(name=name, tmux_session="agents", tmux_window=name, command=["claude"])
+        if fields:
+            sm.update_session(s.id, **fields)
+        sm.delete_session(s.id, archive=True)
+
+    def test_counts_follow_appends_and_parse_only_new_lines(self, tmp_path, monkeypatch):
+        sm = self._sm(tmp_path, monkeypatch)
+        self._archive(sm, "a", parent_session_id="p", tags=["x"])
+        self._archive(sm, "b", standing_instructions="be brief")
+        counts, tags, backends = J._archive_counts(sm)
+        assert counts["agents"] == 2 and counts["child_of_agent"] == 1
+        assert counts["standing_orders"] == 1 and tags == {"x"} and backends == {"claude-code"}
+
+        seen = []
+        real = type(sm).archived_sessions_since
+
+        def spy(self, offset=0, inode=None):
+            out = real(self, offset, inode)
+            seen.append(len(out[0]))
+            return out
+
+        monkeypatch.setattr(type(sm), "archived_sessions_since", spy)
+        self._archive(sm, "c", tags=["y"])
+        counts, tags, _ = J._archive_counts(sm)
+        assert counts["agents"] == 3 and tags == {"x", "y"}
+        assert J._archive_counts(sm)[0]["agents"] == 3
+        assert seen == [1, 0]  # only the appended session, then nothing
+
+    def test_a_replaced_archive_is_recounted(self, tmp_path, monkeypatch):
+        sm = self._sm(tmp_path, monkeypatch)
+        self._archive(sm, "a")
+        self._archive(sm, "b")
+        assert J._archive_counts(sm)[0]["agents"] == 2
+        lines = sm.archive_file.read_bytes().splitlines(keepends=True)
+        tmp = sm.archive_file.with_name("new.jsonl")
+        tmp.write_bytes(lines[0])
+        tmp.replace(sm.archive_file)
+        assert J._archive_counts(sm)[0]["agents"] == 1
+
+    def test_a_bad_cache_is_ignored(self, tmp_path, monkeypatch):
+        sm = self._sm(tmp_path, monkeypatch)
+        self._archive(sm, "a")
+        (sm.state_dir / "archive_residue.json").write_text('{"v": 1, "counts": []}')
+        assert J._archive_counts(sm)[0]["agents"] == 1

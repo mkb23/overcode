@@ -14,6 +14,8 @@ cut, and every threshold is a setting until real usage calibrates it.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -56,7 +58,7 @@ class Residue:
     """Counts from state files: features in use, whatever way they were set up."""
     agents: int = 0
     live_agents: int = 0
-    child_of_agent: int = 0        # agents whose parent is another agent
+    child_of_agent: int = 0        # agents launched by another agent
     standing_orders: int = 0
     budgets: int = 0
     tags: int = 0
@@ -405,33 +407,82 @@ def _safe(fn: Callable, arg) -> bool:
 
 # ── gathering (I/O) ────────────────────────────────────────────────────
 
+# Per-session counters summed into a Residue; tags and backends are sets.
+_SESSION_COUNTERS = ("agents", "child_of_agent", "standing_orders", "budgets", "wrappers",
+                     "heartbeats", "annotations", "values", "overagents")
+_ARCHIVE_CACHE_VERSION = 1
+
+
+def _count_sessions(sessions, counts: dict, tags: set, backends: set) -> None:
+    for s in sessions:
+        backend = getattr(s, "backend", None) or "claude-code"
+        counts["agents"] += 1
+        counts["child_of_agent"] += bool(s.parent_session_id)
+        counts["standing_orders"] += bool(s.standing_instructions)
+        counts["budgets"] += bool(s.cost_budget_usd)
+        counts["wrappers"] += bool(s.wrapper)
+        counts["heartbeats"] += bool(s.heartbeat_enabled)
+        counts["annotations"] += bool(s.human_annotation)
+        counts["values"] += s.agent_value != 1000
+        counts["overagents"] += backend == "overagent"
+        tags.update(t for t in (s.tags or []) if isinstance(t, str))
+        backends.add(backend)
+
+
+def _archive_counts(sm) -> tuple[dict, set, set]:
+    """Counters over every archived session, read incrementally.
+
+    The archive only grows (20k sessions is the design target), so the counts
+    are cached next to it with the byte offset they cover, and each call
+    parses only what was appended since. A replaced or shrunk archive is
+    recounted from the start.
+    """
+    path = sm.state_dir / "archive_residue.json"
+    counts = dict.fromkeys(_SESSION_COUNTERS, 0)
+    tags: set = set()
+    backends: set = set()
+    offset, inode = 0, None
+    try:
+        cached = json.loads(path.read_text())
+        if cached.get("v") == _ARCHIVE_CACHE_VERSION:
+            counts.update({k: int(cached["counts"][k]) for k in _SESSION_COUNTERS})
+            tags, backends = set(cached["tags"]), set(cached["backends"])
+            offset, inode = int(cached["offset"]), cached["inode"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    sessions, new_offset, new_inode, reset = sm.archived_sessions_since(offset, inode)
+    if reset:
+        counts = dict.fromkeys(_SESSION_COUNTERS, 0)
+        tags, backends = set(), set()
+    _count_sessions(sessions, counts, tags, backends)
+    if new_offset != offset or new_inode != inode:
+        try:
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps({
+                "v": _ARCHIVE_CACHE_VERSION, "offset": new_offset, "inode": new_inode,
+                "counts": counts, "tags": sorted(tags), "backends": sorted(backends)}))
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return counts, tags, backends
+
+
 def gather_residue() -> Residue:
     """Count features in use from sessions.json, the archive, config and prefs."""
     from .session_manager import SessionManager
     r = Residue()
+    counts = dict.fromkeys(_SESSION_COUNTERS, 0)
+    tags: set = set()
+    backends: set = set()
     try:
         sm = SessionManager()
-        live = list(sm.list_sessions())
-        sessions = live + list(sm.iter_archived_sessions())
+        live = sm.list_sessions()
+        counts, tags, backends = _archive_counts(sm)
+        _count_sessions(live, counts, tags, backends)
     except Exception:
-        live, sessions = [], []
-    by_id = {s.id: s for s in sessions}
-    backends = set()
-    tags = set()
-    for s in sessions:
-        r.agents += 1
-        parent = by_id.get(s.parent_session_id) if s.parent_session_id else None
-        if parent is not None:
-            r.child_of_agent += 1
-        r.standing_orders += bool(s.standing_instructions)
-        r.budgets += bool(s.cost_budget_usd)
-        r.wrappers += bool(s.wrapper)
-        r.heartbeats += bool(s.heartbeat_enabled)
-        r.annotations += bool(s.human_annotation)
-        r.values += s.agent_value != 1000
-        tags.update(s.tags or [])
-        backends.add(getattr(s, "backend", None) or "claude-code")
-        r.overagents += getattr(s, "backend", None) == "overagent"
+        live = []
+    for name, n in counts.items():
+        setattr(r, name, n)
     r.tags = len(tags)
     r.backends = len(backends)
     r.live_agents = sum(1 for s in live if s.status not in ("terminated", "done", "archived"))
