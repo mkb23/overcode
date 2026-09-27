@@ -278,6 +278,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     # Agent — acts on the focused agent
     _C("open_overagent", "Overagent: ask overcode…", "Navigate",
        "assistant help advice ask chat configure claude"),
+    _C("open_journey", "Your journey…", "Navigate",
+       "learn learning progress tips skills achievements tutorial discover"),
     _C("new_agent", "New agent…", "Agent", "launch create start remote"),
     _C("rename_focused", "Rename agent…", "Agent", "name", agent=True),
     _C("fork_focused", "Fork agent", "Agent", "clone copy child", agent=True),

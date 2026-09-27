@@ -534,6 +534,12 @@ overcode activity keys --since 30m --kinds key,action
 
 Where the usage log lives.
 
+### `overcode journey`
+
+Your learning journey: tracks, what's next, the hard way, and every
+capability's level (the TUI's `u` panel as text). `--json` for scripts and
+the overagent.
+
 ---
 
 ## View Commands

@@ -63,11 +63,16 @@ class OveragentMixin:
         self._launch_overagent_async(name, str(directory), OVERAGENT_BACKEND)
 
     def _launch_overagent_async(self, name: str, directory: str, backend: str) -> None:
+        # A question from the journey panel rides along as the first prompt.
+        prompt = getattr(self, "_overagent_question", None)
+        self._overagent_question = None
+
         def work() -> None:
             error = None
             session = None
             try:
-                session = self.launcher.launch(name=name, start_directory=directory, backend=backend)
+                session = self.launcher.launch(name=name, start_directory=directory, backend=backend,
+                                               initial_prompt=prompt)
             except Exception as e:  # launcher raises a variety of errors
                 error = str(e)
             self.call_from_thread(self._overagent_launched, session, error)
@@ -81,3 +86,64 @@ class OveragentMixin:
             return
         self.refresh_sessions()
         self.set_timer(1.0, lambda: self._focus_overagent(session.id))
+
+
+class JourneyMixin:
+    """The `u` key: the learning journey panel (#483)."""
+
+    def action_open_journey(self) -> None:
+        if getattr(self, "_journey_loading", False):
+            return
+        self._journey_loading = True
+
+        def work() -> None:
+            from ..command_palette import keys_by_action
+            from ..journey import load_journey
+            keymap = keys_by_action(self.BINDINGS)
+            bound = frozenset(k for keys in keymap.values() for k in keys)
+            try:
+                self._activity.flush()  # include this session's latest
+                journey, error = load_journey(keymap, bound), None
+            except Exception as e:
+                journey, error = None, e
+            self.call_from_thread(self._show_journey, journey, error)
+
+        self.run_worker(work, thread=True, group="journey", exclusive=True)
+
+    def _show_journey(self, journey, error) -> None:
+        from ..tui_widgets import JourneyPanel
+        self._journey_loading = False
+        if journey is None:
+            self.notify(f"Could not load your journey: {error}", severity="error")
+            return
+        try:
+            panel = self.query_one("#journey-panel", JourneyPanel)
+        except Exception:
+            return
+        self._dialog_will_open()
+        panel.show(journey, self)
+
+    def on_journey_panel_closed(self, message) -> None:
+        self._dialog_did_close()
+
+    def on_journey_panel_try_requested(self, message) -> None:
+        self._dialog_did_close()
+        self.record_activity("action", action="journey:try", via="key", target=message.action)
+        method = getattr(self, f"action_{message.action}", None)
+        if method is not None:
+            method()
+
+    def on_journey_panel_ask_requested(self, message) -> None:
+        """Hand a question to the overagent: send it to the live one, or start one with it."""
+        from ..overagent import find_overagent
+        self._dialog_did_close()
+        self.record_activity("action", action="journey:ask", via="key")
+        session = find_overagent(list(self.sessions))
+        if session is not None:
+            if self.launcher.send_to_session_by_id(session.id, message.question):
+                self._focus_overagent(session.id)
+            else:
+                self.notify("Could not reach the overagent", severity="error")
+            return
+        self._overagent_question = message.question
+        self.action_open_overagent()

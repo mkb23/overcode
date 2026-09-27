@@ -97,6 +97,7 @@ from .tui_widgets import (
     NewAgentModal,
     RenameAgentModal,
     SummaryPromptLab,
+    JourneyPanel,
     AgentSelectModal,
     SisterSelectionModal,
     InstructionHistoryModal,
@@ -113,7 +114,7 @@ from .tui_actions import (
 )
 from .tui_actions.activity import ActivityMixin
 from .tui_actions.view_control import ViewControlMixin
-from .tui_actions.overagent import OveragentMixin
+from .tui_actions.overagent import JourneyMixin, OveragentMixin
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -219,6 +220,7 @@ class SupervisorTUI(
     ActivityMixin,
     ViewControlMixin,
     OveragentMixin,
+    JourneyMixin,
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
@@ -275,6 +277,7 @@ class SupervisorTUI(
         ("R", "restart_focused", "Restart agent"),
         ("n", "new_agent", "New agent"),
         ("e", "open_overagent", "Overagent"),
+        ("u", "open_journey", "Journey"),
         ("ctrl+n", "rename_focused", "Rename agent"),
         # Send Enter to focused agent (for approvals)
         ("enter", "send_enter_to_focused", "Send Enter"),
@@ -633,6 +636,8 @@ class SupervisorTUI(
         yield RenameAgentModal(id="rename-agent-modal", classes="modal")
         # Summarizer prompt editor with live results (#491)
         yield SummaryPromptLab(id="summary-prompt-lab", classes="modal")
+        # The learning journey (#483)
+        yield JourneyPanel(id="journey-panel", classes="modal")
         # Modal for agent selection during new agent creation
         yield AgentSelectModal(id="agent-select-modal", classes="modal")
         # Modal for sister instance visibility (#323)

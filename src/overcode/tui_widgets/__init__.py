@@ -30,6 +30,7 @@ from .column_header import ColumnHeader
 from .rename_agent_modal import RenameAgentModal
 from .summary_prompt_lab import SummaryPromptLab
 from .job_summary import JobSummary
+from .journey_panel import JourneyPanel
 
 __all__ = [
     "FullscreenPreview",
@@ -56,4 +57,5 @@ __all__ = [
     "RenameAgentModal",
     "SummaryPromptLab",
     "JobSummary",
+    "JourneyPanel",
 ]

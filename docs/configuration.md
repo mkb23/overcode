@@ -415,6 +415,15 @@ activity:
 `OVERCODE_ACTIVITY=0` turns it off too (the test suite sets this), and the
 palette command **Record activity** pauses it for the current TUI run.
 
+The [journey](tui-guide.md#your-journey) (`u`) is worked out from this log.
+How fast unused capabilities slip back is a setting:
+
+```yaml
+journey:
+  decay_grace_days: 30   # unused this long: one level down
+  decay_step_days: 45    # then one more level each this many days
+```
+
 ## Unattended Low-Power Mode
 
 Nothing used to be gated on anyone watching: the TUI captured panes four

@@ -30,6 +30,7 @@ _CLASSES_NEEDING_ISOLATION = frozenset({
     "TestUniqueAgentName",
     "TestActivityPilot",
     "TestViewControlPilot",
+    "TestJourneyPanelPilot",
 })
 
 

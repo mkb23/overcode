@@ -79,3 +79,20 @@ def activity_path():
     typer.echo(str(get_activity_dir()))
     if not recording_enabled():
         typer.echo("(recording is off)", err=True)
+
+
+from ._shared import app  # noqa: E402
+
+
+@app.command("journey")
+def journey(
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output")] = False,
+):
+    """Your learning journey: what you've found in overcode and what's next (#483)."""
+    from ..journey import load_journey, render_journey
+    bound, keys_by_action = _tui_keymaps()
+    j = load_journey(keys_by_action, bound)
+    if as_json:
+        typer.echo(json.dumps(j.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        typer.echo(render_journey(j))

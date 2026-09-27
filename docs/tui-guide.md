@@ -40,6 +40,7 @@ In sorts driven by live data (status, value, CPU, time in state…) the list re-
 | `Ctrl+P` | Jump to an agent by name (fuzzy search) |
 | `J` | Switch between the agents and jobs views |
 | `e` | Open the [overagent](#the-overagent): ask overcode for help, advice or changes |
+| `u` | [Your journey](#your-journey): what you've found in overcode, and what's next |
 
 ### View Controls
 
@@ -242,6 +243,33 @@ Organize agents by priority:
 4. Agents with higher values appear first
 
 You can sort by any other column the same way — status (stalled agents first), name, cost, CPU and so on.
+
+## Your Journey
+
+Press `u` to see how much of overcode you have found. The panel shows:
+
+- four tracks (Basics, Fleet, Oversight, Orchestration), each with a level
+  bar and what's next
+- the selected track's syllabus: ✓ done, → next, ◦ later, 🔒 needs another
+  step first
+- **the hard way**: things you do often but rarely by their key
+- keys you press that do nothing
+- every capability with how well you know it: ○ unaware, ◑ tried,
+  ◐ habitual, ● fluent. A capability's key is shown only while you haven't
+  used it.
+
+`j`/`k` pick a track, `t` tries its next step, `a` asks the
+[overagent](#the-overagent) to show you it, `esc` closes.
+`overcode journey [--json]` prints the same thing.
+
+It is worked out from the [usage log](configuration.md#usage-log) and from
+what your agents show (a standing order set, an agent launched by an agent),
+so something you set up another way still counts. Nothing about progress is
+stored: turn the usage log off and the journey only sees the latter.
+Unused capabilities slip back one level after `journey.decay_grace_days`
+(30) and one more each `journey.decay_step_days` (45), never below "tried".
+
+The panel never pops up by itself.
 
 ## The Overagent
 
