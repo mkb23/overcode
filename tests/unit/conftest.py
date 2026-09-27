@@ -32,6 +32,54 @@ _CLASSES_NEEDING_ISOLATION = frozenset({
 
 
 @pytest.fixture(autouse=True)
+def no_real_daemons(monkeypatch):
+    """Unit tests never start real daemons (#485).
+
+    Mounting SupervisorTUI spawns a monitor daemon. The pilot tests finish
+    before it writes its PID file, so isolated_state_dir's cleanup can miss
+    it and it outlives the run. Tests that check the spawn patch it
+    themselves, over this stub.
+    """
+    import overcode.pid_utils
+    import overcode.tui
+
+    def fake_spawn_daemon(args):
+        return None
+
+    monkeypatch.setattr(overcode.pid_utils, "spawn_daemon", fake_spawn_daemon)
+    monkeypatch.setattr(overcode.tui, "spawn_daemon", fake_spawn_daemon)
+
+
+def _daemon_children() -> list[str]:
+    """This process's child daemons, as "pid command" lines.
+
+    spawn_daemon's reaper thread keeps a daemon our child while we run, so
+    this only sees daemons this test run started.
+    """
+    import subprocess
+    out = subprocess.run(
+        ["pgrep", "-lf", "-P", str(os.getpid()), r"overcode\.(monitor|supervisor)_daemon"],
+        capture_output=True, text=True,
+    ).stdout
+    return out.splitlines()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if a unit test left a real daemon behind (#485)."""
+    leaked = _daemon_children()
+    if not leaked:
+        return
+    import signal
+    for line in leaked:
+        try:
+            os.kill(int(line.split()[0]), signal.SIGTERM)
+        except (ValueError, OSError):
+            pass
+    print("\n\nUnit tests started real daemons (killed now):\n  " + "\n  ".join(leaked))
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
 def isolated_state_dir(request):
     """Isolate state directory for tests that mount TUI apps or start daemons.
 
