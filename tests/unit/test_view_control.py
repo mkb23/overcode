@@ -158,6 +158,11 @@ class TestViewControlPilot:
             ack = await self._run(app, pilot, "frobnicate")
             assert not ack["ok"] and "unknown verb" in ack["error"]
 
+            # Methods named _view_* that aren't verbs are not reachable (#502).
+            for internal in ("state", "signature", "control_tick"):
+                ack = await self._run(app, pilot, internal)
+                assert not ack["ok"] and "unknown verb" in ack["error"], internal
+
             ack = await self._run(app, pilot, "sort", colum="x")
             assert not ack["ok"] and "bad arguments" in ack["error"]
 
@@ -179,3 +184,55 @@ class TestViewControlPilot:
             assert app.SUMMARY_LEVELS[app.summary_level_index] == "full"
             acks = [json.loads(line) for line in ack_path("test-pilot").read_text().splitlines()]
             assert any(a["id"] == "tick1" and a["ok"] for a in acks)
+
+
+class TestToggleIsViewOnly:
+    """#502: the overagent runs `overcode view` without a permission prompt,
+    so toggle must never reach an action that acts on agents."""
+
+    def test_every_palette_category_is_classified(self):
+        from overcode.command_palette import COMMANDS
+        from overcode.view_control import TOGGLE_CATEGORIES, _TOGGLE_REFUSALS
+        # A new category must be decided on, not silently refused or allowed.
+        assert {c.category for c in COMMANDS} <= TOGGLE_CATEGORIES | set(_TOGGLE_REFUSALS)
+
+    @pytest.mark.parametrize("action", [
+        "kill_focused", "restart_focused", "sync_to_main_and_clear", "fork_focused",
+        "toggle_sleep", "send_enter_to_focused", "send_1_to_focused", "send_escape_to_focused",
+        "toggle_summarizer", "toggle_web_server", "supervisor_start", "monitor_restart", "quit",
+    ])
+    def test_acting_on_agents_is_refused(self, action):
+        from overcode.command_palette import COMMANDS
+        from overcode.view_control import toggle_refusal
+        cmd = next(c for c in COMMANDS if c.action == action)
+        assert toggle_refusal(cmd.category)
+
+    @pytest.mark.parametrize("action", [
+        "toggle_timeline", "toggle_preview", "cycle_summary", "jump_to_attention",
+        "open_journey", "open_column_config", "toggle_help",
+    ])
+    def test_view_actions_are_allowed(self, action):
+        from overcode.command_palette import COMMANDS
+        from overcode.view_control import toggle_refusal
+        cmd = next(c for c in COMMANDS if c.action == action)
+        assert toggle_refusal(cmd.category) is None
+
+    @pytest.mark.asyncio
+    async def test_kill_twice_through_view_kills_nothing(self, tmp_path):
+        from unittest.mock import patch
+        from overcode.tui import SupervisorTUI
+        app = SupervisorTUI(tmux_session="test-pilot")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            with patch.object(SupervisorTUI, "action_kill_focused") as kill, \
+                    patch.object(SupervisorTUI, "action_send_enter_to_focused") as enter:
+                for action in ("kill_focused", "kill_focused", "send_enter_to_focused"):
+                    app._run_view_command({"id": f"k{time.monotonic_ns()}", "verb": "toggle",
+                                           "args": {"action": action}, "via": "agent"})
+                await pilot.pause()
+                kill.assert_not_called()
+                enter.assert_not_called()
+            acks = [json.loads(l) for l in ack_path("test-pilot").read_text().splitlines()]
+            refused = [a for a in acks if a["verb"] == "toggle"][-3:]
+            assert all(not a["ok"] for a in refused)
+            assert "overcode" in refused[0]["error"] and "asks first" in refused[0]["error"]

@@ -569,7 +569,7 @@ overcode view detail high                    # low, med, high, full
 overcode view filter backend | --clear       # by tag
 overcode view focus my-agent
 overcode view actions                        # every palette action id, with keys
-overcode view toggle toggle_timeline         # run any palette action by id
+overcode view toggle toggle_timeline         # run a view palette action by id
 overcode view point jump_to_attention        # show the user its key
 overcode view notify "Restarted 3 agents"
 ```

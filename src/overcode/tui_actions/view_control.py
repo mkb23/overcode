@@ -15,6 +15,7 @@ from collections import deque
 from typing import Any, Optional
 
 from ..view_control import (
+    VERBS,
     ControlInbox,
     ack_path,
     append_jsonl,
@@ -61,7 +62,9 @@ class ViewControlMixin:
         verb, args, via = cmd.get("verb", ""), cmd.get("args") or {}, cmd.get("via", "agent")
         ack: dict[str, Any] = {"id": cmd["id"], "t": time.time(), "verb": verb}
         try:
-            handler = getattr(self, f"_view_{verb}", None)
+            # Only the published verbs: _view_state, _view_signature and the
+            # tick are methods too, and are not commands (#502).
+            handler = getattr(self, f"_view_{verb}", None) if verb in VERBS else None
             if handler is None:
                 raise ViewCommandError(f"unknown verb '{verb}'")
             ack["result"] = handler(**args)
@@ -176,7 +179,11 @@ class ViewControlMixin:
                                + (f" — did you mean {', '.join(hint)}?" if hint else ""))
 
     def _view_toggle(self, action: str) -> dict:
+        from ..view_control import toggle_refusal
         cmd = self._palette_command(action)
+        refusal = toggle_refusal(cmd.category)
+        if refusal is not None:
+            raise ViewCommandError(f"'{action}' {refusal}")
         if self.compact and action in self._COMPACT_BLOCKED_ACTIONS:
             raise ViewCommandError(f"'{action}' is not available in split mode")
         getattr(self, f"action_{action}")()

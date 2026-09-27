@@ -107,10 +107,14 @@ overcode view detail low|med|high|full            # the s key
 overcode view filter <tag> | --clear
 overcode view focus <agent>
 overcode view actions [--json]                    # every palette action id, title, keys
-overcode view toggle <action>                     # run any palette action by id
+overcode view toggle <action>                     # run a view palette action by id
 overcode view point <action>                      # show them its key in the TUI
 overcode view notify "<text>"
 ```
+
+`toggle` runs view actions only (`view_toggle: true` in `overcode view
+actions --json`). Killing, restarting or sending keys to an agent goes through
+the overcode CLI (`overcode kill`, `restart`, `send`), which asks the person first.
 
 Columns: detail levels low/med/high/full each have their own column set;
 `full` shows everything. A column in `uniform_columns` is hidden only

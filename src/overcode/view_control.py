@@ -30,6 +30,27 @@ ACK_TIMEOUT_SECONDS = 3.0
 
 VERBS = ("columns", "sort", "detail", "filter", "focus", "toggle", "notify", "point")
 
+# What `overcode view toggle` may run (#502): palette actions that change the
+# view or open a dialog for the person to finish. Acting on agents, sending
+# them keys, starting daemons and quitting stay with the person, or with the
+# CLI commands that ask first — the overagent may run `overcode view` with no
+# permission prompt, so this is the line that keeps kill/restart/approve asking.
+TOGGLE_CATEGORIES = frozenset({"Navigate", "View", "Display", "Settings"})
+_TOGGLE_REFUSALS = {
+    "Agent": "acts on an agent; use the overcode CLI (kill, restart, fork, sleep, …), "
+             "which asks first",
+    "Send to agent": "sends keys to an agent; use `overcode send`, which asks first",
+    "Daemons": "starts or stops a daemon; ask the person to do it in the TUI",
+    "App": "ask the person to do it in the TUI",
+}
+
+
+def toggle_refusal(category: str) -> Optional[str]:
+    """Why `overcode view toggle` won't run an action of this category, or None if it may."""
+    if category in TOGGLE_CATEGORIES:
+        return None
+    return _TOGGLE_REFUSALS.get(category, "not a view action")
+
 
 def control_path(session: str) -> Path:
     return get_session_dir(session) / "tui_control.jsonl"

@@ -165,11 +165,15 @@ def view_focus(
 
 @view_app.command("toggle")
 def view_toggle(
-    action: Annotated[str, typer.Argument(help="A palette action id, e.g. toggle_timeline")],
+    action: Annotated[str, typer.Argument(help="A view palette action id, e.g. toggle_timeline")],
     session: SessionOpt = "agents",
     as_json: JsonOpt = False,
 ):
-    """Run any command-palette action by its id (see `overcode view actions`)."""
+    """Run a view palette action by its id (see `overcode view actions`).
+
+    Only actions that change the view or open a dialog: acting on agents,
+    sending them keys, daemons and quit are refused (#502).
+    """
     r = _send(session, "toggle", {"action": action}, as_json)
     if not as_json:
         state = f": {r['state']}" if r.get("state") else ""
@@ -181,10 +185,12 @@ def view_actions(as_json: JsonOpt = False):
     """Every palette action id, with its title, category and keys."""
     from ..command_palette import COMMANDS, key_label, keys_by_action
     from ..tui import SupervisorTUI
+    from ..view_control import toggle_refusal
     keys = keys_by_action(SupervisorTUI.BINDINGS)
     rows = [{"action": c.action, "title": c.title, "category": c.category,
              "keys": [key_label(k) for k in keys.get(c.action, [])],
-             "acts_on_focused_agent": c.agent, "toggle": c.state is not None}
+             "acts_on_focused_agent": c.agent, "toggle": c.state is not None,
+             "view_toggle": toggle_refusal(c.category) is None}
             for c in COMMANDS]
     if as_json:
         typer.echo(json.dumps(rows, indent=2, ensure_ascii=False))
