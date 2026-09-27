@@ -251,43 +251,6 @@ Jobs are visible in the TUI jobs view (press `J`) and auto-clean after 24h (conf
 }
 
 
-def _add_configurator_skill() -> None:
-    from .overagent import CONFIGURATOR_SKILL
-    OVERCODE_SKILLS["overcode-configurator"] = {
-        "description": "Configure, control and explain overcode from inside its overagent (#484)",
-        "content": CONFIGURATOR_SKILL,
-    }
-
-
-_add_configurator_skill()
-
-
-def install_bundled_skills(base: Path | None = None) -> tuple[int, int, int]:
-    """Write every bundled skill under base (default ~/.claude/skills) when missing or stale.
-
-    Returns (installed, updated, up_to_date). Removes deprecated skill names.
-    """
-    import shutil
-    base = base or Path.home() / ".claude" / "skills"
-    for old_name in DEPRECATED_SKILL_NAMES:
-        old_dir = base / old_name
-        if old_dir.exists():
-            shutil.rmtree(old_dir)
-    installed = updated = skipped = 0
-    for name, skill in OVERCODE_SKILLS.items():
-        skill_file = base / name / "SKILL.md"
-        if skill_file.exists():
-            if skill_file.read_text() == skill["content"]:
-                skipped += 1
-                continue
-            updated += 1
-        else:
-            installed += 1
-        skill_file.parent.mkdir(parents=True, exist_ok=True)
-        skill_file.write_text(skill["content"])
-    return installed, updated, skipped
-
-
 def get_available_skills(project_dir: str | None = None) -> list[str]:
     """Scan for installed skill directories (user-level + project-level).
 

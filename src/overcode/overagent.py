@@ -9,12 +9,13 @@ Design: docs/design/483-484/03_overagent.md.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
 OVERAGENT_BACKEND = "overagent"
 DEFAULT_NAME = "overagent"
-PERSONA_SKILLS = ("overcode", "delegating-to-agents", "overcode-configurator")
+PLUGIN_NAME = "overagent"
 
 DOCS_URL = "https://github.com/mkb23/overcode/tree/main/docs"
 
@@ -59,7 +60,8 @@ Start with `overcode view state` whenever a question says "this", "here" or \
 "that column": it tells you which agent is focused and what is on screen. \
 Keep answers short: they are glancing at you between agents.
 
-Load the overcode-configurator skill before your first overcode task.
+Load the overcode-configurator skill (overagent:overcode-configurator) before \
+your first overcode task.
 """
 
 
@@ -161,7 +163,7 @@ Lead with one suggestion, not a list. If they ask for more, give more.
 
 ## Controlling the fleet
 
-Use the overcode CLI (the `overcode` skill has the reference):
+Use the overcode CLI (`overcode <command> --help` has the details):
 `overcode list`, `show <name>`, `restart`, `kill`, `send`, `launch`,
 `budget`, `tag`. These ask permission — say what you are about to do and why. For
 bulk actions ("restart every dead agent") list what you will touch first.
@@ -199,6 +201,39 @@ def write_system_prompt() -> Path:
     tmp.write_text(SYSTEM_PROMPT)
     tmp.replace(path)
     return path
+
+
+def plugin_dir() -> Path:
+    from .settings import get_overcode_dir
+    return get_overcode_dir() / "overagent" / "plugin"
+
+
+def write_plugin() -> Path:
+    """The overagent's own plugin: the configurator skill, loaded with --plugin-dir.
+
+    Session-only: nothing is installed into ~/.claude/skills, so other Claude
+    sessions never see it, and the user's own skill choices (`overcode skills
+    install`) are left alone. Rewritten only when the bundled content changed.
+    """
+    root = plugin_dir()
+    files = {
+        root / ".claude-plugin" / "plugin.json": json.dumps({
+            "name": PLUGIN_NAME, "version": "1.0.0",
+            "description": "overcode's overagent: configure, control and explain overcode",
+        }, indent=2) + "\n",
+        root / "skills" / "overcode-configurator" / "SKILL.md": CONFIGURATOR_SKILL,
+    }
+    for path, content in files.items():
+        try:
+            if path.read_text() == content:
+                continue
+        except OSError:
+            pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(content)
+        tmp.replace(path)
+    return root
 
 
 def docs_location() -> str:

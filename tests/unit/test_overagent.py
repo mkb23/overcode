@@ -72,32 +72,41 @@ class TestBackend:
         cmd = get_backend("claude-code").build_command(LaunchSpec())
         assert "--append-system-prompt-file" not in cmd
 
-    def test_prepare_launch_installs_skills(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-        get_backend("overagent").prepare_launch(LaunchSpec())
-        skill = tmp_path / ".claude" / "skills" / "overcode-configurator" / "SKILL.md"
+    def test_loads_its_skill_as_a_session_plugin(self):
+        from overcode.overagent import plugin_dir
+        cmd = get_backend("overagent").build_command(LaunchSpec())
+        root = cmd[cmd.index("--plugin-dir") + 1]
+        assert root == str(plugin_dir())
+        skill = plugin_dir() / "skills" / "overcode-configurator" / "SKILL.md"
         assert skill.read_text() == CONFIGURATOR_SKILL
+        manifest = json.loads((plugin_dir() / ".claude-plugin" / "plugin.json").read_text())
+        assert manifest["name"] == "overagent"
 
-    def test_prepare_launch_survives_an_unwritable_home(self, tmp_path, monkeypatch):
-        blocker = tmp_path / "home"
-        blocker.write_text("")
-        monkeypatch.setattr("pathlib.Path.home", lambda: blocker)
-        get_backend("overagent").prepare_launch(LaunchSpec())  # no raise
+    def test_installs_nothing_globally(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        b = get_backend("overagent")
+        b.prepare_launch(LaunchSpec())
+        b.build_command(LaunchSpec())
+        assert not (tmp_path / ".claude").exists()
+
+    def test_plugin_is_rewritten_only_when_it_changed(self):
+        from overcode.overagent import plugin_dir, write_plugin
+        write_plugin()
+        skill = plugin_dir() / "skills" / "overcode-configurator" / "SKILL.md"
+        before = skill.stat().st_mtime_ns
+        write_plugin()
+        assert skill.stat().st_mtime_ns == before
+        skill.write_text("stale")
+        write_plugin()
+        assert skill.read_text() == CONFIGURATOR_SKILL
 
 
 class TestSkills:
-    def test_configurator_is_bundled(self):
+    def test_configurator_is_not_a_global_skill(self):
+        """The overagent's skill is its own; `overcode skills install` offers the rest."""
         from overcode.bundled_skills import OVERCODE_SKILLS
-        assert OVERCODE_SKILLS["overcode-configurator"]["content"] == CONFIGURATOR_SKILL
+        assert "overcode-configurator" not in OVERCODE_SKILLS
         assert CONFIGURATOR_SKILL.startswith("---\nname: overcode-configurator\n")
-
-    def test_install_counts(self, tmp_path):
-        from overcode.bundled_skills import OVERCODE_SKILLS, install_bundled_skills
-        n = len(OVERCODE_SKILLS)
-        assert install_bundled_skills(tmp_path) == (n, 0, 0)
-        assert install_bundled_skills(tmp_path) == (0, 0, n)
-        (tmp_path / "overcode" / "SKILL.md").write_text("old")
-        assert install_bundled_skills(tmp_path) == (0, 1, n - 1)
 
     def test_skill_commands_exist(self):
         """Every `overcode <cmd>` the skill and prompt teach is a real command."""

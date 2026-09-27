@@ -309,8 +309,11 @@ read your usage summary, and edit `~/.overcode/config.yaml`. Everything else
 permissions bypassed. It resolves "this" from what you have focused, and
 when it suggests a key it lights it up in your TUI.
 
-It loads the `overcode-configurator` skill, which the backend installs into
-`~/.claude/skills` when missing or stale, with the other bundled skills.
+It always has the `overcode-configurator` skill, loaded as a plugin for its
+own session only (`~/.overcode/overagent/plugin`). Nothing is added to
+`~/.claude/skills`, so your other Claude sessions don't see it, and which
+overcode skills you install globally (`overcode skills install`) stays up
+to you.
 
 ## Tips
 

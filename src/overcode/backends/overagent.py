@@ -12,9 +12,11 @@ resume, fork, status detection):
   one: read overcode's state and change the view without asking; kill,
   restart, launch, send and budgets always ask. Never bypass permissions:
   a bypass or permissive mode requested at launch is dropped.
-- ``prepare_launch`` installs the bundled skills (overcode,
-  delegating-to-agents, overcode-configurator) into ~/.claude/skills when
-  missing or stale, as `overcode skills install` would.
+- ``--plugin-dir``: its own plugin carrying the overcode-configurator
+  skill, loaded for that session only. Nothing is installed into
+  ~/.claude/skills: other Claude sessions never see it, and which overcode
+  skills the user has globally stays their choice (`overcode skills
+  install`).
 """
 
 import dataclasses
@@ -30,7 +32,7 @@ class OveragentBackend(ClaudeCodeBackend):
     display_name = "Overagent (Claude Code)"
 
     def build_command(self, spec: LaunchSpec) -> List[str]:
-        from ..overagent import ALLOW, write_system_prompt
+        from ..overagent import ALLOW, write_plugin, write_system_prompt
 
         spec = dataclasses.replace(
             spec,
@@ -46,11 +48,5 @@ class OveragentBackend(ClaudeCodeBackend):
         settings["permissions"] = {"allow": list(ALLOW)}
         cmd[i + 1] = json.dumps(settings)
         cmd.extend(["--append-system-prompt-file", str(write_system_prompt())])
+        cmd.extend(["--plugin-dir", str(write_plugin())])
         return cmd
-
-    def prepare_launch(self, spec: LaunchSpec) -> None:
-        from ..bundled_skills import install_bundled_skills
-        try:
-            install_bundled_skills()
-        except OSError:
-            pass  # the overagent still works; it just lacks its skill
