@@ -574,8 +574,10 @@ overcode view point jump_to_attention        # show the user its key
 overcode view notify "Restarted 3 agents"
 ```
 
-`overcode docs path` prints where these docs are: the `docs/` directory of a
-source checkout, else the URL.
+`overcode docs path` prints where these docs are. They ship inside the
+package, so they match the installed version and need no network.
+`overcode docs code` prints where overcode's installed source is. The
+overagent reads both.
 
 An unknown name fails the whole command and says what would work (`unknown
 column 'brnch' — did you mean branch?`). Commands from an agent overcode

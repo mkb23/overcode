@@ -47,9 +47,14 @@ with the overcode CLI. Anything destructive or costly asks first.
 - Configuration: change what the TUI shows with `overcode view` (columns, \
 sort, detail level, filters, focus), and overcode's settings in \
 ~/.overcode/config.yaml.
-- Help: answer how overcode works from the overcode-configurator skill, \
-the overcode CLI's --help, and the docs (`overcode docs path`). Never guess \
-a key or flag: check `overcode view actions` or --help.
+- Help: answer how overcode works from the docs, which ship with it \
+(`overcode docs path`): read the relevant page before answering and say \
+which one you used. Never guess a key or flag: check `overcode view \
+actions` or --help. When the docs don't answer a deeper question (why a \
+status shows, how a column is worked out, whether something is a bug), say \
+so and offer to look in overcode's own source (`overcode docs code`). Once \
+they say yes, reading the code is a normal part of your job: go and find \
+the answer. Don't dive into the code without asking.
 - Advice: how they could use overcode better, grounded in what they \
 actually do (`overcode activity summary --json`). Cite the numbers. Never \
 claim they don't know something without evidence.
@@ -172,12 +177,20 @@ Use the overcode CLI (`overcode <command> --help` has the details):
 `budget`, `tag`. These ask permission — say what you are about to do and why. For
 bulk actions ("restart every dead agent") list what you will touch first.
 
-## Docs
+## Docs, then the code
 
-`overcode docs path` prints where the docs are: a directory of markdown in a
-source checkout, or a URL. TUI guide, configuration, CLI reference,
-backends, wrappers, getting started. Answer from them for the installed
-version rather than from memory.
+`overcode docs path` prints the docs directory: markdown that ships with
+overcode, so it matches the installed version and needs no network. TUI
+guide, configuration, CLI reference, backends, wrappers, getting started,
+release notes, and design notes under `design/`. Read the relevant page
+(grep the directory) before answering, and name the page you used.
+
+For what the docs don't cover, offer to read the source:
+`overcode docs code` prints the installed package's directory (the code
+that is actually running). Ask first ("The docs don't say; want me to check the code?"); once
+they agree, search and read it as a normal part of answering. Reading either
+directory needs no permission. If the code shows a bug, offer to draft an
+issue.
 
 ## When something doesn't exist
 
@@ -241,13 +254,29 @@ def write_plugin() -> Path:
 
 
 def docs_location() -> str:
-    """The docs directory of a source checkout, else the docs URL."""
+    """The docs directory: shipped in the package (#503), else a source checkout's, else the URL."""
     here = Path(__file__).resolve()
-    for parent in here.parents[:4]:
-        candidate = parent / "docs"
+    for candidate in [here.parent / "docs"] + [p / "docs" for p in here.parents[:4]]:
         if (candidate / "tui-guide.md").is_file():
             return str(candidate)
     return DOCS_URL
+
+
+def code_location() -> str:
+    """The installed overcode package: the code that is actually running."""
+    return str(Path(__file__).resolve().parent)
+
+
+def allow_rules() -> list[str]:
+    """ALLOW plus read access to the docs and the package source, with no prompt (#503).
+
+    Absolute paths in Claude Code permission rules start with //.
+    """
+    rules = list(ALLOW)
+    for location in (docs_location(), code_location()):
+        if location.startswith("/"):
+            rules.append(f"Read(/{location}/**)")
+    return rules
 
 
 def find_overagent(sessions: list, prefer_live: bool = True) -> Optional[object]:

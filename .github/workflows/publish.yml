@@ -59,7 +59,7 @@ jobs:
           import overcode
 
           # List all files that should be in the package
-          expected = ['tui.tcss']
+          expected = ['tui.tcss', 'docs/tui-guide.md', 'docs/configuration.md']
 
           pkg_path = resources.files(overcode)
           for f in expected:

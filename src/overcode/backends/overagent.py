@@ -10,7 +10,8 @@ resume, fork, status detection):
   and a multi-line argument there is noise in the pane and its history.
 - Its own permission allow-list in ``--settings``, replacing the default
   one: read overcode's state and change the view without asking; kill,
-  restart, launch, send and budgets always ask. Never bypass permissions:
+  restart, launch, send and budgets always ask. Reading overcode's docs
+  and its own source is allowed too, so questions get answered from them. Never bypass permissions:
   a bypass or permissive mode requested at launch is dropped.
 - ``--plugin-dir``: its own plugin carrying the overcode-configurator
   skill, loaded for that session only. Nothing is installed into
@@ -32,7 +33,7 @@ class OveragentBackend(ClaudeCodeBackend):
     display_name = "Overagent (Claude Code)"
 
     def build_command(self, spec: LaunchSpec) -> List[str]:
-        from ..overagent import ALLOW, write_plugin, write_system_prompt
+        from ..overagent import allow_rules, write_plugin, write_system_prompt
 
         spec = dataclasses.replace(
             spec,
@@ -45,7 +46,7 @@ class OveragentBackend(ClaudeCodeBackend):
         cmd = super().build_command(spec)
         i = cmd.index("--settings")
         settings = json.loads(cmd[i + 1])
-        settings["permissions"] = {"allow": list(ALLOW)}
+        settings["permissions"] = {"allow": allow_rules()}
         cmd[i + 1] = json.dumps(settings)
         cmd.extend(["--append-system-prompt-file", str(write_system_prompt())])
         cmd.extend(["--plugin-dir", str(write_plugin())])

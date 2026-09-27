@@ -230,10 +230,14 @@ from ._shared import app  # noqa: E402
 
 @app.command("docs")
 def docs(
-    what: Annotated[str, typer.Argument(help="'path' prints where the docs are")] = "path",
+    what: Annotated[str, typer.Argument(
+        help="'path': where the docs are; 'code': where overcode's own source is")] = "path",
 ):
-    """Where overcode's docs are: a directory in a source checkout, else the URL."""
-    from ..overagent import docs_location
-    if what != "path":
-        raise typer.BadParameter("only 'path' is supported")
-    typer.echo(docs_location())
+    """Where overcode's docs are (they ship with it), or its installed source code."""
+    from ..overagent import code_location, docs_location
+    if what == "path":
+        typer.echo(docs_location())
+    elif what == "code":
+        typer.echo(code_location())
+    else:
+        raise typer.BadParameter("'path' or 'code'")

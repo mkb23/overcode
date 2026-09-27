@@ -10,6 +10,8 @@ from overcode.backends import BackendCapability, get_backend, supports
 from overcode.backends.base import LaunchSpec
 from overcode.overagent import (
     ALLOW,
+    allow_rules,
+    code_location,
     CONFIGURATOR_SKILL,
     DEFAULT_NAME,
     SYSTEM_PROMPT,
@@ -41,7 +43,7 @@ class TestBackend:
         assert open(prompt_file).read() == SYSTEM_PROMPT
         assert not any("\n" in arg for arg in cmd if not arg.startswith("{"))  # nothing multi-line on the shell line
         s = _settings(cmd)
-        assert s["permissions"]["allow"] == list(ALLOW)
+        assert s["permissions"]["allow"] == allow_rules()
         assert s["hooks"]  # hooks still injected: status and stats work as for Claude
         assert "--session-id" in cmd
 
@@ -62,7 +64,7 @@ class TestBackend:
         cmd = get_backend("overagent").build_command(spec)
         assert "--dangerously-skip-permissions" not in cmd
         assert "dontAsk" not in cmd
-        assert _settings(cmd)["permissions"]["allow"] == list(ALLOW)
+        assert _settings(cmd)["permissions"]["allow"] == allow_rules()
 
     def test_resume_keeps_the_persona(self):
         cmd = get_backend("overagent").build_command(LaunchSpec(resume_session_id="old"))
@@ -135,6 +137,39 @@ class TestFindOveragent:
 def test_docs_location_finds_the_checkout():
     loc = docs_location()
     assert loc.endswith("docs") or loc.startswith("https://")
+
+
+class TestDocsAndCode:
+    """#503: the docs ship with overcode, and the overagent may read them and the code."""
+
+    def test_packaged_docs_win_over_a_checkout(self, tmp_path, monkeypatch):
+        import overcode.overagent as oa
+        pkg = tmp_path / "site-packages" / "overcode"
+        (pkg / "docs").mkdir(parents=True)
+        (pkg / "docs" / "tui-guide.md").write_text("# TUI")
+        monkeypatch.setattr(oa, "__file__", str(pkg / "overagent.py"))
+        assert docs_location() == str(pkg / "docs")
+        assert code_location() == str(pkg)
+
+    def test_no_docs_anywhere_falls_back_to_the_url(self, tmp_path, monkeypatch):
+        import overcode.overagent as oa
+        monkeypatch.setattr(oa, "__file__", str(tmp_path / "a" / "b" / "c" / "overagent.py"))
+        assert docs_location() == oa.DOCS_URL
+
+    def test_docs_and_code_are_readable_without_a_prompt(self):
+        rules = allow_rules()
+        assert rules[: len(ALLOW)] == list(ALLOW)
+        assert f"Read(/{code_location()}/**)" in rules
+        if docs_location().startswith("/"):
+            assert f"Read(/{docs_location()}/**)" in rules
+        # Read only: nothing new may write or run.
+        assert all(r.startswith("Read(") for r in rules[len(ALLOW):])
+
+    def test_the_persona_answers_from_docs_and_asks_before_the_code(self):
+        from overcode.overagent import CONFIGURATOR_SKILL
+        assert "overcode docs path" in SYSTEM_PROMPT and "overcode docs code" in SYSTEM_PROMPT
+        assert "Don't dive into the code without asking" in SYSTEM_PROMPT
+        assert "overcode docs code" in CONFIGURATOR_SKILL
 
 
 class TestOpenOveragentKey:
