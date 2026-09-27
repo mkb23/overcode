@@ -31,6 +31,7 @@ _CLASSES_NEEDING_ISOLATION = frozenset({
     "TestActivityPilot",
     "TestViewControlPilot",
     "TestJourneyPanelPilot",
+    "TestMentorFooterPilot",
 })
 
 
@@ -62,8 +63,11 @@ def activity_log_in_tmp(monkeypatch, tmp_path_factory):
     location patch get_activity_dir themselves, over this.
     """
     import overcode.activity_log
+    import overcode.mentor
     d = tmp_path_factory.mktemp("activity")
     monkeypatch.setattr(overcode.activity_log, "get_activity_dir", lambda: d)
+    # Mounting the TUI loads (and on first sight writes) the mentor's state.
+    monkeypatch.setattr(overcode.mentor, "state_path", lambda: d / "journey_state.json")
 
 
 def _daemon_children() -> list[str]:

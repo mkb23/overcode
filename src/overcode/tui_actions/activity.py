@@ -103,6 +103,9 @@ class ActivityMixin:
                                       ok=bool(handled), ns=ns)
                 if ns is None and via != "auto":
                     self.note_recent_action(name, via)
+            if default_namespace is None or default_namespace is self:
+                via_now = "key" if self._activity_binding_key is not None else "auto"
+                self.mentor_saw_action(_action_name(action), via_now)
                 self.call_after_refresh(self._activity_settle)
         except Exception:
             pass

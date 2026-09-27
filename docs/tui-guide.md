@@ -269,7 +269,24 @@ stored: turn the usage log off and the journey only sees the latter.
 Unused capabilities slip back one level after `journey.decay_grace_days`
 (30) and one more each `journey.decay_step_days` (45), never below "tried".
 
-The panel never pops up by itself.
+The panel never pops up by itself. If you'd like the occasional tip, turn
+on the mentor (off by default):
+
+```yaml
+journey:
+  mentor: occasional   # off (default) | occasional | coach
+```
+
+A tip replaces the footer line for up to 90 seconds, only when you've been
+idle for 5 s, nothing is open and no agent is waiting on you. It suggests
+one thing the journey shows you haven't found yet, or a key for something
+you do the long way. `occasional` gives at most one per TUI run, 30 minutes
+apart; `coach` up to four, 10 minutes apart. Doing what a tip suggests (or
+opening `u`) makes tips a little more frequent. Letting one pass makes them
+less frequent and snoozes that tip for a week. After your first month only
+the single most useful tip is offered. New achievements get one toast each.
+Achievements already earned when you first turn the mentor on are recorded
+silently. The mentor's memory is `~/.overcode/journey_state.json`.
 
 ## The Overagent
 

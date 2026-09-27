@@ -422,6 +422,7 @@ How fast unused capabilities slip back is a setting:
 journey:
   decay_grace_days: 30   # unused this long: one level down
   decay_step_days: 45    # then one more level each this many days
+  mentor: off            # off | occasional | coach — see the TUI guide
 ```
 
 ## Unattended Low-Power Mode

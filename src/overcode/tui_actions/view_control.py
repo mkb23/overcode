@@ -52,6 +52,10 @@ class ViewControlMixin:
         for cmd in self._control_inbox.poll():
             self._run_view_command(cmd)
         self._publish_view_state()
+        try:
+            self._mentor_tick()
+        except Exception:
+            pass
 
     def _run_view_command(self, cmd: dict) -> None:
         verb, args, via = cmd.get("verb", ""), cmd.get("args") or {}, cmd.get("via", "agent")

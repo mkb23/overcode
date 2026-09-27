@@ -115,6 +115,7 @@ from .tui_actions import (
 from .tui_actions.activity import ActivityMixin
 from .tui_actions.view_control import ViewControlMixin
 from .tui_actions.overagent import JourneyMixin, OveragentMixin
+from .tui_actions.mentor import MentorMixin
 
 # Event-loop heartbeat probe: the 5 s flush normally drains ~55 rows, so this
 # only bites if the flush timer never runs. Without it the buffer grew for the
@@ -221,6 +222,7 @@ class SupervisorTUI(
     ViewControlMixin,
     OveragentMixin,
     JourneyMixin,
+    MentorMixin,
     NavigationActionsMixin,
     ViewActionsMixin,
     DaemonActionsMixin,
@@ -403,6 +405,7 @@ class SupervisorTUI(
         self.tmux_session = tmux_session
         self._init_activity()  # usage log (#483)
         self._init_view_control()  # overcode view (#484)
+        self._init_mentor()  # occasional tips, off by default (#483)
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
         self.compact = False  # Compact mode: no preview (set by overcode tmux)
@@ -4623,6 +4626,7 @@ class SupervisorTUI(
                              q=message.query or None, rank=message.rank)
         if self._activity.active:
             self.note_recent_action(message.action, "palette")
+        self.mentor_saw_action(message.action, "palette")
         recent = [message.action] + [a for a in self._prefs.recent_commands if a != message.action]
         self._prefs.recent_commands = recent[:10]
         self._save_prefs()
