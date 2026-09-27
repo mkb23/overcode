@@ -57,12 +57,34 @@ def state_path() -> Path:
 
 
 def load_state() -> MentorState:
+    """The saved state, keeping only fields of the right type: a bad file never stops the TUI."""
     try:
         data = json.loads(state_path().read_text())
-        known = MentorState.__dataclass_fields__
-        return MentorState(**{k: v for k, v in data.items() if k in known})
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError):
         return MentorState()
+    if not isinstance(data, dict):
+        return MentorState()
+    default = MentorState()
+    kept = {}
+    for name in MentorState.__dataclass_fields__:
+        if name not in data:
+            continue
+        value, want = data[name], getattr(default, name)
+        if name == "last_topic":
+            ok = value is None or isinstance(value, str)
+        elif isinstance(want, bool):
+            ok = isinstance(value, bool)
+        elif isinstance(want, float):
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        else:
+            ok = isinstance(value, type(want))
+        if ok:
+            kept[name] = float(value) if isinstance(want, float) else value
+    state = MentorState(**kept)
+    state.snoozed = {k: v for k, v in state.snoozed.items()
+                     if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    state.celebrated = [c for c in state.celebrated if isinstance(c, str)]
+    return state
 
 
 def save_state(state: MentorState) -> None:

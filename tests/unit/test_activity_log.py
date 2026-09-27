@@ -211,6 +211,25 @@ class TestIterRecords:
     def test_missing_directory_yields_nothing(self, tmp_path):
         assert list(iter_records(directory=tmp_path / "nope")) == []
 
+    def test_skips_records_that_are_not_records(self, tmp_path):
+        """A cut-off write, non-object JSON, or a missing/odd `t` never stops the read."""
+        (tmp_path / "2026-01.jsonl").write_bytes(
+            b'{"t": 1, "kind": "a"}\n'
+            b'{"t": 2, "kind": "cut", "q": "\xe2\x80\n'   # ends mid-character
+            b'[1, 2]\n' b'null\n' b'"text"\n'
+            b'{"kind": "no_t"}\n' b'{"t": null}\n' b'{"t": "5"}\n' b'{"t": true}\n'
+            b'{"t": 3, "kind": "b"}\n')
+        assert [r["kind"] for r in iter_records(directory=tmp_path)] == ["a", "b"]
+        assert [r["kind"] for r in iter_records(since_ms=2, directory=tmp_path)] == ["b"]
+
+    def test_truncated_gzip_ends_that_file_only(self, tmp_path):
+        import gzip
+        whole = gzip.compress(b"".join(b'{"t": %d, "kind": "old"}\n' % i for i in range(500)))
+        (tmp_path / "2025-12.jsonl.gz").write_bytes(whole[: len(whole) // 2])
+        (tmp_path / "2026-01.jsonl").write_text('{"t": 1, "kind": "a"}\n')
+        kinds = [r["kind"] for r in iter_records(directory=tmp_path)]
+        assert kinds[-1] == "a"
+
 
 class TestActivityPilot:
     """The TUI's chokepoints record keys, actions and dialogs."""

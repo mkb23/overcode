@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import statistics
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -114,34 +114,56 @@ class Summary:
 def summarize(records: Iterable[dict], bound_keys: frozenset[str] = frozenset(),
               keys_by_action: Optional[dict[str, list[str]]] = None,
               since: Optional[float] = None) -> Summary:
-    """Fold records into a Summary.
+    """Fold records into a Summary, one record at a time.
+
+    Records are never held: each TUI run (sid) keeps only the little state
+    its signals need, so memory does not grow with the log. A
+    record whose fields have unexpected types is skipped, not fatal.
 
     bound_keys: keys the TUI binds, so an unhandled key that is bound anyway
     (a modal's own key, say) is never counted as a phantom.
     keys_by_action: for "picked in the palette although it has a key".
     """
     s = Summary(since_ms=since)
-    by_sid: dict[str, list[dict]] = defaultdict(list)
+    runs: dict[str, _RunFolder] = {}
     minutes: set[int] = set()
+    keymap = keys_by_action or {}
     for r in records:
-        s.records += 1
-        by_sid[r.get("sid", "")].append(r)
-        kind = r.get("kind")
-        if kind in ("key", "click", "action"):
-            minutes.add(int(r.get("t", 0) // 60000))
-        if kind == "cli":
-            s.cli[r.get("cmd", "?")] += 1
-            name = "cli:" + r.get("cmd", "?")
-            use = s.actions.setdefault(name, ActionUse())
-            _count_use(use, r.get("via", "cli"), r.get("t"))
+        if not isinstance(r, dict):
+            continue
+        try:
+            s.records += 1
+            kind = r.get("kind")
+            if kind in ("key", "click", "action"):
+                minutes.add(int(_num(r.get("t")) // 60000))
+            if kind == "cli":
+                cmd = str(r.get("cmd", "?"))
+                s.cli[cmd] += 1
+                use = s.actions.setdefault("cli:" + cmd, ActionUse())
+                _count_use(use, str(r.get("via", "cli")), _num_or_none(r.get("t")))
+            sid = str(r.get("sid", ""))
+            run = runs.get(sid)
+            if run is None:
+                run = runs[sid] = _RunFolder(s, bound_keys, keymap)
+            run.feed(r)
+        except (TypeError, ValueError, AttributeError, KeyError):
+            continue
     s.active_minutes = len(minutes)
-    for sid_records in by_sid.values():
-        _fold_run(sid_records, s, bound_keys, keys_by_action or {})
+    for run in runs.values():
+        run.finish()
     # A miss is the query as finally typed: drop prefixes of a longer miss.
     for q in list(s.palette_misses):
         if any(o != q and o.startswith(q) for o in s.palette_misses):
             del s.palette_misses[q]
     return s
+
+
+def _num(v: object) -> float:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+
+def _num_or_none(v: object) -> Optional[float]:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
 def _count_use(use: ActionUse, via: str, t: Optional[float]) -> None:
@@ -152,87 +174,95 @@ def _count_use(use: ActionUse, via: str, t: Optional[float]) -> None:
         use.last_t = t if use.last_t is None else max(use.last_t, t)
 
 
-def _fold_run(records: list[dict], s: Summary, bound_keys: frozenset[str],
-              keys_by_action: dict[str, list[str]]) -> None:
-    """One TUI run's records, in order."""
-    pending_key: Optional[dict] = None     # last list-context key not yet claimed by an action
-    last_toggle: Optional[dict] = None
-    help_closed_t: Optional[float] = None
-    walk_run = 0
-    last_key_dt: Optional[int] = None
+class _RunFolder:
+    """One TUI run's records, fed in order, folded straight into the Summary."""
 
-    def settle_pending() -> None:
-        nonlocal pending_key
-        if pending_key is not None and pending_key["key"] not in bound_keys:
-            s.phantom_keys[pending_key["key"]] += 1
-        pending_key = None
+    def __init__(self, s: Summary, bound_keys: frozenset[str],
+                 keys_by_action: dict[str, list[str]]) -> None:
+        self.s = s
+        self.bound_keys = bound_keys
+        self.keys_by_action = keys_by_action
+        self.pending_key: Optional[str] = None   # last list-context key not yet claimed by an action
+        self.last_toggle: Optional[tuple[str, float]] = None
+        self.help_closed_t: Optional[float] = None
+        self.walk_run = 0
+        self.last_key_dt: Optional[float] = None
 
-    def end_walk() -> None:
-        nonlocal walk_run
-        if walk_run >= WALK_MIN_RUN:
-            s.walks += 1
-            s.walk_keys += walk_run
-        walk_run = 0
+    def _settle_pending(self) -> None:
+        if self.pending_key is not None and self.pending_key not in self.bound_keys:
+            self.s.phantom_keys[self.pending_key] += 1
+        self.pending_key = None
 
-    for r in records:
+    def _end_walk(self) -> None:
+        if self.walk_run >= WALK_MIN_RUN:
+            self.s.walks += 1
+            self.s.walk_keys += self.walk_run
+        self.walk_run = 0
+
+    def finish(self) -> None:
+        self._settle_pending()
+        self._end_walk()
+
+    def feed(self, r: dict) -> None:
+        s = self.s
         kind = r.get("kind")
-        t = r.get("t", 0.0)
+        t = _num(r.get("t"))
         if kind == "tui" and r.get("phase") == "start":
             s.tui_runs += 1
         elif kind == "key":
-            settle_pending()
+            self._settle_pending()
             s.keys += 1
-            ctx = r.get("ctx", "")
+            ctx = str(r.get("ctx", ""))
             s.contexts[ctx] += 1
-            last_key_dt = r.get("dt")
+            self.last_key_dt = _num_or_none(r.get("dt"))
             if ctx == "list":
-                pending_key = r
+                self.pending_key = str(r.get("key", "?"))
         elif kind == "click":
-            settle_pending()
+            self._settle_pending()
             s.clicks += 1
-            end_walk()
+            self._end_walk()
         elif kind == "action":
-            name = r.get("action", "?")
-            via = r.get("via", "auto")
+            name = str(r.get("action", "?"))
+            via = str(r.get("via", "auto"))
             if via == "key":
-                pending_key = None
+                self.pending_key = None
             if r.get("ns"):
-                continue  # a widget's own binding (a modal's cursor), not a TUI action
+                return  # a widget's own binding (a modal's cursor), not a TUI action
             use = s.actions.setdefault(name, ActionUse())
             _count_use(use, via, t)
             if r.get("ok") is False:
                 s.blocked[name] += 1
-            if via == "key" and last_key_dt is not None and last_key_dt >= HESITATION_MS:
+            if via == "key" and self.last_key_dt is not None and self.last_key_dt >= HESITATION_MS:
                 s.hesitations[name] += 1
-            if via == "palette" and keys_by_action.get(name):
+            if via == "palette" and self.keys_by_action.get(name):
                 s.palette_picks_with_key[name] += 1
             if name in WALK_ACTIONS and via == "key":
-                walk_run += 1
+                self.walk_run += 1
             else:
-                end_walk()
+                self._end_walk()
             if name.startswith("toggle_") and via in ("key", "palette", "click"):
-                if last_toggle is not None and last_toggle["action"] == name \
-                        and t - last_toggle["t"] <= REGRET_WINDOW_MS:
+                if self.last_toggle is not None and self.last_toggle[0] == name \
+                        and t - self.last_toggle[1] <= REGRET_WINDOW_MS:
                     s.toggle_regret[name] += 1
-                    last_toggle = None
+                    self.last_toggle = None
                 else:
-                    last_toggle = r
-            if help_closed_t is not None and via == "key" and name != "toggle_help":
-                if t - help_closed_t <= LOOKUP_WINDOW_MS:
+                    self.last_toggle = (name, t)
+            if self.help_closed_t is not None and via == "key" and name != "toggle_help":
+                if t - self.help_closed_t <= LOOKUP_WINDOW_MS:
                     s.help_lookups[name] += 1
-                help_closed_t = None
+                self.help_closed_t = None
         elif kind == "dialog":
-            name, phase = r.get("name", "?"), r.get("phase", "?")
+            name, phase = str(r.get("name", "?")), str(r.get("phase", "?"))
             s.dialogs.setdefault(name, Counter())[phase] += 1
-            if phase == "cancel" and r.get("dur_ms") is not None:
-                s.dialog_cancel_ms.setdefault(name, []).append(r["dur_ms"])
+            dur = _num_or_none(r.get("dur_ms"))
+            if phase == "cancel" and dur is not None:
+                s.dialog_cancel_ms.setdefault(name, []).append(dur)
             if name == "help" and phase in ("ok", "cancel"):
-                help_closed_t = t
+                self.help_closed_t = t
         elif kind == "palette_query":
-            if r.get("n") == 0 and r.get("q"):
-                s.palette_misses[r["q"].strip().lower()] += 1
-    settle_pending()
-    end_walk()
+            q = r.get("q")
+            if r.get("n") == 0 and isinstance(q, str) and q.strip():
+                s.palette_misses[q.strip().lower()] += 1
 
 
 def render_summary(s: Summary, top: int = 12) -> str:

@@ -169,3 +169,31 @@ class TestStreamHelpers:
         d = digest_line(log.records, 900)
         assert d["type"] == "rollup" and "toggle_timeline ×2" in d["description"]
         assert "v ×1" in d["description"] and d["window_s"] == 900
+
+
+class TestOddRecords:
+    def test_records_with_unexpected_field_types_are_skipped(self):
+        log = _Log().pressed("t", "toggle_timeline")
+        odd = [
+            {"kind": "cli", "sid": "x", "t": 1, "cmd": ["list"]},
+            {"kind": "action", "sid": "x", "t": "later", "action": {"a": 1}, "via": 3},
+            {"kind": "dialog", "sid": "x", "t": 2, "name": "help", "phase": "cancel", "dur_ms": "long"},
+            {"kind": "palette_query", "sid": "x", "t": 3, "n": 0, "q": 42},
+            {"kind": "key", "sid": ["x"], "t": 4, "key": None, "ctx": None, "dt": "slow"},
+            [1, 2], None, "text",
+        ]
+        s = summarize(odd + log.records, BOUND)
+        assert s.actions["toggle_timeline"].uses == 1
+        render_summary(s)
+        s.to_dict()
+
+    def test_state_per_run_not_records(self):
+        """Many runs, many records: summarize consumes a generator without holding it."""
+        def gen():
+            for run in range(50):
+                log = _Log(sid=f"r{run}")
+                for _ in range(100):
+                    log.pressed("j", "focus_next_session")
+                yield from log.records
+        s = summarize(gen(), BOUND)
+        assert s.records == 50 * 100 * 2 and s.walks == 50

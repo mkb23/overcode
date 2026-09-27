@@ -206,7 +206,10 @@ def iter_records(since_ms: Optional[float] = None, until_ms: Optional[float] = N
                  directory: Optional[Path] = None) -> Iterator[dict]:
     """Every record in [since, until), oldest first. The one loader every reader uses.
 
-    Reads plain and gzipped month files; skips lines that don't parse.
+    Reads plain and gzipped month files. Skips anything that isn't a record:
+    lines that don't parse (a write cut off mid-character included), JSON
+    that isn't an object, and records without a numeric `t`. A truncated or
+    unreadable file ends that file, never the read.
     """
     import gzip
     d = directory or get_activity_dir()
@@ -227,17 +230,30 @@ def iter_records(since_ms: Optional[float] = None, until_ms: Optional[float] = N
                 continue
         opener = gzip.open if path.name.endswith(".gz") else open
         try:
-            with opener(path, "rt", encoding="utf-8") as f:
+            with opener(path, "rt", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
+                    rec = parse_record(line)
+                    if rec is None:
                         continue
-                    t = rec.get("t", 0)
+                    t = rec["t"]
                     if since_ms is not None and t < since_ms:
                         continue
                     if until_ms is not None and t >= until_ms:
                         continue
                     yield rec
-        except OSError:
+        except (OSError, EOFError, ValueError):
             continue
+
+
+def parse_record(line: str | bytes) -> Optional[dict]:
+    """One log line as a record, or None if it isn't one (see iter_records)."""
+    try:
+        rec = json.loads(line)
+    except ValueError:  # includes UnicodeDecodeError for bytes
+        return None
+    if not isinstance(rec, dict):
+        return None
+    t = rec.get("t")
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        return None
+    return rec

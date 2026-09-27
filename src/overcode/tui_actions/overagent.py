@@ -99,15 +99,17 @@ class JourneyMixin:
         def work() -> None:
             from ..command_palette import keys_by_action
             from ..journey import load_journey
-            keymap = keys_by_action(self.BINDINGS)
-            bound = frozenset(k for keys in keymap.values() for k in keys)
             try:
-                self._activity.flush()  # include this session's latest
+                keymap = keys_by_action(self.BINDINGS)
+                bound = frozenset(k for keys in keymap.values() for k in keys)
                 journey, error = load_journey(keymap, bound), None
             except Exception as e:
                 journey, error = None, e
             self.call_from_thread(self._show_journey, journey, error)
 
+        # Include this session's latest. Flushed here, on the UI thread that
+        # appends to the buffer, never from the worker.
+        self._flush_activity()
         self.run_worker(work, thread=True, group="journey", exclusive=True)
 
     def _show_journey(self, journey, error) -> None:

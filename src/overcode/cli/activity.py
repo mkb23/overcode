@@ -110,7 +110,7 @@ def activity_stream(
     happen; verbose adds every key and click.
     """
     import time as _time
-    from ..activity_log import activity_path_for, get_activity_dir
+    from ..activity_log import activity_path_for, get_activity_dir, parse_record
     from ..usage_analytics import digest_line, is_significant, parse_since
 
     if detail not in ("rollup", "significant", "verbose"):
@@ -150,9 +150,8 @@ def activity_stream(
                 end = data.rfind(b"\n") + 1
                 offset += end
                 for line in data[:end].splitlines():
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
+                    rec = parse_record(line)
+                    if rec is None:
                         continue
                     window.append(rec)
                     if detail == "verbose" or (detail == "significant" and is_significant(rec)):

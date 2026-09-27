@@ -136,6 +136,33 @@ class TestState:
         path.write_text('{"receptiveness": 2, "unknown_field": 1}')
         assert M.load_state().receptiveness == 2
 
+    @pytest.mark.parametrize("text", ["null", "[]", "1", '"x"', "true"])
+    def test_state_that_is_not_an_object_gives_defaults(self, tmp_path, monkeypatch, text):
+        path = tmp_path / "js.json"
+        monkeypatch.setattr(M, "state_path", lambda: path)
+        path.write_text(text)
+        assert M.load_state() == MentorState()
+
+    def test_fields_of_the_wrong_type_are_dropped(self, tmp_path, monkeypatch):
+        path = tmp_path / "js.json"
+        monkeypatch.setattr(M, "state_path", lambda: path)
+        path.write_text('{"receptiveness": "high", "snoozed": [1], "celebrated": {"a": 1},'
+                        ' "last_topic": 5, "seeded": 1, "first_seen_ms": 7,'
+                        ' "last_nudge_ms": true}')
+        assert M.load_state() == MentorState(first_seen_ms=7.0)
+        path.write_text('{"snoozed": {"a": 9, "b": "soon"}, "celebrated": ["x", 3]}')
+        s = M.load_state()
+        assert s.snoozed == {"a": 9} and s.celebrated == ["x"]
+        M.save_state(s)
+        assert M.load_state() == s
+
+    def test_tui_starts_with_a_broken_state_file(self, tmp_path, monkeypatch):
+        from overcode.tui_actions.mentor import MentorMixin
+        monkeypatch.setattr(M, "load_state", MagicMock(side_effect=RuntimeError("boom")))
+        host = MentorMixin()
+        host._init_mentor()
+        assert host._mentor_state == MentorState()
+
 
 class TestTuiGates:
     def _tui(self, dial="occasional", idle=60, waiting=False, dialog=False):

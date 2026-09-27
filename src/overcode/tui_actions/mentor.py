@@ -33,11 +33,14 @@ class MentorMixin:
     _mentor_busy = False
 
     def _init_mentor(self) -> None:
-        from ..mentor import load_state, now_ms, save_state
-        state = load_state()
-        if not state.first_seen_ms:
-            state.first_seen_ms = now_ms()
-            save_state(state)
+        from ..mentor import MentorState, load_state, now_ms, save_state
+        try:
+            state = load_state()
+            if not state.first_seen_ms:
+                state.first_seen_ms = now_ms()
+                save_state(state)
+        except Exception:  # runs in the TUI's __init__: never stop it starting
+            state = MentorState()
         self._mentor_state = state
 
     # ── the tick ───────────────────────────────────────────────────────
@@ -60,6 +63,7 @@ class MentorMixin:
         if self._any_dialog_visible() or self._command_bar_in_use() or self._someone_waiting():
             return
         self._mentor_busy = True
+        self._flush_activity()  # on the UI thread, which is the one appending
         self.run_worker(self._mentor_pick, thread=True, group="mentor", exclusive=True)
 
     def _command_bar_in_use(self) -> bool:
@@ -85,7 +89,6 @@ class MentorMixin:
             if self._mentor_journey is None or time.monotonic() - self._mentor_journey_at > JOURNEY_TTL_SECONDS:
                 keymap = keys_by_action(self.BINDINGS)
                 bound = frozenset(k for keys in keymap.values() for k in keys)
-                self._activity.flush()
                 self._mentor_journey = load_journey(keymap, bound)
                 self._mentor_journey_at = time.monotonic()
             journey = self._mentor_journey
