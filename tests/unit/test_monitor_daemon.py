@@ -552,6 +552,24 @@ class TestSyncClaudeCodeStats:
         daemon.session_manager.add_agent_session_id.assert_not_called()
 
 
+    def test_sync_model_follows_only_transcript_changes(self, tmp_path, monkeypatch):
+        """A /model switch updates the model; a stale transcript model
+        doesn't undo `restart --model` (#505)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", model="claude-opus-5", transcript_model=None)
+
+        daemon._sync_model(session, "claude-opus-5")  # first sighting
+        assert daemon._pending.fields["sess-1"]["transcript_model"] == "claude-opus-5"
+
+        daemon._pending.fields.clear()
+        session.model, session.transcript_model = "claude-sonnet-5", "claude-opus-5"
+        daemon._sync_model(session, "claude-opus-5")  # restart --model, no reply yet
+        assert "sess-1" not in daemon._pending.fields
+
+        daemon._sync_model(session, "claude-fable-5-1")  # /model in the agent
+        assert daemon._pending.fields["sess-1"]["model"] == "claude-fable-5-1"
+
+
 class TestUpdateStateTime:
     """Test _update_state_time method."""
 

@@ -2549,6 +2549,33 @@ class TestLauncherRestart:
         assert ok is False
 
 
+    def test_restart_uses_current_model_over_passthrough_model(self, tmp_path):
+        """A --model passed through at launch must not beat Session.model (#505)."""
+        launcher, session, mock_tmux = self._launch_and_bind_claude_sid(
+            tmp_path, name="agent", extra_cli_args=["--model haiku --verbose"],
+        )
+        launcher.sessions.update_session(session.id, model="claude-opus-5-5")
+        session = launcher.sessions.get_session(session.id)
+
+        with patch("overcode.launcher.time.sleep"):
+            launcher.restart(session)
+
+        cmd = self._restart_cmd(mock_tmux)
+        assert "--model claude-opus-5-5" in cmd
+        assert "haiku" not in cmd
+        assert "--verbose" in cmd
+
+
+class TestDropModelFlag:
+    def test_forms(self):
+        from overcode.launcher import drop_model_flag
+        assert drop_model_flag(None) is None
+        assert drop_model_flag(["--model", "haiku", "--verbose"]) == ["--verbose"]
+        assert drop_model_flag(["--model haiku"]) == []
+        assert drop_model_flag(["--model=haiku", "--x 'a b'"]) == ["--x 'a b'"]
+        assert drop_model_flag(["--verbose --model haiku"]) == ["--verbose"]
+
+
 class TestLauncherRevive:
     """Test AgentLauncher.revive — revival preserves full launch context."""
 

@@ -837,14 +837,25 @@ class MonitorDaemon:
                 session.id, discovered.latest
             )
 
+    def _sync_model(self, session, detected: Optional[str]) -> None:
+        """Follow a model change seen in the transcript (e.g. /model).
+
+        Only a change counts: after `restart --model`, the resumed
+        transcript still ends on the old model until the agent replies,
+        and must not undo the new choice (#505).
+        """
+        if detected and detected != session.transcript_model:
+            self._pending.update_session(
+                session.id, model=detected, transcript_model=detected
+            )
+
     def _apply_container_stats(self, session, stats: AgentSessionStats) -> None:
         """Persist stats read from inside a container agent's filesystem."""
         detected_model = stats.model
         detected_provider = stats.provider
 
         # Update model/provider if detected
-        if detected_model and detected_model != session.model:
-            self._pending.update_session(session.id, model=detected_model)
+        self._sync_model(session, detected_model)
         if detected_provider and detected_provider != session.provider:
             self._pending.update_session(session.id, provider=detected_provider)
         if stats.effort and stats.effort != session.effort:
@@ -917,8 +928,7 @@ class MonitorDaemon:
             # ("msg_bdrk_" = bedrock, "msg_" = web), which stays correct
             # across /clear (fixing cases where a bedrock agent switches
             # to Claude Max and vice versa).
-            if stats.model and stats.model != session.model:
-                self._pending.update_session(session.id, model=stats.model)
+            self._sync_model(session, stats.model)
             if stats.provider and stats.provider != session.provider:
                 self._pending.update_session(session.id, provider=stats.provider)
             if stats.effort and stats.effort != session.effort:

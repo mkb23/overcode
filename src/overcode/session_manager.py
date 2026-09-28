@@ -235,6 +235,10 @@ class Session:
     agent_teams: bool = False  # Claude Code agent teams mode (#309)
     agent_persona: Optional[str] = None  # Agent persona (--agent), e.g. .claude/agents/
     model: Optional[str] = None  # Model (e.g. "sonnet", "opus", or "openai/gpt-4o-mini")
+    # Model the transcript last showed. `model` follows it only when it
+    # changes, so a model picked by `restart --model` survives until the
+    # agent answers on it (#505).
+    transcript_model: Optional[str] = None
     effort: Optional[str] = None  # Reasoning effort, detected from the backend's store (#497)
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)

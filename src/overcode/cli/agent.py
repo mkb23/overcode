@@ -232,7 +232,7 @@ def launch(
         Optional[List[str]],
         typer.Option(
             "--backend-arg",
-            help="Extra agent-CLI flag (repeatable, e.g. '--model haiku')",
+            help="Extra agent-CLI flag (repeatable, e.g. '--verbose')",
         ),
     ] = None,
     claude_args: Annotated[
@@ -857,6 +857,10 @@ def restart(
             help="Start a brand-new agent session instead of resuming the prior conversation.",
         ),
     ] = False,
+    model: Annotated[
+        Optional[str],
+        typer.Option("--model", "-m", help="Relaunch on this model (kept for later restarts)"),
+    ] = None,
     session: SessionOption = "agents",
 ):
     """Restart a running agent with the same configuration.
@@ -869,6 +873,9 @@ def restart(
     By default, resumes the agent's prior session so conversation
     history is preserved. Pass --fresh to start a brand-new session (useful
     when the old session is stuck or MCP configs have changed).
+
+    The model is the one the agent last ran on (a /model switch is picked
+    up from its transcript); --model picks another.
     """
     from ..launcher import AgentLauncher
 
@@ -881,6 +888,10 @@ def restart(
     if not launcher.tmux.window_exists(sess.tmux_window):
         rprint(f"[red]Error: Tmux window for '{name}' no longer exists[/red]")
         raise typer.Exit(code=1)
+
+    if model:
+        launcher.sessions.update_session(sess.id, model=model)
+        sess = launcher.sessions.get_session(sess.id)
 
     rprint(f"[dim]Stopping '{name}'...[/dim]")
     if launcher.restart(sess, fresh=fresh):

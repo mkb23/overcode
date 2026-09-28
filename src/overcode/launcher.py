@@ -75,6 +75,33 @@ def window_in_lookup(window: str, lookup: Tuple[set, set]) -> bool:
     return window.isdigit() and window in indices
 
 
+def drop_model_flag(extra_args: Optional[List[str]]) -> Optional[List[str]]:
+    """Remove ``--model X`` / ``--model=X`` from pass-through CLI args.
+
+    Backends append extra args after their own ``--model``, so a model
+    passed through at launch would win on every relaunch over
+    ``Session.model``, which the daemon keeps at the model the agent last
+    ran on (#505).
+    """
+    if not extra_args:
+        return extra_args
+    kept = []
+    skip = False  # the value may be the next list item
+    for arg in extra_args:
+        tokens = shlex.split(arg)
+        out = []
+        for tok in tokens:
+            if skip:
+                skip = False
+            elif tok == "--model":
+                skip = True
+            elif not tok.startswith("--model="):
+                out.append(tok)
+        if out:
+            kept.append(arg if out == tokens else shlex.join(out))
+    return kept
+
+
 def validate_session_name(name: str) -> None:
     """Validate session name format.
 
@@ -840,7 +867,8 @@ class AgentLauncher:
             model=session.model,
             agent=session.agent_persona,
             allowed_tools=session.allowed_tools,
-            extra_args=session.extra_cli_args,
+            extra_args=(drop_model_flag(session.extra_cli_args) if session.model
+                        else session.extra_cli_args),
             agent_teams=session.agent_teams,
             provider=session.provider,
             start_directory=session.start_directory,
