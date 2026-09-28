@@ -455,6 +455,34 @@ class TestEffort:
         assert full_stats(path)[0]["effort"] is None
 
 
+class TestPrLink:
+    """pr-link records (#489): the latest PR the session was linked to."""
+
+    @staticmethod
+    def _pr_link(ts: datetime, number: int) -> str:
+        return json.dumps({
+            "type": "pr-link", "sessionId": "s", "prNumber": number,
+            "prUrl": f"https://github.com/o/r/pull/{number}",
+            "prRepository": "o/r", "timestamp": _iso_z(ts),
+        })
+
+    def test_latest_pr_wins_and_index_matches_full_parse(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        w = _Writer(path)
+        index = TranscriptIndex(str(path))
+        w.write(_assistant(T0) + "\n" + self._pr_link(T0 + timedelta(minutes=1), 12) + "\n")
+        _check(index, path, SINCES, [])
+        assert index.stats(None)[0]["pr_number"] == 12
+        w.append(self._pr_link(T0 + timedelta(minutes=2), 13) + "\n")
+        _check(index, path, SINCES, [])
+        assert index.stats(None)[0]["pr_number"] == 13
+
+    def test_no_pr_link_is_none(self, tmp_path):
+        path = tmp_path / "s.jsonl"
+        _Writer(path).write(_assistant(T0) + "\n")
+        assert TranscriptIndex(str(path)).stats(None)[0]["pr_number"] is None
+
+
 class TestSinceStates:
     def test_new_since_after_window_only_use_rebuilds_once(self, tmp_path):
         path = tmp_path / "s.jsonl"

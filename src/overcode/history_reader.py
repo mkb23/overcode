@@ -415,6 +415,7 @@ class AgentSessionStats:
     # per harness) (#497)
     effort: Optional[str] = None
     agent: Optional[str] = None  # detected agent persona, opencode2's NULL-row fallback
+    pr_number: Optional[int] = None  # PR the session is linked to (Claude pr-link, #489)
     last_command: Optional[str] = None  # Most recent user prompt text
     # The backend's *own* context window for this session, when it has one
     # (#469) — codex's rollout JSONL reports `payload.info.model_context_window`
@@ -954,6 +955,7 @@ def _parse_session_lines(
         "model": None,
         "provider": None,
         "effort": None,
+        "pr_number": None,
     }
 
     user_prompt_times: List[datetime] = []
@@ -1041,6 +1043,13 @@ def _parse_session_lines(
                     user_prompt_times.append(msg_time)
                 except (ValueError, TypeError):
                     continue
+
+            elif msg_type == "pr-link":
+                # The PR Claude Code linked the session to — what its
+                # status line shows as "PR #N" (#489)
+                pr = data.get("prNumber")
+                if isinstance(pr, int):
+                    totals["pr_number"] = pr
 
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
@@ -1138,7 +1147,7 @@ def read_session_stats_from_content(
             "input_tokens": 0, "output_tokens": 0,
             "cache_creation_tokens": 0, "cache_read_tokens": 0,
             "current_context_tokens": 0, "model": None, "provider": None,
-            "effort": None,
+            "effort": None, "pr_number": None,
         }
         return defaults, []
 
@@ -1255,6 +1264,7 @@ def get_session_stats(
     detected_model: Optional[str] = None
     detected_provider: Optional[str] = None
     detected_effort: Optional[str] = None
+    detected_pr: Optional[int] = None
     all_work_times: List[float] = []
     subagent_count = 0  # Count subagent files (#176)
     live_subagent_count = 0  # Subagents with recently-modified files (#256)
@@ -1291,6 +1301,8 @@ def get_session_stats(
                     detected_provider = usage["provider"]
                 if usage.get("effort"):
                     detected_effort = usage.get("effort")
+                if usage.get("pr_number"):
+                    detected_pr = usage["pr_number"]
         else:
             if usage["current_context_tokens"] > current_context:
                 current_context = usage["current_context_tokens"]
@@ -1300,6 +1312,8 @@ def get_session_stats(
                 detected_provider = usage["provider"]
             if usage.get("effort"):
                 detected_effort = usage.get("effort")
+            if usage.get("pr_number"):
+                detected_pr = usage["pr_number"]
 
         # Collect work times from this session file
         all_work_times.extend(work_times)
@@ -1353,6 +1367,7 @@ def get_session_stats(
         model=detected_model,
         provider=detected_provider,
         effort=detected_effort,
+        pr_number=detected_pr,
         last_command=last_command,
     )
 

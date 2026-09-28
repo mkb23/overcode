@@ -115,6 +115,7 @@ def empty_stats() -> Tuple[dict, List[float]]:
         "model": None,
         "provider": None,
         "effort": None,
+        "pr_number": None,
     }, []
 
 
@@ -163,6 +164,8 @@ def parse_message_time(ts_str) -> Optional[datetime]:
 #       None when the timestamp is missing or unparseable
 #   ("u", key, datetime)
 #       a user prompt (not a tool result) with a parseable timestamp
+#   ("p", pr_number)
+#       a pr-link record: the PR Claude Code linked the session to (#489)
 # Anything else parses to None.
 _Event = tuple
 
@@ -248,6 +251,9 @@ def parse_line(
         except (ValueError, TypeError, OverflowError, OSError):
             return None
         return ("u", datetime_key(dt), dt)
+    if msg_type == "pr-link":
+        pr = data.get("prNumber")
+        return ("p", pr) if isinstance(pr, int) else None
     return None
 
 
@@ -299,6 +305,9 @@ def fold_event(
                 totals["provider"] = event[7]
             if event[8]:
                 totals["effort"] = event[8]
+        return last_prompt
+    if event[0] == "p":
+        totals["pr_number"] = event[1]
         return last_prompt
     key, prompt_time = event[1], event[2]
     if since_key is not None and key < since_key:

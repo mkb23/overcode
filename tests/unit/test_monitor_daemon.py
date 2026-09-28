@@ -570,6 +570,24 @@ class TestSyncClaudeCodeStats:
         assert daemon._pending.fields["sess-1"]["model"] == "claude-fable-5-1"
 
 
+    def test_sync_pr_takes_transcript_pr_once(self, tmp_path, monkeypatch):
+        """The pr-link PR is applied when it changes, not re-applied after a
+        branch switch cleared it (#489)."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = Mock(id="sess-1", pr_number=None, branch="feat")
+
+        daemon._sync_pr(session, None)
+        assert "sess-1" not in daemon._pending.fields
+
+        daemon._sync_pr(session, 489)
+        assert daemon._pending.fields["sess-1"] == {"pr_number": 489, "pr_branch": "feat"}
+
+        daemon._pending.fields.clear()
+        session.pr_number, session.branch = None, "other"  # cleared by a branch switch
+        daemon._sync_pr(session, 489)
+        assert "sess-1" not in daemon._pending.fields
+
+
 class TestUpdateStateTime:
     """Test _update_state_time method."""
 

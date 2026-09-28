@@ -380,6 +380,8 @@ class MonitorDaemon:
         # _flush_pending_writes. Reads inside the tick go through
         # self._pending.view(session) so they see the staged values.
         self._pending: PendingUpdates = PendingUpdates()
+        # Last pr-link PR number seen per session id (see _sync_pr)
+        self._transcript_prs: Dict[str, int] = {}
 
         # When each terminated entry in sessions.json was first seen so by
         # this daemon (any tmux session); after the configured grace the
@@ -849,6 +851,22 @@ class MonitorDaemon:
                 session.id, model=detected, transcript_model=detected
             )
 
+    def _sync_pr(self, session, pr_number: Optional[int]) -> None:
+        """Take the PR from the transcript's pr-link records (#489).
+
+        That is the number Claude Code's status line shows, and it is
+        there even when no PR URL is on screen. Applied only when it
+        changes, so a branch switch that cleared the PR is not undone.
+        """
+        if pr_number is None:
+            return
+        if self._transcript_prs.get(session.id) != pr_number:
+            self._transcript_prs[session.id] = pr_number
+            if pr_number != session.pr_number:
+                self._pending.update_session(
+                    session.id, pr_number=pr_number, pr_branch=session.branch
+                )
+
     def _apply_container_stats(self, session, stats: AgentSessionStats) -> None:
         """Persist stats read from inside a container agent's filesystem."""
         detected_model = stats.model
@@ -929,6 +947,7 @@ class MonitorDaemon:
             # across /clear (fixing cases where a bedrock agent switches
             # to Claude Max and vice versa).
             self._sync_model(session, stats.model)
+            self._sync_pr(session, stats.pr_number)
             if stats.provider and stats.provider != session.provider:
                 self._pending.update_session(session.id, provider=stats.provider)
             if stats.effort and stats.effort != session.effort:
@@ -1639,8 +1658,9 @@ class MonitorDaemon:
                     if new_skills and sorted(new_skills) != sorted(session.loaded_skills):
                         pending.update_session(session.id, loaded_skills=new_skills)
 
-                # Extract PR number from pane content
-                if pane_content:
+                # Extract PR number from pane content, unless the
+                # transcript names the PR (#489)
+                if pane_content and session.id not in self._transcript_prs:
                     pr = extract_pr_number(pane_content)
                     if pr is not None and pr != session.pr_number:
                         pending.update_session(session.id, pr_number=pr, pr_branch=session.branch)
