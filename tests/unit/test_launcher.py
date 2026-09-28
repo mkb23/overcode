@@ -1094,6 +1094,60 @@ class TestLauncherHierarchy:
             assert child is not None
             assert child.parent_session_id == parent.id
 
+    def _launcher(self, tmp_path):
+        session_manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
+        launcher = AgentLauncher(
+            tmux_session="agents",
+            tmux_manager=TmuxManager("agents", tmux=MockTmux()),
+            session_manager=session_manager,
+        )
+        return launcher, session_manager
+
+    def test_no_parent_from_overagent_launches_top_level(self, tmp_path):
+        """The overagent can launch an agent that is not its child."""
+        launcher, session_manager = self._launcher(tmp_path)
+        boss = launcher.launch(name="overagent")
+        session_manager.update_session(boss.id, backend="overagent")
+
+        with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "overagent"}):
+            shell = launcher.launch(name="shell", no_parent=True)
+        assert shell is not None
+        assert shell.parent_session_id is None
+
+    def test_no_parent_refused_for_other_agents(self, tmp_path, capsys):
+        """An ordinary agent cannot escape the hierarchy with no_parent."""
+        launcher, _ = self._launcher(tmp_path)
+        launcher.launch(name="worker")
+
+        with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "worker"}):
+            assert launcher.launch(name="escapee", no_parent=True) is None
+        assert "only the overagent" in capsys.readouterr().out
+
+    def test_no_parent_outside_any_agent_is_allowed(self, tmp_path):
+        """A person at a plain terminal is already top-level."""
+        launcher, _ = self._launcher(tmp_path)
+        session = launcher.launch(name="solo", no_parent=True)
+        assert session is not None
+        assert session.parent_session_id is None
+
+    def test_overagent_child_is_not_another_overagent(self, tmp_path):
+        """A child of the overagent gets the default backend, not its persona."""
+        launcher, session_manager = self._launcher(tmp_path)
+        boss = launcher.launch(name="overagent")
+        session_manager.update_session(boss.id, backend="overagent")
+
+        with patch.dict("os.environ", {"OVERCODE_SESSION_NAME": "overagent"}):
+            child = launcher.launch(name="helper")
+        assert child is not None
+        assert child.parent_session_id == boss.id
+        assert child.backend != "overagent"
+
+    def test_no_parent_with_parent_is_refused(self, tmp_path, capsys):
+        launcher, _ = self._launcher(tmp_path)
+        launcher.launch(name="p")
+        assert launcher.launch(name="c", parent_name="p", no_parent=True) is None
+        assert "mutually exclusive" in capsys.readouterr().out
+
     def test_depth_limit_enforced(self, tmp_path, capsys):
         """Launch fails when max depth would be exceeded."""
         mock_tmux = MockTmux()

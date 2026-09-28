@@ -193,6 +193,13 @@ def launch(
         Optional[str],
         typer.Option("--parent", help="Parent agent name for hierarchy (#244)"),
     ] = None,
+    no_parent: Annotated[
+        bool,
+        typer.Option(
+            "--no-parent",
+            help="Launch top-level, not as the caller's child (from inside an agent, overagent only)",
+        ),
+    ] = False,
     follow: Annotated[
         bool,
         typer.Option("--follow", "-f", help="Stream child output and block until done (#244)"),
@@ -361,6 +368,7 @@ def launch(
         backend=backend,
         wrapper=wrapper,
         inherit_parent_settings=not no_inherit,
+        no_parent=no_parent,
     )
 
     if result:

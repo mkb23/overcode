@@ -259,6 +259,7 @@ class AgentLauncher:
         wrapper: Optional[str] = None,
         inherit_parent_settings: bool = True,
         backend: Optional[str] = None,
+        no_parent: bool = False,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -283,6 +284,9 @@ class AgentLauncher:
                 the parent agent (#433).
             backend: Agent CLI backend name. None resolves via parent
                 inheritance, then the built-in default.
+            no_parent: Launch top-level instead of as a child of the calling
+                agent. Only the overagent may do this: it launches agents the
+                person will drive themselves.
 
         Returns:
             Session object if successful, None otherwise
@@ -302,7 +306,18 @@ class AgentLauncher:
 
         # Auto-detect parent from env var if not explicitly set (#244)
         parent_session = None
-        if parent_name is None:
+        if no_parent:
+            if parent_name is not None:
+                print("Cannot launch: --no-parent and --parent are mutually exclusive")
+                return None
+            caller_name = os.environ.get("OVERCODE_SESSION_NAME")
+            if caller_name:
+                from .overagent import OVERAGENT_BACKEND
+                caller = self._resolve(caller_name)
+                if caller is None or caller.backend != OVERAGENT_BACKEND:
+                    print("Cannot launch: only the overagent may launch with --no-parent")
+                    return None
+        elif parent_name is None:
             env_parent_name = os.environ.get("OVERCODE_SESSION_NAME")
             if env_parent_name:
                 parent_name = env_parent_name
@@ -327,6 +342,11 @@ class AgentLauncher:
         if parent_session and inherit_parent_settings:
             if backend is None:
                 backend = getattr(parent_session, "backend", None) or None
+                # The overagent persona is one per install: its children are
+                # ordinary agents, not more overagents.
+                from .overagent import OVERAGENT_BACKEND
+                if backend == OVERAGENT_BACKEND:
+                    backend = None
             # Model ids and provider transports are backend-specific grammar —
             # a Claude `sonnet`/`claude-fable-5` or a bedrock pin means nothing
             # to codex/grok (and vice versa), so they only flow to a child on

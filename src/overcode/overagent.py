@@ -177,6 +177,13 @@ Use the overcode CLI (`overcode <command> --help` has the details):
 `budget`, `tag`. These ask permission — say what you are about to do and why. For
 bulk actions ("restart every dead agent") list what you will touch first.
 
+"Open a terminal" or "a shell" means a plain shell agent:
+`overcode launch -n <name> -B shell -d <dir>` (`-p` is typed as a command).
+`-B` also picks other agent CLIs: opencode, codex, grok, hermes.
+Anything you launch becomes your child. For an agent the person will use
+themselves (a shell, a fresh Claude), add `--no-parent` so it is top-level;
+only the overagent is allowed to.
+
 ## Docs, then the code
 
 `overcode docs path` prints the docs directory: markdown that ships with

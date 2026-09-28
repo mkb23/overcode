@@ -20,6 +20,7 @@ overcode launch --name <name> [options]
 | `--skip-permissions` | | Auto-deny permission prompts |
 | `--bypass-permissions` | | Bypass all permission checks (dangerous) |
 | `--parent` | | Name of parent agent (auto-detected if launched from within an agent) |
+| `--no-parent` | | Launch top-level instead of as the calling agent's child. Only the overagent may use it from inside an agent, for agents you will drive yourself (a guard against accidents, not a sandbox) |
 | `--follow` | `-f` | Stream child output, block until report or timeout |
 | `--on-stuck` | | Policy when child stops without reporting: `wait` (default), `fail`, `timeout:DURATION` |
 | `--oversight-timeout` | | Shorthand for `--on-stuck timeout:DURATION` (e.g., `5m`, `1h`, `30s`) |
