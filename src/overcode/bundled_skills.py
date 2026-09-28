@@ -7,245 +7,107 @@ the Claude Code skill format. Each skill has a description and content field.
 
 from pathlib import Path
 
-# Skill names that were renamed — installer removes these on install
-DEPRECATED_SKILL_NAMES = ["delegation"]
+# Skill names that were renamed or merged — installer removes these on install.
+# delegating-to-agents was merged into the overcode skill.
+DEPRECATED_SKILL_NAMES = ["delegation", "delegating-to-agents"]
 
 OVERCODE_SKILLS: dict[str, dict] = {
     "overcode": {
-        "description": "Overcode CLI reference for managing Claude Code agent sessions in tmux",
+        "description": "Run and manage other coding agents through overcode",
         "content": """\
 ---
-name: overcode-cli
-description: Reference for overcode CLI commands to launch, monitor, and control Claude Code agent sessions in tmux. Use when needing to interact with agents via overcode commands.
-user-invocable: false
+name: overcode
+description: Run other coding agents through overcode. Hand a separate piece of work to a child agent (Claude Code, opencode, codex, grok and others), check on it, unblock it, collect its result, or run a long shell command as a tracked job. Use when a task is large or independent enough to give to another agent, when the user asks you to launch, delegate to or check on agents, or when you are an overcode child agent that has to report back.
 ---
 
-# Overcode CLI Reference
+# overcode
 
-Overcode manages multiple Claude Code agent sessions in tmux.
+overcode runs coding agents in tmux windows the user can watch and step into.
+If `$OVERCODE_SESSION_NAME` is set, you are one of them, and agents you launch
+become your children.
 
-## Quick Reference
+## When to delegate
 
-```bash
-# Launch
-overcode launch -n <name> [-d <path>] [-p "<prompt>"] [--follow] [--bypass-permissions]
-overcode launch -n <name> --follow --oversight-timeout 5m -p "... When done: overcode report --status success"
-overcode launch -n <name> --allowed-tools "Read,Glob,Grep" --skip-permissions
-overcode launch -n <name> --claude-arg "--model haiku" --claude-arg "--effort low"
-overcode launch -n <name> --budget 2.00 -p "..."  # Set cost budget (auto-deducted from parent)
+Hand work to a child agent when it will take many minutes, can be described
+completely in a prompt, and doesn't need your judgment along the way, or when
+independent pieces can run in parallel. The user can watch and steer a child,
+which they can't do with your own subagents.
 
-# Monitor
-overcode list [name] [--show-done]
-overcode show <name> [-n 50]
-overcode follow <name>
+Keep the work yourself when it's quick, when you need the result to carry on
+thinking, or when explaining it would take as long as doing it.
 
-# Control
-overcode send <name> "message"       # Send text + Enter
-overcode send <name> approve         # Approve permission (backend-aware)
-overcode send <name> reject          # Reject permission (backend-aware)
-overcode kill <name> [--no-cascade]
-overcode instruct <name> "instructions"
-
-# Report completion (child agents call this when done)
-overcode report --status success|failure [--reason "..."]
-
-# Budget
-overcode budget set <name> <amount>
-overcode budget transfer <source> <target> <amount>
-overcode budget show [name]
-
-# Cleanup
-overcode cleanup [--done]
-
-# TUI / daemons
-overcode monitor
-overcode supervisor [--restart]
-overcode attach [--name <agent>]
-```
-
-## Status Indicators
-
-| Status | Meaning |
-|--------|---------|
-| GREEN | Running actively |
-| YELLOW | No standing instructions |
-| ORANGE | Waiting for supervisor |
-| RED | Waiting for user input |
-| \U0001f441\ufe0f YELLOW | Waiting for oversight report |
-
-## Unblocking Stuck Agents
+## Launching a child
 
 ```bash
-overcode show my-agent -n 100   # See what it's stuck on
-overcode send my-agent approve   # Approve permission (backend-aware)
-overcode send my-agent reject    # Reject permission (backend-aware)
-overcode send my-agent "yes"     # Send text response
+overcode launch -n fix-jwt-refresh -d ~/project --follow --oversight-timeout 30m -p "<prompt>"
 ```
 
-## Jobs (Long-Running Bash Commands)
+The prompt is everything the child knows. Say what should be true when it's
+done, name the files involved, give the constraints and how to check the work,
+and end with the report line:
 
-For long-running commands (10min+ \u2014 test suites, builds, deploys), use `overcode bash` to launch them as tracked jobs in a separate tmux session. This keeps the output visible and lets you monitor multiple concurrent jobs from the TUI.
+    When finished, run: overcode report --status success --reason "<one line>"
+    (or --status failure, with the reason, if you couldn't do it)
+
+A child that never reports is never counted as done.
+
+- `--follow` blocks, streaming the child's output, until it reports. Exit code
+  0 means success, 1 failure, 2 timed out, 130 interrupted. The
+  `--oversight-timeout` stops a child that halts without reporting from
+  blocking you forever.
+- Without `--follow`, launch several children and check on them later.
+  `overcode follow <name>` waits for one.
+- Name children after their task (`fix-jwt-refresh`, not `child-1`). The user
+  sees these names.
+
+Children inherit your permission mode, model, provider and wrapper. Add
+`--bypass-permissions` only when the user wants unattended work; otherwise the
+child's permission prompts wait for the user, or for you (see below).
+
+Other options:
+- `-B opencode` (or `codex`, `grok`, ...) launches a different agent CLI.
+- `-m <model>` picks the model.
+- `--budget 2.00` caps its spend, and is taken from your budget if you have one.
+- `--allowed-tools "Read,Grep,Glob"` makes a read-only Claude Code child.
+- `--skills <profile>` switches on a skill profile.
+
+## Checking in and unblocking
 
 ```bash
-# Launch a job
-overcode bash "pytest tests/ -x" --name unit-tests
-overcode bash "npm run build" -d ~/frontend
-overcode bash "make deploy-staging" --agent my-agent   # Link to an agent
-
-# Manage jobs
-overcode jobs list [--all]        # List running (or all) jobs
-overcode jobs tail <name>         # Stream output (works without TTY)
-overcode jobs tail <name> -n 50   # Last 50 lines and exit
-overcode jobs kill <name>         # Kill a running job
-overcode jobs attach <name>       # Attach to job's tmux window (needs TTY)
-overcode jobs clear               # Remove completed/failed/killed jobs
-
-# TUI: press J to toggle jobs view, j/k to navigate, x to kill, c to clear
-overcode monitor --jobs           # Start TUI directly in jobs view
+overcode list "$OVERCODE_SESSION_NAME"   # you and your children, with status
+overcode show <name> -n 80               # an agent's recent output
+overcode send <name> "text"              # answer its question
+overcode send <name> approve             # or reject: a permission prompt, any backend
+overcode kill <name>                     # also kills its children (--no-cascade keeps them)
 ```
 
-## Standing Instructions Presets
+Read a child's output before you trust its report, and check the claims that
+matter yourself, for example by running the tests.
 
-`overcode instruct <name> <preset>` \u2014 available presets: `DO_NOTHING`, `STANDARD`, `PERMISSIVE`, `CAUTIOUS`, `RESEARCH`, `CODING`, `TESTING`, `REVIEW`, `DEPLOY`, `AUTONOMOUS`, `MINIMAL`.
+## Long shell commands
 
-## File Locations
-
-```
-~/.overcode/
-\u251c\u2500\u2500 sessions/<tmux-session>/
-\u2502   \u251c\u2500\u2500 sessions.json              # Session state
-\u2502   \u251c\u2500\u2500 monitor_daemon_state.json  # Daemon state (TUI reads this)
-\u2502   \u251c\u2500\u2500 report_<agent>.json        # Oversight reports
-\u2502   \u2514\u2500\u2500 *.log                      # Daemon logs
-\u251c\u2500\u2500 config.yaml
-\u2514\u2500\u2500 presets.json
-```
-""",
-    },
-    "delegating-to-agents": {
-        "description": "Delegate substantial work to child Claude agents using overcode launch",
-        "content": """\
----
-name: delegating-to-agents
-description: Delegate substantial work to child Claude agents using overcode launch for parallel execution. Use when needing to run independent tasks in parallel, launch long-duration work that benefits from real-time monitoring, or distribute work across multiple repositories. Prefer over the built-in Task tool for anything involving code changes, test runs, or tasks the human may want to observe.
-user-invocable: false
----
-
-# Delegating Work to Child Agents
-
-Use `overcode launch` instead of the Task tool when work is substantial, involves code/tests/commits, or the human may want to intervene. Overcode agents are full Claude Code sessions in tmux with real-time visibility. Use the Task tool only for quick lookups (seconds, not minutes) where you need the result inline.
-
-## Sequential (Blocking)
+Run commands that take many minutes (full test suites, builds, deploys) as a
+tracked job in their own window, linked to you:
 
 ```bash
-overcode launch --name fix-auth-bug -d ~/project --follow --bypass-permissions \\
-  -p "Fix the JWT refresh bug in src/auth/jwt.py \u2014 refresh_token() doesn't check expiry. Add check, update tests/test_auth.py, run pytest. When done: overcode report --status success --reason 'Fixed and tests pass'"
-```
-
-- `--follow` blocks until child calls `overcode report`, streaming output
-- `--bypass-permissions` for full autonomy; `--skip-permissions` for safer mode
-- Exit codes: 0 = success, 1 = failure/terminated, 2 = timeout, 130 = interrupted
-- Verify after: `overcode show fix-auth-bug -n 50`
-
-## Parallel (Non-Blocking)
-
-```bash
-overcode launch -n refactor-api -d ~/project --budget 3.00 -p "Refactor REST API. When done: overcode report --status success" --bypass-permissions
-overcode launch -n write-tests -d ~/project --budget 2.00 -p "Write auth tests. When done: overcode report --status success" --bypass-permissions
-
-overcode list                       # Monitor progress
-overcode show refactor-api -n 100   # Read output
-overcode follow refactor-api        # Block on one when needed
-```
-
-## Writing the Prompt
-
-**Most important part.** The child has zero context \u2014 `--prompt` must be self-contained:
-
-- **State the goal** \u2014 what should be different when done?
-- **Include file paths** \u2014 `src/auth/jwt.py` not "the auth module"
-- **Specify constraints** \u2014 "don't change the public API"
-- **Include verification** \u2014 "run `pytest tests/auth/`"
-- **End with `overcode report`** \u2014 child must signal completion
-
-Bad: `"Fix the bug"`
-Good: `"Fix the JWT refresh bug in src/auth/jwt.py. The refresh_token() on line 45 doesn't check expiry. Add check, update tests/test_auth.py, run pytest. When done: overcode report --status success --reason 'Fixed JWT refresh and tests pass'"`
-
-## Reporting & Oversight
-
-Children must call `overcode report --status success|failure [--reason "..."]` when done. Without it, the child enters `waiting_oversight` (not `done`) and `--follow` keeps blocking.
-
-**Stuck policies** control what happens on Stop without report:
-
-| Flag | Behavior |
-|------|----------|
-| (default) | Wait indefinitely for report |
-| `--on-stuck fail` | Exit 1 immediately |
-| `--oversight-timeout 5m` | Wait up to duration, then exit 2 |
-
-## Budget Control
-
-```bash
-# Preferred: set budget at launch (auto-deducted from parent if parent has budget)
-overcode launch -n child-agent -d ~/project --bypass-permissions --budget 2.00 -p "..."
-
-# Manual budget management
-overcode budget transfer my-agent child-agent 2.00   # Transfer from your budget
-overcode budget set child-agent 3.00                  # Set directly
-```
-
-Exceeded budget = heartbeats and supervisor stop, agent winds down naturally.
-
-## Tool Restrictions
-
-Scope agent capabilities with `--allowed-tools` for safety:
-
-```bash
-# Read-only agent — cannot modify files
-overcode launch -n safe-reader --follow --allowed-tools "Read,Glob,Grep" \\
-  -p "Analyze the codebase. Do NOT modify files. When done: overcode report --status success"
-
-# Code-only agent — no shell access
-overcode launch -n coder --follow --allowed-tools "Read,Write,Edit,Glob,Grep" --skip-permissions \\
-  -p "Refactor auth module. When done: overcode report --status success"
-```
-
-Pass arbitrary Claude CLI flags with `--claude-arg` (repeatable):
-
-```bash
-overcode launch -n fast --claude-arg "--model haiku" --claude-arg "--effort low" -p "Quick review"
-```
-
-## Long-Running Shell Commands (Jobs)
-
-When a task involves a long-running shell command (10min+ \u2014 full test suites, builds, deploys, docker compose), use `overcode bash` instead of running it inline. This launches the command as a tracked job in a separate tmux session with its own window, so you can monitor it without blocking your agent session.
-
-```bash
-# Launch a test suite as a tracked job
-overcode bash "pytest tests/ -x --timeout=600" --name full-tests
-
-# Launch a build linked to the current agent
-overcode bash "npm run build" --name frontend-build --agent my-agent
-
-# Check on it later
+overcode bash "pytest tests/" -n full-tests
+overcode jobs tail full-tests -n 50      # last lines; without -n it streams to the end
 overcode jobs list
-overcode jobs tail full-tests      # Stream output (no TTY needed)
-overcode jobs tail full-tests -n 50  # Last 50 lines snapshot
-overcode jobs kill full-tests      # Kill if needed
+overcode jobs kill full-tests
 ```
 
-**When to use `overcode bash` vs running inline:**
-- Inline (`Bash` tool): Quick commands (<2 min) where you need the result to continue
-- `overcode bash`: Long commands (10min+) \u2014 test suites, builds, deploys, docker operations
-- `overcode launch`: When you need a full Claude Code agent with AI reasoning
+## If you are a child
 
-Jobs are visible in the TUI jobs view (press `J`) and auto-clean after 24h (configurable via `jobs.retention_hours` in config).
+Do the task in your prompt, then run the `overcode report` line it gave you, or
+`overcode report --status failure --reason "..."` if you couldn't. Your parent
+may be blocked waiting on you and can't answer questions, so make reasonable
+calls yourself and mention them in `--reason`.
 
-## Rules
+## More
 
-- Parent auto-detected from `OVERCODE_SESSION_NAME` \u2014 no `--parent` needed inside an overcode agent
-- Max depth: 5 levels. `overcode kill` cascades by default (`--no-cascade` to orphan)
-- Use task-oriented names: `fix-auth-bug` not `child-1`
+`overcode <command> --help` documents every command and flag.
+`overcode docs path` prints where overcode's docs are: markdown shipped with it,
+such as cli-reference.md, backends.md and skill-profiles.md.
 """,
     },
 }
@@ -278,8 +140,14 @@ def get_available_skills(project_dir: str | None = None) -> list[str]:
 
 
 def any_skills_stale() -> bool:
-    """Check if any installed skills are outdated vs bundled versions."""
+    """Check if any installed skills are outdated vs bundled versions.
+
+    A retired skill still installed (e.g. delegating-to-agents, now part of
+    the overcode skill) counts too: `overcode skills install` removes it.
+    """
     base = Path.home() / ".claude" / "skills"
+    if any((base / old / "SKILL.md").exists() for old in DEPRECATED_SKILL_NAMES):
+        return True
     for name, skill in OVERCODE_SKILLS.items():
         skill_file = base / name / "SKILL.md"
         if skill_file.exists() and skill_file.read_text() != skill["content"]:

@@ -110,7 +110,6 @@ sisters:
 # Overrides built-in defaults shown in the "Available Skills" (ASK) column
 skill_emoji:
   overcode: 🐙           # Default: 🐙 (built-in)
-  delegating-to-agents: 👥  # Default: 👥 (built-in)
   claude-api: 🔌         # Default: 🔌 (built-in)
   simplify: ✨            # Default: ✨ (built-in)
   shirka: 🔬             # Custom skill example
@@ -619,8 +618,7 @@ Overcode displays emoticons for available skills in the TUI's "Available Skills"
 
 | Skill | Default Emoji | Purpose |
 |-------|:-------------:|---------|
-| `overcode` | 🐙 | Overcode CLI commands reference |
-| `delegating-to-agents` | 👥 | Parallel agent delegation |
+| `overcode` | 🐙 | Running and managing agents through overcode |
 | `claude-api` | 🔌 | Claude API/SDK development |
 | `simplify` | ✨ | Code quality review |
 | `commit` | 📦 | Git commit creation |

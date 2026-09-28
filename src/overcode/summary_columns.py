@@ -66,7 +66,7 @@ MAX_TOOL_EMOJI = 10  # Configurable cap
 # ---------------------------------------------------------------------------
 _SKILL_EMOJI_DEFAULTS: dict[str, str] = {
     "overcode": "🐙",
-    "delegating-to-agents": "👥",
+    "delegating-to-agents": "👥",  # merged into overcode; kept for older sessions
     "claude-api": "🔌",
     "simplify": "✨",
     "commit": "📦",

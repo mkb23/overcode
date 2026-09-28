@@ -3,7 +3,7 @@ E2E Test: Child Agent Delegation via Skill Discovery
 
 Tests the full skill activation pipeline: a parent agent receives generic
 high-level instructions (with NO overcode hints), discovers the
-delegating-to-agents skill on its own, learns the overcode CLI syntax
+overcode skill on its own, learns the overcode CLI syntax
 (including overcode report), and executes the delegation correctly.
 
 Requires:
@@ -207,7 +207,7 @@ def _judge_outputs(all_outputs: dict[str, str]) -> dict:
 A parent agent was given this prompt:
 "You need to research jokes by delegating to 3 child agents. Each child should research jokes about a different theme: animals, food, and technology. Each child should think of 3 original jokes, pausing 5 seconds between each joke to simulate research time. After all children complete, summarize all the jokes you collected."
 
-The parent agent needed to autonomously discover a "delegating-to-agents" skill, learn the `overcode launch` command syntax, launch child agents, and collect their results using `overcode report`.
+The parent agent needed to autonomously discover a "overcode" skill, learn the `overcode launch` command syntax, launch child agents, and collect their results using `overcode report`.
 
 Below are the captured terminal outputs from all agents found in the test.
 
@@ -215,7 +215,7 @@ Below are the captured terminal outputs from all agents found in the test.
 
 Evaluate each criterion as true or false:
 
-1. skill_activated: Did the parent discover and use the delegating-to-agents skill? (Look for /skill or skill activation messages)
+1. skill_activated: Did the parent discover and use the overcode skill? (Look for /skill or skill activation messages)
 2. children_launched: Did the parent launch child agents using `overcode launch`? (Look for overcode launch commands)
 3. jokes_produced: Did children produce jokes about their assigned topics?
 4. report_protocol_followed: Did agents use `overcode report` to signal completion?
@@ -249,7 +249,7 @@ Respond with ONLY a JSON object (no markdown fencing):
 # ── The Test ─────────────────────────────────────────────────────────────────
 
 PARENT_PROMPT = """\
-Use the /delegating-to-agents skill to delegate joke research to 3 child agents. \
+Use the /overcode skill to delegate joke research to 3 child agents. \
 Each child should research jokes about a different theme: animals, food, and \
 technology. Each child should think of 3 original jokes, pausing 5 seconds between \
 each joke to simulate research time. After all children complete, summarize all \
@@ -477,7 +477,7 @@ class TestChildDelegation:
             f"FAIL: Jokes were not produced.\n{verdict.get('explanation')}"
         )
         assert verdict.get("skill_activated"), (
-            f"FAIL: Parent did not discover/activate the delegating-to-agents skill.\n"
+            f"FAIL: Parent did not discover/activate the overcode skill.\n"
             f"{verdict.get('explanation')}"
         )
         assert verdict.get("report_protocol_followed"), (

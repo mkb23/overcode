@@ -29,6 +29,15 @@ class TestSendTextToTmuxWindow:
         # 4 calls: copy-mode probe, load-buffer, paste-buffer, send-keys (Enter)
         assert mock_run.call_count == 4
 
+    def test_pastes_bracketed_so_a_multiline_prompt_is_submitted(self):
+        # Without -p, tmux turns each newline into a carriage return and
+        # Claude Code swallows the Enter that follows the paste.
+        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="0")
+            send_text_to_tmux_window("agents", 1, "line one\nline two")
+        pastes = [c.args[0] for c in mock_run.call_args_list if "paste-buffer" in c.args[0]]
+        assert pastes and all("-p" in args for args in pastes)
+
     def test_sends_without_enter(self):
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="0")

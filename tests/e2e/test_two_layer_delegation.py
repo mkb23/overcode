@@ -330,7 +330,7 @@ def _judge_outputs(
     prompt = f"""You are evaluating an automated test of a 2-layer AI agent delegation system called "overcode".
 
 A controller agent was given instructions to:
-1. Use the /delegating-to-agents skill
+1. Use the /overcode skill
 2. Launch 3 sub-agents (animals, food, tech) — each handles a joke theme
 3. Each sub-agent launches 2 sub-sub-agents for different languages
 4. Sub-sub-agents produce 2 jokes each in their assigned language with 3s sleep between
@@ -354,7 +354,7 @@ Expected hierarchy:
 
 Evaluate each criterion as true or false. Be generous — agents may use slightly different names or structures, but the core behaviors must be present:
 
-1. skill_activated: Did the controller discover and use the delegating-to-agents skill? (Look for /delegating-to-agents or skill activation messages)
+1. skill_activated: Did the controller discover and use the overcode skill? (Look for /overcode or skill activation messages)
 2. three_subs_launched: Did the controller launch ~3 sub-agents using `overcode launch`? (Look for overcode launch commands in controller's pane)
 3. two_layer_delegation: Did sub-agents THEMSELVES run `overcode launch` to create sub-sub-agents? (Look for overcode launch in non-controller panes — this is the KEY test: delegation went 2 levels deep, not just 1)
 4. correct_languages: Are jokes present in at least 4 of the 6 expected languages (English, Spanish, French, German, Japanese, Italian)? (Look for non-English text or language indicators in panes/reports)
@@ -396,7 +396,7 @@ Respond with ONLY a JSON object (no markdown fencing):
 # ── The Test ─────────────────────────────────────────────────────────────────
 
 CONTROLLER_PROMPT = """\
-Use the /delegating-to-agents skill to orchestrate a 2-layer joke research project.
+Use the /overcode skill to orchestrate a 2-layer joke research project.
 
 You are the CONTROLLER. You must launch exactly 3 sub-agents using `overcode launch` \
 (WITHOUT --follow, so they run in parallel):
@@ -800,7 +800,7 @@ class TestTwoLayerDelegation:
 
         # ── 6. Assert all criteria ───────────────────────────────────────
         assert verdict.get("skill_activated"), (
-            f"FAIL: Controller did not activate /delegating-to-agents skill.\n"
+            f"FAIL: Controller did not activate /overcode skill.\n"
             f"{verdict.get('explanation')}"
         )
         assert verdict.get("three_subs_launched"), (

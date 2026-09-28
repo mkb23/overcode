@@ -275,7 +275,7 @@ COMPETENCIES = (
     # Orchestration
     Competency("x_overagent", "Ask the overagent", "e: overcode's own assistant.", "orchestration",
                lambda s: s.uses("open_overagent") >= 1, try_action="open_overagent"),
-    Competency("x_children", "Have agents launch agents", "The delegating-to-agents skill, or overcode launch from an agent.",
+    Competency("x_children", "Have agents launch agents", "The overcode skill, or overcode launch from an agent.",
                "orchestration", lambda s: s.residue.child_of_agent >= 1, ("f_new",)),
     Competency("x_jobs", "Run background jobs", "overcode jobs, and J to see them.", "orchestration",
                lambda s: s.uses("toggle_tui_mode") >= 1),

@@ -508,8 +508,13 @@ def send_text_to_tmux_window(
                 f.write(batch_text)
 
             subprocess.run(tmux_cmd + ['load-buffer', temp_path], timeout=5, check=True)
+            # -p: bracketed paste (when the app asked for it), so the app
+            # knows exactly where the paste ends. Without it, tmux turns
+            # each newline into a carriage return and Claude Code guesses
+            # "fast input = paste", swallowing the Enter sent just after:
+            # a multi-line prompt sat unsubmitted (tmux 3.7c, 2026-09-28).
             subprocess.run(tmux_cmd + [
-                'paste-buffer', '-t', target
+                'paste-buffer', '-p', '-t', target
             ], timeout=5, check=True)
         except subprocess.SubprocessError as e:
             logger.warning("Failed to send text batch to tmux: %s", e)

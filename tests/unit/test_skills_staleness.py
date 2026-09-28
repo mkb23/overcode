@@ -42,22 +42,18 @@ class TestAnySkillsStale:
 
         assert any_skills_stale() is True
 
-    def test_partial_install_stale(self, tmp_path, monkeypatch):
-        """If only one skill is outdated, returns True."""
+    def test_retired_skill_still_installed_is_stale(self, tmp_path, monkeypatch):
+        """Current skills up to date, but a merged-away skill is still installed."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         base = tmp_path / ".claude" / "skills"
-        names = list(OVERCODE_SKILLS.keys())
+        for name, skill in OVERCODE_SKILLS.items():
+            (base / name).mkdir(parents=True)
+            (base / name / "SKILL.md").write_text(skill["content"])
+        assert any_skills_stale() is False
 
-        # Install first skill correctly, second with stale content
-        for i, name in enumerate(names):
-            skill_dir = base / name
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            content = OVERCODE_SKILLS[name]["content"]
-            if i > 0:
-                content += "\n# outdated"
-            (skill_dir / "SKILL.md").write_text(content)
-
+        (base / "delegating-to-agents").mkdir()
+        (base / "delegating-to-agents" / "SKILL.md").write_text("old")
         assert any_skills_stale() is True
 
 

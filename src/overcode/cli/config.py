@@ -70,7 +70,6 @@ CONFIG_TEMPLATE = """\
 # Custom emoticons for skills (overrides built-in defaults)
 # skill_emoji:
 #   overcode: 🐙           # Default: 🐙
-#   delegating-to-agents: 👥  # Default: 👥
 #   claude-api: 🔌         # Default: 🔌
 #   simplify: ✨            # Default: ✨
 #   shirka: 🔬             # Example: research project organization
