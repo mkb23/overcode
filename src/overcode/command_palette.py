@@ -322,6 +322,7 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
 
     # Settings dialogs
     _C("open_new_agent_defaults", "New agent defaults…", "Settings", "launch config"),
+    _C("open_skills", "Skill profiles…", "Settings", "skills plugins library pin folder"),
     _C("open_sister_selection", "Sister visibility…", "Settings", "remote hosts machines"),
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),

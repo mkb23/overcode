@@ -239,6 +239,7 @@ class Session:
     provider: str = "web"  # API provider: "web" (Claude.ai OAuth) or "bedrock" (AWS Bedrock)
     backend: str = "claude-code"  # Agent CLI backend (see overcode.backends)
     wrapper: Optional[str] = None  # Wrapper script path (wraps claude invocation)
+    skill_profile: Optional[str] = None  # Skill profile applied at every (re)launch (#499)
     sandbox_enabled: Optional[bool] = None  # Live /sandbox state, None = unknown
 
     # Resource usage (summed over the claude process tree).
@@ -1112,6 +1113,7 @@ class SessionManager:
                       backend: str = "claude-code",
                       session_id: Optional[str] = None,
                       wrapper: Optional[str] = None,
+                      skill_profile: Optional[str] = None,
                       launcher_version: str = "",
                       **legacy_kwargs) -> Session:
         """Create and register a new session.
@@ -1173,6 +1175,7 @@ class SessionManager:
             provider=provider,
             backend=backend,
             wrapper=wrapper,
+            skill_profile=skill_profile,
             launcher_version=launcher_version,
         )
 

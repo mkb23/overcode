@@ -16,6 +16,7 @@ from . import agent  # noqa: F401
 from . import budget  # noqa: F401
 from . import hooks  # noqa: F401
 from . import skills  # noqa: F401
+from . import skill_profiles  # noqa: F401
 from . import perms  # noqa: F401
 from . import monitoring  # noqa: F401
 from . import daemon  # noqa: F401

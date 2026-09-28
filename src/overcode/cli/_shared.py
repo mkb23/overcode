@@ -46,7 +46,7 @@ app.add_typer(hooks_app, name="hooks")
 # Skills subcommand group
 skills_app = typer.Typer(
     name="skills",
-    help="Manage Claude Code skill files.",
+    help="Skill library and profiles (#499), and overcode's own skill files.",
     no_args_is_help=True,
 )
 app.add_typer(skills_app, name="skills")

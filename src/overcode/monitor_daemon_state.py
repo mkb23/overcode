@@ -172,6 +172,7 @@ class SessionDaemonState:
     # Wrapper/sandbox badges (#437, #451)
     wrapper: Optional[str] = None          # Wrapper script path, or None
     sandbox_enabled: Optional[bool] = None  # /sandbox live state, None = unknown
+    skill_profile: Optional[str] = None    # Skill profile applied at launch (#499)
 
     # Resource usage (summed across the agent process tree)
     cpu_percent: float = 0.0

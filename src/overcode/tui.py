@@ -92,6 +92,7 @@ from .tui_widgets import (
     CommandBar,
     SummaryConfigModal,
     NewAgentDefaultsModal,
+    SkillsModal,
     TmuxConfigModal,
     PassthruConfigModal,
     NewAgentModal,
@@ -364,6 +365,7 @@ class SupervisorTUI(
         ("L", "toggle_column_headers", "Column headers"),
         # New agent defaults modal
         ("G", "open_new_agent_defaults", "Agent defaults"),
+        ("W", "open_skills", "Skill profiles"),
         # Tmux pane-toggle key modal (#442)
         ("ctrl+g", "open_tmux_config", "Tmux toggle key"),
         # Sister selection modal (#323)
@@ -630,6 +632,7 @@ class SupervisorTUI(
         yield SummaryConfigModal(id="summary-config-modal", classes="modal")
         # Modal for new-agent defaults
         yield NewAgentDefaultsModal(id="new-agent-defaults-modal", classes="modal")
+        yield SkillsModal(id="skills-modal", classes="modal")
         # Modal for tmux pane-toggle key (#442)
         yield TmuxConfigModal(id="tmux-config-modal", classes="modal")
         # Modal for passthru key configuration (#446)
@@ -3881,10 +3884,13 @@ class SupervisorTUI(
                     backend=message.backend,
                     wrapper=message.wrapper,
                     extra_cli_args=message.extra_cli_args or None,
+                    skill_profile=message.skill_profile,
                 )
                 parts = [f"Created agent: {name}"]
                 if message.wrapper:
                     parts.append(f"wrapper: {message.wrapper}")
+                if message.skill_profile and message.skill_profile != "none":
+                    parts.append(f"skills: {message.skill_profile}")
                 self.notify(" ".join(parts), severity="information")
                 self.refresh_sessions()
             except Exception as e:
@@ -4322,6 +4328,28 @@ class SupervisorTUI(
 
     def on_new_agent_defaults_modal_cancelled(self, message: NewAgentDefaultsModal.Cancelled) -> None:
         """Handle new-agent defaults modal cancellation."""
+        self._dialog_did_close()
+
+    def action_open_skills(self) -> None:
+        """Open the skill profiles dialog (#499), on the focused agent's profile."""
+        from pathlib import Path
+        from .skill_library import skill_usage
+        focused = self._get_focused_widget()
+        session = focused.session if focused else None
+        try:
+            modal = self.query_one("#skills-modal", SkillsModal)
+        except NoMatches:
+            return
+        self._dialog_will_open()
+        modal.show(
+            usage=skill_usage(self.session_manager.list_sessions()),
+            profile=getattr(session, "skill_profile", None),
+            folder=(session.start_directory if session else None) or str(Path.cwd()),
+            app_ref=self,
+        )
+
+    def on_skills_modal_closed(self, message: SkillsModal.Closed) -> None:
+        self.refresh_sessions()
         self._dialog_did_close()
 
     def action_open_tmux_config(self) -> None:

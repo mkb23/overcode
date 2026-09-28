@@ -42,6 +42,7 @@ class Capability:
     actions: tuple = ()            # usage-log action names that count
     residue: Optional[str] = None  # a Residue field whose count also counts
     tracked: bool = True           # False: nothing observable, "available to discover"
+    residue_is_uses: bool = False  # the residue count *is* the uses (agents run on a backend)
 
 
 @dataclass
@@ -66,13 +67,27 @@ class Residue:
     heartbeats: int = 0
     annotations: int = 0
     values: int = 0                # agent_value changed from the default
-    backends: int = 0              # distinct backends used
+    backends: int = 0              # distinct backends used, overagent and shell rows included
+    agent_clis: int = 0            # distinct agent CLIs (claude-code, opencode, codex, …)
+    backend_agents: dict = field(default_factory=dict)  # backend -> agents run on it
+    shells: int = 0                # plain shell rows (#496)
     overagents: int = 0
     sisters: int = 0
     column_overrides: int = 0
     summarizer_prompts: int = 0
+    # Skill profiles (#499)
+    skill_profiles: int = 0        # profiles in config
+    library_skills: int = 0        # skills in the library (installed but off)
+    library_paths: int = 0         # extra library folders, e.g. skill repos
+    folder_pins: int = 0
+    default_profile: int = 0       # new_agent_defaults.skill_profile is set
+    personal_skills: int = 0       # always-on skills Claude Code loads everywhere
+    profiled_agents: int = 0       # agents launched with a profile
+    mixed_profiles: int = 0        # profiles used on agents of two or more CLIs
 
     def get(self, name: str) -> int:
+        if name.startswith("backend:"):
+            return int(self.backend_agents.get(name.split(":", 1)[1], 0))
         return int(getattr(self, name, 0) or 0)
 
 
@@ -105,7 +120,16 @@ EXTRA_CAPABILITIES = (
     Capability("wrappers", "Launch through a wrapper", "Orchestration", residue="wrappers"),
     Capability("sisters", "Watch agents on other machines", "Orchestration", residue="sisters",
                actions=("open_sister_selection",)),
-    Capability("backends", "Mix agent CLIs (codex, opencode, …)", "Orchestration", residue="backends"),
+    Capability("backends", "Mix agent CLIs (codex, opencode, …)", "Orchestration", residue="agent_clis"),
+    *(Capability(f"backend_{b}", f"Run {label} agents", "Backends", residue=f"backend:{b}",
+                 residue_is_uses=True)
+      for b, label in (("claude-code", "Claude Code"), ("opencode", "opencode"), ("codex", "Codex"),
+                       ("grok", "Grok"), ("hermes", "Hermes"), ("shell", "plain shell"))),
+    Capability("skill_profile_launch", "Launch agents with a skill profile", "Skills",
+               residue="profiled_agents", residue_is_uses=True),
+    Capability("cli_skills", "Manage skills from the CLI (overcode skills)", "CLI",
+               actions=tuple(f"cli:skills {c}" for c in ("list", "profile", "pin", "unpin",
+                                                          "library", "adopt"))),
     Capability("cli_view", "Script the TUI (overcode view)", "CLI",
                actions=tuple(f"cli:view {v}" for v in ("columns", "sort", "detail", "filter",
                                                         "focus", "toggle", "point", "notify"))),
@@ -125,6 +149,7 @@ RESIDUE_FOR_ACTION = {
     "open_column_config": "column_overrides",
     "open_summary_prompt_lab": "summarizer_prompts",
     "open_overagent": "overagents",
+    "open_skills": "skill_profiles",
 }
 
 # Same capability, another action name that counts too.
@@ -193,6 +218,7 @@ TRACKS = (
     ("fleet", "Fleet", "Run many agents without losing any."),
     ("oversight", "Oversight", "See who needs you, fast."),
     ("orchestration", "Orchestration", "Agents that run agents, across machines."),
+    ("skills", "Skills", "The right skills on for each agent, and nothing else."),
 )
 
 APPROVE = ("send_enter_to_focused", "send_1_to_focused", "send_2_to_focused", "send_3_to_focused")
@@ -229,6 +255,8 @@ COMPETENCIES = (
                lambda s: s.uses("edit_cost_budget") >= 1, ("f_new",), try_action="edit_cost_budget"),
     Competency("f_fork", "Fork an agent", "F: a new agent with the same conversation.", "fleet",
                lambda s: s.uses("fork_focused") >= 1, ("f_new",)),
+    Competency("f_shell", "Keep a shell in the list", "-B shell: a plain terminal as a row, next to your agents.",
+               "fleet", lambda s: s.residue.shells >= 1, ("f_new",), tier="advanced"),
     # Oversight
     Competency("o_attention", "Jump to whoever needs you", "b goes straight to the next agent waiting on you.",
                "oversight", lambda s: s.uses("jump_to_attention") >= 3, ("b_navigate",), try_action="jump_to_attention"),
@@ -252,13 +280,31 @@ COMPETENCIES = (
     Competency("x_jobs", "Run background jobs", "overcode jobs, and J to see them.", "orchestration",
                lambda s: s.uses("toggle_tui_mode") >= 1),
     Competency("x_backends", "Mix agent CLIs", "codex, opencode, grok, hermes next to Claude.", "orchestration",
-               lambda s: s.residue.backends >= 2, ("f_new",)),
+               lambda s: s.residue.agent_clis >= 2, ("f_new",)),
     Competency("x_sisters", "Watch other machines", "Sister hosts show their agents in your list.", "orchestration",
                lambda s: s.residue.sisters >= 1),
     Competency("x_wrappers", "Launch through a wrapper", "Containers or custom environments per agent.",
                "orchestration", lambda s: s.residue.wrappers >= 1, ("f_new",)),
     Competency("x_scripting", "Script overcode", "overcode view and overcode activity from scripts or agents.",
                "orchestration", lambda s: s.uses("cli_view", "cli_activity") >= 1, tier="advanced"),
+    # Skills (#499)
+    Competency("s_dialog", "Open the skills dialog", "W lists every skill, the ones agents use most first.",
+               "skills", lambda s: s.uses("open_skills") >= 1, try_action="open_skills"),
+    Competency("s_library", "Stock the library", "Skills in ~/.overcode/skills or a skills repo: installed, but off.",
+               "skills", lambda s: s.residue.library_skills >= 1 or s.residue.library_paths >= 1),
+    Competency("s_profile", "Make a skill profile", "A named set of skills: n in the W dialog, or overcode skills profile set.",
+               "skills", lambda s: s.residue.skill_profiles >= 1, try_action="open_skills"),
+    Competency("s_launch", "Launch an agent with a profile", "Its skills on, your other personal skills hidden, for that agent only.",
+               "skills", lambda s: s.residue.profiled_agents >= 1, ("s_profile", "f_new"), try_action="new_agent"),
+    Competency("s_pin", "Pin a profile to a folder", "p in the W dialog: new agents there get it by default.",
+               "skills", lambda s: s.residue.folder_pins >= 1, ("s_profile",), try_action="open_skills"),
+    Competency("s_several", "A profile per kind of work", "Three or more profiles, e.g. research, frontend, ops.",
+               "skills", lambda s: s.residue.skill_profiles >= 3, ("s_profile",)),
+    Competency("s_mixed", "One profile across CLIs", "The same profile on Claude Code and opencode agents.",
+               "skills", lambda s: s.residue.mixed_profiles >= 1, ("s_launch", "x_backends")),
+    Competency("s_default", "Set a default profile", "G: new agents get it when neither parent nor folder sets one.",
+               "skills", lambda s: s.residue.default_profile >= 1, ("s_profile",), tier="advanced",
+               try_action="open_new_agent_defaults"),
     # Achievements: workflows, not clicks
     Competency("a_polyglot", "Polyglot", "Ran the same action by key, palette and click.", "",
                lambda s: any({"key", "palette", "click"} <= set(a.by_via) for a in s.summary.actions.values()),
@@ -270,6 +316,13 @@ COMPETENCIES = (
                lambda s: s.residue.live_agents >= 5, kind="achievement"),
     Competency("a_hands_off", "Hands off the wheel", "Answered twenty prompts without attaching.", "",
                lambda s: s.uses(*APPROVE) >= 20, kind="achievement"),
+    Competency("a_three_clis", "Three CLIs", "Agents on three different agent CLIs.", "",
+               lambda s: s.residue.agent_clis >= 3, kind="achievement"),
+    Competency("a_profiles", "Profile collector", "Five skill profiles.", "",
+               lambda s: s.residue.skill_profiles >= 5, kind="achievement"),
+    Competency("a_nothing_always_on", "Nothing always on", "Every skill in the library, none loaded everywhere.", "",
+               lambda s: s.residue.library_skills >= 1 and s.residue.personal_skills == 0,
+               kind="achievement"),
 )
 
 
@@ -349,7 +402,9 @@ def compute_journey(summary: Summary, residue: Residue, keys_by_action: dict,
             efficient += sum(a.by_via.get(v, 0) for v in ("key", "palette"))
             if a.last_t is not None:
                 last_t = a.last_t if last_t is None else max(last_t, a.last_t)
-        if cap.residue and residue.get(cap.residue) and uses == 0:
+        if cap.residue_is_uses:
+            uses = max(uses, residue.get(cap.residue))
+        elif cap.residue and residue.get(cap.residue) and uses == 0:
             uses = 1  # set up some other way: at least tried
         share = efficient / uses if uses else 0.0
         if cap.keys and uses:
@@ -407,15 +462,28 @@ def _safe(fn: Callable, arg) -> bool:
 
 # ── gathering (I/O) ────────────────────────────────────────────────────
 
-# Per-session counters summed into a Residue; tags and backends are sets.
+# Per-session counters summed into a Residue. Sets: tags, and "backend" plus
+# "profile\tbackend" pairs (#499), so a profile used on two CLIs shows up.
 _SESSION_COUNTERS = ("agents", "child_of_agent", "standing_orders", "budgets", "wrappers",
-                     "heartbeats", "annotations", "values", "overagents")
-_ARCHIVE_CACHE_VERSION = 1
+                     "heartbeats", "annotations", "values", "overagents", "shells",
+                     "profiled_agents")
+_ARCHIVE_CACHE_VERSION = 2
+# Rows that aren't an agent CLI: overcode's own assistant and plain shells.
+_NOT_AGENT_CLIS = frozenset({"overagent", "shell"})
 
 
-def _count_sessions(sessions, counts: dict, tags: set, backends: set) -> None:
+def _count_sessions(sessions, counts: dict, tags: set, backends: set,
+                    backend_agents: Optional[dict] = None,
+                    profile_backends: Optional[set] = None) -> None:
     for s in sessions:
         backend = getattr(s, "backend", None) or "claude-code"
+        profile = getattr(s, "skill_profile", None)
+        if backend_agents is not None:
+            backend_agents[backend] = backend_agents.get(backend, 0) + 1
+        if profile_backends is not None and isinstance(profile, str) and profile:
+            profile_backends.add(f"{profile}\t{backend}")
+        counts["shells"] += backend == "shell"
+        counts["profiled_agents"] += bool(isinstance(profile, str) and profile)
         counts["agents"] += 1
         counts["child_of_agent"] += bool(s.parent_session_id)
         counts["standing_orders"] += bool(s.standing_instructions)
@@ -429,7 +497,7 @@ def _count_sessions(sessions, counts: dict, tags: set, backends: set) -> None:
         backends.add(backend)
 
 
-def _archive_counts(sm) -> tuple[dict, set, set]:
+def _archive_counts(sm) -> tuple[dict, set, set, dict, set]:
     """Counters over every archived session, read incrementally.
 
     The archive only grows (20k sessions is the design target), so the counts
@@ -441,30 +509,35 @@ def _archive_counts(sm) -> tuple[dict, set, set]:
     counts = dict.fromkeys(_SESSION_COUNTERS, 0)
     tags: set = set()
     backends: set = set()
+    backend_agents: dict = {}
+    profile_backends: set = set()
     offset, inode = 0, None
     try:
         cached = json.loads(path.read_text())
         if cached.get("v") == _ARCHIVE_CACHE_VERSION:
             counts.update({k: int(cached["counts"][k]) for k in _SESSION_COUNTERS})
             tags, backends = set(cached["tags"]), set(cached["backends"])
+            backend_agents = {str(k): int(v) for k, v in cached["backend_agents"].items()}
+            profile_backends = set(cached["profile_backends"])
             offset, inode = int(cached["offset"]), cached["inode"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     sessions, new_offset, new_inode, reset = sm.archived_sessions_since(offset, inode)
     if reset:
         counts = dict.fromkeys(_SESSION_COUNTERS, 0)
-        tags, backends = set(), set()
-    _count_sessions(sessions, counts, tags, backends)
+        tags, backends, backend_agents, profile_backends = set(), set(), {}, set()
+    _count_sessions(sessions, counts, tags, backends, backend_agents, profile_backends)
     if new_offset != offset or new_inode != inode:
         try:
             tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
             tmp.write_text(json.dumps({
                 "v": _ARCHIVE_CACHE_VERSION, "offset": new_offset, "inode": new_inode,
-                "counts": counts, "tags": sorted(tags), "backends": sorted(backends)}))
+                "counts": counts, "tags": sorted(tags), "backends": sorted(backends),
+                "backend_agents": backend_agents, "profile_backends": sorted(profile_backends)}))
             os.replace(tmp, path)
         except OSError:
             pass
-    return counts, tags, backends
+    return counts, tags, backends, backend_agents, profile_backends
 
 
 def gather_residue() -> Residue:
@@ -474,17 +547,31 @@ def gather_residue() -> Residue:
     counts = dict.fromkeys(_SESSION_COUNTERS, 0)
     tags: set = set()
     backends: set = set()
+    backend_agents: dict = {}
+    profile_backends: set = set()
     try:
         sm = SessionManager()
         live = sm.list_sessions()
-        counts, tags, backends = _archive_counts(sm)
-        _count_sessions(live, counts, tags, backends)
+        counts, tags, backends, backend_agents, profile_backends = _archive_counts(sm)
+        _count_sessions(live, counts, tags, backends, backend_agents, profile_backends)
     except Exception:
         live = []
     for name, n in counts.items():
         setattr(r, name, n)
     r.tags = len(tags)
     r.backends = len(backends)
+    r.agent_clis = len(backends - _NOT_AGENT_CLIS)
+    r.backend_agents = backend_agents
+    clis_by_profile: dict = {}
+    for pair in profile_backends:
+        profile, _, backend = pair.partition("\t")
+        if backend not in _NOT_AGENT_CLIS:
+            clis_by_profile.setdefault(profile, set()).add(backend)
+    r.mixed_profiles = sum(1 for clis in clis_by_profile.values() if len(clis) >= 2)
+    try:
+        _skills_residue(r)
+    except Exception:
+        pass
     r.live_agents = sum(1 for s in live if s.status not in ("terminated", "done", "archived"))
     try:
         from .config import get_sisters_config
@@ -499,6 +586,18 @@ def gather_residue() -> Residue:
     except Exception:
         pass
     return r
+
+
+def _skills_residue(r: Residue) -> None:
+    """Skill profiles, library and pins from config; always-on skills from disk (#499)."""
+    from . import skill_library
+    from .config import get_new_agent_defaults
+    r.skill_profiles = len(skill_library.get_profiles())
+    r.library_paths = len(skill_library.library_paths())
+    r.folder_pins = len(skill_library.get_folder_pins())
+    r.library_skills = len(skill_library.scan_library())
+    r.personal_skills = len(skill_library.personal_skills("claude-code"))
+    r.default_profile = int(bool(get_new_agent_defaults().get("skill_profile")))
 
 
 def journey_settings() -> tuple[float, float]:

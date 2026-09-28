@@ -2,7 +2,7 @@
 New-agent defaults configuration modal for TUI.
 
 Keyboard-navigable checkbox list to toggle bypass_permissions and
-agent_teams, plus a cycling Backend row. Persists to ~/.overcode/config.yaml
+agent_teams, plus cycling Backend and Skill profile rows. Persists to ~/.overcode/config.yaml
 via config helpers.
 """
 
@@ -51,13 +51,19 @@ class NewAgentDefaultsModal(ModalBase):
         self.defaults: dict = {"bypass_permissions": False, "agent_teams": False}
         self.backend_options: list[str] = [UNSET_BACKEND]
         self.backend_value: str = UNSET_BACKEND
+        self.profile_options: list[str] = ["none"]
+        self.profile_value: str = "none"
 
-    # The Backend row is a synthetic entry appended after the checkboxes.
+    # The Backend and Skill profile rows are synthetic entries appended after
+    # the checkboxes.
     def _backend_row(self) -> int:
         return len(_OPTIONS)
 
-    def _row_count(self) -> int:
+    def _profile_row(self) -> int:
         return len(_OPTIONS) + 1
+
+    def _row_count(self) -> int:
+        return len(_OPTIONS) + 2
 
     TITLE = "New agent defaults"
     WIDTH = 92
@@ -67,6 +73,7 @@ class NewAgentDefaultsModal(ModalBase):
         "New agents skip permission prompts",
         "New agents can run agent teams",
         "Agent CLI new agents launch with; (unset) uses the built-in default",
+        "Skill profile for new agents when neither parent nor folder sets one",
     ]
 
     def hints(self) -> str:
@@ -78,6 +85,7 @@ class NewAgentDefaultsModal(ModalBase):
         rows = [(label, ("off", "on"), "on" if self.defaults.get(key, False) else "off")
                 for label, key in _OPTIONS]
         rows.append(("Backend", tuple(self.backend_options), self.backend_value))
+        rows.append(("Skill profile", tuple(self.profile_options), self.profile_value))
         for i, (label, opts, current) in enumerate(rows):
             sel = i == self.selected_index
             line = ds.item(sel)
@@ -96,6 +104,10 @@ class NewAgentDefaultsModal(ModalBase):
         if key in ("space", "enter"):
             if self.selected_index == self._backend_row():
                 self._cycle_backend()
+            elif self.selected_index == self._profile_row():
+                opts = self.profile_options
+                i = opts.index(self.profile_value) if self.profile_value in opts else -1
+                self.profile_value = opts[(i + 1) % len(opts)]
             else:
                 _, dict_key = _OPTIONS[self.selected_index]
                 self.defaults[dict_key] = not self.defaults.get(dict_key, False)
@@ -122,6 +134,7 @@ class NewAgentDefaultsModal(ModalBase):
         # config key, so it isn't persisted.
         result.pop("backend_explicit", None)
         result["backend"] = None if self.backend_value == UNSET_BACKEND else self.backend_value
+        result["skill_profile"] = None if self.profile_value == "none" else self.profile_value
         self.post_message(self.DefaultsChanged(result))
         self._hide()
 
@@ -138,6 +151,11 @@ class NewAgentDefaultsModal(ModalBase):
             self.backend_value = defaults["backend"]
         else:
             self.backend_value = UNSET_BACKEND
+
+        from ..skill_library import get_profiles
+        self.profile_options = ["none"] + list(get_profiles())
+        current = defaults.get("skill_profile")
+        self.profile_value = current if current in self.profile_options else "none"
 
         self._save_focus(app_ref)
         self._show()

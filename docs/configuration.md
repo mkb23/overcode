@@ -163,7 +163,10 @@ new_agent_defaults:
   provider: web               # "web" (Claude.ai OAuth) or "bedrock" (AWS)
   wrapper: ""                 # Wrapper script name or path (e.g., "devcontainer")
   backend: claude-code        # claude-code | opencode | opencode2 | codex | grok — see docs/backends.md
+  skill_profile: research     # Skill profile when neither parent nor folder sets one — see docs/skill-profiles.md
 ```
+
+Skill profiles, the skill library and folder pins live under a `skills:` key; see [Skill Profiles](skill-profiles.md).
 
 These apply to agents created via both the CLI (`overcode launch`) and the TUI (`n` key). CLI flags override config defaults, and for child agents the parent's settings take precedence over config defaults (#433): explicit flag > parent setting > config default > built-in default. Use `--no-inherit` to skip the parent.
 

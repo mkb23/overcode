@@ -106,6 +106,7 @@ class ClaudeCodeBackend:
         | BackendCapability.PERMISSION_INJECTION
         | BackendCapability.AGENT_INJECTION
         | BackendCapability.SKILLS
+        | BackendCapability.SKILL_PROFILES
         | BackendCapability.SANDBOX_PROBE
         | BackendCapability.SUBSCRIPTION_USAGE
         | BackendCapability.AGENT_TEAMS
@@ -162,7 +163,13 @@ class ClaudeCodeBackend:
         settings = _build_launch_settings(
             overcode_bin, include_punchy_perms=spec.include_punchy_perms
         )
+        # Skill profile (#499): personal skills outside the profile are hidden
+        # for this session only; the profile's own skills load as a plugin.
+        if spec.hidden_skills:
+            settings["skillOverrides"] = {name: "off" for name in spec.hidden_skills}
         cmd.extend(["--settings", json.dumps(settings)])
+        if spec.skill_dir:
+            cmd.extend(["--plugin-dir", spec.skill_dir])
 
         # Permission flags — from explicit args or inherited mode
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":

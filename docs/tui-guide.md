@@ -97,6 +97,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `K` | Toggle detection mode (hooks/polling) |
 | `Ctrl+T` | Toggle time context |
 | `G` | New agent defaults |
+| `W` | Skill profiles: build named sets of skills, pin them to folders ([guide](skill-profiles.md)) |
 | `U` | Sister visibility |
 
 ### Daemon Control

@@ -477,6 +477,7 @@ def get_new_agent_defaults() -> dict:
         "wrapper": defaults.get("wrapper", ""),
         "backend": defaults.get("backend") or DEFAULT_BACKEND,
         "backend_explicit": bool(defaults.get("backend")),
+        "skill_profile": defaults.get("skill_profile") or None,
     }
 
 

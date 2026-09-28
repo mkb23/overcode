@@ -30,6 +30,7 @@ overcode launch --name <name> [options]
 | `--budget` | `-b` | Cost budget in USD (deducted from parent if parent has budget) |
 | `--wrapper` | `-w` | Wrapper script: path or name from `~/.overcode/wrappers/` (e.g., `devcontainer`) |
 | `--no-inherit` | | Don't inherit settings from the parent agent (see below) |
+| `--skills` | | Skill profile to switch on; `none` for none. Default: the parent's, then the folder's pinned profile. See [Skill Profiles](skill-profiles.md) |
 | `--session` | | Tmux session name (default: `agents`) |
 
 **Parent settings inheritance (#433):** when launched from within an agent (or with `--parent`), the child inherits the parent's `provider`, `model`, `wrapper`, agent-teams setting, and permission mode for any of those not given explicitly. Resolution order is: explicit flag > parent setting > `new_agent_defaults` in `~/.overcode/config.yaml` > built-in default. So a parent pinned to Bedrock spawns Bedrock children unless told otherwise. Use `--no-inherit` to skip the parent and resolve from config defaults only.
@@ -441,6 +442,28 @@ overcode supervisor-daemon watch [--session <session>]
 ```
 
 ---
+
+## Skill Profile Commands
+
+See [Skill Profiles](skill-profiles.md) for the whole picture.
+
+| Command | What it does |
+|---------|--------------|
+| `overcode skills list` | The library, each CLI's always-on skills, profiles and pinned folders |
+| `overcode skills profile set <name> <skill>...` | Create a profile or replace its skills |
+| `overcode skills profile add\|remove <name> <skill>...` | Change a profile's skills |
+| `overcode skills profile show <name>` | What a profile adds and hides for each CLI |
+| `overcode skills profile list` / `delete <name>` | List or delete profiles |
+| `overcode skills pin <profile> [dir]` / `unpin [dir]` | New agents in a folder (and below) get this profile |
+| `overcode skills library add\|remove <path>` | Read library skills from another folder too |
+| `overcode skills adopt <skill>...` | Move always-on personal skills into the library |
+
+```bash
+overcode skills library add ~/Code/team-skills
+overcode skills profile set research shirka dataviz
+overcode skills pin research ~/Code/papers
+overcode launch -n reader -d ~/Code/papers        # gets 'research'
+```
 
 ## Wrapper Commands
 

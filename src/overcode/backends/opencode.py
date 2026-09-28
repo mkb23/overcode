@@ -25,7 +25,7 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from ..status_patterns import StatusPatterns
@@ -426,6 +426,7 @@ class OpencodeBackend:
         | BackendCapability.HOOK_EVENTS
         | BackendCapability.TRANSCRIPT_STATS
         | BackendCapability.AGENT_INJECTION
+        | BackendCapability.SKILL_PROFILES
     )
 
     def executable(self) -> str:
@@ -533,10 +534,26 @@ class OpencodeBackend:
         if state_dir:
             env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)
 
+        permission: Dict[str, Any] = {}
         if spec.dangerously_skip_permissions or spec.permissiveness_mode == "bypass":
-            env["OPENCODE_PERMISSION"] = shlex.quote(
-                json.dumps(OPENCODE_ALLOW_EVERYTHING_PERMISSION)
-            )
+            permission = dict(OPENCODE_ALLOW_EVERYTHING_PERMISSION)
+
+        # Skill profile (#499). OPENCODE_CONFIG_DIR adds the profile's skills
+        # on top of ~/.config/opencode (it is an extra config dir, not a
+        # replacement). Hidden personal skills get "deny" rules, which take
+        # them out of the list the model sees; opencode's built-in skill and
+        # the project's own skills are untouched. Both verified on 1.18.29.
+        if spec.skill_dir:
+            env["OPENCODE_CONFIG_DIR"] = shlex.quote(spec.skill_dir)
+        if spec.hidden_skills:
+            rules: Dict[str, str] = {}
+            if permission.get("skill") == "allow":
+                rules["*"] = "allow"
+            rules.update({name: "deny" for name in spec.hidden_skills})
+            permission["skill"] = rules
+
+        if permission:
+            env["OPENCODE_PERMISSION"] = shlex.quote(json.dumps(permission))
 
         return env
 

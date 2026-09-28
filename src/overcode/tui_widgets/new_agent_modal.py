@@ -7,7 +7,8 @@ to launch — locally or on a remote sister.
 
 Field types:
   text   — inline editable (directory, name, wrapper, backend_args)
-  toggle — space/enter cycles through options (host, perms, teams, provider)
+  toggle — space/enter cycles through options (host, perms, teams, provider,
+           backend, skill profile)
   select — space/enter cycles through a dynamic list (agent persona)
 """
 
@@ -88,6 +89,7 @@ class NewAgentModal(ModalBase):
             backend: str,
             wrapper: Optional[str],
             extra_cli_args: List[str],
+            skill_profile: Optional[str] = None,
         ) -> None:
             super().__init__()
             self.host = host
@@ -101,6 +103,7 @@ class NewAgentModal(ModalBase):
             self.backend = backend
             self.wrapper = wrapper
             self.extra_cli_args = extra_cli_args
+            self.skill_profile = skill_profile
 
     class Cancelled(Message):
         pass
@@ -115,6 +118,7 @@ class NewAgentModal(ModalBase):
         self._edit_snapshot: str = ""     # value before edit started
         self._existing_names: set[str] = set()
         self._local_hostname: str = ""
+        self._default_profile: Optional[str] = None
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -178,9 +182,13 @@ class NewAgentModal(ModalBase):
             FormField("teams",     "Teams",     "toggle", value="on" if defaults.get("agent_teams") else "off", options=["off", "on"]),
             FormField("provider",  "Provider",  "toggle", value=defaults.get("provider", "web"), options=["web", "bedrock"]),
             FormField("backend",   "Backend",   "toggle", value=backend_default, options=backend_options),
+            FormField("skills",    "Skills",    "toggle", value="none", options=["none"], auto=True),
             FormField("wrapper",   "Wrapper",   "text",   value=wrapper_default),
             FormField("backend_args", "CLI args", "text", value=""),
         ]
+
+        self._default_profile = defaults.get("skill_profile")
+        self._rederive_skills()
 
         self._editing = False
         self._cursor = 0
@@ -234,9 +242,24 @@ class NewAgentModal(ModalBase):
         self.update_frame()
         self.refresh()
 
+    def _rederive_skills(self) -> None:
+        """Skill profile options, and the folder's profile until one is picked (#499)."""
+        from .. import skill_library
+        f = self._field("skills")
+        profiles = list(skill_library.get_profiles())
+        f.options = ["none"] + profiles
+        if f.auto:
+            resolved = skill_library.resolve_profile_name(
+                None, None, str(Path(self._field("directory").value).expanduser()),
+                self._default_profile,
+            )
+            f.value = resolved if resolved in profiles else "none"
+
     def _cycle(self, f: FormField) -> None:
         if not f.options:
             return
+        if f.key == "skills":
+            f.auto = False
         try:
             idx = f.options.index(f.value)
         except ValueError:
@@ -311,6 +334,7 @@ class NewAgentModal(ModalBase):
             backend=d["backend"],
             wrapper=wrapper,
             extra_cli_args=extra_cli_args,
+            skill_profile=d.get("skills"),
         ))
         self._hide()
 
@@ -337,6 +361,7 @@ class NewAgentModal(ModalBase):
         "teams": "Let the agent run agent teams",
         "provider": "API provider for Claude Code: Anthropic (web) or Bedrock",
         "backend": "Agent CLI to launch",
+        "skills": "Skill profile: its skills on, your other personal skills hidden (Claude, opencode)",
         "wrapper": "Launch wrapper script, e.g. devcontainer; empty for none",
         "backend_args": "Extra arguments for the agent CLI, shell-quoted",
     }
@@ -409,6 +434,7 @@ class NewAgentModal(ModalBase):
         if key == "enter" or key == "tab":
             if f.key == "directory":
                 self._rederive_name()
+                self._rederive_skills()
             self._confirm_edit(advance=True)
             event.stop()
         elif key == "escape":

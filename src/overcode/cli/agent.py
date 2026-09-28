@@ -200,6 +200,14 @@ def launch(
             help="Launch top-level, not as the caller's child (from inside an agent, overagent only)",
         ),
     ] = False,
+    skills: Annotated[
+        Optional[str],
+        typer.Option(
+            "--skills",
+            help="Skill profile to switch on (see `overcode skills profile list`); "
+                 "'none' for none. Default: parent's, then the folder's pinned profile",
+        ),
+    ] = None,
     follow: Annotated[
         bool,
         typer.Option("--follow", "-f", help="Stream child output and block until done (#244)"),
@@ -369,12 +377,15 @@ def launch(
         wrapper=wrapper,
         inherit_parent_settings=not no_inherit,
         no_parent=no_parent,
+        skill_profile=skills,
     )
 
     if result:
         rprint(f"\n[green]✓[/green] Agent '[bold]{name}[/bold]' launched")
         if result.parent_session_id:
             rprint(f"  Parent: {parent or os.environ.get('OVERCODE_SESSION_NAME', '?')}")
+        if result.skill_profile:
+            rprint(f"  Skills: {result.skill_profile}")
         if prompt:
             rprint("  Initial prompt sent")
         if allowed_tools:

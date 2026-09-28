@@ -11,6 +11,7 @@ Welcome to the overcode documentation. Overcode is a TUI supervisor for managing
 | [CLI Reference](cli-reference.md) | Complete reference for all commands and options |
 | [Configuration](configuration.md) | Config file, environment variables, and presets |
 | [Advanced Features](advanced-features.md) | Sleep mode, remote monitoring, and more |
+| [Skill Profiles](skill-profiles.md) | Named sets of skills switched on per agent, instead of always on |
 | [Agent Backends](backends.md) | Running opencode/Codex/Grok agents; support matrix and flag mapping |
 | [Claude Session Files](claude-session-files.md) | How token counting and cost estimation works internally |
 

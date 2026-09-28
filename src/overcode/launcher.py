@@ -173,6 +173,7 @@ class AgentLauncher:
         provider: str = "web",
         wrapper: Optional[str] = None,
         backend: str = DEFAULT_BACKEND,
+        skill_profile: Optional[str] = None,
     ) -> dict:
         """Build the kwargs dict for SessionManager.create_session.
 
@@ -196,6 +197,7 @@ class AgentLauncher:
             session_id=session_id,
             wrapper=wrapper,
             backend=backend,
+            skill_profile=skill_profile,
             launcher_version=get_full_version(),
         )
 
@@ -260,6 +262,7 @@ class AgentLauncher:
         inherit_parent_settings: bool = True,
         backend: Optional[str] = None,
         no_parent: bool = False,
+        skill_profile: Optional[str] = None,
     ) -> Optional[Session]:
         """
         Launch an interactive Claude Code session in a tmux window.
@@ -284,6 +287,9 @@ class AgentLauncher:
                 the parent agent (#433).
             backend: Agent CLI backend name. None resolves via parent
                 inheritance, then the built-in default.
+            skill_profile: Skill profile name (#499), or "none" for no
+                profile. None resolves via the parent, the folder's pinned
+                profile, then new_agent_defaults.
             no_parent: Launch top-level instead of as a child of the calling
                 agent. Only the overagent may do this: it launches agents the
                 person will drive themselves.
@@ -377,6 +383,19 @@ class AgentLauncher:
         if backend is None:
             backend = agent_defaults.get("backend") or DEFAULT_BACKEND
 
+        # Skill profile (#499): explicit > parent > pinned folder > default.
+        from . import skill_library
+        skill_profile = skill_library.resolve_profile_name(
+            skill_profile,
+            parent_session.skill_profile if parent_session and inherit_parent_settings else None,
+            start_directory or os.getcwd(),
+            agent_defaults.get("skill_profile"),
+        )
+        if skill_profile and skill_profile not in skill_library.get_profiles():
+            print(f"Cannot launch: skill profile '{skill_profile}' not found "
+                  f"(see `overcode skills profile list`)")
+            return None
+
         # Backend resolution is complete (explicit > parent > config >
         # built-in), so the CLI dependency check can finally target the
         # right binary rather than always probing `claude`.
@@ -461,6 +480,7 @@ class AgentLauncher:
             extra_cli_args=extra_cli_args, agent_teams=agent_teams,
             agent_persona=agent_persona, model=model, provider=provider,
             wrapper=resolved_wrapper, backend=agent_backend.name,
+            skill_profile=skill_profile,
         )
 
         session = self.sessions.create_session(**metadata)
@@ -687,6 +707,7 @@ class AgentLauncher:
             agent_teams=source_session.agent_teams, agent_persona=source_session.agent_persona,
             model=source_session.model, provider=source_session.provider,
             wrapper=source_session.wrapper, backend=agent_backend.name,
+            skill_profile=getattr(source_session, "skill_profile", None),
         )
 
         session = self.sessions.create_session(**metadata)
@@ -826,6 +847,7 @@ class AgentLauncher:
             wrapper=session.wrapper,
             mock_scenario=os.environ.get("MOCK_SCENARIO"),
         )
+        self._apply_skill_profile(backend, session, spec)
 
         # Stage anything the CLI needs on disk before it starts — for opencode,
         # the telemetry plugin in the project's .opencode/plugins/. Failure here
@@ -854,6 +876,33 @@ class AgentLauncher:
             self.sessions.set_active_agent_session_id(session.id, new_claude_sid)
 
         return True
+
+    def _apply_skill_profile(self, backend: AgentBackend, session: Session,
+                             spec: LaunchSpec) -> None:
+        """Fill the spec's skill folder and hidden skills from the profile (#499).
+
+        Runs on every launch/restart/revive, so profile edits take effect
+        the next time the agent starts. A profile deleted since launch, or
+        one that can't be built, costs the profile, never the launch.
+        """
+        profile = getattr(session, "skill_profile", None)
+        if not profile or not supports(backend, BackendCapability.SKILL_PROFILES):
+            return
+        from . import skill_library
+        try:
+            prepared = skill_library.prepare_profile(profile, backend.name)
+        except OSError as e:
+            print(f"Warning: skill profile '{profile}' not applied: {e}", file=sys.stderr)
+            return
+        if prepared is None:
+            print(f"Warning: skill profile '{profile}' not found; launching without it",
+                  file=sys.stderr)
+            return
+        if prepared.missing:
+            print(f"Warning: skill profile '{profile}': not in the library: "
+                  f"{', '.join(prepared.missing)}", file=sys.stderr)
+        spec.skill_dir = prepared.skill_dir
+        spec.hidden_skills = list(prepared.hidden)
 
     def restart(
         self,

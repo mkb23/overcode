@@ -82,7 +82,10 @@ class TestCatalog:
         assert set(J.EXTRA_ACTIONS) <= actions
         fields = set(Residue.__dataclass_fields__)
         assert set(J.RESIDUE_FOR_ACTION.values()) <= fields
-        assert {c.residue for c in J.EXTRA_CAPABILITIES if c.residue} <= fields
+        residues = {c.residue for c in J.EXTRA_CAPABILITIES if c.residue}
+        assert {r for r in residues if not r.startswith("backend:")} <= fields
+        from overcode.backends import list_backends
+        assert {r.split(":", 1)[1] for r in residues if r.startswith("backend:")} <= set(list_backends())
 
     def test_competencies_name_real_things(self):
         """Every id a criterion counts is a capability or a TUI action; every try_action runs."""
@@ -229,7 +232,7 @@ class TestArchiveResidue:
         sm = self._sm(tmp_path, monkeypatch)
         self._archive(sm, "a", parent_session_id="p", tags=["x"])
         self._archive(sm, "b", standing_instructions="be brief")
-        counts, tags, backends = J._archive_counts(sm)
+        counts, tags, backends, _, _ = J._archive_counts(sm)
         assert counts["agents"] == 2 and counts["child_of_agent"] == 1
         assert counts["standing_orders"] == 1 and tags == {"x"} and backends == {"claude-code"}
 
@@ -243,7 +246,7 @@ class TestArchiveResidue:
 
         monkeypatch.setattr(type(sm), "archived_sessions_since", spy)
         self._archive(sm, "c", tags=["y"])
-        counts, tags, _ = J._archive_counts(sm)
+        counts, tags, *_ = J._archive_counts(sm)
         assert counts["agents"] == 3 and tags == {"x", "y"}
         assert J._archive_counts(sm)[0]["agents"] == 3
         assert seen == [1, 0]  # only the appended session, then nothing
@@ -264,3 +267,69 @@ class TestArchiveResidue:
         self._archive(sm, "a")
         (sm.state_dir / "archive_residue.json").write_text('{"v": 1, "counts": []}')
         assert J._archive_counts(sm)[0]["agents"] == 1
+
+
+class TestBackendsAndSkills:
+    """Backends counted per CLI; skill profiles as their own track (#499)."""
+
+    def test_overagent_and_shell_rows_are_not_a_second_agent_cli(self):
+        j = _journey(residue=Residue(agents=3, backends=3, agent_clis=1))
+        assert "x_backends" not in j.earned_ids
+        j = _journey(residue=Residue(agents=3, agent_clis=2))
+        assert "x_backends" in j.earned_ids
+
+    def test_agents_per_backend_are_the_uses(self):
+        j = _journey(residue=Residue(backend_agents={"codex": 9, "opencode": 1}))
+        assert j.mastery["backend_codex"].level == "fluent"
+        assert j.mastery["backend_opencode"].level == "tried"
+        assert j.mastery["backend_grok"].level == "unaware"
+
+    def test_skills_track(self):
+        j = _journey(residue=Residue(agents=2, skill_profiles=3, profiled_agents=2, folder_pins=1,
+                                     library_skills=4, agent_clis=2, mixed_profiles=1))
+        assert {"s_library", "s_profile", "s_launch", "s_pin", "s_several", "s_mixed"} <= j.earned_ids
+        skills = next(t for t in j.tracks if t.id == "skills")
+        assert skills.level == skills.core_total
+        assert j.mastery["skill_profile_launch"].uses == 2
+
+    def test_skills_track_starts_at_the_dialog(self):
+        j = _journey(("open_skills", "key", 1))
+        assert "s_dialog" in j.earned_ids
+        skills = next(t for t in j.tracks if t.id == "skills")
+        assert any(c.id == "s_launch" for c in skills.locked)  # needs a profile first
+
+    def test_skill_achievements(self):
+        earned = _journey(residue=Residue(skill_profiles=5, agent_clis=3, library_skills=2,
+                                          personal_skills=0)).earned_ids
+        assert {"a_profiles", "a_three_clis", "a_nothing_always_on"} <= earned
+        assert "a_nothing_always_on" not in _journey(
+            residue=Residue(library_skills=2, personal_skills=1)).earned_ids
+
+    def test_counting_sessions_by_backend_and_profile(self):
+        class S:
+            def __init__(self, backend, profile=None):
+                self.backend, self.skill_profile = backend, profile
+                self.parent_session_id = self.standing_instructions = self.cost_budget_usd = None
+                self.wrapper = self.human_annotation = None
+                self.heartbeat_enabled, self.agent_value, self.tags = False, 1000, []
+        counts = dict.fromkeys(J._SESSION_COUNTERS, 0)
+        tags, backends, per_backend, pairs = set(), set(), {}, set()
+        J._count_sessions([S("claude-code", "research"), S("opencode", "research"),
+                           S("overagent"), S("shell"), S("codex")],
+                          counts, tags, backends, per_backend, pairs)
+        assert per_backend == {"claude-code": 1, "opencode": 1, "overagent": 1, "shell": 1, "codex": 1}
+        assert counts["shells"] == 1 and counts["profiled_agents"] == 2
+        assert pairs == {"research\tclaude-code", "research\topencode"}
+
+    def test_gathered_residue_reads_skills_config(self, tmp_path, monkeypatch):
+        from overcode import skill_library as sl
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
+        (tmp_path / ".overcode" / "skills" / "x").mkdir(parents=True)
+        (tmp_path / ".overcode" / "skills" / "x" / "SKILL.md").write_text("---\nname: x\n---\n")
+        sl.save_profile("a", ["x"])
+        sl.save_profile("b", [])
+        sl.pin_folder(str(tmp_path), "a")
+        r = Residue()
+        J._skills_residue(r)
+        assert (r.skill_profiles, r.folder_pins, r.library_skills, r.personal_skills) == (2, 1, 1, 0)

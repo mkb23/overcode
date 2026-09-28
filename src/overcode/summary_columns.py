@@ -964,6 +964,23 @@ def render_skills_plain(ctx: ColumnContext) -> Optional[str]:
     return f"{''.join(emojis)}  ({', '.join(skills)})"
 
 
+def _skill_profile(ctx: ColumnContext) -> Optional[str]:
+    profile = getattr(ctx.session, "skill_profile", None)
+    return profile if isinstance(profile, str) and profile else None
+
+
+def render_skill_profile(ctx: ColumnContext) -> ColumnOutput:
+    """The skill profile the agent launched with (#499); None when it has none."""
+    profile = _skill_profile(ctx)
+    if not profile:
+        return None
+    return [(f" {profile}", ctx.mono(f"cyan{ctx.bg}", ""))]
+
+
+def render_skill_profile_plain(ctx: ColumnContext) -> Optional[str]:
+    return _skill_profile(ctx)
+
+
 def render_available_skills(ctx: ColumnContext) -> ColumnOutput:
     skills = ctx.session.available_skills
     if not skills:
@@ -1503,6 +1520,9 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   label="Wrapper", render_plain=render_wrapper_plain, header="WRP", name="Wrapper"),
     SummaryColumn(id="allowed_tools", group="supervision", detail_levels=ALL, render=render_allowed_tools,
                   label="Tools", render_plain=render_tools_plain, header="TLS", name="Allowed Tools"),
+    SummaryColumn(id="skill_profile", group="supervision", detail_levels=ALL, render=render_skill_profile,
+                  label="Skill Profile", render_plain=render_skill_profile_plain, header="PRF",
+                  name="Skill Profile"),
     SummaryColumn(id="loaded_skills", group="supervision", detail_levels=ALL, render=render_loaded_skills,
                   label="Loaded Skills", render_plain=render_skills_plain, header="SKL", name="Loaded Skills"),
     SummaryColumn(id="available_skills", group="supervision", detail_levels=ALL, render=render_available_skills,
@@ -1573,6 +1593,7 @@ COLUMN_HELP: dict[str, str] = {
     "agent_teams": "Agent teams enabled",
     "wrapper": "Launch wrapper (e.g. devcontainer) and sandbox badge",
     "allowed_tools": "Tools the agent was launched with permission to use",
+    "skill_profile": "Skill profile the agent launched with (W to edit profiles)",
     "loaded_skills": "Skills the agent has loaded this session",
     "available_skills": "Skills installed and available to the agent",
     "enhanced_context": "Enhanced context hook on (^T to toggle)",
@@ -1697,6 +1718,7 @@ COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
     "permission_mode": (lambda ctx: ctx.session.permissiveness_mode, False),
     "agent_teams": (lambda ctx: int(bool(ctx.session.agent_teams)), True),
     "wrapper": (lambda ctx: render_wrapper_plain(ctx), False),
+    "skill_profile": (lambda ctx: _skill_profile(ctx) or "", False),
     "loaded_skills": (lambda ctx: len(ctx.session.loaded_skills or []), True),
     "available_skills": (lambda ctx: len(ctx.session.available_skills or []), True),
     "enhanced_context": (lambda ctx: int(bool(ctx.session.enhanced_context_enabled)), True),

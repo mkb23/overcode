@@ -620,6 +620,7 @@ class MonitorDaemon:
             # Wrapper/sandbox badges (#437, #451)
             wrapper=session.wrapper,
             sandbox_enabled=session.sandbox_enabled,
+            skill_profile=getattr(session, 'skill_profile', None),
             # Resource usage (summed over the agent process tree)
             cpu_percent=session.cpu_percent,
             rss_bytes=session.rss_bytes,

@@ -75,6 +75,7 @@ class HelpOverlay(Static):
         row("G", "New agent defaults", "U", "Sister visibility")
         row("^G", "Tmux toggle-key config", "^K", "Passthru key config")
         row("^O", "Send Ctrl+O (passthru)", "^R", "Cycle focal repo")
+        row("W", "Skill profiles")
         t.append("\n")
 
         section("DAEMON & SERVICES")

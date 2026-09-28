@@ -27,7 +27,9 @@ _ALLOWED_COMMANDS = (
     "overcode list", "overcode show", "overcode view", "overcode activity",
     "overcode journey", "overcode docs", "overcode config show", "overcode config path",
     "overcode usage", "overcode history", "overcode tags", "overcode models",
-    "overcode doctor", "overcode skills status", "overcode wrappers list", "overcode --help",
+    "overcode doctor", "overcode skills status", "overcode skills list",
+    "overcode skills profile list", "overcode skills profile show",
+    "overcode wrappers list", "overcode --help",
 )
 ALLOW = tuple(
     [f"Bash({c})" for c in _ALLOWED_COMMANDS]
@@ -176,6 +178,12 @@ Use the overcode CLI (`overcode <command> --help` has the details):
 `overcode list`, `show <name>`, `restart`, `kill`, `send`, `launch`,
 `budget`, `tag`. These ask permission — say what you are about to do and why. For
 bulk actions ("restart every dead agent") list what you will touch first.
+
+Skill profiles (docs: skill-profiles.md) are named sets of skills switched on
+per agent: `overcode skills list` shows the library, always-on skills and
+profiles; `overcode skills profile set|add|remove`, `pin` and `adopt` change
+them (these ask permission). Suggest a profile from the skills agents in a
+folder actually used (the loaded_skills column) rather than inventing one.
 
 "Open a terminal" or "a shell" means a plain shell agent:
 `overcode launch -n <name> -B shell -d <dir>` (`-p` is typed as a command).

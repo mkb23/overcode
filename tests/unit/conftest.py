@@ -55,6 +55,22 @@ def no_real_daemons(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_skill_profiles(monkeypatch):
+    """Unit tests never read or write the real skills config (#499).
+
+    Launching resolves a skill profile from config.yaml (folder pins, the
+    default profile), so a developer's own pins would leak into launcher
+    tests. Tests of the config itself use the ``skills_config`` fixture in
+    test_skill_library.py, which patches over this.
+    """
+    import overcode.skill_library
+    store: dict = {}
+    monkeypatch.setattr(overcode.skill_library, "_skills_config", lambda: dict(store))
+    monkeypatch.setattr(overcode.skill_library, "_save_skills_config",
+                        lambda section: (store.clear(), store.update(section)))
+
+
+@pytest.fixture(autouse=True)
 def activity_log_in_tmp(monkeypatch, tmp_path_factory):
     """Unit tests never write the real usage log (#483).
 

@@ -40,6 +40,7 @@ class BackendCapability(Flag):
     SANDBOX_PROBE = auto()
     SUBSCRIPTION_USAGE = auto()
     AGENT_TEAMS = auto()
+    SKILL_PROFILES = auto()           # per-launch skill profile: add a skill folder, hide personal skills (#499)
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,11 @@ class LaunchSpec:
     start_directory: Optional[str] = None
     wrapper: Optional[str] = None
     mock_scenario: Optional[str] = None
+
+    # Skill profile (#499), resolved by the launcher: a folder of linked
+    # skills to add for this session, and personal skills to hide.
+    skill_dir: Optional[str] = None
+    hidden_skills: List[str] = field(default_factory=list)
 
 
 class AgentBackend(Protocol):

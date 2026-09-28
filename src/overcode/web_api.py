@@ -288,6 +288,7 @@ def _build_status_info(s: SessionDaemonState) -> Dict[str, Any]:
         # Wrapper/sandbox badges (#437, #451)
         "wrapper": getattr(s, "wrapper", None),
         "sandbox_enabled": getattr(s, "sandbox_enabled", None),
+        "skill_profile": getattr(s, "skill_profile", None),
         # Resource usage
         "cpu_percent": getattr(s, "cpu_percent", 0.0),
         "rss_bytes": getattr(s, "rss_bytes", 0),
