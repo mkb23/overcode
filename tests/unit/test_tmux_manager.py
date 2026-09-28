@@ -410,6 +410,7 @@ class TestTmuxManagerLibtmuxWindows:
         manager, mock_session = self._make_manager_with_session()
         mock_window = MagicMock()
         mock_window.window_name = "my-window"
+        mock_window.active_pane.capture_pane.return_value = ["% "]
         mock_session.new_window.return_value = mock_window
 
         result = manager.create_window("my-window")
@@ -419,11 +420,24 @@ class TestTmuxManagerLibtmuxWindows:
             window_name="my-window", attach=False
         )
 
+    def test_create_window_waits_for_prompt(self):
+        """Nothing is typed into the window until its shell has drawn a prompt."""
+        manager, mock_session = self._make_manager_with_session()
+        mock_window = MagicMock()
+        mock_window.window_name = "my-window"
+        mock_window.active_pane.capture_pane.side_effect = [[""], ["", ""], ["% "]]
+        mock_session.new_window.return_value = mock_window
+
+        with patch("overcode.tmux_manager.time.sleep"):
+            assert manager.create_window("my-window") == "my-window"
+        assert mock_window.active_pane.capture_pane.call_count == 3
+
     def test_create_window_with_start_directory(self):
         """create_window passes start_directory when provided."""
         manager, mock_session = self._make_manager_with_session()
         mock_window = MagicMock()
         mock_window.window_name = "my-window"
+        mock_window.active_pane.capture_pane.return_value = ["% "]
         mock_session.new_window.return_value = mock_window
 
         result = manager.create_window("my-window", start_directory="/tmp")

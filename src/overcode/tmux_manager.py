@@ -5,6 +5,7 @@ Uses libtmux for reliable tmux interaction.
 """
 
 import os
+import time
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 import libtmux
@@ -133,9 +134,28 @@ class TmuxManager:
             # Prevent tmux from auto-renaming the window based on the
             # running process — we rely on stable window names for lookups.
             window.set_window_option('automatic-rename', 'off')
+            self._wait_for_prompt(window)
             return window.window_name
         except (LibTmuxException, ValueError):
             return None
+
+    @staticmethod
+    def _wait_for_prompt(window, timeout: float = 3.0) -> None:
+        """Wait for the new window's shell to draw its prompt.
+
+        Until the shell's line editor starts, the tty is in canonical
+        mode and drops typed-ahead input past 1024 bytes (MAX_CANON on
+        macOS), so a long launch command sent too early arrives cut off
+        and the shell sits at a `quote>` prompt.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if any(line.strip() for line in window.active_pane.capture_pane()):
+                    return
+            except LibTmuxException:
+                return
+            time.sleep(0.05)
 
     def create_ssh_proxy_window(
         self,
