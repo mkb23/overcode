@@ -131,7 +131,7 @@ EMOJI_ASCII = {
     "🖥️": "Sh",
     "📖": "Rd",
     "✏️": "Wr",
-    "\U0001fa9b": "Ed",  # 🪛 Edit
+    "🔨": "Ed",  # Edit
     "🔧": "Tl",  # wrench — DTL tool badge
     "🔍": "Gl",
     "🔎": "Gr",
@@ -158,6 +158,8 @@ EMOJI_ASCII = {
     "🤿": "Su",
     "🐚": "Bg",
     "👶": "Ch",
+    "🎣": "Hk",  # enhanced context hooks
+    "🧱": "Br",  # Bedrock provider
     "🤝": "Tm",
     "🕐": "Tc",
     # Content modes

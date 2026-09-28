@@ -46,7 +46,7 @@ TOOL_EMOJI: dict[str, str] = {
     "Bash": "🖥️",
     "Read": "📖",
     "Write": "✏️",
-    "Edit": "\U0001fa9b",  # 🪛 screwdriver — moved from 🔧 (now the DTL `tool` badge)
+    "Edit": "🔨",  # 🔧 is the DTL `tool` badge; the screwdriver was too new for VSCode (#504)
     "Glob": "🔍",
     "Grep": "🔎",
     "WebFetch": "🌐",
@@ -1002,7 +1002,7 @@ def render_available_skills_plain(ctx: ColumnContext) -> Optional[str]:
 
 def render_enhanced_context(ctx: ColumnContext) -> ColumnOutput:
     if ctx.session.enhanced_context_enabled:
-        return [(f" {ctx.e('🪝')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🎣')}", ctx.mono(f"bold white{ctx.bg}", "bold"))]
     else:
         return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
@@ -1286,7 +1286,7 @@ def render_mode_plain(ctx: ColumnContext) -> Optional[str]:
         perm = "auto"
     emoji = PERMISSIVENESS_EMOJIS.get(perm, "👮")
     mode = f"{emoji} {perm}"
-    ec = "🪝 enabled" if ctx.session.enhanced_context_enabled else "disabled"
+    ec = "🎣 enabled" if ctx.session.enhanced_context_enabled else "disabled"
     return f"{mode}  Enh ctx: {ec}"
 
 
@@ -1321,10 +1321,10 @@ render_value_plain = _make_simple_render_plain("session.agent_value", str)
 
 
 def render_provider(ctx: ColumnContext) -> ColumnOutput:
-    """API provider: 🪨 bedrock, · web. Hidden when all agents use web."""
+    """API provider: 🧱 bedrock, · web. Hidden when all agents use web."""
     provider = getattr(ctx.session, 'provider', 'web') or 'web'
     if provider == 'bedrock':
-        return [(f" {ctx.e('🪨')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
+        return [(f" {ctx.e('🧱')}", ctx.mono(f"bold cyan{ctx.bg}", "bold"))]
     return [("  ·", ctx.mono(f"dim{ctx.bg}", "dim"))]
 
 

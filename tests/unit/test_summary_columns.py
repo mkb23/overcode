@@ -1037,7 +1037,7 @@ class TestRenderEnhancedContext:
         session = _make_session(enhanced_context_enabled=True)
         ctx = _make_ctx(session=session)
         result = render_enhanced_context(ctx)
-        assert "🪝" in result[0][0]
+        assert "🎣" in result[0][0]
 
     def test_disabled_shows_dot(self):
         session = _make_session(enhanced_context_enabled=False)
@@ -1387,7 +1387,7 @@ class TestRenderModePlain:
         ctx = _make_ctx(session=session)
         result = render_mode_plain(ctx)
         assert "🔥 bypass" in result
-        assert "🪝 enabled" in result
+        assert "🎣 enabled" in result
 
 
 class TestRenderHeartbeatPlain:
