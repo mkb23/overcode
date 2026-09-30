@@ -1,7 +1,7 @@
 """
 Command palette — one fuzzy picker for agents, tags and commands (#482).
 
-Ctrl+P opens it on agents (as the old jump modal did, #420), `/` opens it
+The jump key (^P by default, #420, #510) opens it on agents, `/` opens it
 on commands, and `>` typed into an empty agent query switches to commands
 the way VSCode's quick-open does; backspace past the `>` switches back.
 `T` opens it on tags (#357), and `S` on sort choices (#487): every
@@ -64,6 +64,29 @@ class _Row:
 
 class CommandPalette(ModalBase):
     """Fuzzy picker over agents, tags or commands."""
+
+    # Default keys of the `command_palette` key scope (#510): (key, action,
+    # description). Printable keys always type into the query, so only
+    # modified or non-printing keys belong here.
+    KEYS = [
+        ("escape", "close", "Close"),
+        ("enter", "choose", "Run / choose and close"),
+        ("tab", "choose_keep_open", "Run and keep open"),
+        ("down", "cursor_down", "Next row"),
+        ("ctrl+n", "cursor_down", "Next row"),
+        ("ctrl+j", "cursor_down", "Next row"),
+        ("up", "cursor_up", "Previous row"),
+        ("ctrl+p", "cursor_up", "Previous row"),
+        ("ctrl+k", "cursor_up", "Previous row"),
+        ("pagedown", "page_down", "Page down"),
+        ("pageup", "page_up", "Page up"),
+        ("home", "first", "First row"),
+        ("end", "last", "Last row"),
+        ("backspace", "delete_back", "Delete character"),
+        ("ctrl+h", "delete_back", "Delete character"),
+        ("ctrl+u", "clear_query", "Clear query"),
+        ("ctrl+w", "delete_word", "Delete word"),
+    ]
 
     class CommandChosen(Message):
         """`focus_target` is what had focus before the palette opened: the
@@ -286,36 +309,38 @@ class CommandPalette(ModalBase):
         event.prevent_default()
         key = event.key
         n = len(self._items)
-        if key == "escape":
+        from ..keymap import active
+        action = active().action_for(key, "command_palette")
+        if action == "close":
             self._close()
-        elif key == "enter":
+        elif action == "choose":
             self._choose(keep_open=False)
-        elif key == "tab":
+        elif action == "choose_keep_open":
             self._choose(keep_open=True)
-        elif key in ("down", "ctrl+n", "ctrl+j"):
+        elif action == "cursor_down":
             if n:
                 self._select((self.selected_index + 1) % n)
-        elif key in ("up", "ctrl+p", "ctrl+k"):
+        elif action == "cursor_up":
             if n:
                 self._select((self.selected_index - 1) % n)
-        elif key == "pagedown":
+        elif action == "page_down":
             self._select(self.selected_index + self._list_height - 1)
-        elif key == "pageup":
+        elif action == "page_up":
             self._select(self.selected_index - self._list_height + 1)
-        elif key == "home":
+        elif action == "first":
             self._select(0)
-        elif key == "end":
+        elif action == "last":
             self._select(n - 1)
-        elif key in ("backspace", "ctrl+h"):
+        elif action == "delete_back":
             if self.text:
                 self.text = self.text[:-1]
                 self._recompute()
             elif self.mode == "commands" and self._agents:
                 self._switch("agents")
-        elif key == "ctrl+u":
+        elif action == "clear_query":
             self.text = ""
             self._recompute()
-        elif key == "ctrl+w":
+        elif action == "delete_word":
             self.text = self.text.rstrip()
             self.text = self.text[: self.text.rfind(" ") + 1] if " " in self.text else ""
             self._recompute()

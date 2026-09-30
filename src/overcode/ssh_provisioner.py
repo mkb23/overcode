@@ -133,13 +133,19 @@ def _start_overcode(ssh_target: str, version: str, port: int, host: str) -> bool
         return False
 
 
-def _stop_overcode(ssh_target: str, port: int) -> bool:
-    """Stop overcode web server on the remote."""
+def _stop_overcode(ssh_target: str, port: int, api_key: str = "") -> bool:
+    """Stop the remote's overcode services (web server, monitor, supervisor).
+
+    POST /api/shutdown with its default "services" scope leaves the
+    remote's agents running (#509). Needs web.allow_control on the remote.
+    """
+    import shlex
+    header = f"-H {shlex.quote('X-API-Key: ' + api_key)} " if api_key else ""
     try:
-        # Try using overcode's built-in stop first, fall back to curl
         result = _ssh_run(
             ssh_target,
-            f"curl -s --connect-timeout 3 -X POST http://127.0.0.1:{port}/api/shutdown 2>/dev/null; sleep 1",
+            f"curl -s --connect-timeout 3 -X POST {header}"
+            f"http://127.0.0.1:{port}/api/shutdown 2>/dev/null; sleep 1",
             timeout=15,
         )
         return True
@@ -196,7 +202,7 @@ def ensure_remote_ready(
 
         # Upgrade: stop old, start new
         logger.info("Upgrading remote %s: %s -> %s", ssh_target, remote_version, local_version)
-        _stop_overcode(ssh_target, port)
+        _stop_overcode(ssh_target, port, api_key)
         if _start_overcode(ssh_target, local_version, port, host):
             return ProvisionResult(
                 ok=True,

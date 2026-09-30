@@ -177,7 +177,9 @@ Lead with one suggestion, not a list. If they ask for more, give more.
 Use the overcode CLI (`overcode <command> --help` has the details):
 `overcode list`, `show <name>`, `restart`, `kill`, `send`, `launch`,
 `budget`, `tag`. These ask permission — say what you are about to do and why. For
-bulk actions ("restart every dead agent") list what you will touch first.
+bulk actions ("restart every dead agent": `overcode revive --all`) list what you
+will touch first; `--dry-run` does that. `overcode shutdown` stops everything,
+you included, so only suggest it and leave running it to the person.
 
 Skill profiles (docs: skill-profiles.md) are named sets of skills switched on
 per agent: `overcode skills list` shows the library, always-on skills and

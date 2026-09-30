@@ -207,7 +207,7 @@ exact footprint and the `overcode hooks uninstall-backend` cleanup commands.
 
 By default, a handful of TUI hotkeys are forwarded straight to the focused agent's Claude Code session rather than being handled by overcode: `Enter`, `Esc`, `1`–`5` (for numbered prompts), and `Ctrl+O`.
 
-You can toggle these on and off from inside the TUI with `Ctrl+K`, which saves your choices to `config.yaml`. For more advanced customization — remapping a slot to send a different key, or adding fully new passthru keys — edit `~/.overcode/config.yaml` directly:
+You can toggle these on and off from inside the TUI with `Ctrl+K` (`^` under the vscode [key preset](#keybindings)), which saves your choices to `config.yaml`. For more advanced customization — remapping a slot to send a different key, or adding fully new passthru keys — edit `~/.overcode/config.yaml` directly:
 
 ```yaml
 passthru_keys:
@@ -230,6 +230,60 @@ passthru_keys:
 ```
 
 Only deltas from the defaults are written — a fresh config keeps the section empty. Disabled slots show `☐` in the modal; remapped slots show their target in yellow.
+
+## Keybindings
+
+Every TUI key can be changed under `keys:` in `~/.overcode/config.yaml` (#510):
+
+```yaml
+keys:
+  preset: vscode                     # default | vscode
+  overrides:                         # main-screen actions
+    jump_to_agent: [ctrl+j, J]       # action -> one key or a list
+    toggle_monochrome: null          # unbind
+    reverse_sort: R                  # palette-only commands can be bound too
+  scopes:                            # keys inside widgets
+    command_palette:
+      cursor_down: [down, ctrl+n]
+    command_bar:
+      toggle_expand: ctrl+l
+```
+
+- **Layers.** The default keys are the ones in code (`SupervisorTUI.BINDINGS` plus each widget's own list). A preset is a delta on top of them, and `overrides` / `scopes` are a delta on top of the preset. Each entry names an action and gives its *complete* key list, replacing what the layer below bound.
+- **Action names** are the palette's: `overcode view actions` lists them, and `overcode keys` shows every scope's actions with their current keys.
+- **Key names** are Textual's (`ctrl+p`, `question_mark`, `pagedown`, `J` for shift+j). Characters (`?`, `@`, `|`), caret (`^P`) and tmux (`C-p`, `M-j`) spellings are accepted too.
+- **Scopes:** `app` (the main screen, which `overrides` sets), `command_bar`, `command_palette`, `fullscreen_preview`, `summary_prompt_lab`.
+- **Problems are warnings, never crashes:** an unknown action or scope, a key bound twice in one scope, a key the preset avoids, a typing key bound inside a text field, or a key that shadows a [passthru key](#passthru-keys). The TUI mentions them at startup; `overcode keys --conflicts` lists them.
+
+```bash
+overcode keys                  # effective keys, grouped, with source (default / preset / override)
+overcode keys --preset vscode  # what a preset would give you (with your overrides)
+overcode keys --conflicts      # only the warnings
+overcode keys --use vscode     # switch preset (writes keys.preset)
+overcode keys --presets        # list presets
+```
+
+The palette's **Key preset** command switches preset and rebinds the running TUI immediately. The help overlay (`h`), the palette and the footer always show the keys in effect.
+
+### VSCode preset
+
+VSCode's integrated terminal runs some keys as VSCode commands instead of passing them to the program (`terminal.integrated.commandsToSkipShell`). On Linux/Windows that takes `Ctrl+P` (Quick Open), `Ctrl+K` (chord prefix), `Ctrl+G` (recent directory), `Ctrl+E`, `Ctrl+J` and `Ctrl+F`; on every OS it takes `Ctrl+Space`, ``Ctrl+` ``, `Ctrl+Tab`, `Ctrl+Q` and `F1`. On macOS most workbench shortcuts use Cmd, so the Ctrl keys get through there, but they still clash with VSCode habits. The `vscode` preset moves off all of them:
+
+| Action | Default | vscode |
+|---|---|---|
+| Jump to agent | `Ctrl+P` | `Space` |
+| Rename agent | `Ctrl+N` | `N` |
+| Send Ctrl+O to agent | `Ctrl+O` | `v` |
+| Passthru keys… | `Ctrl+K` | `^` |
+| Cycle focal repo | `Ctrl+R` | `@` |
+| Enhanced context | `Ctrl+T` | `+` |
+| Tmux toggle key… | `Ctrl+G` | `\|` |
+| Command bar: multi-line | `Ctrl+E` | `Ctrl+L` |
+| Palette: next / previous | `↓` `Ctrl+N` `Ctrl+J` / `↑` `Ctrl+P` `Ctrl+K` | `↓` / `↑` |
+
+It also recommends a tmux pane toggle key other than `Ctrl+Space` (`Tab`, the default); your `tmux.toggle_key` is never changed for you. `overcode doctor` suggests the preset when it sees `TERM_PROGRAM=vscode`.
+
+The alternative is to keep the default keys and let VSCode pass them through: add the command with a `-` prefix to `terminal.integrated.commandsToSkipShell` (e.g. `"-workbench.action.quickOpen"` for `Ctrl+P`), set `terminal.integrated.allowChords` to `false` for `Ctrl+K`, or set `terminal.integrated.sendKeybindingsToShell` to `true`.
 
 ## Standing Instruction Presets
 

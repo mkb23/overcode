@@ -18,6 +18,8 @@ from typing import Optional
 
 from rich.text import Text
 
+from ..keymap import keymap_of
+
 IDLE_SECONDS = 5.0
 TIP_SECONDS = 90.0
 JOURNEY_TTL_SECONDS = 600.0
@@ -82,12 +84,11 @@ class MentorMixin:
 
     def _mentor_pick(self) -> None:
         """Worker: work out the journey (cached), choose a tip, hand it to the UI thread."""
-        from ..command_palette import keys_by_action
         from ..journey import load_journey
         from ..mentor import choose, new_achievements, now_ms
         try:
             if self._mentor_journey is None or time.monotonic() - self._mentor_journey_at > JOURNEY_TTL_SECONDS:
-                keymap = keys_by_action(self.BINDINGS)
+                keymap = keymap_of(self).keys_by_action()
                 bound = frozenset(k for keys in keymap.values() for k in keys)
                 self._mentor_journey = load_journey(keymap, bound)
                 self._mentor_journey_at = time.monotonic()

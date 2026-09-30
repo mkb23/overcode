@@ -109,6 +109,85 @@ overcode kill <agent-name> [--no-cascade] [--session <session>]
 
 By default, killing a parent also kills all its descendants (deepest-first).
 
+### `overcode restart`
+
+Restart an agent with the same launch configuration, resuming its conversation.
+
+```bash
+overcode restart <agent-name> [--fresh] [--model <model>] [--session <session>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--fresh` | Start a new conversation instead of resuming |
+| `--model`, `-m` | Relaunch on this model (kept for later restarts) |
+
+If the agent's tmux window is gone (it was killed, or the machine rebooted),
+`restart` revives it in a new window instead.
+
+### `overcode revive`
+
+Bring back agents whose tmux window is gone, for example after a reboot.
+
+```bash
+overcode revive <agent-name> [--fresh] [--dry-run]
+overcode revive --all [--all-sessions] [--fresh] [--dry-run]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--all`, `-a` | Revive every dead agent, parents before children |
+| `--all-sessions` | With `--all`: every overcode tmux session, not just this one |
+| `--fresh` | Start new conversations instead of resuming |
+| `--dry-run`, `-n` | List what would be revived, change nothing |
+
+Each agent is relaunched in a new window with its full launch context. It
+resumes its previous conversation when one is recorded and its backend can
+resume. Otherwise it starts fresh, and the output gives the reason. Done
+children and children that filed a report are skipped. The monitor daemon is
+started if it isn't running. In the TUI, the command palette has the same
+action: **Revive all dead agents**.
+
+### `overcode shutdown`
+
+Stop everything overcode is running.
+
+```bash
+overcode shutdown [--dry-run] [--yes] [--force] [--keep-jobs] [--all] [--timeout <s>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run`, `-n` | List what would be stopped, change nothing |
+| `--yes`, `-y` | Skip the confirmation (the plan is printed first otherwise) |
+| `--force` | Kill agent windows without a graceful exit |
+| `--keep-jobs` | Leave the `jobs` tmux session running |
+| `--all`, `--all-sessions` | Every overcode tmux session, not just this one |
+| `--timeout` | Seconds to wait for agents to exit before killing their windows (default 10) |
+
+Steps run in this order:
+
+1. The supervisor daemon.
+2. Agents, children first. Each gets its backend's exit keys, then its window is killed.
+3. The `jobs` tmux session.
+4. The monitor daemon, the web server, the presence logger, and any legacy PID files.
+5. overcode's tmux sessions: the agents session, `oc-view-*`, the `overcode` split layout and the supervisor controller.
+
+Agent records are kept, so `overcode revive --all` brings the agents back
+later with their conversations. The shared pieces (the split and controller
+sessions, the presence logger) are left alone while another overcode tmux
+session is still running.
+
+The tmux session you run the command from is killed last. An agent that runs
+`shutdown` itself is not exited, and its window closes with that session.
+
+In the TUI, the command palette has **Shut down overcode**. Run it twice to
+confirm, and the TUI exits at the end. A web server with
+`web.allow_control: true` also takes `POST /api/shutdown`. Its default body
+stops only the supervisor, the monitor and the web server, and agents keep
+running. `{"scope": "all"}` does the full shutdown, and `"dry_run": true`
+returns the plan instead.
+
 ### `overcode rename`
 
 Rename an agent, keeping its conversation, status history and costs.
@@ -527,6 +606,22 @@ overcode config path
 ```
 
 ---
+
+## Key Commands
+
+### `overcode keys`
+
+Show the TUI's effective keys, grouped like the command palette, with where each comes from: `default` (in code), the preset's name, or `override` (your config). See [Configuration → Keybindings](configuration.md#keybindings).
+
+```bash
+overcode keys                        # every scope
+overcode keys --scope command_palette
+overcode keys --preset vscode        # preview a preset (with your overrides)
+overcode keys --conflicts            # warnings only: unknown actions, duplicate keys, swallowed keys, shadowed passthru keys
+overcode keys --use vscode           # switch preset (writes keys.preset to config.yaml)
+overcode keys --presets              # list presets
+overcode keys --all --json           # include palette commands with no key; machine-readable
+```
 
 ## Activity Commands
 

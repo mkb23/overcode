@@ -63,7 +63,18 @@ class CommandBar(Static):
     - "send": Default mode for sending instructions to an agent
     - "standing_orders": Mode for editing standing orders for an agent
     Key handling is done via on_key() since Input/TextArea consume most keys.
+    The keys are the `command_bar` scope of the keymap (#510); KEYS are the
+    defaults. Enter in single-line mode sends and is not remappable.
     """
+
+    # Default keys of the `command_bar` key scope (#510): (key, action, description).
+    KEYS = [
+        ("ctrl+e", "toggle_expand", "Multi-line mode"),
+        ("ctrl+o", "set_standing_order", "Set as standing order"),
+        ("escape", "clear_and_unfocus", "Clear & unfocus"),
+        ("ctrl+s", "send_multiline", "Send (multi-line)"),
+        ("ctrl+enter", "send_multiline", "Send (multi-line)"),
+    ]
 
     expanded = reactive(False)  # Toggle single/multi-line mode
     target_session: Optional[str] = None
@@ -139,7 +150,7 @@ class CommandBar(Static):
             yield Label("", id="target-label")
             yield Input(id="cmd-input", placeholder="Type instruction (Enter to send)...", disabled=True)
             yield TextArea(id="cmd-textarea", classes="hidden", disabled=True)
-            yield Label("[^E]", id="expand-hint")
+            yield Label(self._expand_hint(), id="expand-hint")
 
     def on_mount(self) -> None:
         """Initialize command bar state."""
@@ -196,18 +207,33 @@ class CommandBar(Static):
             textarea.text = ""
             input_widget.focus()
 
+    @staticmethod
+    def _expand_hint() -> str:
+        from ..keymap import active
+        label = active().label("toggle_expand", "command_bar")
+        return f"[{label}]" if label else ""
+
+    def refresh_key_hint(self) -> None:
+        """Re-read the expand key after the keymap changed (#510)."""
+        try:
+            self.query_one("#expand-hint", Label).update(self._expand_hint())
+        except Exception:
+            pass
+
     def on_key(self, event: events.Key) -> None:
-        """Handle key events for command bar shortcuts."""
-        if event.key == "ctrl+e":
+        """Handle key events for command bar shortcuts (keymap scope `command_bar`)."""
+        from ..keymap import active
+        action = active().action_for(event.key, "command_bar")
+        if action == "toggle_expand":
             self.action_toggle_expand()
             event.stop()
-        elif event.key == "ctrl+o":
+        elif action == "set_standing_order":
             self.action_set_standing_order()
             event.stop()
-        elif event.key == "escape":
+        elif action == "clear_and_unfocus":
             self.action_clear_and_unfocus()
             event.stop()
-        elif event.key in ("ctrl+enter", "ctrl+s") and self.expanded:
+        elif action == "send_multiline" and self.expanded:
             self.action_send_multiline()
             event.stop()
 

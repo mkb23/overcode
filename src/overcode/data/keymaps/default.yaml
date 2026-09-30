@@ -1,0 +1,10 @@
+# The default key preset (#510).
+#
+# Deliberately empty: the default keys are the ones written in code —
+# SupervisorTUI.BINDINGS in tui.py for the main screen, and each widget's
+# own key list for its scope (CommandBar.KEYS, CommandPalette.KEYS,
+# FullscreenPreview.BINDINGS, SummaryPromptLab.BINDINGS). Nothing is
+# repeated here, so a key added in code needs no change to this file.
+# `overcode keys --preset default` prints the full list.
+name: default
+description: overcode's built-in keys

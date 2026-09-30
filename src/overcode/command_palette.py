@@ -6,8 +6,10 @@ keys are labelled, how each stateful command reports its states, and the
 fuzzy matcher that ranks them. The widget in tui_widgets/command_palette.py
 only draws what this module decides.
 
-Keys are never written here. They are read from SupervisorTUI.BINDINGS at
-runtime, so the palette cannot drift from what a key actually does.
+Keys are never written here. They are read from the effective keymap
+(keymap.py: SupervisorTUI.BINDINGS plus the key preset and the user's
+overrides, #510) at runtime, so the palette cannot drift from what a key
+actually does.
 """
 
 from __future__ import annotations
@@ -170,6 +172,15 @@ def _notifications_state(app: Any) -> StateView:
         return StateView(options, None)
 
 
+def _key_preset_state(app: Any) -> StateView:
+    try:
+        from .keymap import active, list_presets
+        km = getattr(app, "keymap", None) or active()
+        return _cycle(tuple(list_presets()), km.preset)
+    except Exception:
+        return StateView(("default",), None)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -269,6 +280,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _toggle(getattr(app, "monochrome", None))),
     _C("toggle_emoji_free", "Emoji-free", "Display", "ascii",
        state=lambda app: _toggle(getattr(app, "emoji_free", None))),
+    _C("toggle_theme", "Theme", "Display", "light dark mode colour color scheme background",
+       state=lambda app: _cycle(("dark", "light"), getattr(app, "ui_theme", None))),
     _C("open_column_config", "Configure columns…", "Display", "fields"),
     _C("toggle_activity_recording", "Record activity (usage log)", "Settings",
        "privacy pause telemetry journey keys incognito",
@@ -284,6 +297,8 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("rename_focused", "Rename agent…", "Agent", "name", agent=True),
     _C("fork_focused", "Fork agent", "Agent", "clone copy child", agent=True),
     _C("restart_focused", "Restart agent", "Agent", "revive", agent=True),
+    _C("revive_dead_agents", "Revive all dead agents", "Agent",
+       "restart resume reboot terminated killed dead crashed bulk restore recover bring back"),
     _C("kill_focused", "Kill / clean up agent", "Agent", "stop delete remove", agent=True),
     _C("sync_to_main_and_clear", "Sync to main and clear", "Agent", "git reset", agent=True),
     _C("toggle_sleep", "Sleep", "Agent", "asleep wake pause", state=_agent_toggle("is_asleep"), agent=True),
@@ -327,7 +342,16 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("open_tmux_config", "Tmux toggle key…", "Settings", "split pane focus"),
     _C("open_passthru_config", "Passthru keys…", "Settings", "forward ctrl"),
 
+    # App, not Settings: it rewrites the user's keys, so `overcode view
+    # toggle` (agents) may not run it.
+    _C("cycle_key_preset", "Key preset", "App",
+       "keymap keybindings shortcuts vscode bindings remap settings", state=_key_preset_state),
     _C("quit", "Quit", "App", "exit close detach"),
+    # After Quit: they share "exit"/"close", and ties go to registry order,
+    # so the everyday quit stays the first answer.
+    _C("shutdown_overcode", "Shut down overcode", "App",
+       "stop everything exit quit close terminate end halt kill all agents daemons "
+       "tmux power off teardown wind down"),
 )
 
 # Commands the palette handles itself by switching list rather than closing.
@@ -422,14 +446,32 @@ _KEY_LABELS = {
     "equals_sign": "=", "minus": "-", "slash": "/",
     "down": "↓", "up": "↑", "left": "←", "right": "→",
     "enter": "Enter", "escape": "Esc", "tab": "Tab", "space": "Space",
+    "at": "@", "number_sign": "#", "circumflex_accent": "^", "plus": "+",
+    "vertical_line": "|", "apostrophe": "'", "semicolon": ";", "ampersand": "&",
+    "asterisk": "*", "exclamation_mark": "!", "tilde": "~", "grave_accent": "`",
+    "underscore": "_", "percent_sign": "%", "quotation_mark": '"',
+    "left_parenthesis": "(", "right_parenthesis": ")",
+    "left_curly_bracket": "{", "right_curly_bracket": "}",
+    "pageup": "PgUp", "pagedown": "PgDn", "home": "Home", "end": "End",
+    "backspace": "Bksp", "delete": "Del",
 }
 
 
 def key_label(key: str) -> str:
     """Display form of a Textual key name: `ctrl+p` → `^P`, `comma` → `,`."""
     if key.startswith("ctrl+"):
-        return "^" + key_label(key[len("ctrl+"):]).upper()
-    return _KEY_LABELS.get(key, key)
+        rest = key_label(key[len("ctrl+"):])
+        return "^" + (rest.upper() if len(rest) == 1 else rest)
+    if key.startswith("shift+"):
+        rest = key_label(key[len("shift+"):])
+        return "⇧" + (rest.upper() if len(rest) == 1 else rest)
+    if key.startswith("alt+"):
+        return "M-" + key_label(key[len("alt+"):])
+    if key in _KEY_LABELS:
+        return _KEY_LABELS[key]
+    if len(key) > 1 and key[0] == "f" and key[1:].isdigit():
+        return key.upper()
+    return key
 
 
 def keys_by_action(bindings: Iterable[Any]) -> Dict[str, List[str]]:

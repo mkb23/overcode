@@ -268,7 +268,7 @@ class TestHelpCoversEveryBinding:
         from overcode.tui import SupervisorTUI
         from overcode.tui_widgets.help_overlay import HelpOverlay
 
-        text = HelpOverlay()._build_keybindings().plain
+        text = HelpOverlay().render_text(200).plain
         missing = []
         for binding in SupervisorTUI.BINDINGS:
             key, action = (binding[0], binding[1]) if isinstance(binding, tuple) else (
@@ -292,6 +292,6 @@ class TestHelpCoversEveryBinding:
     def test_rename_is_in_the_help(self):
         from overcode.tui_widgets.help_overlay import HelpOverlay
 
-        text = HelpOverlay()._build_keybindings().plain
+        text = HelpOverlay().render_text(200).plain
         assert re.search(r"\^N\s+Rename agent", text)
         assert re.search(r"\^R\s+Cycle focal repo", text)

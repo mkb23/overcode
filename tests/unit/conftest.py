@@ -86,6 +86,21 @@ def activity_log_in_tmp(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(overcode.mentor, "state_path", lambda: d / "journey_state.json")
 
 
+@pytest.fixture(autouse=True)
+def default_keymap_only(monkeypatch):
+    """Unit tests run on the built-in keys (#510).
+
+    A developer's own `keys:` config (preset, overrides) would otherwise
+    change which key a pilot test's press reaches. Tests of the config
+    patch user_keys_config themselves, over this. The active keymap a
+    mounted TUI sets is cleared afterwards so it can't leak between tests.
+    """
+    import overcode.keymap
+    monkeypatch.setattr(overcode.keymap, "user_keys_config", lambda: {})
+    yield
+    overcode.keymap.set_active(None)
+
+
 def _daemon_children() -> list[str]:
     """This process's child daemons, as "pid command" lines.
 

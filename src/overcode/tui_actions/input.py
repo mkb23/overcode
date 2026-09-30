@@ -74,6 +74,12 @@ def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | N
     return True
 
 
+def _passthru_key(app) -> str:
+    """The key that opens the passthru dialog, for hints (#510)."""
+    from ..keymap import keymap_of
+    return keymap_of(app).label("open_passthru_config", fallback="the palette (/)")
+
+
 class InputActionsMixin:
     """Mixin providing input/send actions for SupervisorTUI."""
 
@@ -137,7 +143,7 @@ class InputActionsMixin:
             return
         target = self._passthru_target("enter")
         if target is None:
-            self.notify("Enter passthru disabled — enable it in Ctrl+K", severity="warning")
+            self.notify(f"Enter passthru disabled — enable it in {_passthru_key(self)}", severity="warning")
             return
         _send_keys_to_focused(self, target, label="Enter")
 
@@ -145,7 +151,7 @@ class InputActionsMixin:
         """Send Escape keypress to the focused agent (for interrupting)."""
         target = self._passthru_target("escape")
         if target is None:
-            self.notify("Escape passthru disabled — enable it in Ctrl+K", severity="warning")
+            self.notify(f"Escape passthru disabled — enable it in {_passthru_key(self)}", severity="warning")
             return
         _send_keys_to_focused(self, target, label="Escape", auto_wake=False)
 
@@ -153,7 +159,7 @@ class InputActionsMixin:
         """Send Ctrl+O to the focused agent (#446)."""
         target = self._passthru_target("ctrl+o")
         if target is None:
-            self.notify("Ctrl+O passthru disabled — enable it in Ctrl+K", severity="warning")
+            self.notify(f"Ctrl+O passthru disabled — enable it in {_passthru_key(self)}", severity="warning")
             return
         _send_keys_to_focused(self, target, label="Ctrl+O")
 
@@ -206,7 +212,7 @@ class InputActionsMixin:
 
         target = self._passthru_target(key)
         if target is None:
-            self.notify(f"{key} passthru disabled — enable it in Ctrl+K", severity="warning")
+            self.notify(f"{key} passthru disabled — enable it in {_passthru_key(self)}", severity="warning")
             return
 
         # Check freetext before sending (need access to focused widget)

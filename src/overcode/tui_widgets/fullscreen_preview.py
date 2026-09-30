@@ -41,6 +41,10 @@ class FullscreenPreview(ScrollableContainer, can_focus=True):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Keys come from the `fullscreen_preview` key scope (#510); BINDINGS
+        # above are its defaults.
+        from ..keymap import apply_to_widget
+        apply_to_widget(self, "fullscreen_preview")
         self._content_lines: List[str] = []
         self._session_name: str = ""
         self._monochrome: bool = False

@@ -183,12 +183,12 @@ def view_toggle(
 @view_app.command("actions")
 def view_actions(as_json: JsonOpt = False):
     """Every palette action id, with its title, category and keys."""
-    from ..command_palette import COMMANDS, key_label, keys_by_action
-    from ..tui import SupervisorTUI
+    from ..command_palette import COMMANDS
+    from ..keymap import effective_keymap
     from ..view_control import toggle_refusal
-    keys = keys_by_action(SupervisorTUI.BINDINGS)
+    keys = effective_keymap().keys_by_action()
     rows = [{"action": c.action, "title": c.title, "category": c.category,
-             "keys": [key_label(k) for k in keys.get(c.action, [])],
+             "keys": list(keys.get(c.action, [])),
              "acts_on_focused_agent": c.agent, "toggle": c.state is not None,
              "view_toggle": toggle_refusal(c.category) is None}
             for c in COMMANDS]

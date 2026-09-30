@@ -61,6 +61,17 @@ def doctor(
     sessions = [s for s in launcher.list_sessions(detect_terminated=False)
                 if s.status != "terminated"]
 
+    # Global, and independent of agents: the TUI's keys vs the terminal it
+    # runs in — VSCode swallows some default keys (#510).
+    try:
+        from ..config import get_tmux_toggle_key
+        from ..keymap import terminal_findings
+        from rich.markup import escape
+        for finding in terminal_findings(tmux_toggle_key=get_tmux_toggle_key()):
+            rprint(f"[yellow]⚠[/yellow] {escape(finding)}")
+    except Exception:
+        pass
+
     if not sessions:
         rprint("[dim]No running agents in session '[bold]{}[/bold]'[/dim]".format(session))
         return

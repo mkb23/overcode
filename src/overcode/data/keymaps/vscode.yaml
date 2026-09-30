@@ -1,0 +1,83 @@
+# VSCode-safe key preset (#510).
+#
+# A delta on top of the default keys: only the actions named here change.
+# Each action gets its complete key list ([] unbinds it).
+#
+# Why: VSCode's integrated terminal runs some keys as VSCode commands
+# instead of sending them to the program in the terminal. Those commands
+# are listed in `terminal.integrated.commandsToSkipShell` (defaults:
+# DEFAULT_COMMANDS_TO_SKIP_SHELL in vscode's terminal.ts plus the terminal
+# contribs' lists). Which keys that catches depends on the OS, because on
+# macOS most workbench shortcuts use Cmd rather than Ctrl. Checked against
+# vscode main, 2026-09:
+#
+#   key          Linux / Windows                       macOS
+#   ctrl+p       Quick Open (swallowed)                reaches the TUI (Cmd+P)
+#   ctrl+e       Quick Open (swallowed)                reaches the TUI
+#   ctrl+j       Toggle panel (swallowed)              reaches the TUI (Cmd+J)
+#   ctrl+k       chord prefix (swallowed, allowChords) reaches the TUI (Cmd+K)
+#   ctrl+g       Go to recent directory (swallowed     reaches the TUI (Cmd+G)
+#                with shell integration)
+#   ctrl+f       terminal Find (swallowed)             reaches the TUI (Cmd+F)
+#   ctrl+q       Quick Open View (swallowed)           swallowed
+#   ctrl+space   terminal suggest (swallowed when      swallowed by suggest; also
+#                terminal.integrated.suggest is on)    macOS's input-source switch
+#   ctrl+`       Toggle terminal (swallowed)           swallowed
+#   ctrl+tab     recent editors (swallowed)            swallowed
+#   ctrl+shift+p Command palette (swallowed)           reaches the TUI (Cmd+Shift+P)
+#   f1           Command palette (swallowed)           swallowed
+#
+# ctrl+n / ctrl+t / ctrl+r / ctrl+o / ctrl+b / ctrl+w reach the TUI on
+# every OS (their VSCode commands are not in the skip list) but are
+# VSCode habits — new file, symbols, recent, open, sidebar, close — so the
+# main screen moves off them too. Text fields keep ctrl+o / ctrl+s / ctrl+w,
+# which do reach them.
+#
+# Instead of this preset you can keep the default keys and tell VSCode to
+# pass them through: add "-workbench.action.quickOpen" (etc.) to
+# terminal.integrated.commandsToSkipShell, set
+# terminal.integrated.allowChords to false for ctrl+k, or set
+# terminal.integrated.sendKeybindingsToShell to true.
+name: vscode
+description: avoids keys the VSCode terminal swallows or that clash with VSCode habits
+
+overrides:
+  jump_to_agent: [space]              # was ctrl+p (Quick Open)
+  rename_focused: [N]                 # was ctrl+n
+  send_ctrl_o_to_focused: [v]         # was ctrl+o — "v"erbose transcript
+  open_passthru_config: ["^"]         # was ctrl+k (chord prefix) — ^ for ctrl keys
+  cycle_focal_repo: ["@"]             # was ctrl+r
+  toggle_enhanced_context: ["+"]      # was ctrl+t
+  open_tmux_config: ["|"]             # was ctrl+g — | for the split
+
+scopes:
+  command_bar:
+    toggle_expand: [ctrl+l]           # was ctrl+e (Quick Open on Linux/Windows)
+  command_palette:
+    cursor_down: [down]               # was also ctrl+n / ctrl+j (Toggle panel)
+    cursor_up: [up]                   # was also ctrl+p / ctrl+k (Quick Open / chord)
+
+# Keys this preset never binds, in any scope: the ones VSCode swallows on
+# at least one OS. (The habit keys above still reach the TUI, so they are
+# not forbidden — the summary prompt lab keeps ^T/^R.) A user override
+# that binds one is reported by `overcode keys --conflicts`.
+forbidden:
+  ctrl+p: Quick Open on Linux/Windows
+  ctrl+e: Quick Open on Linux/Windows
+  ctrl+j: Toggle panel on Linux/Windows
+  ctrl+k: chord prefix on Linux/Windows
+  ctrl+g: Go to recent directory on Linux/Windows (shell integration)
+  ctrl+f: terminal Find on Linux/Windows
+  ctrl+q: Quick Open View
+  ctrl+space: terminal suggest; macOS input-source switch
+  ctrl+grave_accent: Toggle terminal
+  ctrl+tab: switch editor
+  ctrl+shift+tab: switch editor
+  ctrl+shift+p: Command palette on Linux/Windows
+  f1: Command palette
+
+# tmux pane toggle (`overcode tmux`): advice only — tmux.toggle_key in
+# config.yaml is never rewritten. Ctrl+Space is swallowed (see above).
+tmux:
+  toggle_key: Tab
+  avoid_toggle_keys: [C-Space]

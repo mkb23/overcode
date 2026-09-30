@@ -717,3 +717,77 @@ class SessionActionsMixin:
             "heartbeat_freq",
             lambda s: str(s.heartbeat_frequency_seconds) if s.heartbeat_enabled else "300",
         )
+
+    # -- Fleet lifecycle (#481, #509): palette-only, confirmed by running twice --
+
+    def action_revive_dead_agents(self) -> None:
+        """Revive every agent whose tmux window is gone (#481), parents first."""
+        from ..launcher import AgentLauncher
+        from ..lifecycle import find_dead_agents
+
+        launcher = AgentLauncher(self.tmux_session, session_manager=self.session_manager)
+        dead = find_dead_agents(launcher)
+        if not dead:
+            self._pending_confirmations.pop("revive_all", None)
+            self.notify("No dead agents to revive", severity="information")
+            return
+        self._confirm_double_press(
+            "revive_all",
+            f"Revive {len(dead)} dead agent(s)? Run 'Revive all dead agents' again to confirm",
+            lambda: self._execute_revive_all(launcher),
+            timeout=10.0,
+        )
+
+    def _execute_revive_all(self, launcher) -> None:
+        from ..lifecycle import revive_all
+
+        self.notify("Reviving dead agents…", severity="information")
+
+        def work() -> None:
+            try:
+                results = revive_all(launcher)
+            except Exception as e:  # surface, don't crash the worker silently
+                self.call_from_thread(self.notify, f"Revive failed: {e}", severity="error")
+                return
+            self.call_from_thread(self._revive_all_done, results)
+
+        self.run_worker(work, thread=True, group="revive_all", exclusive=True)
+
+    def _revive_all_done(self, results) -> None:
+        revived = [r for r in results if r.ok]
+        failed = [r for r in results if r.ok is False]
+        for r in revived:
+            self._terminated_sessions.pop(r.session_id, None)
+            self._terminated_times.pop(r.session_id, None)
+        resumed = sum(1 for r in revived if r.mode == "resume")
+        msg = f"Revived {len(revived)} agent(s): {resumed} resumed, {len(revived) - resumed} fresh"
+        if failed:
+            msg += f"; failed: {', '.join(r.name for r in failed)}"
+        self.notify(msg, severity="error" if failed else "information")
+        if revived:
+            self._ensure_monitor_daemon()
+        self.refresh_sessions()
+
+    def action_shutdown_overcode(self) -> None:
+        """Stop agents (records kept), jobs, daemons and tmux sessions, then exit (#509)."""
+        self._confirm_double_press(
+            "shutdown",
+            "Shut down all of overcode (agents, jobs, daemons, tmux)? "
+            "Run 'Shut down overcode' again to confirm",
+            self._execute_shutdown,
+            timeout=10.0,
+        )
+
+    def _execute_shutdown(self) -> None:
+        from ..lifecycle import shutdown
+
+        self.notify("Shutting down overcode…", severity="warning")
+        tmux_session = self.tmux_session
+
+        def work() -> None:
+            try:
+                shutdown(tmux_session, echo=lambda _line: None)
+            finally:
+                self.call_from_thread(self.exit)
+
+        self.run_worker(work, thread=True, group="shutdown", exclusive=True)

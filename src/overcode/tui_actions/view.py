@@ -56,7 +56,9 @@ class ViewActionsMixin:
                 self._dialog_did_close()
             else:
                 self._dialog_will_open()
+                help_overlay.refresh_content()  # keymap may have changed (#510)
                 help_overlay.add_class("visible")
+                help_overlay.scroll_home(animate=False)
         except NoMatches:
             pass
 
@@ -486,6 +488,32 @@ class ViewActionsMixin:
             "Monochrome mode ON" if self.monochrome else "Monochrome mode OFF",
             severity="information"
         )
+
+    def get_line_filters(self):
+        """Textual's line filters, led by the light-theme adapter in light
+        mode (#508). Dark mode gets Textual's list untouched."""
+        filters = super().get_line_filters()
+        if getattr(self, "ui_theme", "dark") == "light":
+            return [self._light_filter, *filters]
+        return filters
+
+    def _apply_ui_theme(self) -> None:
+        """Point Textual's theme ($background, $surface, $text...) at the
+        current mode. Setting App.theme refreshes every widget, which also
+        picks up the change in get_line_filters."""
+        from ..tui_theme import TEXTUAL_THEMES
+
+        self.theme = TEXTUAL_THEMES[self.ui_theme]
+
+    def action_toggle_theme(self) -> None:
+        """Switch between the dark and light colour themes (#508)."""
+        from ..tui_theme import next_theme
+
+        self.ui_theme = next_theme(self.ui_theme)
+        self._prefs.theme = self.ui_theme
+        self._save_prefs()
+        self._apply_ui_theme()
+        self.notify(f"Theme: {self.ui_theme}", severity="information")
 
     def action_toggle_emoji_free(self) -> None:
         """Toggle emoji-free mode for terminals without emoji fonts (#315).

@@ -14,6 +14,7 @@ import time
 from collections import deque
 from typing import Any, Optional
 
+from ..keymap import keymap_of
 from ..view_control import (
     VERBS,
     ControlInbox,
@@ -206,7 +207,7 @@ class ViewControlMixin:
     def _view_point(self, action: str) -> dict:
         """Show the user where something is: its key, or where to find it in the palette."""
         cmd = self._palette_command(action)
-        keys = [k for k, a, *_ in self.BINDINGS if a == action]
+        keys = keymap_of(self).keys_for(action)
         if keys:
             from ..command_palette import key_label
             how = " or ".join(key_label(k) for k in keys)

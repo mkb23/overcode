@@ -833,10 +833,9 @@ class TestHelpOverlayWidget:
         """HelpOverlay renders help content with keybindings and status reference"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
-        rendered = widget.render()
-        # Should return a Rich Panel with keybindings and status reference
-        from rich.panel import Panel
-        assert isinstance(rendered, Panel)
+        plain = widget.render_text(120).plain
+        assert "OVERCODE HELP" in plain
+        assert "AGENT STATUSES" in plain
 
 
 # =============================================================================
@@ -926,18 +925,16 @@ class TestHelpOverlayRender:
         """Help keybindings column contains keyboard shortcut sections"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
-        keybindings = widget._build_keybindings()
-        plain = keybindings.plain
-        assert "NAVIGATION" in plain
-        assert "AGENT CONTROL" in plain
+        plain = widget.render_text(120).plain
+        assert "NAVIGATE" in plain
+        assert "AGENT" in plain
         assert "Quit" in plain
 
     def test_render_contains_status_reference(self):
         """Help status column contains status descriptions"""
         from overcode.tui import HelpOverlay
         widget = HelpOverlay()
-        statuses = widget._build_status_reference()
-        plain = statuses.plain
+        plain = widget.render_text(120).plain
         assert "Running" in plain
         assert "Waiting (user)" in plain
         assert "AGENT STATUSES" in plain

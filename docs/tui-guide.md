@@ -30,6 +30,8 @@ In sorts driven by live data (status, value, CPU, time in state…) the list re-
 
 ## Keyboard Shortcuts
 
+These are the default keys. Any of them can be remapped, or switched to the VSCode-safe preset, under `keys:` in config.yaml — see [Configuration → Keybindings](configuration.md#keybindings). The help overlay (`h`/`?`) always shows the keys in effect, grouped like the command palette, in one to three columns depending on terminal width; scroll it with `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`.
+
 ### Navigation
 
 | Key | Action |

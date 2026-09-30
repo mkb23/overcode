@@ -572,6 +572,54 @@ def stop_supervisor(tmux_session: str) -> dict:
     raise ControlError("Failed to stop supervisor daemon", status=500)
 
 
+def shutdown_overcode(
+    tmux_session: str,
+    scope: str = "services",
+    force: bool = False,
+    keep_jobs: bool = False,
+    all_sessions: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Shut overcode down on this host (#509), as `overcode shutdown` does.
+
+    ``scope`` "services" (the default) stops the supervisor, monitor
+    daemon and this web server and leaves agents running — what the SSH
+    provisioner needs before an upgrade. "all" is the full shutdown:
+    agents (records kept), jobs, daemons and tmux sessions.
+
+    Replies first and shuts down in a background thread, since stopping
+    this server ends the process answering the request. A dry run
+    answers with the plan instead.
+    """
+    import os
+    import signal
+    import threading
+    import time
+
+    from .lifecycle import shutdown
+
+    if scope not in ("services", "all"):
+        raise ControlError("scope must be 'services' or 'all'", status=400)
+    kwargs = dict(all_sessions=all_sessions, services_only=scope == "services",
+                  force=force, keep_jobs=keep_jobs)
+
+    if dry_run:
+        report = shutdown(tmux_session, dry_run=True, echo=lambda _line: None, **kwargs)
+        return {"ok": True, "scope": scope, "dry_run": True, "steps": [
+            {"phase": s.phase, "target": s.target, "outcome": s.outcome, "detail": s.detail}
+            for s in report.steps
+        ]}
+
+    def run() -> None:
+        time.sleep(0.5)  # let the reply go out
+        report = shutdown(tmux_session, echo=lambda _line: None, **kwargs)
+        if report.stop_self:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=run, daemon=True, name="overcode-shutdown").start()
+    return {"ok": True, "scope": scope, "started": True}
+
+
 def toggle_summarizer(tmux_session: str) -> dict:
     """Toggle AI summarizer on/off.
 

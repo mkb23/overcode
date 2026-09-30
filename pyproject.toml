@@ -85,6 +85,8 @@ overcode = [
     # Bundled models.dev snapshot (context windows + list prices, #473) —
     # refreshed by scripts/refresh_model_metadata.py.
     "data/*.json",
+    # Key presets (#510): deltas on the in-code default keys.
+    "data/keymaps/*.yaml",
 ]
 
 [tool.black]

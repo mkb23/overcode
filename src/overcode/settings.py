@@ -817,6 +817,7 @@ class TUIPreferences:
     baseline_minutes: int = 60  # 0=now (instantaneous), 15/30/.../180 = minutes back for mean spin
     monochrome: bool = False  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: bool = False  # ASCII fallbacks for terminals without emoji (#315)
+    theme: str = "dark"  # "dark" | "light" colour theme (#508)
     show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
     timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)

@@ -245,6 +245,10 @@ class SupervisorTUI(
     CSS_PATH = "tui.tcss"
 
 
+    # The default keys (#510): the `default` key preset IS this list. Presets
+    # (data/keymaps/*.yaml) and the user's `keys:` config are deltas applied
+    # on top at startup (keymap.py → apply_keymap), so add new keys here as
+    # plain tuples. Read keys through self.keymap, never this class attribute.
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("h", "toggle_help", "Help"),
@@ -347,6 +351,8 @@ class SupervisorTUI(
         ("less_than_sign", "cycle_timeline_hours", "Timeline scope"),
         # Monochrome mode for terminals with ANSI issues (#138)
         ("M", "toggle_monochrome", "Monochrome"),
+        # Light / dark colour theme (#508)
+        ("Y", "toggle_theme", "Light/dark theme"),
         # Emoji-free mode for terminals without emoji fonts (#315)
         ("E", "toggle_emoji_free", "Emoji-free"),
         # Cycle between token count, dollar cost, and joules display
@@ -397,6 +403,7 @@ class SupervisorTUI(
     baseline_minutes: reactive[int] = reactive(0)  # 0=now, 15/30/.../180 = minutes back for mean spin
     monochrome: reactive[bool] = reactive(False)  # B&W mode for terminals with ANSI issues (#138)
     emoji_free: reactive[bool] = reactive(False)  # ASCII fallbacks for emoji (#315)
+    ui_theme: str = "dark"  # "dark" | "light" (#508); App.theme is Textual's own
     show_cost: reactive[str] = reactive("tokens")  # "tokens", "cost", "joules" — cycle with $
     tui_mode: reactive[str] = reactive("agents")  # "agents" | "jobs"
     focused_job_index: reactive[int] = reactive(0, always_update=True)
@@ -405,6 +412,9 @@ class SupervisorTUI(
     def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, initial_jobs_mode: bool = False):
         super().__init__()
         self.tmux_session = tmux_session
+        # Effective keys (#510): BINDINGS + key preset + config overrides.
+        from .keymap import effective_keymap
+        self.apply_keymap(effective_keymap(), refresh=False)
         self._init_activity()  # usage log (#483)
         self._init_view_control()  # overcode view (#484)
         self._init_mentor()  # occasional tips, off by default (#483)
@@ -549,6 +559,11 @@ class SupervisorTUI(
         self.monochrome = self._prefs.monochrome
         # Initialize emoji_free from preferences (#315)
         self.emoji_free = self._prefs.emoji_free
+        # Colour theme from preferences (#508)
+        from .tui_theme import LightThemeFilter, normalize_theme
+        self._light_filter = LightThemeFilter()
+        self.ui_theme = normalize_theme(self._prefs.theme)
+        self._apply_ui_theme()
         # Initialize show_cost from preferences
         self.show_cost = self._prefs.show_cost
         # macOS notification integration (#235)
@@ -659,6 +674,53 @@ class SupervisorTUI(
             id="help-text"
         )
 
+    # -- keymap (#510) --------------------------------------------------------
+
+    def apply_keymap(self, km, refresh: bool = True) -> None:
+        """Run with keymap `km`: rebind the app and every keyed widget live."""
+        from .keymap import apply_to_widget, set_active, textual_bindings_map
+        self.keymap = km
+        set_active(km)
+        self._bindings = textual_bindings_map(type(self), km.bindings("app"))
+        if not refresh:
+            return
+        from .tui_widgets import FullscreenPreview
+        from .tui_widgets.summary_prompt_lab import SummaryPromptLab
+        for widget, scope in ((FullscreenPreview, "fullscreen_preview"),
+                              (SummaryPromptLab, "summary_prompt_lab")):
+            for w in self.query(widget):
+                apply_to_widget(w, scope, km)
+        try:
+            self.query_one("#command-bar", CommandBar).refresh_key_hint()
+        except NoMatches:
+            pass
+        self._update_footer()
+        try:
+            self.query_one("#help-overlay").refresh_content()
+        except Exception:
+            pass
+        self.refresh_bindings()
+
+    def _effective_keymap(self):
+        from .keymap import keymap_of
+        return keymap_of(self)
+
+    def action_cycle_key_preset(self) -> None:
+        """Switch to the next key preset, save it, and rebind live (#510)."""
+        from .keymap import effective_keymap, list_presets, set_configured_preset
+        presets = list_presets()
+        current = self._effective_keymap().preset
+        nxt = presets[(presets.index(current) + 1) % len(presets)] if current in presets else presets[0]
+        try:
+            set_configured_preset(nxt)
+        except Exception as e:
+            self.notify(f"Could not save key preset: {e}", severity="error")
+            return
+        km = effective_keymap(preset=nxt)
+        self.apply_keymap(km)
+        note = f" — {len(km.warnings)} warning(s): overcode keys --conflicts" if km.warnings else ""
+        self.notify(f"Key preset: {nxt}{note}", severity="warning" if km.warnings else "information")
+
     def on_mount(self) -> None:
         """Called when app starts"""
         self.title = f"Overcode v{__version__}{get_dev_version_suffix()}"
@@ -668,6 +730,12 @@ class SupervisorTUI(
         # Set up TUI diagnostic file logger
         from .tui_widgets.tui_log_panel import setup_tui_file_logger
         self._tui_log_handler = setup_tui_file_logger(self.tmux_session)
+
+        # Keymap problems (#510) are warnings, never crashes: say so once.
+        km_warnings = getattr(getattr(self, "keymap", None), "warnings", None)
+        if km_warnings:
+            self.notify(f"{len(km_warnings)} key binding warning(s) — run: overcode keys --conflicts",
+                        severity="warning", timeout=10)
 
         # Auto-start Monitor Daemon if not running
         self._ensure_monitor_daemon()
@@ -3357,23 +3425,31 @@ class SupervisorTUI(
         Deliberately short. The palette lists every command with its key
         and state, so the footer's job is to send people there (#482).
         """
+        from .keymap import keymap_of
         from .tui_widgets.dialog_style import KEY, KEYCAP
+        km = keymap_of(self)
         if self.tui_mode == "jobs":
-            keys = [("J", "Agents"), ("j/k", "Jobs"), ("x", "Kill"), ("c", "Clear done")]
+            keys = [(km.label("toggle_tui_mode"), "Agents"), ("j/k", "Jobs"), ("x", "Kill"), ("c", "Clear done")]
         else:
-            keys = [("n", "New agent"), ("j/k", "Next/prev"), ("^P", "Jump to agent")]
+            nav = "/".join(filter(None, (km.label("focus_next_session").split("/")[0],
+                                         km.label("focus_previous_session").split("/")[0])))
+            keys = [(km.label("new_agent"), "New agent"), (nav, "Next/prev"),
+                    (km.label("jump_to_agent"), "Jump to agent")]
             if self.compact:
                 from .config import get_tmux_toggle_key
                 from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
                 toggle = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
                 label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == toggle), toggle)
                 keys.append((label.split(" ")[0], "Switch pane"))
-        keys += [("?", "Help"), ("q", "Quit")]
+        keys += [(km.label("toggle_help").split("/")[-1], "Help"), (km.label("quit"), "Quit")]
 
+        palette_key = km.label("command_palette").split("/")[0] or "/"
         text = Text()
-        text.append(" / ", style=KEYCAP)
+        text.append(f" {palette_key} ", style=KEYCAP)
         text.append(" Commands", style="bold")
         for key, label in keys:
+            if not key:
+                continue
             text.append("   ")
             text.append(key, style=KEY)
             text.append(f" {label}")
@@ -4569,7 +4645,6 @@ class SupervisorTUI(
         self._open_palette("tags")
 
     def _open_palette(self, mode: str) -> None:
-        from .command_palette import keys_by_action
         try:
             palette = self.query_one("#command-palette", CommandPalette)
         except NoMatches:
@@ -4580,7 +4655,7 @@ class SupervisorTUI(
             agents=self._palette_agents(),
             tags=self._palette_tags(),
             sorts=self._palette_sorts(),
-            keymap=keys_by_action(self.BINDINGS),
+            keymap=self._effective_keymap().keys_by_action(),
             recent=self._prefs.recent_commands,
             app_ref=self,
         )
@@ -4792,10 +4867,14 @@ class SupervisorTUI(
         try:
             from .tui_widgets import HelpOverlay
             help_overlay = self.query_one("#help-overlay", HelpOverlay)
-            if help_overlay.has_class("visible") and event.key == "escape":
-                help_overlay.remove_class("visible")
-                self._dialog_did_close()
-                event.stop()
+            if help_overlay.has_class("visible"):
+                if event.key == "escape":
+                    help_overlay.remove_class("visible")
+                    self._dialog_did_close()
+                    event.stop()
+                elif help_overlay.scroll_key(event.key):
+                    # PgUp/PgDn/Home/End scroll a help taller than the screen
+                    event.stop()
         except Exception:
             pass
 
@@ -4884,6 +4963,10 @@ class SupervisorTUI(
                 # Allow these actions when help is visible
                 if action in ("toggle_help", "quit"):
                     return True
+                # Next/previous agent keys scroll the help instead (#510)
+                if action in ("focus_next_session", "focus_previous_session"):
+                    help_overlay.scroll_lines(1 if action == "focus_next_session" else -1)
+                    return False
                 # Block all other actions - close help instead
                 help_overlay.remove_class("visible")
                 self._dialog_did_close()

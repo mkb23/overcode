@@ -69,6 +69,7 @@ The TUI displays all agents with live status updates, showing:
 - **Agent hierarchy** - parent/child delegation with follow mode and reporting
 - **Cost budgets** - per-agent spending limits with automatic enforcement
 - **Sleep mode** - pause agents and exclude them from stats
+- **Shutdown and revive**: `overcode shutdown` stops agents, jobs, daemons and tmux sessions and keeps the agent records. After a reboot, `overcode revive --all` brings the agents back with their conversations.
 
 ### Supervisor Daemon
 An optional Claude-powered orchestrator that:
@@ -126,6 +127,7 @@ Aggregate agents from multiple machines into one dashboard:
 | `q` | Quit (or detach in tmux split) |
 
 See the [TUI Guide](docs/tui-guide.md) for all keyboard shortcuts.
+Every key can be remapped, and a `vscode` preset avoids the keys VSCode's terminal swallows: `overcode keys --use vscode` (see [Configuration → Keybindings](docs/configuration.md#keybindings)).
 
 ## Documentation
 

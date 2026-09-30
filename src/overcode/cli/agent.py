@@ -874,6 +874,10 @@ def restart(
     history is preserved. Pass --fresh to start a brand-new session (useful
     when the old session is stuck or MCP configs have changed).
 
+    If the agent's tmux window is gone (killed, or after a reboot), it is
+    revived in a new window instead. `overcode revive --all` does this for
+    every dead agent.
+
     The model is the one the agent last ran on (a /model switch is picked
     up from its transcript); --model picks another.
     """
@@ -885,13 +889,23 @@ def restart(
         rprint(f"[red]Error: Agent '{name}' not found[/red]")
         raise typer.Exit(code=1)
 
-    if not launcher.tmux.window_exists(sess.tmux_window):
-        rprint(f"[red]Error: Tmux window for '{name}' no longer exists[/red]")
-        raise typer.Exit(code=1)
-
     if model:
         launcher.sessions.update_session(sess.id, model=model)
         sess = launcher.sessions.get_session(sess.id)
+
+    # Window gone (killed, reboot): bring it back in a new window, as the
+    # TUI's R does (#481).
+    if not launcher.tmux.window_exists(sess.tmux_window):
+        from ..lifecycle import resume_mode
+
+        mode, reason = resume_mode(sess, fresh)
+        rprint(f"[dim]'{name}' has no tmux window; reviving...[/dim]")
+        if launcher.revive(sess, fresh=fresh):
+            why = f", {reason}" if reason and not fresh else ""
+            rprint(f"[green]Revived agent: {name} ({'resumed' if mode == 'resume' else 'fresh'}{why})[/green]")
+            return
+        rprint(f"[red]Failed to revive agent: {name}[/red]")
+        raise typer.Exit(code=1)
 
     rprint(f"[dim]Stopping '{name}'...[/dim]")
     if launcher.restart(sess, fresh=fresh):

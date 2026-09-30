@@ -15,12 +15,10 @@ from ._shared import activity_app
 
 
 def _tui_keymaps() -> tuple[frozenset[str], dict[str, list[str]]]:
-    """The TUI's bound keys, and keys by action, straight from its BINDINGS."""
-    from ..tui import SupervisorTUI
-    keys_by_action: dict[str, list[str]] = {}
-    for binding in SupervisorTUI.BINDINGS:
-        key, action = binding[0], binding[1]
-        keys_by_action.setdefault(action, []).append(key)
+    """The TUI's bound keys, and keys by action, from its effective keymap
+    (BINDINGS + key preset + config overrides, #510)."""
+    from ..keymap import effective_keymap
+    keys_by_action = effective_keymap().raw_keys_by_action()
     bound = frozenset(k for keys in keys_by_action.values() for k in keys)
     return bound, keys_by_action
 

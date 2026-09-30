@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import subprocess
 
+from ..keymap import keymap_of
+
 
 class OveragentMixin:
     """Mixed into SupervisorTUI."""
@@ -97,10 +99,9 @@ class JourneyMixin:
         self._journey_loading = True
 
         def work() -> None:
-            from ..command_palette import keys_by_action
             from ..journey import load_journey
             try:
-                keymap = keys_by_action(self.BINDINGS)
+                keymap = keymap_of(self).keys_by_action()
                 bound = frozenset(k for keys in keymap.values() for k in keys)
                 journey, error = load_journey(keymap, bound), None
             except Exception as e:

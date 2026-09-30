@@ -60,6 +60,10 @@ class SummaryPromptLab(Vertical):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # Keys come from the `summary_prompt_lab` key scope (#510); BINDINGS
+        # above are its defaults.
+        from ..keymap import apply_to_widget
+        apply_to_widget(self, "summary_prompt_lab")
         self.mode: str = "short"
         self._saved: str = ""
         self._runner: Optional[PromptLabRunner] = None
@@ -156,11 +160,19 @@ class SummaryPromptLab(Vertical):
         editor_h = screen_h - top - 1 - 2 - 2 - results_h
         self.editor.styles.height = max(5, min(18, editor_h))
         self.border_title = self.TITLE
-        self.border_subtitle = ds.hints(
-            ("^S", "save"), ("^T", "short/context"), ("^R", "revert"),
-            ("^L", "default"), ("esc", "close"),
-        )
+        self.border_subtitle = ds.hints(*(
+            (k, what) for k, what in (
+                (self._key("save"), "save"), (self._key("switch_mode"), "short/context"),
+                (self._key("revert"), "revert"), (self._key("load_default"), "default"),
+                (self._key("close").replace("Esc", "esc"), "close"),
+            ) if k))
         self._draw()
+
+    @staticmethod
+    def _key(action: str) -> str:
+        """The key label for one of this dialog's actions (#510)."""
+        from ..keymap import active
+        return active().label(action, "summary_prompt_lab")
 
     # ── prompt state ─────────────────────────────────────────────────────
 
@@ -213,13 +225,13 @@ class SummaryPromptLab(Vertical):
 
     def action_load_default(self) -> None:
         self._set_text(sp.DEFAULT_PROMPTS[self.mode])
-        self._note = Text("built-in default loaded — ^S to save it", style=ds.MUTED)
+        self._note = Text(f"built-in default loaded — {self._key('save')} to save it", style=ds.MUTED)
         self._draw()
 
     def action_switch_mode(self) -> None:
         if self.dirty and not self._confirm_discard:
             self._confirm_discard = True
-            self._note = Text("unsaved edits — ^S to save, or ^T again to discard", style=ds.WARN)
+            self._note = Text(f"unsaved edits — {self._key('save')} to save, or {self._key('switch_mode')} again to discard", style=ds.WARN)
             self._draw()
             return
         self._load_mode("context" if self.mode == "short" else "short")
@@ -228,7 +240,7 @@ class SummaryPromptLab(Vertical):
     def action_close(self) -> None:
         if self.dirty and not self._confirm_discard:
             self._confirm_discard = True
-            self._note = Text("unsaved edits — ^S to save, or esc again to discard", style=ds.WARN)
+            self._note = Text(f"unsaved edits — {self._key('save')} to save, or {self._key('close')} again to discard", style=ds.WARN)
             self._draw()
             return
         self.hide()
@@ -287,7 +299,7 @@ class SummaryPromptLab(Vertical):
         elif sp.is_customised(self.mode):
             state = Text(f"saved · {_tilde(path)}", style=ds.MUTED)
         else:
-            state = Text(f"built-in default · ^S saves to {_tilde(path)}", style=ds.MUTED)
+            state = Text(f"built-in default · {self._key('save')} saves to {_tilde(path)}", style=ds.MUTED)
         # The state (with its path) gives way before the mode choice does
         state = ds.fit(state, max(8, w - cell_len(line.plain) - 1)) if cell_len(state.plain) > w - cell_len(line.plain) - 1 else state
         t.append_text(ds.spread(line, state, w))

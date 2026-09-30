@@ -119,6 +119,17 @@ class TestRank:
         assert _titles("S")[0] == "Sort agents by…"
         assert _titles("s")[0] == "Summary detail"
 
+    @pytest.mark.parametrize("query", ["quit", "close", "exit", "terminate", "stop", "shut"])
+    def test_ways_of_saying_quit_shortlist_shutdown(self, query):
+        titles = _titles(query)
+        assert "Shut down overcode" in titles[:5]
+        if query in ("quit", "close", "exit"):
+            assert titles[0] == "Quit"  # the everyday quit still wins
+
+    @pytest.mark.parametrize("query", ["revive", "dead", "reboot", "restore"])
+    def test_ways_of_saying_revive_shortlist_it(self, query):
+        assert "Revive all dead agents" in _titles(query)[:5]
+
     def test_symbol_keys_find_their_command(self):
         assert _titles("$")[0] == "Cost units"
         assert _titles("<")[0] == "Timeline scope"

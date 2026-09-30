@@ -69,6 +69,12 @@ _FIXED_CONTROL_ROUTES = {
     ("POST", "/api/daemon/supervisor/start"): lambda api, ts, body: api.start_supervisor(ts),
     ("POST", "/api/daemon/supervisor/stop"): lambda api, ts, body: api.stop_supervisor(ts),
     ("POST", "/api/daemon/summarizer/toggle"): lambda api, ts, body: api.toggle_summarizer(ts),
+    ("POST", "/api/shutdown"): lambda api, ts, body: api.shutdown_overcode(
+        ts, scope=body.get("scope", "services"), force=bool(body.get("force", False)),
+        keep_jobs=bool(body.get("keep_jobs", False)),
+        all_sessions=bool(body.get("all_sessions", False)),
+        dry_run=bool(body.get("dry_run", False)),
+    ),
 }
 
 # Agent routes: (method, action_suffix) -> handler(api, ts, name, body)
