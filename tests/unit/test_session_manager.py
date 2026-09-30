@@ -1288,6 +1288,20 @@ class TestSessionHierarchy:
         # Repo name now matches the focal subdir
         assert reloaded.repo_name == "alpha"
 
+    def test_git_refresh_keeps_the_focal_repo(self, tmp_path):
+        """#494: the daemon's per-tick refresh read start_directory, so the
+        Repo column went back to n/a right after Ctrl+R set a focal repo."""
+        ws = self._make_workspace(tmp_path)
+        manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)
+        s = manager.create_session(
+            name="ws", tmux_session="agents", tmux_window=1, command=["claude"],
+            start_directory=str(ws),
+        )
+        manager.set_focal_repo(s.id, "beta")
+        assert manager.read_git_context(manager.get_session(s.id))[0] == "beta"
+        assert manager.refresh_git_context(s.id) is False
+        assert manager.get_session(s.id).repo_name == "beta"
+
     def test_set_focal_repo_rejects_unknown(self, tmp_path):
         ws = self._make_workspace(tmp_path)
         manager = SessionManager(state_dir=tmp_path / "state", skip_git_detection=True)

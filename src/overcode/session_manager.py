@@ -1071,19 +1071,21 @@ class SessionManager:
             return None, None
 
     def read_git_context(self, session: Session) -> tuple[Optional[str], Optional[str]]:
-        """``(repo_name, branch)`` of ``session``'s start directory right now.
+        """``(repo_name, branch)`` of ``session``'s focal repo, else its start directory, right now.
 
         The detection half of ``refresh_git_context`` with no write: the
         daemon compares the answer with the session it holds and stages
-        the change for its per-tick commit.
+        the change for its per-tick commit. It must follow the focal repo,
+        or every tick undoes ``set_focal_repo`` (#494).
         """
-        return self._detect_git_context(session.start_directory)
+        return self._detect_git_context(self.resolve_focal_directory(
+            session.start_directory, getattr(session, "focal_repo_subdir", None)))
 
     def refresh_git_context(self, session_id: str) -> bool:
         """Refresh git repo/branch info for a session.
 
-        Detects current branch from the session's start_directory and
-        updates the session if it has changed.
+        Detects current branch from the session's focal repo (else its
+        start_directory) and updates the session if it has changed.
 
         Returns:
             True if git context was updated, False otherwise
