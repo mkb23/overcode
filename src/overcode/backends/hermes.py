@@ -534,9 +534,9 @@ class HermesBackend:
     #   /Users/x/.hermes/hermes-agent/venv/bin/python /Users/x/.hermes/hermes-agent/hermes --cli
     # so the process the pane actually runs has basename ``python`` — far too
     # broad to match on. ``process_argv_markers`` (below) is the seam that
-    # identifies it by argv instead; the basename tuple is kept for the
-    # shim's own brief lifetime and for installs that put a real binary on
-    # PATH.
+    # identifies it by argv instead. The basename tuple covers the shim's own
+    # brief lifetime, a real binary on PATH, and a pip/uv console script
+    # (``<python> <venv>/bin/hermes``), whose script basename doctor matches.
     process_basenames = ("hermes",)
     process_argv_markers = ("hermes-agent/hermes",)
     not_found_error = HermesNotFoundError

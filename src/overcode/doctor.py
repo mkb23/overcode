@@ -202,9 +202,15 @@ def find_agent_process(
         argv = argv_by_pid.get(pid, "")
         if not argv:
             continue
-        first_token = argv.split(None, 1)[0]
-        basename = first_token.rsplit("/", 1)[-1]
+        tokens = argv.split(None, 2)
+        basename = tokens[0].rsplit("/", 1)[-1]
         if basename in wanted:
+            return pid, argv
+        # A console script (pip, uv, a venv) runs as `<interpreter> <path to
+        # script> ...`: the kernel puts the shebang's interpreter first, so the
+        # agent's own name is the basename of the script it runs.
+        if len(tokens) > 1 and _is_interpreter(basename) \
+                and tokens[1].rsplit("/", 1)[-1] in wanted:
             return pid, argv
         if any(marker in argv for marker in markers):
             return pid, argv
@@ -213,6 +219,14 @@ def find_agent_process(
 
 # Compat alias — callers that only ever look for Claude.
 find_claude_process = find_agent_process
+
+
+def _is_interpreter(basename: str) -> bool:
+    """True for a Python interpreter's basename: python, python3, python3.12."""
+    if not basename.startswith("python"):
+        return False
+    version = basename[len("python"):]
+    return version == "" or version.replace(".", "").isdigit()
 
 
 def session_process_basenames(session) -> Sequence[str]:

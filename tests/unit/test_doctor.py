@@ -31,6 +31,7 @@ from overcode.doctor import (
     VERDICT_WINDOW_GONE,
     _build_child_index,
     find_claude_process,
+    find_agent_process,
     gather_data_findings,
     get_descendant_pids,
     inspect_agent,
@@ -143,6 +144,45 @@ class TestFindClaudeProcess:
         argv = {101: "bash wrapper.sh", 102: "claude --settings {}"}
         pid, _ = find_claude_process(100, children, argv)
         assert pid == 102
+
+
+class TestFindAgentProcessConsoleScript:
+    """A pip/uv/venv install runs an agent as `<python> <script>`, never as a
+    binary of its own name: the agent's name is the script's basename."""
+
+    HERMES = (("hermes",), ("hermes-agent/hermes",))
+
+    def _find(self, argv):
+        basenames, markers = self.HERMES
+        return find_agent_process(100, {100: [101]}, {101: argv}, basenames, markers)
+
+    @pytest.mark.parametrize("argv", [
+        # the Nous installer's shim (the argv marker's case, unchanged)
+        "/u/.hermes/hermes-agent/venv/bin/python /u/.hermes/hermes-agent/hermes --cli",
+        # a pip or uv console script in any venv
+        "/u/venv/bin/python3 /u/venv/bin/hermes --cli",
+        "/u/.local/share/uv/tools/hermes-agent/bin/python /u/.local/bin/hermes --cli",
+        "/opt/venvs/py/bin/python3.11 /opt/venvs/hermes/bin/hermes -p work --cli",
+        # a real binary on PATH
+        "/usr/local/bin/hermes --cli",
+    ])
+    def test_finds_hermes_however_it_was_installed(self, argv):
+        assert self._find(argv) == (101, argv)
+
+    @pytest.mark.parametrize("argv", [
+        "/u/venv/bin/python /u/venv/bin/hermes-acp",          # a sibling script
+        "/u/venv/bin/python /u/work/hermes/run.py",           # a directory named hermes
+        "/u/venv/bin/pythonx /u/venv/bin/hermes",             # not an interpreter
+        "/usr/bin/node /u/bin/hermes",                        # other runtimes are not assumed
+        "/u/venv/bin/python",                                 # no script at all
+    ])
+    def test_does_not_match_other_processes(self, argv):
+        assert self._find(argv) == (None, "")
+
+    def test_claude_lookup_is_unchanged_by_a_python_process(self):
+        children = {100: [101]}
+        argv = {101: "/usr/bin/python3 /u/bin/claude-helper"}
+        assert find_claude_process(100, children, argv) == (None, "")
 
 
 class TestInspectAgent:
