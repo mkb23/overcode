@@ -105,6 +105,9 @@ def list_jobs(
             f"{job.status}{exit_str}{agent_str}"
         )
 
+    running = sum(1 for j in jobs if j.status == "running")
+    rprint(f"[dim]{running} running[/dim]" + (f"[dim], {len(jobs) - running} finished[/dim]" if all else ""))
+
 
 @jobs_app.command("kill")
 def kill_job(

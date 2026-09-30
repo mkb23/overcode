@@ -66,6 +66,21 @@ class TestJobsListCommand:
 
         assert result.exit_code == 0
         assert "test-job" in result.output
+        assert "1 running" in result.output
+
+    @patch("overcode.job_launcher.JobLauncher.list_jobs")
+    @patch("overcode.job_launcher.JobLauncher.__init__", return_value=None)
+    def test_list_all_summarises_running_and_finished(self, mock_init, mock_list):
+        done = _mock_job()
+        done.status = "completed"
+        done.exit_code = 0
+        done.end_time = done.start_time
+        mock_list.return_value = [_mock_job(), done]
+
+        result = runner.invoke(app, ["jobs", "list", "--all"])
+
+        assert result.exit_code == 0
+        assert "1 running, 1 finished" in result.output
 
 
 class TestJobsKillCommand:

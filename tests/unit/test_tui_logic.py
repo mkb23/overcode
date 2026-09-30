@@ -1623,6 +1623,30 @@ class TestComputeWindowBurn:
         assert result.total_tokens == 0
 
 
+class TestRunningJobCounts:
+    """Jobs column and the monitor bar's orphan count (#463)."""
+
+    @staticmethod
+    def _job(status="running", agent=None):
+        return Mock(status=status, agent_session_id=agent)
+
+    def test_counts_running_jobs_per_live_agent(self):
+        from overcode.tui_logic import running_job_counts
+        jobs = [self._job(agent="a"), self._job(agent="a"), self._job(agent="b"),
+                self._job("completed", agent="a")]
+        assert running_job_counts(jobs, {"a", "b"}) == ({"a": 2, "b": 1}, 0)
+
+    def test_unlinked_or_dead_agent_jobs_are_orphans(self):
+        from overcode.tui_logic import running_job_counts
+        jobs = [self._job(), self._job(agent="gone"), self._job("failed"),
+                self._job(agent="a")]
+        assert running_job_counts(jobs, {"a"}) == ({"a": 1}, 2)
+
+    def test_nothing_running(self):
+        from overcode.tui_logic import running_job_counts
+        assert running_job_counts([], {"a"}) == ({}, 0)
+
+
 # =============================================================================
 # Run tests directly
 # =============================================================================

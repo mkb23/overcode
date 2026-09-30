@@ -1155,3 +1155,22 @@ def should_scan_git(sweep: int, every: int = GIT_STATS_EVERY_SWEEPS) -> bool:
     CPU/IO burst. Diff and untracked columns tolerate a slower refresh.
     """
     return sweep % max(1, every) == 0
+
+
+def running_job_counts(jobs, agent_ids) -> Tuple[Dict[str, int], int]:
+    """Running jobs per launching agent, and how many have no live agent (#463).
+
+    ``agent_ids`` are the agents on screen; a running job whose agent is not
+    among them (never linked, or since killed) counts as an orphan.
+    """
+    per_agent: Dict[str, int] = {}
+    orphans = 0
+    for job in jobs:
+        if getattr(job, "status", None) != "running":
+            continue
+        owner = getattr(job, "agent_session_id", None)
+        if owner and owner in agent_ids:
+            per_agent[owner] = per_agent.get(owner, 0) + 1
+        else:
+            orphans += 1
+    return per_agent, orphans

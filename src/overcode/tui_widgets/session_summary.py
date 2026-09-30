@@ -121,6 +121,7 @@ class SessionSummary(Static, can_focus=True):
         self.tree_depth: int = 0  # Set by TUI when sort mode is by_tree
         self.tree_prefix: str = ""  # e.g., "├─ " or "└─ " — set by TUI
         self.child_count: int = 0  # Number of direct children — set by TUI
+        self.job_count: int = 0  # Running jobs it launched — set by TUI (#463)
         self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
         # Always single-line display
         self.add_class("list-mode")
@@ -402,6 +403,7 @@ class SessionSummary(Static, can_focus=True):
                 else self.background_bash_count
             ),
             child_count=self.child_count,
+            job_count=self.job_count,
             status_changed_at=self._status_changed_at,
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),

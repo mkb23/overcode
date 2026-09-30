@@ -50,6 +50,7 @@ def _make_bare_status_bar(**extra_attrs):
     widget._sister_states = []
     widget._burn_stats = None
     widget._burn_window_hours = 0.0
+    widget.orphan_job_count = 0
     # Each instance gets its own mock app
     widget._mock_app = MagicMock()
     widget._mock_app._summarizer.enabled = False
@@ -228,8 +229,15 @@ class TestDaemonStatusBarRenderStopped:
         )
         result = widget.render()
         plain = result.plain
-        assert "Supervisor:" in plain
-        assert "stopped" in plain
+        assert "Supervisor: 🛑" in plain       # a stop sign, not the word (#463)
+        widget._mock_app.emoji_free = True
+        assert "Supervisor: ○ off" in widget.render().plain
+
+    def test_orphan_jobs_shown_only_when_there_are_some(self):
+        widget = _make_bare_status_bar(monitor_state=None)
+        assert "orphan" not in widget.render().plain
+        widget.orphan_job_count = 2
+        assert "🚜 2 orphan jobs" in widget.render().plain
 
 
 # ===========================================================================

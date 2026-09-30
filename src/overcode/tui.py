@@ -67,6 +67,7 @@ from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
     compute_child_counts,
+    running_job_counts,
     compute_tree_metadata,
     compute_stall_state,
     should_send_stall_notification,
@@ -589,6 +590,7 @@ class SupervisorTUI(
         # Jobs mode — tracked bash jobs in a separate tmux session
         self._job_manager = JobManager()
         self._job_launcher = JobLauncher(job_manager=self._job_manager)
+        self._job_counts: dict = {}  # agent id -> running jobs it launched (#463)
 
         # Sister integration (#245) - remote agent monitoring + control
         self._sister_poller = SisterPoller()
@@ -2942,6 +2944,8 @@ class SupervisorTUI(
             remote_children = rds.get('children_count')
             if remote_children is not None:
                 widget.child_count = remote_children
+        for widget in ordered_widgets:
+            widget.job_count = self._job_counts.get(widget.session.id, 0)
 
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
@@ -3262,6 +3266,23 @@ class SupervisorTUI(
             except NoMatches:
                 pass
 
+    def _apply_job_counts(self) -> None:
+        """Running jobs into each agent's JOB column; orphans into the monitor bar (#463)."""
+        local_ids = {s.id for s in self.sessions if not s.is_remote}
+        self._job_counts, orphans = running_job_counts(self.jobs, local_ids)
+        for widget in self.query(SessionSummary):
+            count = self._job_counts.get(widget.session.id, 0)
+            if widget.job_count != count:
+                widget.job_count = count
+                widget.refresh()
+        try:
+            bar = self.query_one("#daemon-status", DaemonStatusBar)
+        except NoMatches:
+            return
+        if bar.orphan_job_count != orphans:
+            bar.orphan_job_count = orphans
+            bar.refresh()
+
     def _get_job_widgets(self) -> List[JobSummary]:
         """Get job widgets in order."""
         return list(self.query(JobSummary))
@@ -3280,6 +3301,7 @@ class SupervisorTUI(
     def _apply_jobs(self, jobs: List[Job]) -> None:
         """Apply refreshed job list to TUI (main thread)."""
         self.jobs = jobs
+        self._apply_job_counts()
         try:
             container = self.query_one("#jobs-container", ScrollableContainer)
         except NoMatches:

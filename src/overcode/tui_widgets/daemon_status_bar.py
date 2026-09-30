@@ -58,6 +58,8 @@ class DaemonStatusBar(Static):
         # Window-scoped burn stats (#174) — scoped to the user's timeline window
         self._burn_stats = None  # WindowBurnStats or None
         self._burn_window_hours: float = 0.0
+        # Running jobs with no live agent behind them — set by the TUI (#463)
+        self.orphan_job_count: int = 0
 
     def fetch_volatile_state(
         self,
@@ -284,9 +286,16 @@ class DaemonStatusBar(Static):
                     content.append(f" ⏱{total_run}", style="dim")
             else:
                 content.append("ready", style="green")
+        elif getattr(self.app, "emoji_free", False) is True:
+            content.append("○ off", style="red")
         else:
-            content.append("○ ", style="red")
-            content.append("stopped", style="red")
+            content.append("🛑", style="red")  # stopped; short to leave room (#463)
+
+        if self.orphan_job_count:
+            content.append(" │ ", style="dim")
+            icon = "Jb" if getattr(self.app, "emoji_free", False) is True else "🚜"
+            content.append(f"{icon} {self.orphan_job_count} orphan job"
+                           f"{'s' if self.orphan_job_count != 1 else ''}", style="bold yellow")
 
         # AI Summarizer status (from TUI's local summarizer, not daemon)
         content.append(" │ ", style="dim")

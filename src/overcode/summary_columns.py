@@ -196,6 +196,9 @@ class ColumnContext:
     max_repo_width: int
     max_branch_width: int
 
+    # Running overcode jobs this agent launched (#463)
+    job_count: int = 0
+
     # Oversight countdown
     any_has_oversight_timeout: bool = False
     oversight_deadline: Optional[str] = None
@@ -923,6 +926,13 @@ def render_child_count(ctx: ColumnContext) -> ColumnOutput:
     return [(f" {ctx.e('👶')}{count:>2}", style)]
 
 
+def render_job_count(ctx: ColumnContext) -> ColumnOutput:
+    count = ctx.job_count
+    if count == 0:
+        return [(f" {ctx.e('🚜')} 0", ctx.mono(f"dim{ctx.bg}", "dim"))]
+    return [(f" {ctx.e('🚜')}{count:>2}", ctx.mono(f"bold green{ctx.bg}", "bold"))]
+
+
 render_permission_mode = _make_simple_render("perm_emoji", format_str=" {v}", colored_style="bold white")
 
 
@@ -1504,6 +1514,8 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   header="SH", name="Bash Count"),
     SummaryColumn(id="child_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_child_count,
                   header="CH", name="Child Count"),
+    SummaryColumn(id="job_count", group="subprocesses", detail_levels=HIGH_PLUS, render=render_job_count,
+                  header="JOB", name="Job Count"),
     # Synthetic CLI-only: combined work + interactions line
     SummaryColumn(id="work_combined", group="performance", detail_levels=set(), render=lambda ctx: None,
                   label="Work", render_plain=render_work_plain, cli_only=True),
@@ -1589,6 +1601,7 @@ COLUMN_HELP: dict[str, str] = {
     "subagent_count": "Subagents running right now",
     "bash_count": "Background shell commands running right now",
     "child_count": "Overcode child agents launched by this agent",
+    "job_count": "Overcode jobs this agent launched that are still running",
     "permission_mode": "Permission mode: normal, auto-accept, permissive or bypass",
     "agent_teams": "Agent teams enabled",
     "wrapper": "Launch wrapper (e.g. devcontainer) and sandbox badge",
@@ -1715,6 +1728,7 @@ COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
     "subagent_count": (lambda ctx: ctx.live_subagent_count, True),
     "bash_count": (lambda ctx: ctx.background_bash_count, True),
     "child_count": (lambda ctx: ctx.child_count, True),
+    "job_count": (lambda ctx: ctx.job_count, True),
     "permission_mode": (lambda ctx: ctx.session.permissiveness_mode, False),
     "agent_teams": (lambda ctx: int(bool(ctx.session.agent_teams)), True),
     "wrapper": (lambda ctx: render_wrapper_plain(ctx), False),

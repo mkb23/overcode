@@ -158,6 +158,7 @@ EMOJI_ASCII = {
     "🤿": "Su",
     "🐚": "Bg",
     "👶": "Ch",
+    "🚜": "Jb",
     "🎣": "Hk",  # enhanced context hooks
     "🧱": "Br",  # Bedrock provider
     "🤝": "Tm",
