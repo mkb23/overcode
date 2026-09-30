@@ -264,6 +264,9 @@ class SupervisorTUI(
         ("k", "focus_previous_session", "Prev"),
         ("down", "focus_next_session", "Next"),
         ("up", "focus_previous_session", "Prev"),
+        # The split's agent-pane keys work in the TUI pane too
+        ("alt+j", "focus_next_session", "Next"),
+        ("alt+k", "focus_previous_session", "Prev"),
         # Preview pane toggle
         ("m", "toggle_preview", "Preview"),
         # Fullscreen preview (expand preview pane)

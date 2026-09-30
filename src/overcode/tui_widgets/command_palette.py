@@ -49,6 +49,8 @@ TITLES = {"commands": "Commands", "agents": "Jump to agent", "tags": "Filter by 
           "sort": "Sort agents by"}
 MAX_ROWS = 16      # tallest the list gets; shorter terminals get fewer
 MAX_WIDTH = 88
+# Keys shown on a row (`j ↓`); the tip line under the list shows them all.
+ROW_KEYS = 2
 RECENT_SHOWN = 3
 
 
@@ -159,7 +161,7 @@ class CommandPalette(ModalBase):
         self._recent = list(recent)
         self._title_width = max(cell_len(c.title) for c in COMMANDS)
         self._key_width = max(
-            (cell_len(" ".join(k)) for k in self._keymap.values()), default=3,
+            (cell_len(" ".join(k[:ROW_KEYS])) for k in self._keymap.values()), default=3,
         )
         self._save_focus(app_ref)
         self._switch(mode)
@@ -446,7 +448,7 @@ class CommandPalette(ModalBase):
         line.append_text(_fit(title, tw))
         line.append("  ")
 
-        keys = _keys(self._keymap.get(cmd.action, []), row.match.by_key)
+        keys = _keys(self._keymap.get(cmd.action, [])[:ROW_KEYS], row.match.by_key)
         states_w = w - 1 - tw - 2 - self._key_width - 1
         if cmd.state is not None and states_w >= 6:
             line.append_text(_states(self._state(cmd), states_w))

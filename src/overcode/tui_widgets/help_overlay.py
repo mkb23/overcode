@@ -166,7 +166,7 @@ def key_sections(km: Any, compact: bool = False,
     if split:
         tmux_rows.append(HelpRow(split, "Resize split"))
     tmux_rows += [
-        HelpRow("M-j/M-k", "Next / prev agent (from the agent pane)"),
+        HelpRow("M-j/M-k", "Next / prev agent (either pane)"),
         HelpRow("M-b", "Go to bell (from the agent pane)"),
         HelpRow("PgUp/PgDn", "Scrollback"),
     ]

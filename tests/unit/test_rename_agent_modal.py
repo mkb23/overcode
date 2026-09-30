@@ -261,6 +261,8 @@ class TestHelpCoversEveryBinding:
     def _label(self, key: str) -> str:
         if key.startswith("ctrl+"):
             return "^" + key[len("ctrl+"):].upper()
+        if key.startswith("alt+"):
+            return "M-" + key[len("alt+"):]
         label = self.LABELS.get(key, key)
         return self.GROUPED.get(label, label)
 

@@ -2,6 +2,7 @@
 the vscode preset, the `overcode keys` CLI, and the keymap reaching help,
 palette and the running TUI."""
 
+import re
 import json
 from unittest.mock import patch
 
@@ -396,8 +397,9 @@ class TestHelpLayout:
         from overcode.tui_widgets.help_overlay import build_help
         default = build_help(120, _km()).plain
         vscode = build_help(120, _km(preset="vscode")).plain
-        assert "^P  Jump to agent" in default or "^P    Jump to agent" in default
-        assert "Space Jump to agent" in vscode
+        # The key column is as wide as its longest entry (j/↓/M-j)
+        assert re.search(r"\^P +Jump to agent", default)
+        assert re.search(r"Space +Jump to agent", vscode)
         assert "^P" not in vscode.split("COMMAND BAR")[0]
         assert "keys: vscode preset" in vscode
 
@@ -488,7 +490,7 @@ class TestKeymapInTUI:
             overlay = tui.query_one("#help-overlay")
             assert overlay.has_class("visible")
             body = overlay.query_one("#help-body")
-            assert "Space Jump to agent" in body.render().plain
+            assert re.search(r"Space +Jump to agent", body.render().plain)
 
     async def test_cycle_preset_rebinds_live(self, vscode_tui, monkeypatch):
         from tests.unit.test_command_palette import _palette, _ready

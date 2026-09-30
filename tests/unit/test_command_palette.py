@@ -52,11 +52,11 @@ class TestRegistry:
     def test_every_full_cycle_fits_the_palette(self):
         """At full width, each stateful row shows its whole cycle rather than
         falling back to "3 of 6"."""
-        from overcode.tui_widgets.command_palette import MAX_WIDTH, _states
+        from overcode.tui_widgets.command_palette import MAX_WIDTH, ROW_KEYS, _states
         keymap = _keymap()
         inner = MAX_WIDTH - 4
         title_w = max(cell_len(c.title) for c in COMMANDS)
-        key_w = max(cell_len(" ".join(k)) for k in keymap.values())
+        key_w = max(cell_len(" ".join(k[:ROW_KEYS])) for k in keymap.values())
         states_w = inner - 1 - title_w - 2 - key_w - 1
         for c in COMMANDS:
             if c.state is None:
@@ -80,7 +80,7 @@ class TestKeyLabels:
 
     def test_keys_by_action_keeps_binding_order(self):
         keymap = _keymap()
-        assert keymap["focus_next_session"] == ["j", "↓"]
+        assert keymap["focus_next_session"] == ["j", "↓", "M-j"]
         assert keymap["toggle_help"] == ["h", "?"]
         assert keymap["command_palette"] == ["/"]
         assert keymap["jump_to_agent"] == ["^P"]
@@ -387,3 +387,10 @@ class TestFooter:
     def test_jobs_view(self):
         text = self._footer(mode="jobs")
         assert text.startswith(" / ") and "J Agents" in text and "New agent" not in text
+
+
+def test_alt_j_k_navigate_in_the_tui_pane_too():
+    """The split's agent-pane keys M-j/M-k also work in the TUI pane."""
+    keymap = _keymap()
+    assert keymap["focus_next_session"] == ["j", "↓", "M-j"]
+    assert keymap["focus_previous_session"] == ["k", "↑", "M-k"]
