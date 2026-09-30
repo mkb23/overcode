@@ -94,6 +94,15 @@ class Skill:
         """Every name a profile may use for this skill: frontmatter and folder."""
         return {self.name, self.path.name}
 
+    @property
+    def source_label(self) -> str:
+        """Short name for where it came from: its plugin, else its library folder (#511)."""
+        if self.plugin:
+            return self.plugin
+        if self.source == "library":
+            return "library"
+        return Path(self.source).name or self.source
+
     def cli_name(self, backend: str) -> str:
         """The name ``backend`` knows this skill by."""
         return self.path.name if _NAMES_BY_FOLDER.get(backend) else self.name

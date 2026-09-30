@@ -354,6 +354,22 @@ class TestSkillsModal:
         assert "on: Claude+opencode" in plain
         assert "hidden" in plain
 
+    def test_plugin_library_rows_name_the_plugin_not_the_path(self, home):
+        """#511: every row read "~/.claude/plugins/ma…" and long names were cut."""
+        root = home / ".claude" / "plugins" / "marketplaces"
+        plugin = root / "official" / "plugins" / "setup"
+        (plugin / ".claude-plugin").mkdir(parents=True)
+        (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "claude-code-setup"}')
+        make_skill(plugin / "skills", "claude-automation-recommender")
+        make_skill(root / "loose", "stray")
+        sl.add_library_path(str(root))
+        modal = self._modal(home)
+        rows = "\n".join(modal._row(e, False, 120).plain for e in modal.entries)
+        assert "claude-automation-recommender " in rows
+        assert "claude-code-setup" in rows
+        assert "marketplaces" in rows            # no plugin: the library folder's name
+        assert "~/.claude/plugins" not in rows
+
     async def test_mounted_in_an_app(self, home):
         from textual.app import App
         from overcode.tui_widgets.skills_modal import SkillsModal

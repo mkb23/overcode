@@ -38,8 +38,10 @@ class SkillsModal(ModalBase):
 
     TITLE = "Skill profiles"
     WIDTH = 110
-    _NAME_W = 24
-    _SOURCE_W = 21
+    # Name and source columns fit the longest value, within these bounds;
+    # the full path of the highlighted skill is in the tip line (#511).
+    _NAME_W = (12, 32)
+    _SOURCE_W = (8, 24)
     _USES_W = 8
     _CHROME = 9  # border, header, rules, tip
 
@@ -53,6 +55,8 @@ class SkillsModal(ModalBase):
         self._naming: Optional[str] = None      # new profile name being typed
         self._confirm_delete = False
         self._message: Optional[Text] = None
+        self._name_w = self._NAME_W[0]
+        self._source_w = self._SOURCE_W[0]
 
     # ── public api ───────────────────────────────────────────────────────
 
@@ -67,6 +71,7 @@ class SkillsModal(ModalBase):
         """Open on ``profile`` (else the folder's, else the first one)."""
         from .. import skill_library
         self.entries = skill_library.catalog(usage)
+        self._fit_columns()
         self.profiles = skill_library.get_profiles()
         self.folder = folder
         pinned = skill_library.profile_for_folder(folder)
@@ -202,18 +207,28 @@ class SkillsModal(ModalBase):
             line.append("none yet — press n to make one", style=f"italic {ds.MUTED}")
         return ds.finish(line, w)
 
+    @staticmethod
+    def _source(entry: Any) -> str:
+        if entry.always_on:
+            return "on: " + "+".join(entry.always_on)
+        return entry.skill.source_label
+
+    def _fit_columns(self) -> None:
+        def width(values, bounds):
+            lo, hi = bounds
+            return max(lo, min(hi, max((len(v) for v in values), default=0) + 2))
+        self._name_w = width((e.name for e in self.entries), self._NAME_W)
+        self._source_w = width((self._source(e) for e in self.entries), self._SOURCE_W)
+
     def _row(self, entry: Any, selected: bool, w: int) -> Text:
         on = self._in_profile(entry)
         line = ds.item(selected)
         line.append_text(ds.check(on if self.profile else False))
         line.append(" ")
         line.append_text(ds.fit(Text(entry.name, style="bold" if selected else ds.TEXT),
-                                self._NAME_W))
-        if entry.always_on:
-            source = Text("on: " + "+".join(entry.always_on), style=ds.WARN)
-        else:
-            source = Text(entry.skill.source, style=ds.ACCENT)
-        line.append_text(ds.fit(source, self._SOURCE_W))
+                                self._name_w))
+        style = ds.WARN if entry.always_on else ds.ACCENT
+        line.append_text(ds.fit(Text(self._source(entry), style=style), self._source_w))
         uses = f"{entry.uses} used" if entry.uses else ""
         line.append_text(ds.fit(Text(uses, style=ds.MUTED), self._USES_W))
         if entry.always_on and self.profile and not on:
