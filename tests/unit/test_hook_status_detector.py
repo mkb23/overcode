@@ -11,11 +11,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import (
     HookStatusDetector,
+    _live_subagent_count,
     augment_with_legacy_heartbeat,
     compute_status_detail,
     synthesize_status_detail_from_legacy,
@@ -1106,6 +1108,90 @@ from overcode.status_constants import (
     StatusBadge,
     StatusDetail,
 )
+
+
+class TestBackgroundWork:
+    """Background shells and subagents keep a stopped agent yellow (#507)."""
+
+    def _session(self, parent_session_id=None):
+        s = create_mock_session(name="a1")
+        s.parent_session_id = parent_session_id
+        return s
+
+    def _detail(self, state, legacy=STATUS_BUSY_SLEEPING, **kw):
+        return compute_status_detail(
+            hook_state=state, event=state["event"], session=self._session(),
+            pane_content="", monitor_count=0, has_interrupt=False,
+            sleep_duration_seconds=None, legacy_status=legacy, **kw,
+        )
+
+    def test_shells_from_the_status_bar_are_a_bg_task_badge(self):
+        d = self._detail({"event": "Stop", "timestamp": time.time()}, background_shells=2)
+        assert d.color == STATUS_COLOR_YELLOW
+        assert [(b.kind, b.count) for b in d.badges] == [("bg_task", 2)]
+
+    def test_shells_already_tracked_as_obligations_are_not_counted_twice(self):
+        state = {"event": "Stop", "timestamp": time.time(),
+                 "pending_obligations": [{"kind": "bg_task", "added_at": time.time()}]}
+        d = self._detail(state, background_shells=2)
+        assert [(b.kind, b.count) for b in d.badges] == [("bg_task", 2)]
+
+    def test_subagents_are_a_subagent_badge(self):
+        d = self._detail({"event": "Stop", "timestamp": time.time()}, subagent_count=1)
+        assert d.color == STATUS_COLOR_YELLOW
+        assert [(b.kind, b.count) for b in d.badges] == [("subagent", 1)]
+
+    def test_live_subagent_count_drops_entries_unheard_from_for_an_hour(self):
+        now = time.time()
+        state = {"subagents": {
+            "a1": {"last_seen": now - 10},
+            "a2": {"last_seen": now - 4000},
+            "a3": "garbage",
+        }}
+        assert _live_subagent_count(state, now) == 1
+        assert _live_subagent_count({}, now) == 0
+
+    @staticmethod
+    def _write(state_dir, state):
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "hook_state_a1.json").write_text(json.dumps(state))
+
+    def test_detect_status_lifts_a_stop_with_a_live_subagent(self, tmp_path):
+        state_dir = tmp_path / "agents"
+        self._write(state_dir, {
+            "event": "Stop", "timestamp": time.time() - 30,
+            "subagents": {"x": {"type": "Explore", "started_at": time.time() - 40,
+                                "last_seen": time.time() - 5}},
+        })
+        tmux = MagicMock()
+        tmux.capture_pane.return_value = "⏺ Running.\n❯ \n  ⏵⏵ bypass permissions on"
+        detector = HookStatusDetector("agents", tmux=tmux, state_dir=state_dir)
+        status, activity, _ = detector.detect_status(self._session())
+        assert status == STATUS_BUSY_SLEEPING
+        assert activity == "Waiting on 1 background agent"
+        assert detector.get_status_detail("a1").color == STATUS_COLOR_YELLOW
+
+    def test_detect_status_lifts_a_stop_with_background_shells(self, tmp_path):
+        state_dir = tmp_path / "agents"
+        self._write(state_dir, {"event": "Stop", "timestamp": time.time() - 30})
+        tmux = MagicMock()
+        tmux.capture_pane.return_value = "⏺ Running.\n❯ \n  ⏵⏵ bypass permissions on · 2 shells"
+        detector = HookStatusDetector("agents", tmux=tmux, state_dir=state_dir)
+        status, activity, _ = detector.detect_status(self._session())
+        assert status == STATUS_BUSY_SLEEPING
+        assert activity == "Waiting on 2 background shells"
+
+    def test_subagent_events_do_not_extend_the_sticky_green_window(self, tmp_path):
+        state_dir = tmp_path / "agents"
+        now = time.time()
+        state_dir.mkdir(parents=True)
+        (state_dir / "hook_events_a1.jsonl").write_text("\n".join([
+            json.dumps({"event": "PostToolUse", "timestamp": now - 30}),
+            json.dumps({"event": "Stop", "timestamp": now - 29}),
+            json.dumps({"event": "PostToolUse", "timestamp": now - 0.5, "agent_id": "x"}),
+        ]) + "\n")
+        detector = HookStatusDetector("agents", state_dir=state_dir)
+        assert detector._most_recent_running_event_age("a1", now=now) == pytest.approx(30)
 
 
 class TestAugmentWithLegacyHeartbeat:

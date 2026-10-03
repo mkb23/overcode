@@ -12,6 +12,7 @@ from overcode.hook_handler import (
     OVERCODE_HOOKS,
     _get_hook_state_path,
     _get_hook_event_log_path,
+    _apply_subagent_event,
     _normalize_hook_payload,
     append_hook_event,
     write_hook_state,
@@ -28,6 +29,8 @@ class TestConstants:
         assert "Stop" in events
         assert "PermissionRequest" in events
         assert "SessionEnd" in events
+        assert "SubagentStart" in events
+        assert "SubagentStop" in events
 
     def test_all_hooks_use_same_command(self):
         commands = set(cmd for _, cmd in OVERCODE_HOOKS)
@@ -91,6 +94,106 @@ class TestWriteHookState:
         write_hook_state("Stop", "agents", "my-agent")
         path = tmp_path / "deep" / "nested" / "agents" / "hook_state_my-agent.json"
         assert path.exists()
+
+
+class TestApplySubagentEvent:
+    """A subagent's events maintain the parent's map, never its turn (#507)."""
+
+    PARENT = {"event": "Stop", "timestamp": 100.0, "loaded_skills": ["x"]}
+
+    def test_start_records_and_stop_forgets(self):
+        s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1",
+                                  {"agent_type": "general-purpose"}, 110.0)
+        assert s["subagents"] == {"a1": {"type": "general-purpose",
+                                         "started_at": 110.0, "last_seen": 110.0}}
+        assert s["event"] == "Stop" and s["timestamp"] == 100.0
+        s = _apply_subagent_event(s, "SubagentStop", "a1", {}, 120.0)
+        assert "subagents" not in s
+        assert s["event"] == "Stop" and s["loaded_skills"] == ["x"]
+
+    def test_tool_events_touch_only_last_seen(self):
+        s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1", {}, 110.0)
+        s = _apply_subagent_event(s, "PostToolUse", "a1", {"tool_name": "Grep"}, 130.0)
+        assert s["subagents"]["a1"]["last_seen"] == 130.0
+        assert s["event"] == "Stop" and "tool_name" not in s
+
+    def test_events_from_an_unknown_subagent_add_nothing(self):
+        s = _apply_subagent_event(self.PARENT, "PostToolUse", "zz", {}, 130.0)
+        assert s == self.PARENT
+
+    def test_permission_surfaces_on_the_parent_then_restores_it(self):
+        s = _apply_subagent_event(self.PARENT, "SubagentStart", "a1", {}, 110.0)
+        s = _apply_subagent_event(s, "PermissionRequest", "a1",
+                                  {"tool_name": "Bash", "tool_input": {"command": "git push"}}, 120.0)
+        assert s["event"] == "PermissionRequest" and s["tool_name"] == "Bash"
+        assert s["permission_agent_id"] == "a1"
+        s = _apply_subagent_event(s, "PostToolUse", "a1", {"tool_name": "Bash"}, 125.0)
+        assert s["event"] == "Stop" and s["timestamp"] == 100.0
+        assert "tool_name" not in s and "permission_agent_id" not in s
+        assert "before_permission" not in s
+        assert s["subagents"]["a1"]["last_seen"] == 125.0
+
+    def test_another_subagents_event_leaves_the_prompt_up(self):
+        s = _apply_subagent_event(self.PARENT, "PermissionRequest", "a1", {"tool_name": "Bash"}, 120.0)
+        s = _apply_subagent_event(s, "PostToolUse", "a2", {}, 121.0)
+        assert s["event"] == "PermissionRequest"
+
+    def test_a_second_prompt_keeps_the_original_parent_state(self):
+        s = _apply_subagent_event(self.PARENT, "PermissionRequest", "a1", {"tool_name": "Bash"}, 120.0)
+        s = _apply_subagent_event(s, "PermissionRequest", "a1", {"tool_name": "Edit"}, 121.0)
+        s = _apply_subagent_event(s, "PostToolUse", "a1", {}, 122.0)
+        assert s["event"] == "Stop" and s["timestamp"] == 100.0
+
+
+class TestSubagentRouting:
+    """handle_hook_event keeps subagent events out of the parent's turn (#507)."""
+
+    def _send(self, payload):
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps(payload)
+            handle_hook_event()
+
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        self.state_path = tmp_path / "agents" / "hook_state_test-agent.json"
+        self.log_path = tmp_path / "agents" / "hook_events_test-agent.jsonl"
+
+    def _state(self):
+        return json.loads(self.state_path.read_text())
+
+    def test_a_subagents_tool_call_does_not_become_the_parents_event(self):
+        self._send({"hook_event_name": "Stop"})
+        self._send({"hook_event_name": "SubagentStart", "agent_id": "a1", "agent_type": "Explore"})
+        self._send({"hook_event_name": "PostToolUse", "agent_id": "a1",
+                    "tool_name": "Grep", "tool_input": {"pattern": "x"}, "tool_use_id": "t1"})
+        state = self._state()
+        assert state["event"] == "Stop"
+        assert list(state["subagents"]) == ["a1"]
+
+    def test_subagents_survive_the_parents_turns_until_session_end(self):
+        self._send({"hook_event_name": "SubagentStart", "agent_id": "a1"})
+        self._send({"hook_event_name": "UserPromptSubmit"})
+        self._send({"hook_event_name": "Stop"})
+        assert list(self._state()["subagents"]) == ["a1"]
+        self._send({"hook_event_name": "SessionEnd"})
+        assert "subagents" not in self._state()
+
+    def test_subagent_events_are_logged_with_their_agent_id(self):
+        self._send({"hook_event_name": "SubagentStart", "agent_id": "a1"})
+        entries = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+        assert entries[-1]["event"] == "SubagentStart"
+        assert entries[-1]["agent_id"] == "a1"
+
+    def test_state_is_written_atomically(self):
+        self._send({"hook_event_name": "Stop"})
+        assert not list(self.state_path.parent.glob("*.tmp"))
+        with patch("overcode.hook_handler.os.replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                self._send({"hook_event_name": "UserPromptSubmit"})
+        assert self._state()["event"] == "Stop"  # the old file is intact
 
 
 class TestHandleHookEvent:

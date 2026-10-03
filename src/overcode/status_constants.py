@@ -192,6 +192,7 @@ EMOJI_ASCII = {
     "❗": "!W",  # error (was ⚠ — text-default)
     "❓": "??",
     "📥": "In",
+    "👥": "Sa",
 }
 
 
@@ -457,7 +458,8 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "schedule_wakeup": ("⏰", STATUS_COLOR_YELLOW, "@@"),  # ScheduleWakeup pending
     "cron":            ("🔁", STATUS_COLOR_YELLOW, "Cr"),  # CronCreate registered
     "monitor":         ("📡", STATUS_COLOR_YELLOW, "Mo"),  # Monitor stream open
-    "bg_task":         ("🔌", STATUS_COLOR_YELLOW, "Bg"),  # Background Bash/Agent/Workflow
+    "bg_task":         ("🔌", STATUS_COLOR_YELLOW, "Bg"),  # Background Bash/Workflow
+    "subagent":        ("👥", STATUS_COLOR_YELLOW, "Sa"),  # Subagent still running (#507)
     "heartbeat":       ("💓", STATUS_COLOR_YELLOW, "Hb"),  # Overcode heartbeat will re-prompt
 
     # ---- GREEN (acting) ----

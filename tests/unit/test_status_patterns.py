@@ -424,6 +424,13 @@ class TestExtractBackgroundBashCount:
         content_3 = """⏵⏵ auto-approve · 3 bashes · esc"""
         assert extract_background_bash_count(content_3) == 3
 
+    def test_detects_shells(self):
+        """Claude Code 2.1.286 says 'N shells' where it used to say 'N bashes' (#507)."""
+        content = """Some output
+  ⏵⏵ bypass permissions on · 2 shells · ← 1 agent · ↓ to manage"""
+        assert extract_background_bash_count(content) == 2
+        assert extract_background_bash_count("⏵⏵ bypass permissions on · 1 shell · ← 1 agent") == 1
+
     def test_detects_single_bash(self):
         """Should detect single bash via (running) pattern."""
         content = """Some output

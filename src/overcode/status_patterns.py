@@ -296,9 +296,11 @@ class StatusPatterns:
         r')'
     )
 
-    # Status-bar extraction — background bash tasks. "N bashes" is
-    # unambiguous; a lone "(running)" could be a bash or a subagent (#259).
-    background_bash_count_pattern: str = r'(\d+)\s+bashes'
+    # Status-bar extraction — background bash tasks. "N shells" (Claude Code
+    # 2.1.286+, e.g. "⏵⏵ bypass permissions on · 2 shells · ← 1 agent") and
+    # the older "N bashes" are unambiguous; a lone "(running)" could be a
+    # bash or a subagent (#259).
+    background_bash_count_pattern: str = r'(\d+)\s+(?:bashes|shells?)\b'
     background_bash_marker: str = "bashes"
     single_task_running_marker: str = "(running)"
 

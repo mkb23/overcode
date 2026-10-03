@@ -231,6 +231,77 @@ def _update_obligations(
     return obligations
 
 
+# =============================================================================
+# Subagents (#507)
+# =============================================================================
+#
+# Claude Code tags every hook a subagent fires with ``agent_id``: its own tool
+# calls as well as the SubagentStart/SubagentStop pair that brackets it
+# (live-verified on 2.1.286). None of that is the parent's turn. A background
+# subagent keeps calling tools long after the parent's Stop, and writing those
+# events into the parent's snapshot showed an idle parent as working. So a
+# subagent event only maintains the parent's ``subagents`` map, which the
+# detector reads as work in flight. The one exception is a subagent's
+# permission prompt: it is answered in the parent's pane, so it surfaces as
+# the parent's PermissionRequest until that subagent's next event, which puts
+# back whatever the parent was doing before.
+
+# Snapshot fields that describe the parent's current event
+_EVENT_STATE_KEYS = ("event", "timestamp", "tool_name", "tool_input", "tool_use_id", "foreground")
+
+
+def _apply_subagent_event(prev: dict, event: str, agent_id: str, data: dict, now: float) -> dict:
+    """Return the parent's hook state after one of its subagents' events.
+
+    Pure function — no I/O.
+    """
+    state = dict(prev)
+    subagents = dict(state.get("subagents") or {})
+    if event == "SubagentStop":
+        subagents.pop(agent_id, None)
+    elif event == "SubagentStart":
+        subagents[agent_id] = {
+            "type": data.get("agent_type"), "started_at": now, "last_seen": now,
+        }
+    elif agent_id in subagents:
+        subagents[agent_id] = {**subagents[agent_id], "last_seen": now}
+    if subagents:
+        state["subagents"] = subagents
+    else:
+        state.pop("subagents", None)
+
+    if event == "PermissionRequest":
+        if state.get("permission_agent_id") is None:
+            state["before_permission"] = {k: prev[k] for k in _EVENT_STATE_KEYS if k in prev}
+        for k in _EVENT_STATE_KEYS:
+            state.pop(k, None)
+        state["event"] = event
+        state["timestamp"] = now
+        for k in ("tool_name", "tool_input", "tool_use_id"):
+            if data.get(k) is not None:
+                state[k] = data[k]
+        state["permission_agent_id"] = agent_id
+    elif state.get("permission_agent_id") == agent_id:
+        before = state.pop("before_permission", None) or {}
+        state.pop("permission_agent_id", None)
+        for k in _EVENT_STATE_KEYS:
+            state.pop(k, None)
+        state.update(before)
+    return state
+
+
+def _write_state_file(path: Path, state: dict) -> None:
+    """Replace the hook-state file atomically.
+
+    The detector reads this file on every tick; a reader landing mid-write
+    would see truncated JSON and report "Waiting for first hook event" for
+    that tick.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state))
+    os.replace(tmp, path)
+
+
 # All hooks that overcode installs for Claude Code (via --settings).
 # Claude also gets SessionStart, but only for these sources (a matcher on the
 # --settings registration; see claude_code._build_launch_settings): /clear and
@@ -248,6 +319,9 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("StopFailure", "overcode hook-handler"),
     ("PermissionRequest", "overcode hook-handler"),
     ("SessionEnd", "overcode hook-handler"),
+    # Bracket each subagent, background ones included (#507)
+    ("SubagentStart", "overcode hook-handler"),
+    ("SubagentStop", "overcode hook-handler"),
 ]
 
 # Codex needs two events Claude does not register: SessionStart (codex has no
@@ -463,6 +537,7 @@ def append_hook_event(
     session_name: str,
     tool_name: str | None = None,
     tool_input: dict | None = None,
+    agent_id: str | None = None,
 ) -> None:
     """Append one event record to the hook event log (#448).
 
@@ -483,6 +558,8 @@ def append_hook_event(
         entry["tool_name"] = tool_name
     if tool_input is not None:
         entry["tool_input"] = _compact_tool_input(tool_input)
+    if agent_id is not None:
+        entry["agent_id"] = agent_id
 
     line = json.dumps(entry) + "\n"
     # O_APPEND writes are atomic on POSIX for payloads under PIPE_BUF (4KB
@@ -725,6 +802,7 @@ def write_hook_state(
     prev_active_agent_session_id: str | None = None
     prev_active_prompt_id: str | None = None
     prev_synced_agent_session_id: str | None = None
+    prev_subagents: dict | None = None
     try:
         prev = prev_state if prev_state is not None else json.loads(state_path.read_text())
         prev_skills = prev.get("loaded_skills", [])
@@ -733,6 +811,7 @@ def write_hook_state(
         prev_active_agent_session_id = prev.get("agent_session_id")
         prev_active_prompt_id = prev.get("active_prompt_id")
         prev_synced_agent_session_id = prev.get("agent_session_id_synced")
+        prev_subagents = prev.get("subagents")
     except (json.JSONDecodeError, FileNotFoundError, OSError):
         pass
 
@@ -778,6 +857,10 @@ def write_hook_state(
     if obligations:
         state["pending_obligations"] = obligations
 
+    # Subagents outlive the parent's turns; only the session ending drops them
+    if prev_subagents and event != "SessionEnd":
+        state["subagents"] = prev_subagents
+
     # Foreground detail — only populated mid-tool (PreToolUse); cleared by
     # any subsequent event so a stale entry can't outlive its tool call.
     foreground = _compute_foreground(event, tool_name, tool_input)
@@ -793,7 +876,7 @@ def write_hook_state(
     if pending_session_id:
         state["agent_session_id_pending"] = pending_session_id
 
-    state_path.write_text(json.dumps(state))
+    _write_state_file(state_path, state)
 
 
 # Dialect key aliases for a camelCase stdin (grok, Phase 4). codex's stdin
@@ -1024,6 +1107,19 @@ def handle_hook_event() -> None:
 
     tool_name = data.get("tool_name")
     tool_input = data.get("tool_input")
+
+    agent_id = data.get("agent_id")
+    if agent_id:
+        # A subagent's event: bookkeeping on the parent, not the parent's turn
+        with _locked_hook_state(tmux_session, session_name) as prev_state:
+            _write_state_file(
+                _get_hook_state_path(tmux_session, session_name),
+                _apply_subagent_event(prev_state, event, agent_id, data, time.time()),
+            )
+        append_hook_event(event, tmux_session, session_name,
+                          tool_name=tool_name, tool_input=tool_input, agent_id=agent_id)
+        return
+
     tool_use_id = data.get("tool_use_id")
     # Every backend's hook payload carries the session id on every event
     # (live-verified on Claude Code 2.1.258: UserPromptSubmit, PostToolUse

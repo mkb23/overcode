@@ -41,6 +41,7 @@ from .status_constants import (
 )
 from .status_patterns import (
     extract_active_monitor_count,
+    extract_background_bash_count,
     get_patterns,
     is_sleep_command,
     extract_sleep_duration,
@@ -146,6 +147,25 @@ _RECENT_ACTIVITY_WINDOW_SECONDS = 1.5
 # How many log lines to keep in memory per read — plenty for a 1.5s window.
 _RECENT_EVENTS_LIMIT = 50
 
+# A subagent unheard from for this long is assumed gone (#507). SubagentStop
+# can be lost (a crash, an interrupt), and an entry left behind would hold
+# the parent yellow forever. A live subagent blocked on a long wait sends no
+# events, so this is generous.
+_SUBAGENT_STALE_SECONDS = 3600.0
+
+
+def _live_subagent_count(hook_state: dict, now: float) -> int:
+    """Subagents the parent is waiting on, per the hook state's map (#507)."""
+    subagents = hook_state.get("subagents")
+    if not isinstance(subagents, dict):
+        return 0
+    live = 0
+    for entry in subagents.values():
+        seen = entry.get("last_seen") if isinstance(entry, dict) else None
+        if isinstance(seen, (int, float)) and now - seen <= _SUBAGENT_STALE_SECONDS:
+            live += 1
+    return live
+
 
 def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
     """Convert raw obligation dicts into stacked StatusBadge entries.
@@ -228,6 +248,8 @@ def compute_status_detail(
     has_interrupt: bool,
     sleep_duration_seconds: Optional[int],
     legacy_status: str,
+    background_shells: int = 0,
+    subagent_count: int = 0,
 ) -> StatusDetail:
     """Reduce hook state + side signals into a 4-color StatusDetail.
 
@@ -273,7 +295,10 @@ def compute_status_detail(
             STATUS_COLOR_ORANGE,
             [StatusBadge(kind="permission", label=tool or None)],
         ))
-    if event == "Stop" and session is not None and session.parent_session_id is not None:
+    if legacy_status == STATUS_WAITING_OVERSIGHT:
+        # A child's Stop — unless the sticky-green window or its own
+        # background work (#507) already lifted it out of waiting: a child
+        # still mid-burst or waiting on a subagent isn't ready to report.
         candidates.append((STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")]))
 
     # GREEN — actively working
@@ -306,6 +331,22 @@ def compute_status_detail(
                 break
         else:
             yellow_badges.append(StatusBadge(kind="monitor", count=synthetic_monitors))
+    # Background shells and subagents (#507). A background Bash's own
+    # PostToolUse lands as soon as it launches and nothing fires when it
+    # exits, so the status bar's shell count is the live signal for those.
+    obligation_bg_count = sum(
+        1 for o in obligations if isinstance(o, dict) and o.get("kind") == "bg_task"
+    )
+    synthetic_shells = max(0, background_shells - obligation_bg_count)
+    if synthetic_shells > 0:
+        for b in yellow_badges:
+            if b.kind == "bg_task":
+                b.count += synthetic_shells
+                break
+        else:
+            yellow_badges.append(StatusBadge(kind="bg_task", count=synthetic_shells))
+    if subagent_count > 0:
+        yellow_badges.append(StatusBadge(kind="subagent", count=subagent_count))
     if yellow_badges:
         candidates.append((STATUS_COLOR_YELLOW, yellow_badges))
 
@@ -563,6 +604,8 @@ class HookStatusDetector:
         if now is None:
             now = time.time()
         for entry in reversed(self._read_recent_events(session_name)):
+            if entry.get("agent_id"):
+                continue  # a subagent's event, not the parent's turn (#507)
             if _HOOK_STATUS_MAP.get(entry.get("event", "")) == STATUS_RUNNING:
                 try:
                     return now - float(entry["timestamp"])
@@ -734,6 +777,16 @@ class HookStatusDetector:
             status = STATUS_BUSY_SLEEPING
             self._last_detect_phase[session.id] = f"hook:{event}+monitors={monitor_count}"
 
+        # Background shells and subagents will wake the agent too (#507)
+        shell_count = (
+            extract_background_bash_count(pane_content, self._patterns) if pane_content else 0
+        )
+        subagent_count = _live_subagent_count(hook_state, time.time())
+        if (shell_count or subagent_count) and status in (
+            STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT,
+        ):
+            status = STATUS_BUSY_SLEEPING
+
         # Build activity description
         activity = self._build_activity(event, hook_state, pane_content, session)
 
@@ -743,6 +796,12 @@ class HookStatusDetector:
             if monitor_count > 0:
                 plural = "s" if monitor_count != 1 else ""
                 activity = f"Watching {monitor_count} monitor{plural}"
+            elif subagent_count > 0:
+                plural = "s" if subagent_count != 1 else ""
+                activity = f"Waiting on {subagent_count} background agent{plural}"
+            elif shell_count > 0 and sleep_dur is None:
+                plural = "s" if shell_count != 1 else ""
+                activity = f"Waiting on {shell_count} background shell{plural}"
             else:
                 activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
 
@@ -760,6 +819,8 @@ class HookStatusDetector:
             has_interrupt=has_interrupt,
             sleep_duration_seconds=sleep_dur,
             legacy_status=status,
+            background_shells=shell_count,
+            subagent_count=subagent_count,
         )
 
         return status, activity, pane_content
