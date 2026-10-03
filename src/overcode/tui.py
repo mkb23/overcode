@@ -63,6 +63,7 @@ from .tui_helpers import (
     get_git_diff_stats,
     get_git_untracked_count,
 )
+from .monitor_daemon_core import parse_datetime_safe
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
@@ -70,6 +71,7 @@ from .tui_logic import (
     running_job_counts,
     compute_tree_metadata,
     compute_stall_state,
+    first_sight_stall_is_unvisited,
     should_send_stall_notification,
     compute_active_session_names,
     compute_session_widget_diff,
@@ -2237,13 +2239,33 @@ class SupervisorTUI(
 
         # Debounced stall detection: prevents notification re-triggering
         # from brief green flickers and daemon enrichment changes
-        if stall.is_new_stall:
+        if stall.is_new_stall and prev_status is None:
+            # First sight since this TUI started, so the stall may predate
+            # it: a restart sees every red agent at once. Ring only for a
+            # stall that began after your last visit, age it from when it
+            # began, and keep notifications for stalls seen starting live.
+            stats = widget.session.stats
+            since_dt = parse_datetime_safe(stats.state_since if stats else None)
+            stall_since = since_dt.timestamp() if since_dt else None
+            if (session_id in self._prefs.visited_stalled_agents
+                    and first_sight_stall_is_unvisited(
+                        session_id, self._prefs.visited_stalled_agents,
+                        self._prefs.visited_stalled_at, stall_since)):
+                self._prefs.visited_stalled_agents.discard(session_id)
+                self._prefs.visited_stalled_at.pop(session_id, None)
+                prefs_changed = True
+            stall_age = max(0.0, time.time() - stall_since) if stall_since else 0.0
+            self._stall_start_times[session_id] = time.monotonic() - stall_age
+            self._notified_stalls.add(session_id)
+            self._non_stall_since.pop(session_id, None)
+        elif stall.is_new_stall:
             non_stall_start = self._non_stall_since.pop(session_id, None)
             active_duration = (time.monotonic() - non_stall_start) if non_stall_start else float('inf')
 
-            if active_duration >= 60 or prev_status is None:
-                # Sustained work or first observation → genuine new stall
+            if active_duration >= 60:
+                # Sustained work → genuine new stall
                 self._prefs.visited_stalled_agents.discard(session_id)
+                self._prefs.visited_stalled_at.pop(session_id, None)
                 prefs_changed = True
                 self._stall_start_times[session_id] = time.monotonic()
                 self._notified_stalls.discard(session_id)
@@ -2817,6 +2839,7 @@ class SupervisorTUI(
         """Handle when user visits a stalled agent - mark as visited"""
         session_id = message.session_id
         self._prefs.visited_stalled_agents.add(session_id)
+        self._prefs.visited_stalled_at[session_id] = time.time()
         self._save_prefs()
         # Cancel any pending auto-dismiss timer
         self._bell_dismiss_timers.pop(session_id, None)
@@ -2841,6 +2864,7 @@ class SupervisorTUI(
                 return
             # Mark as visited
             self._prefs.visited_stalled_agents.add(session_id)
+            self._prefs.visited_stalled_at[session_id] = time.time()
             self._save_prefs()
             for widget in self.query(SessionSummary):
                 if widget.session.id == session_id:

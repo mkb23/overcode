@@ -890,6 +890,33 @@ def compute_stall_state(
     )
 
 
+def first_sight_stall_is_unvisited(
+    session_id: str,
+    visited_stalled_agents: Set[str],
+    visited_stalled_at: Mapping[str, float],
+    stall_since: Optional[float],
+) -> bool:
+    """Should a stall the TUI is seeing for the first time ring the bell?
+
+    A freshly started TUI has no previous status for any agent, so every
+    agent already sitting at waiting_user looks like a brand-new stall.
+    Treating them that way rings a bell on every red agent at once. Instead
+    compare when the stall began (the daemon's persisted ``state_since``)
+    with when you last visited the agent: ring only if the stall began after
+    that visit, or if you never visited it.
+
+    Pure function. Times are epoch seconds. A visit with no recorded time
+    (preferences written before visit times were kept) or an unknown stall
+    start counts as seen, so a restart never rings for it.
+    """
+    if session_id not in visited_stalled_agents:
+        return True
+    visited_at = visited_stalled_at.get(session_id)
+    if visited_at is None or stall_since is None:
+        return False
+    return stall_since > visited_at
+
+
 def should_send_stall_notification(
     status: str,
     is_notified: bool,

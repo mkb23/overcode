@@ -22,7 +22,7 @@ import os
 DAEMON_VERSION = 2  # Increment when daemon behavior changes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import yaml
 
@@ -823,6 +823,9 @@ class TUIPreferences:
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
     # Session IDs of stalled agents that have been visited by the user
     visited_stalled_agents: Set[str] = field(default_factory=set)
+    # When each of those visits happened (epoch seconds), so a restarted TUI
+    # can tell a stall you already saw from one that began after your visit
+    visited_stalled_at: Dict[str, float] = field(default_factory=dict)
     # Per-level column overrides: {"low": {"uptime": true, ...}, "med": {...}, "high": {...}}
     # Only stores explicit user overrides. Missing = use default from detail_levels.
     column_config: dict = field(default_factory=dict)

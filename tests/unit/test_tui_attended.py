@@ -509,7 +509,8 @@ class TestUnattendedStatusPath:
         app._notified_stalls = set()
         app._non_stall_since = {}
         app._bell_dismiss_timers = {}
-        app._prefs = MagicMock(status_change_logging=False, visited_stalled_agents=set())
+        app._prefs = MagicMock(status_change_logging=False, visited_stalled_agents=set(),
+                               visited_stalled_at={})
         app._notifier = MagicMock()
         app._save_prefs = MagicMock()
         return app
@@ -520,13 +521,14 @@ class TestUnattendedStatusPath:
         with patch.object(SupervisorTUI, "preview_visible", False):
             yield
 
-    def _widget(self, sid, name="a", start="2026-01-01T00:00:00"):
+    def _widget(self, sid, name="a", start="2026-01-01T00:00:00", state_since=None):
         w = MagicMock()
         w.session.id = sid
         w.session.name = name
         w.session.is_asleep = False
         w.session.start_time = start
         w.session.stats.current_task = "task"
+        w.session.stats.state_since = state_since
         w.is_unvisited_stalled = False
         w.refresh = MagicMock()
         return w
@@ -566,6 +568,51 @@ class TestUnattendedStatusPath:
         app._apply_unattended_status({"s1": "waiting_user"})
         app._notifier.queue.assert_called_once_with("a", "task")
         assert app._notified_stalls == {"s1"}
+
+    def _restart(self, visited_at, stalled_at):
+        """A fresh TUI (no previous statuses) sees an agent already red."""
+        from datetime import datetime
+        app = self._app()
+        app._prefs.visited_stalled_agents = {"s1"}
+        if visited_at is not None:
+            app._prefs.visited_stalled_at = {"s1": visited_at}
+        w = self._widget("s1", state_since=datetime.fromtimestamp(stalled_at).isoformat())
+        app.query = lambda cls: [w]
+        for _ in range(3):
+            app._apply_unattended_status({"s1": "waiting_user"})
+        return app, w
+
+    def test_restart_keeps_quiet_for_a_stall_you_already_visited(self):
+        now = time.time()
+        app, w = self._restart(visited_at=now - 60, stalled_at=now - 600)
+        assert w.is_unvisited_stalled is False
+        assert app._prefs.visited_stalled_agents == {"s1"}
+
+    def test_restart_rings_for_a_stall_that_began_after_your_visit(self):
+        now = time.time()
+        app, w = self._restart(visited_at=now - 600, stalled_at=now - 60)
+        assert w.is_unvisited_stalled is True
+        assert app._prefs.visited_stalled_agents == set()
+
+    def test_restart_keeps_quiet_for_visits_saved_without_a_time(self):
+        now = time.time()
+        app, w = self._restart(visited_at=None, stalled_at=now - 60)
+        assert w.is_unvisited_stalled is False
+
+    def test_restart_ages_the_stall_from_when_it_began_and_never_notifies(self):
+        now = time.time()
+        app, w = self._restart(visited_at=now - 600, stalled_at=now - 120)
+        assert time.monotonic() - app._stall_start_times["s1"] >= 119
+        app._notifier.queue.assert_not_called()
+        assert app._notified_stalls == {"s1"}
+
+    def test_visiting_records_when(self):
+        app = self._app()
+        app.query = lambda cls: []
+        msg = MagicMock(session_id="s1")
+        SupervisorTUI.on_session_summary_stalled_agent_visited(app, msg)
+        assert app._prefs.visited_stalled_agents == {"s1"}
+        assert abs(app._prefs.visited_stalled_at["s1"] - time.time()) < 5
 
     def test_widgets_the_daemon_does_not_report_are_left_alone(self):
         app = self._app()

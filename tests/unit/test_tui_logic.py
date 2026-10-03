@@ -13,6 +13,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 
 from overcode.tui_logic import (
+    first_sight_stall_is_unvisited,
     sort_sessions_alphabetical,
     sort_sessions_by_status,
     sort_sessions_by_value,
@@ -1433,6 +1434,26 @@ class TestComputeStallState:
             is_asleep=False,
         )
         assert result.is_new_stall is True
+
+
+class TestFirstSightStallIsUnvisited:
+    """A restarted TUI rings only for stalls that began after your last visit."""
+
+    def test_never_visited_rings(self):
+        assert first_sight_stall_is_unvisited("s1", set(), {}, 1000.0) is True
+
+    def test_visited_during_this_stall_stays_quiet(self):
+        assert first_sight_stall_is_unvisited("s1", {"s1"}, {"s1": 2000.0}, 1000.0) is False
+
+    def test_stall_began_after_the_visit_rings(self):
+        assert first_sight_stall_is_unvisited("s1", {"s1"}, {"s1": 1000.0}, 2000.0) is True
+
+    def test_visit_with_no_recorded_time_stays_quiet(self):
+        # Preferences saved before visit times were kept
+        assert first_sight_stall_is_unvisited("s1", {"s1"}, {}, 2000.0) is False
+
+    def test_unknown_stall_start_stays_quiet(self):
+        assert first_sight_stall_is_unvisited("s1", {"s1"}, {"s1": 1000.0}, None) is False
 
 
 class TestShouldSendStallNotification:
