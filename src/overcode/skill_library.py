@@ -189,6 +189,40 @@ def save_profile(name: str, skills: Iterable[str]) -> None:
     _save_skills_config(section)
 
 
+# The PRF column shows a profile as one emoji, so a long profile name
+# doesn't widen every row. Set per profile in config.yaml
+# (skills.profile_emoji) or with `overcode skills profile emoji`.
+PROFILE_EMOJI_DEFAULT = "🎒"
+
+
+def get_profile_emojis() -> Dict[str, str]:
+    """Profile name -> emoji, for the profiles that have one."""
+    raw = _skills_config().get("profile_emoji") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if v}
+
+
+def profile_emoji(name: str) -> str:
+    """The emoji that stands for profile ``name`` (the default if it has none)."""
+    return get_profile_emojis().get(name, PROFILE_EMOJI_DEFAULT)
+
+
+def set_profile_emoji(name: str, emoji: Optional[str]) -> None:
+    """Give profile ``name`` an emoji, or drop its emoji when ``emoji`` is falsy."""
+    section = _skills_config()
+    emojis = dict(section.get("profile_emoji") or {})
+    if emoji:
+        emojis[name] = emoji
+    else:
+        emojis.pop(name, None)
+    if emojis:
+        section["profile_emoji"] = emojis
+    else:
+        section.pop("profile_emoji", None)
+    _save_skills_config(section)
+
+
 def delete_profile(name: str) -> bool:
     section = _skills_config()
     profiles = dict(section.get("profiles") or {})
@@ -199,6 +233,11 @@ def delete_profile(name: str) -> bool:
         section["profiles"] = profiles
     else:
         section.pop("profiles", None)
+    emojis = {k: v for k, v in (section.get("profile_emoji") or {}).items() if k != name}
+    if emojis:
+        section["profile_emoji"] = emojis
+    else:
+        section.pop("profile_emoji", None)
     folders = {k: v for k, v in (section.get("folders") or {}).items() if v != name}
     if folders:
         section["folders"] = folders

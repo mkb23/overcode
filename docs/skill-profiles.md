@@ -72,7 +72,7 @@ The first of these that applies:
 
 An agent without a profile launches exactly as before, with nothing hidden.
 
-The profile is recorded on the agent and applied again on every restart, so edits to a profile take effect the next time an agent starts. The **PRF** column shows each agent's profile.
+The profile is recorded on the agent and applied again on every restart, so edits to a profile take effect the next time an agent starts. The **PRF** column shows each agent's profile as one emoji; hover it to see the profile's name and skills. Pick a profile's emoji with `overcode skills profile emoji <name> <emoji>` (🎒 until you do).
 
 ## What happens at launch
 
@@ -104,6 +104,8 @@ skills:
     ios: [swift-helper]
   folders:
     ~/Code/papers: research
+  profile_emoji:        # what the PRF column shows
+    research: 🔬
 new_agent_defaults:
   skill_profile: research
 ```

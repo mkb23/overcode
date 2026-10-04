@@ -533,6 +533,7 @@ See [Skill Profiles](skill-profiles.md) for the whole picture.
 | `overcode skills profile add\|remove <name> <skill>...` | Change a profile's skills |
 | `overcode skills profile show <name>` | What a profile adds and hides for each CLI |
 | `overcode skills profile list` / `delete <name>` | List or delete profiles |
+| `overcode skills profile emoji <name> [emoji]` | The emoji the PRF column shows for a profile; no emoji goes back to the default 🎒 |
 | `overcode skills pin <profile> [dir]` / `unpin [dir]` | New agents in a folder (and below) get this profile |
 | `overcode skills library add\|remove <path>` | Read library skills from another folder too |
 | `overcode skills adopt <skill>...` | Move always-on personal skills into the library |

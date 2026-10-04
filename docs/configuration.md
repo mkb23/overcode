@@ -694,7 +694,7 @@ skill_emoji:
 ```
 
 Emoticons appear in:
-- TUI "Available Skills" (ASK) column when viewing agents with `--full` detail
+- TUI "Available Skills" (ASK) column when viewing agents with `--full` detail. Hover an agent's emoji cell (skills, PRF, tools, wrapper, status detail) to see what each emoji stands for.
 - Skill selection dialogs
 - Agent summary outputs
 

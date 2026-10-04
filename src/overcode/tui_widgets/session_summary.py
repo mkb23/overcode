@@ -27,7 +27,10 @@ from ..tui_helpers import (
     effective_git_directory,
     get_summary_content_text,
 )
-from ..summary_columns import ColumnContext, SummaryColumn, SUMMARY_COLUMNS, render_summary_cells, resolve_column_visible, pad_and_join_cells
+from ..summary_columns import (
+    COLUMNS_BY_ID, ColumnContext, SummaryColumn, SUMMARY_COLUMNS, column_at,
+    render_summary_cells, resolve_column_visible, pad_and_join_cells,
+)
 
 
 _SCRAPED_RECAP_PLACEHOLDERS = frozenset({
@@ -125,11 +128,35 @@ class SessionSummary(Static, can_focus=True):
         self.children_collapsed: bool = False  # True when children hidden via X — set by TUI
         # Always single-line display
         self.add_class("list-mode")
+        self._hover_column: Optional[str] = None  # column whose popup is showing
 
     def column_visible(self, col: SummaryColumn) -> bool:
         """Check if a column is visible at the current detail level with overrides."""
         return resolve_column_visible(col, self.summary_detail, self.column_overrides,
                                       self.uniform_columns)
+
+    def column_under(self, event: events.MouseEvent) -> Optional[SummaryColumn]:
+        """The column under the pointer, from the same widths the row is
+        padded to (as the header row does, #477)."""
+        widths = getattr(self.app, "column_widths", None)
+        offset = event.get_content_offset(self)
+        if not widths or offset is None:
+            return None
+        ids = [c.id for c in SUMMARY_COLUMNS if self.column_visible(c)]
+        return COLUMNS_BY_ID.get(column_at(offset.x, ids, widths))
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Hovering an emoji cell pops up what its emoji stand for."""
+        col = self.column_under(event)
+        col_id = col.id if col is not None else None
+        if col_id == self._hover_column:
+            return
+        self._hover_column = col_id
+        self.tooltip = col.hover(self._build_column_context()) if col and col.hover else None
+
+    def on_leave(self, event: events.Leave) -> None:
+        self._hover_column = None
+        self.tooltip = None
 
     def on_click(self) -> None:
         """Handle click — mark stalled agent as visited."""

@@ -2,7 +2,7 @@
 Skill profile commands (#499): the library, profiles, folder pins.
 
     overcode skills list
-    overcode skills profile list|show|set|add|remove|delete
+    overcode skills profile list|show|set|add|remove|delete|emoji
     overcode skills pin <profile> [dir] / unpin [dir]
     overcode skills library add|remove <path>
     overcode skills adopt <skill>
@@ -114,13 +114,13 @@ def skills_list():
 @profile_app.command("list")
 def profile_list():
     """List skill profiles."""
-    from ..skill_library import get_profiles
+    from ..skill_library import get_profiles, profile_emoji
     profiles = get_profiles()
     if not profiles:
         rprint("[dim]No skill profiles. Create one: overcode skills profile set <name> <skill>...[/dim]")
         return
     for pname, skills in profiles.items():
-        rprint(f"[cyan]{escape(pname):<16}[/cyan] {escape(', '.join(skills))}")
+        rprint(f"{profile_emoji(pname)} [cyan]{escape(pname):<16}[/cyan] {escape(', '.join(skills))}")
 
 
 @profile_app.command("show")
@@ -194,6 +194,19 @@ def profile_delete(name: Annotated[str, typer.Argument(help="Profile name")]):
         rprint(f"[red]No skill profile '{escape(name)}'[/red]")
         raise typer.Exit(1)
     rprint(f"[green]✓[/green] Deleted profile [cyan]{escape(name)}[/cyan]")
+
+
+@profile_app.command("emoji")
+def profile_set_emoji(
+    name: Annotated[str, typer.Argument(help="Profile name")],
+    emoji: Annotated[Optional[str], typer.Argument(help="Emoji to show in the PRF column; omit to go back to the default")] = None,
+):
+    """Choose the emoji the PRF column shows for a profile."""
+    from ..skill_library import PROFILE_EMOJI_DEFAULT, set_profile_emoji
+    _require_profile(name)
+    set_profile_emoji(name, emoji)
+    rprint(f"[green]✓[/green] Profile [cyan]{escape(name)}[/cyan] shows as "
+           f"{emoji or PROFILE_EMOJI_DEFAULT}{'' if emoji else ' (default)'}")
 
 
 @skills_app.command("pin")

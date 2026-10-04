@@ -485,6 +485,28 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
 }
 
 
+# What each badge means, for the hover popup on the status-detail column
+BADGE_MEANINGS: dict[str, str] = {
+    "schedule_wakeup": "wakeup scheduled",
+    "cron":            "cron job registered",
+    "monitor":         "watching a Monitor stream",
+    "bg_task":         "background shell or task running",
+    "heartbeat":       "overcode heartbeat will re-prompt",
+    "subagent":        "subagent still running",
+    "generating":      "generating a response",
+    "tool":            "running a tool",
+    "blocked_ci":      "waiting on CI",
+    "blocked_process": "waiting on a process",
+    "blocked_sleep":   "sleeping",
+    "permission":      "permission prompt open",
+    "plan_approval":   "plan waiting for approval",
+    "oversight":       "child stopped, ready to report",
+    "ask_question":    "asking you a question",
+    "awaiting_input":  "waiting for your next prompt",
+    "error":           "error needs attention",
+}
+
+
 @dataclass
 class StatusBadge:
     """A single detail badge for column 2.

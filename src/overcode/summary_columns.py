@@ -18,6 +18,7 @@ from typing import Callable, List, Optional, Tuple
 from .status_constants import (
     ALL_STATUSES,
     BADGE_KINDS,
+    BADGE_MEANINGS,
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
     STATUS_COLOR_RED,
@@ -304,6 +305,9 @@ class SummaryColumn:
     # Hidden while every row shows the same value (uniform_columns); set
     # from HIDE_WHEN_UNIFORM below
     hide_when_uniform: bool = False
+    # Popup for a row's cell, naming what its emoji stand for; set from
+    # COLUMN_HOVER below. None = no popup.
+    hover: Optional[Callable[[ColumnContext], Optional["Text"]]] = None  # noqa: F821
 
 
 # ---------------------------------------------------------------------------
@@ -980,15 +984,23 @@ def _skill_profile(ctx: ColumnContext) -> Optional[str]:
 
 
 def render_skill_profile(ctx: ColumnContext) -> ColumnOutput:
-    """The skill profile the agent launched with (#499); None when it has none."""
+    """The skill profile the agent launched with (#499), as its emoji; None
+    when it has none. Emoji-free terminals get the profile name."""
     profile = _skill_profile(ctx)
     if not profile:
         return None
-    return [(f" {profile}", ctx.mono(f"cyan{ctx.bg}", ""))]
+    if ctx.emoji_free:
+        return [(f" {profile}", ctx.mono(f"cyan{ctx.bg}", ""))]
+    from .skill_library import profile_emoji
+    return [(f" {ctx.e(profile_emoji(profile))}", ctx.mono(f"cyan{ctx.bg}", ""))]
 
 
 def render_skill_profile_plain(ctx: ColumnContext) -> Optional[str]:
-    return _skill_profile(ctx)
+    profile = _skill_profile(ctx)
+    if not profile:
+        return None
+    from .skill_library import profile_emoji
+    return f"{profile_emoji(profile)} {profile}"
 
 
 def render_available_skills(ctx: ColumnContext) -> ColumnOutput:
@@ -1566,6 +1578,98 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
 # column list above stays scannable. A test asserts every TUI column has a
 # description, so a new column cannot ship without one.
 
+# ---------------------------------------------------------------------------
+# Hover popups: what a row's emoji stand for
+# ---------------------------------------------------------------------------
+
+def _emoji_legend(title: str, rows: List[Tuple[str, str]], footer: str = "") -> "Text":  # noqa: F821
+    """A popup: a bold title, then one ``emoji  name`` line per row."""
+    from rich.text import Text
+    text = Text(title, style="bold")
+    for emoji, name in rows:
+        text.append(f"\n{emoji}  {name}")
+    if footer:
+        text.append(f"\n{footer}", style="dim italic")
+    return text
+
+
+def _skills_legend(ctx: ColumnContext, title: str, skills: Optional[List[str]]) -> "Optional[Text]":  # noqa: F821
+    if not skills:
+        return None
+    emoji = get_skill_emoji()
+    return _emoji_legend(title, [(ctx.e(emoji.get(s, SKILL_EMOJI_DEFAULT)), s) for s in skills])
+
+
+def hover_loaded_skills(ctx: ColumnContext):
+    return _skills_legend(ctx, "Skills used", ctx.session.loaded_skills)
+
+
+def hover_available_skills(ctx: ColumnContext):
+    return _skills_legend(ctx, "Skills available", ctx.session.available_skills)
+
+
+def hover_skill_profile(ctx: ColumnContext):
+    profile = _skill_profile(ctx)
+    if not profile:
+        return None
+    from .skill_library import get_profile_emojis, get_profiles, profile_emoji
+    emoji = get_skill_emoji()
+    skills = get_profiles().get(profile, [])
+    footer = (
+        "" if profile in get_profile_emojis()
+        else f"Set its emoji: overcode skills profile emoji {profile} <emoji>"
+    )
+    return _emoji_legend(
+        f"Skill profile {ctx.e(profile_emoji(profile))} {profile}",
+        [(ctx.e(emoji.get(s, SKILL_EMOJI_DEFAULT)), s) for s in skills],
+        footer,
+    )
+
+
+def hover_allowed_tools(ctx: ColumnContext):
+    tools = [t.strip() for t in (ctx.session.allowed_tools or "").split(",") if t.strip()]
+    if not tools:
+        return None
+    return _emoji_legend("Allowed tools", [(ctx.e(TOOL_EMOJI.get(t, TOOL_EMOJI_DEFAULT)), t) for t in tools])
+
+
+def hover_wrapper(ctx: ColumnContext):
+    rows = []
+    if ctx.session.wrapper:
+        name = _wrapper_name(ctx.session.wrapper)
+        rows.append((ctx.e(get_wrapper_emoji().get(name, WRAPPER_EMOJI_DEFAULT)), f"wrapper: {name}"))
+    if getattr(ctx.session, "sandbox_enabled", None) is True:
+        rows.append((ctx.e(SANDBOX_EMOJI), "Claude /sandbox is on"))
+    return _emoji_legend("Wrapper", rows) if rows else None
+
+
+def hover_status_detail(ctx: ColumnContext):
+    detail = ctx.status_detail
+    if detail is None or not detail.badges:
+        return None
+    rows = []
+    for b in detail.badges:
+        meaning = BADGE_MEANINGS.get(b.kind, b.kind)
+        if b.label:
+            meaning += f" ({b.label})"
+        if b.count > 1:
+            meaning += f" ×{b.count}"
+        if b.eta_seconds is not None and b.eta_seconds > 0:
+            meaning += f", in {format_duration(int(b.eta_seconds))}"
+        rows.append((_badge_glyph(b.kind, ctx.emoji_free), meaning))
+    return _emoji_legend("Status detail", rows)
+
+
+COLUMN_HOVER: dict[str, Callable[[ColumnContext], object]] = {
+    "loaded_skills": hover_loaded_skills,
+    "available_skills": hover_available_skills,
+    "skill_profile": hover_skill_profile,
+    "allowed_tools": hover_allowed_tools,
+    "wrapper": hover_wrapper,
+    "sleep_countdown": hover_status_detail,
+}
+
+
 COLUMN_HELP: dict[str, str] = {
     "status_symbol": "What the agent is doing: running, waiting for you, stalled, asleep, done",
     "unvisited_alert": "Flags an agent that stalled and you haven't looked at since",
@@ -1606,7 +1710,7 @@ COLUMN_HELP: dict[str, str] = {
     "agent_teams": "Agent teams enabled",
     "wrapper": "Launch wrapper (e.g. devcontainer) and sandbox badge",
     "allowed_tools": "Tools the agent was launched with permission to use",
-    "skill_profile": "Skill profile the agent launched with (W to edit profiles)",
+    "skill_profile": "Skill profile the agent launched with, as its emoji; hover a row to name it (W to edit profiles)",
     "loaded_skills": "Skills the agent has loaded this session",
     "available_skills": "Skills installed and available to the agent",
     "enhanced_context": "Enhanced context hook on (^T to toggle)",
@@ -1757,6 +1861,7 @@ HIDE_WHEN_UNIFORM = frozenset({
 
 for _col in SUMMARY_COLUMNS:
     _col.description = COLUMN_HELP.get(_col.id, "")
+    _col.hover = COLUMN_HOVER.get(_col.id)
     if _col.id in COLUMN_SORT:
         _col.sort_key, _col.sort_desc = COLUMN_SORT[_col.id]
     if _col.id in HIDE_WHEN_UNIFORM:
