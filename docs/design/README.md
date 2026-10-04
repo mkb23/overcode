@@ -12,6 +12,13 @@ This directory contains technical design documents, architecture analysis, and i
 - **Audience:** Contributors, architects, anyone considering remote agent monitoring integration
 - **Key Finding:** ACP covers ~25-30% of overcode features; recommend hybrid model (sister protocol for control, ACP for observability)
 
+### Background Shell Classification (proposal)
+- **File:** `background-shell-classification.md`
+- **Status:** Proposal / Not implemented
+- **Date:** October 2026
+- **Summary:** Telling an agent's background shells apart: services (never finish, don't wake the agent), batch work (finishes and wakes it) and watchers (fire on a condition; stuck once their target has ended). Proposes reading live shells from the process table, a rules → runtime signals → target liveness → cached LLM classifier pipeline, and `overcode jobs wait` so watchers can't outlive their target. Issue #515; builds on #507.
+- **Audience:** Contributors
+
 ### Model Alias Resolution (proposal)
 - **File:** `model-alias-resolution.md`
 - **Status:** Proposal / Not implemented
