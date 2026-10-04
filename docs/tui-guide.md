@@ -22,6 +22,8 @@ When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/c
 
 Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
 
+Click an agent's row to select it, just like moving to it with `j`/`k`: with pane sync on (`P`), the tmux pane below switches to that agent. Hover a row's emoji cells (skills, PRF, tools, status detail) to see what each emoji means.
+
 From the keyboard, `S` opens the command palette on sort choices: every sortable column plus Tree order. Type a few letters of the column's name or its header code (`cpu`, `tok`, `git`) and press `Enter`; choosing the current sort again reverses it, and `Tab` does the same while keeping the picker open. "Reverse sort" in the `/` palette flips the current direction. The sort is saved in `tui_preferences.json`.
 
 Hover a column header to see what the column means. The column configurator (`C`) is the full guide: every column is listed under its group with its header code, what it shows for the focused agent, and what it means, and the foot explains the highlighted one — its default detail levels and whether it sorts. It sits at the bottom of the screen so the first agents stay in view as you toggle columns. `L` hides or shows the header row.

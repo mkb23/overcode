@@ -159,9 +159,17 @@ class SessionSummary(Static, can_focus=True):
         self.tooltip = None
 
     def on_click(self) -> None:
-        """Handle click — mark stalled agent as visited."""
+        """Handle click — select this agent (as j/k would, so the tmux pane
+        follows) and mark it visited if it was stalled."""
         if self.is_unvisited_stalled:
             self.post_message(self.StalledAgentVisited(self.session.id))
+        self.post_message(self.Clicked(self.session.id))
+
+    class Clicked(events.Message):
+        """Message sent when the user clicks this agent's row"""
+        def __init__(self, session_id: str):
+            super().__init__()
+            self.session_id = session_id
 
     def on_focus(self) -> None:
         """Handle focus event - mark stalled agent as visited and update selection"""

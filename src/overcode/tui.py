@@ -2874,6 +2874,22 @@ class SupervisorTUI(
 
         self._bell_dismiss_timers[session_id] = self.set_timer(5.0, _dismiss)
 
+    def on_session_summary_clicked(self, message: SessionSummary.Clicked) -> None:
+        """A click on an agent's row selects it the way j/k do: focus,
+        preview, and the tmux pane switches to it when pane sync is on."""
+        for i, widget in enumerate(self._get_widgets_in_session_order()):
+            if widget.session.id != message.session_id:
+                continue
+            if i == self.focused_session_index:
+                # Already selected, so the index watcher won't fire. The
+                # pane may have been switched by hand since; bring it back.
+                self._sync_tmux_window(widget)
+                self._fix_window_size_if_needed(widget)
+            else:
+                self._user_navigated = True
+                self.focused_session_index = i
+            return
+
     def on_session_summary_session_selected(self, message: SessionSummary.SessionSelected) -> None:
         """Handle session selection - update .selected class to preserve highlight when unfocused"""
         session_id = message.session_id
