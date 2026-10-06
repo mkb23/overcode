@@ -58,6 +58,7 @@ from ..stats_reader import (
     empty_window_usage,
 )
 from .opencode_stats import (
+    WindowIndex,
     _as_float,
     _as_int,
     _cached_records,
@@ -70,7 +71,10 @@ from .opencode_stats import (
     connect,
     database_path,
     default_data_dir,
+    recent_window_index,
+    remember_window_index,
     session_ids_from_hook_state,
+    window_index_key,
 )
 
 # Columns the reader reads by name. Anything missing here is schema drift —
@@ -300,8 +304,9 @@ def _scan_messages(
     Returns interaction count (user messages), per-turn work times, the
     newest assistant message's context snapshot (the live context size),
     the newest assistant message's model/agent (v2's session-row columns
-    are NULL on verified live rows), and, when ``since_ms`` is given, the
-    token usage inside that window.
+    are NULL on verified live rows), a ``WindowIndex`` over the assistant
+    turns (None when the scan failed), and, when ``since_ms`` is given, the token usage inside that
+    window.
 
     Rows are consumed newest-first (``time_created DESC`` with ``seq`` as
     the tie-breaker — ``seq`` alone would interleave multiple owned
@@ -312,6 +317,8 @@ def _scan_messages(
         "work_times": [],
         "current_context_tokens": 0,
         "window": empty_window_usage(),
+        # None until a scan succeeds: a failed one must not be published.
+        "window_index": None,
         "model": None,
         "effort": None,
         "agent": None,
@@ -333,6 +340,7 @@ def _scan_messages(
         return out
 
     seen_context = False
+    turns: List[Tuple[int, int, int, int, int]] = []
     for msg_id, session_id, mtype, _seq, time_created, _updated in rows:
         record = records.get(msg_id)
         if record is None:
@@ -373,14 +381,18 @@ def _scan_messages(
             if elapsed > 0:
                 out["work_times"].append(elapsed)
 
-        if since_ms is not None and _as_int(time_created) >= since_ms:
-            window = out["window"]
-            window["input_tokens"] += record["input"]
-            window["output_tokens"] += record["output"] + record["reasoning"]
-            window["cache_creation_tokens"] += record["cache_write"]
-            window["cache_read_tokens"] += record["cache_read"]
+        turns.append((
+            _as_int(time_created),
+            record["input"],
+            record["output"] + record["reasoning"],
+            record["cache_write"],
+            record["cache_read"],
+        ))
 
     out["work_times"].reverse()
+    out["window_index"] = WindowIndex(turns)
+    if since_ms is not None:
+        out["window"] = out["window_index"].usage(since_ms)
     return out
 
 
@@ -449,6 +461,11 @@ class Opencode2StatsReader:
         rows = fetch_rows_for_directory(conn, directories, since_ms)
         return rows if len(rows) == 1 else []
 
+    def _window_key(self, conversation_ids: Sequence[str]) -> Tuple:
+        return window_index_key(
+            self._db_path or database_path(), "session_message", conversation_ids
+        )
+
     # -- StatsReader -----------------------------------------------------
 
     def get_stats(self, session: Any, *, history_file: Any = None) -> Optional[AgentSessionStats]:
@@ -478,6 +495,9 @@ class Opencode2StatsReader:
             row_model, row_agent, row_effort = _row_identities(rows)
             row_ids = [row["id"] for row in rows]
             scan = _scan_messages(conn, row_ids, row_ids[-1])
+            # Hand the burn rate this scan (#517) — see opencode_stats.WindowIndex.
+            if scan["window_index"] is not None:
+                remember_window_index(self._window_key(row_ids), scan["window_index"])
 
             return AgentSessionStats(
                 interaction_count=scan["interaction_count"],
@@ -613,10 +633,14 @@ class Opencode2StatsReader:
             if not rows:
                 return empty_window_usage()
             row_ids = [row["id"] for row in rows]
-            scan = _scan_messages(
-                conn, row_ids, row_ids[-1], since_ms=int(since.timestamp() * 1000)
-            )
-            return scan["window"]
+            key = self._window_key(row_ids)
+            index = recent_window_index(key)
+            if index is None:
+                index = _scan_messages(conn, row_ids, row_ids[-1])["window_index"]
+                if index is None:
+                    return empty_window_usage()
+                remember_window_index(key, index)
+            return index.usage(int(since.timestamp() * 1000))
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return empty_window_usage()
         finally:

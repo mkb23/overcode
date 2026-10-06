@@ -230,8 +230,51 @@ lock, and the worst race is one duplicated parse.
 - The Claude backend's `read_window_token_usage` re-parses JSONL at the
   same 1 Hz cadence with no cache. It has not been reported as a problem.
 
+## Follow-up: the burn rate reuses the stats scan (#517)
+
+At fleet scale the per-scan cost was no longer the issue; the number of
+scans was. The status bar's burn rate asks every agent for its window usage
+once a second, and each answer was a full scan. The TUI's stats sweep scans
+again every 5 s. That is six scans per agent per 5 s. A 23-agent fleet
+profiled at ~37% CPU, with `_scan_messages` in 76% of samples.
+
+#517 proposed memoizing both `get_stats` and `get_window_token_usage` for
+60 s. It was not merged, for the same reason as #476's patch. The token,
+cost and context columns have a 5 s freshness contract, and the TUI's
+own 5 s sweep (not the daemon's 60 s sync) is what keeps them there. A
+60 s cache would have let them go up to a minute stale. Bucketing `since`
+to 60 s also summed up to 59 s of turns that had already left the window.
+
+What shipped instead:
+
+- `get_stats` is never cached. Its scan, which it runs anyway, now also
+  builds a `WindowIndex`: the assistant turns' token usage, sorted by
+  `time_created`, with suffix sums. The scan publishes it under (store,
+  table, conversation ids).
+- `get_window_token_usage` reuses a published index younger than
+  `WINDOW_INDEX_MAX_AGE_SECONDS` (10 s, inside the burn rate's 5-30 s
+  contract), else scans and publishes one itself. The index answers any
+  `since` exactly with a bisect, so the per-second sliding window costs
+  nothing extra and there is no bucketing error.
+- Indexes are immutable and shared by v1 and v2 (the table is in the key).
+  The store is bounded at 256 entries, and expired entries are evicted
+  first.
+
+At the TUI's cadence on the 2.3 GB generated store, 23 agents:
+
+| owned ids per agent | before | after |
+|---|---|---|
+| 1 | 24-33 ms/s | 9-10 ms/s |
+| 3 | 74-101 ms/s | 17-22 ms/s |
+| 8 | 101-152 ms/s | 24-34 ms/s |
+
+(The ranges span opencode and opencode2.) What remains is `get_stats` every
+5 s, which the columns' contract requires, plus a connection and session-row
+lookup per window call. Tests: `TestWindowIndexReuse`, `TestWindowIndex` and
+`TestWindowIndexStore` in `tests/unit/test_opencode_scan_cost.py`.
+
 ## References
 
-- Issue #476
+- Issues #476, #517
 - `scripts/make_opencode_store.py`, `scripts/bench_opencode_scan.py`
 - `docs/design/agent-agnostic-backends-opencode.md` (the reader's origin)

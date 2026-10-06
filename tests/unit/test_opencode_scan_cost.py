@@ -335,8 +335,10 @@ class TestRowCache:
     @pytest.fixture(autouse=True)
     def _fresh_cache(self):
         opencode_stats.clear_row_cache()
+        opencode_stats.clear_window_indexes()
         yield
         opencode_stats.clear_row_cache()
+        opencode_stats.clear_window_indexes()
 
     @pytest.fixture
     def fetched(self, monkeypatch):
@@ -413,6 +415,9 @@ class TestRowCache:
             "agent": "build",
         }
         _rewrite(path, table, "msg_a", bumped, LAUNCH_MS + 9000)
+        # This pins the ROW layer; a window index younger than its max age
+        # (#517) would answer without reaching the rows at all.
+        opencode_stats.clear_window_indexes()
         fetched.clear()
         after = reader.get_window_token_usage(session_with(1), LAUNCH)
         assert after["input_tokens"] == 900
@@ -439,3 +444,300 @@ class TestRowCache:
         self._reader(v2, path, monkeypatch).get_stats(session_with(1))
         assert len(opencode_stats._row_cache) <= 6  # oldest half evicted, new rows in
         assert any(key[2] == "msg_a" for key in opencode_stats._row_cache)
+
+
+# ── #517: the burn rate reuses the stats scan ──────────────────────────
+#
+# The status bar asks every agent for its window usage once a second; each
+# answer used to be a full scan. get_stats (every 5 s, never cached) now
+# publishes a WindowIndex that window calls reuse for up to
+# WINDOW_INDEX_MAX_AGE_SECONDS, inside the burn rate's 5-30 s freshness
+# contract. These pin: the stats columns stay exactly as fresh as before,
+# the window is exact for any `since`, and reuse is scoped and bounded.
+
+
+def _assistant(tokens_in: int, completed_ms: int) -> dict:
+    return {
+        "role": "assistant",
+        "tokens": {"input": tokens_in, "output": 5, "reasoning": 0,
+                   "total": tokens_in + 5, "cache": {"read": 0, "write": 0}},
+        "time": {"created": LAUNCH_MS + 1500, "completed": completed_ms},
+        "model": {"id": "gpt-5", "providerID": "openai"},
+        "agent": "build",
+    }
+
+
+@pytest.mark.parametrize("v2", [False, True], ids=["opencode", "opencode2"])
+class TestWindowIndexReuse:
+    @pytest.fixture
+    def scans(self, v2, monkeypatch):
+        """How many full message scans the reader ran."""
+        module = opencode2_stats if v2 else opencode_stats
+        real = module._scan_messages
+        count = {"n": 0}
+
+        def counting(*args, **kwargs):
+            count["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_scan_messages", counting)
+        return count
+
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        """A hand-driven monotonic clock for the index's max age."""
+        now = {"t": 1000.0}
+        monkeypatch.setattr(opencode_stats, "window_index_clock", lambda: now["t"])
+        return now
+
+    def _small(self, v2, tmp_path, monkeypatch, name="opencode.db"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _small_store(path, v2=v2, tokens_in=100)
+        if v2:
+            return path, opencode2_stats.Opencode2StatsReader(db_path=path)
+        return path, opencode_stats.OpencodeStatsReader(db_path=path)
+
+    @staticmethod
+    def _table(v2):
+        return "session_message" if v2 else "message"
+
+    def test_window_after_get_stats_does_not_scan(self, v2, tmp_path, monkeypatch, scans):
+        _path, reader = self._small(v2, tmp_path, monkeypatch)
+        reader.get_stats(session_with(1))
+        assert scans["n"] == 1
+        usage = reader.get_window_token_usage(session_with(1), LAUNCH)
+        assert scans["n"] == 1  # served by the index get_stats published
+        assert usage["input_tokens"] == 100
+
+    def test_sliding_since_answers_from_one_scan(self, v2, tmp_path, monkeypatch, scans):
+        _path, reader = self._small(v2, tmp_path, monkeypatch)
+        # The assistant turn is created at LAUNCH_MS + 1500.
+        inside = reader.get_window_token_usage(session_with(1), LAUNCH)
+        at_turn = reader.get_window_token_usage(
+            session_with(1), datetime.fromtimestamp((LAUNCH_MS + 1500) / 1000)
+        )
+        past_turn = reader.get_window_token_usage(
+            session_with(1), datetime.fromtimestamp((LAUNCH_MS + 1501) / 1000)
+        )
+        assert scans["n"] == 1
+        assert inside["input_tokens"] == 100
+        assert at_turn["input_tokens"] == 100  # the window start is inclusive
+        assert past_turn == opencode_stats.empty_window_usage()
+
+    def test_get_stats_is_never_served_from_the_index(
+        self, v2, tmp_path, monkeypatch, scans
+    ):
+        """The token/context columns keep their 5 s freshness: a rewrite shows
+        on the very next get_stats, even inside the window index's max age."""
+        path, reader = self._small(v2, tmp_path, monkeypatch)
+        reader.get_window_token_usage(session_with(1), LAUNCH)
+        before = reader.get_stats(session_with(1))
+        _rewrite(path, self._table(v2), "msg_a", _assistant(900, LAUNCH_MS + 9000),
+                 LAUNCH_MS + 9000)
+        after = reader.get_stats(session_with(1))
+        assert scans["n"] == 3
+        assert after.current_context_tokens != before.current_context_tokens
+        assert after.current_context_tokens >= 900
+
+    def test_get_stats_refreshes_the_window(self, v2, tmp_path, monkeypatch, scans, clock):
+        path, reader = self._small(v2, tmp_path, monkeypatch)
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 100
+        _rewrite(path, self._table(v2), "msg_a", _assistant(900, LAUNCH_MS + 9000),
+                 LAUNCH_MS + 9000)
+        clock["t"] += 3
+        # Inside the max age the window may lag a rewrite...
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 100
+        # ...until the next stats tick scans, which the window then reuses.
+        reader.get_stats(session_with(1))
+        scanned = scans["n"]
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 900
+        assert scans["n"] == scanned
+
+    def test_window_rescans_at_max_age(self, v2, tmp_path, monkeypatch, scans, clock):
+        path, reader = self._small(v2, tmp_path, monkeypatch)
+        reader.get_window_token_usage(session_with(1), LAUNCH)
+        _rewrite(path, self._table(v2), "msg_a", _assistant(900, LAUNCH_MS + 9000),
+                 LAUNCH_MS + 9000)
+        clock["t"] += opencode_stats.WINDOW_INDEX_MAX_AGE_SECONDS - 0.01
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 100
+        assert scans["n"] == 1
+        clock["t"] += 0.01
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 900
+        assert scans["n"] == 2
+
+    def test_max_age_is_inside_the_burn_freshness_contract(self, v2):
+        # Burn/μ window averages: 5-30 s (the scaling audit's contract).
+        assert 5 <= opencode_stats.WINDOW_INDEX_MAX_AGE_SECONDS <= 30
+
+    def test_status_bar_cadence_scans_once_per_stats_tick(
+        self, v2, tmp_path, monkeypatch, scans, clock
+    ):
+        """The TUI's shape: get_stats every 5 s, the window every second."""
+        _path, reader = self._small(v2, tmp_path, monkeypatch)
+        for _tick in range(4):
+            reader.get_stats(session_with(1))
+            for _second in range(5):
+                reader.get_window_token_usage(session_with(1), LAUNCH)
+                clock["t"] += 1
+        assert scans["n"] == 4  # was 4 + 20
+
+    def test_a_new_conversation_misses(self, v2, store, monkeypatch, scans):
+        reader = (opencode2_stats.Opencode2StatsReader if v2
+                  else opencode_stats.OpencodeStatsReader)(db_path=store)
+        reader.get_stats(session_with(1))
+        reader.get_window_token_usage(session_with(2), LAUNCH)  # after /new
+        assert scans["n"] == 2
+
+    def test_stores_do_not_share_indexes(self, v2, tmp_path, monkeypatch, scans):
+        _a, reader_a = self._small(v2, tmp_path / "a", monkeypatch)
+        b, _reader_b = self._small(v2, tmp_path / "b", monkeypatch)
+        _rewrite(b, self._table(v2), "msg_a", _assistant(900, LAUNCH_MS + 9000),
+                 LAUNCH_MS + 9000)
+        reader_b = type(reader_a)(db_path=b)
+        reader_a.get_stats(session_with(1))
+        assert reader_b.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 900
+        assert scans["n"] == 2
+
+    def test_window_matches_a_full_scan_for_any_since(self, v2, store):
+        """The index answers exactly what a per-call scan summed, for window
+        starts before, inside, on and just past assistant turns."""
+        module = opencode2_stats if v2 else opencode_stats
+        reader = (opencode2_stats.Opencode2StatsReader if v2
+                  else opencode_stats.OpencodeStatsReader)(db_path=store)
+        session = session_with(3)
+        ids = session.agent_session_ids
+        conn = module.connect(store)
+        try:
+            span = 3 * MSGS_PER_SESSION * 1000
+            starts = [LAUNCH_MS - 1, LAUNCH_MS + span + 1]
+            for offset in (0.1, 0.4, 0.5, 0.75, 0.97):
+                t = LAUNCH_MS + int(span * offset) // 1000 * 1000
+                starts += [t - 1, t, t + 1]
+            for since_ms in starts:
+                since = datetime.fromtimestamp(since_ms / 1000)
+                got = reader.get_window_token_usage(session, since)
+                # Same ms the reader converts `since` to.
+                expected = module._scan_messages(
+                    conn, ids, ids[-1], since_ms=int(since.timestamp() * 1000)
+                )["window"]
+                assert got == expected, since_ms
+        finally:
+            conn.close()
+
+    def test_v1_and_v2_indexes_do_not_collide(self, v2, store, scans):
+        """Both tables hold the same ids in the fixture store (and v1/v2 share
+        a file in real life): one reader's index must not answer the other."""
+        other = (opencode_stats.OpencodeStatsReader if v2
+                 else opencode2_stats.Opencode2StatsReader)(db_path=store)
+        reader = (opencode2_stats.Opencode2StatsReader if v2
+                  else opencode_stats.OpencodeStatsReader)(db_path=store)
+        other.get_stats(session_with(1))
+        reader.get_window_token_usage(session_with(1), LAUNCH)
+        assert scans["n"] == 1  # only this reader's own scan is counted
+
+    def test_callers_cannot_corrupt_the_index(self, v2, tmp_path, monkeypatch):
+        _path, reader = self._small(v2, tmp_path, monkeypatch)
+        first = reader.get_window_token_usage(session_with(1), LAUNCH)
+        first["input_tokens"] = 999_999
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 100
+
+    def test_a_transient_scan_error_is_not_published(self, v2, tmp_path, monkeypatch):
+        """A locked store answers 'nothing' for that call only — never an
+        empty index that would zero the burn rate for the max age."""
+        _path, reader = self._small(v2, tmp_path, monkeypatch)
+        real = opencode_stats._fetch_data
+        monkeypatch.setattr(
+            opencode_stats, "_fetch_data",
+            lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+        )
+        assert reader.get_window_token_usage(session_with(1), LAUNCH) == (
+            opencode_stats.empty_window_usage()
+        )
+        reader.get_stats(session_with(1))
+        assert opencode_stats._window_indexes == {}
+        monkeypatch.setattr(opencode_stats, "_fetch_data", real)
+        assert reader.get_window_token_usage(session_with(1), LAUNCH)["input_tokens"] == 100
+
+    def test_failed_scan_publishes_nothing(self, v2, tmp_path, monkeypatch):
+        reader = (opencode2_stats.Opencode2StatsReader if v2
+                  else opencode_stats.OpencodeStatsReader)(db_path=tmp_path / "absent.db")
+        assert reader.get_window_token_usage(session_with(1), LAUNCH) == (
+            opencode_stats.empty_window_usage()
+        )
+        assert reader.get_stats(session_with(1)) is None
+        assert opencode_stats._window_indexes == {}
+
+
+class TestWindowIndex:
+    def test_empty(self):
+        assert opencode_stats.WindowIndex(()).usage(0) == opencode_stats.empty_window_usage()
+
+    def test_sums_turns_at_or_after_since_whatever_the_input_order(self):
+        index = opencode_stats.WindowIndex([
+            (300, 3, 30, 300, 3000),
+            (100, 1, 10, 100, 1000),
+            (200, 2, 20, 200, 2000),
+            (200, 4, 40, 400, 4000),  # a tie on time_created
+        ])
+        assert index.usage(0) == {"input_tokens": 10, "output_tokens": 100,
+                                  "cache_creation_tokens": 1000,
+                                  "cache_read_tokens": 10000}
+        assert index.usage(200)["input_tokens"] == 9  # both tied turns, inclusive
+        assert index.usage(201)["input_tokens"] == 3
+        assert index.usage(301) == opencode_stats.empty_window_usage()
+
+    def test_keys_match_the_burn_rate_shape(self):
+        assert set(opencode_stats.WindowIndex(()).usage(0)) == set(
+            opencode_stats.empty_window_usage()
+        )
+
+
+class TestWindowIndexStore:
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        now = {"t": 1000.0}
+        monkeypatch.setattr(opencode_stats, "window_index_clock", lambda: now["t"])
+        return now
+
+    def test_bounded_stale_entries_go_first(self, clock):
+        cap = opencode_stats._WINDOW_INDEX_MAX_ENTRIES
+        index = opencode_stats.WindowIndex(())
+        for i in range(cap):
+            opencode_stats.remember_window_index(("stale", i), index)
+        clock["t"] += opencode_stats.WINDOW_INDEX_MAX_AGE_SECONDS
+        opencode_stats.remember_window_index(("live", 0), index)
+        assert len(opencode_stats._window_indexes) == 1
+        assert opencode_stats.recent_window_index(("live", 0)) is index
+
+    def test_bounded_when_every_entry_is_live(self, clock):
+        cap = opencode_stats._WINDOW_INDEX_MAX_ENTRIES
+        index = opencode_stats.WindowIndex(())
+        for i in range(cap + 1):
+            clock["t"] += 0.001
+            opencode_stats.remember_window_index(("k", i), index)
+        assert len(opencode_stats._window_indexes) <= cap
+        assert opencode_stats.recent_window_index(("k", cap)) is index  # newest kept
+        assert opencode_stats.recent_window_index(("k", 0)) is None  # oldest dropped
+
+    def test_concurrent_publishers(self):
+        import threading
+
+        index = opencode_stats.WindowIndex(())
+        errors = []
+
+        def publish(worker):
+            try:
+                for i in range(2000):
+                    opencode_stats.remember_window_index((worker, i), index)
+                    opencode_stats.recent_window_index((worker, i // 2))
+            except Exception as exc:  # pragma: no cover - the failure mode
+                errors.append(exc)
+
+        threads = [threading.Thread(target=publish, args=(w,)) for w in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        assert len(opencode_stats._window_indexes) <= opencode_stats._WINDOW_INDEX_MAX_ENTRIES

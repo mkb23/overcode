@@ -87,6 +87,22 @@ def activity_log_in_tmp(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def fresh_opencode_window_indexes():
+    """Each test starts with no published opencode window index (#517).
+
+    The readers share module-level indexes, keyed by the store's path, that
+    burn-rate calls reuse for up to 10 s. A test that rewrites its store and
+    reads the window again inside that age would otherwise see the earlier
+    scan. Tests of the reuse itself publish their own indexes.
+    """
+    from overcode.backends import opencode_stats
+
+    opencode_stats.clear_window_indexes()
+    yield
+    opencode_stats.clear_window_indexes()
+
+
+@pytest.fixture(autouse=True)
 def default_keymap_only(monkeypatch):
     """Unit tests run on the built-in keys (#510).
 

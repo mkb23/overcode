@@ -27,6 +27,8 @@ import json
 import os
 import sqlite3
 import threading
+import time
+from bisect import bisect_left
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -462,6 +464,95 @@ def _cached_records(
     return records
 
 
+# Burn-window reuse (#517). The status bar asks every opencode agent for its
+# window token usage once a second, and each answer was a full scan — at 23
+# agents ~0.1 s of GIL-holding work per second, enough to starve the TUI's
+# input loop. The burn rate's freshness contract is 5-30 s, the stats
+# columns' is 5 s. So the scan get_stats does anyway (every 5 s, never
+# cached — the columns stay exactly as fresh as before) also publishes a
+# WindowIndex, and window calls reuse one younger than
+# WINDOW_INDEX_MAX_AGE_SECONDS. The index answers any window start exactly,
+# so the sliding `since` costs a bisect, not a scan.
+WINDOW_INDEX_MAX_AGE_SECONDS = 10.0
+_WINDOW_INDEX_MAX_ENTRIES = 256
+_window_indexes: Dict[Tuple, Tuple[float, "WindowIndex"]] = {}
+_window_indexes_lock = threading.Lock()
+
+# Test seam: expiry without sleeping.
+window_index_clock = time.monotonic
+
+
+class WindowIndex:
+    """One scan's assistant-turn token usage, answerable for any window start.
+
+    Built from ``(time_created_ms, input, output, cache_write, cache_read)``
+    per assistant row; ``usage(since_ms)`` sums the turns created at or after
+    ``since_ms`` — the same rows the per-scan window loop used to sum.
+    Immutable once built, so one instance is safely shared between threads.
+    """
+
+    __slots__ = ("_times", "_sums")
+
+    def __init__(self, turns: Sequence[Tuple[int, int, int, int, int]]) -> None:
+        ordered = sorted(turns, key=lambda turn: turn[0])
+        self._times = [turn[0] for turn in ordered]
+        # _sums[i] = totals of turns i..end (suffix sums), so a window is
+        # one bisect plus one lookup.
+        sums = [(0, 0, 0, 0)] * (len(ordered) + 1)
+        for i in range(len(ordered) - 1, -1, -1):
+            _created, inp, out, write, read = ordered[i]
+            nxt = sums[i + 1]
+            sums[i] = (nxt[0] + inp, nxt[1] + out, nxt[2] + write, nxt[3] + read)
+        self._sums = sums
+
+    def usage(self, since_ms: int) -> Dict[str, int]:
+        inp, out, write, read = self._sums[bisect_left(self._times, since_ms)]
+        return {
+            "input_tokens": inp,
+            "output_tokens": out,
+            "cache_creation_tokens": write,
+            "cache_read_tokens": read,
+        }
+
+
+def window_index_key(db: Any, table: str, conversation_ids: Sequence[str]) -> Tuple:
+    """Identity of one agent's scan: the store, the table, the conversations."""
+    return (str(db), table, tuple(sorted(conversation_ids)))
+
+
+def remember_window_index(key: Tuple, index: WindowIndex) -> None:
+    """Publish a freshly scanned index; prune past the bound (stale first)."""
+    now = window_index_clock()
+    with _window_indexes_lock:
+        _window_indexes[key] = (now, index)
+        if len(_window_indexes) <= _WINDOW_INDEX_MAX_ENTRIES:
+            return
+        for stale in [k for k, (at, _i) in _window_indexes.items()
+                      if now - at >= WINDOW_INDEX_MAX_AGE_SECONDS]:
+            del _window_indexes[stale]
+        if len(_window_indexes) > _WINDOW_INDEX_MAX_ENTRIES:
+            by_age = sorted(_window_indexes, key=lambda k: _window_indexes[k][0])
+            for old in by_age[: len(by_age) - _WINDOW_INDEX_MAX_ENTRIES // 2]:
+                del _window_indexes[old]
+
+
+def recent_window_index(key: Tuple) -> Optional[WindowIndex]:
+    """The index for ``key`` if one was scanned within the max age."""
+    entry = _window_indexes.get(key)
+    if entry is None:
+        return None
+    at, index = entry
+    if window_index_clock() - at >= WINDOW_INDEX_MAX_AGE_SECONDS:
+        return None
+    return index
+
+
+def clear_window_indexes() -> None:
+    """Drop every published window index (tests)."""
+    with _window_indexes_lock:
+        _window_indexes.clear()
+
+
 def _optional_ms(value: Any) -> Optional[float]:
     return value if isinstance(value, (int, float)) else None
 
@@ -507,14 +598,17 @@ def _scan_messages(
     """One pass over recent messages for the counts the columns need.
 
     Returns interaction count (user messages), per-turn work times, the newest
-    assistant message's total-token snapshot (the live context size), and, when
-    ``since_ms`` is given, the token usage inside that window.
+    assistant message's total-token snapshot (the live context size), a
+    ``WindowIndex`` over the assistant turns (None when the scan failed), and, when ``since_ms`` is
+    given, the token usage inside that window.
     """
     out: Dict[str, Any] = {
         "interaction_count": 0,
         "work_times": [],
         "current_context_tokens": 0,
         "window": empty_window_usage(),
+        # None until a scan succeeds: a failed one must not be published.
+        "window_index": None,
     }
     ids = [sid for sid in session_ids if sid]
     if not ids:
@@ -532,6 +626,7 @@ def _scan_messages(
         return out
 
     seen_context = False
+    turns: List[Tuple[int, int, int, int, int]] = []
     for msg_id, session_id, time_created, _updated in rows:
         record = records.get(msg_id)
         if record is None:
@@ -561,14 +656,18 @@ def _scan_messages(
             if elapsed > 0:
                 out["work_times"].append(elapsed)
 
-        if since_ms is not None and _as_int(time_created) >= since_ms:
-            window = out["window"]
-            window["input_tokens"] += record["input"]
-            window["output_tokens"] += record["output"] + record["reasoning"]
-            window["cache_creation_tokens"] += record["cache_write"]
-            window["cache_read_tokens"] += record["cache_read"]
+        turns.append((
+            _as_int(time_created),
+            record["input"],
+            record["output"] + record["reasoning"],
+            record["cache_write"],
+            record["cache_read"],
+        ))
 
     out["work_times"].reverse()
+    out["window_index"] = WindowIndex(turns)
+    if since_ms is not None:
+        out["window"] = out["window_index"].usage(since_ms)
     return out
 
 
@@ -667,6 +766,11 @@ class OpencodeStatsReader:
             return []
         return fetch_rows_for_directory(conn, directories, since_ms)
 
+    def _window_key(self, conversation_ids: Sequence[str]) -> Tuple:
+        return window_index_key(
+            self._db_path or database_path(), "message", conversation_ids
+        )
+
     # -- StatsReader -----------------------------------------------------
 
     def get_stats(
@@ -709,6 +813,9 @@ class OpencodeStatsReader:
             row_ids = [row["id"] for row in rows]
             active_id = row_ids[-1] if row_ids else None
             scan = _scan_messages(conn, row_ids, active_id)
+            # Hand the burn rate this scan (#517) — see WindowIndex.
+            if scan["window_index"] is not None:
+                remember_window_index(self._window_key(row_ids), scan["window_index"])
 
             return AgentSessionStats(
                 interaction_count=scan["interaction_count"],
@@ -839,10 +946,14 @@ class OpencodeStatsReader:
             if not rows:
                 return empty_window_usage()
             row_ids = [row["id"] for row in rows]
-            scan = _scan_messages(
-                conn, row_ids, row_ids[-1], since_ms=int(since.timestamp() * 1000)
-            )
-            return scan["window"]
+            key = self._window_key(row_ids)
+            index = recent_window_index(key)
+            if index is None:
+                index = _scan_messages(conn, row_ids, row_ids[-1])["window_index"]
+                if index is None:
+                    return empty_window_usage()
+                remember_window_index(key, index)
+            return index.usage(int(since.timestamp() * 1000))
         except (sqlite3.Error, OSError, ValueError, KeyError, IndexError):
             return empty_window_usage()
         finally:
@@ -867,7 +978,10 @@ def _launch_ms(session: Any) -> Optional[int]:
 
 __all__ = [
     "EXPECTED_MESSAGE_COLUMNS",
+    "WINDOW_INDEX_MAX_AGE_SECONDS",
+    "WindowIndex",
     "clear_row_cache",
+    "clear_window_indexes",
     "EXPECTED_SESSION_COLUMNS",
     "OpencodeStatsReader",
     "connect",
