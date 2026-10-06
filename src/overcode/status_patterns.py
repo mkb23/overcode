@@ -641,6 +641,25 @@ def _find_status_bar_line(content: str, patterns: StatusPatterns = None, *, clea
     return None
 
 
+def status_bar_visible(content: str, patterns: StatusPatterns = None) -> bool:
+    """True when the pane shows the CLI's status bar at all (#507).
+
+    The bar's counts (shells, monitors) read as 0 both when nothing is
+    running and when a menu or dialog is drawn over the bar; this tells the
+    two apart.
+    """
+    return _find_status_bar_line(content, patterns) is not None
+
+
+def shows_permission_prompt(content: str, patterns: StatusPatterns = None, tail: int = 20) -> bool:
+    """True when the bottom of the pane shows a permission dialog (#507)."""
+    patterns = patterns or DEFAULT_PATTERNS
+    if not content or not patterns.permission_patterns:
+        return False
+    lines = [line for line in strip_ansi(content).splitlines() if line.strip()]
+    return matches_any("\n".join(lines[-tail:]), patterns.permission_patterns)
+
+
 def extract_background_bash_count(content: str, patterns: StatusPatterns = None, *, clean_content: str = None) -> int:
     """Extract the number of background bash tasks from pane content.
 

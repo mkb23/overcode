@@ -47,6 +47,8 @@ from .status_patterns import (
     extract_sleep_duration,
     strip_ansi,
     is_shell_prompt,
+    shows_permission_prompt,
+    status_bar_visible,
 )
 from .tui_helpers import format_duration
 
@@ -152,6 +154,12 @@ _RECENT_EVENTS_LIMIT = 50
 # the parent yellow forever. A live subagent blocked on a long wait sends no
 # events, so this is generous.
 _SUBAGENT_STALE_SECONDS = 3600.0
+
+
+# How long the last status-bar counts (monitors, shells) stand in while a
+# menu or dialog covers the bar (#507). Covers are brief; past this the
+# counts are unknown and read as 0.
+_STATUS_BAR_HOLD_SECONDS = 30.0
 
 
 def _live_subagent_count(hook_state: dict, now: float) -> int:
@@ -512,6 +520,16 @@ class HookStatusDetector:
         # Parsed tail of each session's event log, keyed by the log's
         # (st_mtime_ns, st_size, limit): an unchanged log costs one stat.
         self._events_cache: Dict[str, tuple] = {}
+        # When the interrupt marker was first seen in each pane (#507): the
+        # marker lingers on screen after the person re-prompts, so it only
+        # counts while no working event has arrived since.
+        self._interrupt_seen_at: Dict[str, float] = {}
+        # Last visible status-bar counts: (seen_at, monitors, shells) (#507)
+        self._status_bar_counts: Dict[str, Tuple[float, int, int]] = {}
+        # The PermissionRequest (by hook-state timestamp) whose dialog has
+        # been seen in the pane (#507). Nothing fires when it is answered,
+        # so the dialog going away is the signal.
+        self._permission_prompt_seen: Dict[str, float] = {}
 
         # Resolve state directory — must match hook_handler._get_hook_state_path()
         if state_dir is not None:
@@ -728,6 +746,15 @@ class HookStatusDetector:
             self._status_details.pop(session.name, None)
             return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
 
+        # An answered permission prompt: nothing fires on approval, so the
+        # approved tool would show orange until its PostToolUse (#507).
+        if event == "PermissionRequest" and self._permission_answered(
+            session.name, hook_state, pane_content
+        ):
+            event = "PreToolUse"
+            status = STATUS_RUNNING
+            self._last_detect_phase[session.id] = "hook:PermissionRequest+answered"
+
         # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
         sleep_dur = None
         if status == STATUS_RUNNING:
@@ -743,6 +770,7 @@ class HookStatusDetector:
         has_interrupt = bool(pane_content) and _pane_shows_interrupt_prompt(
             pane_content, self._patterns
         )
+        has_interrupt = self._interrupt_still_current(session.name, has_interrupt)
         if status == STATUS_RUNNING and has_interrupt:
             status = STATUS_WAITING_USER
             self._last_detect_phase[session.id] = f"hook:{event}+interrupt"
@@ -773,14 +801,17 @@ class HookStatusDetector:
         monitor_count = (
             extract_active_monitor_count(pane_content, self._patterns) if pane_content else 0
         )
+        shell_count = (
+            extract_background_bash_count(pane_content, self._patterns) if pane_content else 0
+        )
+        monitor_count, shell_count = self._hold_status_bar_counts(
+            session.name, pane_content, monitor_count, shell_count
+        )
         if monitor_count > 0 and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT):
             status = STATUS_BUSY_SLEEPING
             self._last_detect_phase[session.id] = f"hook:{event}+monitors={monitor_count}"
 
         # Background shells and subagents will wake the agent too (#507)
-        shell_count = (
-            extract_background_bash_count(pane_content, self._patterns) if pane_content else 0
-        )
         subagent_count = _live_subagent_count(hook_state, time.time())
         if (shell_count or subagent_count) and status in (
             STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT,
@@ -824,6 +855,55 @@ class HookStatusDetector:
         )
 
         return status, activity, pane_content
+
+    def _interrupt_still_current(self, session_name: str, shown: bool) -> bool:
+        """Whether an on-screen interrupt marker still means "interrupted" (#507).
+
+        The marker stays in the pane's tail after the person types a new
+        prompt; once a working event arrives after the marker first showed,
+        the agent has resumed and the marker is history.
+        """
+        if not shown:
+            self._interrupt_seen_at.pop(session_name, None)
+            return False
+        now = time.time()
+        first_seen = self._interrupt_seen_at.setdefault(session_name, now)
+        age = self._most_recent_running_event_age(session_name, now)
+        return age is None or now - age <= first_seen
+
+    def _permission_answered(
+        self, session_name: str, hook_state: dict, pane_content: str
+    ) -> bool:
+        """True once this PermissionRequest's dialog was seen and has gone (#507).
+
+        A dialog never recognised in the pane (another backend's wording, a
+        restart mid-run) proves nothing, so that case stays orange.
+        """
+        request = float(hook_state.get("timestamp", 0))
+        if not pane_content:
+            return False
+        if shows_permission_prompt(pane_content, self._patterns):
+            self._permission_prompt_seen[session_name] = request
+            return False
+        return self._permission_prompt_seen.get(session_name) == request
+
+    def _hold_status_bar_counts(
+        self, session_name: str, pane_content: str, monitors: int, shells: int
+    ) -> Tuple[int, int]:
+        """Status-bar counts, held briefly while the bar is covered (#507).
+
+        A menu or dialog drawn over the bar hides "1 monitor" / "2 shells"
+        without anything having stopped; reading that as 0 would drop a
+        waiting agent to red for as long as the cover stays.
+        """
+        now = time.time()
+        if pane_content and status_bar_visible(pane_content, self._patterns):
+            self._status_bar_counts[session_name] = (now, monitors, shells)
+            return monitors, shells
+        held = self._status_bar_counts.get(session_name)
+        if held is not None and now - held[0] <= _STATUS_BAR_HOLD_SECONDS:
+            return max(monitors, held[1]), max(shells, held[2])
+        return monitors, shells
 
     def get_status_detail(self, session_name: str) -> Optional[StatusDetail]:
         """Return the most recent StatusDetail for a session, or None.

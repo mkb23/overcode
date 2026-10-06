@@ -242,6 +242,105 @@ INTERRUPT_THEN_REPROMPT = Scenario(
 )
 
 
+# The person picks "No" (Esc): Claude prints the interrupt marker and no hook
+# fires. The dialog going away must not read as an approval.
+PERMISSION_DENIED = Scenario(
+    "permission_denied",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "Bash", "p1", command="rm -rf build"),
+        ev(1.1, "PermissionRequest", "Bash", "p1", command="rm -rf build"),
+        frame(1.2, claude_pane(body="Do you want to proceed?\n❯ 1. Yes\n  2. No")),
+        frame(4.0, claude_pane(
+            body="⏺ Bash(rm -rf build)\n  ⎿  Interrupted · What should Claude do instead?")),
+    ],
+    expect=[(1.25, 3.75, ORANGE), (4.0, 15.0, RED)],
+)
+
+# Two approvals in one turn: the second dialog must show orange again, even
+# though the first was seen and answered — including the moment before it
+# renders, when the pane still shows the first approved tool.
+TWO_PERMISSION_PROMPTS = Scenario(
+    "two_permission_prompts",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "Bash", "p1", command="git push"),
+        ev(1.1, "PermissionRequest", "Bash", "p1", command="git push"),
+        frame(1.2, claude_pane(body="Do you want to proceed?\n❯ 1. Yes\n  2. No")),
+        frame(3.0, claude_pane(body="⏺ Bash(git push)\n  ⎿  Running…")),
+        ev(5.0, "PostToolUse", "Bash", "p1", command="git push"),
+        ev(6.0, "PreToolUse", "Bash", "p2", command="gh pr create"),
+        ev(6.1, "PermissionRequest", "Bash", "p2", command="gh pr create"),
+        frame(6.6, claude_pane(body="Do you want to proceed?\n❯ 1. Yes\n  2. No")),
+        frame(9.0, claude_pane(body="⏺ Bash(gh pr create)\n  ⎿  Running…")),
+        ev(12.0, "PostToolUse", "Bash", "p2", command="gh pr create"),
+        ev(13.0, "Stop"),
+    ],
+    expect=[
+        (1.25, 2.75, ORANGE), (3.25, 5.75, GREEN), (6.25, 8.75, ORANGE),
+        (9.25, 12.75, GREEN), (15.0, 18.0, RED),
+    ],
+)
+
+# A dialog the patterns don't recognise (another wording, a restart mid-run)
+# proves nothing either way, so the agent stays orange until PostToolUse.
+UNRECOGNISED_PERMISSION_DIALOG = Scenario(
+    "unrecognised_permission_dialog",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "Bash", "p1", command="git push"),
+        ev(1.1, "PermissionRequest", "Bash", "p1", command="git push"),
+        frame(1.2, claude_pane(body="Run git push?  [y/N]")),
+        frame(3.0, claude_pane(body="⏺ Bash(git push)\n  ⎿  Running…")),
+        ev(9.0, "PostToolUse", "Bash", "p1", command="git push"),
+    ],
+    expect=[(1.25, 8.75, ORANGE), (9.0, 10.0, GREEN)],
+)
+
+# Covers are brief: past the hold, an unseen count reads as 0 again.
+MONITOR_STATUS_BAR_COVERED_LONG = Scenario(
+    "monitor_status_bar_covered_long",
+    steps=MONITOR_ARMED.steps + [
+        frame(10.0, "⏺ Done.\n\n  /model  Choose a model\n  /help   Show help"),
+    ],
+    expect=[(5.0, 39.75, YELLOW), (40.25, 50.0, RED)],
+)
+
+# A visible bar without the count means the stream really ended.
+MONITOR_ENDS = Scenario(
+    "monitor_ends",
+    steps=MONITOR_ARMED.steps + [frame(10.0, claude_pane())],
+    expect=[(5.0, 9.75, YELLOW), (10.0, 20.0, RED)],
+)
+
+BACKGROUND_SHELL_STATUS_BAR_COVERED = Scenario(
+    "background_shell_status_bar_covered",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "Bash", "b1", command="npm run build", run_in_background=True),
+        ev(1.05, "PostToolUse", "Bash", "b1", command="npm run build", run_in_background=True),
+        frame(1.1, claude_pane(footer="1 shell · ↓ to manage")),
+        ev(2.0, "Stop"),
+        frame(10.0, "⏺ Done.\n\n  /model  Choose a model\n  /help   Show help"),
+        frame(12.0, claude_pane(footer="1 shell · ↓ to manage")),
+    ],
+    expect=[(4.0, 20.0, YELLOW)],
+)
+
+# A TUI started (t=0) while the marker is already on screen: the turn's
+# events all predate it, so the marker still counts.
+INTERRUPT_SEEN_AFTER_RESTART = Scenario(
+    "interrupt_seen_after_restart",
+    steps=[
+        ev(-30.0, "UserPromptSubmit"),
+        ev(-29.0, "PreToolUse", "Bash", "i1", command="make test"),
+        ev(12.0, "UserPromptSubmit"),
+    ],
+    initial_pane=claude_pane(body="⏺ Bash(make test)\n  ⎿  Interrupted by user"),
+    expect=[(0.0, 11.75, RED), (12.0, 15.0, GREEN)],
+)
+
+
 SCENARIOS = [
     PLAIN_TURN,
     QUICK_TEXT_REPLY,
@@ -252,17 +351,18 @@ SCENARIOS = [
     SUBAGENT_PERMISSION,
     CHILD_WITH_BACKGROUND_AGENT,
     MONITOR_ARMED,
-    pytest.param(MONITOR_STATUS_BAR_COVERED, marks=_bug(
-        "#507: Monitor's obligation is disarmed by PostToolUse, so the status "
-        "bar count is the only signal and a covered bar drops to red")),
+    MONITOR_STATUS_BAR_COVERED,
     SCHEDULE_WAKEUP,
-    pytest.param(PERMISSION_PROMPT, marks=_bug(
-        "#507: nothing fires on approval, so orange lasts until PostToolUse "
-        "while the approved tool runs")),
+    PERMISSION_PROMPT,
     CHILD_REPORTS_BACK,
-    pytest.param(INTERRUPT_THEN_REPROMPT, marks=_bug(
-        "#507: the interrupt marker in the last 40 lines keeps a re-prompted, "
-        "working agent red")),
+    INTERRUPT_THEN_REPROMPT,
+    PERMISSION_DENIED,
+    TWO_PERMISSION_PROMPTS,
+    UNRECOGNISED_PERMISSION_DIALOG,
+    MONITOR_STATUS_BAR_COVERED_LONG,
+    MONITOR_ENDS,
+    BACKGROUND_SHELL_STATUS_BAR_COVERED,
+    INTERRUPT_SEEN_AFTER_RESTART,
 ]
 
 
