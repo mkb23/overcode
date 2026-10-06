@@ -587,6 +587,20 @@ Return early when the probe is disabled, cap the buffer, and prune the preferenc
 5. **Count tmux commands, then cut them at source.** Persistent RealTmux in the daemon and web tier; one `list-panes -F` for pids and pane activity per sync; capture only panes whose activity changed, 40 lines for enrichment (R7, R9, R11).
 6. **Log status changes, not samples.** A history row on change plus a periodic keepalive, byte-based hook-log rotation with truncated inputs, presence tail-reads (R10, R12, R13).
 
+## Follow-up (2026-10-06): R15-R18 were not in the fix programme
+
+The fix programme above covered R1-R14, which shipped in 0.5.5. R15-R18 were
+never scheduled, and the scale tier only built Claude fleets, so nothing
+budgeted the other backends. A user then hit the opencode burn-rate rescan at
+37% CPU (#517, fixed). Since then:
+
+- `scripts/bench_backends.py` and `tests/scale/test_backend_budgets.py` budget
+  the opencode, opencode2, codex, grok and hermes readers at the TUI's cadence.
+- R15 is tracked in #524 (codex), #525 (grok), #526 (opencode row cache) and
+  #527 (hermes). Each issue has a strict xfail budget.
+- R16-R18 were re-checked against main and are tracked in #528: 3 fixed
+  incidentally, 9 partly fixed, 7 open.
+
 ## What history says
 
 100 prior incidents were mined from git history, GitHub issues and PRs, `AUDIT.md` and the March 2026 UX performance analysis, each checked against current source. Most still-open ones added a cache or cap to one call site and left its siblings alone; the tiered capture from #161 was silently lost and only rediscovered in 0.5.4.
