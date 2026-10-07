@@ -53,8 +53,8 @@ def models_lookup(
 ):
     """Show what overcode resolves for a model id, and which tier answered."""
     from ..history_reader import (
-        MODEL_CONTEXT_WINDOWS,
         _bare_model_id,
+        curated_context_window,
         model_context_window,
         model_short_name,
     )
@@ -66,8 +66,9 @@ def models_lookup(
     window = model_context_window(model)
     pricing = lookup_pricing(model)
 
-    if bare in MODEL_CONTEXT_WINDOWS:
-        window_tier = "curated"
+    curated = curated_context_window(model)
+    if curated is not None:
+        window_tier = "curated" if curated[0] == bare else f"curated, family {curated[0]}"
     elif meta and meta.context_window:
         window_tier = f"catalog ({snapshot_info()['tier']})"
     else:

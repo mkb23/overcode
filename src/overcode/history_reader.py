@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from . import model_metadata
 from .stat_gate import FileSignature, is_settled, stat_signature
-from .transcript_index import TranscriptRegistry, empty_stats, empty_window
+from .transcript_index import TranscriptRegistry, empty_stats
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -83,7 +83,13 @@ def resolve_project_path(path: str) -> str:
 # model, so the codex-reported 258,400 for the gpt-5.6 line stays put even
 # though models.dev advertises that family's 1.05M long-context ceiling.
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    # Claude: platform.claude.com model overview (cached in the claude-api
+    # skill, 2026-06-24). Claude Code reports the dash-versioned ids
+    # (claude-opus-5-5); a point release missing here still resolves to its
+    # family's row through claude_family_id() below (#519).
+    "claude-fable-5-1": 1_000_000,
     "claude-fable-5": 1_000_000,
+    "claude-opus-5-5": 1_000_000,
     "claude-opus-5": 1_000_000,
     "claude-sonnet-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
@@ -166,7 +172,9 @@ DEFAULT_CONTEXT_WINDOW = 200_000  # Retained for callers predating #469; no
 MODEL_SHORT_NAME_MAX_LEN = 7
 
 MODEL_SHORT_NAMES: Dict[str, str] = {
+    "claude-fable-5-1": "Fb5.1",
     "claude-fable-5": "Fb5",
+    "claude-opus-5-5": "Op5.5",
     "claude-opus-5": "Op5",
     "claude-sonnet-5": "Sn5",
     "claude-opus-4-8": "Op4.8",
@@ -243,6 +251,48 @@ _FAMILY_PREFIX_TAGS = [
 ]
 
 _DATE_SUFFIX_RE = re.compile(r"-20\d{6}$")
+
+# A Claude id as family + major version, then any point-release and date
+# segments: claude-opus-5-5, claude-fable-5-1, claude-opus-5-5-20261001.
+_CLAUDE_VERSIONED_ID_RE = re.compile(
+    r"^(claude-(?:fable|opus|sonnet|haiku|mythos)-\d+)(?:-\d+)*?(?:-20\d{6})?$"
+)
+
+
+def claude_family_id(bare: str) -> Optional[str]:
+    """The family + major version a Claude point release belongs to, or None.
+
+    ``claude-opus-5-5`` → ``claude-opus-5``; ``claude-fable-5-1-20261001`` →
+    ``claude-fable-5``. The major version is never dropped, so an unknown
+    generation (``claude-opus-6-1`` → ``claude-opus-6``) only resolves if
+    that generation itself is curated — a guess across generations could
+    be off by 5x (200K vs 1M). None when the id is already a family id or
+    not a dash-versioned Claude id.
+    """
+    match = _CLAUDE_VERSIONED_ID_RE.match(bare.lower())
+    if not match:
+        return None
+    family = match.group(1)
+    return family if family != bare.lower() else None
+
+
+def curated_context_window(model: Optional[str]) -> Optional[Tuple[str, int]]:
+    """``(table key, window)`` from the curated table, or None.
+
+    Exact bare id first, then the Claude family the id is a point release
+    of (#519: Claude Code reported ``claude-opus-5-5`` while the table only
+    had ``claude-opus-5``, so CTX% rendered a dash).
+    """
+    if not model:
+        return None
+    bare = _bare_model_id(model)
+    known = MODEL_CONTEXT_WINDOWS.get(bare)
+    if known is not None:
+        return bare, known
+    family = claude_family_id(bare)
+    if family is not None and family in MODEL_CONTEXT_WINDOWS:
+        return family, MODEL_CONTEXT_WINDOWS[family]
+    return None
 
 
 def _heuristic_short_name(bare: str) -> str:
@@ -345,16 +395,17 @@ def model_context_window(model: Optional[str]) -> Optional[int]:
     dash, never assume some other model's window. Handles opencode's
     ``provider/model``-qualified ids the same way ``model_short_name`` does.
 
-    Resolution order (#473): the curated table above, then the bundled
-    models.dev snapshot (``model_metadata``), then None.
+    Resolution order (#473, #519): the curated table above by exact id,
+    then by Claude family (a point release such as ``claude-opus-5-5``
+    inherits ``claude-opus-5``'s window, never a different generation's),
+    then the bundled models.dev snapshot (``model_metadata``), then None.
     """
     if not model:
         return None
-    bare = _bare_model_id(model)
-    known = MODEL_CONTEXT_WINDOWS.get(bare)
-    if known is not None:
-        return known
-    return model_metadata.context_window(bare)
+    curated = curated_context_window(model)
+    if curated is not None:
+        return curated[1]
+    return model_metadata.context_window(_bare_model_id(model))
 
 
 def provider_from_model(model: Optional[str]) -> Optional[str]:

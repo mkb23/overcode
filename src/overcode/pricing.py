@@ -41,8 +41,13 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     # Legacy Opus (4.1 and the deprecated original 4.0) — $15 / $75.
     "opus-4-1":     ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
     "opus-4-2025":  ModelPricing(input=15.0, output=75.0, cache_write=18.75, cache_read=1.50),
+    # Opus 5.5 (claude-opus-5-5) — $4 / $20, cache read $0.20 (#519; the
+    # generic "opus" key priced it at Opus 5's $5 / $25).
+    "opus-5-5":     ModelPricing(input=4.0,  output=20.0, cache_write=5.00,  cache_read=0.20),
     # Sonnet 4.x — $3 / $15.
     "sonnet":       ModelPricing(input=3.0,  output=15.0, cache_write=3.75,  cache_read=0.30),
+    # Sonnet 5 (claude-sonnet-5) — $2 / $10 (#519; was priced as Sonnet 4.x).
+    "sonnet-5":     ModelPricing(input=2.0,  output=10.0, cache_write=2.50,  cache_read=0.20),
     # Current Haiku (4.5) — $1 / $5.
     "haiku":        ModelPricing(input=1.0,  output=5.0,  cache_write=1.25,  cache_read=0.10),
     # Legacy Haiku 3.5 (retired, but still served on Bedrock/Vertex) — $0.80 / $4.

@@ -6,7 +6,7 @@ import pytest
 import sys
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -433,6 +433,77 @@ class TestClaude5FamilyContextWindows:
         assert model_context_window("gpt-4o-mini") == 128_000
         assert model_context_window("openai/gpt-4o-mini") == 128_000
         assert model_context_window("gpt-4o") == 128_000
+
+
+class TestClaudePointReleases:
+    """#519: Claude Code reported ``claude-opus-5-5`` and the CTX column
+    showed a dash, because the curated table only had ``claude-opus-5``."""
+
+    @pytest.mark.parametrize("model, window, short", [
+        ("claude-fable-5-1", 1_000_000, "Fb5.1"),
+        ("claude-opus-5-5", 1_000_000, "Op5.5"),
+        ("claude-sonnet-5", 1_000_000, "Sn5"),
+        ("claude-haiku-4-5-20251001", 200_000, "Hk4.5"),
+        ("claude-opus-5-5[1m]", 1_000_000, "Op5.5"),
+        ("anthropic/claude-fable-5-1", 1_000_000, "Fb5.1"),
+    ])
+    def test_current_ids_have_windows_and_short_names(self, model, window, short):
+        from overcode.history_reader import model_context_window, model_short_name
+        assert model_context_window(model) == window
+        assert model_short_name(model) == short
+
+    @pytest.mark.parametrize("model, family", [
+        ("claude-opus-5-7", "claude-opus-5"),
+        ("claude-fable-5-2", "claude-fable-5"),
+        ("claude-sonnet-5-1", "claude-sonnet-5"),
+        ("claude-opus-5-5-20261101", "claude-opus-5"),
+        ("Claude-Opus-5-9", "claude-opus-5"),
+    ])
+    def test_unlisted_point_release_inherits_its_family(self, model, family):
+        from overcode.history_reader import (
+            claude_family_id, curated_context_window, model_context_window)
+        assert claude_family_id(model) == family
+        assert curated_context_window(model) == (family, 1_000_000)
+        assert model_context_window(model) == 1_000_000
+
+    @pytest.mark.parametrize("model", [
+        # An unknown generation: the major version is never dropped, so this
+        # must not borrow Opus 5's (or any other) window.
+        "claude-opus-6-1",
+        "claude-opus-6",
+        "claude-sonnet-6-0-20270101",
+        # Opus 4 point releases outside the table: there is no bare
+        # claude-opus-4 row (4.0/4.1 were 200K, 4.6+ 1M), so no guess.
+        "claude-opus-4-9",
+        # Not dash-versioned Claude ids.
+        "claude-opus",
+        "claude-3-9-sonnet",
+        "notclaude-opus-5-5",
+    ])
+    def test_unknown_family_gets_no_window(self, model):
+        from overcode.history_reader import curated_context_window, model_context_window
+        assert curated_context_window(model) is None
+        assert model_context_window(model) is None
+
+    def test_family_id_is_none_for_a_family_id(self):
+        from overcode.history_reader import claude_family_id
+        assert claude_family_id("claude-opus-5") is None
+
+    def test_pricing_resolves_current_ids(self):
+        from overcode.pricing import lookup_pricing
+        assert (lookup_pricing("claude-opus-5-5").input,
+                lookup_pricing("claude-opus-5-5").output) == (4.0, 20.0)
+        assert lookup_pricing("claude-opus-5-5").cache_read == 0.20
+        assert (lookup_pricing("claude-opus-5").input,
+                lookup_pricing("claude-opus-5").output) == (5.0, 25.0)
+        assert (lookup_pricing("claude-fable-5-1").input,
+                lookup_pricing("claude-fable-5-1").output) == (10.0, 50.0)
+        assert (lookup_pricing("claude-sonnet-5").input,
+                lookup_pricing("claude-sonnet-5").output) == (2.0, 10.0)
+        assert (lookup_pricing("claude-sonnet-4-5-20250929").input,
+                lookup_pricing("claude-sonnet-4-5-20250929").output) == (3.0, 15.0)
+        assert (lookup_pricing("claude-haiku-4-5-20251001").input,
+                lookup_pricing("claude-haiku-4-5-20251001").output) == (1.0, 5.0)
 
 
 class TestCapacityVariantSuffix:
@@ -1772,7 +1843,7 @@ class TestSynthesizeRemoteStats:
     daemon_state forwarded by the sister API."""
 
     def _make_remote_session(self, daemon_state):
-        from overcode.session_manager import Session, SessionStats
+        from overcode.session_manager import Session
         return Session(
             id="remote:host1:foo",
             name="foo",
