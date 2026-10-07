@@ -353,6 +353,10 @@ class MonitorDaemon:
             daemon_version=DAEMON_VERSION,
         )
 
+        # engine.sock (docs/design/engine-0.6.md): started by run(), so a
+        # daemon object built for a test never binds a socket
+        self._engine = None
+
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
         self._last_tick_duration_seconds: float = 0.0
@@ -1046,6 +1050,9 @@ class MonitorDaemon:
         it serves a status request (a sister TUI's poll), so the daemon
         never slows while a sister is watching this fleet.
         """
+        engine = getattr(self, "_engine", None)
+        if engine is not None and engine.attended:
+            return "attended"  # a view on engine.sock says it is being looked at
         attached = self.session_attached
         if attached is None or attached > 0:
             return "attended"
@@ -1225,6 +1232,25 @@ class MonitorDaemon:
                 pass
 
         self.state.save(self.state_path)
+        engine = getattr(self, "_engine", None)
+        if engine is not None:
+            try:
+                engine.publish(self.state.to_engine_snapshot())
+            except Exception as e:  # a view problem must never stop the tick
+                self.log.warn(f"engine.sock publish failed: {e}")
+
+    def _start_engine_socket(self) -> None:
+        """Serve engine.sock next to the state file; log and carry on if it can't."""
+        from .engine_socket import EngineServer, socket_path
+
+        try:
+            server = EngineServer(socket_path(self.state_path.parent))
+            server.start()
+        except OSError as e:
+            self.log.warn(f"engine.sock unavailable, views fall back to the state file: {e}")
+            return
+        self._engine = server
+        self.log.info(f"engine.sock: {server.path}")
 
     # ------------------------------------------------------------------
     # Tick phases — decomposed from the monolithic run() loop
@@ -1961,6 +1987,7 @@ class MonitorDaemon:
         self.state.status = "active"
         self.state.current_interval = check_interval
         self.state.save(self.state_path)
+        self._start_engine_socket()
 
         try:
             while not self._shutdown:
@@ -1974,6 +2001,8 @@ class MonitorDaemon:
         finally:
             self.log.info("Monitor daemon shutting down")
             self.presence.stop()
+            if self._engine is not None:
+                self._engine.stop()
             self.state.status = "stopped"
             self.state.save(self.state_path)
             remove_pid_file(self.pid_path)

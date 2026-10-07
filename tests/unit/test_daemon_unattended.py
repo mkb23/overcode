@@ -147,6 +147,17 @@ class TestAttendance:
         daemon._panes_at(START + timedelta(seconds=6))
         assert daemon.session_attached == 1
 
+    def test_a_visible_engine_view_is_attended(self, root):
+        """0.6.0: a view on engine.sock that says it is visible (docs/design/engine-0.6.md)."""
+        from types import SimpleNamespace
+
+        daemon = _daemon(root)
+        daemon.session_attached = 0
+        daemon._engine = SimpleNamespace(attended=False)
+        assert daemon.attendance() == "unattended"
+        daemon._engine = SimpleNamespace(attended=True)
+        assert daemon.attendance() == "attended"
+
     def test_nobody_is_unattended(self, root):
         daemon = _daemon(root)
         daemon.session_attached = 0

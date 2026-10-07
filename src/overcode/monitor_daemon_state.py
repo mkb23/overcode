@@ -272,6 +272,37 @@ class MonitorDaemonState:
         known = {k: v for k, v in data.items() if k in fields and k != "sessions"}
         return cls(sessions=sessions, **known)
 
+    # Fields that change on every tick whether or not anything happened.
+    # They are liveness, not news: views learn the engine is alive from its
+    # pings, so pushing these would turn every quiet tick into a delta.
+    ENGINE_TICK_FIELDS = frozenset({
+        "loop_count", "last_loop_time", "tick_started_at", "last_tick_duration_seconds",
+    })
+
+    def to_engine_snapshot(self):
+        """This state as the engine publishes it on engine.sock (0.6.0).
+
+        Agents are keyed by session id with their SessionDaemonState fields;
+        fleet fields are everything else except ENGINE_TICK_FIELDS. ``seq``
+        is assigned by the server on publish.
+        """
+        from .engine_protocol import Snapshot
+
+        import time
+
+        fleet = {
+            k: v for k, v in self.to_dict().items()
+            if k != "sessions" and k not in self.ENGINE_TICK_FIELDS
+        }
+        # Idle seconds grow every tick; when idleness began only changes when
+        # the person does something. Views compute the seconds from it.
+        idle = fleet.pop("presence_idle_seconds", None)
+        fleet["presence_idle_since"] = (
+            int(time.time() - idle) if isinstance(idle, (int, float)) else None
+        )
+        agents = {s.session_id: s.to_dict() for s in self.sessions if s.session_id}
+        return Snapshot(agents=agents, fleet=fleet)
+
     def update_summaries(self) -> None:
         """Recompute summary metrics from session data."""
         self.total_green_time = sum(s.green_time_seconds for s in self.sessions)
