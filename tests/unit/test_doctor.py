@@ -1,14 +1,12 @@
 """Tests for overcode.doctor — hook-health inspection."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import List, Optional
 
 import pytest
 
 from overcode.doctor import (
-    AgentHealth,
     FINDING_BUDGET_EXCEEDED,
     FINDING_CONTEXT_ZERO,
     FINDING_COST_ZERO,
@@ -23,7 +21,6 @@ from overcode.doctor import (
     FINDING_TOKENS_ZERO,
     Finding,
     SEVERITY_ERROR,
-    SEVERITY_WARNING,
     VERDICT_MISSING_SETTINGS,
     VERDICT_NO_CLAUDE,
     VERDICT_OK,
@@ -178,6 +175,63 @@ class TestFindAgentProcessConsoleScript:
     ])
     def test_does_not_match_other_processes(self, argv):
         assert self._find(argv) == (None, "")
+
+    @pytest.mark.parametrize("argv", [
+        # versioned and free-threaded interpreters
+        "/u/.pyenv/versions/3.12.1/bin/python3.12 /u/venv/bin/hermes --cli",
+        "/opt/py/bin/python3.13t /u/venv/bin/hermes --cli",
+        # `#!/usr/bin/env python3`: env execs the interpreter by bare name
+        "python3 /u/.local/bin/hermes --cli",
+        # macOS python.org / Homebrew framework builds re-exec into Python.app
+        "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app"
+        "/Contents/MacOS/Python /u/venv/bin/hermes --cli",
+        # interpreter options from a distro shebang, or -X with its value
+        "/usr/bin/python3 -s /usr/bin/hermes --cli",
+        "/usr/bin/python3 -sP /usr/bin/hermes",
+        "/usr/bin/python3 -X utf8 -u /u/bin/hermes --cli",
+    ])
+    def test_finds_hermes_under_other_interpreter_spellings(self, argv):
+        assert self._find(argv) == (101, argv)
+
+    @pytest.mark.parametrize("argv", [
+        # a module or a -c string: no script, whatever follows
+        "/u/venv/bin/python -m hermes --cli",
+        "/u/venv/bin/python -c import hermes /u/bin/hermes",
+        # -X's value is not the script
+        "/u/venv/bin/python -X hermes",
+        # an argument that looks like the agent's path, after another script
+        "/u/venv/bin/python /u/tools/run.py /u/venv/bin/hermes",
+        # the interpreter is an argument of another program
+        "/usr/bin/node /u/x.js /usr/bin/python3 /u/venv/bin/hermes",
+        "/bin/sh -c python3 /u/venv/bin/hermes",
+        # a non-Python first token, interpreter-like names that are not
+        "/u/bin/ruby /u/bin/hermes",
+        "/u/bin/python-config /u/bin/hermes",
+        "/u/bin/ipython /u/bin/hermes",
+        "/u/bin/python3.x /u/bin/hermes",
+        "/u/venv/bin/python -s",
+    ])
+    def test_does_not_misidentify(self, argv):
+        assert self._find(argv) == (None, "")
+
+    def test_paths_with_spaces_resolve_only_when_they_exist(self, tmp_path):
+        venv = tmp_path / "My Projects" / "venv" / "bin"
+        venv.mkdir(parents=True)
+        (venv / "python3").write_text("")
+        (venv / "hermes").write_text("")
+        argv = f"{venv}/python3 {venv}/hermes --cli"
+        assert " " in argv
+        assert self._find(argv) == (101, argv)
+        # the same shape where the joined paths are not real files
+        ghost = str(venv).replace("My Projects", "Nope Here")
+        assert self._find(f"{ghost}/python3 {ghost}/hermes --cli") == (None, "")
+        # a real interpreter with spaces, running a script that is not hermes
+        # but whose argument spans to a path ending in /hermes
+        argv = f"{venv}/python3 /u/run.py {venv}/hermes"
+        assert self._find(argv) == (None, "")
+
+    def test_whitespace_only_argv_is_skipped(self):
+        assert self._find("   ") == (None, "")
 
     def test_claude_lookup_is_unchanged_by_a_python_process(self):
         children = {100: [101]}

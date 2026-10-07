@@ -11,6 +11,8 @@ started manually in the tmux window — or whose last relaunch predates the
 daemon sees no state changes.
 """
 
+import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -202,15 +204,16 @@ def find_agent_process(
         argv = argv_by_pid.get(pid, "")
         if not argv:
             continue
-        tokens = argv.split(None, 2)
+        tokens = argv.split()
+        if not tokens:
+            continue
         basename = tokens[0].rsplit("/", 1)[-1]
         if basename in wanted:
             return pid, argv
         # A console script (pip, uv, a venv) runs as `<interpreter> <path to
         # script> ...`: the kernel puts the shebang's interpreter first, so the
         # agent's own name is the basename of the script it runs.
-        if len(tokens) > 1 and _is_interpreter(basename) \
-                and tokens[1].rsplit("/", 1)[-1] in wanted:
+        if _runs_console_script(tokens, wanted):
             return pid, argv
         if any(marker in argv for marker in markers):
             return pid, argv
@@ -221,12 +224,74 @@ def find_agent_process(
 find_claude_process = find_agent_process
 
 
+# A Python interpreter's basename: python, python3, python3.12, the
+# free-threaded python3.13t, and macOS framework builds' `Python` (python.org
+# and Homebrew re-exec into .../Python.app/Contents/MacOS/Python, which is
+# what ps shows for a venv script on those installs).
+_INTERPRETER_RE = re.compile(r"python(\d+(\.\d+)*t?)?", re.IGNORECASE)
+
+# Interpreter options that take their value as the next argv token.
+_INTERPRETER_OPTIONS_WITH_VALUE = frozenset({"-X", "-W", "-Q"})
+# Options after which there is no script: the code is a module or a string.
+_INTERPRETER_OPTIONS_WITHOUT_SCRIPT = frozenset({"-m", "-c"})
+
+# How many whitespace-split tokens one path may span (a path with spaces).
+_MAX_PATH_TOKENS = 8
+
+
 def _is_interpreter(basename: str) -> bool:
-    """True for a Python interpreter's basename: python, python3, python3.12."""
-    if not basename.startswith("python"):
+    """True for a Python interpreter's basename (see ``_INTERPRETER_RE``)."""
+    return _INTERPRETER_RE.fullmatch(basename) is not None
+
+
+def _runs_console_script(tokens: List[str], wanted: set) -> bool:
+    """True when ``tokens`` (a process's argv, split on whitespace) is a
+    Python interpreter running a script whose basename is in ``wanted``.
+
+    Handles interpreter options before the script (a distro shebang's
+    ``python3 -s``, ``-X utf8``), and an interpreter or script path that
+    contains spaces. ps joins argv with spaces, so such a path spans several
+    tokens; a multi-token candidate counts only if that path exists on
+    disk, which keeps an argument that merely *looks* like a path
+    (``python run.py /tmp/hermes``, ``node x.js /usr/bin/python3 …``) from
+    matching. The common single-token case touches no filesystem: the
+    daemon runs this for every agent pane on each resource sweep.
+    """
+    script_at = _after_interpreter(tokens)
+    if script_at is None:
         return False
-    version = basename[len("python"):]
-    return version == "" or version.replace(".", "").isdigit()
+    i = script_at
+    while i < len(tokens) and tokens[i].startswith("-"):
+        if tokens[i] in _INTERPRETER_OPTIONS_WITHOUT_SCRIPT:
+            return False
+        i += 2 if tokens[i] in _INTERPRETER_OPTIONS_WITH_VALUE else 1
+    if i >= len(tokens):
+        return False
+    if tokens[i].rsplit("/", 1)[-1] in wanted:
+        return True
+    # A script path with spaces: join forward, but only a path that exists.
+    for end in range(i + 2, min(len(tokens), i + _MAX_PATH_TOKENS) + 1):
+        candidate = " ".join(tokens[i:end])
+        if candidate.rsplit("/", 1)[-1] in wanted and os.path.isfile(candidate):
+            return True
+    return False
+
+
+def _after_interpreter(tokens: List[str]) -> Optional[int]:
+    """Index of the first token after a leading Python interpreter path, or
+    None when argv does not start with one."""
+    if not tokens:
+        return None
+    if _is_interpreter(tokens[0].rsplit("/", 1)[-1]):
+        return 1
+    # An interpreter path with spaces (a venv under "My Projects").
+    if not tokens[0].startswith("/"):
+        return None
+    for end in range(2, min(len(tokens), _MAX_PATH_TOKENS) + 1):
+        candidate = " ".join(tokens[:end])
+        if _is_interpreter(candidate.rsplit("/", 1)[-1]) and os.path.isfile(candidate):
+            return end
+    return None
 
 
 def session_process_basenames(session) -> Sequence[str]:
