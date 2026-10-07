@@ -1,141 +1,72 @@
 # Agent Development Guidelines
 
-Guidelines and gotchas for AI agents working on the overcode codebase.
+Gotchas for AI agents working on the overcode codebase. Keep this short;
+add an entry when something bites.
 
-## TUI Development
+## Tests never touch the real fleet
 
-### CSS max-height Constraint
+- Run the unit suite with `python -m pytest -q tests/unit -p no:cacheprovider`
+  (`pytest.ini` puts `src` on the path). `-m e2e` and
+  `OVERCODE_SCALE_TESTS=1 ... tests/scale` are the slower tiers.
+- The user's `agents` tmux session, the `overcode` split session and
+  `~/.overcode` are live. Isolate with `OVERCODE_STATE_DIR`, `OVERCODE_DIR`
+  and `OVERCODE_TMUX_SOCKET` (a private tmux server), and run pytest with
+  `TMUX`/`TMUX_PANE` unset when you are inside tmux.
+- `overcode`, `overcode monitor` and `overcode tmux` call
+  `cli.split.open_split`, which creates/switches tmux sessions, respawns the
+  monitor pane and finally `exec`s `tmux attach`. A CLI test that reaches it
+  unmocked restarts the user's dashboard and replaces the pytest process.
+  Patch `overcode.cli.split.open_split`.
+- Fixtures are synthetic. Never copy real `~/.overcode` data into the repo.
 
-**Problem**: When adding new detail levels or increasing the amount of content shown in the expanded SessionSummary widget, the content may appear truncated from the bottom (showing old content like welcome banners instead of recent activity).
+## The TUI has one layout
 
-**Root cause**: The `SessionSummary.expanded` CSS class has a `max-height` constraint that limits how many lines can be displayed. If content exceeds this, the Textual renderer shows from the top and truncates the bottom.
+- Since 0.6.0 the TUI only runs as the top pane of the `overcode tmux` split
+  (`run_tui(session, sync_target)`). There is no standalone mode, no `compact`
+  flag, no preview toggle and no pane-sync toggle.
+- Everything that acts on tmux (zoom for dialogs and the sister view, window
+  switching, agent-window resizing, split resize, detach on `q`) is gated on
+  `SupervisorTUI.in_split`, i.e. a linked session was passed. Unit tests build
+  the app without one, so they never touch tmux. Keep new tmux side effects
+  behind that gate.
+- The preview pane is only for sister agents and jobs view.
+- Timer cadences in `tui.py` `TIMER_INTERVALS` are the product's freshness
+  contract. Fix CPU by doing the work cheaper, never by polling slower.
 
-**Location**: `src/overcode/tui.py` in the CSS string, look for:
-```css
-SessionSummary.expanded {
-    height: auto;
-    min-height: 2;
-    max-height: 55;  /* Support up to 50 lines detail + header/instructions */
-    ...
-}
-```
+## Keys, palette and help come from one place
 
-**Fix**: When adding new detail levels (e.g., increasing from 20 to 50 lines), update the `max-height` value to accommodate the new maximum plus a few extra lines for headers/standing instructions.
+- `SupervisorTUI.BINDINGS` is the `default` key preset. Presets
+  (`data/keymaps/*.yaml`) and the user's `keys:` config are deltas
+  (`keymap.py`); read keys through `self.keymap`, not `BINDINGS`.
+- The command palette registry (`command_palette.COMMANDS`) titles and
+  groups actions; the help overlay is built from it. A new action needs a
+  palette entry to show up in help.
+- Config naming an unknown or removed action or scope must warn, never
+  crash. Removed names go in `keymap.REMOVED_ACTIONS` / `REMOVED_SCOPES`.
+- Old `tui_preferences.json` and `sessions.json` files must keep loading:
+  loaders ignore unknown keys, and `session_manager` migrates old field names.
 
-### Detail Level Constants
+## Summary line columns
 
-The detail levels for the `v` toggle are defined in `DETAIL_LEVELS` array:
-```python
-DETAIL_LEVELS = [5, 10, 20, 50]
-```
+- Columns are registered in `summary_columns.py` (`SUMMARY_COLUMNS`); each
+  renders a cell, and `compute_column_widths` / `pad_and_join_cells` align
+  them across rows for both the TUI and `overcode list`. Give a column's
+  placeholder ("-", no data) the same shape as its value so the column does
+  not jump as data arrives.
 
-When changing these values, also update:
-1. The `max-height` CSS constraint (see above)
-2. The pane content buffer in `update_status()` - `num_lines` parameter and the `[-50:]` slice
-3. The docstring in `action_cycle_detail()`
+## Single sources
 
-### Pane Content Buffer
+- Bundled wrapper scripts live only in `wrapper.BUNDLED_WRAPPERS`.
+- Pricing lives in `pricing.py`; import from there.
+- Tmux interfaces: `protocols.py` (Protocols), `implementations.py` (real),
+  `mocks.py` (test doubles).
 
-The pane content capture flow:
-1. `get_pane_content(num_lines=60)` captures from tmux
-2. `update_status()` stores `lines[-50:]` in `self.pane_content`
-3. Render takes `pane_content[-lines_to_show:]`
+## Git
 
-Ensure the buffer sizes are >= the maximum detail level.
-
-### Summary Line Alignment
-
-When adding new fields to the session summary line (`SessionSummary.render()` in `tui.py`):
-
-**Always use fixed-width formatting** to maintain alignment across all sessions.
-
-### Pattern
-
-```python
-# GOOD: Fixed width with padding
-content.append(f" {value:>6}", style=...)  # Right-align in 6 chars
-content.append(f" {value:<8}", style=...)  # Left-align in 8 chars
-
-# BAD: Variable width
-content.append(f" {value}", style=...)  # Width varies with content
-```
-
-### Key Rules
-
-1. **Determine maximum width** - What's the largest value this field could reasonably display?
-
-2. **Use format specifiers** - `:>N` for right-align, `:<N` for left-align, where N is the fixed width
-
-3. **Handle all states consistently**:
-   - Normal value: `f" Δ{files:>2}"`
-   - Zero value: Same width as normal
-   - No data/placeholder: Same width (e.g., `"  Δ-"`)
-   - Different detail levels (low/med/full) may need different widths
-
-4. **Add a comment** documenting the width:
-   ```python
-   # ALIGNMENT: Use fixed widths - low/med: 4 chars "Δnn", full: 15 chars "Δnn +nnnn -nnn"
-   ```
-
-5. **Test visually** with multiple sessions having different values (0, small, large numbers)
-
-### Example
-
-```python
-# Git diff stats with proper alignment
-if self.git_diff_stats:
-    files, ins, dels = self.git_diff_stats
-    if self.summary_detail == "full":
-        # Full: 15 chars total "Δnn +nnnn -nnn"
-        content.append(f" Δ{files:>2}", style=f"bold magenta{bg}")
-        content.append(f" +{ins:>4}", style=f"bold green{bg}")
-        content.append(f" -{dels:>3}", style=f"bold red{bg}")
-    else:
-        # Compact: 4 chars "Δnn"
-        content.append(f" Δ{files:>2}", style=...)
-else:
-    # Placeholder with matching width
-    if self.summary_detail == "full":
-        content.append("  Δ-  +   -  -", style=f"dim{bg}")
-    else:
-        content.append("  Δ-", style=f"dim{bg}")
-```
-
-## Git Guidelines
-
-### Never Force Push to Shared Branches
-
-**Never use `git push --force` or `git push --force-with-lease` unless explicitly asked by the user.**
-
-Force pushing is destructive and can blow away other people's or agents' work. If you find yourself wanting to force push, it usually means something has gone wrong with your assumptions:
-
-- Another agent may be working on the same branch
-- The branch may have commits you don't know about
-- Your local state may be out of sync
-
-**What to do instead:**
-1. Stop and reassess the situation
-2. Use `git fetch` and `git log origin/branch` to see what's on remote
-3. Ask the user how they want to proceed
-4. Consider creating a new branch instead of modifying the existing one
-
-**The only acceptable force push scenarios:**
-- User explicitly requests it
-- You created the branch yourself in this session AND no one else could have touched it
-- Rebasing your own feature branch that you know is not shared
-
-When in doubt, don't force push. Create a new branch instead.
-
-## Other Guidelines
-
-### Never Commit API Keys or Secrets
-
-**Never hardcode API keys, tokens, or secrets in any file that gets committed to git.**
-
-- Use environment variables: `${OPENAI_API_KEY}` or `os.environ.get("API_KEY")`
-- Use `.env` files (which should be in `.gitignore`)
-- If you accidentally commit a secret, alert the user immediately so they can revoke/rotate it
-
-Even after removing a secret from a file, it remains in git history forever unless the history is rewritten.
-
-(Add more guidelines here as patterns emerge)
+- Never `git push --force` / `--force-with-lease` unless the user asks, or
+  the branch is one you created this session that nobody else can have
+  touched. If you want to, something is off: fetch, look at the remote, ask,
+  or use a new branch.
+- Never commit API keys, tokens or secrets. Use environment variables or a
+  git-ignored `.env`. If one slips into a commit, tell the user at once so
+  they can rotate it; it stays in history.

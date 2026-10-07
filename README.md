@@ -25,19 +25,17 @@ Running multiple coding agents is powerful, but managing them gets chaotic fast.
 Try it instantly with [uvx](https://docs.astral.sh/uv/):
 
 ```bash
-uvx overcode monitor
+uvx overcode
 ```
 
-This opens the standalone dashboard. Press `n` to create your first agent.
-
-For the full tmux-native experience (recommended):
+Or install it:
 
 ```bash
 pip install overcode
-overcode tmux
+overcode            # same as `overcode tmux`
 ```
 
-This creates a split layout: the overcode dashboard on top, the focused agent's live terminal on the bottom. Navigate agents with `j/k` — the bottom pane follows automatically. Press `Tab` to toggle focus between panes.
+This opens the tmux split layout (attaching to it if you are in a plain terminal): the overcode dashboard on top, the focused agent's live terminal on the bottom. Press `n` to create your first agent. Navigate agents with `j/k` — the bottom pane follows automatically. Press `Tab` to toggle focus between panes.
 
 **Requirements:** Python 3.12+, tmux, and an agent CLI — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [opencode](https://opencode.ai) (v1, or the opencode2 2.0 preview), [Codex CLI](https://github.com/openai/codex), [Grok Build](https://x.ai), or [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 
@@ -46,7 +44,7 @@ See the [Getting Started Guide](docs/getting-started.md) for a complete walkthro
 ## Features
 
 ### Tmux Split Layout (`overcode tmux`)
-The recommended way to use overcode. Creates a two-pane layout in tmux:
+The overcode dashboard. `overcode`, `overcode tmux` and `overcode monitor` all open it. A two-pane layout in tmux:
 - **Top pane**: Compact agent dashboard with live status
 - **Bottom pane**: The focused agent's native terminal — no emulation, real tmux
 - `j/k` navigates agents, bottom pane follows
@@ -104,7 +102,7 @@ limitations.
 Aggregate agents from multiple machines into one dashboard:
 - Configure sister machines in `~/.overcode/config.yaml`
 - Remote agents appear alongside local ones
-- In tmux split mode, selecting a sister agent auto-zooms the dashboard with a preview pane
+- Selecting a sister agent auto-zooms the dashboard with a preview pane
 - Each remote runs `overcode web`, a small API server that serves the sister API only (there is no web UI)
 
 ### Analytics & Export

@@ -20,10 +20,10 @@ claude --version
 The fastest way to try overcode is with `uvx` (comes with [uv](https://docs.astral.sh/uv/)):
 
 ```bash
-uvx overcode monitor
+uvx overcode
 ```
 
-This launches the standalone dashboard. You'll see an empty list since no agents are running yet.
+This opens the dashboard: the tmux split layout described below (from a plain terminal it creates the tmux session and attaches to it). You'll see an empty list since no agents are running yet.
 
 ### Creating Your First Agents
 
@@ -40,16 +40,16 @@ Try creating three agents:
 
 Now you have three agents working in parallel. Use `j/k` to navigate between them.
 
-## Tmux Split Layout (Recommended)
+## The Tmux Split Layout
 
-For the best experience, use the tmux-native split layout:
+`overcode`, `overcode tmux` and `overcode monitor` all open the same layout — it is the only way the dashboard runs:
 
 ```bash
 pip install overcode
 overcode tmux
 ```
 
-This creates a two-pane layout:
+It has two panes:
 - **Top pane**: Compact dashboard showing all agents
 - **Bottom pane**: The focused agent's live terminal — native tmux, full speed
 
@@ -63,7 +63,7 @@ This creates a two-pane layout:
 | `PageUp/Down` | Bottom pane | Scroll agent's terminal history |
 | `Enter` | Top pane | Approve agent permission prompts |
 | `i` | Top pane | Send an instruction to the agent |
-| `q` | Top pane | Detach (return to your previous tmux session) |
+| `q` | Top pane | Stop the dashboard and detach (the pane offers a one-key relaunch) |
 
 The bottom pane is a real tmux terminal. When it has focus, all keystrokes go directly to the agent. Use `Tab` to return to the dashboard.
 
@@ -87,16 +87,6 @@ overcode tmux --uninstall
 ```
 
 This removes keybindings and kills the split window and linked sessions.
-
-## Standalone Monitor
-
-If you prefer not to use the split layout, the standalone monitor works in any terminal:
-
-```bash
-overcode monitor
-```
-
-Press `m` to toggle list+preview mode for a side-by-side view of agent list and terminal output.
 
 ## Installation
 
@@ -158,10 +148,10 @@ Standing orders are persistent instructions that guide an agent's behavior. Pres
 
 ## Using the Supervisor
 
-The supervisor daemon adds automated oversight:
+The supervisor daemon adds automated oversight. Start it with `[` in the dashboard (`]` stops it), or from the shell:
 
 ```bash
-overcode supervisor
+overcode supervisor-daemon start
 ```
 
 The supervisor:

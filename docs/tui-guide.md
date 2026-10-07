@@ -4,17 +4,18 @@ Complete guide to the overcode terminal user interface.
 
 ## Overview
 
-The TUI provides a real-time dashboard for monitoring and controlling your Claude Code agents. Launch it with:
+The TUI provides a real-time dashboard for monitoring and controlling your coding agents. It runs as the top pane of a tmux split, with the focused agent's live terminal below it (see [Tmux Split Layout](#tmux-split-layout)). Launch it with any of:
 
 ```bash
-overcode monitor      # Standalone monitor
-overcode supervisor   # Monitor with supervisor daemon
+overcode            # the same as `overcode tmux`
+overcode tmux
+overcode monitor    # an alias, kept for old habits and scripts
 ```
 
 ## Display Modes
 
 ### Agent List
-Shows all agents as single-line summaries with live status, metrics, and a content area. Press `m` to toggle the preview pane, which shows the focused agent's terminal output below the list.
+Shows all agents as single-line summaries with live status, metrics, and a content area. The focused agent's terminal is the bottom pane of the split. A sister agent (one on another machine) has no local terminal, so selecting one zooms the dashboard and shows a preview pane of its polled output instead; jobs view (`J`) does the same for the focused job.
 
 When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/child hierarchy with tree connectors (├─/└─). Press `X` to collapse/expand a parent's children; folds are remembered per session in `tui_preferences.json`, so a parent you folded stays folded after restarting the TUI or the tmux session (#464). The child count column (👶) shows direct children per agent.
 
@@ -22,7 +23,7 @@ When using "Tree" sort order (`S`, then pick Tree), agents display in a parent/c
 
 Click any column header to sort by that column; click it again to reverse. The sorted column is drawn bold with ▼ (largest first) or ▲ (smallest / A→Z first). Numbers sort largest first by default, text A→Z; agents with no value for the column (e.g. no CPU sample yet) always go last. Child agents stay grouped under their parent in every sort.
 
-Click an agent's row to select it, just like moving to it with `j`/`k`: with pane sync on (`P`), the tmux pane below switches to that agent. Hover a row's emoji cells (skills, PRF, tools, status detail) to see what each emoji means.
+Click an agent's row to select it, just like moving to it with `j`/`k`: the tmux pane below switches to that agent. Hover a row's emoji cells (skills, PRF, tools, status detail) to see what each emoji means.
 
 From the keyboard, `S` opens the command palette on sort choices: every sortable column plus Tree order. Type a few letters of the column's name or its header code (`cpu`, `tok`, `git`) and press `Enter`; choosing the current sort again reverses it, and `Tab` does the same while keeping the picker open. "Reverse sort" in the `/` palette flips the current direction. The sort is saved in `tui_preferences.json`.
 
@@ -50,8 +51,7 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 
 | Key | Action |
 |-----|--------|
-| `m` | Toggle preview pane |
-| `t` | Toggle timeline display |
+| `t` | Toggle timeline display (hidden at start: the top pane is short) |
 | `d` | Toggle daemon log panel |
 | `g` | Show/hide terminated agents |
 | `Z` | Show/hide sleeping agents |
@@ -119,9 +119,8 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | Key | Action |
 |-----|--------|
 | `p` | Pause/resume heartbeat |
-| `P` | Toggle tmux pane sync |
 | `y` | Toggle copy mode (disable mouse for text selection) |
-| `r` | Resize focused agent's tmux pane |
+| `r` | Resize focused agent's tmux window to the bottom pane |
 | `J` | Toggle jobs mode |
 | `,` | Move timeline baseline back 15 minutes |
 | `.` | Move timeline baseline forward 15 minutes |
@@ -197,7 +196,7 @@ Press `d` to show the daemon log panel at the bottom. This displays:
 
 ## Tmux Split Layout
 
-The recommended way to use overcode. Run `overcode tmux` to get a two-pane layout with the dashboard on top and the focused agent's live terminal on the bottom.
+The only layout the dashboard has. `overcode tmux` (or plain `overcode`, or `overcode monitor`) gives a two-pane layout with the dashboard on top and the focused agent's live terminal on the bottom.
 
 ```bash
 overcode tmux
@@ -211,23 +210,15 @@ overcode tmux
 | `Option+J/K` | Terminal pane | Navigate agents without leaving the terminal |
 | `PageUp/Down` | Terminal pane | Enter scrollback mode (full-screen agents such as opencode scroll their own transcript instead) |
 | `=` / `-` | Dashboard | Grow / shrink dashboard pane |
-| `q` | Dashboard | Detach (return to previous tmux session) |
+| `q` | Dashboard | Stop the dashboard and detach (return to previous tmux session); the pane offers a one-key relaunch |
 
 ### Sister Agents in Split Mode
 
 When you navigate to a remote/sister agent, the dashboard automatically zooms to show a preview pane with the sister's terminal content (polled every 1.5 seconds). Navigate back to a local agent to restore the normal split layout.
 
-### Manual Split Setup (Alternative)
-
-If you prefer not to use `overcode tmux`, you can set up a split manually:
-1. Split your terminal horizontally
-2. Run `overcode monitor` in the top pane
-3. Run `tmux attach -t agents` in the bottom pane
-4. Press `p` to enable pane sync
-
 ## Copy Mode
 
-The TUI captures mouse events for interaction (row selection, header click-to-sort and tooltips, preview scrolling). To select and copy text:
+The TUI captures mouse events for interaction (row selection, header click-to-sort and tooltips). To select and copy text:
 
 1. Press `y` to enter copy mode (disables mouse capture)
 2. Select text with your mouse
@@ -236,7 +227,7 @@ The TUI captures mouse events for interaction (row selection, header click-to-so
 
 ## Monochrome Mode
 
-If you experience color rendering issues in your terminal, press `M` to toggle monochrome mode. This strips ANSI color codes from the preview pane.
+If you experience color rendering issues in your terminal, press `M` to toggle monochrome mode. This strips ANSI color codes from the preview pane (sister agents and jobs).
 
 ## Priority Sorting
 

@@ -291,8 +291,8 @@ keys:
 - **Layers.** The default keys are the ones in code (`SupervisorTUI.BINDINGS` plus each widget's own list). A preset is a delta on top of them, and `overrides` / `scopes` are a delta on top of the preset. Each entry names an action and gives its *complete* key list, replacing what the layer below bound.
 - **Action names** are the palette's: `overcode view actions` lists them, and `overcode keys` shows every scope's actions with their current keys.
 - **Key names** are Textual's (`ctrl+p`, `question_mark`, `pagedown`, `J` for shift+j). Characters (`?`, `@`, `|`), caret (`^P`) and tmux (`C-p`, `M-j`) spellings are accepted too.
-- **Scopes:** `app` (the main screen, which `overrides` sets), `command_bar`, `command_palette`, `fullscreen_preview`, `summary_prompt_lab`.
-- **Problems are warnings, never crashes:** an unknown action or scope, a key bound twice in one scope, a key the preset avoids, a typing key bound inside a text field, or a key that shadows a [passthru key](#passthru-keys). The TUI mentions them at startup; `overcode keys --conflicts` lists them.
+- **Scopes:** `app` (the main screen, which `overrides` sets), `command_bar`, `command_palette`, `summary_prompt_lab`.
+- **Problems are warnings, never crashes:** an unknown action or scope (including ones removed with the standalone dashboard in 0.6.0: `toggle_preview`, `expand_preview`, `toggle_tmux_sync` and the `fullscreen_preview` scope), a key bound twice in one scope, a key the preset avoids, a typing key bound inside a text field, or a key that shadows a [passthru key](#passthru-keys). The TUI mentions them at startup; `overcode keys --conflicts` lists them.
 
 ```bash
 overcode keys                  # effective keys, grouped, with source (default / preset / override)
@@ -373,8 +373,6 @@ The TUI saves your display preferences per tmux session in:
 
 Saved preferences include:
 - Summary detail level (low/med/full)
-- Detail lines (5/10/20/50)
-- View mode (tree/list_preview)
 - Timeline visibility
 - Daemon panel visibility
 - Sort mode
@@ -430,9 +428,8 @@ differently because they serve different purposes:
   active file (gzip typically shrinks this data ~15-20x), while the active
   file keeps everything the windowed TUI/export readers need (3h/24h).
   Archives older than `status_history_max_days` are deleted on the same
-  hourly pass. The archive-aware range reader
-  (`read_agent_status_history_range`) reads both the active file and any
-  archives it needs, so deep history queries keep working after rotation.
+  hourly pass. overcode itself reads only the active file; the archives
+  are there for your own analysis until they age out.
 - **`diagnostics/event_loop_timing.csv` is diagnostic.** It's the TUI's
   event-loop responsiveness probe (records every ~100ms, flushed every 5s)
   and isn't read by any view — it's a debugging aid. Rather than
@@ -756,11 +753,11 @@ Run separate agent pools with different tmux sessions:
 ```bash
 # Production monitoring
 overcode launch -n prod-watcher -d ~/prod --session production
-overcode monitor --session production
+overcode tmux --session production
 
 # Development work
 overcode launch -n feature-dev -d ~/dev --session development
-overcode monitor --session development
+overcode tmux --session development
 ```
 
 Each session has independent:

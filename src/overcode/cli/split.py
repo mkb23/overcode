@@ -2,10 +2,12 @@
 `overcode tmux` — tmux-native split layout.
 
 Creates (or re-attaches to) a tmux window with two panes:
-  - Top pane: overcode monitor (tree mode, sync auto-enabled)
+  - Top pane: the overcode TUI (`overcode monitor --sync-target <linked>`)
   - Bottom pane: linked tmux session showing the focused agent's terminal
 
-The TUI's tmux_sync feature drives window switching in the bottom pane.
+Navigating agents in the TUI switches the linked session's window, so the
+bottom pane follows. This is the only TUI layout: `overcode` and
+`overcode monitor` open it too (open_split).
 Tab toggles focus between the nav (top) and terminal (bottom) panes.
 
 Idempotent: running `overcode tmux` again will switch to the existing
@@ -676,7 +678,7 @@ def tmux_layout(
     """Open the tmux split layout: monitor on top, agent terminal on bottom.
 
     Creates the layout if it doesn't exist, or switches to it if it does.
-    The top pane runs `overcode monitor` with auto-sync enabled. The bottom
+    The top pane runs the overcode TUI, driving the bottom pane. The bottom
     pane shows the focused agent's terminal natively — full speed, full
     color, full scrollback.
 

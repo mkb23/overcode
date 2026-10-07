@@ -6,7 +6,7 @@ This CLI tool allows Claude Code to "see" TUI applications by:
 3. Sending keystrokes for interaction
 
 Example usage:
-    tui-eye start "overcode supervisor" --size 120x40
+    tui-eye start "overcode monitor --session test --sync-target test" --size 120x40
     tui-eye screenshot /tmp/tui.png
     tui-eye send j j enter
     tui-eye wait-for "Session:"

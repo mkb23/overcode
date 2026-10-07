@@ -583,7 +583,7 @@ This typically happens if:
 For debugging TUI issues:
 
 ```bash
-overcode monitor --diagnostics
+overcode monitor --diagnostics   # opens the split with a diagnostics-mode dashboard
 ```
 
 This disables auto-refresh timers, letting you manually refresh with `r` and observe state changes.
@@ -592,7 +592,7 @@ This disables auto-refresh timers, letting you manually refresh with `r` and obs
 
 ### Color Issues
 
-If colors render incorrectly, press `M` for monochrome mode. This strips ANSI codes from the preview pane.
+If colors render incorrectly, press `M` for monochrome mode. This strips ANSI codes from the preview pane (sister agents and jobs).
 
 ### Mouse Issues
 
@@ -601,7 +601,3 @@ If mouse events interfere with your terminal:
 2. Mouse capture is disabled
 3. Select text normally
 4. Press `y` again to re-enable
-
-### Large Repos
-
-For repos with many files, Claude's output can be verbose. Use `v` to cycle through detail line counts (5/10/20/50) to manage preview pane size.

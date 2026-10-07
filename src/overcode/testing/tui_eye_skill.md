@@ -3,7 +3,7 @@
 ```yaml
 ---
 name: tui-eye
-description: Interactive visual testing of TUI applications. Use when testing the overcode supervisor TUI, validating layouts, or running smoke tests.
+description: Interactive visual testing of TUI applications. Use when testing the overcode TUI, validating layouts, or running smoke tests.
 disable-model-invocation: true
 ---
 ```
@@ -13,8 +13,11 @@ You are performing visual TUI testing using the `tui-eye` tool. This tool gives 
 ## Core Commands
 
 ```bash
-# Start a TUI in a controlled tmux session (220x40 default)
-tui-eye start "overcode monitor" --size 220x40
+# Start a TUI in a controlled tmux session (220x40 default). The overcode
+# dashboard normally runs as the top pane of the `overcode tmux` split; with
+# --sync-target it runs directly in this pane (navigation switches windows of
+# the named session, so point it at a test session, not your real one).
+tui-eye start "overcode monitor --session test --sync-target test" --size 220x40
 
 # Capture screenshot for visual inspection
 tui-eye screenshot /tmp/tui.png
@@ -44,7 +47,7 @@ tui-eye stop
 
 1. **Start the TUI**
    ```bash
-   tui-eye start "overcode monitor" --size 220x40
+   tui-eye start "overcode monitor --session test --sync-target test" --size 220x40
    ```
 
 2. **Capture & Analyze**
@@ -92,7 +95,7 @@ tui-eye stop
 
 ```bash
 # Start supervisor TUI
-tui-eye start "overcode monitor" --size 220x45
+tui-eye start "overcode monitor --session test --sync-target test" --size 220x45
 
 # Wait for initial render
 tui-eye wait-for "Timeline:" --timeout 10
@@ -127,7 +130,7 @@ overcode launch --name test-agent-1 --prompt "Write hello world"
 overcode launch --name test-agent-2 --prompt "List files"
 
 # Start monitor
-tui-eye start "overcode monitor" --size 220x45
+tui-eye start "overcode monitor --session test --sync-target test" --size 220x45
 
 # Periodic monitoring loop
 tui-eye wait-for "test-agent" --timeout 30
@@ -164,13 +167,13 @@ tui-eye screenshot /tmp/x.png --width 220 --height 45
 **Can't see full content:**
 Increase height:
 ```bash
-tui-eye start "overcode monitor" --size 220x60
+tui-eye start "overcode monitor --session test --sync-target test" --size 220x60
 ```
 
 **Session already exists:**
 ```bash
 tui-eye stop
-tui-eye start "overcode monitor"
+tui-eye start "overcode monitor --session test --sync-target test"
 ```
 
 **Keys not working:**
