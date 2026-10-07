@@ -20,9 +20,25 @@
  * (<OVERCODE_STATE_DIR>/<name>), so one node process can replay hundreds of
  * generated streams.
  *
+ * Optional job fields, used by the colour-level replays
+ * (tests/status_replay.py, tests/unit/test_status_replay_opencode.py):
+ *
+ *   "flavor": "v2"     — `plugin` is opencode2's overcode-telemetry-core.mjs;
+ *                        `event` records go to its real `createTelemetry`
+ *                        reducer (the plugin's tui.js only pumps the SSE
+ *                        stream into that reducer).
+ *   "clock": "record"  — Date.now() reads each record's own `t` (epoch
+ *                        seconds) while that record is handled, so the
+ *                        plugin stamps its writes with the scenario's clock.
+ *   "snapshots": true  — each stream result also carries `writes`: per
+ *                        record, the hook_state the plugin left behind (null
+ *                        when it published nothing) and the raw event-log
+ *                        lines it appended.
+ *
  * Result (stdout JSON):
  *   { "ok": true, "streams": [ { "name", "publishes": [[{event, tool_name}, …] per record],
- *                                "state": <final hook_state json or null> }, … ] }
+ *                                "state": <final hook_state json or null>,
+ *                                "writes"?: [{state, lines} per record] }, … ] }
  */
 
 import fs from "node:fs"
@@ -55,7 +71,17 @@ function readState(statePath) {
   }
 }
 
-async function replayStream(mod, baseEnv, stream) {
+async function makeHooks(mod, flavor) {
+  if (flavor === "v2") {
+    const telemetry = mod.createTelemetry(process.env)
+    return {
+      event: async (input) => telemetry.handleBusEvent(input && input.event),
+    }
+  }
+  return await mod.OvercodeTelemetryPlugin({ directory: "/proj", worktree: "/proj" })
+}
+
+async function replayStream(mod, baseEnv, stream, job) {
   const stateDir = path.join(baseEnv.OVERCODE_STATE_DIR, stream.name)
   const env = { ...baseEnv, OVERCODE_STATE_DIR: stateDir }
   const agent = env.OVERCODE_SESSION_NAME
@@ -67,7 +93,7 @@ async function replayStream(mod, baseEnv, stream) {
   process.env = env
   let hooks
   try {
-    hooks = await mod.OvercodeTelemetryPlugin({ directory: "/proj", worktree: "/proj" })
+    hooks = await makeHooks(mod, job.flavor)
   } finally {
     process.env = savedEnv
   }
@@ -76,18 +102,29 @@ async function replayStream(mod, baseEnv, stream) {
   }
 
   const publishes = []
+  const writes = []
+  const realNow = Date.now
   let seen = readLog(logPath).length
   for (const record of stream.records) {
     const hook = record.hook
-    if (hook === "event") {
-      await hooks.event({ event: record.event })
-    } else if (hook === "__load__") {
-      /* spy bookkeeping, not a hook */
-    } else if (typeof hooks[hook] === "function") {
-      await hooks[hook](record.input, record.output)
+    if (job.clock === "record" && typeof record.t === "number") {
+      const fixed = record.t * 1000
+      Date.now = () => fixed
+    }
+    try {
+      if (hook === "event") {
+        await hooks.event({ event: record.event })
+      } else if (hook === "__load__") {
+        /* spy bookkeeping, not a hook */
+      } else if (typeof hooks[hook] === "function") {
+        await hooks[hook](record.input, record.output)
+      }
+    } finally {
+      Date.now = realNow
     }
     const lines = readLog(logPath)
-    const fresh = lines.slice(seen).map((l) => {
+    const appended = lines.slice(seen)
+    const fresh = appended.map((l) => {
       try {
         const e = JSON.parse(l)
         return { event: e.event, tool_name: e.tool_name ?? null }
@@ -95,22 +132,31 @@ async function replayStream(mod, baseEnv, stream) {
         return { event: "<unparseable>", tool_name: null }
       }
     })
+    if (job.snapshots) {
+      writes.push({ state: appended.length ? readState(statePath) : null, lines: appended })
+    }
     seen = lines.length
     publishes.push(fresh)
   }
-  return { name: stream.name, publishes, state: readState(statePath) }
+  const result = { name: stream.name, publishes, state: readState(statePath) }
+  if (job.snapshots) result.writes = writes
+  return result
 }
 
 async function main() {
   const job = JSON.parse(await readStdin())
   const mod = await import(pathToFileURL(job.plugin).href)
   const exported = Object.keys(mod)
-  if (exported.length !== 1 || exported[0] !== "OvercodeTelemetryPlugin") {
+  if (job.flavor === "v2") {
+    if (typeof mod.createTelemetry !== "function") {
+      throw new Error(`the v2 core must export createTelemetry, got: ${exported}`)
+    }
+  } else if (exported.length !== 1 || exported[0] !== "OvercodeTelemetryPlugin") {
     throw new Error(`plugin must export exactly OvercodeTelemetryPlugin, got: ${exported}`)
   }
   const streams = []
   for (const stream of job.streams || []) {
-    streams.push(await replayStream(mod, job.env, stream))
+    streams.push(await replayStream(mod, job.env, stream, job))
   }
   return { ok: true, streams }
 }
