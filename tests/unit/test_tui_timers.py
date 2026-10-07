@@ -1,9 +1,11 @@
 """The TUI's periodic timers: cadences are the freshness contract, phases are spread.
 
 The 5/10/15/30 s timers used to start at the same instant and so fired
-together every fifth second (stats executor, git subprocesses, tmux
-list-windows, jobs refresh and their main-thread apply callbacks at once).
-De-phasing them spreads that burst without changing any interval.
+together every fifth second (their main-thread apply callbacks at once).
+De-phasing them spreads that burst without changing any interval. Since
+0.6.0 no timer detects a status, reads stats or polls the daemon: the engine
+pushes those (docs/design/engine-0.6.md), and the timers below are what is
+left for a view.
 """
 
 import sys
@@ -15,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.tui import (  # noqa: E402
-    RUNS_ONLY_WHEN_UNATTENDED,
+    PAUSED_WHEN_UNATTENDED,
     TIMER_INTERVALS,
     TIMER_PHASE_OFFSETS,
     SupervisorTUI,
@@ -27,13 +29,11 @@ class TestCadences:
         """Never lowered to save CPU; a change here is a product decision."""
         assert TIMER_INTERVALS == {
             "heartbeat_probe": 0.1,
-            "fast_status": 0.25,
+            "focused_pane": 0.25,
             "daemon_status": 1,
             "focused_job_pane": 1,
             "attended_watch": 1,
             "focused_sister": 1.5,
-            "unattended_status": 2,
-            "slow_stats": 5,
             "summarizer": 5,
             "refresh_jobs": 5,
             "heartbeat_flush": 5,
@@ -48,6 +48,12 @@ class TestCadences:
 
     def test_every_timer_has_an_offset(self):
         assert set(TIMER_PHASE_OFFSETS) == set(TIMER_INTERVALS)
+
+    def test_no_timer_computes_what_the_engine_publishes(self):
+        """The fast status rotation, the stats sweep and the unattended
+        state-file read are gone: the engine publishes all three."""
+        for gone in ("fast_status", "slow_stats", "unattended_status"):
+            assert gone not in TIMER_INTERVALS
 
     def test_offsets_are_within_the_phase_modulus(self):
         """Offsets only shift phase; none delays a first tick beyond 5 s.
@@ -110,7 +116,7 @@ class TestStartPeriodic:
     def test_zero_offset_starts_the_interval_directly(self):
         app = self._app()
         cb = object()
-        app._start_periodic("fast_status", cb)
+        app._start_periodic("focused_pane", cb)
         app.set_interval.assert_called_once_with(0.25, cb, pause=False)
         app.set_timer.assert_not_called()
 
@@ -126,37 +132,26 @@ class TestStartPeriodic:
 
     @pytest.mark.parametrize("name", sorted(TIMER_INTERVALS))
     def test_every_timer_starts_with_its_own_cadence(self, name):
-        app = self._app()  # attended: only the unattended-only read starts paused
+        app = self._app()  # attended: nothing starts paused
         cb = object()
         app._start_periodic(name, cb)
         if TIMER_PHASE_OFFSETS[name] > 0:
             app.set_timer.call_args.args[1]()
-        app.set_interval.assert_called_once_with(
-            TIMER_INTERVALS[name], cb, pause=name in RUNS_ONLY_WHEN_UNATTENDED
-        )
+        app.set_interval.assert_called_once_with(TIMER_INTERVALS[name], cb, pause=False)
         assert app._periodic_timers[name] is app.set_interval.return_value
 
-    def test_the_unattended_read_starts_paused_only_while_attended(self):
-        app = self._app(attended=True)
-        app._start_periodic("unattended_status", object())
-        app.set_timer.call_args.args[1]()
-        assert app.set_interval.call_args.kwargs == {"pause": True}
-        app = self._app(attended=False)
-        app._start_periodic("unattended_status", object())
-        app.set_timer.call_args.args[1]()
-        assert app.set_interval.call_args.kwargs == {"pause": False}
-
     def test_the_pause_decision_is_made_when_the_delayed_start_lands(self):
-        """A detach during the 0.8 s delay must not leave the read paused."""
+        """A detach during the 1.55 s delay must still start the bar paused."""
         app = self._app(attended=True)
-        app._start_periodic("unattended_status", object())
+        app._start_periodic("daemon_status", object())
         app.attended = False
         app.set_timer.call_args.args[1]()
-        assert app.set_interval.call_args.kwargs == {"pause": False}
+        assert app.set_interval.call_args.kwargs == {"pause": True}
 
     def test_a_pausable_timer_started_while_unattended_starts_paused(self):
+        assert "focused_pane" in PAUSED_WHEN_UNATTENDED
         app = self._app(attended=False)
-        app._start_periodic("fast_status", object())
+        app._start_periodic("focused_pane", object())
         assert app.set_interval.call_args.kwargs == {"pause": True}
         app._start_periodic("status_changes", object())  # not in the paused set
         app.set_timer.call_args.args[1]()

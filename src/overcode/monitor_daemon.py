@@ -648,6 +648,7 @@ class MonitorDaemon:
             oversight_deadline=getattr(session, 'oversight_deadline', None),
             # Last user command (from history sync)
             last_command=self._last_commands.get(session_id),
+            pr_number=session.pr_number,
             # Skills (#252)
             available_skills=session.available_skills,
             loaded_skills=session.loaded_skills,

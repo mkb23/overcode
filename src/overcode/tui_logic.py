@@ -9,16 +9,11 @@ No side effects, no mutations of input data.
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Mapping, Set, Optional, TypeVar, Protocol, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Set, Optional, TypeVar, Protocol, Tuple
 from dataclasses import dataclass
 
 from .settings import DAEMON
 from .status_constants import is_green_status
-from .tmux_utils import pane_for_window
-
-if TYPE_CHECKING:
-    from .pane_capture_gate import PaneChangeTracker
-    from .tmux_utils import PaneInfo
 
 
 class SessionLike(Protocol):
@@ -778,122 +773,6 @@ def compute_tree_metadata(sessions: List[T], parent_id_fn=None) -> dict:
     return result
 
 
-@dataclass
-class StallState:
-    """Result of stall detection computation."""
-    is_new_stall: bool          # Session just transitioned TO stalled
-    is_unvisited_stalled: bool  # Session is stalled and not yet visited
-    should_clear_tracking: bool  # Session left stalled state, clear tracking
-
-
-def compute_stall_state(
-    status: str,
-    prev_status: Optional[str],
-    session_id: str,
-    visited_stalled_agents: Set[str],
-    is_asleep: bool,
-) -> StallState:
-    """Compute stall state transitions for a session.
-
-    Pure function — no side effects, fully testable.
-
-    Args:
-        status: Current agent status
-        prev_status: Previous agent status (or None)
-        session_id: The session's ID
-        visited_stalled_agents: Set of session IDs already visited while stalled
-        is_asleep: Whether the session is asleep
-
-    Returns:
-        StallState with transition flags
-    """
-    is_waiting = status == "waiting_user"
-    prev_was_green = prev_status is not None and is_green_status(prev_status)
-
-    # Only green→waiting or None→waiting is a potential new stall.
-    # Non-green waiting states (waiting_heartbeat, error, approval) transitioning
-    # back to waiting_user should NOT count as a new stall.
-    is_new_stall = is_waiting and (prev_was_green or prev_status is None)
-
-    # Only clear stall tracking during green (actively working) statuses.
-    # Non-green, non-waiting states (waiting_heartbeat, error, approval) are still
-    # conceptually "stalled" and should NOT clear notification tracking.
-    should_clear_tracking = is_green_status(status)
-
-    is_unvisited_stalled = (
-        is_waiting
-        and session_id not in visited_stalled_agents
-        and not is_asleep
-    )
-
-    return StallState(
-        is_new_stall=is_new_stall,
-        is_unvisited_stalled=is_unvisited_stalled,
-        should_clear_tracking=should_clear_tracking,
-    )
-
-
-def first_sight_stall_is_unvisited(
-    session_id: str,
-    visited_stalled_agents: Set[str],
-    visited_stalled_at: Mapping[str, float],
-    stall_since: Optional[float],
-) -> bool:
-    """Should a stall the TUI is seeing for the first time ring the bell?
-
-    A freshly started TUI has no previous status for any agent, so every
-    agent already sitting at waiting_user looks like a brand-new stall.
-    Treating them that way rings a bell on every red agent at once. Instead
-    compare when the stall began (the daemon's persisted ``state_since``)
-    with when you last visited the agent: ring only if the stall began after
-    that visit, or if you never visited it.
-
-    Pure function. Times are epoch seconds. A visit with no recorded time
-    (preferences written before visit times were kept) or an unknown stall
-    start counts as seen, so a restart never rings for it.
-    """
-    if session_id not in visited_stalled_agents:
-        return True
-    visited_at = visited_stalled_at.get(session_id)
-    if visited_at is None or stall_since is None:
-        return False
-    return stall_since > visited_at
-
-
-def should_send_stall_notification(
-    status: str,
-    is_notified: bool,
-    is_asleep: bool,
-    has_stall_start: bool,
-    stall_age_seconds: float,
-    uptime_seconds: float,
-) -> bool:
-    """Determine whether a macOS stall notification should be sent.
-
-    Pure function — no side effects, fully testable.
-
-    Args:
-        status: Current agent status
-        is_notified: Whether we already sent a notification for this stall
-        is_asleep: Whether the session is asleep
-        has_stall_start: Whether we have a recorded stall start time
-        stall_age_seconds: How long the session has been stalled
-        uptime_seconds: Total session uptime
-
-    Returns:
-        True if a notification should be sent
-    """
-    if status != "waiting_user":
-        return False
-    if is_notified:
-        return False
-    if is_asleep:
-        return False
-    if not has_stall_start:
-        return False
-    return stall_age_seconds >= 30 and uptime_seconds >= 60
-
-
 def compute_session_widget_diff(
     existing_ids: Set[str],
     display_ids: List[str],
@@ -942,142 +821,6 @@ def detect_display_changes(
     return new_budget, new_oversight, new_pr
 
 
-def compute_active_session_names(
-    sessions: List,
-    asleep_ids: Set[str],
-) -> List[str]:
-    """Compute the names of active (non-asleep) sessions.
-
-    Pure function — no side effects, fully testable.
-
-    Args:
-        sessions: List of session objects with session_id and name attributes
-        asleep_ids: Set of session IDs that are asleep
-
-    Returns:
-        List of session names that are not asleep
-    """
-    return [s.name for s in sessions if s.session_id not in asleep_ids]
-
-
-# ── Polling load shaping ──────────────────────────────────────────────
-#
-# The TUI's fast path captures tmux panes every 250ms. Every capture is a
-# tmux client round-trip that the (single-threaded) tmux server has to
-# serve in line with keystrokes, so the *number* of commands per second is
-# what makes typing in agent panes feel laggy at fleet scale. Only the
-# focused agent needs 4 Hz (its pane feeds the preview); the daemon owns
-# every other agent's status and refreshes it every 2s anyway, so their
-# captures — which only feed the bash/subagent/auto-accept columns — are
-# spread round-robin across ticks.
-
-NON_FOCUSED_CAPTURE_EVERY = 4  # ticks; at 250ms that's ~1 Hz per agent
-
-
-NON_FOCUSED_CAPTURES_PER_TICK = 12  # the rotation period grows past this many per tick
-
-
-def capture_rotation_period(
-    n_nonfocused: int,
-    min_every: int = NON_FOCUSED_CAPTURE_EVERY,
-    max_per_tick: int = NON_FOCUSED_CAPTURES_PER_TICK,
-) -> int:
-    """Ticks between two captures of the same non-focused session.
-
-    1-in-``min_every`` (about 1 Hz at 250 ms ticks) until that would put more
-    than ``max_per_tick`` non-focused captures on one tick; past that the
-    period grows with N so a tick issues at most ~``1 + max_per_tick``
-    capture-pane commands whatever the fleet size: 48 agents -> every 4
-    (13/tick), 50 -> every 5 (11/tick), 200 -> every 17 (13/tick). The tmux
-    server is single-threaded and shared by every overcode process on the
-    host, so the per-tick command count is what has to be bounded; each
-    non-focused status is still refreshed every ``every`` * 250 ms.
-    """
-    every = max(1, min_every)
-    if n_nonfocused > 0:
-        every = max(every, -(-n_nonfocused // max(1, max_per_tick)))  # ceil
-    return every
-
-
-def select_capture_sessions(
-    session_ids: List[str],
-    focused_id: Optional[str],
-    tick: int,
-    always_ids: Set[str] = frozenset(),
-    every: Optional[int] = None,
-) -> Set[str]:
-    """Pick which sessions get a tmux capture on this fast-path tick.
-
-    Always: the focused session, and ``always_ids`` (sessions never captured
-    yet, so their pane-derived columns fill in on first sight — at most one
-    extra capture per session lifetime). Everyone else is captured on a
-    rotating 1-in-``every`` slot (``capture_rotation_period`` when ``every``
-    is None), *whether or not the daemon is reporting on them*: daemon
-    freshness decides where a skipped session's status comes from (the
-    daemon, or its last known value), never how many panes a tick captures.
-    The previous design captured every session on every tick as soon as the
-    daemon looked stale — 4N capture-pane/s on the shared tmux server, 200/s
-    at 50 agents — and a daemon tick slower than 5 s was enough to trip it.
-    """
-    n_nonfocused = sum(1 for sid in session_ids if sid != focused_id)
-    if every is None:
-        every = capture_rotation_period(n_nonfocused)
-    every = max(1, every)
-    slot = tick % every
-    chosen: Set[str] = set()
-    for i, sid in enumerate(session_ids):
-        if sid == focused_id or sid in always_ids or i % every == slot:
-            chosen.add(sid)
-    return chosen
-
-
-def gate_worth_a_listing(n_nonfocused: int, every: Optional[int] = None) -> bool:
-    """Whether one ``list-panes`` per tick can save the fast path a command.
-
-    The listing costs one command and can only remove the rotation's
-    non-focused picks, so it pays when the rotation would issue more than
-    one of them per tick: ``ceil(n_nonfocused / every) > 1``. Below that
-    (up to ``every`` non-focused agents) the rotation runs as it is.
-    """
-    if every is None:
-        every = capture_rotation_period(n_nonfocused)
-    return n_nonfocused > max(1, every)
-
-
-def gate_capture_ids(
-    capture_ids: Set[str],
-    focused_id: Optional[str],
-    windows: Mapping[str, str],
-    panes: Optional[Mapping[str, "PaneInfo"]],
-    tracker: "PaneChangeTracker",
-    now: float,
-) -> Set[str]:
-    """Drop the rotation's non-focused picks whose pane has not changed (audit R11).
-
-    ``panes`` is this tick's ``list-panes -s`` (window name -> PaneInfo);
-    a pick stays when the tracker finds its signature moved since the
-    session's last capture, when it was never captured, for the one
-    follow-up capture after a change, or on the keepalive (see
-    pane_capture_gate). The focused session always stays — captured every
-    tick, unconditionally — and its signature is recorded so its record is
-    current when focus moves on. ``windows`` maps session id to tmux window;
-    a session without one, or absent from the listing, has signature None
-    (window gone): captured once, then only when it reappears. With no
-    listing (``panes`` None, tmux could not answer) every pick stands and
-    the tick is the plain rotation.
-    """
-    if panes is None:
-        return set(capture_ids)
-    kept: Set[str] = set()
-    for sid in capture_ids:
-        window = windows.get(sid)
-        info = pane_for_window(panes, window) if window is not None else None
-        signature = info.signature if info is not None else None
-        if tracker.due(sid, signature, None, now) or sid == focused_id:
-            kept.add(sid)
-    return kept
-
-
 def windows_needing_resize(
     current_sizes: dict,
     windows: List[str],
@@ -1093,20 +836,6 @@ def windows_needing_resize(
     call in the steady state.
     """
     return [w for w in windows if current_sizes.get(w) != (width, height)]
-
-
-GIT_STATS_EVERY_SWEEPS = 3  # 5s stats sweeps between git diff/untracked scans
-
-
-def should_scan_git(sweep: int, every: int = GIT_STATS_EVERY_SWEEPS) -> bool:
-    """Whether stats sweep number ``sweep`` (0-based) should run git scans.
-
-    ``git ls-files --others`` walks the whole working tree and ``git diff
-    --stat HEAD`` reads every tracked file's stat — heavy on big repos, and
-    the previous per-agent-every-5s cadence turned that into a periodic
-    CPU/IO burst. Diff and untracked columns tolerate a slower refresh.
-    """
-    return sweep % max(1, every) == 0
 
 
 def running_job_counts(jobs, agent_ids) -> Tuple[Dict[str, int], int]:

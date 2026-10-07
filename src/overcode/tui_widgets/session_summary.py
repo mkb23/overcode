@@ -4,6 +4,7 @@ Session summary widget for TUI.
 Displays a single-line session summary with status, metrics, and content area.
 """
 
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -13,18 +14,13 @@ from textual import events
 from rich.text import Text
 
 from ..session_manager import Session
-from ..protocols import StatusDetectorProtocol
-from ..status_constants import get_status_color
 from ..status_patterns import extract_from_pane, extract_sleep_duration
-from ..history_reader import AgentSessionStats
-from ..stats_reader import stats_reader_for_session
+from ..history_reader import AgentSessionStats, synthesize_remote_stats
+from .. import tui_engine
 from ..tui_helpers import (
     calculate_uptime,
     get_current_state_times,
     get_status_symbol,
-    get_git_diff_stats,
-    get_git_untracked_count,
-    effective_git_directory,
     get_summary_content_text,
 )
 from ..summary_columns import (
@@ -55,13 +51,12 @@ class SessionSummary(Static, can_focus=True):
     summary_detail: reactive[str] = reactive("low")  # low, med, full
     summary_content_mode: reactive[str] = reactive("ai_short")  # ai_short, ai_long, orders, annotation (#74)
 
-    def __init__(self, session: Session, status_detector: StatusDetectorProtocol, *args, **kwargs):
+    def __init__(self, session: Session, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # The row as last drawn, so the 250 ms tick can skip rows that would
         # draw the same (refresh_if_changed, #486)
         self._last_rendered: Optional[Text] = None
         self.session = session
-        self.status_detector = status_detector
         # Initialize from session status (for terminated) or persisted state
         if session.status == "terminated":
             self.detected_status = "terminated"
@@ -83,8 +78,6 @@ class SessionSummary(Static, can_focus=True):
         self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
         self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
         self.any_has_status_detail: bool = False  # True if any agent has a populated StatusDetail (#TBD)
-        # Two-column status model (#TBD). Populated by detect_status; consumed by the ⏰ column.
-        self.status_detail = None  # type: Optional["StatusDetail"]
         self.any_has_model: bool = False  # True if any agent has a model set
         self.any_has_effort: bool = False  # True if any agent has an effort detected (#497)
         # Columns every row shows the same value in — hidden (set by TUI)
@@ -106,18 +99,27 @@ class SessionSummary(Static, can_focus=True):
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
         self.any_has_pr: bool = False  # App-level flag, set by TUI
-        # Track if this is a stalled agent that hasn't been visited yet
+        # Needs a look: an input-needed stretch began after the last visit
+        # (from the engine's input_needed_since / visited_at)
         self.is_unvisited_stalled: bool = False
-        # Track when status last changed (for immediate time-in-state updates)
-        # Initialize from daemon's persisted state_since to survive TUI restarts (#132)
+        # What the engine publishes for this agent (engine.sock agent view);
+        # empty until the first snapshot names it. The row renders from it.
+        self.engine: dict = {}
+        # True while this TUI's own focused-pane capture supplies the
+        # pane-derived counts (fresher than the engine's) for this row
+        self.local_pane: bool = False
+        # Time in state counts from here (the engine's episode; the
+        # session's persisted state_since until the engine reports)
         self._status_changed_at: Optional[datetime] = None
         if session.stats.state_since:
             try:
                 self._status_changed_at = datetime.fromisoformat(session.stats.state_since)
             except (ValueError, TypeError):
                 pass
-        self._last_known_status: str = self.detected_status
         self.last_command: str = ""  # Last instruction sent to this agent (#413)
+        # session_with_view(session, engine), rebuilt when either changes
+        self._overlay_key: Optional[tuple] = None
+        self._overlay: Optional[Session] = None
         # Per-level column overrides for current detail level
         self.column_overrides: dict = {}
         # Agent hierarchy (#244)
@@ -129,6 +131,11 @@ class SessionSummary(Static, can_focus=True):
         # Always single-line display
         self.add_class("list-mode")
         self._hover_column: Optional[str] = None  # column whose popup is showing
+
+    @property
+    def status_detail(self):
+        """The engine's 4-colour detail (badge countdowns as of now), or None."""
+        return tui_engine.status_detail(self.engine, time.time()) if self.engine else None
 
     def column_visible(self, col: SummaryColumn) -> bool:
         """Check if a column is visible at the current detail level with overrides."""
@@ -190,147 +197,123 @@ class SessionSummary(Static, can_focus=True):
             super().__init__()
             self.session_id = session_id
 
-    def update_status(self) -> None:
-        """Update the detected status for this session.
-
-        NOTE: This is now VIEW-ONLY. Time tracking is handled by the Monitor Daemon.
-        We only detect status for display and capture pane content for the expanded view.
-        """
-        # detect_status returns (status, activity, pane_content) - reuse content to avoid
-        # duplicate tmux subprocess calls (was 2 calls per widget, now just 1)
-        new_status, self.current_activity, content = self.status_detector.detect_status(self.session)
-        # Pick up the structured 2-column detail cached as a side-effect (#TBD).
-        try:
-            self.status_detail = self.status_detector.get_status_detail(self.session.name)
-        except AttributeError:
-            # Detector predates the two-column model
-            self.status_detail = None
-        self.apply_status(new_status, self.current_activity, content)
-
-    def apply_status(self, status: str, activity: str, content: str) -> None:
-        """Apply pre-fetched status data to this widget.
-
-        Used by parallel status updates to apply data fetched in background threads.
-        Note: This still fetches claude_stats synchronously - used for single widget updates.
-        """
-        # Fetch claude stats (only for standalone update_status calls)
-        claude_stats = stats_reader_for_session(self.session).get_stats(self.session)
-        # Fetch git diff stats — remote agents already have this from the sister API
-        git_diff = None
-        git_untracked = None
-        if self.session.is_remote:
-            git_diff = self.session.remote_git_diff
-            git_untracked = self.session.remote_git_untracked
-        else:
-            _gdir = effective_git_directory(self.session)
-            if _gdir:
-                git_diff = get_git_diff_stats(_gdir)
-                git_untracked = get_git_untracked_count(_gdir)
-        self.apply_status_no_refresh(
-            status, activity, content, claude_stats, git_diff, git_untracked
-        )
-        self.refresh()
-
     def _status_patterns(self):
         """Pane chrome for this agent's backend."""
         from ..backends import session_backend_name
         from ..status_patterns import get_patterns
         return get_patterns(session_backend_name(self.session))
 
-    def apply_status_no_refresh(self, status: str, activity: str, content: str, claude_stats: Optional[AgentSessionStats] = None, git_diff_stats: Optional[tuple] = None, git_untracked_count: Optional[int] = None) -> bool:
-        """Apply pre-fetched status data without triggering refresh.
+    def _effective_status(self, status: str) -> str:
+        """Terminated supersedes asleep (#399); asleep supersedes the status (#68).
 
-        Used for batched updates where the caller will refresh once at the end.
-        All data including claude_stats should be pre-fetched in background thread.
+        ``session.is_asleep`` is the local toggle, so z shows at once.
+        """
+        if status == "terminated" or self.session.status == "terminated":
+            return "terminated"
+        if self.session.is_asleep:
+            return "asleep"
+        return status
 
-        Returns True if any data actually changed (caller should refresh).
+    def apply_engine(self, view: dict, burn_hours: float = 0.0,
+                     visited_here: Optional[float] = None) -> bool:
+        """Take this agent's published view; True if the row may draw differently.
+
+        Everything comes from ``view`` except the pane-derived counts while
+        ``local_pane`` holds (the focused agent's own capture).
+        """
+        before = self._engine_inputs()
+        self.engine = view or {}
+        v = self.engine
+        if v.get("current_status"):
+            self.detected_status = self._effective_status(v["current_status"])
+        if "current_activity" in v:
+            self.current_activity = v.get("current_activity") or ""
+        self.claude_stats = tui_engine.agent_stats(v)
+        self.file_subagent_count = v.get("file_subagent_count") or 0
+        diff = tui_engine.git_diff(v)
+        if diff is not None:
+            self.git_diff_stats = diff
+        if v.get("git_untracked") is not None:
+            self.git_untracked_count = v["git_untracked"]
+        if not self.local_pane:
+            for name in tui_engine.PANE_FIELDS:
+                if name in v:
+                    setattr(self, name, v[name])
+        self.window_burn = tui_engine.window_burn(v, burn_hours)
+        self.subtree_cost_usd = v.get("subtree_cost_usd") or 0.0
+        if v.get("last_command"):
+            self.last_command = v["last_command"]
+        if "pr_number" in v:
+            self.pr_number = v["pr_number"]
+        changed_at = tui_engine.status_changed_at(v)
+        if changed_at is not None:
+            self._status_changed_at = changed_at
+        self.is_unvisited_stalled = (
+            not self.session.is_asleep and tui_engine.is_unvisited(v, visited_here)
+        )
+        return self._engine_inputs() != before
+
+    def _engine_inputs(self) -> tuple:
+        return (self.engine, self.detected_status, self.current_activity,
+                self.window_burn, self.is_unvisited_stalled,
+                tuple(getattr(self, n) for n in tui_engine.PANE_FIELDS))
+
+    def apply_pane_content(self, content: str) -> bool:
+        """This agent's terminal text (the focused capture, or a sister's poll).
+
+        Keeps the lines for the preview pane and extracts the pane-derived
+        counts from them. Returns True if anything changed.
         """
         changed = False
-
-        if self.current_activity != activity:
-            self.current_activity = activity
+        new_pane = content.rstrip().split('\n') if content else []
+        if self.pane_content != new_pane:
+            self.pane_content = new_pane
             changed = True
-
-        # Use pane content from detect_status (already fetched)
-        if content:
-            # Keep all lines including blanks for proper formatting, just strip trailing blanks
-            lines = content.rstrip().split('\n')
-            new_pane = lines if lines else []
-            # Pure extraction — results stored as widget vars, never on session
-            extracted = extract_from_pane(content, self._status_patterns())
-            if self.pane_content != new_pane:
-                self.pane_content = new_pane
+        extracted = extract_from_pane(content, self._status_patterns()) if content else None
+        for name in tui_engine.PANE_FIELDS:
+            value = getattr(extracted, name) if extracted is not None else type(getattr(self, name))()
+            if getattr(self, name) != value:
+                setattr(self, name, value)
                 changed = True
-            if self.background_bash_count != extracted.background_bash_count:
-                self.background_bash_count = extracted.background_bash_count
-                changed = True
-            if self.bash_count_ambiguous != extracted.bash_count_ambiguous:
-                self.bash_count_ambiguous = extracted.bash_count_ambiguous
-                changed = True
-            if self.live_subagent_count != extracted.live_subagent_count:
-                self.live_subagent_count = extracted.live_subagent_count
-                changed = True
-            if self.auto_accept_mode != extracted.auto_accept_mode:
-                self.auto_accept_mode = extracted.auto_accept_mode
-                changed = True
-        else:
-            if self.pane_content:
-                self.pane_content = []
-                changed = True
-            if self.background_bash_count != 0:
-                self.background_bash_count = 0
-                changed = True
-            if self.bash_count_ambiguous:
-                self.bash_count_ambiguous = False
-                changed = True
-            if self.live_subagent_count != 0:
-                self.live_subagent_count = 0
-                changed = True
-            if self.auto_accept_mode:
-                self.auto_accept_mode = False
-                changed = True
-
-        # Update detected status for display
-        # NOTE: Time tracking removed - Monitor Daemon is the single source of truth
-        # The session.stats values are read from what Monitor Daemon has persisted
-        # Terminated supersedes asleep (#399); asleep supersedes detected status (#68)
-        if status == "terminated":
-            new_status = status
-        elif self.session.is_asleep:
-            new_status = "asleep"
-        else:
-            new_status = status
-
-        # Track status changes for immediate time-in-state reset (#73)
-        # Compare by color group so sub-status changes within the same color
-        # (e.g. running ↔ running_heartbeat) don't reset the timer.
-        if get_status_color(new_status) != get_status_color(self._last_known_status):
-            self._status_changed_at = datetime.now()
-            changed = True
-        self._last_known_status = new_status
-
-        if self.detected_status != new_status:
-            self.detected_status = new_status
-            changed = True
-
-        # Use pre-fetched claude stats (no file I/O on main thread)
-        if claude_stats is not None:
-            self.claude_stats = claude_stats
-            changed = True
-
-        # Use pre-fetched git diff stats
-        if git_diff_stats is not None:
-            self.git_diff_stats = git_diff_stats
-            changed = True
-
-        # Use pre-fetched untracked count (#455). None means "no update";
-        # actual missing-data state is represented in widget state by leaving
-        # it as None until the first successful fetch.
-        if git_untracked_count is not None:
-            self.git_untracked_count = git_untracked_count
-            changed = True
-
         return changed
+
+    def end_local_pane(self) -> None:
+        """Focus moved on: the engine's pane-derived counts apply again."""
+        if not self.local_pane:
+            return
+        self.local_pane = False
+        for name in tui_engine.PANE_FIELDS:
+            if name in self.engine:
+                setattr(self, name, self.engine[name])
+
+    def apply_remote(self, visited_here: Optional[float] = None) -> bool:
+        """A sister's agent, from what its API returned (sisters stay on HTTP polling)."""
+        s = self.session
+        before = (self.detected_status, self.current_activity, self.claude_stats,
+                  self.git_diff_stats, self.git_untracked_count, self.is_unvisited_stalled)
+        stats = s.stats
+        self.detected_status = self._effective_status(stats.current_state or "running")
+        self.current_activity = stats.current_task or ""
+        self.claude_stats = synthesize_remote_stats(s)
+        if s.remote_git_diff:
+            self.git_diff_stats = tuple(s.remote_git_diff)
+        if s.remote_git_untracked is not None:
+            self.git_untracked_count = s.remote_git_untracked
+        # A 0.6 sister publishes the same attention fields as a local engine
+        rds = s.remote_daemon_state or {}
+        self.is_unvisited_stalled = not s.is_asleep and tui_engine.is_unvisited(rds, visited_here)
+        pane_changed = self.apply_pane_content(s.pane_content or "")
+        return pane_changed or before != (
+            self.detected_status, self.current_activity, self.claude_stats,
+            self.git_diff_stats, self.git_untracked_count, self.is_unvisited_stalled)
+
+    def rendered_session(self) -> Session:
+        """The session as the row draws it: sessions.json with the engine's values."""
+        key = (id(self.session), id(self.engine))
+        if key != self._overlay_key:
+            self._overlay_key = key
+            self._overlay = tui_engine.session_with_view(self.session, self.engine)
+        return self._overlay
 
     def watch_summary_detail(self, summary_detail: str) -> None:
         """Called when summary_detail changes"""
@@ -342,7 +325,7 @@ class SessionSummary(Static, can_focus=True):
 
     def _build_column_context(self) -> ColumnContext:
         """Build the ColumnContext with all pre-computed data for column rendering."""
-        s = self.session
+        s = self.rendered_session()
 
         # Pre-compute times
         uptime = calculate_uptime(s.start_time)
@@ -395,9 +378,13 @@ class SessionSummary(Static, can_focus=True):
             if dur:
                 sleep_wake_estimate = self._status_changed_at + timedelta(seconds=dur)
 
-        # Bridge legacy heartbeat statuses into the two-column model (#TBD task 6)
-        from ..hook_status_detector import augment_with_legacy_heartbeat
-        effective_detail = augment_with_legacy_heartbeat(self.status_detail, self.detected_status)
+        # The engine publishes the detail already bridged from the legacy
+        # heartbeat statuses; a sister's agent gets the bridge here.
+        if self.engine:
+            effective_detail = tui_engine.status_detail(self.engine, time.time())
+        else:
+            from ..hook_status_detector import augment_with_legacy_heartbeat
+            effective_detail = augment_with_legacy_heartbeat(None, self.detected_status)
 
         return ColumnContext(
             session=s,

@@ -16,7 +16,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 import yaml
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 # Version - increment when daemon code changes significantly
 # =============================================================================
 
-DAEMON_VERSION = 2  # Increment when daemon behavior changes
+DAEMON_VERSION = 3  # Increment when daemon behavior changes (3: engine.sock, 0.6.0)
 
 
 # =============================================================================
@@ -812,11 +812,8 @@ class TUIPreferences:
     show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
     timeline_hours: float = 3.0  # 1, 3, 6, 12, 24 — timeline scope (#191)
     notifications: str = "off"  # "off", "sound", "banner", "both" — macOS notifications (#235)
-    # Session IDs of stalled agents that have been visited by the user
-    visited_stalled_agents: Set[str] = field(default_factory=set)
-    # When each of those visits happened (epoch seconds), so a restarted TUI
-    # can tell a stall you already saw from one that began after your visit
-    visited_stalled_at: Dict[str, float] = field(default_factory=dict)
+    # (Visits to stalled agents are the engine's since 0.6.0: an older file's
+    # visited_stalled_agents / visited_stalled_at keys are ignored.)
     # Per-level column overrides: {"low": {"uptime": true, ...}, "med": {...}, "high": {...}}
     # Only stores explicit user overrides. Missing = use default from detail_levels.
     column_config: dict = field(default_factory=dict)

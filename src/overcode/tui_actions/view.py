@@ -384,6 +384,8 @@ class ViewActionsMixin:
             else:
                 label = f"-{hours}h{mins}m"
         self.notify(f"Baseline: {label}", severity="information")
+        # The burn window is the baseline: ask the engine for it
+        self._report_burn_window()
         # Trigger status bar refresh to show updated mean spin
         self.update_daemon_status()
         # Trigger timeline refresh to show baseline marker

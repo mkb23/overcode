@@ -189,9 +189,19 @@ def tui(tmp_path, monkeypatch):
 
 
 async def _ready(pilot):
+    """The three agents are on screen and the layout has settled.
+
+    The timeline's history arrives from a worker after mount and grows the
+    timeline, which moves every agent row down. A test that measures or
+    clicks a row before that lands is racing it (the flaky column-guide and
+    click tests under load), so wait for the timeline to hold the agents.
+    """
     app = pilot.app
-    for _ in range(50):
-        if len(app._get_widgets_in_session_order()) == 3:
+    for _ in range(100):
+        timeline = app.query_one("#timeline")
+        if len(app._get_widgets_in_session_order()) == 3 and (
+            not timeline.display or len(timeline.sessions) == 3
+        ):
             break
         await pilot.pause(0.05)
     await pilot.pause(0.1)

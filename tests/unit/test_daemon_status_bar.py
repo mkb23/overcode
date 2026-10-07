@@ -35,7 +35,8 @@ def _make_bare_status_bar(**extra_attrs):
     # Default attributes from __init__
     widget.tmux_session = "agents"
     widget.monitor_state = None
-    widget._session_manager = None
+    widget.engine_connected = True  # engine.sock is up unless a test says not
+    widget.presence_idle_since = None
     widget._asleep_session_ids = set()
     widget.show_cost = "tokens"
     widget._usage_snapshot = None
@@ -87,6 +88,7 @@ def _make_monitor_state(**overrides):
         untracked_window_count=0,
         tick_started_at=None,
         last_tick_duration_seconds=0.0,
+        slow_tick_seconds=None,
     )
     defaults.update(overrides)
     mock = MagicMock(spec=MonitorDaemonState)
@@ -150,52 +152,6 @@ class TestUsagePctStyle:
 
 
 # ===========================================================================
-# _get_active_session_names
-# ===========================================================================
-
-
-class TestGetActiveSessionNames:
-    """Tests for DaemonStatusBar._get_active_session_names."""
-
-    def test_returns_empty_when_no_monitor_state(self):
-        widget = _make_bare_status_bar(monitor_state=None)
-        assert widget._get_active_session_names() == []
-
-    def test_returns_empty_when_no_sessions(self):
-        state = _make_monitor_state(sessions=[])
-        widget = _make_bare_status_bar(monitor_state=state)
-        assert widget._get_active_session_names() == []
-
-    def test_returns_all_names_when_none_asleep(self):
-        s1 = _make_session_state(session_id="s1", name="agent-1")
-        s2 = _make_session_state(session_id="s2", name="agent-2")
-        state = _make_monitor_state(sessions=[s1, s2])
-        widget = _make_bare_status_bar(monitor_state=state)
-        names = widget._get_active_session_names()
-        assert sorted(names) == ["agent-1", "agent-2"]
-
-    def test_excludes_asleep_sessions(self):
-        s1 = _make_session_state(session_id="s1", name="agent-1")
-        s2 = _make_session_state(session_id="s2", name="agent-2")
-        state = _make_monitor_state(sessions=[s1, s2])
-        widget = _make_bare_status_bar(
-            monitor_state=state,
-            _asleep_session_ids={"s2"},
-        )
-        names = widget._get_active_session_names()
-        assert names == ["agent-1"]
-
-    def test_all_asleep_returns_empty(self):
-        s1 = _make_session_state(session_id="s1", name="agent-1")
-        state = _make_monitor_state(sessions=[s1])
-        widget = _make_bare_status_bar(
-            monitor_state=state,
-            _asleep_session_ids={"s1"},
-        )
-        assert widget._get_active_session_names() == []
-
-
-# ===========================================================================
 # render — stopped states
 # ===========================================================================
 
@@ -208,16 +164,16 @@ class TestDaemonStatusBarRenderStopped:
         result = widget.render()
         plain = result.plain
         assert "Monitor:" in plain
-        assert "stopped" in plain
+        assert "not running" in plain
 
-    def test_render_stale_monitor_state(self):
+    def test_render_engine_disconnected(self):
+        """The last snapshot is still held, but the engine is gone: not running."""
         state = _make_monitor_state()
-        state.is_stale.return_value = True
-        widget = _make_bare_status_bar(monitor_state=state)
+        widget = _make_bare_status_bar(monitor_state=state, engine_connected=False)
         result = widget.render()
         plain = result.plain
         assert "Monitor:" in plain
-        assert "stopped" in plain
+        assert "not running" in plain
 
     def test_render_supervisor_stopped(self):
         widget = _make_bare_status_bar(
@@ -251,30 +207,28 @@ class TestDaemonStatusBarRenderRunning:
         result = widget.render()
         plain = result.plain
         assert "Monitor:" in plain
-        assert "#42" in plain
         assert "@10s" in plain
+        # The loop count moves every tick, so the engine does not publish it
+        assert "#42" not in plain
         assert "daemon slow" not in plain
 
     def test_render_slow_tick_indicator(self):
-        """A tick longer than the interval is shown, not mistaken for 'stopped'."""
-        state = _make_monitor_state(
-            loop_count=42, current_interval=2, last_tick_duration_seconds=7.26
-        )
+        """A tick longer than the interval is shown, not mistaken for 'not running'."""
+        state = _make_monitor_state(current_interval=2, slow_tick_seconds=7.3)
         widget = _make_bare_status_bar(monitor_state=state)
         plain = widget.render().plain
-        assert "#42" in plain
         assert "daemon slow (7.3s tick)" in plain
-        assert "stopped" not in plain.split("Supervisor")[0]
+        assert "not running" not in plain.split("Supervisor")[0]
 
     def test_render_tick_within_interval_shows_nothing(self):
-        state = _make_monitor_state(current_interval=2, last_tick_duration_seconds=1.9)
+        state = _make_monitor_state(current_interval=2, slow_tick_seconds=None)
         widget = _make_bare_status_bar(monitor_state=state)
         assert "daemon slow" not in widget.render().plain
 
     def test_render_tolerates_missing_duration_attribute(self):
         """State from an older daemon (or a bare mock) has no usable duration."""
         state = _make_monitor_state(current_interval=2)
-        state.last_tick_duration_seconds = MagicMock()  # not a number
+        state.slow_tick_seconds = MagicMock()  # not a number
         widget = _make_bare_status_bar(monitor_state=state)
         assert "daemon slow" not in widget.render().plain
 
@@ -552,25 +506,18 @@ class TestDaemonStatusBarRenderPresence:
     """Tests for presence section of DaemonStatusBar.render."""
 
     def test_presence_locked(self):
-        state = _make_monitor_state(
-            presence_available=True,
-            presence_state=1,
-            presence_idle_seconds=120,
-        )
-        widget = _make_bare_status_bar(monitor_state=state)
-        result = widget.render()
-        plain = result.plain
+        """Idle seconds count from the engine's presence_idle_since, at render."""
+        state = _make_monitor_state(presence_available=True, presence_state=1)
+        widget = _make_bare_status_bar(monitor_state=state, presence_idle_since=1000.0)
+        with patch("overcode.tui_widgets.daemon_status_bar.time.time", return_value=1120.0):
+            plain = widget.render().plain
         assert "120s" in plain
 
     def test_presence_active(self):
-        state = _make_monitor_state(
-            presence_available=True,
-            presence_state=3,
-            presence_idle_seconds=5,
-        )
-        widget = _make_bare_status_bar(monitor_state=state)
-        result = widget.render()
-        plain = result.plain
+        state = _make_monitor_state(presence_available=True, presence_state=3)
+        widget = _make_bare_status_bar(monitor_state=state, presence_idle_since=1000.0)
+        with patch("overcode.tui_widgets.daemon_status_bar.time.time", return_value=1005.0):
+            plain = widget.render().plain
         assert "5s" in plain
 
     def test_presence_not_available_not_shown(self):
@@ -900,64 +847,50 @@ class TestDaemonStatusBarSpinWithSisters:
 
 
 # ---------------------------------------------------------------------------
-# fetch_volatile_state reuses the caller's session list (audit R4)
+# fetch_local_state: the bar's own checks, nothing about agents
 # ---------------------------------------------------------------------------
 
 
-class TestFetchVolatileStateSessions:
-    """The 1 Hz worker reads sessions.json once: the list it already holds
-    feeds the burn window instead of a second list_sessions() call."""
+class TestFetchLocalState:
+    """The 1 Hz worker checks local processes and the mean spin; the agents'
+    statuses, spend and burn come from the engine's snapshot."""
 
-    def _bar_with_manager(self):
-        bar = _make_bare_status_bar()
-        bar._session_manager = MagicMock()
-        mine = MagicMock(tmux_session="agents")
-        other = MagicMock(tmux_session="elsewhere")
-        return bar, mine, other
-
-    @patch("overcode.tui_logic.compute_window_burn", return_value="burn")
-    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
-    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
-    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
-    @patch(
-        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
-        return_value=False,
-    )
-    def test_given_sessions_are_used_without_a_second_read(self, _sup, _summ, _web, _url, burn):
-        bar, mine, other = self._bar_with_manager()
-        bar.fetch_volatile_state(
-            baseline_minutes=60, active_session_names=[], sessions=[mine, other]
+    def _patches(self):
+        return (
+            patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None),
+            patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False),
+            patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient"),
+            patch("overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
+                  return_value=True),
         )
-        bar._session_manager.list_sessions.assert_not_called()
-        # Filtered to this tmux session, exactly as the old in-function read was
-        assert burn.call_args.args[0] == [mine]
-        assert bar._burn_stats == "burn"
 
-    @patch("overcode.tui_logic.compute_window_burn", return_value="burn")
-    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
-    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
-    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
-    @patch(
-        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
-        return_value=False,
-    )
-    def test_sessions_are_loaded_when_omitted(self, _sup, _summ, _web, _url, burn):
-        bar, mine, other = self._bar_with_manager()
-        bar._session_manager.list_sessions.return_value = [mine, other]
-        bar.fetch_volatile_state(baseline_minutes=60, active_session_names=[])
-        bar._session_manager.list_sessions.assert_called_once_with()
-        assert burn.call_args.args[0] == [mine]
-
-    @patch("overcode.tui_logic.compute_window_burn")
-    @patch("overcode.tui_widgets.daemon_status_bar.get_web_server_url", return_value=None)
-    @patch("overcode.tui_widgets.daemon_status_bar.is_web_server_running", return_value=False)
-    @patch("overcode.tui_widgets.daemon_status_bar.SummarizerClient")
-    @patch(
-        "overcode.tui_widgets.daemon_status_bar.is_supervisor_daemon_running",
-        return_value=False,
-    )
-    def test_no_window_means_no_burn_even_with_sessions(self, _sup, _summ, _web, _url, burn):
-        bar, mine, other = self._bar_with_manager()
-        bar.fetch_volatile_state(baseline_minutes=0, active_session_names=[], sessions=[mine])
+    def test_process_checks_and_no_burn(self):
+        bar = _make_bare_status_bar()
+        p1, p2, p3, p4 = self._patches()
+        with p1, p2, p3, p4, patch("overcode.tui_logic.compute_window_burn") as burn:
+            bar.fetch_local_state(baseline_minutes=60, active_session_names=[])
         burn.assert_not_called()
-        assert bar._burn_stats is None
+        assert bar._supervisor_running is True
+        assert bar._spin_baseline_minutes == 60
+
+    def test_mean_spin_over_the_baseline_window(self):
+        bar = _make_bare_status_bar()
+        p1, p2, p3, p4 = self._patches()
+        with p1, p2, p3, p4, \
+                patch("overcode.tui_widgets.daemon_status_bar.read_agent_status_history",
+                      return_value=["rows"]) as hist, \
+                patch("overcode.tui_widgets.daemon_status_bar.calculate_mean_spin_from_history",
+                      return_value=(1.5, 12)) as spin:
+            bar.fetch_local_state(baseline_minutes=30, active_session_names=["a", "b"])
+        assert hist.call_args.kwargs["hours"] == 30 / 60.0 + 0.1
+        spin.assert_called_once_with(["rows"], ["a", "b"], 30)
+        assert (bar._mean_spin, bar._spin_sample_count) == (1.5, 12)
+
+    def test_no_window_no_spin(self):
+        bar = _make_bare_status_bar()
+        p1, p2, p3, p4 = self._patches()
+        with p1, p2, p3, p4, \
+                patch("overcode.tui_widgets.daemon_status_bar.read_agent_status_history") as hist:
+            bar.fetch_local_state(baseline_minutes=0, active_session_names=["a"])
+        hist.assert_not_called()
+        assert bar._mean_spin == 0.0

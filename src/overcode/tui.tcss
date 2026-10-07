@@ -226,6 +226,29 @@ SessionSummary:focus.list-mode {
     display: block;
 }
 
+/* engine.sock is absent or dropped (0.6.0): an overlay just under the
+   status bar, so showing it never moves a row; the rows dim to say they are
+   the last known state. */
+#engine-banner {
+    display: none;
+    layer: above;
+    dock: top;
+    offset-y: 2;
+    width: 100%;
+    height: 1;
+    background: #5a1a1a;
+    color: #ffdddd;
+    text-style: bold;
+}
+
+#engine-banner.visible {
+    display: block;
+}
+
+#sessions-container.engine-stale SessionSummary {
+    text-opacity: 55%;
+}
+
 /* Dialogs (#488): every modal shares the command palette's frame (#482)
    — rounded accent border, title in the top edge, keys in the bottom.
    Width, max-height and offset are set in code (ModalBase.relayout) to

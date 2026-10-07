@@ -4,15 +4,14 @@ Nothing in the TUI was gated on anyone watching (scaling audit,
 cross-cutting finding): every timer ran at full rate with the tmux client
 detached. Now one ``attended`` flag on the app, written only through
 ``_set_attended`` and reacted to only in ``_on_attended_changed``, pauses
-every timer in PAUSED_WHEN_UNATTENDED and resumes the one 2 s read of the
-daemon's published state that keeps stall bells and notifications going.
-These tests drive the real app methods on a bare instance with fake
-timers and a fake attached/detached signal, and count what the workers
-were asked to do.
+every timer in PAUSED_WHEN_UNATTENDED and tells the engine (``visible``) so
+it can run its own unattended cadences. Bells keep arriving over
+engine.sock while detached (test_engine_view_tui.py). These tests drive the
+real app methods on a bare instance with fake timers and a fake
+attached/detached signal, and count what the workers were asked to do.
 """
 
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -67,7 +66,7 @@ class Clock:
         end = self.now + seconds
         while self.now < end - 1e-9:
             self.now = round(self.now + step, 6)
-            for due, cb in sorted(self.pending):
+            for due, cb in sorted(self.pending, key=lambda p: p[0]):
                 if due <= self.now + 1e-9:
                     self.pending.remove((due, cb))
                     cb()
@@ -88,14 +87,12 @@ def _bare_app(attended=True, in_tmux=True):
     app._periodic_timers = {}
     app._tui_tmux_pane = "%3" if in_tmux else None
     app._tui_tmux_socket = "/tmp/tmux-1/default" if in_tmux else None
-    app._listing_is_own_server = in_tmux
     app._tui_tmux_session = None
-    app._attached_reading = None
-    app._last_attended_touch = 0.0
     app._heartbeat_last = 0.0
     app._heartbeat_enabled = False
     app.has_sisters = False
     app.diagnostics = False
+    app._engine_client = MagicMock()
     app._prefs = MagicMock(status_change_logging=False)
     app._prefs.status_change_logging = False
     # Every worker the timers reach, as counters
@@ -109,8 +106,7 @@ def _bare_app(attended=True, in_tmux=True):
 
     for name in (
         "refresh_sessions",
-        "update_focused_status",
-        "_update_stats_async",
+        "_focused_pane_tick",
         "update_daemon_status",
         "update_timeline",
         "_update_summaries_async",
@@ -122,9 +118,8 @@ def _bare_app(attended=True, in_tmux=True):
         "_record_heartbeat",
         "_flush_heartbeat",
         "_flush_status_changes",
-        "update_all_statuses",
+        "_repaint_rows",
         "_poll_attended_async",
-        "_fetch_unattended_status_async",
     ):
         setattr(app, name, counter(name))
     clock = Clock(app)
@@ -139,8 +134,7 @@ def _start_all_timers(app):
     app._start_periodic("heartbeat_flush", app._flush_heartbeat)
     app._start_periodic("status_changes", app._flush_status_changes)
     app._start_periodic("refresh_sessions", app.refresh_sessions)
-    app._start_periodic("fast_status", app.update_focused_status)
-    app._start_periodic("slow_stats", app._update_stats_async)
+    app._start_periodic("focused_pane", app._focused_pane_tick)
     app._start_periodic("daemon_status", app.update_daemon_status)
     app._start_periodic("timeline", app.update_timeline)
     app._start_periodic("summarizer", app._update_summaries_async)
@@ -148,13 +142,11 @@ def _start_all_timers(app):
     app._start_periodic("focused_job_pane", app._poll_focused_job_pane)
     app._start_periodic("agent_resize", app._periodic_agent_resize)
     app._start_periodic("attended_watch", app._attended_watch_tick)
-    app._start_periodic("unattended_status", app._unattended_status_tick)
 
 
 ATTENDED_ONLY = {
     "refresh_sessions",
-    "update_focused_status",
-    "_update_stats_async",
+    "_focused_pane_tick",
     "update_daemon_status",
     "update_timeline",
     "_update_summaries_async",
@@ -168,12 +160,11 @@ ATTENDED_ONLY = {
 class TestPausedSet:
     def test_every_paused_timer_exists_and_the_watch_never_pauses(self):
         assert PAUSED_WHEN_UNATTENDED <= set(TIMER_INTERVALS)
-        for name in ("attended_watch", "unattended_status", "heartbeat_flush", "status_changes"):
+        for name in ("attended_watch", "heartbeat_flush", "status_changes", "activity_flush"):
             assert name not in PAUSED_WHEN_UNATTENDED
-        # Every capture / render / stats path is in the paused set
+        # The capture, every render and every refresh path is in the paused set
         for name in (
-            "fast_status",
-            "slow_stats",
+            "focused_pane",
             "timeline",
             "summarizer",
             "sister_poll",
@@ -189,43 +180,40 @@ class TestPausedSet:
 
 
 class TestWatcher:
-    def test_detach_pauses_the_set_and_resumes_the_unattended_read(self):
+    def test_detach_pauses_the_set_and_tells_the_engine(self):
         app, clock = _bare_app()
         _start_all_timers(app)
         clock.advance(5)  # every delayed start has happened
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+        with patch("overcode.tui.signal_activity"):
             app._set_attended(False)
         paused = {name for name, t in app._periodic_timers.items() if t.paused}
         assert paused == PAUSED_WHEN_UNATTENDED & set(app._periodic_timers)
-        assert len(paused) == 10  # every started timer in the set (no sisters here)
-        assert not app._periodic_timers["unattended_status"].paused
+        assert len(paused) == 9  # every started timer in the set (no sisters here)
         assert not app._periodic_timers["attended_watch"].paused
         assert not app._periodic_timers["heartbeat_flush"].paused
         assert not app._periodic_timers["status_changes"].paused
+        app._engine_client.set_visible.assert_called_once_with(False)
 
-    def test_reattach_resumes_everything_signals_the_daemon_and_refreshes(self, tmp_path):
+    def test_reattach_resumes_everything_tells_the_engine_and_refreshes(self):
         app, clock = _bare_app(attended=False)
         _start_all_timers(app)
         clock.advance(5)
         assert all(t.paused for n, t in app._periodic_timers.items() if n in PAUSED_WHEN_UNATTENDED)
         app.calls = {}  # what the 5 s of detached ticks asked for is not the refresh
-        touched, signalled = [], []
-        with (
-            patch("overcode.tui.touch_tui_attended", touched.append),
-            patch("overcode.tui.signal_activity", signalled.append),
-        ):
+        signalled = []
+        with patch("overcode.tui.signal_activity", signalled.append):
             app._set_attended(True)
         assert not any(
             t.paused for n, t in app._periodic_timers.items() if n in PAUSED_WHEN_UNATTENDED
         )
-        assert app._periodic_timers["unattended_status"].paused
-        assert touched == ["agents"] and signalled == ["agents"]
-        # One full refresh: sessions, daemon bar, timeline, statuses (fast + slow), jobs
+        app._engine_client.set_visible.assert_called_once_with(True)
+        assert signalled == ["agents"]
+        # One full refresh: sessions, daemon bar, timeline, every row, jobs
         assert app.calls == {
             "refresh_sessions": 1,
             "update_daemon_status": 1,
             "update_timeline": 1,
-            "update_all_statuses": 1,
+            "_repaint_rows": 1,
             "_refresh_jobs": 1,
         }
         assert app._heartbeat_last > 0  # the probe restarts from now, not from the pause
@@ -235,32 +223,23 @@ class TestWatcher:
         _start_all_timers(app)
         clock.advance(5)
         app._set_attended(True)
-        assert app.calls == {} or "update_all_statuses" not in app.calls
+        assert "_repaint_rows" not in app.calls
         assert all(t.transitions == [] for t in app._periodic_timers.values())
+        app._engine_client.set_visible.assert_not_called()
 
     def test_sisters_are_polled_on_return_when_configured(self):
         app, clock = _bare_app(attended=False)
         app.has_sisters = True
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+        with patch("overcode.tui.signal_activity"):
             app._set_attended(True)
         assert app.calls["_poll_sisters"] == 1
 
-    def test_a_detach_during_the_unattended_reads_delayed_start_still_starts_it(self):
-        """The first poll (0.45 s) can answer 0 clients before the 2 s read's
-        delayed start (0.8 s) lands — a TUI launched under ``tmux new -d``.
-        The read must start running, not paused: bells depend on it."""
-        app, clock = _bare_app()
-        _start_all_timers(app)
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
-            clock.advance(0.5)  # the watch has started; the read has not
-            assert "unattended_status" not in app._periodic_timers
+    def test_no_engine_subscription_yet_is_fine(self):
+        app, _ = _bare_app()
+        app._engine_client = None
+        with patch("overcode.tui.signal_activity"):
             app._set_attended(False)
-            before = dict(app.calls)
-            clock.advance(60)
-        assert not app._periodic_timers["unattended_status"].paused
-        assert app.calls["_fetch_unattended_status_async"] == pytest.approx(30, abs=2)
-        for name in ATTENDED_ONLY:
-            assert app.calls.get(name, 0) == before.get(name, 0), name
+        assert app.attended is False
 
 
 class TestWorkerInvocationsAcrossDetachAttach:
@@ -274,39 +253,35 @@ class TestWorkerInvocationsAcrossDetachAttach:
     def test_nothing_but_the_watch_and_flushes_run_while_detached(self):
         app, clock = _bare_app()
         _start_all_timers(app)
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+        with patch("overcode.tui.signal_activity"):
             attended = self._run(app, clock, 30)
-            assert attended["update_focused_status"] == pytest.approx(120, abs=2)
-            assert attended["_update_stats_async"] >= 5
+            assert attended["_focused_pane_tick"] == pytest.approx(120, abs=2)
             assert attended["update_daemon_status"] >= 28
             app._set_attended(False)
             detached = self._run(app, clock, 60)
         for name in ATTENDED_ONLY:
             assert detached.get(name, 0) == 0, name
-        # The signal poll (1 s), the status read (2 s) and the flushes keep going
+        # The signal poll (1 s) and the flushes keep going
         assert detached["_poll_attended_async"] == pytest.approx(60, abs=2)
-        assert detached["_fetch_unattended_status_async"] == pytest.approx(30, abs=2)
         assert detached["_flush_heartbeat"] == pytest.approx(12, abs=2)
 
     def test_reattach_restores_every_cadence_within_a_tick(self):
         app, clock = _bare_app()
         _start_all_timers(app)
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+        with patch("overcode.tui.signal_activity"):
             clock.advance(10)
             app._set_attended(False)
             clock.advance(60)
             app._set_attended(True)
             after = self._run(app, clock, 30)
-        assert after["update_focused_status"] == pytest.approx(120, abs=2)
+        assert after["_focused_pane_tick"] == pytest.approx(120, abs=2)
         assert after["update_daemon_status"] >= 28
-        assert after["_update_stats_async"] >= 5
-        assert after["_fetch_unattended_status_async"] == 0
 
     def test_the_fake_signal_drives_the_state_through_the_watch(self):
         """A poll answer of 0 clients detaches; 1 client re-attaches; None is ignored."""
         app, clock = _bare_app()
         _start_all_timers(app)
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
+        with patch("overcode.tui.signal_activity"):
             clock.advance(5)
             app._apply_attended_poll(("agents", 0))
             assert app.attended is False
@@ -315,168 +290,40 @@ class TestWorkerInvocationsAcrossDetachAttach:
             assert app.attended is False
             app._apply_attended_poll(("agents", 1))
             assert app.attended is True
-        assert app.calls["update_all_statuses"] == 1
+        assert app.calls["_repaint_rows"] == 1
+        assert [c.args for c in app._engine_client.set_visible.call_args_list] == [(False,), (True,)]
 
 
 class TestAttendedWatchTick:
-    def test_polls_tmux_when_no_fresh_listing_reading(self):
+    def test_polls_tmux_every_tick(self):
         app, _ = _bare_app()
-        with patch("overcode.tui.touch_tui_attended"):
-            app._attended_watch_tick()
-        assert app.calls["_poll_attended_async"] == 1
-
-    def test_uses_the_fast_paths_listing_instead_of_a_command_when_fresh(self):
-        app, _ = _bare_app()
-        app._tui_tmux_session = "agents"
-        app._attached_reading = (0, time.monotonic())
-        with patch("overcode.tui.touch_tui_attended"), patch("overcode.tui.signal_activity"):
-            app._attended_watch_tick()
-        assert "_poll_attended_async" not in app.calls
-        assert app.attended is False
-
-    def test_a_stale_listing_reading_is_not_trusted(self):
-        app, _ = _bare_app()
-        app._attached_reading = (0, time.monotonic() - 2.0)
-        with patch("overcode.tui.touch_tui_attended"):
-            app._attended_watch_tick()
-        assert app.calls["_poll_attended_async"] == 1
-        assert app.attended is True
-
-    def test_touches_the_liveness_file_every_five_seconds_while_attended(self):
-        app, _ = _bare_app()
-        touched = []
-        with patch("overcode.tui.touch_tui_attended", touched.append):
-            with patch(
-                "overcode.tui.time.monotonic", side_effect=[100.0, 101.0, 104.9, 105.0, 111.0]
-            ):
-                for _ in range(5):
-                    app._attended_watch_tick()
-        assert touched == ["agents", "agents", "agents"]  # at 100, 105, 111
-
-    def test_never_touches_while_unattended(self):
-        app, _ = _bare_app(attended=False)
-        touched = []
-        with patch("overcode.tui.touch_tui_attended", touched.append):
-            app._attended_watch_tick()
-            app._attended_watch_tick()
-        assert touched == []
+        app._attended_watch_tick()
+        app._attended_watch_tick()
+        assert app.calls["_poll_attended_async"] == 2
 
     def test_the_poll_addresses_this_panes_own_server(self):
         """A pane id means nothing on another server: the query carries the
         socket from $TMUX, not -L $OVERCODE_TMUX_SOCKET."""
         app, _ = _bare_app()
         app.call_from_thread = lambda fn, *a: fn(*a)
-        with patch("overcode.tui.query_pane_attended", return_value=("work", 0)) as query:
+        with patch("overcode.tui.query_pane_attended", return_value=("work", 0)) as query, \
+                patch("overcode.tui.signal_activity"):
             SupervisorTUI._poll_attended_async.__wrapped__(app)
         query.assert_called_once_with("%3", socket_path="/tmp/tmux-1/default")
         assert app.attended is False and app._tui_tmux_session == "work"
 
 
 class TestOutsideTmux:
-    """A TUI in a plain terminal: nobody can tell, so it stays attended and
-    keeps the daemon fast with its touch — the case the daemon's third
-    signal exists for."""
+    """A TUI in a plain terminal: nobody can tell, so it stays attended."""
 
-    def test_the_watch_runs_touches_and_never_polls(self):
+    def test_the_watch_runs_and_never_polls(self):
         app, clock = _bare_app(in_tmux=False)
         _start_all_timers(app)
-        touched = []
-        with (
-            patch("overcode.tui.touch_tui_attended", touched.append),
-            patch("overcode.tui.time.monotonic", lambda: clock.now),  # the touch is wall-clock
-        ):
-            clock.advance(60)
+        clock.advance(60)
         assert app.attended is True
         assert "_poll_attended_async" not in app.calls
-        assert touched == ["agents"] * 12  # every 5 s for a minute
-        assert app.calls["update_focused_status"] == pytest.approx(240, abs=2)
+        assert app.calls["_focused_pane_tick"] == pytest.approx(240, abs=2)
         assert app.calls["update_daemon_status"] >= 58
-        assert "_fetch_unattended_status_async" not in app.calls
-
-    def test_a_stale_listing_reading_is_never_consulted(self):
-        app, _ = _bare_app(in_tmux=False)
-        app._tui_tmux_session = "agents"
-        app._attached_reading = (0, time.monotonic())  # could not arise, but must not flip
-        with patch("overcode.tui.touch_tui_attended"):
-            app._attended_watch_tick()
-        assert app.attended is True
-
-
-class TestListingReading:
-    def _panes(self, attached):
-        from overcode.tmux_utils import PaneInfo
-
-        return {"w": PaneInfo("w", 1, 10, 5, 0, 0, 0, "claude", attached)}
-
-    def test_recorded_when_this_pane_is_in_the_agents_session(self):
-        app, _ = _bare_app()
-        app._tui_tmux_session = "agents"
-        app._note_pane_listing(self._panes(2))
-        count, at = app._attached_reading
-        assert count == 2 and time.monotonic() - at < 1
-
-    def test_ignored_for_a_tui_in_another_session_or_unknown(self):
-        app, _ = _bare_app()
-        app._note_pane_listing(self._panes(0))  # session not yet learned
-        assert app._attached_reading is None
-        app._tui_tmux_session = "work"
-        app._note_pane_listing(self._panes(0))
-        assert app._attached_reading is None
-
-    def test_ignored_when_the_listing_failed(self):
-        app, _ = _bare_app()
-        app._tui_tmux_session = "agents"
-        app._note_pane_listing(None)
-        app._note_pane_listing({})
-        assert app._attached_reading is None
-
-    def test_ignored_when_the_listing_is_from_another_server(self):
-        """OVERCODE_TMUX_SOCKET names a server this pane is not on: a session
-        called "agents" there is not the one holding this pane."""
-        app, _ = _bare_app()
-        app._tui_tmux_session = "agents"
-        app._listing_is_own_server = False
-        app._note_pane_listing(self._panes(0))
-        assert app._attached_reading is None
-
-    def test_fast_path_records_the_listing_it_already_issues(self):
-        """The real worker body: the gate's listing feeds the reading, no extra command."""
-        from overcode.pane_capture_gate import PaneChangeTracker
-
-        app, _ = _bare_app()
-        app._tui_tmux_session = "agents"
-        sessions = []
-        for i in range(6):  # > every=4 non-focused: the listing is worth issuing
-            s = MagicMock()
-            s.id = f"s{i}"
-            s.is_remote = False
-            s.status = "running"
-            s.tmux_window = f"w{i}"
-            sessions.append(s)
-        widgets = [MagicMock(session=s) for s in sessions]
-        app.session_manager = MagicMock()
-        app.session_manager.list_sessions.return_value = sessions
-        app._get_focused_widget = lambda: widgets[0]
-        app._previous_statuses = {}
-        app._pane_content_cache = {}
-        app._activity_cache = {}
-        app._status_tick = 0
-        app._remote_sessions = []
-        app._summaries = {}
-        app.detector = MagicMock()
-        app.detector.detect_status.side_effect = lambda s, num_lines=0: ("running", "a", "p")
-        app._pane_change_tracker = PaneChangeTracker()
-        app._tmux = MagicMock()
-        from overcode.tmux_utils import PaneInfo
-
-        app._tmux.list_panes.return_value = {
-            f"w{i}": PaneInfo(f"w{i}", i, 1, 1, 1, 0, 0, "claude", 1) for i in range(6)
-        }
-        app.call_from_thread = lambda fn, *a, **kw: None
-        with patch("overcode.tui.get_monitor_daemon_state", return_value=None):
-            SupervisorTUI._fetch_statuses_async.__wrapped__(app, widgets)
-        assert app._tmux.list_panes.call_count == 1
-        assert app._attached_reading[0] == 1
 
 
 class TestOnKeyBackstop:
@@ -492,154 +339,14 @@ class TestOnKeyBackstop:
         with (
             patch("overcode.tui.signal_activity"),
             patch("overcode.tui.write_tui_heartbeat"),
-            patch("overcode.tui.touch_tui_attended"),
         ):
             app.on_key(MagicMock())
         assert app.attended is True
-        assert not app._periodic_timers["fast_status"].paused
-
-
-class TestUnattendedStatusPath:
-    """Daemon-published status drives the same stall bookkeeping, with no repaint."""
-
-    def _app(self):
-        app, _ = _bare_app(attended=False)
-        app._previous_statuses = {}
-        app._stall_start_times = {}
-        app._notified_stalls = set()
-        app._non_stall_since = {}
-        app._bell_dismiss_timers = {}
-        app._prefs = MagicMock(status_change_logging=False, visited_stalled_agents=set(),
-                               visited_stalled_at={})
-        app._notifier = MagicMock()
-        app._save_prefs = MagicMock()
-        return app
-
-    @pytest.fixture(autouse=True)
-    def _no_preview(self):
-        # preview_visible is a Textual reactive; a bare instance cannot set it
-        with patch.object(SupervisorTUI, "preview_visible", False):
-            yield
-
-    def _widget(self, sid, name="a", start="2026-01-01T00:00:00", state_since=None):
-        w = MagicMock()
-        w.session.id = sid
-        w.session.name = name
-        w.session.is_asleep = False
-        w.session.start_time = start
-        w.session.stats.current_task = "task"
-        w.session.stats.state_since = state_since
-        w.is_unvisited_stalled = False
-        w.refresh = MagicMock()
-        return w
-
-    def test_worker_reads_state_and_applies_only_when_fresh(self):
-        app = self._app()
-        applied = []
-        app.call_from_thread = lambda fn, *a: applied.append((fn, a))
-        state = MagicMock()
-        state.sessions = [MagicMock(session_id="s1", current_status="waiting_user")]
-        state.is_stale.return_value = False
-        with patch("overcode.tui.get_monitor_daemon_state", return_value=state):
-            SupervisorTUI._fetch_unattended_status_async.__wrapped__(app)
-        assert applied == [(app._apply_unattended_status, ({"s1": "waiting_user"},))]
-        state.is_stale.return_value = True
-        applied.clear()
-        with patch("overcode.tui.get_monitor_daemon_state", return_value=state):
-            SupervisorTUI._fetch_unattended_status_async.__wrapped__(app)
-        assert applied == []
-        with patch("overcode.tui.get_monitor_daemon_state", return_value=None):
-            SupervisorTUI._fetch_unattended_status_async.__wrapped__(app)
-        assert applied == []
-
-    def test_a_stall_seen_while_detached_rings_the_bell_and_notifies(self):
-        app = self._app()
-        w = self._widget("s1")
-        app.query = lambda cls: [w]
-        app._previous_statuses["s1"] = "running"
-        app._apply_unattended_status({"s1": "waiting_user"})
-        assert w.is_unvisited_stalled is True
-        assert app._previous_statuses["s1"] == "waiting_user"
-        assert "s1" in app._stall_start_times
-        app._notifier.queue.assert_not_called()  # deferred: 30 s of stall first
-        app._notifier.flush.assert_called_once()
-        w.refresh.assert_not_called()  # nothing is drawn while nobody watches
-        app._stall_start_times["s1"] -= 31
-        app._apply_unattended_status({"s1": "waiting_user"})
-        app._notifier.queue.assert_called_once_with("a", "task")
-        assert app._notified_stalls == {"s1"}
-
-    def _restart(self, visited_at, stalled_at):
-        """A fresh TUI (no previous statuses) sees an agent already red."""
-        from datetime import datetime
-        app = self._app()
-        app._prefs.visited_stalled_agents = {"s1"}
-        if visited_at is not None:
-            app._prefs.visited_stalled_at = {"s1": visited_at}
-        w = self._widget("s1", state_since=datetime.fromtimestamp(stalled_at).isoformat())
-        app.query = lambda cls: [w]
-        for _ in range(3):
-            app._apply_unattended_status({"s1": "waiting_user"})
-        return app, w
-
-    def test_restart_keeps_quiet_for_a_stall_you_already_visited(self):
-        now = time.time()
-        app, w = self._restart(visited_at=now - 60, stalled_at=now - 600)
-        assert w.is_unvisited_stalled is False
-        assert app._prefs.visited_stalled_agents == {"s1"}
-
-    def test_restart_rings_for_a_stall_that_began_after_your_visit(self):
-        now = time.time()
-        app, w = self._restart(visited_at=now - 600, stalled_at=now - 60)
-        assert w.is_unvisited_stalled is True
-        assert app._prefs.visited_stalled_agents == set()
-
-    def test_restart_keeps_quiet_for_visits_saved_without_a_time(self):
-        now = time.time()
-        app, w = self._restart(visited_at=None, stalled_at=now - 60)
-        assert w.is_unvisited_stalled is False
-
-    def test_restart_ages_the_stall_from_when_it_began_and_never_notifies(self):
-        now = time.time()
-        app, w = self._restart(visited_at=now - 600, stalled_at=now - 120)
-        assert time.monotonic() - app._stall_start_times["s1"] >= 119
-        app._notifier.queue.assert_not_called()
-        assert app._notified_stalls == {"s1"}
-
-    def test_visiting_records_when(self):
-        app = self._app()
-        app.query = lambda cls: []
-        msg = MagicMock(session_id="s1")
-        SupervisorTUI.on_session_summary_stalled_agent_visited(app, msg)
-        assert app._prefs.visited_stalled_agents == {"s1"}
-        assert abs(app._prefs.visited_stalled_at["s1"] - time.time()) < 5
-
-    def test_widgets_the_daemon_does_not_report_are_left_alone(self):
-        app = self._app()
-        w = self._widget("s2")
-        app.query = lambda cls: [w]
-        app._apply_unattended_status({"s1": "waiting_user"})
-        assert app._previous_statuses == {}
-        assert w.is_unvisited_stalled is False
-
-    def test_attended_path_uses_the_same_bookkeeping(self):
-        """_apply_status_results delegates to _track_stall: one transition, one bell."""
-        app = self._app()
-        w = self._widget("s1")
-        app.query = lambda cls: [w]
-        app._session_burn_rates = {}
-        app._recompute_cell_column_widths = MagicMock()
-        app._should_recover_focus = lambda: False
-        app.detector = MagicMock()
-        app._previous_statuses["s1"] = "running"
-        app._apply_status_results({"s1": ("waiting_user", "Waiting", "pane")}, {})
-        assert w.is_unvisited_stalled is True
-        assert app._previous_statuses["s1"] == "waiting_user"
-        w.apply_status_no_refresh.assert_called_once()
-        w.refresh_if_changed.assert_called_once()
+        assert not app._periodic_timers["focused_pane"].paused
+        app._engine_client.set_visible.assert_called_once_with(True)
 
 
 class TestPhaseOffsetsOfTheNewTimers:
     def test_new_timers_have_offsets_off_the_fast_grid(self):
-        for name in ("attended_watch", "unattended_status"):
+        for name in ("attended_watch", "daemon_status"):
             assert TIMER_PHASE_OFFSETS[name] % 0.25 != 0

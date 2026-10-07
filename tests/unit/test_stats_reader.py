@@ -457,14 +457,13 @@ class TestUsageWidgetGate:
     """The subscription-usage widget is fleet-level, gated on the fleet."""
 
     def _fleet(self, *backends):
-        state = Mock()
-        state.sessions = [Mock(backend=b) for b in backends]
-        return state
+        """The engine's agent views (published SessionDaemonState fields)."""
+        return [{"backend": b} for b in backends]
 
-    def _check(self, state):
+    def _check(self, agents):
         from overcode.tui import SupervisorTUI
 
-        return SupervisorTUI._fleet_has_subscription_usage(None, state)
+        return SupervisorTUI._fleet_has_subscription_usage(None, agents)
 
     def test_claude_fleet_fetches(self):
         assert self._check(self._fleet("claude-code")) is True
@@ -477,7 +476,7 @@ class TestUsageWidgetGate:
 
     def test_empty_fleet_fetches(self):
         assert self._check(self._fleet()) is True
-        assert self._check(None) is True
+        assert self._check([]) is True
 
 
 class TestDoctorSuppression:

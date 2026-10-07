@@ -134,7 +134,7 @@ class TestHistoryFileSharedAccess:
 
 
 class TestAppSharedState:
-    def test_app_holds_one_session_manager_and_one_history_file(self, tmp_path, monkeypatch):
+    def test_app_holds_one_session_manager(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("OVERCODE_DIR", str(tmp_path / ".overcode"))
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path / ".overcode" / "state"))
@@ -146,8 +146,8 @@ class TestAppSharedState:
 
         app = SupervisorTUI("test-session", diagnostics=True)
         assert app.launcher.sessions is app.session_manager
-        assert isinstance(app._history_file, HistoryFile)
-        assert app._history_file is app._history_file
+        # The stats sweep (and its history.jsonl reader) is the engine's since 0.6.0
+        assert not hasattr(app, "_history_file")
 
 
 class TestHistoryIndexes:

@@ -100,7 +100,14 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.show_cost = "tokens"
     widget.any_has_budget = False
     widget._status_changed_at = None
-    widget._last_known_status = "running"
+    widget.engine = {}
+    widget.local_pane = False
+    widget.file_subagent_count = 0
+    widget.window_burn = None
+    widget.subtree_cost_usd = 0.0
+    widget.last_command = ""
+    widget._overlay_key = None
+    widget._overlay = None
     widget.summary_detail = "low"
     widget.column_overrides = {}
     # Apply any caller-specified overrides
@@ -171,105 +178,177 @@ class TestColumnVisible:
 
 
 # ===========================================================================
-# apply_status_no_refresh
+# apply_engine: the row is the engine's published view (0.6.0)
 # ===========================================================================
 
 
-class TestApplyStatusNoRefresh:
-    """Tests for SessionSummary.apply_status_no_refresh."""
+def _view(**fields):
+    base = dict(
+        session_id="test-id", name="test-agent", current_status="running",
+        current_activity="Editing files", status_since="2026-10-07T12:00:00",
+    )
+    base.update(fields)
+    return base
 
-    def test_updates_current_activity(self):
-        """Activity string is stored on the widget."""
+
+class TestApplyEngine:
+    """SessionSummary.apply_engine: status, stats, git, burn and attention from a view."""
+
+    def test_status_and_activity(self):
         widget = _make_bare_widget()
-        widget.apply_status_no_refresh("running", "Editing files", "", None, None)
-        assert widget.current_activity == "Editing files"
+        assert widget.apply_engine(_view(current_status="waiting_user",
+                                         current_activity="Waiting")) is True
+        assert (widget.detected_status, widget.current_activity) == ("waiting_user", "Waiting")
+
+    def test_unchanged_view_reports_no_change(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view())
+        assert widget.apply_engine(_view()) is False
+
+    def test_asleep_session_overrides_status(self):
+        """The local z toggle shows at once, before the engine says asleep."""
+        widget = _make_bare_widget(session=_make_session(is_asleep=True))
+        widget.apply_engine(_view(current_status="running"))
+        assert widget.detected_status == "asleep"
+
+    def test_terminated_wins(self):
+        widget = _make_bare_widget(session=_make_session(is_asleep=True))
+        widget.apply_engine(_view(current_status="terminated"))
+        assert widget.detected_status == "terminated"
+
+    def test_stats_render_only_when_the_backend_has_them(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(stats_available=False, input_tokens=5))
+        assert widget.claude_stats is None
+        widget.apply_engine(_view(stats_available=True, input_tokens=1000, output_tokens=500,
+                                  interaction_count=7, work_median_seconds=90.0,
+                                  current_context_tokens=50_000, context_window=200_000,
+                                  file_subagent_count=2))
+        stats = widget.claude_stats
+        assert isinstance(stats, AgentSessionStats)
+        assert stats.total_tokens == 1500
+        assert stats.interaction_count == 7
+        assert stats.median_work_time == 90.0
+        assert stats.max_context_tokens == 200_000
+        assert widget.file_subagent_count == 2
+
+    def test_git_columns(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(git_diff=[5, 100, 20], git_untracked=3))
+        assert widget.git_diff_stats == (5, 100, 20)
+        assert widget.git_untracked_count == 3
+        widget.apply_engine(_view(git_diff=None, git_untracked=None))  # not read yet
+        assert widget.git_diff_stats == (5, 100, 20)
+
+    def test_pane_derived_counts_come_from_the_engine(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(background_bash_count=3, live_subagent_count=2,
+                                  auto_accept_mode=True, bash_count_ambiguous=False))
+        assert (widget.background_bash_count, widget.live_subagent_count,
+                widget.auto_accept_mode) == (3, 2, True)
+
+    def test_the_focused_capture_keeps_its_own_pane_counts(self):
+        widget = _make_bare_widget(local_pane=True, background_bash_count=1)
+        widget.apply_engine(_view(background_bash_count=4))
+        assert widget.background_bash_count == 1
+        widget.end_local_pane()
+        assert widget.background_bash_count == 4
+
+    def test_burn_for_the_asked_window(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(burn={"1.0": {"input_tokens": 3000, "output_tokens": 600,
+                                                "cost_usd": 1.5, "energy_j": 7200.0}}),
+                            burn_hours=1.0)
+        assert widget.window_burn.tokens_per_hour == 3600
+        assert widget.window_burn.cost_per_hour == 1.5
+        assert widget.window_burn.watts == 2.0
+        widget.apply_engine(widget.engine, burn_hours=0.5)  # not computed for 30 min
+        assert widget.window_burn is None
+
+    def test_time_in_state_follows_the_recorded_episode(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(live_colour="green", episode_colour="green",
+                                  episode_start=1_000.0, live_since=1_000.0))
+        assert widget._status_changed_at == datetime.fromtimestamp(1_000.0)
+        # A pending excursion: the timer shows the live colour's own start
+        widget.apply_engine(_view(live_colour="red", episode_colour="green",
+                                  episode_start=1_000.0, live_since=1_500.0))
+        assert widget._status_changed_at == datetime.fromtimestamp(1_500.0)
+
+    def test_unvisited_from_the_attention_fields(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(input_needed_since=200.0, visited_at=100.0))
+        assert widget.is_unvisited_stalled is True
+        widget.apply_engine(_view(input_needed_since=200.0, visited_at=300.0))
+        assert widget.is_unvisited_stalled is False
+        # A visit this TUI made that the engine has not published yet
+        widget.apply_engine(_view(input_needed_since=200.0, visited_at=100.0), visited_here=250.0)
+        assert widget.is_unvisited_stalled is False
+
+    def test_badges_count_down_from_eta_at(self):
+        widget = _make_bare_widget()
+        widget.apply_engine(_view(status_detail={
+            "color": "yellow", "legacy_status": "waiting_user",
+            "badges": [{"kind": "schedule_wakeup", "eta_at": 1_300}],
+        }))
+        with patch("overcode.tui_widgets.session_summary.time.time", return_value=1_000.0):
+            detail = widget.status_detail
+        assert detail.color == "yellow"
+        assert detail.badges[0].eta_seconds == 300
+
+    def test_the_row_draws_the_engines_session_values(self):
+        session = Session(id="test-id", name="test-agent", tmux_session="agents",
+                          tmux_window="test-agent", command=["claude"], start_directory=None,
+                          start_time="2026-10-07T11:00:00", model="claude-sonnet-4")
+        widget = _make_bare_widget(session=session)
+        widget.apply_engine(_view(model="claude-opus-4", cpu_percent=12.5,
+                                  estimated_cost_usd=2.5, steers_count=3,
+                                  time_base=[10.0, 20.0, 0.0], time_base_at=1_000.0))
+        shown = widget.rendered_session()
+        assert shown.model == "claude-opus-4"
+        assert shown.cpu_percent == 12.5
+        assert shown.stats.estimated_cost_usd == 2.5
+        assert shown.stats.steers_count == 3
+        assert shown.stats.green_time_seconds == 10.0
+        assert shown.stats.current_task == "Editing files"
+        assert widget.session.model != "claude-opus-4"  # the shared snapshot is untouched
+
+
+class TestApplyPaneContent:
+    """The focused capture, or a sister's polled pane: lines and pane-derived counts."""
 
     def test_parses_pane_content_into_lines(self):
-        """Content is split into lines and stored (no artificial cap)."""
         content = "\n".join(f"line {i}" for i in range(300))
         widget = _make_bare_widget()
-        widget.apply_status_no_refresh("running", "", content, None, None)
+        assert widget.apply_pane_content(content) is True
         assert len(widget.pane_content) == 300
         assert widget.pane_content[-1] == "line 299"
-        assert widget.pane_content[0] == "line 0"
 
     def test_empty_content_clears_pane_and_counts(self):
-        """Empty/falsy content resets pane_content and live counts to zero."""
         widget = _make_bare_widget()
         widget.pane_content = ["old line"]
         widget.background_bash_count = 3
         widget.live_subagent_count = 2
-        widget.apply_status_no_refresh("running", "", "", None, None)
+        widget.apply_pane_content("")
         assert widget.pane_content == []
         assert widget.background_bash_count == 0
         assert widget.live_subagent_count == 0
 
-    def test_asleep_session_overrides_status(self):
-        """If the session is_asleep, detected_status is set to 'asleep'."""
-        session = _make_session(is_asleep=True)
-        widget = _make_bare_widget(session=session)
-        widget.apply_status_no_refresh("running", "Active work", "", None, None)
-        assert widget.detected_status == "asleep"
-
-    def test_status_change_updates_timestamp(self):
-        """When the status changes, _status_changed_at is updated."""
-        widget = _make_bare_widget()
-        widget._last_known_status = "running"
-        before = datetime.now()
-        widget.apply_status_no_refresh("waiting_user", "Waiting", "", None, None)
-        after = datetime.now()
-        assert widget._status_changed_at is not None
-        assert before <= widget._status_changed_at <= after
-        assert widget._last_known_status == "waiting_user"
-
-    def test_same_status_does_not_update_timestamp(self):
-        """If the status has not changed, _status_changed_at remains unchanged."""
-        widget = _make_bare_widget()
-        widget._last_known_status = "running"
-        widget._status_changed_at = None
-        widget.apply_status_no_refresh("running", "Still working", "", None, None)
-        assert widget._status_changed_at is None
-
-    def test_claude_stats_stored_when_provided(self):
-        """Pre-fetched AgentSessionStats are saved on the widget."""
-        stats = MagicMock(spec=AgentSessionStats)
-        widget = _make_bare_widget()
-        widget.apply_status_no_refresh("running", "", "", stats, None)
-        assert widget.claude_stats is stats
-
-    def test_claude_stats_not_overwritten_when_none(self):
-        """Passing None for claude_stats does not clear a previously set value."""
-        old_stats = MagicMock(spec=AgentSessionStats)
-        widget = _make_bare_widget()
-        widget.claude_stats = old_stats
-        widget.apply_status_no_refresh("running", "", "", None, None)
-        assert widget.claude_stats is old_stats
-
-    def test_git_diff_stats_stored_when_provided(self):
-        """Pre-fetched git diff stats tuple is saved."""
-        diff = (5, 100, 20)
-        widget = _make_bare_widget()
-        widget.apply_status_no_refresh("running", "", "", None, diff)
-        assert widget.git_diff_stats == (5, 100, 20)
-
-    def test_git_diff_stats_not_overwritten_when_none(self):
-        """Passing None for git_diff_stats does not clear a previously set value."""
-        widget = _make_bare_widget()
-        widget.git_diff_stats = (3, 50, 10)
-        widget.apply_status_no_refresh("running", "", "", None, None)
-        assert widget.git_diff_stats == (3, 50, 10)
-
     @patch("overcode.tui_widgets.session_summary.extract_from_pane")
     def test_extracts_live_counts_from_content(self, mock_extract):
-        """Background bash and subagent counts are extracted from content."""
         from overcode.status_patterns import PaneExtraction
         mock_extract.return_value = PaneExtraction(
             background_bash_count=3, live_subagent_count=2, pr_number=None,
         )
         widget = _make_bare_widget()
-        widget.apply_status_no_refresh("running", "", "some pane content", None, None)
+        widget.apply_pane_content("some pane content")
         assert widget.background_bash_count == 3
         assert widget.live_subagent_count == 2
+
+    def test_unchanged_content_is_no_change(self):
+        widget = _make_bare_widget()
+        widget.apply_pane_content("x")
+        assert widget.apply_pane_content("x") is False
 
 
 # ===========================================================================

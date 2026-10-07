@@ -2,15 +2,19 @@
 Daemon status bar widget for TUI.
 
 Shows Monitor Daemon, Supervisor Daemon, AI, spin stats, and presence status.
+The fleet fields, the agents' statuses and spend, and the burn come from the
+engine's snapshot (the TUI sets them); what the bar checks itself is local:
+the other processes, and the mean spin over the baseline window.
 """
 
+import time
 from datetime import datetime, timezone
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from textual.widgets import Static
 from rich.text import Text
 
-from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
+from ..monitor_daemon_state import MonitorDaemonState
 from ..supervisor_daemon import is_supervisor_daemon_running
 from ..summarizer_client import SummarizerClient
 from ..web_server import is_web_server_running, get_web_server_url
@@ -27,9 +31,6 @@ from ..tui_helpers import (
 )
 from ..status_constants import is_green_status
 
-if TYPE_CHECKING:
-    from ..session_manager import SessionManager
-
 
 class DaemonStatusBar(Static):
     """Widget displaying daemon status.
@@ -38,11 +39,14 @@ class DaemonStatusBar(Static):
     Presence is shown only when available (macOS with monitor daemon running).
     """
 
-    def __init__(self, tmux_session: str = "agents", session_manager: Optional["SessionManager"] = None, *args, **kwargs):
+    def __init__(self, tmux_session: str = "agents", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tmux_session = tmux_session
+        # The engine's snapshot as a MonitorDaemonState (set by the TUI), and
+        # whether engine.sock is connected: the bar's "Monitor" section
         self.monitor_state: Optional[MonitorDaemonState] = None
-        self._session_manager = session_manager
+        self.engine_connected: bool = False
+        self.presence_idle_since: Optional[float] = None  # epoch, from the engine
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
         self.show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
         self._usage_snapshot = None  # UsageSnapshot from UsageMonitor
@@ -55,24 +59,23 @@ class DaemonStatusBar(Static):
         self._spin_sample_count: int = 0
         self._spin_baseline_minutes: int = 0
         self._sister_states: list = []  # List of SisterState (#245)
-        # Window-scoped burn stats (#174) — scoped to the user's timeline window
+        # Window-scoped burn stats (#174) over the baseline window: the sum of
+        # the engine's per-agent burn, set by the TUI
         self._burn_stats = None  # WindowBurnStats or None
         self._burn_window_hours: float = 0.0
         # Running jobs with no live agent behind them — set by the TUI (#463)
         self.orphan_job_count: int = 0
 
-    def fetch_volatile_state(
+    def fetch_local_state(
         self,
         baseline_minutes: int = 0,
         active_session_names: Optional[list] = None,
-        sessions: Optional[list] = None,
     ) -> None:
-        """Fetch all I/O-dependent state. Call from a background thread, NOT main thread.
+        """Check what the bar shows that is not about agents. Call from a worker thread.
 
-        This replaces the I/O that was previously done inside render().
-        ``sessions`` is the caller's already-loaded ``list_sessions()``
-        result (every tmux session; filtered here), so the 1 Hz worker
-        reads sessions.json once per tick. It is loaded here when omitted.
+        Whether the supervisor and API server run and the summarizer is
+        reachable, and the mean spin over the baseline window from the
+        daemon's status history (an incremental, cached read).
         """
         self._supervisor_running = is_supervisor_daemon_running(self.tmux_session)
         self._summarizer_available = SummarizerClient.is_available()
@@ -80,7 +83,6 @@ class DaemonStatusBar(Static):
         self._web_url = get_web_server_url(self.tmux_session) if self._web_running else None
         self._spin_baseline_minutes = baseline_minutes
 
-        # Mean spin rate from history (expensive CSV parse)
         if baseline_minutes > 0 and active_session_names:
             history = read_agent_status_history(
                 hours=baseline_minutes / 60.0 + 0.1,  # slight buffer
@@ -92,64 +94,6 @@ class DaemonStatusBar(Static):
         else:
             self._mean_spin = 0.0
             self._spin_sample_count = 0
-
-        # Burn rate over the spin-rate baseline window (#174). Tracks the
-        # SAME window as the μ spin stat — cycled with `,` (back) and `.`
-        # (forward). When baseline=0 ("now"), no rate to show.
-        burn_hours = baseline_minutes / 60.0
-        self._burn_window_hours = burn_hours
-        if burn_hours > 0 and self._session_manager:
-            from ..tui_logic import compute_window_burn
-            try:
-                if sessions is None:
-                    sessions = self._session_manager.list_sessions()
-                mine = [s for s in sessions if s.tmux_session == self.tmux_session]
-                self._burn_stats = compute_window_burn(
-                    mine, self._asleep_session_ids, burn_hours,
-                )
-            except Exception as exc:
-                # Log so silent failures don't masquerade as "burn stuck at
-                # zero" — but never let a parse error take down the worker.
-                import logging
-                logging.getLogger(__name__).warning(
-                    "compute_window_burn failed: %r", exc, exc_info=True,
-                )
-                self._burn_stats = None
-        else:
-            self._burn_stats = None
-
-    def update_status(self) -> None:
-        """Refresh daemon state from file.
-
-        NOTE: This is the legacy entry point. The TUI now calls
-        fetch_volatile_state() from a background worker and sets
-        monitor_state / _asleep_session_ids directly. This method
-        remains for backwards compatibility (e.g. diagnostics mode
-        manual refresh).
-        """
-        self.monitor_state = get_monitor_daemon_state(self.tmux_session)
-        sessions = None
-        if self._session_manager:
-            sessions = self._session_manager.list_sessions()
-            self._asleep_session_ids = {
-                s.id for s in sessions
-                if s.is_asleep and s.tmux_session == self.tmux_session
-            }
-        self.fetch_volatile_state(
-            baseline_minutes=getattr(self.app, 'baseline_minutes', 0),
-            active_session_names=self._get_active_session_names(),
-            sessions=sessions,
-        )
-        self.refresh()
-
-    def _get_active_session_names(self) -> list:
-        """Get active (non-sleeping) agent names from monitor state."""
-        if not self.monitor_state or not self.monitor_state.sessions:
-            return []
-        return [
-            s.name for s in self.monitor_state.sessions
-            if s.session_id not in self._asleep_session_ids
-        ]
 
     @staticmethod
     def _format_queried_ago(fetched_at: Optional[datetime]) -> str:
@@ -214,26 +158,23 @@ class DaemonStatusBar(Static):
                 content.append(f" ({queried_ago})", style="dim")
             content.append(" │ ", style="dim")
 
-        # Monitor Daemon status
+        # Monitor Daemon (the engine) status: live while engine.sock is connected
         content.append("Monitor: ", style="bold")
-        monitor_running = self.monitor_state and not self.monitor_state.is_stale()
+        monitor_running = bool(self.engine_connected and self.monitor_state)
 
         if monitor_running:
             state = self.monitor_state
             symbol, style = get_daemon_status_style(state.status)
             content.append(f"{symbol} ", style=style)
-            content.append(f"#{state.loop_count}", style="cyan")
-            content.append(f" @{format_interval(state.current_interval)}", style="dim")
+            content.append(f"@{format_interval(state.current_interval)}", style="dim")
             # The daemon stretched its loop because it saw nobody watching;
             # a TUI sees this for up to one loop after re-attaching (its
             # own liveness touch keeps the daemon fast the rest of the time).
             if getattr(state, "interval_mode", "attended") == "unattended":
                 content.append(" (unattended)", style="dim")
-            # A tick slower than the interval means the daemon is alive but
-            # behind. is_stale() already tolerates it (it adds the tick
-            # duration to its window), so say so rather than flip to "stopped".
-            tick_s = getattr(state, "last_tick_duration_seconds", 0.0)
-            if isinstance(tick_s, (int, float)) and tick_s > state.current_interval:
+            # A tick slower than the interval: the daemon is alive but behind
+            tick_s = getattr(state, "slow_tick_seconds", None)
+            if isinstance(tick_s, (int, float)):
                 content.append(f" ⚠daemon slow ({tick_s:.1f}s tick)", style="bold yellow")
             # Version mismatch warning
             if state.daemon_version != DAEMON_VERSION:
@@ -243,7 +184,7 @@ class DaemonStatusBar(Static):
                 content.append(f" ⚠{state.untracked_window_count} untracked", style="bold yellow")
         else:
             content.append("○ ", style="red")
-            content.append("stopped", style="red")
+            content.append("not running", style="red")
 
         content.append(" │ ", style="dim")
 
@@ -466,7 +407,8 @@ class DaemonStatusBar(Static):
         if monitor_running and self.monitor_state.presence_available:
             content.append(" │ ", style="dim")
             state = self.monitor_state.presence_state
-            idle = self.monitor_state.presence_idle_seconds or 0
+            since = self.presence_idle_since
+            idle = max(0.0, time.time() - since) if isinstance(since, (int, float)) else 0
 
             state_names = {0: "⏻", 1: "🔒", 2: "🧘", 3: "🚶", 4: "🏃"}
             state_colors = {0: "#1a1a2e", 1: "red", 2: "orange1", 3: "yellow", 4: "green"}

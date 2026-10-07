@@ -340,45 +340,6 @@ class TestTuiPaneTarget:
         assert tui_tmux_socket({"TMUX": ""}) is None
 
 
-class TestTmuxCmdTargetsOwnServer:
-    """Does ``-L $OVERCODE_TMUX_SOCKET`` (or a bare tmux) reach this pane's server?"""
-
-    def test_bare_tmux_follows_the_tmux_variable(self):
-        from overcode.tmux_utils import tmux_cmd_targets_own_server
-
-        assert tmux_cmd_targets_own_server({"TMUX": "/tmp/tmux-1/default,1,0"}) is True
-        assert tmux_cmd_targets_own_server({}) is False  # no own server outside tmux
-
-    def test_label_resolved_under_tmpdir_and_compared_by_real_path(self, tmp_path):
-        from overcode.tmux_utils import tmux_cmd_targets_own_server
-
-        uid = os.getuid()
-        real = tmp_path / "real"
-        (real / f"tmux-{uid}").mkdir(parents=True)
-        link = tmp_path / "link"
-        link.symlink_to(real)  # /tmp -> /private/tmp on macOS
-        env = {
-            "TMUX_TMPDIR": str(link),
-            "OVERCODE_TMUX_SOCKET": "agents",
-            "TMUX": f"{real}/tmux-{uid}/agents,1,0",
-        }
-        assert tmux_cmd_targets_own_server(env) is True
-        env["OVERCODE_TMUX_SOCKET"] = "other"
-        assert tmux_cmd_targets_own_server(env) is False
-        env["TMUX_TMPDIR"] = str(tmp_path / "elsewhere")
-        env["OVERCODE_TMUX_SOCKET"] = "agents"
-        assert tmux_cmd_targets_own_server(env) is False
-
-    def test_default_directory_is_tmp(self):
-        from overcode.tmux_utils import tmux_cmd_targets_own_server
-
-        uid = os.getuid()
-        env = {"OVERCODE_TMUX_SOCKET": "sock", "TMUX": f"/tmp/tmux-{uid}/sock,1,0"}
-        assert tmux_cmd_targets_own_server(env) is True
-        env["TMUX"] = f"/tmp/tmux-{uid}/default,1,0"
-        assert tmux_cmd_targets_own_server(env) is False
-
-
 class TestQueryPaneAttended:
     """One display-message per call; None whenever tmux cannot answer."""
 

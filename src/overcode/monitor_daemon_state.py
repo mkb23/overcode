@@ -160,6 +160,8 @@ class SessionDaemonState:
 
     # Last user command (from history.jsonl)
     last_command: Optional[str] = None
+    # Open PR for the agent's branch (transcript pr-link or pane, #489)
+    pr_number: Optional[int] = None
 
     # Oversight system
     oversight_policy: str = "wait"

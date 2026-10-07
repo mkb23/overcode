@@ -8,7 +8,6 @@ TODO: Split this file into smaller modules for maintainability:
 - tui_keybindings.py: Key bindings and input handling
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional
 import sys
@@ -30,12 +29,11 @@ from .job_manager import Job, JobManager
 from .job_launcher import JobLauncher
 from .launcher import AgentLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import HistoryFile, synthesize_remote_stats
-from .stats_reader import stats_reader_for_session
+from .status_constants import DEFAULT_CAPTURE_LINES
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
-from .settings import touch_tui_attended, TUI_ATTENDED_TOUCH_SECONDS
 from .monitor_daemon_state import get_monitor_daemon_state
+from . import tui_engine
+from .engine_socket import EngineClient
 from .monitor_daemon import (
     is_monitor_daemon_running,
 )
@@ -43,7 +41,6 @@ from .pid_utils import is_daemon_lock_held, spawn_daemon
 from .tmux_utils import _build_tmux_cmd as _tmux_base
 from .tmux_utils import (
     query_pane_attended,
-    tmux_cmd_targets_own_server,
     tui_pane_target,
     tui_tmux_socket,
 )
@@ -55,32 +52,20 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
 from .implementations import RealTmux
-from .pane_capture_gate import PaneChangeTracker
 from .tmux_utils import get_pane_base_index, SSH_PROXY_WINDOW_PREFIX
 from .worker_guard import single_flight, worker_cancelled
 from .tui_helpers import (
     format_duration,
-    get_git_diff_stats,
-    get_git_untracked_count,
 )
-from .monitor_daemon_core import parse_datetime_safe
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
     compute_child_counts,
     running_job_counts,
     compute_tree_metadata,
-    compute_stall_state,
-    first_sight_stall_is_unvisited,
-    should_send_stall_notification,
-    compute_active_session_names,
     compute_session_widget_diff,
     detect_display_changes,
-    select_capture_sessions,
-    gate_capture_ids,
-    gate_worth_a_listing,
     windows_needing_resize,
-    should_scan_git,
 )
 from .tui_widgets import (
     HelpOverlay,
@@ -127,20 +112,23 @@ from .tui_actions.mentor import MentorMixin
 HEARTBEAT_LOG_MAX_ENTRIES = 10_000
 
 # Periodic timer cadences (seconds). These are the product's freshness
-# contract (focused status 250 ms, non-focused via the daemon at 1 s, token
-# columns 5 s, sessions 10 s, resize 15 s, timeline 30 s) and are never
-# changed to save CPU. heartbeat_probe is the event-loop diagnostic;
-# attended_watch is the "is anyone looking" poll and unattended_status the
-# one timer that runs only while nobody is (see PAUSED_WHEN_UNATTENDED).
+# contract and are never changed to save CPU. Since 0.6.0 the TUI is a view
+# of the engine (docs/design/engine-0.6.md): statuses, stats, git and burn
+# arrive on engine.sock as the engine publishes them, so no timer here
+# detects, reads stats or polls the daemon's state file. What remains:
+# focused_pane is the one capture loop (the focused agent's terminal, for
+# its pane-derived columns and the preview) and the row clock (durations
+# and countdowns tick); daemon_status is the status bar's local checks
+# (supervisor/API server/summarizer processes, usage, mean spin) and the
+# engine-connection watch; heartbeat_probe is the event-loop diagnostic;
+# attended_watch is the "is anyone looking" poll the engine is told about.
 TIMER_INTERVALS = {
     "heartbeat_probe": 0.1,
-    "fast_status": 0.25,
+    "focused_pane": 0.25,
     "daemon_status": 1,
     "focused_job_pane": 1,
     "attended_watch": 1,
     "focused_sister": 1.5,
-    "unattended_status": 2,
-    "slow_stats": 5,
     "summarizer": 5,
     "refresh_jobs": 5,
     "heartbeat_flush": 5,
@@ -155,26 +143,19 @@ TIMER_INTERVALS = {
 
 # Initial delay before each timer's first tick. The intervals above share
 # common multiples (5/10/15/30 s), so timers started at the same instant fire
-# together forever: every fifth second used to launch the 8-thread stats
-# executor, git subprocesses, a tmux list-windows, the jobs refresh and
-# several main-thread apply callbacks at once, and the event-loop probe
-# showed main-thread stalls over 150 ms were seven times more frequent
-# inside that window. Distinct offsets (mod 5 s) spread the burst without
-# touching any cadence. The >= 1 s timers are also kept off each other and
-# off the 250 ms fast-status grid: a 1 s timer at phase .55 never meets a
-# 15 s timer at phase .7, and an offset that is not a multiple of 0.25
-# never lands on a fast tick (the hour-long test in test_tui_timers checks
-# every pair). The 0.25 s and 0.1 s timers are the grid itself and stay at
-# phase 0.
+# together forever and their main-thread apply callbacks stack up. Distinct
+# offsets (mod 5 s) spread them without touching any cadence. The >= 1 s
+# timers are also kept off each other and off the 250 ms focused-pane grid:
+# an offset that is not a multiple of 0.25 never lands on a focused tick
+# (the hour-long test in test_tui_timers checks every pair). The 0.25 s and
+# 0.1 s timers are the grid itself and stay at phase 0.
 TIMER_PHASE_OFFSETS = {
     "heartbeat_probe": 0.0,
-    "fast_status": 0.0,
+    "focused_pane": 0.0,
     "daemon_status": 1.55,
     "focused_job_pane": 0.85,
     "attended_watch": 0.45,
     "focused_sister": 0.15,
-    "unattended_status": 0.8,
-    "slow_stats": 0.35,
     "agent_resize": 0.7,
     "refresh_jobs": 1.1,
     "refresh_sessions": 2.3,
@@ -188,22 +169,19 @@ TIMER_PHASE_OFFSETS = {
 }
 
 # Timers paused while no tmux client is attached to the pane the TUI runs
-# in (scaling audit, cross-cutting: nothing was gated on anyone watching).
-# Every pane capture, stats sweep, sister poll, jobs/sessions refresh,
-# resize sweep and render-driving apply callback is here. What keeps
-# running: attended_watch (the signal itself, one tmux command a second),
-# unattended_status (a 2 s stat-gated read of the daemon's published state
-# that drives stall bells and notifications with no capture), and the two
-# cheap flush timers that drain buffers. The whole set resumes, and a full
-# refresh runs, the moment a client attaches again (_on_attended_changed).
+# in: the capture, the clock, every refresh and every render-driving apply.
+# What keeps running: attended_watch (the signal itself, one tmux command a
+# second) and the cheap flush timers that drain buffers. The engine keeps
+# recording, and its bells still reach this TUI (notifications go out while
+# detached). The whole set resumes, and a full refresh runs, the moment a
+# client attaches again (_on_attended_changed).
 PAUSED_WHEN_UNATTENDED = frozenset(
     {
         "heartbeat_probe",
-        "fast_status",
+        "focused_pane",
         "daemon_status",
         "focused_job_pane",
         "focused_sister",
-        "slow_stats",
         "summarizer",
         "refresh_jobs",
         "refresh_sessions",
@@ -213,11 +191,12 @@ PAUSED_WHEN_UNATTENDED = frozenset(
     }
 )
 
-# The mirror image: timers that run only while nobody is attached, paused
-# the rest of the time. Both sets are read by _start_periodic (a timer's
-# initial pause state, decided when its delayed start lands) and by
-# _on_attended_changed (the flip).
-RUNS_ONLY_WHEN_UNATTENDED = frozenset({"unattended_status"})
+# A dropped or absent engine.sock is shown after this long (a normal start
+# connects well within it), and the daemon is (re)started at most this often
+# while the engine stays away.
+ENGINE_BANNER_GRACE_SECONDS = 1.5
+ENGINE_RESTART_EVERY_SECONDS = 10.0
+ENGINE_BANNER_TEXT = "  ⚠ engine not running — starting…  (showing the last known state)  "
 
 
 class SupervisorTUI(
@@ -429,10 +408,6 @@ class SupervisorTUI(
         # One manager per process: the launcher's reads share the app's
         # stat-gated snapshot instead of parsing sessions.json a second time.
         self.launcher = AgentLauncher(tmux_session, session_manager=self.session_manager)
-        # One history.jsonl reader for the app's lifetime, so its mtime+size
-        # gate carries across the 5 s stats sweeps (a fresh HistoryFile per
-        # sweep re-parsed the whole file every time).
-        self._history_file = HistoryFile()
         from .settings import resolve_detection_mode
         detection_mode = resolve_detection_mode(tmux_session)
         self.detector = StatusDetectorDispatcher(tmux_session, mode=detection_mode)
@@ -470,38 +445,26 @@ class SupervisorTUI(
 
         # Suppress focus watcher during command bar interaction etc.
         self._suppress_focus_watcher = False
-        # Track previous status of each session for detecting transitions to stalled state
-        self._previous_statuses: dict[str, str] = {}
-        # Track when each session first stalled (monotonic time) for deferred notifications
-        self._stall_start_times: dict[str, float] = {}
-        # Sessions we've already sent a macOS notification for (current stall)
-        self._notified_stalls: set[str] = set()
-        # Debounce: when each session last entered green (working) state
-        self._non_stall_since: dict[str, float] = {}
         # Timers for auto-dismissing bell when the stalled agent is already focused
         self._bell_dismiss_timers: dict[str, object] = {}
-        # Flag to prevent overlapping fast-path updates. It is checked on the
-        # main thread before a worker is even submitted, and the fast path
-        # is deliberately not coupled to any other worker group. Every other
-        # periodic thread worker carries @single_flight (worker_guard): a
-        # tick or explicit refresh that arrives mid-run is coalesced into
-        # one rerun after it, never stacked and never dropped.
-        self._status_update_in_progress = False
-        # Fast-path tick counter and last captured pane text per session.
-        # Non-focused agents are captured round-robin (see
-        # tui_logic.select_capture_sessions); on ticks they're skipped, the
-        # cached text keeps their bash/subagent columns and preview stable.
-        self._status_tick = 0
-        self._pane_content_cache: dict[str, str] = {}
-        # Last applied activity per session, replayed on skipped ticks so the
-        # activity column holds steady when the daemon can't supply one.
-        self._activity_cache: dict[str, str] = {}
-        # Per-session pane change signature at its last capture: the rotation's
-        # non-focused picks are captured only when one list-panes per tick says
-        # the pane moved (tui_logic.gate_capture_ids, audit R11).
-        self._pane_change_tracker = PaneChangeTracker()
-        # Slow-path sweep counter: git scans run every Nth sweep
-        self._stats_sweep = 0
+        # The engine (docs/design/engine-0.6.md): this TUI subscribes to
+        # engine.sock and renders what it publishes. The client is started
+        # on mount; _engine_agents is the last snapshot's agents.
+        self._engine_client: Optional[EngineClient] = None
+        self._engine_connected: bool = False
+        self._engine_agents: dict = {}
+        self._engine_fleet: dict = {}
+        self._engine_down_since: float = time.monotonic()
+        self._engine_start_attempt: float = float("-inf")
+        self._engine_focus: Optional[str] = None
+        self._engine_pending = None  # the latest snapshot, not yet applied
+        self._engine_apply_posted = False
+        # Visits this TUI made that the engine may not have published yet
+        self._visited_here: dict[str, float] = {}
+        # The focused-pane capture in flight (one at a time, never queued)
+        self._focused_capture_in_flight = False
+        # Rows changed while detached; repainted on re-attach
+        self._repaint_on_attach = False
         # Track whether sessions have been loaded at least once (for startup sequencing)
         self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
@@ -521,16 +484,9 @@ class SupervisorTUI(
         self.attended: bool = True
         self._tui_tmux_pane: Optional[str] = tui_pane_target()
         # This pane's own server, which the poll addresses explicitly (a
-        # pane id means nothing on another server), and whether that is
-        # the server the agents session's pane listing comes from.
+        # pane id means nothing on another server).
         self._tui_tmux_socket: Optional[str] = tui_tmux_socket()
-        self._listing_is_own_server: bool = tmux_cmd_targets_own_server()
         self._tui_tmux_session: Optional[str] = None  # learned from the first poll
-        # (attached count, monotonic) from the fast path's own list-panes,
-        # when this pane is in the agents session: a reading under a second
-        # old saves the watch its tmux command.
-        self._attached_reading: Optional[tuple] = None
-        self._last_attended_touch: float = 0.0
         # Every periodic Timer by TIMER_INTERVALS name, for pause/resume.
         self._periodic_timers: dict[str, object] = {}
         # SSH proxy windows for remote agents: session_id -> tmux window name
@@ -598,9 +554,6 @@ class SupervisorTUI(
         self.has_sisters: bool = self._sister_poller.has_sisters
         self.local_hostname: str = self._sister_poller.local_hostname
         self._remote_sessions: List[Session] = []
-        # Per-session burn rates over the timeline window, populated by the
-        # daemon-status worker thread (#174).
-        self._session_burn_rates: dict = {}
         from .sister_controller import SisterController
         self._sister_controller = SisterController()
 
@@ -636,7 +589,8 @@ class SupervisorTUI(
     def compose(self) -> ComposeResult:
         """Create child widgets"""
         yield Header(show_clock=True)
-        yield DaemonStatusBar(tmux_session=self.tmux_session, session_manager=self.session_manager, id="daemon-status")
+        yield DaemonStatusBar(tmux_session=self.tmux_session, id="daemon-status")
+        yield Static(ENGINE_BANNER_TEXT, id="engine-banner")
         yield StatusTimeline([], tmux_session=self.tmux_session, id="timeline")
         yield DaemonPanel(tmux_session=self.tmux_session, id="daemon-panel")
         yield TuiLogPanel(tmux_session=self.tmux_session, id="tui-log-panel")
@@ -737,6 +691,7 @@ class SupervisorTUI(
                         severity="warning", timeout=10)
 
         # Auto-start Monitor Daemon if not running
+        self._engine_start_attempt = time.monotonic()
         self._ensure_monitor_daemon()
 
         # Clean up stale SSH proxy windows from previous TUI sessions
@@ -807,8 +762,8 @@ class SupervisorTUI(
             self.refresh_sessions()
         self.update_daemon_status()
         self.update_timeline()
-        # Kick off status fetch immediately (widgets already exist from pre-load)
-        self.update_all_statuses()
+        # Subscribe to the engine: every status, stat and bell arrives here
+        self._start_engine_client()
 
         # Event loop heartbeat probe — on by default (negligible per-tick
         # overhead), but disable via history_retention.event_loop_timing_enabled
@@ -838,10 +793,8 @@ class SupervisorTUI(
             # there on why the long timers are de-phased).
             # Refresh session list every 10 seconds
             self._start_periodic("refresh_sessions", self.refresh_sessions)
-            # Fast status updates every 250ms (detect_status + capture_pane only)
-            self._start_periodic("fast_status", self.update_focused_status)
-            # Slow stats updates every 5s (claude stats + git diff — heavy file I/O)
-            self._start_periodic("slow_stats", self._update_stats_async)
+            # The focused agent's pane, and the row clock, every 250 ms
+            self._start_periodic("focused_pane", self._focused_pane_tick)
             self._start_periodic("daemon_status", self.update_daemon_status)
             # Update timeline every 30 seconds
             self._start_periodic("timeline", self.update_timeline)
@@ -862,11 +815,8 @@ class SupervisorTUI(
             # misfires after splits/zooms leave windows stuck at the old size.
             self._start_periodic("agent_resize", self._periodic_agent_resize)
             # Unattended low-power mode: once a second ask tmux whether a
-            # client is attached to this pane, and touch the liveness file
-            # that keeps the daemon fast; the 2 s daemon-status read runs
-            # only while none is.
+            # client is attached to this pane; the engine is told (visible).
             self._start_periodic("attended_watch", self._attended_watch_tick)
-            self._start_periodic("unattended_status", self._unattended_status_tick)
 
         # Apply initial jobs mode if requested (e.g. --jobs flag)
         if self._initial_jobs_mode:
@@ -882,21 +832,13 @@ class SupervisorTUI(
         resume it. Whether it starts paused is decided when it actually
         starts — after the delay — from the attended state at that moment:
         a PAUSED_WHEN_UNATTENDED timer starts paused while nobody is
-        attached, a RUNS_ONLY_WHEN_UNATTENDED one while somebody is. (A
-        detach during the delay would otherwise leave the unattended read
-        dead until the next attach-detach cycle.)
+        attached.
         """
         interval = TIMER_INTERVALS[name]
         delay = TIMER_PHASE_OFFSETS[name]
 
         def start() -> None:
-            attended = getattr(self, "attended", True)
-            if name in PAUSED_WHEN_UNATTENDED:
-                start_paused = not attended
-            elif name in RUNS_ONLY_WHEN_UNATTENDED:
-                start_paused = attended
-            else:
-                start_paused = False
+            start_paused = name in PAUSED_WHEN_UNATTENDED and not getattr(self, "attended", True)
             self._periodic_timers[name] = self.set_interval(interval, callback, pause=start_paused)
 
         if delay > 0:
@@ -907,29 +849,14 @@ class SupervisorTUI(
     # ── Unattended low-power mode ──────────────────────────────────────
 
     def _attended_watch_tick(self) -> None:
-        """Once a second: refresh the attended state from the cheapest source.
+        """Once a second: ask this pane's own tmux server whether a client is attached.
 
-        The fast path's per-tick ``list-panes`` already carries the agents
-        session's attached-client count; when this pane lives in that
-        session on the same server and such a reading is under a second
-        old it is used and no command is spent. Otherwise one
-        ``display-message`` asks this pane's own server about its session.
-        With no pane (unit tests) there is nothing to ask and the state
-        stays attended. Either way, while attended, the liveness file the
-        monitor daemon watches is touched every TUI_ATTENDED_TOUCH_SECONDS:
-        it is how a TUI outside the agents session — the split lives in the
-        `overcode` session — keeps the daemon fast.
+        One ``display-message`` to the server the pane lives on. With no
+        pane (unit tests) there is nothing to ask and the state stays
+        attended. The engine hears about every change (``visible``).
         """
-        now = time.monotonic()
         if self._tui_tmux_pane is not None:
-            reading = self._attached_reading
-            if reading is not None and now - reading[1] < TIMER_INTERVALS["attended_watch"]:
-                self._set_attended(reading[0] > 0)
-            else:
-                self._poll_attended_async()
-        if self.attended and now - self._last_attended_touch >= TUI_ATTENDED_TOUCH_SECONDS:
-            self._last_attended_touch = now
-            touch_tui_attended(self.tmux_session)
+            self._poll_attended_async()
 
     @work(thread=True, group="attended_watch")
     @single_flight("attended_watch")
@@ -946,23 +873,6 @@ class SupervisorTUI(
         self._tui_tmux_session = session_name
         self._set_attended(attached > 0)
 
-    def _note_pane_listing(self, panes) -> None:
-        """Fast path (worker thread): keep the listing's attached count as a reading.
-
-        Only when this pane is in the agents session on the server the
-        listing came from — a TUI in another session, on another server
-        (OVERCODE_TMUX_SOCKET naming one this pane is not on) or in a plain
-        terminal is not among that session's clients.
-        """
-        if (
-            not panes
-            or not getattr(self, "_listing_is_own_server", False)
-            or getattr(self, "_tui_tmux_session", None) != self.tmux_session
-        ):
-            return
-        first = next(iter(panes.values()))
-        self._attached_reading = (first.session_attached, time.monotonic())
-
     def _set_attended(self, attended: bool) -> None:
         """The single write to the attended state; the watcher does the rest."""
         if attended == self.attended:
@@ -974,15 +884,15 @@ class SupervisorTUI(
         self._on_attended_changed(attended)
 
     def _on_attended_changed(self, attended: bool) -> None:
-        """Watcher: pause or resume the timers, and refresh everything on return.
+        """Watcher: pause or resume the timers, tell the engine, refresh on return.
 
         A resumed Textual timer fires its pending tick at once, so every
         paused path is back within one of its own ticks; the explicit
-        refresh makes that one full pass (sessions, statuses, stats, daemon
-        bar, timeline, jobs, sisters) rather than whatever each timer was
-        due for, and the activity signal wakes the daemon out of its
-        unattended interval within a second. Nothing here runs while the
-        state is unchanged, so an attended TUI behaves exactly as before.
+        refresh makes that one full pass (sessions, rows, daemon bar,
+        timeline, jobs, sisters) rather than whatever each timer was due
+        for. The engine hears ``visible`` either way: it is what keeps the
+        engine on its attended cadences (and wakes an unattended one).
+        Nothing here runs while the state is unchanged.
         """
         for name in PAUSED_WHEN_UNATTENDED:
             timer = self._periodic_timers.get(name)
@@ -992,21 +902,12 @@ class SupervisorTUI(
                 timer.resume()
             else:
                 timer.pause()
-        for name in RUNS_ONLY_WHEN_UNATTENDED:
-            timer = self._periodic_timers.get(name)
-            if timer is None:
-                continue
-            if attended:
-                timer.pause()
-            else:
-                timer.resume()
+        if self._engine_client is not None:
+            self._engine_client.set_visible(attended)
         if attended:
-            now = time.monotonic()
             # The probe measured nothing while paused; a delta spanning the
             # pause would log as one enormous stall.
-            self._heartbeat_last = now
-            self._last_attended_touch = now
-            touch_tui_attended(self.tmux_session)
+            self._heartbeat_last = time.monotonic()
             signal_activity(self.tmux_session)
             self._full_refresh()
 
@@ -1015,154 +916,404 @@ class SupervisorTUI(
         self.refresh_sessions()
         self.update_daemon_status()
         self.update_timeline()
-        self.update_all_statuses()
+        self._repaint_rows()
         self._refresh_jobs()
         if self.has_sisters:
             self._poll_sisters()
 
-    def _unattended_status_tick(self) -> None:
-        """Every 2 s while unattended: daemon-published status drives the bells."""
-        self._fetch_unattended_status_async()
-
-    @work(thread=True, group="unattended_status")
-    @single_flight("unattended_status")
-    def _fetch_unattended_status_async(self) -> None:
-        """Worker: the stat-gated state read — a parse only when the daemon wrote."""
-        daemon_state = get_monitor_daemon_state(self.tmux_session)
-        if (
-            not daemon_state
-            or not daemon_state.sessions
-            or daemon_state.is_stale(buffer_seconds=5.0)
-        ):
-            return
-        statuses = {s.session_id: s.current_status for s in daemon_state.sessions}
-        self.call_from_thread(self._apply_unattended_status, statuses)
-
-    def _apply_unattended_status(self, statuses: dict) -> None:
-        """Main thread: stall bookkeeping and notifications only — no repaint.
-
-        The transition logic the attended path runs (:meth:`_track_stall`)
-        over the daemon's status for every agent that has a widget. Nothing
-        is drawn; the resumed fast path repaints everything within a tick
-        of re-attaching.
-        """
-        prefs_changed = False
-        focused_id = self._selected_session_id()
-        for widget in self.query(SessionSummary):
-            status = statuses.get(widget.session.id)
-            if status is not None and self._track_stall(widget, status, focused_id):
-                prefs_changed = True
-        if prefs_changed:
-            self._save_prefs()
-        self._notifier.flush()
-
     # ── End unattended low-power mode ──────────────────────────────────
 
+    # ── The engine (docs/design/engine-0.6.md) ─────────────────────────
+
+    def _start_engine_client(self) -> None:
+        """Subscribe to engine.sock; the client reconnects by itself for good."""
+        if self._engine_client is not None:
+            return
+        client = EngineClient(
+            tui_engine.engine_socket_path(self.tmux_session),
+            on_change=self._on_engine_change,
+            on_bell=self._on_engine_bell,
+            on_connection=self._on_engine_connection,
+        )
+        self._engine_client = client
+        # Stated now, restated by the client on every (re)connect
+        client.set_visible(self.attended)
+        client.set_burn_window(self._burn_hours() or None)
+        self._report_focus(self._get_focused_widget())
+        client.set_focus(self._engine_focus)
+        client.start()
+
+    def _burn_hours(self) -> float:
+        """The burn window: the same baseline as the mean spin (0: none)."""
+        return (getattr(self, "baseline_minutes", 0) or 0) / 60.0
+
+    def _report_burn_window(self) -> None:
+        """Ask the engine for the current window's burn; re-read what it has."""
+        if self._engine_client is not None:
+            self._engine_client.set_burn_window(self._burn_hours() or None)
+        self._apply_engine_views(force=True)
+
+    def _report_focus(self, widget: Optional["SessionSummary"]) -> None:
+        """Tell the engine which local agent has focus; hand back the old row's pane."""
+        sid = widget.session.id if widget is not None and not widget.session.is_remote else None
+        if sid == self._engine_focus:
+            return
+        for w in self.query(SessionSummary):
+            if w.local_pane and w.session.id != sid:
+                w.end_local_pane()
+        self._engine_focus = sid
+        if self._engine_client is not None:
+            self._engine_client.set_focus(sid)
+
+    class EngineEvent(events.Message):
+        """Something the engine client heard, for the main thread."""
+
+        def __init__(self, kind: str, args: tuple) -> None:
+            super().__init__()
+            self.kind = kind
+            self.args = args
+
+    # The client's callbacks run on its thread. They post a message rather
+    # than call_from_thread, which would block the client on the main
+    # thread (and deadlock an exit that joins the client). Snapshots
+    # coalesce: a burst of deltas is applied once, as the latest.
+
+    def _on_engine_change(self, snapshot) -> None:
+        self._engine_pending = snapshot
+        if not getattr(self, "_engine_apply_posted", False):
+            self._engine_apply_posted = True
+            self.post_message(self.EngineEvent("snapshot", ()))
+
+    def _on_engine_bell(self, agent: str, episode: dict) -> None:
+        self.post_message(self.EngineEvent("bell", (agent, episode)))
+
+    def _on_engine_connection(self, connected: bool) -> None:
+        self.post_message(self.EngineEvent("connection", (connected,)))
+
+    def on_supervisor_tui_engine_event(self, event: "SupervisorTUI.EngineEvent") -> None:
+        if event.kind == "snapshot":
+            self._engine_apply_posted = False
+            snapshot = self._engine_pending
+            if snapshot is not None:
+                self._apply_engine_snapshot(snapshot)
+        elif event.kind == "bell":
+            self._ring(*event.args)
+        elif event.kind == "connection":
+            self._set_engine_connected(*event.args)
+
+    def _apply_engine_snapshot(self, snapshot) -> None:
+        """Main thread: the engine's current snapshot (a full one or a delta applied)."""
+        self._mark_event("apply_engine_start")
+        if not self._engine_connected:
+            # A snapshot means a live connection, whatever order callbacks land in
+            self._set_engine_connected(True)
+        self._engine_agents = snapshot.agents
+        self._engine_fleet = snapshot.fleet
+        self._apply_engine_views()
+        self._mark_event("apply_engine_end")
+
+    def _apply_engine_views(self, force: bool = False) -> None:
+        """Give each local row its agent's view; repaint only the rows that changed.
+
+        ``force`` re-applies unchanged views too (the burn window moved).
+        Fleet-wide flags that decide whether a column shows are recomputed;
+        when one flips, or the aligned column widths move, every row
+        repaints, since every row's layout changed.
+        """
+        agents = self._engine_agents
+        hours = self._burn_hours()
+        changed = []
+        for widget in self.query(SessionSummary):
+            if widget.session.is_remote:
+                continue
+            view = agents.get(widget.session.id)
+            if view is None or (view == widget.engine and not force):
+                continue
+            old_status = widget.detected_status
+            if widget.apply_engine(view, hours, self._visited_here.get(widget.session.id)):
+                changed.append(widget)
+                if self._prefs.status_change_logging and old_status != widget.detected_status:
+                    self._log_status_change(
+                        widget.session.name, old_status, widget.detected_status,
+                        source="engine", focused=widget.session.id == self._engine_focus,
+                    )
+        self._apply_engine_to_status_bar()
+        if not changed:
+            return
+        if self._update_fleet_flags():
+            changed = list(self.query(SessionSummary))
+        if not self.attended:
+            self._repaint_on_attach = True
+            return
+        self._repaint(changed)
+
+    def _repaint(self, changed: list) -> None:
+        """Re-align columns, then repaint ``changed`` (every row if widths moved)."""
+        old_widths = list(self.column_widths)
+        self._column_widths_dirty = True
+        self._recompute_cell_column_widths()
+        rows = list(self.query(SessionSummary)) if self.column_widths != old_widths else changed
+        for widget in rows:
+            widget.refresh_if_changed()
+        if self.preview_visible:
+            self._update_preview()
+
+    def _repaint_rows(self) -> None:
+        """Every row from what it holds now (after a detach, or a full refresh)."""
+        self._repaint_on_attach = False
+        self._update_fleet_flags()
+        self._repaint(list(self.query(SessionSummary)))
+
+    def _update_fleet_flags(self) -> bool:
+        """The any_* column gates that depend on engine data; True if one flipped."""
+        widgets = list(self.query(SessionSummary))
+        flags = {
+            "any_has_burn": any(
+                w.window_burn is not None
+                and (w.window_burn.tokens_per_hour > 0 or w.window_burn.cost_per_hour > 0)
+                for w in widgets
+            ),
+            "any_has_subtree_cost": any(w.subtree_cost_usd > 0 for w in widgets),
+            "any_is_sleeping": any(w.detected_status == "busy_sleeping" for w in widgets),
+            "any_has_status_detail": any(w.status_detail is not None for w in widgets),
+        }
+        flipped = False
+        for widget in widgets:
+            for name, value in flags.items():
+                if getattr(widget, name) != value:
+                    setattr(widget, name, value)
+                    flipped = True
+        return flipped
+
+    def _apply_engine_to_status_bar(self) -> None:
+        """The daemon status bar's fleet fields and the aggregate burn, from the snapshot."""
+        try:
+            bar = self.query_one("#daemon-status", DaemonStatusBar)
+        except NoMatches:
+            return
+        local_ids = {s.id for s in self.sessions if not s.is_remote}
+        agents = {sid: v for sid, v in self._engine_agents.items()
+                  if not local_ids or sid in local_ids}
+        bar.monitor_state = tui_engine.monitor_state(self._engine_fleet, agents)
+        bar.presence_idle_since = self._engine_fleet.get("presence_idle_since")
+        bar.engine_connected = self._engine_connected
+        bar._asleep_session_ids = {s.id for s in self.sessions if s.is_asleep}
+        bar._burn_window_hours = self._burn_hours()
+        bar._burn_stats = tui_engine.fleet_burn(agents, self._burn_hours())
+        if self.attended:
+            bar.refresh()
+
+    def _set_engine_connected(self, connected: bool) -> None:
+        """Main thread: the subscription came up or went away."""
+        if connected == self._engine_connected:
+            return
+        self._engine_connected = connected
+        if connected:
+            self._show_engine_banner(False)
+        else:
+            self._engine_down_since = time.monotonic()
+            # Show the banner at once: the engine was there and went away
+            self._show_engine_banner(True)
+            self._start_engine()
+        try:
+            bar = self.query_one("#daemon-status", DaemonStatusBar)
+            bar.engine_connected = connected
+            bar.refresh()
+        except NoMatches:
+            pass
+
+    def _engine_watch(self) -> None:
+        """Each second: a missing engine is shown, and started again now and then."""
+        if self._engine_connected:
+            return
+        now = time.monotonic()
+        if now - self._engine_down_since >= ENGINE_BANNER_GRACE_SECONDS:
+            self._show_engine_banner(True)
+        if now - self._engine_start_attempt >= ENGINE_RESTART_EVERY_SECONDS:
+            self._start_engine()
+
+    def _start_engine(self) -> None:
+        """Start the monitor daemon (the engine) unless it is already starting."""
+        self._engine_start_attempt = time.monotonic()
+        self._ensure_monitor_daemon()
+
+    def _show_engine_banner(self, show: bool) -> None:
+        """The "engine not running" banner; the agent list dims while it shows."""
+        try:
+            banner = self.query_one("#engine-banner", Static)
+            container = self.query_one("#sessions-container", ScrollableContainer)
+        except NoMatches:
+            return
+        if show:
+            banner.add_class("visible")
+            container.add_class("engine-stale")
+        else:
+            banner.remove_class("visible")
+            container.remove_class("engine-stale")
+
+    def _ring(self, agent: str, episode: dict) -> None:
+        """Main thread: the engine rang the bell for ``agent`` (an input-needed episode began).
+
+        The row lights 🔔 (the next delta says the same), a macOS
+        notification goes out, and if the person is already on that agent
+        it counts as seen after a few seconds.
+        """
+        widget = next((w for w in self.query(SessionSummary) if w.session.id == agent), None)
+        name = episode.get("name") or (widget.session.name if widget is not None else agent)
+        task = widget.current_activity if widget is not None else None
+        if widget is not None and not widget.session.is_asleep:
+            widget.is_unvisited_stalled = True
+            if self.attended:
+                widget.refresh()
+        self._notifier.queue(name, task)
+        self._notifier.flush()
+        if self.attended and self._selected_session_id() == agent:
+            self._schedule_bell_dismiss(agent)
+
+    def _visit(self, session_id: str) -> None:
+        """The person looked at ``session_id``: tell the engine, clear the 🔔 now."""
+        self._visited_here[session_id] = time.time()
+        self._bell_dismiss_timers.pop(session_id, None)
+        widget = next((w for w in self.query(SessionSummary) if w.session.id == session_id), None)
+        if widget is not None and not widget.session.is_remote and self._engine_client is not None:
+            self._engine_client.visit(session_id)
+        if widget is not None and widget.is_unvisited_stalled:
+            widget.is_unvisited_stalled = False
+            widget.refresh()
+
+    # ── The focused agent's pane: the one capture loop ─────────────────
+
+    def _focused_pane_tick(self) -> None:
+        """Every 250 ms: capture the focused agent's pane; tick every row's clock.
+
+        The capture feeds the focused row's pane-derived columns (and the
+        preview); the rest of the row, and every other row, is the engine's.
+        The same worker re-reads the session table (a stat while
+        sessions.json is unchanged). The clock repaints a row only if it
+        would now draw differently (a duration or countdown moved).
+        """
+        if not self._focused_capture_in_flight:
+            widget = self._get_focused_widget()
+            window = None
+            if (
+                widget is not None
+                and self.in_split  # an app built without the split (tests) never reaches tmux
+                and self.tui_mode != "jobs"
+                and not widget.session.is_remote
+                and widget.session.status not in ("terminated", "done")
+                and widget.session.tmux_window
+            ):
+                window = widget.session.tmux_window
+            self._focused_capture_in_flight = True
+            self._capture_focused_async(widget.session.id if window else None, window)
+        for row in self.query(SessionSummary):
+            row.refresh_if_changed()
+        self._notifier.flush()
+        # Proactive focus recovery: if focus was lost or landed on a
+        # non-interactive widget (e.g. a click on the preview pane), restore
+        # it within a tick so the selection highlight never disappears.
+        if self._should_recover_focus():
+            focused = self._get_focused_widget()
+            if focused is not None:
+                focused.focus()
+
+    @work(thread=True, exclusive=True, group="focused_pane")
+    def _capture_focused_async(self, session_id: Optional[str], window: Optional[str]) -> None:
+        """Worker: one capture-pane of the focused agent (if any), and the session table.
+
+        The session table is a stat while sessions.json is unchanged; a
+        changed one (a rename, standing orders, a value) reaches the rows
+        within a tick.
+        """
+        try:
+            content = (self.detector.get_pane_content(window) or "") if window else None
+            fresh = {s.id: s for s in self.session_manager.list_sessions()}
+            self.call_from_thread(self._apply_focused_capture, session_id, content, fresh)
+        finally:
+            self._focused_capture_in_flight = False
+
+    def _apply_focused_capture(self, session_id: Optional[str], content: Optional[str],
+                               fresh: dict) -> None:
+        """Main thread: the focused row's pane, and fresh session metadata for every row."""
+        self._mark_event("apply_focused_start")
+        changed = []
+        focused_id = self._selected_session_id()
+        for widget in self.query(SessionSummary):
+            new_sess = fresh.get(widget.session.id)
+            if new_sess is not None and new_sess is not widget.session:
+                widget.session = new_sess
+                if "pr_number" not in widget.engine:
+                    widget.pr_number = new_sess.pr_number
+                changed.append(widget)
+            if content is not None and widget.session.id == session_id == focused_id:
+                widget.local_pane = True
+                if widget.apply_pane_content(content) and widget not in changed:
+                    changed.append(widget)
+        if changed:
+            self._repaint(changed)
+        self._mark_event("apply_focused_end")
+
+    # ── The status bar ─────────────────────────────────────────────────
+
     def update_daemon_status(self) -> None:
-        """Update daemon status bar (kicks off background worker)"""
+        """Each second: the engine watch, and the status bar's own local checks."""
+        self._engine_watch()
         self._fetch_daemon_status_async()
 
     @work(thread=True, group="daemon_status")
     @single_flight("daemon_status")
     def _fetch_daemon_status_async(self) -> None:
-        """Fetch daemon status off the main thread, then apply to UI."""
+        """Worker: what the status bar shows that is not about agents.
+
+        Whether the supervisor and API server are running and the
+        summarizer is reachable (pid files), the account's usage (fetched
+        at most every 5 minutes) and the mean spin over the baseline window
+        (the daemon's history CSV, read incrementally). Everything about
+        the agents themselves comes from the engine's snapshot.
+        """
         try:
             daemon_bar = self.query_one("#daemon-status", DaemonStatusBar)
         except NoMatches:
             return
-
-        # All I/O happens here in the worker thread
-        monitor_state = get_monitor_daemon_state(self.tmux_session)
+        agents = list(self._engine_agents.values())
         # Subscription usage is fleet-level, not per-agent: the widget shows
         # the user's own Claude limits, which stay true for a mixed fleet as
-        # long as one agent is on a subscription-metered backend. Skip the
-        # API call entirely when none is.
-        if self._fleet_has_subscription_usage(monitor_state):
+        # long as one agent is on a subscription-metered backend.
+        if self._fleet_has_subscription_usage(agents):
             self._usage_monitor.fetch()  # Internally throttled to 5min
-        from .settings import get_monitor_daemon_pid_path
-        daemon_lock_held = is_daemon_lock_held(get_monitor_daemon_pid_path(self.tmux_session))
-
-        # Gather data that DaemonStatusBar.update_status() would fetch. One
-        # list_sessions() per tick: the same list feeds the asleep set here
-        # and the burn-window computation in fetch_volatile_state() below.
-        sessions = None
-        asleep_ids = set()
-        if daemon_bar._session_manager:
-            sessions = daemon_bar._session_manager.list_sessions()
-            asleep_ids = {
-                s.id for s in sessions
-                if s.is_asleep and s.tmux_session == self.tmux_session
-            }
-
-        # Pre-compute active session names for spin rate calculation
-        active_session_names = compute_active_session_names(
-            monitor_state.sessions if monitor_state and monitor_state.sessions else [],
-            asleep_ids,
+        asleep = {s.id for s in self.sessions if s.is_asleep}
+        active_names = [v.get("name") for sid, v in self._engine_agents.items()
+                        if sid not in asleep and v.get("name")]
+        daemon_bar.fetch_local_state(
+            baseline_minutes=getattr(self, "baseline_minutes", 0),
+            active_session_names=active_names,
         )
-
-        # Fetch all volatile I/O state for the status bar (PID checks, CSV reads, etc.)
-        baseline_minutes = getattr(self, 'baseline_minutes', 0)
-        daemon_bar.monitor_state = monitor_state
-        daemon_bar._asleep_session_ids = asleep_ids
-        # Sister states for footer display (#245)
         if self.has_sisters:
             daemon_bar._sister_states = self._sister_poller.get_sister_states()
-        daemon_bar.fetch_volatile_state(
-            baseline_minutes=baseline_minutes,
-            active_session_names=active_session_names,
-            sessions=sessions,
-        )
+        self.call_from_thread(self._apply_daemon_status, daemon_bar)
 
-        # Apply results on main thread
-        self.call_from_thread(
-            self._apply_daemon_status, daemon_bar, monitor_state, daemon_lock_held, asleep_ids
-        )
-
-    def _fleet_has_subscription_usage(self, monitor_state) -> bool:
+    def _fleet_has_subscription_usage(self, agents: list) -> bool:
         """True when any agent runs on a subscription-metered backend.
 
         An empty fleet counts as yes — the widget is about the user's
         account, and hiding it on an idle dashboard would read as a bug.
         """
+        from types import SimpleNamespace
+
         from .backends import BackendCapability, session_supports
-        sessions = getattr(monitor_state, "sessions", None) if monitor_state else None
-        if not sessions:
+        if not agents:
             return True
         return any(
-            session_supports(s, BackendCapability.SUBSCRIPTION_USAGE)
-            for s in sessions
+            session_supports(SimpleNamespace(backend=v.get("backend")),
+                             BackendCapability.SUBSCRIPTION_USAGE)
+            for v in agents
         )
 
-    def _apply_daemon_status(
-        self,
-        daemon_bar: "DaemonStatusBar",
-        monitor_state,
-        daemon_lock_held: bool,
-        asleep_ids: set,
-    ) -> None:
-        """Apply daemon status results on main thread (no I/O)."""
-        self._mark_event("apply_daemon_start")
-        daemon_bar.monitor_state = monitor_state
-        daemon_bar._asleep_session_ids = asleep_ids
+    def _apply_daemon_status(self, daemon_bar: "DaemonStatusBar") -> None:
+        """Main thread: repaint the status bar (no I/O)."""
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
-        # Stash per-session burn rates so the burn-rate column can read them
-        # without redoing the JSONL parse on the main thread (#174). Then
-        # push the fresh values directly to each SessionSummary widget and
-        # refresh — otherwise the column waits until the next update_sessions
-        # cycle to pick up new values, which is gated on session changes.
-        burn = daemon_bar._burn_stats
-        burn_rates = dict(burn.per_session) if burn and burn.per_session else {}
-        self._session_burn_rates = burn_rates
-        any_has_burn = any(
-            b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
-            for b in burn_rates.values()
-        )
-        for widget in self.query(SessionSummary):
-            widget.window_burn = burn_rates.get(widget.session.id)
-            widget.any_has_burn = any_has_burn
-            widget.refresh()
+        daemon_bar.engine_connected = self._engine_connected
         daemon_bar.refresh()
-        self._mark_event("apply_daemon_end")
 
     def update_timeline(self) -> None:
         """Update the status timeline widget (kicks off background worker)"""
@@ -1343,6 +1494,7 @@ class SupervisorTUI(
 
     def _apply_sessions(self, sessions: list) -> None:
         """Apply refreshed session list on main thread (no I/O)."""
+        self._gc_terminated_sessions()
         # Detect new sessions for timeline refresh (#244)
         old_names = {s.name for s in self.sessions}
         # Which agent is highlighted, read against the *old* order — the
@@ -1391,9 +1543,6 @@ class SupervisorTUI(
             self.update_daemon_status()
             # Select first agent immediately (no timer delay)
             self._select_first_agent()
-            # Kick off immediate status fetch for first agent so preview pane
-            # populates right away instead of staying blank until 250ms timer (#245)
-            self.update_all_statuses()
 
     def _recalc_column_widths(self, sessions) -> bool:
         """Recalculate max name/repo/branch widths and name-match flag.
@@ -1765,6 +1914,7 @@ class SupervisorTUI(
                 source="focus_switch", focused=True,
             )
         widget.focus()
+        self._report_focus(widget)
         if self.preview_visible:
             self._update_preview()
         # Only sync tmux on explicit user navigation, not programmatic restores.
@@ -1775,325 +1925,6 @@ class SupervisorTUI(
             self._user_navigated = False
             self._sync_tmux_window(widget)
             self._fix_window_size_if_needed(widget)
-
-    def update_focused_status(self) -> None:
-        """Update all session statuses every 250ms.
-
-        All data fetching (tmux capture_pane, claude stats, git diff) happens
-        in a background thread with ThreadPoolExecutor parallelism, so updating
-        all widgets is no more expensive than updating one.
-        """
-        # Skip if an update is already in progress
-        if self._status_update_in_progress:
-            return
-
-        widgets = list(self.query(SessionSummary))
-        if not widgets:
-            return
-
-        self._status_update_in_progress = True
-        self._fetch_statuses_async(widgets)
-
-    def update_all_statuses(self) -> None:
-        """Trigger full async refresh of all session widgets.
-
-        Kicks off both the fast path (detect_status) and slow path (stats/git).
-        Primarily used for manual refresh ('r' key) and initial load.
-        """
-        # Fast path
-        if not self._status_update_in_progress:
-            widgets = list(self.query(SessionSummary))
-            if widgets:
-                self._status_update_in_progress = True
-                self._fetch_statuses_async(widgets)
-        # Slow path
-        self._update_stats_async()
-
-    @work(thread=True, exclusive=True, group="fast_status")
-    def _fetch_statuses_async(self, widgets: list) -> None:
-        """Fast path: fetch detect_status (capture_pane) only, every 250ms.
-
-        This is the critical path for responsive preview pane updates.
-        Heavy operations (claude stats, git diff) run on a separate 5s timer.
-        """
-        try:
-            # Load fresh session data (this does file I/O but we're in a thread)
-            fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
-
-            # Build list of sessions to check (use fresh data if available)
-            sessions_to_check = []
-            for widget in widgets:
-                session = fresh_sessions.get(widget.session.id, widget.session)
-                sessions_to_check.append((widget.session.id, session))
-
-            # Fetch only detect_status (capture_pane) in parallel — no heavy I/O
-            # Non-focused agents use reduced capture lines (STATUS_CAPTURE_LINES)
-            # since their pane content is only needed for status detection, not preview.
-            focused_w = self._get_focused_widget()
-            focused_session_id = focused_w.session.id if focused_w else None
-
-            # Daemon state is read once, up front. It only decides, in the
-            # enrichment below, whether a non-focused agent's status comes
-            # from the daemon or from its last known value — never how many
-            # panes this tick captures: the rotation is the same with a
-            # fresh, slow, or absent daemon (tui_logic.select_capture_sessions).
-            daemon_state = get_monitor_daemon_state(self.tmux_session)
-            daemon_fresh = bool(
-                daemon_state and daemon_state.sessions
-                and not daemon_state.is_stale(buffer_seconds=5.0)
-            )
-            self._status_tick += 1
-            content_cache = self._pane_content_cache
-            activity_cache = self._activity_cache
-            session_ids = [sid for sid, _ in sessions_to_check]
-            capture_ids = select_capture_sessions(
-                session_ids,
-                focused_session_id,
-                self._status_tick,
-                # Never-captured sessions get one immediate capture so their
-                # status and pane columns are right on first sight.
-                always_ids={sid for sid in session_ids if sid not in content_cache},
-            )
-            # One list-panes per tick says which of the rotation's picks
-            # actually changed, so an idle non-focused pane costs no
-            # capture-pane; the focused pane is captured every tick
-            # regardless, and a listing that fails leaves the rotation as
-            # it is. Only worth the command when the rotation would issue
-            # more than one non-focused capture per tick.
-            n_nonfocused = sum(1 for sid in session_ids if sid != focused_session_id)
-            if gate_worth_a_listing(n_nonfocused):
-                panes = self._tmux.list_panes(self.tmux_session)
-                self._note_pane_listing(panes)
-                capture_ids = gate_capture_ids(
-                    capture_ids,
-                    focused_session_id,
-                    {sid: s.tmux_window for sid, s in sessions_to_check if not s.is_remote},
-                    panes,
-                    self._pane_change_tracker,
-                    time.monotonic(),
-                )
-
-            def fetch_status(session):
-                try:
-                    if session.is_remote:
-                        return (session.stats.current_state or "running", session.stats.current_task, session.pane_content or "")
-                    if session.id not in capture_ids:
-                        # Skipped this tick (rotation): repeat the last known
-                        # status and activity — a fresh daemon overrides both
-                        # below — and reuse the last captured text so the
-                        # pane-derived columns don't flicker to empty.
-                        return (
-                            self._previous_statuses.get(session.id, STATUS_WAITING_USER),
-                            activity_cache.get(session.id, ""),
-                            content_cache.get(session.id, ""),
-                        )
-                    if session.status == "terminated":
-                        # Re-check to detect revival (window is uncontested)
-                        return self.detector.detect_status(session)
-                    if session.status == "done":
-                        # Still capture pane content so preview shows output
-                        content = self.detector.get_pane_content(session.tmux_window) or ""
-                        return ("done", "Completed", content)
-                    # Focused agent: full capture for preview pane display
-                    # Non-focused: reduced capture for status detection only
-                    capture = 0 if session.id == focused_session_id else STATUS_CAPTURE_LINES
-                    return self.detector.detect_status(session, num_lines=capture)
-                except Exception:
-                    return (STATUS_WAITING_USER, "Error", "")
-
-            sessions = [s for _, s in sessions_to_check]
-            with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
-                results = list(executor.map(fetch_status, sessions))
-
-            # Package results with session IDs
-            status_results = {}
-            raw_statuses = {}
-            _diag = self._prefs.status_change_logging
-            for (session_id, _), status_result in zip(sessions_to_check, results):
-                status_results[session_id] = status_result
-                if session_id in capture_ids:
-                    content_cache[session_id] = status_result[2] or ""
-                if _diag:
-                    raw_statuses[session_id] = status_result[0]
-            # Drop cache entries for sessions no longer displayed
-            for stale_id in [sid for sid in content_cache if sid not in status_results]:
-                del content_cache[stale_id]
-            self._pane_change_tracker.forget(status_results)
-
-            # Enrich non-focused agents with daemon state (#291)
-            # The focused agent keeps its detect_status result for preview pane
-            # responsiveness. Non-focused agents use daemon's current_status
-            # directly when available and fresh (< 5s old), which includes
-            # heartbeat, oversight, and other enrichments already applied by
-            # the daemon.
-            # IMPORTANT: reuse focused_session_id from capture phase (line 850)
-            # to avoid a race where focus changes between capture and enrichment,
-            # causing an agent to be captured with reduced lines but treated as
-            # focused (no daemon override) for enrichment.
-            focused_id = focused_session_id
-            status_sources = {sid: "detect" for sid in status_results} if _diag else {}
-            if daemon_fresh:
-                daemon_by_id = {s.session_id: s for s in daemon_state.sessions}
-                for session_id in list(status_results):
-                    if session_id == focused_id:
-                        # Focused agent: still enrich with heartbeat/oversight
-                        # from daemon (detect_status can't see these)
-                        ds = daemon_by_id.get(session_id)
-                        if ds:
-                            status, activity, content = status_results[session_id]
-                            if ds.running_from_heartbeat and status == STATUS_RUNNING:
-                                status = STATUS_RUNNING_HEARTBEAT
-                                status_sources[session_id] = "detect+heartbeat"
-                            elif ds.waiting_for_heartbeat and status not in (STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT):
-                                status = STATUS_WAITING_HEARTBEAT
-                                status_sources[session_id] = "detect+wait_hb"
-                            elif ds.current_status == STATUS_WAITING_OVERSIGHT:
-                                status = STATUS_WAITING_OVERSIGHT
-                                activity = "Waiting for oversight report"
-                                status_sources[session_id] = "detect+oversight"
-                            status_results[session_id] = (status, activity, content)
-                    else:
-                        # Non-focused: use daemon's status directly
-                        ds = daemon_by_id.get(session_id)
-                        if ds:
-                            _, _, content = status_results[session_id]
-                            status_results[session_id] = (ds.current_status, ds.current_activity, content)
-                            status_sources[session_id] = "daemon"
-
-            # Remember each session's activity so a skipped tick repeats it
-            # instead of blanking the column when the daemon isn't fresh.
-            for session_id, (_, activity, _) in status_results.items():
-                activity_cache[session_id] = activity
-            for stale_id in [sid for sid in activity_cache if sid not in status_results]:
-                del activity_cache[stale_id]
-
-            # Extract subtree costs from daemon state (local agents)
-            subtree_costs = {}
-            if daemon_fresh:
-                for ds in daemon_state.sessions:
-                    if ds.subtree_cost_usd > 0:
-                        subtree_costs[ds.session_id] = ds.subtree_cost_usd
-            # Also extract from remote sessions via forwarded daemon_state
-            for s in self._remote_sessions:
-                rds = getattr(s, 'remote_daemon_state', None)
-                if rds and rds.get('subtree_cost_usd', 0) > 0:
-                    subtree_costs[s.id] = rds['subtree_cost_usd']
-
-            # Use local summaries from TUI's summarizer (not daemon state)
-            ai_summaries = {}
-            for session_id, summary in self._summaries.items():
-                ai_summaries[session_id] = (
-                    summary.text or "",
-                    summary.context or "",
-                )
-
-            # Build diagnostics (only when status_change_logging is on)
-            diag_kwargs = {}
-            if _diag:
-                polling = getattr(self.detector, 'polling', self.detector)
-                diag_kwargs = dict(
-                    _diag_raw=raw_statuses, _diag_sources=status_sources,
-                    _diag_focused_id=focused_id,
-                    _diag_content_changed=dict(getattr(polling, '_content_changed', {})),
-                    _diag_phases=dict(getattr(polling, '_last_detect_phase', {})),
-                )
-
-            # Update UI on main thread
-            self.call_from_thread(
-                self._apply_status_results, status_results, fresh_sessions,
-                ai_summaries, subtree_costs, **diag_kwargs,
-            )
-        finally:
-            self._status_update_in_progress = False
-
-    @work(thread=True, group="slow_stats")
-    @single_flight("slow_stats")
-    def _update_stats_async(self) -> None:
-        """Slow path: fetch claude stats + git diff every 5s.
-
-        These involve heavy file I/O (parsing JSONL session files, running
-        git diff subprocess) and don't need 250ms updates. Runs independently
-        from the fast status path so it never blocks preview pane updates.
-
-        Uses the app's HistoryFile so history.jsonl is parsed only when it
-        changed, regardless of how many sessions or sweeps ask.
-        """
-        widgets = list(self.query(SessionSummary))
-        if not widgets:
-            return
-
-        fresh_sessions = {s.id: s for s in self.session_manager.list_sessions()}
-
-        sessions_to_check = []
-        for widget in widgets:
-            session = fresh_sessions.get(widget.session.id, widget.session)
-            sessions_to_check.append((widget.session.id, session))
-
-        # The app's HistoryFile: parsed when history.jsonl changes, reused N times
-        history_file = self._history_file
-
-        sessions = [s for _, s in sessions_to_check]
-
-        # Git diff/untracked scans: once per distinct directory (agents
-        # commonly share a repo) and only every Nth sweep — they walk the
-        # working tree, which is the expensive part of this path.
-        from .tui_helpers import effective_git_directory
-        git_by_dir: dict = {}
-        run_git = should_scan_git(self._stats_sweep)
-        self._stats_sweep += 1
-        if run_git:
-            git_dirs = sorted({
-                d for d in (
-                    effective_git_directory(s) for s in sessions if not s.is_remote
-                ) if d
-            })
-
-            def scan_git(directory):
-                try:
-                    return (get_git_diff_stats(directory), get_git_untracked_count(directory))
-                except Exception:
-                    return (None, None)
-
-            if git_dirs:
-                with ThreadPoolExecutor(max_workers=min(8, len(git_dirs))) as executor:
-                    git_by_dir = dict(zip(git_dirs, executor.map(scan_git, git_dirs)))
-
-        def fetch_stats(session):
-            try:
-                if session.is_remote:
-                    return (
-                        synthesize_remote_stats(session),
-                        session.remote_git_diff,
-                        session.remote_git_untracked,
-                    )
-                claude_stats = stats_reader_for_session(session).get_stats(
-                    session, history_file=history_file
-                )
-                # (None, None) on non-git sweeps → widgets keep prior values
-                git_diff, git_untracked = git_by_dir.get(
-                    effective_git_directory(session), (None, None)
-                )
-                return (claude_stats, git_diff, git_untracked)
-            except Exception:
-                return (None, None, None)
-
-        with ThreadPoolExecutor(max_workers=min(8, len(sessions))) as executor:
-            results = list(executor.map(fetch_stats, sessions))
-
-        stats_results = {}
-        git_diff_results = {}
-        git_untracked_results = {}
-        for (session_id, _), (claude_stats, git_diff, git_untracked) in zip(sessions_to_check, results):
-            stats_results[session_id] = claude_stats
-            git_diff_results[session_id] = git_diff
-            git_untracked_results[session_id] = git_untracked
-
-        self.call_from_thread(
-            self._apply_stats_results,
-            stats_results,
-            git_diff_results,
-            git_untracked_results,
-        )
 
     # ── Sister integration (#245) ──────────────────────────────────────
 
@@ -2168,6 +1999,7 @@ class SupervisorTUI(
                 widget.session = updated_session
                 # Sync pr_number from session (propagates both detection and clearing)
                 widget.pr_number = updated_session.pr_number
+                widget.apply_remote(self._visited_here.get(session_id))
                 widget.refresh()
                 break
 
@@ -2196,211 +2028,6 @@ class SupervisorTUI(
 
     # ── End sister integration ────────────────────────────────────────
 
-    def _track_stall(self, widget: "SessionSummary", status: str, focused_id=...) -> bool:
-        """Stall bookkeeping for one agent's newly observed ``status``.
-
-        Transition tracking, the debounced new-stall decision, the unvisited
-        bell, the deferred macOS notification and the auto-dismiss timer —
-        everything the attended fast path does with a status besides
-        drawing it. Shared with the unattended 2 s path, which feeds it the
-        daemon's status so bells and notifications keep working while no
-        client is attached. Returns True if the persisted preferences
-        (visited stalled agents) changed. Callers looping over every agent
-        pass ``focused_id`` (the focused session's id, or None) so the
-        focused widget is looked up once per pass, not once per agent.
-        """
-        session_id = widget.session.id
-        prefs_changed = False
-        prev_status = self._previous_statuses.get(session_id)
-        stall = compute_stall_state(
-            status, prev_status, session_id,
-            self._prefs.visited_stalled_agents,
-            widget.session.is_asleep,
-        )
-
-        # Track when session transitions TO green (working) state
-        prev_was_green = prev_status is not None and is_green_status(prev_status)
-        if stall.should_clear_tracking and not prev_was_green:
-            self._non_stall_since[session_id] = time.monotonic()
-
-        # Debounced stall detection: prevents notification re-triggering
-        # from brief green flickers and daemon enrichment changes
-        if stall.is_new_stall and prev_status is None:
-            # First sight since this TUI started, so the stall may predate
-            # it: a restart sees every red agent at once. Ring only for a
-            # stall that began after your last visit, age it from when it
-            # began, and keep notifications for stalls seen starting live.
-            stats = widget.session.stats
-            since_dt = parse_datetime_safe(stats.state_since if stats else None)
-            stall_since = since_dt.timestamp() if since_dt else None
-            if (session_id in self._prefs.visited_stalled_agents
-                    and first_sight_stall_is_unvisited(
-                        session_id, self._prefs.visited_stalled_agents,
-                        self._prefs.visited_stalled_at, stall_since)):
-                self._prefs.visited_stalled_agents.discard(session_id)
-                self._prefs.visited_stalled_at.pop(session_id, None)
-                prefs_changed = True
-            stall_age = max(0.0, time.time() - stall_since) if stall_since else 0.0
-            self._stall_start_times[session_id] = time.monotonic() - stall_age
-            self._notified_stalls.add(session_id)
-            self._non_stall_since.pop(session_id, None)
-        elif stall.is_new_stall:
-            non_stall_start = self._non_stall_since.pop(session_id, None)
-            active_duration = (time.monotonic() - non_stall_start) if non_stall_start else float('inf')
-
-            if active_duration >= 60:
-                # Sustained work → genuine new stall
-                self._prefs.visited_stalled_agents.discard(session_id)
-                self._prefs.visited_stalled_at.pop(session_id, None)
-                prefs_changed = True
-                self._stall_start_times[session_id] = time.monotonic()
-                self._notified_stalls.discard(session_id)
-            else:
-                # Brief green flicker → restore stall timer if needed, keep _notified_stalls
-                if session_id not in self._stall_start_times:
-                    self._stall_start_times[session_id] = time.monotonic()
-
-        if stall.should_clear_tracking:
-            self._stall_start_times.pop(session_id, None)
-        elif status == STATUS_WAITING_USER:
-            self._non_stall_since.pop(session_id, None)
-
-        self._previous_statuses[session_id] = status
-        widget.is_unvisited_stalled = stall.is_unvisited_stalled
-
-        # Queue macOS notification with deferred delivery (#235)
-        now_mono = time.monotonic()
-        stall_age = now_mono - self._stall_start_times[session_id] if session_id in self._stall_start_times else 0
-        try:
-            uptime = (datetime.now() - datetime.fromisoformat(widget.session.start_time)).total_seconds()
-        except (ValueError, TypeError):
-            uptime = 0
-        if should_send_stall_notification(
-            status,
-            is_notified=session_id in self._notified_stalls,
-            is_asleep=widget.session.is_asleep,
-            has_stall_start=session_id in self._stall_start_times,
-            stall_age_seconds=stall_age,
-            uptime_seconds=uptime,
-        ):
-            task = widget.session.stats.current_task if widget.session.stats else None
-            self._notifier.queue(widget.session.name, task)
-            self._notified_stalls.add(session_id)
-
-        # Auto-dismiss bell after 5s if this agent is already being viewed
-        if stall.is_unvisited_stalled and self.preview_visible:
-            if focused_id is ...:
-                focused_id = self._selected_session_id()
-            if focused_id == session_id:
-                self._schedule_bell_dismiss(session_id)
-        elif not stall.is_unvisited_stalled and session_id in self._bell_dismiss_timers:
-            # Bell cleared by other means — cancel pending timer
-            self._bell_dismiss_timers.pop(session_id, None)
-        return prefs_changed
-
-    def _apply_status_results(self, status_results: dict, fresh_sessions: dict,
-                              ai_summaries: dict = None, subtree_costs: dict = None,
-                              _diag_raw: dict = None, _diag_sources: dict = None,
-                              _diag_focused_id: str = None, _diag_content_changed: dict = None,
-                              _diag_phases: dict = None) -> None:
-        """Apply fast-path status results to widgets (runs on main thread)."""
-        self._mark_event("apply_status_start")
-        prefs_changed = False
-        ai_summaries = ai_summaries or {}
-        subtree_costs = subtree_costs or {}
-        any_has_subtree_cost = bool(subtree_costs)
-
-        widgets = list(self.query(SessionSummary))
-        focused_id = self._selected_session_id()
-
-        for widget in widgets:
-            session_id = widget.session.id
-
-            # Update widget's session with fresh data
-            if session_id in fresh_sessions:
-                new_sess = fresh_sessions[session_id]
-                widget.session = new_sess
-                # Sync pr_number from session (propagates both detection and clearing)
-                widget.pr_number = new_sess.pr_number
-
-            # Update AI summaries (if available)
-            if session_id in ai_summaries:
-                widget.ai_summary_short, widget.ai_summary_context = ai_summaries[session_id]
-            elif widget.session.is_remote:
-                # Use remote summarizer output carried on the session
-                widget.ai_summary_short = widget.session.remote_activity_summary
-                widget.ai_summary_context = widget.session.remote_activity_summary_context
-
-            # Propagate subtree cost from daemon state
-            widget.subtree_cost_usd = subtree_costs.get(session_id, 0.0)
-            widget.any_has_subtree_cost = any_has_subtree_cost
-
-            # Propagate burn rate from daemon-status worker (#174)
-            burn_rates = getattr(self, '_session_burn_rates', {}) or {}
-            widget.window_burn = burn_rates.get(session_id)
-            widget.any_has_burn = any(
-                b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
-                for b in burn_rates.values()
-            )
-
-            # Apply status if we have results for this widget
-            if session_id in status_results:
-                status, activity, content = status_results[session_id]
-
-                if self._track_stall(widget, status, focused_id):
-                    prefs_changed = True
-
-                # Diagnostic: log every color-changing status transition
-                if self._prefs.status_change_logging:
-                    old_status = widget.detected_status
-                    if _diag_raw is not None and old_status != status:
-                        raw = _diag_raw.get(session_id, "?")
-                        source = (_diag_sources or {}).get(session_id, "?")
-                        phase = (_diag_phases or {}).get(session_id, "?")
-                        is_focused = session_id == _diag_focused_id
-                        cc = (_diag_content_changed or {}).get(session_id, False)
-                        self._log_status_change(
-                            widget.session.name, old_status, status,
-                            source=f"{source}(raw={raw}|{phase})", focused=is_focused,
-                            content_changed=cc,
-                        )
-
-                # Pass None for claude_stats/git_diff — those come from the slow path
-                # For remote agents, propagate git_diff/untracked from session (#413, #455)
-                git_diff = widget.session.remote_git_diff if widget.session.is_remote else None
-                git_untracked = widget.session.remote_git_untracked if widget.session.is_remote else None
-                widget.apply_status_no_refresh(status, activity, content, None, git_diff, git_untracked)
-                # Pull the structured 2-column detail cached by detect_status (#TBD).
-                # Without this, widget.status_detail stays None and the ⏰ column
-                # stays hidden because any_has_status_detail never flips True.
-                try:
-                    widget.status_detail = self.detector.get_status_detail(widget.session.name)
-                except AttributeError:
-                    widget.status_detail = None
-
-        # Recompute column widths before refreshing widgets for alignment
-        self._recompute_cell_column_widths()
-        for widget in widgets:
-            widget.refresh_if_changed()
-
-        if prefs_changed:
-            self._save_prefs()
-
-        # Update preview pane on the fast path (250ms) for responsive updates
-        if self.preview_visible:
-            self._update_preview()
-
-        # Proactive focus recovery: if focus was lost or landed on a non-interactive
-        # widget (e.g. mouse click on preview pane when switching windows), restore
-        # it within 250ms so the selection highlight never disappears.
-        if self._should_recover_focus():
-            widget = self._get_focused_widget()
-            if widget is not None:
-                widget.focus()
-        # Flush coalesced macOS notifications (#235)
-        self._notifier.flush()
-        self._mark_event("apply_status_end")
-
     def _gc_terminated_sessions(self) -> None:
         """Remove terminated sessions older than _TERMINATED_GC_SECONDS."""
         if not self._terminated_times:
@@ -2414,37 +2041,6 @@ class SupervisorTUI(
         for sid in expired:
             del self._terminated_sessions[sid]
             del self._terminated_times[sid]
-
-    def _apply_stats_results(self, stats_results: dict, git_diff_results: dict, git_untracked_results: Optional[dict] = None) -> None:
-        """Apply slow-path stats results to widgets (runs on main thread)."""
-        self._gc_terminated_sessions()
-        self._mark_event("apply_stats_start")
-        if git_untracked_results is None:
-            git_untracked_results = {}
-        changed_widgets = []
-        for widget in self.query(SessionSummary):
-            session_id = widget.session.id
-            claude_stats = stats_results.get(session_id)
-            git_diff = git_diff_results.get(session_id)
-            git_untracked = git_untracked_results.get(session_id)
-            if claude_stats is not None:
-                widget.claude_stats = claude_stats
-                widget.file_subagent_count = claude_stats.live_subagent_count
-                # Populate last_command from history
-                if claude_stats.last_command:
-                    widget.last_command = claude_stats.last_command
-            if git_diff is not None:
-                widget.git_diff_stats = git_diff
-            if git_untracked is not None:
-                widget.git_untracked_count = git_untracked
-            if claude_stats is not None or git_diff is not None or git_untracked is not None:
-                changed_widgets.append(widget)
-        if changed_widgets:
-            self._column_widths_dirty = True
-            self._recompute_cell_column_widths()
-            for widget in changed_widgets:
-                widget.refresh()
-        self._mark_event("apply_stats_end")
 
     @work(thread=True, group="summarizer", name="summarizer")
     @single_flight("summarizer")
@@ -2554,25 +2150,12 @@ class SupervisorTUI(
             self.sessions, False, False
         )
 
-        # Read subtree costs from daemon state (local agents)
-        subtree_costs = {}
-        daemon_state = get_monitor_daemon_state(self.tmux_session)
-        if daemon_state and daemon_state.sessions and not daemon_state.is_stale(buffer_seconds=5.0):
-            for ds in daemon_state.sessions:
-                if ds.subtree_cost_usd > 0:
-                    subtree_costs[ds.session_id] = ds.subtree_cost_usd
-        # Also extract from remote sessions via forwarded daemon_state
-        for s in self._remote_sessions:
-            rds = getattr(s, 'remote_daemon_state', None)
-            if rds and rds.get('subtree_cost_usd', 0) > 0:
-                subtree_costs[s.id] = rds['subtree_cost_usd']
-        any_has_subtree_cost = bool(subtree_costs)
-        # Window-scoped burn rates per session (#174), set by daemon-status worker.
-        burn_rates = getattr(self, '_session_burn_rates', {}) or {}
-        any_has_burn = any(
-            b is not None and (b.tokens_per_hour > 0 or b.cost_per_hour > 0)
-            for b in burn_rates.values()
-        )
+        # Subtree cost of a sister's agent comes with its forwarded state; a
+        # local agent's with the engine's view (apply_engine)
+        remote_subtree = {
+            s.id: s.remote_daemon_state['subtree_cost_usd'] for s in self._remote_sessions
+            if (getattr(s, 'remote_daemon_state', None) or {}).get('subtree_cost_usd', 0) > 0
+        }
         # Also check widget pr_number vars (sticky — survive session replacement)
         if not any_has_pr:
             any_has_pr = any(
@@ -2580,12 +2163,11 @@ class SupervisorTUI(
                 for w in self.query(SessionSummary)
             )
 
-        # Check if any agent has a model set
-        any_has_model = any(
-            s.model
-            for s in self.sessions
-        )
-        any_has_effort = any(getattr(s, 'effort', None) for s in self.sessions)
+        # Each local agent as the engine reports it (model, effort, CPU/RAM)
+        views = self._engine_agents
+        shown = [tui_engine.session_with_view(s, views.get(s.id, {})) for s in self.sessions]
+        any_has_model = any(s.model for s in shown)
+        any_has_effort = any(getattr(s, 'effort', None) for s in shown)
 
         # Check if any agent uses a non-web provider
         any_has_provider = any(
@@ -2603,24 +2185,11 @@ class SupervisorTUI(
         # Check if any agent has a non-zero CPU / RAM reading
         any_has_cpu = any(
             (getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0
-            for s in self.sessions
+            for s in shown
         )
         any_has_ram = any(
             (getattr(s, 'rss_bytes', 0) or 0) > 0
-            for s in self.sessions
-        )
-
-        # Check if any agent is busy_sleeping (#289)
-        any_is_sleeping = any(
-            getattr(w, 'detected_status', '') == "busy_sleeping"
-            for w in self.query(SessionSummary)
-        )
-
-        # Check if any agent has a populated StatusDetail — keeps the ⏰ column
-        # visible when someone is showing a non-sleep badge (#TBD).
-        any_has_status_detail = any(
-            getattr(w, 'status_detail', None) is not None
-            for w in self.query(SessionSummary)
+            for s in shown
         )
 
         # Build the list of sessions to display using extracted logic
@@ -2661,23 +2230,23 @@ class SupervisorTUI(
                 if widget.session.id in session_map:
                     new_session = session_map[widget.session.id]
                     old_budget = widget.any_has_budget
-                    old_sleeping = widget.any_is_sleeping
                     # Check if anything display-relevant actually changed
                     changed = (
                         force_refresh
                         or widget.session != new_session
                         or old_budget != any_has_budget
-                        or old_sleeping != any_is_sleeping
                     )
                     widget.session = new_session
                     # Sync display modes
                     widget.emoji_free = self.emoji_free
-                    # Sync pr_number from session (propagates both detection and clearing)
-                    widget.pr_number = new_session.pr_number
+                    if new_session.is_remote:
+                        changed = widget.apply_remote(self._visited_here.get(new_session.id)) or changed
+                        widget.subtree_cost_usd = remote_subtree.get(new_session.id, 0.0)
+                    if "pr_number" not in widget.engine:
+                        # Sync pr_number from session (propagates detection and clearing)
+                        widget.pr_number = new_session.pr_number
                     widget.any_has_budget = any_has_budget
                     widget.any_has_oversight_timeout = any_has_oversight_timeout
-                    widget.any_is_sleeping = any_is_sleeping
-                    widget.any_has_status_detail = any_has_status_detail
                     widget.any_has_pr = any_has_pr
                     widget.any_has_model = any_has_model
                     widget.any_has_effort = any_has_effort
@@ -2686,15 +2255,6 @@ class SupervisorTUI(
                     widget.any_has_cpu = any_has_cpu
                     widget.any_has_ram = any_has_ram
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
-                    widget.subtree_cost_usd = subtree_costs.get(widget.session.id, 0.0)
-                    widget.any_has_subtree_cost = any_has_subtree_cost
-                    widget.window_burn = burn_rates.get(widget.session.id)
-                    widget.any_has_burn = any_has_burn
-                    # Sync remote git diff to widget (#413)
-                    if new_session.is_remote and new_session.remote_git_diff:
-                        widget.git_diff_stats = new_session.remote_git_diff
-                    if new_session.is_remote and new_session.remote_git_untracked is not None:
-                        widget.git_untracked_count = new_session.remote_git_untracked
                     # Update terminated visual state
                     if widget.session.status == "terminated":
                         widget.add_class("terminated")
@@ -2704,6 +2264,9 @@ class SupervisorTUI(
                     # handled via force_refresh=True when widths change)
                     if changed:
                         widget.refresh()
+            if self._update_fleet_flags():
+                for widget in existing_widgets.values():
+                    widget.refresh()
             # Recompute cell column widths for alignment after data update
             self._column_widths_dirty = True
             self._recompute_cell_column_widths()
@@ -2734,7 +2297,7 @@ class SupervisorTUI(
         # Add widgets for new sessions
         for session in display_sessions:
             if session.id in sessions_added:
-                widget = SessionSummary(session, self.detector)
+                widget = SessionSummary(session)
                 # Apply current summary detail level
                 widget.summary_detail = self.SUMMARY_LEVELS[self.summary_level_index]
                 # Apply current summary content mode (#140)
@@ -2744,18 +2307,19 @@ class SupervisorTUI(
                 widget.show_cost = self.show_cost
                 widget.any_has_budget = any_has_budget
                 widget.any_has_oversight_timeout = any_has_oversight_timeout
-                widget.any_is_sleeping = any_is_sleeping
-                widget.any_has_status_detail = any_has_status_detail
                 widget.any_has_pr = any_has_pr
                 widget.any_has_model = any_has_model
                 widget.any_has_effort = any_has_effort
                 widget.any_has_provider = any_has_provider
                 widget.mixed_backends = mixed_backends
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
-                widget.subtree_cost_usd = subtree_costs.get(session.id, 0.0)
-                widget.any_has_subtree_cost = any_has_subtree_cost
-                widget.window_burn = burn_rates.get(session.id)
-                widget.any_has_burn = any_has_burn
+                # What the engine (or a sister) already says about it
+                if session.is_remote:
+                    widget.apply_remote(self._visited_here.get(session.id))
+                    widget.subtree_cost_usd = remote_subtree.get(session.id, 0.0)
+                elif session.id in self._engine_agents:
+                    widget.apply_engine(self._engine_agents[session.id], self._burn_hours(),
+                                        self._visited_here.get(session.id))
                 # Apply per-level column overrides
                 current_level = self.SUMMARY_LEVELS[self.summary_level_index]
                 widget.column_overrides = self._prefs.column_config.get(current_level, {})
@@ -2772,9 +2336,8 @@ class SupervisorTUI(
                     widget.ai_summary_short = summary.text or ""
                     widget.ai_summary_context = summary.context or ""
                 container.mount(widget)
-                # NOTE: Don't call update_status() here - it does blocking tmux calls
-                # The 250ms interval (update_all_statuses) will update status shortly
 
+        self._update_fleet_flags()
         # Reorder widgets to match display_sessions order
         # This must run after any structural changes AND after sort mode changes
         self._reorder_session_widgets(container)
@@ -2819,41 +2382,16 @@ class SupervisorTUI(
             self._suppress_focus_watcher = False
 
     def on_session_summary_stalled_agent_visited(self, message: SessionSummary.StalledAgentVisited) -> None:
-        """Handle when user visits a stalled agent - mark as visited"""
-        session_id = message.session_id
-        self._prefs.visited_stalled_agents.add(session_id)
-        self._prefs.visited_stalled_at[session_id] = time.time()
-        self._save_prefs()
-        # Cancel any pending auto-dismiss timer
-        self._bell_dismiss_timers.pop(session_id, None)
-
-        # Update the widget's state
-        for widget in self.query(SessionSummary):
-            if widget.session.id == session_id:
-                widget.is_unvisited_stalled = False
-                widget.refresh()
-                break
+        """The person reached a 🔔 agent (focus or click): a visit."""
+        self._visit(message.session_id)
 
     def _schedule_bell_dismiss(self, session_id: str) -> None:
-        """Auto-dismiss bell after 5s if the agent is already being viewed."""
-        # Cancel any existing timer for this session
-        self._bell_dismiss_timers.pop(session_id, None)
-
+        """A bell for the agent already on screen counts as seen after 5 s."""
         def _dismiss() -> None:
             self._bell_dismiss_timers.pop(session_id, None)
-            # Only dismiss if still focused on this agent
-            focused = self._get_focused_widget()
-            if focused is None or focused.session.id != session_id:
-                return
-            # Mark as visited
-            self._prefs.visited_stalled_agents.add(session_id)
-            self._prefs.visited_stalled_at[session_id] = time.time()
-            self._save_prefs()
-            for widget in self.query(SessionSummary):
-                if widget.session.id == session_id:
-                    widget.is_unvisited_stalled = False
-                    widget.refresh()
-                    break
+            # Only if still focused on this agent
+            if self._selected_session_id() == session_id:
+                self._visit(session_id)
 
         self._bell_dismiss_timers[session_id] = self.set_timer(5.0, _dismiss)
 
@@ -5089,6 +4627,8 @@ class SupervisorTUI(
             self._unzoom_tui_pane()
         except Exception:
             pass
+        if self._engine_client is not None:
+            self._engine_client.stop()
         # Clean up SSH proxy windows
         self._cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)

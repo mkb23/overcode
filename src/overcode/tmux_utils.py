@@ -204,30 +204,6 @@ def tui_tmux_socket(environ: Optional[Mapping[str, str]] = None) -> Optional[str
     return path or None
 
 
-def tmux_cmd_targets_own_server(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Whether :func:`_build_tmux_cmd` reaches the server this process runs under.
-
-    A bare ``tmux`` inside a pane follows ``TMUX``, so without
-    ``OVERCODE_TMUX_SOCKET`` the answer is yes. With it, ``-L <label>`` is
-    ``$TMUX_TMPDIR/tmux-<uid>/<label>`` (``/tmp`` when unset — the man
-    page's rule for ``-L``), compared with ``TMUX``'s path resolved, since
-    ``/tmp`` is a link to ``/private/tmp`` on macOS. False outside tmux.
-    The TUI uses this to decide whether the agents session's pane listing
-    describes its own server; only then can the listing's attached-client
-    count stand in for a poll of this pane.
-    """
-    env = os.environ if environ is None else environ
-    own = tui_tmux_socket(env)
-    if own is None:
-        return False
-    label = env.get("OVERCODE_TMUX_SOCKET")
-    if not label:
-        return True
-    tmpdir = env.get("TMUX_TMPDIR") or "/tmp"
-    label_path = os.path.join(tmpdir, f"tmux-{os.getuid()}", label)
-    return os.path.realpath(label_path) == os.path.realpath(own)
-
-
 def query_pane_attended(
     pane: str, timeout: float = 2, socket_path: Optional[str] = None
 ) -> Optional[Tuple[str, int]]:
