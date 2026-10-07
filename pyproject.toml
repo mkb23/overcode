@@ -72,7 +72,6 @@ overcode = [
     "*.md",
     "*.sh",
     "*.tcss",
-    "web/templates/*.html",
     # Bundled opencode telemetry plugin — copied into a project's
     # .opencode/plugins/ at launch, so it has to ship with the wheel.
     # v1 is a single .js file; v2 ships a plugin directory (server stub

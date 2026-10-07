@@ -5,9 +5,8 @@ Tests the rendering logic, static methods, and state management
 in isolation without requiring a running Textual application.
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +84,6 @@ def _make_monitor_state(**overrides):
         supervisor_claude_running=False,
         supervisor_claude_started_at=None,
         supervisor_claude_total_run_seconds=0.0,
-        relay_enabled=False,
-        relay_last_status="disabled",
         untracked_window_count=0,
         tick_started_at=None,
         last_tick_duration_seconds=0.0,
@@ -645,38 +642,13 @@ class TestDaemonStatusBarRenderUsage:
 
 
 # ===========================================================================
-# render — relay and web server
+# render — API server
 # ===========================================================================
 
 
 class TestDaemonStatusBarRenderExtras:
-    """Tests for relay and web server sections."""
+    """Tests for the API server section."""
 
-    def test_relay_ok(self):
-        state = _make_monitor_state(
-            relay_enabled=True,
-            relay_last_status="ok",
-        )
-        widget = _make_bare_status_bar(monitor_state=state)
-        result = widget.render()
-        plain = result.plain
-        assert "📡" in plain
-
-    def test_relay_error(self):
-        state = _make_monitor_state(
-            relay_enabled=True,
-            relay_last_status="error",
-        )
-        widget = _make_bare_status_bar(monitor_state=state)
-        result = widget.render()
-        plain = result.plain
-        assert "📡" in plain
-
-    def test_relay_disabled_not_shown(self):
-        state = _make_monitor_state(relay_enabled=False)
-        widget = _make_bare_status_bar(monitor_state=state)
-        result = widget.render()
-        plain = result.plain
         # Relay section won't have the separator before it
         # (but emoji might still appear in other sections, so check context)
         # Just verify it doesn't crash

@@ -104,34 +104,6 @@ def get_default_standing_instructions() -> str:
     return _get_config_value("default_standing_instructions", "")
 
 
-def get_relay_config() -> Optional[dict]:
-    """Get relay configuration for pushing state to cloud.
-
-    Returns None if relay is not configured or disabled.
-
-    Config format in ~/.overcode/config.yaml:
-        relay:
-          enabled: true
-          url: https://your-worker.workers.dev/update
-          api_key: your-secret-key
-          interval: 30  # seconds between pushes (optional, default 30)
-    """
-    if not _get_config_value("relay.enabled", False):
-        return None
-
-    url = _get_config_value("relay.url")
-    api_key = _get_config_value("relay.api_key")
-
-    if not url or not api_key:
-        return None
-
-    return {
-        "url": url,
-        "api_key": api_key,
-        "interval": _get_config_value("relay.interval", 30),
-    }
-
-
 def get_summarizer_config() -> dict:
     """Get summarizer configuration for AI summaries.
 
@@ -200,53 +172,6 @@ def get_timeline_config() -> dict:
     }
 
 
-def get_web_time_presets() -> list:
-    """Get time presets for the web analytics dashboard.
-
-    Returns list of preset dictionaries with name, start, end times.
-    Falls back to defaults if not configured.
-
-    Config format in ~/.overcode/config.yaml:
-        web:
-          time_presets:
-            - name: "Morning"
-              start: "09:00"
-              end: "12:00"
-            - name: "Full Day"
-              start: "09:00"
-              end: "17:00"
-            - name: "Night Owl"
-              start: "22:00"
-              end: "02:00"
-    """
-    presets = _get_config_value("web.time_presets")
-
-    if presets and isinstance(presets, list):
-        # Validate and normalize presets
-        valid_presets = []
-        for p in presets:
-            if isinstance(p, dict) and "name" in p:
-                valid_presets.append({
-                    "name": p.get("name", ""),
-                    "start": p.get("start"),
-                    "end": p.get("end"),
-                })
-        if valid_presets:
-            # Always add "All Time" at the end
-            if not any(p["name"] == "All Time" for p in valid_presets):
-                valid_presets.append({"name": "All Time", "start": None, "end": None})
-            return valid_presets
-
-    # Default presets
-    return [
-        {"name": "Morning", "start": "09:00", "end": "12:00"},
-        {"name": "Afternoon", "start": "13:00", "end": "17:00"},
-        {"name": "Full Day", "start": "09:00", "end": "17:00"},
-        {"name": "Evening", "start": "18:00", "end": "22:00"},
-        {"name": "All Time", "start": None, "end": None},
-    ]
-
-
 def get_enhanced_context_config() -> dict:
     """Get enhanced context configuration for the enhanced-context hook.
 
@@ -292,7 +217,7 @@ def get_hostname() -> str:
 
 
 def get_web_port() -> int:
-    """Get configured web server port.
+    """Get configured API server port.
 
     Config format in ~/.overcode/config.yaml:
         web:
@@ -305,7 +230,7 @@ def get_web_port() -> int:
 
 
 def get_web_host() -> str:
-    """Get configured web server bind host.
+    """Get configured API server bind host.
 
     Config format in ~/.overcode/config.yaml:
         web:
@@ -318,7 +243,7 @@ def get_web_host() -> str:
 
 
 def get_web_api_key() -> Optional[str]:
-    """Get API key for web server authentication.
+    """Get API key for API server authentication.
 
     Required when binding to non-localhost addresses.
 
@@ -333,7 +258,7 @@ def get_web_api_key() -> Optional[str]:
 
 
 def get_web_allow_control() -> bool:
-    """Check if remote control is enabled for the web server.
+    """Check if remote control is enabled for the API server.
 
     When False (default), all POST/PUT/DELETE endpoints return 403.
 

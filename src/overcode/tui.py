@@ -30,8 +30,8 @@ from .job_manager import Job, JobManager
 from .job_launcher import JobLauncher
 from .launcher import AgentLauncher
 from .status_detector_factory import StatusDetectorDispatcher
-from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_TERMINATED, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
-from .history_reader import AgentSessionStats, HistoryFile, synthesize_remote_stats
+from .status_constants import DEFAULT_CAPTURE_LINES, STATUS_CAPTURE_LINES, STATUS_RUNNING, STATUS_RUNNING_HEARTBEAT, STATUS_WAITING_HEARTBEAT, STATUS_WAITING_OVERSIGHT, STATUS_WAITING_USER, is_green_status
+from .history_reader import HistoryFile, synthesize_remote_stats
 from .stats_reader import stats_reader_for_session
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .settings import touch_tui_attended, TUI_ATTENDED_TOUCH_SECONDS
@@ -310,8 +310,8 @@ class SupervisorTUI(
         ("y", "toggle_copy_mode", "Copy mode"),
         # Heartbeat pause/resume toggle (#265) - promoted to lowercase
         ("p", "toggle_heartbeat_pause", "Pause heartbeat"),
-        # Web server toggle
-        ("w", "toggle_web_server", "Web dashboard"),
+        # API server (sister API) toggle
+        ("w", "toggle_web_server", "API server (sisters)"),
         # Sleep mode toggle - mark agent as paused (excluded from stats)
         ("z", "toggle_sleep", "Sleep mode"),
         # Show terminated/killed sessions (ghost mode)
@@ -634,7 +634,7 @@ class SupervisorTUI(
         from .config import get_tmux_toggle_key
         from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
         key = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
-        label = next((l for l, k in TOGGLE_KEY_CHOICES if k == key), key)
+        label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == key), key)
         return f"  ↓ TERMINAL ACTIVE — {label} to return ↓  "
 
     def compose(self) -> ComposeResult:
@@ -4213,7 +4213,7 @@ class SupervisorTUI(
         and version-matched. Bootstraps or upgrades via uvx as needed.
         """
         from .ssh_provisioner import ensure_remote_ready
-        from .config import get_web_port, get_web_host
+        from .config import get_web_host
 
         sisters_with_ssh: list[SisterState] = [
             s for s in self._sister_poller.get_sister_states() if s.ssh
@@ -4363,7 +4363,7 @@ class SupervisorTUI(
         else:
             self.notify(f"Failed to restart agent: {session_name}", severity="error")
 
-    def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:
+    def _execute_revive(self, focused: "SessionSummary", tmux: "TmuxManager") -> None:  # noqa: F821
         """Revive a terminated agent by creating a new tmux window and relaunching.
 
         Delegates to AgentLauncher.revive, which rebuilds the full launch

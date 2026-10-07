@@ -105,10 +105,9 @@ Aggregate agents from multiple machines into one dashboard:
 - Configure sister machines in `~/.overcode/config.yaml`
 - Remote agents appear alongside local ones
 - In tmux split mode, selecting a sister agent auto-zooms the dashboard with a preview pane
+- Each remote runs `overcode web`, a small API server that serves the sister API only (there is no web UI)
 
 ### Analytics & Export
-- **Web dashboard** - mobile-friendly monitoring from any device
-- **Historical analytics** - browse session history with charts
 - **Parquet export** - analyze data in Jupyter notebooks
 - **Presence tracking** - correlate activity with your availability
 

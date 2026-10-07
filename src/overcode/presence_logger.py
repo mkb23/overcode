@@ -411,8 +411,8 @@ _PRESENCE_ROW_BYTES_ESTIMATE = 64
 # handle open for the process lifetime, and every daemon on the host
 # plus a standalone ``overcode presence`` appends to this one file, so a
 # replace would leave each open writer appending to the orphaned inode
-# and lose its rows; it would also need an archive-aware range reader for
-# the analytics date ranges (the status history has one; presence has
+# and lose its rows; it would also need an archive-aware range reader
+# for date-range queries (the status history has one; presence has
 # only this windowed reader). Doing it properly means reopening per row
 # under a cross-process lock and a presence range reader — a separate
 # change, not a reader fix.

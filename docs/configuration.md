@@ -29,13 +29,6 @@ summarizer:
   model: gpt-4o-mini
   api_key_var: OPENAI_API_KEY  # Name of env var containing API key
 
-# Cloud relay for pushing status to a remote endpoint
-relay:
-  enabled: false
-  url: https://your-worker.workers.dev/update
-  api_key: your-secret-key
-  interval: 30  # Seconds between status pushes
-
 # Display hostname (shown in Host column and API response)
 # Defaults to system hostname if omitted
 hostname: "mac-studio"
@@ -54,22 +47,13 @@ bedrock:
   # model_discount:    # optional per-model-family overrides
   #   opus: 0.25
 
-# Web server settings
+# API server settings (`overcode web` — serves the sister API only)
 web:
-  # API key for web server authentication
+  # API key for API server authentication
   # Required when binding to non-localhost (--host 0.0.0.0)
   api_key: "your-secret-key"
-  # Analytics dashboard presets
-  time_presets:
-    - name: "Morning"
-      start: "09:00"
-      end: "12:00"
-    - name: "Afternoon"
-      start: "13:00"
-      end: "17:00"
-    - name: "Full Day"
-      start: "09:00"
-      end: "17:00"
+  # Allow sisters to send control actions (send, kill, launch, ...)
+  allow_control: false
 
 # Tmux split layout settings
 tmux:
@@ -437,7 +421,7 @@ they've been observed reaching multiple GB (#465, #468). They're handled
 differently because they serve different purposes:
 
 - **`agent_status_history.csv` is archival.** It backs the timeline views
-  (TUI timeline, parquet export, web analytics), so history is valuable and
+  (TUI timeline, parquet export, sister timelines), so history is valuable and
   shouldn't be silently discarded. The monitor daemon checks it at most
   hourly and, once it exceeds `status_history_rotate_mb` or spans more than
   7 days, rotates it: rows older than 30 hours (comfortably above the
@@ -446,12 +430,12 @@ differently because they serve different purposes:
   active file (gzip typically shrinks this data ~15-20x), while the active
   file keeps everything the windowed TUI/export readers need (3h/24h).
   Archives older than `status_history_max_days` are deleted on the same
-  hourly pass. The web dashboard's custom date-range analytics endpoint
-  transparently reads both the active file and any archives it needs — deep
-  history queries keep working after rotation.
+  hourly pass. The archive-aware range reader
+  (`read_agent_status_history_range`) reads both the active file and any
+  archives it needs, so deep history queries keep working after rotation.
 - **`diagnostics/event_loop_timing.csv` is diagnostic.** It's the TUI's
   event-loop responsiveness probe (records every ~100ms, flushed every 5s)
-  and isn't read by any dashboard — it's a debugging aid. Rather than
+  and isn't read by any view — it's a debugging aid. Rather than
   archiving it, it's just hard-capped: once it exceeds
   `event_loop_timing_cap_mb`, the TUI truncates it down to its newest ~10%
   on the next flush. Set `event_loop_timing_enabled: false` to turn the
@@ -497,8 +481,8 @@ archiving an agent costs one line regardless of how many are archived
 already (the previous `archive.json` was rewritten whole on every
 archive). An existing `archive.json` is migrated into `archive.jsonl` the
 first time the archive is touched and renamed to `archive.json.migrated`.
-Everything that reads the archive (`overcode history`, the web analytics
-endpoints, `overcode export`) reads the JSONL.
+Everything that reads the archive (`overcode history`, `overcode export`)
+reads the JSONL.
 
 ## Usage Log
 
@@ -573,9 +557,9 @@ nobody is watching: no client is attached to the agents tmux session, no
 TUI keypress heartbeat is fresh (60 s), and nothing has touched the
 `tui_attended` file in the last 15 s. An attended TUI touches it every
 5 s — including one in another tmux session or in a plain terminal, which
-the first two signals cannot see — and the web server touches it whenever
-it serves a status request, so a fleet watched through the browser
-dashboard or a sister TUI stays on the fast loop too. It returns to the
+the first two signals cannot see — and the API server touches it whenever
+it serves a status request, so a fleet watched through a sister TUI stays
+on the fast loop too. It returns to the
 fast interval within one loop of a client attaching, and within about two
 seconds of a TUI re-attaching or a key being pressed (the activity signal
 ends the sleep at its next 1 s chunk). The published state
@@ -588,8 +572,7 @@ written on change (plus a 60 s keepalive), so the timeline you come back
 to has no holes at 10 s resolution; heartbeats, oversight timeouts and the
 every-two-minutes housekeeping (done-agent auto-archive, untracked window
 count, terminated-session archive) are all wall-clock and keep their
-cadence. The daemon's own relay push reads the same status data without
-counting as a watcher.
+cadence.
 
 ```yaml
 monitor_daemon:

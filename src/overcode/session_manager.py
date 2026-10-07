@@ -276,7 +276,7 @@ class Session:
     # Sister integration (#245) - remote agents from other machines
     is_remote: bool = False
     source_host: str = ""
-    source_url: str = ""  # Sister web server URL (for sending control commands)
+    source_url: str = ""  # Sister API server URL (for sending control commands)
     source_api_key: str = ""  # Sister API key (for authentication)
     pane_content: str = ""  # Cached pane content from remote API (empty for local sessions)
     remote_git_diff: Optional[tuple] = None  # (files, insertions, deletions) from remote API

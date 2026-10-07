@@ -431,7 +431,7 @@ def read_agent_status_history(
             inside the window). Rows are written on change plus a
             keepalive, so an agent's first in-window row can be up to a
             keepalive after the cutoff; a consumer that forward-fills
-            (build_timeline_slots, the analytics segments) wants this.
+            (build_timeline_slots, a sister re-slotting) wants this.
 
     Returns:
         List of (timestamp, agent, status, activity, session_id, hostname)
@@ -755,9 +755,10 @@ def read_agent_status_history_range(
     read_agent_status_history() only ever reads the active CSV, which is
     correct for the 3h/24h windowed callers (TUI timeline, parquet export)
     but would silently miss rotated-away history for a deep date-range
-    query. This is that deep-history path — used by the web API's
-    analytics date-range endpoint, the one caller that legitimately reads
-    further back than the active file retains.
+    query. This is that deep-history path, for a caller that legitimately
+    reads further back than the active file retains. (Its one caller, the
+    web dashboard's analytics date-range endpoint, was removed with the
+    web UI; the reader stays as the archive-aware API.)
 
     With ``carry`` the result starts with, per agent, its last row within
     CARRY_LOOKBACK_SECONDS before ``start``, timestamped at ``start`` — the

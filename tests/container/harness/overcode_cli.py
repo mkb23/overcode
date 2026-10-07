@@ -177,7 +177,7 @@ class OvercodeCLI:
         self._daemons.append(proc)
         return proc
 
-    # ------------------------------------------------------------- web server
+    # ------------------------------------------------------------- API server
 
     @property
     def config_file(self) -> Path:
@@ -187,7 +187,7 @@ class OvercodeCLI:
         return path
 
     def start_web(self, extra_config: str = "") -> str:
-        """Start the web server on a free port; returns its base URL.
+        """Start the API server on a free port; returns its base URL.
 
         The server self-daemonizes (start_web_server uses start_new_session),
         so teardown goes through `web --stop` in stop_daemons().

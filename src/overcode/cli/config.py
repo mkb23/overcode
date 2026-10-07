@@ -32,26 +32,12 @@ CONFIG_TEMPLATE = """\
 #   model: gpt-4o-mini
 #   api_key_var: OPENAI_API_KEY  # env var containing the API key
 
-# Cloud relay for remote monitoring
-# relay:
-#   enabled: false
-#   url: https://your-worker.workers.dev/update
-#   api_key: your-secret-key
-#   interval: 30  # seconds between pushes
-
-# Web server and dashboard settings
+# API server settings (serves the sister API)
 # web:
 #   port: 8080            # Default port for 'overcode web'
 #   host: "127.0.0.1"     # Default bind host (use "0.0.0.0" for LAN/sister access)
 #   api_key: "secret"     # Required when host is not localhost
 #   allow_control: false   # Enable remote control API
-#   time_presets:
-#     - name: "Morning"
-#       start: "09:00"
-#       end: "12:00"
-#     - name: "Full Day"
-#       start: "09:00"
-#       end: "17:00"
 
 # Enhanced context hook settings (agent identity, clock, presence, uptime)
 # enhanced_context:
@@ -154,20 +140,6 @@ def _config_show():
             rprint(f"    model: {s['model']}")
         if "api_key_var" in s:
             rprint(f"    api_key_var: {s['api_key_var']}")
-
-    if "relay" in config:
-        r = config["relay"]
-        rprint("  relay:")
-        rprint(f"    enabled: {r.get('enabled', False)}")
-        if "url" in r:
-            rprint(f"    url: {r['url']}")
-        if "interval" in r:
-            rprint(f"    interval: {r['interval']}s")
-
-    if "web" in config:
-        w = config["web"]
-        if "time_presets" in w:
-            rprint(f"  web.time_presets: {len(w['time_presets'])} presets")
 
     if "sisters" in config:
         sisters = config["sisters"]

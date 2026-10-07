@@ -170,7 +170,7 @@ Steps run in this order:
 1. The supervisor daemon.
 2. Agents, children first. Each gets its backend's exit keys, then its window is killed.
 3. The `jobs` tmux session.
-4. The monitor daemon, the web server, the presence logger, and any legacy PID files.
+4. The monitor daemon, the API server, the presence logger, and any legacy PID files.
 5. overcode's tmux sessions: the agents session, `oc-view-*`, the `overcode` split layout and the supervisor controller.
 
 Agent records are kept, so `overcode revive --all` brings the agents back
@@ -182,9 +182,9 @@ The tmux session you run the command from is killed last. An agent that runs
 `shutdown` itself is not exited, and its window closes with that session.
 
 In the TUI, the command palette has **Shut down overcode**. Run it twice to
-confirm, and the TUI exits at the end. A web server with
+confirm, and the TUI exits at the end. An API server with
 `web.allow_control: true` also takes `POST /api/shutdown`. Its default body
-stops only the supervisor, the monitor and the web server, and agents keep
+stops only the supervisor, the monitor and the API server, and agents keep
 running. `{"scope": "all"}` does the full shutdown, and `"dry_run": true`
 returns the plan instead.
 
@@ -423,7 +423,8 @@ overcode supervisor [options]
 
 ### `overcode web`
 
-Start or stop the web dashboard server (non-blocking).
+Start or stop the API server (non-blocking). It serves the sister API only;
+there is no web UI.
 
 ```bash
 overcode web [options]
@@ -433,19 +434,16 @@ overcode web [options]
 |--------|-------|-------------|
 | `--host` | `-h` | Host to bind (default: `127.0.0.1`) |
 | `--port` | `-p` | Port (default: `8080`) |
-| `--stop` | | Stop the running web server |
+| `--stop` | | Stop the running API server |
 | `--session` | | Tmux session name |
 
 Starts the server in the background and exits immediately. If already running, shows the current URL. Use `--stop` to stop a running server. Same toggle as the TUI `w` key.
 
-Features:
-- Summary statistics and daily activity charts
-- Session browser with sortable table
-- Timeline view with status history
-- Efficiency metrics and cost analysis
-- Live agent monitoring at `/dashboard`
-- Sister-compatible `/api/status` endpoint
-- Dark theme
+Routes: `GET /api/status`, `GET /api/agents/{name}/status`,
+`GET /api/timeline/raw`, `GET /health`, and the control routes under
+`/api/agents/...`, `/api/daemon/...` and `POST /api/shutdown` (control needs
+`web.allow_control: true`). See
+[Advanced Features: API Server](advanced-features.md#api-server).
 
 ```bash
 overcode web                          # Start on localhost:8080

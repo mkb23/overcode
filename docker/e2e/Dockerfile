@@ -37,12 +37,6 @@ ENV PIP_ROOT_USER_ACTION=ignore
 COPY docker/e2e/requirements-e2e.txt /tmp/requirements-e2e.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-e2e.txt
 
-# Playwright Chromium in a world-readable shared location (installed as root,
-# used by the non-root test user)
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
-RUN playwright install --with-deps chromium \
-    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
-
 RUN useradd -m -s /bin/bash overcode
 
 # Shims so `overcode` / `tui-eye` resolve like real installs while executing

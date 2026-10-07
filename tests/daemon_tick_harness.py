@@ -378,7 +378,7 @@ def make_daemon(
     daemon._tmux = tmux  # the current tree's persistent client; unused by older trees
     daemon.detector = detector
     daemon._hostname = "test-host"
-    daemon._relay_config = None  # never push anywhere from a test tick
+    daemon._relay_config = None  # older trees had a cloud relay push; never push from a test tick
     daemon.log.console = Console(file=io.StringIO(), theme=DAEMON_THEME, force_terminal=True)
     daemon._legacy_windows_migrated = True
     daemon.state.loop_count = 1

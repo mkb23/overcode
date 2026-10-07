@@ -101,7 +101,7 @@ class SessionDaemonState:
     standing_orders_complete: bool = False
     steers_count: int = 0
 
-    # Additional session info (for web dashboard parity with TUI)
+    # Additional session info (for sister parity with TUI)
     start_time: Optional[str] = None  # ISO timestamp when session started
     permissiveness_mode: str = "normal"  # normal, permissive, bypass
     start_directory: Optional[str] = None  # For git diff stats
@@ -253,11 +253,6 @@ class MonitorDaemonState:
     summarizer_available: bool = False
     summarizer_calls: int = 0
     summarizer_cost_usd: float = 0.0
-
-    # Relay status (for remote monitoring)
-    relay_enabled: bool = False
-    relay_last_push: Optional[str] = None  # ISO timestamp of last successful push
-    relay_last_status: str = "disabled"  # "ok", "error", "disabled"
 
     # Untracked tmux windows (#344)
     untracked_window_count: int = 0

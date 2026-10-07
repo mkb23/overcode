@@ -143,7 +143,7 @@ class SisterSelectionModal(ModalBase):
             return
         sister = self._sisters[self.selected_index]
         if not sister.get("reachable", False):
-            return  # Can't restart if web server is unreachable
+            return  # Can't restart if API server is unreachable
         self.post_message(self.RestartDaemon(
             sister_name=sister["name"],
             sister_url=sister["url"],

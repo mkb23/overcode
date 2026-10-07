@@ -400,7 +400,7 @@ def _setup_keybindings(linked_session: str = "", toggle_key: str = "") -> None:
         # `-q` is a no-op outside a mode, unlike `send-keys -X cancel`,
         # which errors and paints the status line (#454).
         _pane_owns_screen = (
-            f"#{{||:#{{alternate_on}},#{{mouse_any_flag}}}}"
+            "#{||:#{alternate_on},#{mouse_any_flag}}"
         )
         _release = f"copy-mode -q -t {linked_session}"
         _tmux(
@@ -667,7 +667,7 @@ def tmux_layout(
         bool, typer.Option("--uninstall", help="Remove overcode tmux keybindings and exit")
     ] = False,
     restart: Annotated[
-        bool, typer.Option("--restart", help="Restart the monitor daemon and web server on launch")
+        bool, typer.Option("--restart", help="Restart the monitor daemon and API server on launch")
     ] = False,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Skip the first-run confirmation prompt")
@@ -880,7 +880,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
                     pass
                 elif not has_real_client:
                     # Can't determine client — tell user how to get there
-                    rprint(f"[green]Split layout is running.[/green] Switch to it with:")
+                    rprint("[green]Split layout is running.[/green] Switch to it with:")
                     rprint(f"  tmux switch-client -t {oc_session}")
                     return
             else:
@@ -1013,7 +1013,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
         # Focus top pane
         _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}")
 
-        rprint(f"[green]Split layout ready.[/green] Tab toggles panes.")
+        rprint("[green]Split layout ready.[/green] Tab toggles panes.")
 
     else:
         # --- Outside tmux: create detached, split, then attach ---
@@ -1060,6 +1060,6 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
         _tmux("select-pane", "-t", f"{oc_session}:{SPLIT_WINDOW_NAME}.{get_pane_base_index()}")
 
         # Attach to the session (replaces this process)
-        rprint(f"[green]Attaching to split layout...[/green]")
+        rprint("[green]Attaching to split layout...[/green]")
         time.sleep(0.2)
         _exec_tmux_attach(oc_session)

@@ -1,16 +1,12 @@
 """
 Daemon action methods for TUI.
 
-Handles Monitor Daemon, Supervisor Daemon, and Web Server controls.
+Handles Monitor Daemon, Supervisor Daemon, and API Server controls.
 """
 
 import sys
-from typing import TYPE_CHECKING
 
 from textual.css.query import NoMatches
-
-if TYPE_CHECKING:
-    from ..tui_widgets import DaemonPanel
 
 
 def _log_to_daemon_panel(tui, message: str) -> None:
@@ -258,17 +254,17 @@ class DaemonActionsMixin:
             self.notify("Failed to restart Monitor Daemon", severity="error")
 
     def action_toggle_web_server(self) -> None:
-        """Toggle the web analytics dashboard server on/off."""
+        """Toggle the API server (the sister API) on/off."""
         from ..web_server import toggle_web_server, get_web_server_url
 
         is_running, msg = toggle_web_server(self.tmux_session)
 
         if is_running:
             url = get_web_server_url(self.tmux_session)
-            self.notify(f"Web server: {url}", severity="information")
-            _log_to_daemon_panel(self, f">>> Web server started: {url}")
+            self.notify(f"API server: {url}", severity="information")
+            _log_to_daemon_panel(self, f">>> API server started: {url}")
         else:
-            self.notify(f"Web server: {msg}", severity="information")
-            _log_to_daemon_panel(self, f">>> Web server: {msg}")
+            self.notify(f"API server: {msg}", severity="information")
+            _log_to_daemon_panel(self, f">>> API server: {msg}")
 
         self.update_daemon_status()

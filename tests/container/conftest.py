@@ -23,7 +23,7 @@ from tests.container.harness import OvercodeCLI, TmuxSandbox, wait_for
 
 def pytest_ignore_collect(collection_path, config):
     """On the host, don't even import these modules — they depend on
-    container-only packages (requests, playwright). Run via scripts/e2e.sh
+    container-only packages (requests). Run via scripts/e2e.sh
     (see docs/design/e2e-devcontainer-testing.md)."""
     if os.environ.get("OVERCODE_E2E_CONTAINER") != "1":
         return str(collection_path).endswith(".py")

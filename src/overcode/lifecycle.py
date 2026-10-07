@@ -279,10 +279,10 @@ def shutdown(
     the presence logger) are only stopped when no other overcode tmux
     session is left running.
 
-    ``services_only`` stops just the supervisor, monitor and web server
+    ``services_only`` stops just the supervisor, monitor and API server
     (what ``POST /api/shutdown`` does by default, e.g. before an upgrade).
 
-    A pid file held by this very process (the web server serving
+    A pid file held by this very process (the API server serving
     /api/shutdown) is left for the caller: ``report.stop_self`` is set.
     The tmux session this process runs in is killed last, since that ends
     the process.
@@ -385,7 +385,7 @@ def shutdown(
     for ts in scope:
         stop_pid("daemons", f"monitor daemon [{ts}]", get_monitor_daemon_pid_path(ts))
         web_pid = get_web_server_pid_path(ts)
-        stop_pid("daemons", f"web server [{ts}]", web_pid)
+        stop_pid("daemons", f"API server [{ts}]", web_pid)
         if not dry_run and not report.stop_self and not web_pid.exists():
             get_web_server_port_path(ts).unlink(missing_ok=True)
     if not services_only:

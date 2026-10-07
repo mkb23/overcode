@@ -1,5 +1,5 @@
 """
-Control action handlers for the web API.
+Control action handlers for the API server (sister control API).
 
 Thin dispatch layer — each function takes parsed JSON body fields,
 calls existing Launcher/SessionManager/daemon utilities, returns a result dict.
@@ -583,7 +583,7 @@ def shutdown_overcode(
     """Shut overcode down on this host (#509), as `overcode shutdown` does.
 
     ``scope`` "services" (the default) stops the supervisor, monitor
-    daemon and this web server and leaves agents running — what the SSH
+    daemon and this API server and leaves agents running — what the SSH
     provisioner needs before an upgrade. "all" is the full shutdown:
     agents (records kept), jobs, daemons and tmux sessions.
 

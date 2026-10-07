@@ -2,7 +2,6 @@
 
 import os
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 from io import BytesIO
 
@@ -192,28 +191,6 @@ class TestStopWebServer:
 class TestOvercodeHandler:
     """Tests for OvercodeHandler class."""
 
-    def test_parse_datetime_returns_none_for_none(self):
-        """_parse_datetime should return None for None input."""
-        handler = MagicMock(spec=OvercodeHandler)
-        result = OvercodeHandler._parse_datetime(handler, None)
-        assert result is None
-
-    def test_parse_datetime_returns_none_for_invalid(self):
-        """_parse_datetime should return None for invalid input."""
-        handler = MagicMock(spec=OvercodeHandler)
-        result = OvercodeHandler._parse_datetime(handler, "not-a-date")
-        assert result is None
-
-    def test_parse_datetime_parses_valid_iso(self):
-        """_parse_datetime should parse valid ISO datetime."""
-        from datetime import datetime
-        handler = MagicMock(spec=OvercodeHandler)
-        result = OvercodeHandler._parse_datetime(handler, "2024-01-15T10:30:00")
-        assert result is not None
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
-
     def test_log_message_suppresses_api_success(self):
         """Should suppress successful API poll logs."""
         handler = MagicMock(spec=OvercodeHandler)
@@ -355,16 +332,9 @@ class TestOvercodeHandlerRoutes:
         """do_GET should return 404 for unknown routes."""
         handler = MagicMock(spec=OvercodeHandler)
         handler.path = "/unknown/route"
-        handler._parse_datetime = MagicMock(return_value=None)
 
         OvercodeHandler.do_GET(handler)
         handler.send_error.assert_called_once_with(404, "Not Found")
-
-    def test_root_route_matches_analytics(self):
-        """Root path should match analytics route logic."""
-        from urllib.parse import urlparse
-        parsed = urlparse("/")
-        assert parsed.path == "/" or parsed.path == "/index.html"
 
     def test_api_status_route_parsing(self):
         """API status path should be parsed correctly."""
@@ -373,20 +343,10 @@ class TestOvercodeHandlerRoutes:
         assert parsed.path == "/api/status"
         assert parse_qs(parsed.query) == {"foo": ["bar"]}
 
-    def test_api_timeline_route_parsing(self):
-        """API timeline path with query params should be parsed correctly."""
-        from urllib.parse import urlparse, parse_qs
-        parsed = urlparse("/api/timeline?hours=6&slots=30")
-        assert parsed.path == "/api/timeline"
-        query = parse_qs(parsed.query)
-        assert float(query.get("hours", [3.0])[0]) == 6.0
-        assert int(query.get("slots", [60])[0]) == 30
-
-
 class TestStatusRequestsTouchTheAttendedFile:
     """A status request is someone watching: it makes the monitor daemon's
-    "attended" touch, so a fleet read only through the browser or a sister
-    TUI keeps its fast-loop statuses. Other routes are no sign of a watcher."""
+    "attended" touch, so a fleet read only through a sister TUI keeps its
+    fast-loop statuses. Other routes are no sign of a watcher."""
 
     def test_api_status_touches_before_serving(self):
         handler = MagicMock(spec=OvercodeHandler)
@@ -419,7 +379,7 @@ class TestStatusRequestsTouchTheAttendedFile:
             patch("overcode.web_server.get_web_api_key", return_value=None),
             patch("overcode.web_server.touch_tui_attended") as touch,
         ):
-            for path in ("/api/timeline", "/health", "/dashboard", "/api/analytics/stats"):
+            for path in ("/api/timeline/raw", "/health", "/dashboard", "/api/analytics/stats"):
                 handler.path = path
                 OvercodeHandler.do_GET(handler)
         touch.assert_not_called()
@@ -427,36 +387,6 @@ class TestStatusRequestsTouchTheAttendedFile:
 
 class TestOvercodeHandlerRouteDispatching:
     """Tests that OvercodeHandler.do_GET dispatches to correct methods."""
-
-    def test_root_calls_serve_analytics_dashboard(self):
-        """GET / should call _serve_analytics_dashboard."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_dashboard.assert_called_once()
-
-    def test_index_html_calls_serve_analytics_dashboard(self):
-        """GET /index.html should call _serve_analytics_dashboard."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/index.html"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_dashboard.assert_called_once()
-
-    def test_dashboard_calls_serve_dashboard(self):
-        """GET /dashboard should call _serve_dashboard."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/dashboard"
-        handler._parse_datetime = MagicMock(return_value=None)
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_dashboard.assert_called_once()
 
     def test_api_status_dispatches_to_handler(self):
         """GET /api/status should dispatch to _serve_api_status."""
@@ -467,16 +397,6 @@ class TestOvercodeHandlerRouteDispatching:
         OvercodeHandler.do_GET(handler)
 
         handler._serve_api_status.assert_called_once()
-
-    def test_api_timeline_dispatches_to_handler(self):
-        """GET /api/timeline should dispatch to _serve_timeline."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/timeline"
-        handler.tmux_session = "test-session"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_timeline.assert_called_once()
 
     def test_api_timeline_raw_dispatches_to_handler(self):
         """GET /api/timeline/raw should dispatch to _serve_timeline_raw."""
@@ -505,72 +425,6 @@ class TestOvercodeHandlerRouteDispatching:
         OvercodeHandler.do_GET(handler)
 
         handler.send_error.assert_called_once_with(404, "Not Found")
-
-    def test_chartjs_route_calls_serve_chartjs(self):
-        """GET /static/chart.min.js should call _serve_chartjs."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/static/chart.min.js"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_chartjs.assert_called_once()
-
-    def test_sessions_route_dispatches_to_handler(self):
-        """GET /api/analytics/sessions should dispatch to _serve_analytics_sessions."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/sessions"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_sessions.assert_called_once()
-
-    def test_analytics_timeline_route_dispatches_to_handler(self):
-        """GET /api/analytics/timeline should dispatch to _serve_analytics_timeline."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/timeline"
-        handler.tmux_session = "test-session"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_timeline.assert_called_once()
-
-    def test_stats_route_dispatches_to_handler(self):
-        """GET /api/analytics/stats should dispatch to _serve_analytics_stats."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/stats"
-        handler.tmux_session = "test-session"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_stats.assert_called_once()
-
-    def test_daily_route_dispatches_to_handler(self):
-        """GET /api/analytics/daily should dispatch to _serve_analytics_daily."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/daily"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_daily.assert_called_once()
-
-    def test_presets_route_dispatches_to_handler(self):
-        """GET /api/analytics/presets should dispatch to _serve_analytics_presets."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/presets"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_presets.assert_called_once()
-
-    def test_sessions_route_with_time_params(self):
-        """GET /api/analytics/sessions with start/end passes query to handler."""
-        handler = MagicMock(spec=OvercodeHandler)
-        handler.path = "/api/analytics/sessions?start=2024-01-01T00:00:00&end=2024-01-31T23:59:59"
-
-        OvercodeHandler.do_GET(handler)
-
-        handler._serve_analytics_sessions.assert_called_once()
-
 
 class TestLogToFile:
     """Tests for _log_to_file function."""
@@ -745,84 +599,6 @@ class TestServeJson:
         ]
         assert len(content_length_calls) == 1
         assert content_length_calls[0][0][1] == str(len(written))
-
-
-class TestServeContent:
-    """Tests for _serve_content — shared content serving helper."""
-
-    def test_serves_html_with_correct_headers(self):
-        """Should serve HTML content with correct headers."""
-        handler = _make_handler()
-
-        OvercodeHandler._serve_content(handler, "<html>test</html>")
-
-        handler.send_response.assert_called_once_with(200)
-        handler.send_header.assert_any_call("Content-Type", "text/html; charset=utf-8")
-        handler.send_header.assert_any_call("Cache-Control", "no-cache")
-        handler.end_headers.assert_called_once()
-        handler.wfile.write.assert_called_once()
-
-    def test_serves_javascript_with_cache(self):
-        """Should serve JS content with custom content type and cache."""
-        handler = _make_handler()
-
-        OvercodeHandler._serve_content(
-            handler, "var x;", "application/javascript", "public, max-age=31536000"
-        )
-
-        handler.send_header.assert_any_call("Content-Type", "application/javascript")
-        handler.send_header.assert_any_call("Cache-Control", "public, max-age=31536000")
-
-    def test_handles_error_with_500(self):
-        """Should send 500 on encoding/writing error."""
-        handler = _make_handler()
-        handler.send_response.side_effect = Exception("write failed")
-
-        OvercodeHandler._serve_content(handler, "<html>test</html>")
-
-        handler.send_error.assert_called_once()
-        assert handler.send_error.call_args[0][0] == 500
-
-
-class TestServeDashboard:
-    """Tests for _serve_dashboard — live monitoring HTML page."""
-
-    def test_calls_serve_content_with_html(self):
-        """Should call _serve_content with dashboard HTML."""
-        handler = _make_handler()
-
-        with patch('overcode.web_server.get_dashboard_html', return_value="<html>dashboard</html>"):
-            OvercodeHandler._serve_dashboard(handler)
-
-        handler._serve_content.assert_called_once_with("<html>dashboard</html>")
-
-
-class TestServeAnalyticsDashboard:
-    """Tests for _serve_analytics_dashboard."""
-
-    def test_calls_serve_content_with_html(self):
-        """Should call _serve_content with analytics HTML."""
-        handler = _make_handler()
-
-        with patch('overcode.web_server.get_analytics_html', return_value="<html>analytics</html>"):
-            OvercodeHandler._serve_analytics_dashboard(handler)
-
-        handler._serve_content.assert_called_once_with("<html>analytics</html>")
-
-
-class TestServeChartjs:
-    """Tests for _serve_chartjs — embedded Chart.js library."""
-
-    def test_calls_serve_content_with_js(self):
-        """Should call _serve_content with JS content and correct params."""
-        handler = _make_handler()
-
-        with patch.dict('sys.modules', {'overcode.web_chartjs': MagicMock(CHARTJS_JS="var Chart = {};")}):
-            OvercodeHandler._serve_chartjs(handler)
-
-        handler._serve_content.assert_called_once_with(
-            "var Chart = {};", "application/javascript", "public, max-age=31536000"
-        )
 
 
 class TestDoOptions:
@@ -1053,7 +829,6 @@ class TestAgentStatusRoute:
         """Should serve agent data when agent exists."""
         handler = _make_handler()
         handler.path = "/api/agents/my-agent/status"
-        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_web_api_key', return_value=None):
             with patch('overcode.web_server.get_single_agent_status') as mock_fn:
@@ -1067,7 +842,6 @@ class TestAgentStatusRoute:
         """Should return 404 when agent does not exist."""
         handler = _make_handler()
         handler.path = "/api/agents/nonexistent/status"
-        handler._parse_datetime = MagicMock(return_value=None)
 
         with patch('overcode.web_server.get_web_api_key', return_value=None):
             with patch('overcode.web_server.get_single_agent_status', return_value=None):
@@ -1209,7 +983,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.send_key_to_agent') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/keys",
                 {"key": "Enter"}
             )
@@ -1222,7 +996,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.kill_agent') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/kill",
                 {"cascade": False}
             )
@@ -1235,7 +1009,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.restart_agent') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/restart", {}
             )
 
@@ -1247,7 +1021,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.launch_agent') as mock_fn:
             mock_fn.return_value = {"ok": True, "name": "new-agent"}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/launch",
                 {"directory": "/tmp", "name": "new-agent", "prompt": "test"}
             )
@@ -1263,7 +1037,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_sleep') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/sleep", {"asleep": True}
             )
 
@@ -1275,7 +1049,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.pause_heartbeat') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/heartbeat/pause", {}
             )
 
@@ -1287,7 +1061,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.resume_heartbeat') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/agent1/heartbeat/resume", {}
             )
 
@@ -1299,7 +1073,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.cleanup_agents') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/agents/cleanup",
                 {"include_done": True}
             )
@@ -1312,7 +1086,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.restart_monitor') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/daemon/monitor/restart", {}
             )
 
@@ -1324,7 +1098,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.start_supervisor') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/daemon/supervisor/start", {}
             )
 
@@ -1336,7 +1110,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.stop_supervisor') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/daemon/supervisor/stop", {}
             )
 
@@ -1348,7 +1122,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.toggle_summarizer') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "POST", "/api/daemon/summarizer/toggle", {}
             )
 
@@ -1360,7 +1134,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_standing_orders') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/standing-orders",
                 {"text": "Keep working"}
             )
@@ -1373,7 +1147,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_budget') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/budget",
                 {"usd": 5.0}
             )
@@ -1386,7 +1160,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_value') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/value",
                 {"value": 2000}
             )
@@ -1399,7 +1173,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_annotation') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/annotation",
                 {"text": "Working on feature X"}
             )
@@ -1412,7 +1186,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.configure_heartbeat') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/heartbeat",
                 {"enabled": True, "frequency": 300, "instruction": "check status"}
             )
@@ -1428,7 +1202,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_enhanced_context') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/enhanced-context",
                 {"enabled": True}
             )
@@ -1441,7 +1215,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.set_hook_detection') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "PUT", "/api/agents/agent1/hook-detection",
                 {"enabled": False}
             )
@@ -1454,7 +1228,7 @@ class TestDispatchControl:
 
         with patch('overcode.web_control_api.clear_standing_orders') as mock_fn:
             mock_fn.return_value = {"ok": True}
-            result = OvercodeHandler._dispatch_control(
+            OvercodeHandler._dispatch_control(
                 handler, "DELETE", "/api/agents/agent1/standing-orders", {}
             )
 
@@ -1526,11 +1300,11 @@ class TestLogMessageEdgeCases:
             assert "direct message" in mock_stderr.write.call_args[0][0]
 
     def test_suppresses_api_200_poll(self):
-        """Successful GET /api/analytics/sessions should be suppressed."""
+        """Successful GET /api/status poll should be suppressed."""
         handler = _make_handler()
 
         with patch('sys.stderr') as mock_stderr:
-            OvercodeHandler.log_message(handler, "%s %s", "GET /api/analytics/sessions", "200")
+            OvercodeHandler.log_message(handler, "%s %s", "GET /api/status", "200")
             mock_stderr.write.assert_not_called()
 
     def test_logs_api_404(self):
@@ -1541,26 +1315,3 @@ class TestLogMessageEdgeCases:
             OvercodeHandler.log_message(handler, "%s %s", "GET /api/agents/x/status", "404")
             mock_stderr.write.assert_called()
 
-
-class TestParseDateTime:
-    """Additional _parse_datetime tests."""
-
-    def test_parse_datetime_empty_string(self):
-        """Empty string should return None."""
-        handler = _make_handler()
-        result = OvercodeHandler._parse_datetime(handler, "")
-        assert result is None
-
-    def test_parse_datetime_with_timezone(self):
-        """ISO datetime with timezone offset should parse."""
-        handler = _make_handler()
-        result = OvercodeHandler._parse_datetime(handler, "2024-06-15T12:00:00+00:00")
-        assert result is not None
-        assert result.year == 2024
-
-    def test_parse_datetime_date_only(self):
-        """Date-only string should parse via fromisoformat."""
-        handler = _make_handler()
-        result = OvercodeHandler._parse_datetime(handler, "2024-06-15")
-        assert result is not None
-        assert result.day == 15

@@ -2,7 +2,7 @@
 SSH provisioner — ensures remote overcode instances are running and version-matched.
 
 When a sister has SSH configured, this module can:
-1. Check if overcode web server is running on the remote
+1. Check if overcode API server is running on the remote
 2. Compare versions and upgrade if needed
 3. Bootstrap overcode via uvx if not installed/running
 4. Start the monitor daemon on the remote
@@ -120,7 +120,7 @@ def _start_overcode(ssh_target: str, version: str, port: int, host: str) -> bool
     """Start overcode web + monitor daemon on the remote via uvx."""
     version_spec = f"overcode@{version}" if version != "dev" else "overcode"
     try:
-        # Start web server (nohup + background so SSH can exit)
+        # Start API server (nohup + background so SSH can exit)
         result = _ssh_run(
             ssh_target,
             f"nohup uvx {version_spec} web --port {port} --host {host} > /dev/null 2>&1 & "
@@ -134,7 +134,7 @@ def _start_overcode(ssh_target: str, version: str, port: int, host: str) -> bool
 
 
 def _stop_overcode(ssh_target: str, port: int, api_key: str = "") -> bool:
-    """Stop the remote's overcode services (web server, monitor, supervisor).
+    """Stop the remote's overcode services (API server, monitor, supervisor).
 
     POST /api/shutdown with its default "services" scope leaves the
     remote's agents running (#509). Needs web.allow_control on the remote.
@@ -142,7 +142,7 @@ def _stop_overcode(ssh_target: str, port: int, api_key: str = "") -> bool:
     import shlex
     header = f"-H {shlex.quote('X-API-Key: ' + api_key)} " if api_key else ""
     try:
-        result = _ssh_run(
+        _ssh_run(
             ssh_target,
             f"curl -s --connect-timeout 3 -X POST {header}"
             f"http://127.0.0.1:{port}/api/shutdown 2>/dev/null; sleep 1",
@@ -166,8 +166,8 @@ def ensure_remote_ready(
         ssh_target: SSH target (e.g., "user@host")
         sister_url: Sister's HTTP URL (e.g., "http://host:8081")
         api_key: API key for sister authentication
-        port: Remote web server port (extracted from sister_url)
-        host: Remote web server bind host
+        port: Remote API server port (extracted from sister_url)
+        host: Remote API server bind host
 
     Returns:
         ProvisionResult with status of the provisioning

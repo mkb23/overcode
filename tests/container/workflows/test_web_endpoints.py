@@ -1,8 +1,7 @@
-"""Web server REST API (coverage matrix row 9).
+"""API server REST API — the sister API (coverage matrix row 9).
 
 Read endpoints, control gating (web.allow_control), API key auth, and a
-launch-via-API round trip. The embedded dashboard pages get DOM/screenshot
-coverage in tests/container/visual/.
+launch-via-API round trip. The server has no HTML pages.
 """
 
 import requests
@@ -23,7 +22,7 @@ def _up(url):
             return requests.get(f"{url}/health", timeout=2).status_code < 500
         except requests.ConnectionError:
             return False
-    wait_for(probe, timeout=30, desc=f"web server up at {url}")
+    wait_for(probe, timeout=30, desc=f"API server up at {url}")
 
 
 def test_health_and_status_endpoints(oc, oc_wait):
@@ -40,10 +39,13 @@ def test_health_and_status_endpoints(oc, oc_wait):
     payload = status.json()
     assert any(a.get("name") == "webby" for a in payload.get("agents", [])), payload
 
+    raw = requests.get(f"{url}/api/timeline/raw?hours=1", timeout=5)
+    assert raw.status_code == 200
+    assert "agents" in raw.json()
+
+    # The web UI is gone: no HTML pages are served.
     for page in ("/", "/dashboard"):
-        page_resp = requests.get(f"{url}{page}", timeout=5)
-        assert page_resp.status_code == 200
-        assert "<html" in page_resp.text.lower()
+        assert requests.get(f"{url}{page}", timeout=5).status_code == 404
 
 
 def test_control_disabled_by_default(oc, oc_wait):
