@@ -374,20 +374,57 @@ def _scan_sql(ids: Sequence[str]) -> Tuple[str, List[Any]]:
     return sql, params
 
 
-# Per-row parse cache (#476). The TUI re-reads a conversation's newest rows
-# every second for the burn rate and every 5 s for the stats columns, and
-# on a real store an assistant row is 1 KB-1 MB of JSON (tool output
-# travels inline). So the scan selects only the narrow columns — they all
-# sit in the row's first page, so it never touches overflow pages — and
-# fetches + parses ``data`` only for rows it has not seen at that
-# ``time_updated``. opencode rewrites ``time_updated`` whenever it rewrites
-# a row (on a live store an assistant row's ``time_updated`` is its
-# ``time.completed``); an assistant row still in flight (no
-# ``time.completed`` yet) is never cached, so a stale key cannot freeze it.
-# Entries are small extracted records, never the envelope.
-_ROW_CACHE_MAX = 50_000
-_row_cache: Dict[Tuple[str, str, str], Tuple[Any, Any]] = {}
+# Per-conversation parse cache (#476, #526). The TUI re-reads a
+# conversation's newest rows every second for the burn rate and every 5 s
+# for the stats columns, and on a real store an assistant row is 1 KB-1 MB
+# of JSON (tool output travels inline). So the scan selects only the
+# narrow columns — they all sit in the row's first page, so it never
+# touches overflow pages — and fetches + parses ``data`` only for rows it
+# has not seen at that ``time_updated``. opencode rewrites
+# ``time_updated`` whenever it rewrites a row (on a live store an
+# assistant row's ``time_updated`` is its ``time.completed``); an
+# assistant row still in flight (no ``time.completed`` yet) is never
+# cached, so a stale key cannot freeze it. Entries are small extracted
+# records, never the envelope.
+#
+# The cache is held per conversation, keyed (store, table, conversation
+# id), and each conversation keeps exactly the cacheable rows of its most
+# recent scan (at most _MESSAGE_SCAN_LIMIT): a row that scrolls out of
+# the newest 500 leaves the cache with it. So the cache grows with the
+# conversations being polled, never past them, and a fleet cannot
+# outgrow it the way it outgrew the old 50k-row global cap (#526: a sweep
+# visits the same rows in the same order every time, so any row-level cap
+# below the working set — FIFO or LRU — evicts exactly what the next
+# sweep needs, and every body was re-fetched every sweep).
+#
+# Whole conversations are evicted once nobody has polled them for
+# _CONVERSATION_IDLE_SECONDS (an agent that was killed, a /new that left
+# an id behind). _CONVERSATION_CACHE_MAX is a safety ceiling far above
+# any fleet seen (1,000 conversations ≈ 333 agents x 3); past it the
+# least recently polled conversations go first.
+_CONVERSATION_IDLE_SECONDS = 15 * 60.0
+_CONVERSATION_CACHE_MAX = 1_000
+# How often the idle sweep runs at most; it walks every conversation.
+_CONVERSATION_PRUNE_INTERVAL_SECONDS = 60.0
+
+
+class _ConversationRows:
+    """One conversation's cached records and when it was last polled."""
+
+    __slots__ = ("records", "polled_at")
+
+    def __init__(self, records: Dict[str, Tuple[Any, Any]], polled_at: float) -> None:
+        # row id -> (time_updated, record)
+        self.records = records
+        self.polled_at = polled_at
+
+
+_row_cache: Dict[Tuple[str, str, str], _ConversationRows] = {}
 _row_cache_lock = threading.Lock()
+_row_cache_pruned_at = 0.0
+
+# Test seam: idle eviction without sleeping.
+row_cache_clock = time.monotonic
 
 # A parsed row: the record the scan consumes, and whether it may be cached.
 RowParser = Callable[[Optional[str], Any], Tuple[Optional[Dict[str, Any]], bool]]
@@ -395,8 +432,33 @@ RowParser = Callable[[Optional[str], Any], Tuple[Optional[Dict[str, Any]], bool]
 
 def clear_row_cache() -> None:
     """Drop every cached row record (tests)."""
+    global _row_cache_pruned_at
     with _row_cache_lock:
         _row_cache.clear()
+        _row_cache_pruned_at = 0.0
+
+
+def row_cache_size() -> int:
+    """Records held across every cached conversation."""
+    return sum(len(entry.records) for entry in list(_row_cache.values()))
+
+
+def _prune_row_cache(now: float) -> None:
+    """Drop idle conversations, then the least recently polled past the ceiling.
+
+    Caller holds ``_row_cache_lock``.
+    """
+    global _row_cache_pruned_at
+    if (now - _row_cache_pruned_at >= _CONVERSATION_PRUNE_INTERVAL_SECONDS
+            or len(_row_cache) > _CONVERSATION_CACHE_MAX):
+        _row_cache_pruned_at = now
+        for key in [k for k, entry in _row_cache.items()
+                    if now - entry.polled_at >= _CONVERSATION_IDLE_SECONDS]:
+            del _row_cache[key]
+    if len(_row_cache) > _CONVERSATION_CACHE_MAX:
+        by_poll = sorted(_row_cache, key=lambda k: _row_cache[k].polled_at)
+        for key in by_poll[: len(by_poll) - _CONVERSATION_CACHE_MAX]:
+            del _row_cache[key]
 
 
 def _database_key(conn: sqlite3.Connection) -> str:
@@ -426,41 +488,56 @@ def _fetch_data(
 def _cached_records(
     conn: sqlite3.Connection,
     table: str,
-    rows: Sequence[Tuple[str, Any, Any]],
+    rows: Sequence[Tuple[str, str, Any, Any]],
     parse: RowParser,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
-    """Records for ``rows`` of ``(id, time_updated, hint)``, parsed at most
-    once per ``(store, table, id, time_updated)``.
+    """Records for ``rows`` of ``(id, conversation id, time_updated, hint)``,
+    parsed at most once per ``(store, table, conversation, id, time_updated)``.
 
-    ``hint`` is handed to ``parse`` alongside the body (v2 keeps the row
-    type outside the envelope). Unparseable rows map to None.
+    ``rows`` must be whole scans of their conversations (each one's newest
+    ``_MESSAGE_SCAN_LIMIT`` rows): a conversation's cache is replaced by
+    the cacheable rows seen here. ``hint`` is handed to ``parse`` alongside
+    the body (v2 keeps the row type outside the envelope). Unparseable rows
+    map to None.
     """
     db = _database_key(conn)
+    now = row_cache_clock()
     records: Dict[str, Optional[Dict[str, Any]]] = {}
-    missing: List[Tuple[str, Any, Any]] = []
-    for msg_id, version, hint in rows:
-        entry = _row_cache.get((db, table, msg_id))
-        if entry is not None and entry[0] == version:
-            records[msg_id] = entry[1]
+    # Per conversation: its cache entry (or None) and the rows it served.
+    seen: Dict[str, Tuple[Optional[_ConversationRows], Dict[str, Tuple[Any, Any]]]] = {}
+    missing: List[Tuple[str, str, Any, Any]] = []
+    changed = set()  # conversations with a row not served from the cache
+    for msg_id, conversation, version, hint in rows:
+        state = seen.get(conversation)
+        if state is None:
+            state = seen[conversation] = (_row_cache.get((db, table, conversation)), {})
+        entry, kept = state
+        hit = entry.records.get(msg_id) if entry is not None else None
+        if hit is not None and hit[0] == version:
+            records[msg_id] = hit[1]
+            kept[msg_id] = hit
         else:
-            missing.append((msg_id, version, hint))
-    if not missing:
-        return records
+            missing.append((msg_id, conversation, version, hint))
+            changed.add(conversation)
 
-    bodies = _fetch_data(conn, table, [msg_id for msg_id, _, _ in missing])
-    fresh: Dict[Tuple[str, str, str], Tuple[Any, Any]] = {}
-    for msg_id, version, hint in missing:
-        record, cacheable = parse(bodies.get(msg_id), hint)
-        records[msg_id] = record
-        if cacheable:
-            fresh[(db, table, msg_id)] = (version, record)
-    if fresh:
-        with _row_cache_lock:
-            if len(_row_cache) + len(fresh) > _ROW_CACHE_MAX:
-                # Bound growth: drop the oldest half (insertion order).
-                for stale in list(_row_cache)[: _ROW_CACHE_MAX // 2]:
-                    del _row_cache[stale]
-            _row_cache.update(fresh)
+    if missing:
+        bodies = _fetch_data(conn, table, [row[0] for row in missing])
+        for msg_id, conversation, version, hint in missing:
+            record, cacheable = parse(bodies.get(msg_id), hint)
+            records[msg_id] = record
+            if cacheable:
+                seen[conversation][1][msg_id] = (version, record)
+
+    with _row_cache_lock:
+        for conversation, (entry, kept) in seen.items():
+            if conversation not in changed and entry is not None \
+                    and len(kept) == len(entry.records) \
+                    and _row_cache.get((db, table, conversation)) is entry:
+                # Every row a hit and none left the window: keep the entry.
+                entry.polled_at = now
+            else:
+                _row_cache[(db, table, conversation)] = _ConversationRows(kept, now)
+        _prune_row_cache(now)
     return records
 
 
@@ -619,7 +696,7 @@ def _scan_messages(
         rows = conn.execute(sql, params).fetchall()
         rows.sort(key=lambda row: row[2], reverse=True)  # time_created DESC
         records = _cached_records(
-            conn, "message", [(row[0], row[3], None) for row in rows],
+            conn, "message", [(row[0], row[1], row[3], None) for row in rows],
             _parse_message_record,
         )
     except sqlite3.Error:

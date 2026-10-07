@@ -86,12 +86,14 @@ def test_window_reads_real_usage(fleets, name):
     assert usage["input_tokens"] > 0
 
 
-def test_cliff_fleet_polls_past_the_row_cache_cap(fleets):
-    from overcode.backends import opencode_stats
+# The global row cache's cap before #526; the cliff fleet must poll past it.
+OLD_ROW_CACHE_MAX = 50_000
 
+
+def test_cliff_fleet_polls_past_the_old_row_cache_cap(fleets):
     fleet = fleets["opencode-cliff"]
     polled = len(fleet.sessions) * bench_backends.BackendFleetSpec.quick().conversations * 500
-    assert polled > opencode_stats._ROW_CACHE_MAX
+    assert polled > OLD_ROW_CACHE_MAX
 
 
 # ── budgets ───────────────────────────────────────────────────────────────
@@ -150,9 +152,11 @@ def test_hermes_warm_sweep_parses_no_config(fleets):
     assert calls == []
 
 
-@_known(526, "all 75,000 polled row bodies re-fetched every warm sweep")
 def test_opencode_row_cache_holds_the_fleet(fleets, monkeypatch):
-    """A warm sweep over a fleet that polls 75k rows re-fetches no bodies."""
+    """A warm sweep over a fleet that polls 75k rows re-fetches no bodies.
+
+    Before #526 the 50k-row global cap re-fetched all 75,000 every sweep.
+    """
     from overcode.backends import opencode_stats
 
     fleet = fleets["opencode-cliff"]

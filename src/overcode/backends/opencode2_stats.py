@@ -333,7 +333,7 @@ def _scan_messages(
         rows.sort(key=lambda row: (row[4], row[3]), reverse=True)
         records = _cached_records(
             conn, "session_message",
-            [(row[0], row[5], row[2]) for row in rows],
+            [(row[0], row[1], row[5], row[2]) for row in rows],
             _parse_session_message_record,
         )
     except sqlite3.Error:

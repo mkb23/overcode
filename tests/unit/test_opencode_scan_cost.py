@@ -14,7 +14,8 @@ The second cost is the row body: on a real store an assistant row carries
 its tool output inline (median ~1 KB, tail past 1 MB), and the old scan
 fetched and JSON-parsed 500 of them per conversation per call. The scan
 now selects only the narrow columns and parses a body once per
-``(store, row, time_updated)`` — see ``opencode_stats._cached_records``.
+``(store, conversation, row, time_updated)`` — see
+``opencode_stats._cached_records``.
 
 These tests build a store with the live schema AND its indexes (the
 reader fixtures elsewhere have none, which hides the difference) and pin:
@@ -24,7 +25,9 @@ reader fixtures elsewhere have none, which hides the difference) and pin:
   a wide one: on this fixture the old shape measures ~22x for opencode
   and ~80-150x for opencode2, the new one ~9-10x for both), and
 * the row cache: bodies are fetched once, in-flight rows are not cached,
-  a rewritten row is re-read, and stores never share entries.
+  a rewritten row is re-read, stores never share entries, and a fleet
+  bigger than the old 50k-row cap stays warm (#526) while idle
+  conversations are evicted whole.
 """
 
 import json
@@ -435,15 +438,167 @@ class TestRowCache:
         usage_b = self._reader(v2, b, monkeypatch).get_window_token_usage(session_with(1), LAUNCH)
         assert (usage_a["input_tokens"], usage_b["input_tokens"]) == (100, 700)
 
-    def test_cache_stays_bounded(self, v2, tmp_path, monkeypatch):
+    def test_a_conversation_holds_only_its_scanned_rows(self, v2, store, monkeypatch):
+        """2,500 rows in the conversation, 500 scanned, 500 cached: a row
+        that scrolls out of the scan leaves the cache with it."""
+        reader = self._reader(v2, store, monkeypatch)
+        reader.get_stats(session_with(2))
+        table = "session_message" if v2 else "message"
+        keys = [k for k in opencode_stats._row_cache if k[1] == table]
+        assert sorted(k[2] for k in keys) == [sid(0), sid(1)]
+        for key in keys:
+            assert len(opencode_stats._row_cache[key].records) == opencode_stats._MESSAGE_SCAN_LIMIT
+        assert opencode_stats.row_cache_size() == 2 * opencode_stats._MESSAGE_SCAN_LIMIT
+
+    def test_a_row_entering_as_one_leaves_is_cached(self, v2, tmp_path, monkeypatch, fetched):
+        """The window slides by one: the newcomer is cached, the row that
+        scrolled out is dropped (same entry count before and after)."""
+        monkeypatch.setattr(opencode_stats, "_MESSAGE_SCAN_LIMIT", 2)
+        monkeypatch.setattr(opencode2_stats, "_MESSAGE_SCAN_LIMIT", 2)
         path = tmp_path / "opencode.db"
         _small_store(path, v2=v2)
-        monkeypatch.setattr(opencode_stats, "_ROW_CACHE_MAX", 4)
-        for n in range(6):
-            opencode_stats._row_cache[("x", "t", f"filler{n}")] = (0, {})
+        reader = self._reader(v2, path, monkeypatch)
+        reader.get_stats(session_with(1))
+
+        t = LAUNCH_MS + 5000
+        conn = sqlite3.connect(path)
+        if v2:
+            conn.execute("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)",
+                         ("msg_u2", sid(0), "user", 3, t, t, json.dumps({"text": "again"})))
+        else:
+            conn.execute("INSERT INTO message VALUES (?,?,?,?,?)",
+                         ("msg_u2", sid(0), t, t, json.dumps({"role": "user"})))
+        conn.commit()
+        conn.close()
+
+        fetched.clear()
+        reader.get_stats(session_with(1))
+        assert fetched == [["msg_u2"]]
+        fetched.clear()
+        reader.get_stats(session_with(1))
+        assert fetched == []  # the newcomer was cached on its first read
+        (entry,) = opencode_stats._row_cache.values()
+        assert set(entry.records) == {"msg_a", "msg_u2"}  # msg_u scrolled out
+
+    def test_idle_conversations_are_evicted_whole(self, v2, tmp_path, monkeypatch):
+        """An agent that goes away takes its conversations' records with it."""
+        clock = [1000.0]
+        monkeypatch.setattr(opencode_stats, "row_cache_clock", lambda: clock[0])
+        path = tmp_path / "opencode.db"
+        _small_store(path, v2=v2)
+        reader = self._reader(v2, path, monkeypatch)
+        # A conversation polled once, then never again.
+        opencode_stats._row_cache[("gone.db", "message", "ses_gone")] = (
+            opencode_stats._ConversationRows({"m": (1, {})}, clock[0])
+        )
+        reader.get_stats(session_with(1))
+        assert len(opencode_stats._row_cache) == 2
+
+        # Polled every minute for longer than the idle limit: the live
+        # conversation stays warm, the abandoned one goes.
+        steps = int(opencode_stats._CONVERSATION_IDLE_SECONDS // 60) + 2
+        for _ in range(steps):
+            clock[0] += 60
+            reader.get_stats(session_with(1))
+        assert [k[2] for k in opencode_stats._row_cache] == [sid(0)]
+
+    def test_conversation_ceiling_drops_the_least_recently_polled(
+        self, v2, tmp_path, monkeypatch
+    ):
+        clock = [1000.0]
+        monkeypatch.setattr(opencode_stats, "row_cache_clock", lambda: clock[0])
+        monkeypatch.setattr(opencode_stats, "_CONVERSATION_CACHE_MAX", 3)
+        for n in range(3):
+            opencode_stats._row_cache[("x.db", "t", f"ses_{n}")] = (
+                opencode_stats._ConversationRows({}, clock[0] + n)
+            )
+        clock[0] += 10
+        path = tmp_path / "opencode.db"
+        _small_store(path, v2=v2)
         self._reader(v2, path, monkeypatch).get_stats(session_with(1))
-        assert len(opencode_stats._row_cache) <= 6  # oldest half evicted, new rows in
-        assert any(key[2] == "msg_a" for key in opencode_stats._row_cache)
+        assert {k[2] for k in opencode_stats._row_cache} == {"ses_1", "ses_2", sid(0)}
+
+
+# The cap #526 outgrew: 50,000 rows fleet-wide, oldest half dropped.
+OLD_GLOBAL_ROW_CAP = 50_000
+FLEET_CONVERSATIONS = 105
+FLEET_ROWS = 500
+
+
+@pytest.fixture(scope="module")
+def fleet_store(tmp_path_factory) -> Path:
+    """More conversations x 500 rows than the old 50,000-row global cap held."""
+    path = tmp_path_factory.mktemp("opencode-fleet") / "opencode.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(LIVE_DDL)
+    for s in range(FLEET_CONVERSATIONS):
+        first = LAUNCH_MS + s * 1000
+        for table in ("session", "session_v2"):
+            conn.execute(
+                f"INSERT INTO {table} (id, project_id, slug, directory, version,"
+                " parent_id, cost, time_created, time_updated)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (sid(s), "prj", "slug", DIRECTORY, "1", None, 0.0, first, first),
+            )
+        v1_rows, v2_rows = [], []
+        for m in range(FLEET_ROWS):
+            t = first + m
+            role = "user" if m % 2 else "assistant"
+            envelope = {"role": role}
+            if role == "assistant":
+                envelope["tokens"] = {"input": 1, "output": 1, "total": 2}
+                envelope["time"] = {"created": t, "completed": t + 1}
+            data = json.dumps(envelope)
+            v1_rows.append((f"m{s}_{m}", sid(s), t, t, data))
+            v2_rows.append((f"m{s}_{m}", sid(s), role, m + 1, t, t, data))
+        conn.executemany("INSERT INTO message VALUES (?,?,?,?,?)", v1_rows)
+        conn.executemany("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)", v2_rows)
+    conn.commit()
+    conn.close()
+    return path
+
+
+@pytest.mark.parametrize("v2", [False, True], ids=["opencode", "opencode2"])
+def test_fleet_past_the_old_cap_warm_sweep_fetches_no_bodies(v2, fleet_store, monkeypatch):
+    """#526: a fleet polling more rows than the old global cap re-fetched
+    every body on every sweep (cyclic access thrashes any row-level cap).
+    Per-conversation caching holds the whole working set."""
+    assert FLEET_CONVERSATIONS * FLEET_ROWS > OLD_GLOBAL_ROW_CAP
+    opencode_stats.clear_row_cache()
+    opencode_stats.clear_window_indexes()
+    if v2:
+        monkeypatch.delenv("OPENCODE_DB", raising=False)
+        monkeypatch.setenv("OPENCODE_DATA_DIR", str(fleet_store.parent))
+        reader = opencode2_stats.Opencode2StatsReader()
+    else:
+        reader = opencode_stats.OpencodeStatsReader(db_path=fleet_store)
+
+    def agent(n):
+        return SimpleNamespace(
+            agent_session_ids=[sid(n)], active_agent_session_id=sid(n),
+            start_directory=DIRECTORY, start_time=LAUNCH.isoformat(),
+            tmux_session=None, name=None,
+        )
+
+    fleet = [agent(n) for n in range(FLEET_CONVERSATIONS)]
+    try:
+        for session in fleet:  # cold sweep
+            assert reader.get_stats(session).interaction_count == FLEET_ROWS // 2
+        fetched: list = []
+        real = opencode_stats._fetch_data
+
+        def counting(conn, table, ids):
+            fetched.extend(ids)
+            return real(conn, table, ids)
+
+        monkeypatch.setattr(opencode_stats, "_fetch_data", counting)
+        for session in fleet:  # warm sweep
+            assert reader.get_stats(session).interaction_count == FLEET_ROWS // 2
+        assert fetched == []
+        assert opencode_stats.row_cache_size() == FLEET_CONVERSATIONS * FLEET_ROWS
+    finally:
+        opencode_stats.clear_row_cache()
+        opencode_stats.clear_window_indexes()
 
 
 # ── #517: the burn rate reuses the stats scan ──────────────────────────

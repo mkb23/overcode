@@ -189,10 +189,24 @@ User rows are immutable. Unparseable rows are not cached either.
 
 The store file is read from `PRAGMA database_list` on each call so entries
 never cross databases: the unit suites reuse row ids like `msg_a1` across
-many temporary stores. The cache is bounded at 50,000 records and drops
-its oldest half when full; a record is a few hundred bytes, so the ceiling
-is a few megabytes. Dict reads are lock-free; inserts and eviction take a
-lock, and the worst race is one duplicated parse.
+many temporary stores. Dict reads are lock-free; inserts and eviction take
+a lock, and the worst race is one duplicated parse.
+
+**Bounding it (#526).** The cache was first a flat row-level dict capped
+at 50,000 records that dropped its oldest half when full. A fleet polling
+more than that (50 agents x 3 conversations x 500 rows = 75k) re-fetched
+and re-parsed every body on every sweep: a sweep visits the same rows in
+the same order each time, so any row-level cap below the working set,
+FIFO or LRU, evicts exactly the rows the next sweep needs. The cache is
+now per conversation, keyed `(store file, table, conversation id)`, and
+each conversation holds exactly the cacheable rows of its most recent
+scan (at most 500), so a row that scrolls out of the newest 500 leaves
+with it. Size follows the conversations being polled, never past them.
+Whole conversations are evicted after 15 minutes without a poll, and a
+safety ceiling of 1,000 conversations drops the least recently polled.
+On `scripts/bench_backends.py opencode`'s `opencode-cliff` fleet the stats
+sweep went from 434 ms to 150 ms (104 to 46 ms/s), with no bodies
+re-fetched on a warm sweep.
 
 ### What was considered and not done
 

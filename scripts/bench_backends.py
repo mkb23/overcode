@@ -48,7 +48,7 @@ class BackendFleetSpec:
     # Messages per conversation (hermes)
     messages: int = 3000
     # Agents on the row-cache cliff store: cliff_agents x conversations x 500
-    # polled rows must pass the 50k-entry cap
+    # polled rows pass the old 50k-entry global cap (#526)
     cliff_agents: int = 50
 
     @classmethod
@@ -105,8 +105,9 @@ def build_opencode(root: Path, name: str, agents: int, spec: BackendFleetSpec,
     The live store's busiest conversations run to thousands of rows (#517's
     report; 2,300 on the 2.3 GB generated store), and every per-second rescan
     walks 500 of them. Short conversations would hide that cost.
-    ``agents x conversations x 500`` is the fleet's polled rows: under the row
-    cache's 50k cap for the 30-agent fleets, past it for "opencode-cliff".
+    ``agents x conversations x 500`` is the fleet's polled rows: under the old
+    50k-row global cache cap for the 30-agent fleets, past it for
+    "opencode-cliff" (the fleet that thrashed it, #526).
     """
     import make_opencode_store as gen
     from overcode.backends import opencode2_stats, opencode_stats
