@@ -37,7 +37,7 @@ import typer
 from rich import print as rprint
 
 from ._shared import app, SessionOption
-from ..tmux_utils import get_pane_base_index
+from ..tmux_utils import _build_tmux_cmd, get_pane_base_index
 
 
 def _acquire_setup_lock() -> bool:
@@ -208,12 +208,25 @@ def _linked_session_name(agents_session: str) -> str:
 
 
 def _tmux(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
-    """Run a tmux command."""
+    """Run a tmux command on overcode's server (``OVERCODE_TMUX_SOCKET``, if set)."""
     return subprocess.run(
-        ["tmux", *args],
+        [*_build_tmux_cmd(), *args],
         capture_output=capture,
         text=True,
     )
+
+
+def _bottom_pane_command(linked: str) -> str:
+    """The split's bottom pane: a nested attach to the linked session.
+
+    $TMUX is unset because tmux refuses to attach from inside a session, so
+    overcode's server is named explicitly: without $TMUX a bare tmux reaches
+    the default server, not the OVERCODE_TMUX_SOCKET one the agents live on.
+    """
+    import shlex
+
+    attach = shlex.join([*_build_tmux_cmd(), "attach-session", "-t", linked])
+    return f"sh -c {shlex.quote('unset TMUX; exec ' + attach)}"
 
 
 def _tmux_check(*args: str) -> bool:
@@ -935,9 +948,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
 
     # --- Create the split layout ---
 
-    # The bottom pane runs a nested tmux attach. We must unset $TMUX
-    # because tmux refuses to attach from inside an existing session.
-    attach_cmd = f"sh -c 'unset TMUX; exec tmux attach-session -t {linked}'"
+    attach_cmd = _bottom_pane_command(linked)
 
     # If an "overcode" session exists but has no split window, it might be:
     # (a) a stale session from a previous overcode run, or

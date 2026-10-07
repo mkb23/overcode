@@ -139,6 +139,27 @@ class TestExecTmuxAttach:
         assert seen["args"] == ["tmux", "-L", "oc-test", "attach-session", "-t", "agents"]
 
 
+class TestOvercodesServer:
+    """Every split command reaches the server the agents live on (OVERCODE_TMUX_SOCKET)."""
+
+    def test_tmux_commands_carry_the_socket(self, monkeypatch):
+        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "ocx")
+        run = MagicMock(return_value=subprocess.CompletedProcess([], 0, "", ""))
+        monkeypatch.setattr(split_mod.subprocess, "run", run)
+        split_mod._tmux("has-session", "-t", "agents")
+        assert run.call_args.args[0] == ["tmux", "-L", "ocx", "has-session", "-t", "agents"]
+
+    def test_the_bottom_pane_attaches_to_the_same_server(self, monkeypatch):
+        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "ocx")
+        cmd = split_mod._bottom_pane_command("oc-linked-agents")
+        assert cmd == "sh -c 'unset TMUX; exec tmux -L ocx attach-session -t oc-linked-agents'"
+
+    def test_without_a_socket_the_default_server(self, monkeypatch):
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
+        cmd = split_mod._bottom_pane_command("oc-linked-agents")
+        assert cmd == "sh -c 'unset TMUX; exec tmux attach-session -t oc-linked-agents'"
+
+
 class TestLinkedSessionName:
 
     def test_prefix_and_session(self):
