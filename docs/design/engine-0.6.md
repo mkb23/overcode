@@ -35,7 +35,7 @@ through the engine would only add latency.
 
 | Output | Attended | Unattended |
 |---|---|---|
-| Hook-driven status change, e.g. Stop or a permission prompt | ≤ 0.5 s | ≤ 2 s |
+| Hook-driven status change, e.g. Stop or a permission prompt | ≤ 0.5 s (a Stop within 1.5 s of tool activity is held green on purpose, #448, and shows when that window ends: ≤ 2 s) | ≤ 2 s |
 | Pane-derived signals (interrupt marker, shell/monitor counts, dead shell) | ≤ 1 s focused, ≤ 2 s others | ≤ 10 s, ambiguous agents only |
 | Token, cost and energy columns | 5 s | 60 s |
 | Burn rate | ≤ 10 s | not computed |
