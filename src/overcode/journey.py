@@ -195,10 +195,6 @@ class Signals:
                 total += self.summary.actions[i].user_uses
         return total
 
-    def key_uses(self, action: str) -> int:
-        a = self.summary.actions.get(action)
-        return a.by_via.get("key", 0) if a else 0
-
 
 @dataclass
 class Competency:

@@ -7,7 +7,6 @@ import pytest
 from typer.testing import CliRunner
 
 from overcode.claude_config import ClaudeConfigEditor
-from overcode.cli import app
 
 
 runner = CliRunner()
@@ -117,68 +116,6 @@ class TestHasHook:
         assert editor.has_hook("UserPromptSubmit", "overcode time-context")
 
 
-class TestAddHook:
-
-    def test_add_to_empty(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text("{}")
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_hook("UserPromptSubmit", "overcode time-context") is True
-        data = json.loads(f.read_text())
-        assert len(data["hooks"]["UserPromptSubmit"]) == 1
-        entry = data["hooks"]["UserPromptSubmit"][0]
-        assert entry["matcher"] == ""
-        assert entry["hooks"][0]["command"] == "overcode time-context"
-
-    def test_add_to_nonexistent_file(self, tmp_path):
-        f = tmp_path / ".claude" / "settings.json"
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_hook("UserPromptSubmit", "overcode time-context") is True
-        assert f.exists()
-        data = json.loads(f.read_text())
-        assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "overcode time-context"
-
-    def test_preserves_existing_settings(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text(json.dumps({"alwaysThinkingEnabled": True, "hooks": {
-            "Notification": [{"matcher": "x", "hooks": []}]
-        }}))
-        editor = ClaudeConfigEditor(f)
-        editor.add_hook("UserPromptSubmit", "overcode time-context")
-        data = json.loads(f.read_text())
-        assert data["alwaysThinkingEnabled"] is True
-        assert len(data["hooks"]["Notification"]) == 1
-        assert len(data["hooks"]["UserPromptSubmit"]) == 1
-
-    def test_appends_to_existing_event(self, tmp_path):
-        f = tmp_path / "settings.json"
-        existing = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]}
-        ]}}
-        f.write_text(json.dumps(existing))
-        editor = ClaudeConfigEditor(f)
-        editor.add_hook("UserPromptSubmit", "overcode time-context")
-        data = json.loads(f.read_text())
-        assert len(data["hooks"]["UserPromptSubmit"]) == 2
-
-    def test_returns_false_when_exists(self, tmp_path):
-        f = tmp_path / "settings.json"
-        settings = {"hooks": {"UserPromptSubmit": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]}
-        ]}}
-        f.write_text(json.dumps(settings))
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_hook("UserPromptSubmit", "overcode time-context") is False
-
-    def test_custom_matcher(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text("{}")
-        editor = ClaudeConfigEditor(f)
-        editor.add_hook("PreToolUse", "my-cmd", matcher="Bash")
-        data = json.loads(f.read_text())
-        assert data["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
-
-
 class TestRemoveHook:
 
     def test_remove_existing_hook(self, tmp_path):
@@ -246,102 +183,6 @@ class TestRemoveHook:
         data = json.loads(f.read_text())
         assert len(data["hooks"]["UserPromptSubmit"]) == 1
         assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "other-tool"
-
-
-class TestListHooksMatching:
-
-    def test_finds_overcode_hooks(self, tmp_path):
-        f = tmp_path / "settings.json"
-        settings = {"hooks": {
-            "UserPromptSubmit": [
-                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
-            ],
-            "Stop": [
-                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]}
-            ],
-            "PreToolUse": [
-                {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]}
-            ],
-        }}
-        f.write_text(json.dumps(settings))
-        editor = ClaudeConfigEditor(f)
-        result = editor.list_hooks_matching("overcode")
-        assert len(result) == 2
-        assert ("UserPromptSubmit", "overcode hook-handler") in result
-        assert ("Stop", "overcode hook-handler") in result
-
-    def test_no_matches(self, tmp_path):
-        f = tmp_path / "settings.json"
-        settings = {"hooks": {"Stop": [
-            {"matcher": "", "hooks": [{"type": "command", "command": "other-tool"}]}
-        ]}}
-        f.write_text(json.dumps(settings))
-        editor = ClaudeConfigEditor(f)
-        assert editor.list_hooks_matching("overcode") == []
-
-    def test_empty_settings(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text("{}")
-        editor = ClaudeConfigEditor(f)
-        assert editor.list_hooks_matching("overcode") == []
-
-    def test_matches_legacy_hooks(self, tmp_path):
-        f = tmp_path / "settings.json"
-        settings = {"hooks": {
-            "UserPromptSubmit": [
-                {"matcher": "", "hooks": [{"type": "command", "command": "overcode time-context"}]},
-                {"matcher": "", "hooks": [{"type": "command", "command": "overcode hook-handler"}]},
-            ],
-        }}
-        f.write_text(json.dumps(settings))
-        editor = ClaudeConfigEditor(f)
-        result = editor.list_hooks_matching("overcode")
-        assert len(result) == 2
-        assert ("UserPromptSubmit", "overcode time-context") in result
-        assert ("UserPromptSubmit", "overcode hook-handler") in result
-
-
-class TestAddPermission:
-
-    def test_add_to_empty(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text("{}")
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_permission("Bash(overcode report *)") is True
-        data = json.loads(f.read_text())
-        assert data["permissions"]["allow"] == ["Bash(overcode report *)"]
-
-    def test_add_to_nonexistent_file(self, tmp_path):
-        f = tmp_path / ".claude" / "settings.json"
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_permission("Bash(overcode show *)") is True
-        assert f.exists()
-        data = json.loads(f.read_text())
-        assert "Bash(overcode show *)" in data["permissions"]["allow"]
-
-    def test_returns_false_when_exists(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_permission("Bash(overcode report *)") is False
-
-    def test_appends_to_existing_allow(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text(json.dumps({"permissions": {"allow": ["Bash(overcode report *)"]}}))
-        editor = ClaudeConfigEditor(f)
-        assert editor.add_permission("Bash(overcode show *)") is True
-        data = json.loads(f.read_text())
-        assert len(data["permissions"]["allow"]) == 2
-
-    def test_preserves_existing_settings(self, tmp_path):
-        f = tmp_path / "settings.json"
-        f.write_text(json.dumps({"alwaysThinkingEnabled": True, "permissions": {"deny": ["something"]}}))
-        editor = ClaudeConfigEditor(f)
-        editor.add_permission("Bash(overcode list *)")
-        data = json.loads(f.read_text())
-        assert data["alwaysThinkingEnabled"] is True
-        assert data["permissions"]["deny"] == ["something"]
-        assert "Bash(overcode list *)" in data["permissions"]["allow"]
 
 
 class TestRemovePermission:

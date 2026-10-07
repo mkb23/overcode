@@ -1241,22 +1241,6 @@ def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
     return f"Σ {format_tokens(ctx.claude_stats.total_tokens)}"
 
 
-def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
-    """Context window usage for CLI.
-
-    None when the model's context window is unknown (#469) — same "assume
-    nothing" rule as render_context_usage above.
-    """
-    if ctx.claude_stats is None:
-        return None
-    if ctx.claude_stats.current_context_tokens > 0:
-        max_context = ctx.claude_stats.max_context_tokens
-        if max_context:
-            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            return f"context {ctx_pct:.0f}%"
-    return None
-
-
 def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     """Cost + budget for CLI."""
     s = ctx.session

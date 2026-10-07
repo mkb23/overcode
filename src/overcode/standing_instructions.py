@@ -9,7 +9,7 @@ customized by the user.
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 
 PRESETS_PATH = Path.home() / ".overcode" / "presets.json"
 
@@ -185,22 +185,6 @@ def load_presets() -> Dict[str, InstructionPreset]:
         return DEFAULT_PRESETS.copy()
 
 
-def save_presets(presets: Dict[str, InstructionPreset]) -> None:
-    """Save presets to ~/.overcode/presets.json.
-
-    Args:
-        presets: Dict mapping preset names to InstructionPreset objects
-    """
-    _ensure_presets_dir()
-
-    presets_data = {
-        name: asdict(preset)
-        for name, preset in presets.items()
-    }
-    with open(PRESETS_PATH, 'w') as f:
-        json.dump(presets_data, f, indent=2)
-
-
 def get_preset(name: str) -> Optional[InstructionPreset]:
     """Get a preset by name (case-insensitive).
 
@@ -212,23 +196,6 @@ def get_preset(name: str) -> Optional[InstructionPreset]:
     """
     presets = load_presets()
     return presets.get(name.upper())
-
-
-def get_preset_names() -> List[str]:
-    """Get all preset names in order.
-
-    Returns:
-        List of preset names
-    """
-    presets = load_presets()
-    # Return in a consistent order (DO_NOTHING first, then alphabetical)
-    names = list(presets.keys())
-    if "DO_NOTHING" in names:
-        names.remove("DO_NOTHING")
-        names = ["DO_NOTHING"] + sorted(names)
-    else:
-        names = sorted(names)
-    return names
 
 
 def resolve_instructions(input_text: str) -> tuple[str, Optional[str]]:
@@ -247,43 +214,3 @@ def resolve_instructions(input_text: str) -> tuple[str, Optional[str]]:
     if preset:
         return preset.instructions, preset.name
     return input_text, None
-
-
-def add_preset(name: str, description: str, instructions: str) -> None:
-    """Add or update a preset.
-
-    Args:
-        name: Preset name (will be uppercased)
-        description: Short description
-        instructions: Full instruction text
-    """
-    presets = load_presets()
-    presets[name.upper()] = InstructionPreset(
-        name=name.upper(),
-        description=description,
-        instructions=instructions,
-    )
-    save_presets(presets)
-
-
-def remove_preset(name: str) -> bool:
-    """Remove a preset.
-
-    Args:
-        name: Preset name to remove
-
-    Returns:
-        True if preset was removed, False if not found
-    """
-    presets = load_presets()
-    name_upper = name.upper()
-    if name_upper in presets:
-        del presets[name_upper]
-        save_presets(presets)
-        return True
-    return False
-
-
-def reset_presets() -> None:
-    """Reset presets to defaults."""
-    save_presets(DEFAULT_PRESETS.copy())

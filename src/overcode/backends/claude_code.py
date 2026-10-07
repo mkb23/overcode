@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
 from .base import (
-    AgentBackend,
     BackendCapability,
     DialogRule,
     KeyPress,
@@ -288,14 +287,3 @@ class ClaudeCodeBackend:
             "claude running without --settings — hooks will not fire. "
             "Relaunch via `overcode restart` to re-inject."
         )
-
-
-_backend: Optional[AgentBackend] = None
-
-
-def get_claude_backend() -> "ClaudeCodeBackend":
-    """Module-level singleton — backends are stateless."""
-    global _backend
-    if _backend is None:
-        _backend = ClaudeCodeBackend()
-    return _backend

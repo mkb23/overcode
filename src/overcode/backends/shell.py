@@ -269,10 +269,6 @@ class ShellBackend:
     def doctor_findings(self) -> List[str]:
         return []
 
-    def check_binary(self):
-        from ..dependency_check import check_agent_cli
-        return check_agent_cli(self)
-
 
 __all__ = [
     "KNOWN_SHELLS",

@@ -23,8 +23,6 @@ from tests.fixtures import (
     PANE_CONTENT_RUNNING_WITH_SPINNER,
     PANE_CONTENT_RUNNING_WITH_TOOL,
     PANE_CONTENT_STALLED,
-    PANE_CONTENT_ACTIVE_STREAMING,
-    PANE_CONTENT_NO_OUTPUT,
     PANE_CONTENT_THINKING,
     PANE_CONTENT_WEB_SEARCH_PERMISSION,
     PANE_CONTENT_BASH_PERMISSION,
@@ -688,10 +686,8 @@ class TestBusySleepingDetection:
 
     def test_busy_sleeping_counts_as_green(self):
         """busy_sleeping counts as green — agent self-paced, no user needed."""
-        from overcode.status_constants import is_green_status, is_busy_sleeping
+        from overcode.status_constants import is_green_status
         assert is_green_status(STATUS_BUSY_SLEEPING)
-        assert is_busy_sleeping(STATUS_BUSY_SLEEPING)
-        assert not is_busy_sleeping("running")
 
 
 class TestErrorDetection:

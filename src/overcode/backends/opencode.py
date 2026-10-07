@@ -657,10 +657,6 @@ class OpencodeBackend:
         """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""
         return version_findings()
 
-    def check_binary(self):
-        from ..dependency_check import check_agent_cli
-        return check_agent_cli(self)
-
 
 _backend: Optional[OpencodeBackend] = None
 

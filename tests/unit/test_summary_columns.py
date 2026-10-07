@@ -4,71 +4,7 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from overcode.summary_columns import (
-    ALL,
-    MED_PLUS,
-    FULL_PLUS,
-    _tool_emojis,
-    ColumnContext,
-    SUMMARY_COLUMNS,
-    render_status_symbol,
-    render_effort,
-    render_effort_plain,
-    render_unvisited_alert,
-    render_time_in_state,
-    render_sleep_countdown,
-    render_expand_icon,
-    render_agent_name,
-    render_uptime,
-    render_running_time,
-    render_stalled_time,
-    render_sleep_time,
-    render_active_pct,
-    render_token_count,
-    render_context_usage,
-    render_cost,
-    render_joules,
-    render_budget,
-    render_git_diff,
-    render_median_work_time,
-    render_subagent_count,
-    render_bash_count,
-    render_permission_mode,
-    render_allowed_tools,
-    render_enhanced_context,
-    render_wrapper,
-    render_wrapper_plain,
-    render_human_count,
-    render_robot_count,
-    render_standing_orders,
-    render_heartbeat,
-    render_agent_value,
-    render_status_plain,
-    render_uptime_plain,
-    render_time_plain,
-    render_token_count_plain,
-    render_context_usage_plain,
-    render_cost_plain,
-    render_git_diff_plain,
-    render_work_plain,
-    render_agents_plain,
-    render_repo_name_plain,
-    render_branch_plain,
-    render_mode_plain,
-    render_tools_plain,
-    render_heartbeat_plain,
-    render_orders_plain,
-    render_value_plain,
-    render_pr_number,
-    render_pr_number_plain,
-    render_subtree_cost,
-    render_subtree_cost_plain,
-    render_burn_rate,
-    render_burn_rate_plain,
-    burn_color_for_rate,
-    build_cli_context,
-    render_cli_stats,
-)
+from overcode.summary_columns import ALL, MED_PLUS, FULL_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_pr_number_plain, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
 from overcode.summary_groups import SUMMARY_GROUPS_BY_ID
 
 
@@ -1267,29 +1203,6 @@ class TestRenderTokenCountPlain:
         ctx = _make_ctx(claude_stats=stats)
         result = render_token_count_plain(ctx)
         assert "Σ" in result
-
-
-class TestRenderContextUsagePlain:
-    def test_no_stats_returns_none(self):
-        ctx = _make_ctx(claude_stats=None)
-        assert render_context_usage_plain(ctx) is None
-
-    def test_with_context_shows_pct(self):
-        stats = _make_claude_stats(current_context_tokens=50000)
-        ctx = _make_ctx(claude_stats=stats)
-        result = render_context_usage_plain(ctx)
-        assert "context" in result
-
-    def test_zero_context_returns_none(self):
-        stats = _make_claude_stats(current_context_tokens=0)
-        ctx = _make_ctx(claude_stats=stats)
-        assert render_context_usage_plain(ctx) is None
-
-    def test_unrecognized_model_returns_none(self):
-        """#469: unknown window → None, not a percentage against a default."""
-        stats = _make_claude_stats(current_context_tokens=11822, max_context_tokens=None)
-        ctx = _make_ctx(claude_stats=stats)
-        assert render_context_usage_plain(ctx) is None
 
 
 class TestRenderCostPlain:

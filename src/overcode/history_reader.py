@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from . import model_metadata
 from .stat_gate import FileSignature, is_settled, stat_signature
-from .transcript_index import TranscriptRegistry, empty_stats, empty_window
+from .transcript_index import TranscriptRegistry, empty_stats
 
 if TYPE_CHECKING:
     from .session_manager import Session
@@ -357,23 +357,6 @@ def model_context_window(model: Optional[str]) -> Optional[int]:
     return model_metadata.context_window(bare)
 
 
-def provider_from_model(model: Optional[str]) -> Optional[str]:
-    """Derive API provider from a model ID returned in API responses.
-
-    Older Bedrock model IDs have a dotted prefix (e.g. "us.anthropic.claude-..."),
-    while API/Max IDs are plain (e.g. "claude-opus-4-7"). Note that current
-    Bedrock responses often return the plain model ID too, so this heuristic
-    only catches the dotted case — prefer provider_from_message_id when an
-    assistant message ID is available.
-
-    Returns "bedrock" for dotted IDs, "web" for plain, None if unknown/empty.
-    """
-    if not model:
-        return None
-    prefix = model.split("claude")[0] if "claude" in model else ""
-    return "bedrock" if "." in prefix else "web"
-
-
 def provider_from_message_id(msg_id: Optional[str]) -> Optional[str]:
     """Derive API provider from an assistant message ID.
 
@@ -649,10 +632,6 @@ class HistoryFile:
             entries[i] for i in positions if entries[i].timestamp_ms >= session_start_ms
         ]
 
-    def count_interactions(self, session: "Session") -> int:
-        """Count interactions for a session."""
-        return len(self.get_interactions_for_session(session))
-
     def get_session_ids_for_session(self, session: "Session") -> List[str]:
         """Get unique Claude Code sessionIds for an overcode session."""
         entries = self.get_interactions_for_session(session)
@@ -834,16 +813,6 @@ def _read_lines_reversed(filepath: Path, max_bytes: int = 64 * 1024) -> List[str
 _default_history = HistoryFile()
 
 
-def read_history(history_path: Path = CLAUDE_HISTORY_PATH) -> List[HistoryEntry]:
-    """Read all entries from history.jsonl.
-
-    Prefer using a HistoryFile instance directly for cached access.
-    """
-    if history_path == CLAUDE_HISTORY_PATH:
-        return _default_history.read_all()
-    return HistoryFile(history_path).read_all()
-
-
 def get_interactions_for_session(
     session: "Session",
     history_path: Path = CLAUDE_HISTORY_PATH
@@ -855,14 +824,6 @@ def get_interactions_for_session(
     if history_path == CLAUDE_HISTORY_PATH:
         return _default_history.get_interactions_for_session(session)
     return HistoryFile(history_path).get_interactions_for_session(session)
-
-
-def count_interactions(
-    session: "Session",
-    history_path: Path = CLAUDE_HISTORY_PATH
-) -> int:
-    """Count interactions for a session."""
-    return len(get_interactions_for_session(session, history_path))
 
 
 def get_session_ids_for_session(
@@ -1170,28 +1131,6 @@ def read_token_usage_from_session_file(
     """
     totals, _ = read_session_file_stats(session_file, since)
     return totals
-
-
-def read_work_times_from_session_file(
-    session_file: Path,
-    since: Optional[datetime] = None
-) -> List[float]:
-    """Calculate work times from a Claude Code session file.
-
-    Work time = time from one user prompt to the next user prompt.
-    This represents how long the agent worked autonomously.
-
-    Only counts actual user prompts (not tool results which are automatic).
-
-    Args:
-        session_file: Path to the session JSONL file
-        since: Only count work times from messages after this time
-
-    Returns:
-        List of work times in seconds
-    """
-    _, work_times = read_session_file_stats(session_file, since)
-    return work_times
 
 
 def get_session_stats(

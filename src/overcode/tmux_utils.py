@@ -267,14 +267,6 @@ def query_pane_attended(
         return None
 
 
-def list_pane_pids(session: str, timeout: float = 5) -> Optional[Dict[str, int]]:
-    """``{window_name: pane_pid}`` for ``session`` from one ``list-panes -s``; None if unavailable."""
-    panes = list_panes(session, timeout=timeout)
-    if panes is None:
-        return None
-    return {name: info.pane_pid for name, info in panes.items()}
-
-
 def pane_for_window(panes: Mapping[str, PaneInfo], window: str) -> Optional[PaneInfo]:
     """The pane ``RealTmux`` would address for ``window``.
 

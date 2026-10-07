@@ -552,21 +552,6 @@ def _looks_like_tool_execution(line: str, patterns: StatusPatterns = None) -> bo
     return bool(patterns.tool_execution_re.match(line))
 
 
-def is_prompt_line(line: str, patterns: StatusPatterns = None) -> bool:
-    """Check if a line is an empty prompt waiting for input.
-
-    Args:
-        line: Line to check
-        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
-
-    Returns:
-        True if line is an empty prompt
-    """
-    patterns = patterns or DEFAULT_PATTERNS
-    stripped = line.strip()
-    return stripped in patterns.prompt_chars
-
-
 def is_status_bar_line(line: str, patterns: StatusPatterns = None) -> bool:
     """Check if a line is status bar UI chrome.
 

@@ -468,10 +468,6 @@ class MonitorDaemon:
         """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
         return SessionIndex(self.session_manager.sessions_by_id())
 
-    def _get_parent_name(self, session, index: Optional[SessionIndex] = None) -> Optional[str]:
-        """Get the name of a session's parent, if any (#244)."""
-        return (index or self._session_index()).parent_name(session)
-
     def track_session_stats(
         self, session, status: str, index: Optional[SessionIndex] = None
     ) -> SessionDaemonState:

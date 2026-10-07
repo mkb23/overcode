@@ -187,9 +187,11 @@ class TestResolveSessionDetectionMode:
     def test_legacy_global_mode_file_is_the_fleet_default(self, tmp_path, monkeypatch):
         """Migration: the pre-Phase-3 detection_mode file still sets the default."""
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
-        from overcode.settings import resolve_detection_mode, write_detection_mode
+        from overcode.settings import get_detection_mode_path, resolve_detection_mode
 
-        write_detection_mode("agents", "hooks")
+        path = get_detection_mode_path("agents")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("hooks")
         fleet_mode = resolve_detection_mode("agents")
 
         assert fleet_mode == "hooks"

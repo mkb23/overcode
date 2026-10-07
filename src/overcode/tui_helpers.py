@@ -6,8 +6,7 @@ and business logic.
 import re
 import subprocess
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
-import statistics
+from typing import Optional, Tuple
 
 from .status_constants import (
     get_status_symbol as _get_status_symbol,
@@ -130,21 +129,6 @@ def format_joules(joules: float) -> str:
     from .energy import format_si
 
     return format_si(joules, "J")
-
-
-def format_budget(cost_usd: float, budget_usd: float) -> str:
-    """Format cost with budget context (#173).
-
-    Args:
-        cost_usd: Current cost in USD
-        budget_usd: Budget limit in USD (0 = no budget)
-
-    Returns:
-        Formatted string like "$1.23/$5.00" or "$1.23" if no budget
-    """
-    if budget_usd <= 0:
-        return format_cost(cost_usd)
-    return f"{format_cost(cost_usd)}/{format_cost(budget_usd)}"
 
 
 def format_line_count(count: int) -> str:
@@ -306,33 +290,6 @@ def get_git_diff_stats(directory: str) -> Optional[Tuple[int, int, int]]:
 # --- Business logic helpers ---
 
 
-def calculate_percentiles(times: List[float]) -> Tuple[float, float, float]:
-    """Calculate mean, 5th, and 95th percentile of operation times.
-
-    Args:
-        times: List of operation times in seconds
-
-    Returns:
-        Tuple of (mean, p5, p95)
-    """
-    if not times:
-        return 0.0, 0.0, 0.0
-
-    mean_time = statistics.mean(times)
-
-    if len(times) < 2:
-        return mean_time, mean_time, mean_time
-
-    sorted_times = sorted(times)
-    n = len(sorted_times)
-    p5_idx = int(0.05 * (n - 1))
-    p95_idx = int(0.95 * (n - 1))
-    p5 = sorted_times[p5_idx]
-    p95 = sorted_times[p95_idx]
-
-    return mean_time, p5, p95
-
-
 def presence_state_to_char(state: int) -> str:
     """Convert presence state to timeline character.
 
@@ -355,35 +312,6 @@ def agent_status_to_char(status: str) -> str:
         Block character for timeline visualization
     """
     return _get_agent_timeline_char(status)
-
-
-def status_to_color(status: str) -> str:
-    """Map agent status to display color name.
-
-    Args:
-        status: Agent status string
-
-    Returns:
-        Color name for Rich styling
-    """
-    return _get_status_color(status)
-
-
-def get_standing_orders_indicator(session) -> str:
-    """Get standing orders display indicator.
-
-    Args:
-        session: Session object with standing_instructions and standing_orders_complete
-
-    Returns:
-        Emoji indicator: "➖" (none), "📋" (active), "✓" (complete)
-    """
-    if not session.standing_instructions:
-        return "➖"
-    elif session.standing_orders_complete:
-        return "✓"
-    else:
-        return "📋"
 
 
 def get_current_state_times(stats, now: Optional[datetime] = None, is_asleep: bool = False) -> Tuple[float, float, float]:
@@ -488,30 +416,6 @@ def build_timeline_slots(
     return slot_states
 
 
-def build_timeline_string(
-    slot_states: dict,
-    width: int,
-    state_to_char: callable
-) -> str:
-    """Build a timeline string from slot states.
-
-    Args:
-        slot_states: Dict mapping slot index to state
-        width: Number of characters in timeline
-        state_to_char: Function to convert state to display character
-
-    Returns:
-        String of width characters representing the timeline
-    """
-    timeline = []
-    for i in range(width):
-        if i in slot_states:
-            timeline.append(state_to_char(slot_states[i]))
-        else:
-            timeline.append("─")
-    return "".join(timeline)
-
-
 def get_status_symbol(status: str, emoji_free: bool = False) -> Tuple[str, str]:
     """Get status emoji and base style for agent status.
 
@@ -547,25 +451,6 @@ def get_agent_timeline_color(status: str) -> str:
         Color name for Rich styling
     """
     return _get_status_color(status)
-
-
-def style_pane_line(line: str) -> Tuple[str, str]:
-    """Determine styling for a pane content line.
-
-    Args:
-        line: The line content to style
-
-    Returns:
-        Tuple of (prefix_style, content_style) color names
-    """
-    if line.startswith('✓') or 'success' in line.lower():
-        return ("bold green", "green")
-    elif line.startswith('✗') or 'error' in line.lower() or 'fail' in line.lower():
-        return ("bold red", "red")
-    elif line.startswith('>') or line.startswith('$') or line.startswith('❯'):
-        return ("bold cyan", "bold white")
-    else:
-        return ("cyan", "white")  # Punchier bar color
 
 
 def get_daemon_status_style(status: str) -> Tuple[str, str]:

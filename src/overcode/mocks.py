@@ -5,7 +5,6 @@ These mocks allow unit tests to run without real tmux sessions,
 file system access, or subprocess calls.
 """
 
-import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -118,10 +117,6 @@ class MockTmux:
             )
         return panes
 
-    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
-        """No real pane pids in tests: an empty map for a known session."""
-        return {} if session in self.sessions else None
-
     def select_window(self, session: str, window: str) -> bool:
         """Select a window - no-op in tests, just return True."""
         return session in self.sessions
@@ -141,21 +136,6 @@ class MockFileSystem:
     def __init__(self):
         self.files: Dict[str, Any] = {}  # path_str -> content
         self.dirs: set = set()
-
-    def read_json(self, path: Path) -> Optional[Dict[str, Any]]:
-        content = self.files.get(str(path))
-        if content is None:
-            return None
-        if isinstance(content, dict):
-            return content
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return None
-
-    def write_json(self, path: Path, data: Dict[str, Any]) -> bool:
-        self.files[str(path)] = data
-        return True
 
     def exists(self, path: Path) -> bool:
         return str(path) in self.files or str(path) in self.dirs
@@ -203,7 +183,3 @@ class MockSubprocess:
 
         # Default response
         return {'returncode': 0, 'stdout': '', 'stderr': ''}
-
-    def popen(self, cmd: List[str], cwd: Optional[str] = None) -> Any:
-        self.commands.append(cmd)
-        return None

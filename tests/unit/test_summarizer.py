@@ -11,7 +11,7 @@ import os
 import subprocess
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import sys
 from pathlib import Path
@@ -421,30 +421,6 @@ class TestUpdatePassCancellation:
         component.update(self._sessions(2))  # 4 % 2 == 0: full pass, no IndexError
         assert visited[4:] == ["s0", "s1"]
 
-    def test_get_summary_returns_existing(self):
-        """Should return existing summary for session."""
-        component = SummarizerComponent(
-            tmux_session="test",
-            config=SummarizerConfig(enabled=False),
-        )
-        expected = AgentSummary(text="test summary")
-        component.summaries["test-id"] = expected
-
-        result = component.get_summary("test-id")
-
-        assert result == expected
-
-    def test_get_summary_returns_none_for_unknown(self):
-        """Should return None for unknown session."""
-        component = SummarizerComponent(
-            tmux_session="test",
-            config=SummarizerConfig(enabled=False),
-        )
-
-        result = component.get_summary("unknown-id")
-
-        assert result is None
-
     def test_stop_closes_client(self):
         """Should close client on stop."""
         component = SummarizerComponent(
@@ -809,7 +785,7 @@ class TestSummarizerComponentUpdateSession:
             session.stats = Mock(current_state="running")
             sessions.append(session)
 
-        result = component.update(sessions)
+        component.update(sessions)
 
         # Should have captured pane for each session
         assert mock_tmux.capture_pane.call_count == 3

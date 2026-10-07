@@ -7,9 +7,7 @@ and checks a real tick publishes the same hierarchy fields without calling
 any of them per session.
 """
 
-import os
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -157,5 +155,3 @@ class TestDaemonUsesTheTickIndex:
         grandchild = sessions[21]
         state = daemon.track_session_stats(grandchild, "running")
         assert (state.parent_name, state.depth, state.children_count) == ("agent-11", 2, 0)
-        assert daemon._get_parent_name(sessions[11]) == "agent-01"
-        assert daemon._get_parent_name(sessions[0]) is None

@@ -1,7 +1,5 @@
 """Tests for implementations module."""
 
-import pytest
-import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock, PropertyMock
 
@@ -13,85 +11,6 @@ from overcode.implementations import (
 
 class TestRealFileSystem:
     """Tests for RealFileSystem class."""
-
-    def test_read_json_success(self, tmp_path):
-        """Should read JSON file successfully."""
-        fs = RealFileSystem()
-        json_file = tmp_path / "test.json"
-        json_file.write_text('{"key": "value"}')
-
-        result = fs.read_json(json_file)
-
-        assert result == {"key": "value"}
-
-    def test_read_json_nonexistent(self, tmp_path):
-        """Should return None for nonexistent file."""
-        fs = RealFileSystem()
-        json_file = tmp_path / "nonexistent.json"
-
-        result = fs.read_json(json_file)
-
-        assert result is None
-
-    def test_read_json_invalid(self, tmp_path):
-        """Should return None for invalid JSON."""
-        fs = RealFileSystem()
-        json_file = tmp_path / "invalid.json"
-        json_file.write_text("not valid json")
-
-        result = fs.read_json(json_file)
-
-        assert result is None
-
-    def test_read_json_io_error(self, tmp_path):
-        """Should return None on IO error."""
-        fs = RealFileSystem()
-        # Create a directory instead of file
-        dir_path = tmp_path / "is_a_dir.json"
-        dir_path.mkdir()
-
-        result = fs.read_json(dir_path)
-
-        assert result is None
-
-    def test_write_json_success(self, tmp_path):
-        """Should write JSON file successfully."""
-        fs = RealFileSystem()
-        json_file = tmp_path / "test.json"
-        data = {"key": "value", "number": 42}
-
-        result = fs.write_json(json_file, data)
-
-        assert result is True
-        assert json_file.exists()
-        assert json.loads(json_file.read_text()) == data
-
-    def test_write_json_creates_atomic(self, tmp_path):
-        """Should write atomically via temp file."""
-        fs = RealFileSystem()
-        json_file = tmp_path / "test.json"
-        data = {"key": "value"}
-
-        fs.write_json(json_file, data)
-
-        # Temp file should be cleaned up
-        temp_file = json_file.with_suffix('.tmp')
-        assert not temp_file.exists()
-        assert json_file.exists()
-
-    def test_write_json_io_error(self, tmp_path):
-        """Should return False on IO error."""
-        fs = RealFileSystem()
-        # Try to write to a directory
-        dir_path = tmp_path / "is_a_dir"
-        dir_path.mkdir()
-        json_file = dir_path / "subdir" / "test.json"
-
-        # This should fail because parent doesn't exist
-        with patch('builtins.open', side_effect=IOError("Permission denied")):
-            result = fs.write_json(json_file, {"key": "value"})
-
-        assert result is False
 
     def test_exists_true(self, tmp_path):
         """Should return True for existing file."""
@@ -846,7 +765,6 @@ class TestRealTmux:
             )
             assert {n: p.pane_pid for n, p in panes.items()} == {"bash": 100, "agent-a": 200}
             assert panes["agent-a"].signature == (1790136432, 8, 28, 4, "claude")
-            assert tmux.list_pane_pids("agents") == {"bash": 100, "agent-a": 200}
             # No object lookups: the cache is not involved
             mock_server.sessions.get.assert_not_called()
 
@@ -871,7 +789,6 @@ class TestRealTmux:
 
             mock_server.cmd.return_value = MagicMock(returncode=1, stdout=[], stderr=["gone"])
             assert tmux.list_panes("agents") is None
-            assert tmux.list_pane_pids("agents") is None
             tmux.capture_pane("agents", "win1")
             assert mock_server.sessions.get.call_count == 2
 

@@ -502,13 +502,6 @@ def get_user_config() -> UserConfig:
     return _user_config
 
 
-def reload_user_config() -> UserConfig:
-    """Reload the user configuration from disk."""
-    global _user_config
-    _user_config = UserConfig.load()
-    return _user_config
-
-
 # =============================================================================
 # Session-Specific Paths
 # =============================================================================
@@ -604,13 +597,6 @@ def read_detection_mode(session: str) -> str:
         return get_detection_mode_path(session).read_text().strip()
     except (FileNotFoundError, IOError):
         return "auto"
-
-
-def write_detection_mode(session: str, mode: str) -> None:
-    """Write the global detection mode for daemon/TUI synchronisation."""
-    path = get_detection_mode_path(session)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(mode)
 
 
 def resolve_detection_mode(session: str) -> str:
@@ -732,11 +718,6 @@ def get_default_standing_instructions() -> str:
     """
     from .config import get_default_standing_instructions as _get
     return _get()
-
-
-def get_default_tmux_session() -> str:
-    """Get default tmux session name from config."""
-    return get_user_config().tmux_session
 
 
 # =============================================================================

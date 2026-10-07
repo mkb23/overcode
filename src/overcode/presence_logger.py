@@ -368,11 +368,6 @@ def start_background_logger(
         return _singleton_logger
 
 
-def get_singleton_logger() -> Optional[PresenceLogger]:
-    """Get the singleton logger instance if it exists."""
-    return _singleton_logger
-
-
 def get_current_presence_state(tui_active: bool = False) -> tuple[int, float, bool]:
     """Get current presence state without needing a logger instance.
 

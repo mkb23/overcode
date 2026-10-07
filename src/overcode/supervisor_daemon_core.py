@@ -221,10 +221,10 @@ def check_daemon_output_completion(content: str, active_indicators: List[str]) -
     # Check active work indicators only against the last few lines,
     # excluding status bar lines (which contain '·' separators and other
     # UI chrome that false-positive against indicators like '· ').
-    def _is_chrome(l: str) -> bool:
-        s = l.strip()
+    def _is_chrome(text: str) -> bool:
+        s = text.strip()
         return s.startswith('⏵') or s.startswith('Model:') or s.startswith('───')
-    tail_lines = [l for l in lines[-6:] if l.strip() and not _is_chrome(l)]
+    tail_lines = [ln for ln in lines[-6:] if ln.strip() and not _is_chrome(ln)]
     tail_text = '\n'.join(tail_lines)
     for indicator in active_indicators:
         if indicator in tail_text:
@@ -238,7 +238,7 @@ def check_daemon_output_completion(content: str, active_indicators: List[str]) -
                 return False
 
     # Check for empty prompt
-    last_lines = [l.strip() for l in lines[-8:] if l.strip()]
+    last_lines = [ln.strip() for ln in lines[-8:] if ln.strip()]
     for line in last_lines:
         if line in ('>', '›', '❯'):
             return True
@@ -262,37 +262,3 @@ def check_daemon_tool_activity(content: str, tool_indicators: List[str]) -> bool
         if indicator in content:
             return True
     return False
-
-
-def parse_intervention_log_line(
-    line: str,
-    session_names: List[str],
-    action_phrases: List[str],
-    no_action_phrases: List[str],
-) -> Optional[str]:
-    """Parse a log line to extract intervention session name if applicable.
-
-    Pure function - no side effects, fully testable.
-
-    Args:
-        line: Single log line to parse
-        session_names: Session names to look for
-        action_phrases: Phrases indicating an action was taken
-        no_action_phrases: Phrases indicating no action was taken
-
-    Returns:
-        Session name if an intervention was detected, None otherwise
-    """
-    line_lower = line.lower()
-
-    for name in session_names:
-        if f"{name} - " in line:
-            # Check for no-action phrases first
-            if any(phrase in line_lower for phrase in no_action_phrases):
-                return None
-
-            # Check for action phrases
-            if any(phrase in line_lower for phrase in action_phrases):
-                return name
-
-    return None

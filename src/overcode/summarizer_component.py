@@ -310,17 +310,6 @@ class SummarizerComponent:
             logger.warning(f"Failed to capture pane {window}: {e}")
             return None
 
-    def get_summary(self, session_id: str) -> Optional[AgentSummary]:
-        """Get summary for a specific session.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            AgentSummary or None if not available
-        """
-        return self.summaries.get(session_id)
-
     def stop(self) -> None:
         """Clean up resources."""
         if self._client:

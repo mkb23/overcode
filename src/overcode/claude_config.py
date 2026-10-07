@@ -71,27 +71,6 @@ class ClaudeConfigEditor:
                     return True
         return False
 
-    def add_hook(self, event: str, command: str, matcher: str = "") -> bool:
-        """Add a command hook for an event.
-
-        Returns True if the hook was added, False if it already exists.
-        """
-        if self.has_hook(event, command):
-            return False
-
-        def _add(settings):
-            if "hooks" not in settings:
-                settings["hooks"] = {}
-            if event not in settings["hooks"]:
-                settings["hooks"][event] = []
-            settings["hooks"][event].append({
-                "matcher": matcher,
-                "hooks": [{"type": "command", "command": command}],
-            })
-
-        self._modify_settings(_add)
-        return True
-
     def remove_hook(self, event: str, command: str) -> bool:
         """Remove a matcher group containing this command.
 
@@ -125,18 +104,6 @@ class ClaudeConfigEditor:
         self._modify_settings(_remove)
         return True
 
-    def list_hooks_matching(self, command_prefix: str) -> list[tuple[str, str]]:
-        """Return [(event, command)] for all hooks whose command starts with prefix."""
-        settings = self.load()
-        results = []
-        for event, entries in settings.get("hooks", {}).items():
-            for entry in entries:
-                for hook in entry.get("hooks", []):
-                    cmd = hook.get("command", "")
-                    if cmd.startswith(command_prefix):
-                        results.append((event, cmd))
-        return results
-
     # ----- Hook detection -----
 
     @staticmethod
@@ -155,23 +122,6 @@ class ClaudeConfigEditor:
         return all(editor.has_hook(event, "overcode hook-handler") for event in core_events)
 
     # ----- Permission management -----
-
-    def add_permission(self, tool_pattern: str) -> bool:
-        """Add to permissions.allow. Returns True if newly added."""
-        settings = self.load()
-        allow_list = settings.get("permissions", {}).get("allow", [])
-        if tool_pattern in allow_list:
-            return False
-
-        def _add(settings):
-            if "permissions" not in settings:
-                settings["permissions"] = {}
-            if "allow" not in settings["permissions"]:
-                settings["permissions"]["allow"] = []
-            settings["permissions"]["allow"].append(tool_pattern)
-
-        self._modify_settings(_add)
-        return True
 
     def remove_permission(self, tool_pattern: str) -> bool:
         """Remove from permissions.allow. Returns True if found."""

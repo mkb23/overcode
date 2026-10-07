@@ -6,18 +6,12 @@ import pytest
 import sys
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.history_reader import (
-    read_history,
-    get_interactions_for_session,
-    count_interactions,
-    get_session_ids_for_session,
-    HistoryEntry,
-)
+from overcode.history_reader import get_interactions_for_session, get_session_ids_for_session, HistoryEntry
 from overcode.session_manager import Session, SessionStats
 
 
@@ -39,74 +33,6 @@ def create_test_session(
         start_time=start_time,
         **kwargs
     )
-
-
-class TestReadHistory:
-    """Test reading history.jsonl"""
-
-    def test_returns_empty_list_when_no_file(self, tmp_path):
-        """Should return empty list when file doesn't exist."""
-        result = read_history(tmp_path / "nonexistent.jsonl")
-        assert result == []
-
-    def test_reads_valid_entries(self, tmp_path):
-        """Should parse valid JSONL entries."""
-        history_file = tmp_path / "history.jsonl"
-        entries = [
-            {"display": "hello", "timestamp": 1700000000000, "project": "/test", "sessionId": "abc"},
-            {"display": "world", "timestamp": 1700000001000, "project": "/test", "sessionId": "abc"},
-        ]
-        history_file.write_text("\n".join(json.dumps(e) for e in entries))
-
-        result = read_history(history_file)
-
-        assert len(result) == 2
-        assert result[0].display == "hello"
-        assert result[1].display == "world"
-        assert result[0].timestamp_ms == 1700000000000
-        assert result[0].session_id == "abc"
-
-    def test_skips_malformed_entries(self, tmp_path):
-        """Should skip lines that aren't valid JSON."""
-        history_file = tmp_path / "history.jsonl"
-        content = """{"display": "valid", "timestamp": 1700000000000}
-not json at all
-{"display": "also valid", "timestamp": 1700000001000}
-"""
-        history_file.write_text(content)
-
-        result = read_history(history_file)
-
-        assert len(result) == 2
-        assert result[0].display == "valid"
-        assert result[1].display == "also valid"
-
-    def test_handles_missing_fields(self, tmp_path):
-        """Should handle entries with missing optional fields."""
-        history_file = tmp_path / "history.jsonl"
-        entry = {"display": "test", "timestamp": 1700000000000}  # No project/sessionId
-        history_file.write_text(json.dumps(entry))
-
-        result = read_history(history_file)
-
-        assert len(result) == 1
-        assert result[0].display == "test"
-        assert result[0].project is None
-        assert result[0].session_id is None
-
-    def test_skips_empty_lines(self, tmp_path):
-        """Should skip empty lines in the file."""
-        history_file = tmp_path / "history.jsonl"
-        content = """{"display": "one", "timestamp": 1700000000000}
-
-{"display": "two", "timestamp": 1700000001000}
-
-"""
-        history_file.write_text(content)
-
-        result = read_history(history_file)
-
-        assert len(result) == 2
 
 
 class TestHistoryEntry:
@@ -193,47 +119,6 @@ class TestGetInteractionsForSession:
         assert len(result) == 1
 
 
-class TestCountInteractions:
-    """Test interaction counting."""
-
-    def test_counts_matching_entries(self, tmp_path):
-        """Should return count of matching entries."""
-        history_file = tmp_path / "history.jsonl"
-        session_start = datetime(2024, 1, 15, 10, 0, 0)
-        session_start_ms = int(session_start.timestamp() * 1000)
-
-        entries = [
-            {"display": "1", "timestamp": session_start_ms + 1000, "project": "/test"},
-            {"display": "2", "timestamp": session_start_ms + 2000, "project": "/test"},
-            {"display": "3", "timestamp": session_start_ms + 3000, "project": "/test"},
-        ]
-        history_file.write_text("\n".join(json.dumps(e) for e in entries))
-
-        session = create_test_session(
-            start_directory="/test",
-            start_time=session_start.isoformat()
-        )
-
-        count = count_interactions(session, history_file)
-
-        assert count == 3
-
-    def test_returns_zero_for_no_matches(self, tmp_path):
-        """Should return 0 when no entries match."""
-        history_file = tmp_path / "history.jsonl"
-        entry = {"display": "test", "timestamp": 1700000000000, "project": "/other"}
-        history_file.write_text(json.dumps(entry))
-
-        session = create_test_session(
-            start_directory="/test",
-            start_time=datetime.now().isoformat()
-        )
-
-        count = count_interactions(session, history_file)
-
-        assert count == 0
-
-
 class TestGetSessionIdsForSession:
     """Test extracting Claude Code sessionIds."""
 
@@ -315,26 +200,6 @@ class TestEncodeProjectPath:
         assert not result.endswith("-")
         import re
         assert re.sub(r"[^a-zA-Z0-9]", "-", tmp_path.name) in result
-
-
-class TestProviderFromModel:
-    """Test provider_from_model detection from API model IDs."""
-
-    def test_web_models(self):
-        from overcode.history_reader import provider_from_model
-        assert provider_from_model("claude-opus-4-7") == "web"
-        assert provider_from_model("claude-opus-4-6") == "web"
-        assert provider_from_model("claude-sonnet-4-5-20250929") == "web"
-
-    def test_bedrock_models(self):
-        from overcode.history_reader import provider_from_model
-        assert provider_from_model("us.anthropic.claude-sonnet-4-5-20250929-v1:0") == "bedrock"
-        assert provider_from_model("anthropic.claude-3-sonnet-20240229-v1:0") == "bedrock"
-
-    def test_none_or_empty(self):
-        from overcode.history_reader import provider_from_model
-        assert provider_from_model(None) is None
-        assert provider_from_model("") is None
 
 
 class TestModelContextWindow:
@@ -1234,133 +1099,6 @@ class TestGetCurrentSessionIdForDirectory:
         assert result == "correct-session"
 
 
-class TestReadWorkTimesFromSessionFile:
-    """Test read_work_times_from_session_file function."""
-
-    def test_returns_empty_for_nonexistent_file(self, tmp_path):
-        """Should return empty list for nonexistent file."""
-        from overcode.history_reader import read_work_times_from_session_file
-
-        result = read_work_times_from_session_file(tmp_path / "nonexistent.jsonl")
-
-        assert result == []
-
-    def test_calculates_work_times_between_prompts(self, tmp_path):
-        """Should calculate duration between user prompts."""
-        from overcode.history_reader import read_work_times_from_session_file
-
-        session_file = tmp_path / "session.jsonl"
-        entries = [
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:00:00.000Z",
-                "message": {"content": "first prompt"}
-            },
-            {
-                "type": "assistant",
-                "timestamp": "2024-01-15T10:00:30.000Z",
-                "message": {"content": "response 1"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:01:00.000Z",
-                "message": {"content": "second prompt"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:03:00.000Z",
-                "message": {"content": "third prompt"}
-            },
-        ]
-        session_file.write_text("\n".join(json.dumps(e) for e in entries))
-
-        result = read_work_times_from_session_file(session_file)
-
-        # Between first and second prompt: 60 seconds
-        # Between second and third prompt: 120 seconds
-        assert len(result) == 2
-        assert result[0] == 60.0
-        assert result[1] == 120.0
-
-    def test_skips_tool_results(self, tmp_path):
-        """Should skip tool result entries (not real user prompts)."""
-        from overcode.history_reader import read_work_times_from_session_file
-
-        session_file = tmp_path / "session.jsonl"
-        entries = [
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:00:00.000Z",
-                "message": {"content": "first prompt"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:00:30.000Z",
-                "message": {"content": [{"type": "tool_result", "content": "tool output"}]}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:01:00.000Z",
-                "message": {"content": "second prompt"}
-            },
-        ]
-        session_file.write_text("\n".join(json.dumps(e) for e in entries))
-
-        result = read_work_times_from_session_file(session_file)
-
-        # Only one work time between first real prompt and second real prompt
-        assert len(result) == 1
-        assert result[0] == 60.0
-
-    def test_filters_by_since_timestamp(self, tmp_path):
-        """Should only include work times after the since timestamp."""
-        from overcode.history_reader import read_work_times_from_session_file
-
-        session_file = tmp_path / "session.jsonl"
-        entries = [
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T09:00:00.000Z",
-                "message": {"content": "before cutoff"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T09:30:00.000Z",
-                "message": {"content": "also before cutoff"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:30:00.000Z",
-                "message": {"content": "after cutoff 1"}
-            },
-            {
-                "type": "user",
-                "timestamp": "2024-01-15T10:31:00.000Z",
-                "message": {"content": "after cutoff 2"}
-            },
-        ]
-        session_file.write_text("\n".join(json.dumps(e) for e in entries))
-
-        since = datetime(2024, 1, 15, 10, 0, 0)
-        result = read_work_times_from_session_file(session_file, since=since)
-
-        # Only one work time between the two entries after cutoff
-        assert len(result) == 1
-        assert result[0] == 60.0
-
-    def test_handles_io_error(self, tmp_path):
-        """Should return empty list on IO errors."""
-        from overcode.history_reader import read_work_times_from_session_file
-
-        # Create a directory instead of a file to cause IO error
-        dir_path = tmp_path / "not_a_file.jsonl"
-        dir_path.mkdir()
-
-        result = read_work_times_from_session_file(dir_path)
-
-        assert result == []
-
-
 class TestReadWindowTokenUsage:
     """Test read_window_token_usage — used by burn-rate calculation (#174)."""
 
@@ -1618,17 +1356,6 @@ class TestHistoryEntryEdgeCases:
         assert isinstance(ts, datetime)
         assert ts.year == 1970  # Epoch
 
-    def test_read_history_handles_io_error(self, tmp_path):
-        """Should return empty list on IO error."""
-        # Create a directory instead of a file
-        dir_path = tmp_path / "not_a_file.jsonl"
-        dir_path.mkdir()
-
-        result = read_history(dir_path)
-
-        # Should return empty list, not raise
-        assert result == []
-
 
 class TestReadSessionStatsFromContent:
     """Test reading stats from JSONL content strings (for container agents)."""
@@ -1772,7 +1499,7 @@ class TestSynthesizeRemoteStats:
     daemon_state forwarded by the sister API."""
 
     def _make_remote_session(self, daemon_state):
-        from overcode.session_manager import Session, SessionStats
+        from overcode.session_manager import Session
         return Session(
             id="remote:host1:foo",
             name="foo",

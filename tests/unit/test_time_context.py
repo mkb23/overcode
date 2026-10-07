@@ -7,47 +7,11 @@ import pytest
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.time_context import (
-    get_agent_identity,
-    format_clock,
-    format_presence,
-    format_office_hours,
-    format_uptime,
-    format_heartbeat,
-    read_heartbeat_timestamp,
-    build_enhanced_context_line,
-    generate_enhanced_context,
-)
-
-
-class TestGetAgentIdentity:
-    """Test environment variable reading."""
-
-    def test_returns_both_when_set(self, monkeypatch):
-        monkeypatch.setenv("OVERCODE_SESSION_NAME", "my-agent")
-        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
-        name, tmux = get_agent_identity()
-        assert name == "my-agent"
-        assert tmux == "agents"
-
-    def test_returns_none_when_missing(self, monkeypatch):
-        monkeypatch.delenv("OVERCODE_SESSION_NAME", raising=False)
-        monkeypatch.delenv("OVERCODE_TMUX_SESSION", raising=False)
-        name, tmux = get_agent_identity()
-        assert name is None
-        assert tmux is None
-
-    def test_returns_partial(self, monkeypatch):
-        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test")
-        monkeypatch.delenv("OVERCODE_TMUX_SESSION", raising=False)
-        name, tmux = get_agent_identity()
-        assert name == "test"
-        assert tmux is None
+from overcode.time_context import format_clock, format_presence, format_office_hours, format_uptime, format_heartbeat, read_heartbeat_timestamp, build_enhanced_context_line, generate_enhanced_context
 
 
 class TestFormatClock:

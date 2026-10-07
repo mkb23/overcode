@@ -86,10 +86,6 @@ class FakeTmux:
             )
         return panes
 
-    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
-        self.calls["list_pane_pids"] += 1
-        return dict(self.pids) if session == self.session else None
-
     def list_windows(self, session: str) -> List[Dict[str, object]]:
         self.calls["list_windows"] += 1
         if session != self.session:

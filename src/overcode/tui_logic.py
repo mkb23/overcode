@@ -77,15 +77,9 @@ STATUS_ORDER_BY_VALUE = {
 }
 
 
-def _remote_sort_key(s) -> tuple:
-    """Primary sort key: local (0) first, then remote (1) grouped by host."""
-    is_remote = getattr(s, 'is_remote', False)
-    if not isinstance(is_remote, bool):
-        is_remote = False
-    host = getattr(s, 'source_host', '') or '' if is_remote else ''
-    if not isinstance(host, str):
-        host = ''
-    return (1 if is_remote else 0, host.lower())
+def _parent_session_id(session) -> Optional[str]:
+    """The default parent_id_fn: a session's parent_session_id."""
+    return getattr(session, 'parent_session_id', None)
 
 
 def sort_sessions_alphabetical(sessions: List[T], parent_id_fn=None, reverse=False) -> List[T]:
@@ -173,9 +167,10 @@ def _tree_aware_sort(sessions, key=None, parent_id_fn=None, reverse=False, order
         New sorted list
     """
     if order is None:
-        order = lambda items: sorted(items, key=key, reverse=reverse)
+        def order(items):
+            return sorted(items, key=key, reverse=reverse)
     if parent_id_fn is None:
-        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+        parent_id_fn = _parent_session_id
 
     # Build parent_id -> children map
     children_map: dict = {}
@@ -218,7 +213,7 @@ def sort_sessions_by_tree(sessions: List[T], parent_id_fn=None) -> List[T]:
         New sorted list (does not mutate input)
     """
     if parent_id_fn is None:
-        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+        parent_id_fn = _parent_session_id
 
     # Build parent_id -> children map
     children_map: dict = {}
@@ -458,56 +453,6 @@ def get_sort_mode_display_name(mode: str) -> str:
     return mode_names.get(mode, mode)
 
 
-@dataclass
-class SpinStats:
-    """Statistics for spin rate display."""
-    green_count: int
-    total_count: int
-    sleeping_count: int
-    mean_spin: float
-    total_tokens: int
-
-
-def calculate_spin_stats(
-    sessions: List,
-    asleep_session_ids: Set[str],
-) -> SpinStats:
-    """Calculate spin rate statistics from sessions.
-
-    Args:
-        sessions: List of session daemon states with green_time_seconds,
-                  non_green_time_seconds, current_status, input_tokens, output_tokens
-        asleep_session_ids: Set of session IDs that are asleep
-
-    Returns:
-        SpinStats dataclass with calculated values
-    """
-    # Filter out sleeping agents for active stats
-    active_sessions = [s for s in sessions if s.session_id not in asleep_session_ids]
-    sleeping_count = len(sessions) - len(active_sessions)
-
-    total_count = len(active_sessions)
-    green_count = sum(1 for s in active_sessions if is_green_status(s.current_status))
-
-    # Calculate mean spin rate
-    mean_spin = 0.0
-    for s in active_sessions:
-        total_time = s.green_time_seconds + s.non_green_time_seconds
-        if total_time > 0:
-            mean_spin += s.green_time_seconds / total_time
-
-    # Total tokens (include sleeping agents)
-    total_tokens = sum(s.input_tokens + s.output_tokens for s in sessions)
-
-    return SpinStats(
-        green_count=green_count,
-        total_count=total_count,
-        sleeping_count=sleeping_count,
-        mean_spin=mean_spin,
-        total_tokens=total_tokens,
-    )
-
-
 # A history row stands for its agent until the agent's next row (rows are
 # written on change plus a keepalive, audit R10), or for this long when none
 # follows: two keepalives. A daemon gap longer than that counts as "no
@@ -523,8 +468,7 @@ def calculate_mean_spin_from_history(
 ) -> Tuple[float, int]:
     """Calculate mean spin rate from CSV history within a time window.
 
-    This provides a time-windowed average of how many agents were running,
-    as opposed to the cumulative calculation in calculate_spin_stats().
+    A time-windowed average of how many agents were running.
 
     Time-weighted: each row stands for its agent from its timestamp until
     the agent's next row (or SPIN_ROW_VALIDITY_SECONDS, or ``now``), clipped
@@ -727,22 +671,6 @@ def compute_window_burn(
     return stats
 
 
-def calculate_green_percentage(green_time: float, non_green_time: float) -> float:
-    """Calculate the percentage of time spent in green (running) state.
-
-    Args:
-        green_time: Total green time in seconds
-        non_green_time: Total non-green time in seconds
-
-    Returns:
-        Percentage (0-100) of time in green state
-    """
-    total_time = green_time + non_green_time
-    if total_time <= 0:
-        return 0.0
-    return green_time / total_time * 100
-
-
 @dataclass
 class TreeNodeMeta:
     """Tree metadata for a single session node."""
@@ -765,7 +693,7 @@ def compute_child_counts(sessions: List[T], parent_id_fn=None) -> dict:
         dict mapping session_id -> child_count (int)
     """
     if parent_id_fn is None:
-        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+        parent_id_fn = _parent_session_id
 
     child_counts: dict = {}
     for s in sessions:
@@ -792,7 +720,7 @@ def compute_tree_metadata(sessions: List[T], parent_id_fn=None) -> dict:
         dict mapping session_id -> TreeNodeMeta
     """
     if parent_id_fn is None:
-        parent_id_fn = lambda s: getattr(s, 'parent_session_id', None)
+        parent_id_fn = _parent_session_id
 
     # Build id -> session lookup
     id_to_session = {s.id: s for s in sessions}
@@ -1030,24 +958,6 @@ def compute_active_session_names(
         List of session names that are not asleep
     """
     return [s.name for s in sessions if s.session_id not in asleep_ids]
-
-
-def calculate_human_interaction_count(
-    total_interactions: Optional[int],
-    robot_interactions: int,
-) -> int:
-    """Calculate number of human interactions.
-
-    Args:
-        total_interactions: Total interaction count (or None)
-        robot_interactions: Number of robot/supervisor interactions
-
-    Returns:
-        Number of human interactions (clamped to 0 minimum)
-    """
-    if total_interactions is None:
-        return 0
-    return max(0, total_interactions - robot_interactions)
 
 
 # ── Polling load shaping ──────────────────────────────────────────────

@@ -175,15 +175,6 @@ def require_agent_cli(backend) -> str:
     )
 
 
-def check_claude() -> Tuple[bool, Optional[str], Optional[str]]:
-    """Check if Claude Code CLI is available and get its version.
-
-    Returns:
-        Tuple of (is_available, path, version)
-    """
-    return check_agent_cli("claude-code")
-
-
 def require_tmux() -> str:
     """Ensure tmux is available, raise if not.
 
@@ -199,15 +190,3 @@ def require_tmux() -> str:
         "tmux is required but not found. "
         "Install it with: brew install tmux (macOS) or apt install tmux (Linux)",
     )
-
-
-def require_claude() -> str:
-    """Ensure Claude Code CLI is available, raise if not.
-
-    Returns:
-        Path to claude executable
-
-    Raises:
-        AgentCliNotFoundError: If claude is not found
-    """
-    return require_agent_cli("claude-code")

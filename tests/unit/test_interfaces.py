@@ -7,7 +7,6 @@ These tests verify that:
 3. Protocol type checking works correctly
 """
 
-import pytest
 from pathlib import Path
 
 from overcode.protocols import (
@@ -164,22 +163,6 @@ class TestMockFileSystem:
         mock = MockFileSystem()
         assert isinstance(mock, FileSystemInterface)
 
-    def test_write_and_read_json(self):
-        """Should be able to write and read JSON."""
-        mock = MockFileSystem()
-        path = Path("/test/data.json")
-
-        result = mock.write_json(path, {"key": "value"})
-        assert result is True
-
-        data = mock.read_json(path)
-        assert data == {"key": "value"}
-
-    def test_read_json_nonexistent(self):
-        """read_json should return None for nonexistent file."""
-        mock = MockFileSystem()
-        assert mock.read_json(Path("/nonexistent.json")) is None
-
     def test_write_and_read_text(self):
         """Should be able to write and read text."""
         mock = MockFileSystem()
@@ -257,15 +240,6 @@ class TestMockSubprocess:
         assert len(mock.commands) == 2
         assert mock.commands[0] == ["cmd1", "arg1"]
         assert mock.commands[1] == ["cmd2", "arg2", "arg3"]
-
-    def test_popen_records_commands(self):
-        """popen should record executed commands."""
-        mock = MockSubprocess()
-
-        mock.popen(["background", "process"])
-
-        assert len(mock.commands) == 1
-        assert mock.commands[0] == ["background", "process"]
 
 
 class TestRealImplementationsProtocol:

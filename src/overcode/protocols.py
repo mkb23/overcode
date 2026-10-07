@@ -113,14 +113,6 @@ class TmuxInterface(Protocol):
         """
         ...
 
-    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
-        """Every window's first-pane pid in a session, from ONE tmux command.
-
-        Returns:
-            {window_name: pid}, or None when tmux or the session is unavailable
-        """
-        ...
-
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session.
 
@@ -176,22 +168,6 @@ class StatusDetectorProtocol(Protocol):
 class FileSystemInterface(Protocol):
     """Interface for file system operations"""
 
-    def read_json(self, path: Path) -> Optional[Dict[str, Any]]:
-        """Read and parse a JSON file.
-
-        Returns:
-            Parsed JSON data, or None if file doesn't exist/is invalid
-        """
-        ...
-
-    def write_json(self, path: Path, data: Dict[str, Any]) -> bool:
-        """Write data to a JSON file atomically.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        ...
-
     def exists(self, path: Path) -> bool:
         """Check if a path exists."""
         ...
@@ -224,13 +200,5 @@ class SubprocessInterface(Protocol):
 
         Returns:
             Dict with 'returncode', 'stdout', 'stderr', or None on failure
-        """
-        ...
-
-    def popen(self, cmd: List[str], cwd: Optional[str] = None) -> Any:
-        """Start a subprocess without waiting.
-
-        Returns:
-            Process handle or None on failure
         """
         ...

@@ -4,30 +4,8 @@ Tests for status detection patterns module.
 Tests the centralized pattern definitions and helper functions.
 """
 
-import pytest
 
-from overcode.status_patterns import (
-    StatusPatterns,
-    DEFAULT_PATTERNS,
-    get_patterns,
-    matches_any,
-    find_matching_line,
-    line_starts_with_any,
-    is_prompt_line,
-    is_status_bar_line,
-    is_command_menu_line,
-    count_command_menu_lines,
-    clean_line,
-    extract_active_monitor_count,
-    extract_background_bash_count,
-    extract_live_subagent_count,
-    extract_pr_number,
-    extract_from_pane,
-    PaneExtraction,
-    is_sleep_command,
-    extract_sleep_duration,
-    extract_auto_accept_mode,
-)
+from overcode.status_patterns import StatusPatterns, DEFAULT_PATTERNS, get_patterns, matches_any, find_matching_line, line_starts_with_any, is_status_bar_line, is_command_menu_line, count_command_menu_lines, clean_line, extract_active_monitor_count, extract_background_bash_count, extract_live_subagent_count, extract_pr_number, extract_from_pane, PaneExtraction, is_sleep_command, extract_sleep_duration, extract_auto_accept_mode
 
 
 class TestExtractAutoAcceptMode:
@@ -263,26 +241,6 @@ class TestLineStartsWithAny:
         assert result == "  Reading config.json..."
 
 
-class TestIsPromptLine:
-    """Tests for is_prompt_line function."""
-
-    def test_recognizes_angle_bracket(self):
-        """Should recognize > as prompt."""
-        assert is_prompt_line(">") is True
-        assert is_prompt_line("  >  ") is True
-
-    def test_recognizes_chevron(self):
-        """Should recognize › as prompt."""
-        assert is_prompt_line("›") is True
-        assert is_prompt_line("  ›  ") is True
-
-    def test_rejects_non_prompts(self):
-        """Should reject non-prompt lines."""
-        assert is_prompt_line("> some text") is False
-        assert is_prompt_line("regular line") is False
-        assert is_prompt_line("") is False
-
-
 class TestIsStatusBarLine:
     """Tests for is_status_bar_line function."""
 
@@ -340,13 +298,6 @@ class TestCustomPatterns:
         custom = StatusPatterns(permission_patterns=["custom approval"])
         assert matches_any("custom approval needed", custom.permission_patterns)
         assert not matches_any("enter to confirm", custom.permission_patterns)
-
-    def test_custom_prompt_chars(self):
-        """Should use custom prompt chars."""
-        custom = StatusPatterns(prompt_chars=["$", "#"])
-        assert is_prompt_line("$", custom)
-        assert is_prompt_line("#", custom)
-        assert not is_prompt_line(">", custom)
 
     def test_custom_line_prefixes(self):
         """Should use custom line prefixes."""

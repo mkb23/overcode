@@ -2,8 +2,6 @@
 Unit tests for JobManager.
 """
 
-import json
-import pytest
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -11,6 +9,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.job_manager import JobManager, Job, _slugify_command
+
+
+def _job(manager, job_id):
+    """The stored job with this id (completed ones too), or None."""
+    return next((j for j in manager.list_jobs(include_completed=True) if j.id == job_id), None)
 
 
 class TestSlugifyCommand:
@@ -107,14 +110,6 @@ class TestJobManagerCRUD:
         assert job1.name == "test"
         assert job2.name == "test-2"
 
-    def test_get_job(self, tmp_path):
-        manager = JobManager(state_dir=tmp_path)
-        created = manager.create_job(command="echo hi", name="test")
-        retrieved = manager.get_job(created.id)
-        assert retrieved is not None
-        assert retrieved.id == created.id
-        assert retrieved.name == "test"
-
     def test_get_job_by_name(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
         manager.create_job(command="echo hi", name="my-job")
@@ -122,13 +117,9 @@ class TestJobManagerCRUD:
         assert retrieved is not None
         assert retrieved.name == "my-job"
 
-    def test_get_job_not_found(self, tmp_path):
-        manager = JobManager(state_dir=tmp_path)
-        assert manager.get_job("nonexistent") is None
-
     def test_list_jobs_excludes_completed(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
-        job1 = manager.create_job(command="echo 1", name="running-job")
+        manager.create_job(command="echo 1", name="running-job")
         job2 = manager.create_job(command="echo 2", name="done-job")
         manager.mark_complete(job2.id, 0)
 
@@ -149,20 +140,20 @@ class TestJobManagerCRUD:
         manager = JobManager(state_dir=tmp_path)
         job = manager.create_job(command="echo hi", name="test")
         manager.update_job(job.id, tmux_window="win-1")
-        retrieved = manager.get_job(job.id)
+        retrieved = _job(manager, job.id)
         assert retrieved.tmux_window == "win-1"
 
     def test_delete_job(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
         job = manager.create_job(command="echo hi", name="test")
         manager.delete_job(job.id)
-        assert manager.get_job(job.id) is None
+        assert _job(manager, job.id) is None
 
     def test_mark_complete_success(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
         job = manager.create_job(command="echo hi", name="test")
         manager.mark_complete(job.id, 0)
-        retrieved = manager.get_job(job.id)
+        retrieved = _job(manager, job.id)
         assert retrieved.status == "completed"
         assert retrieved.exit_code == 0
         assert retrieved.end_time is not None
@@ -171,7 +162,7 @@ class TestJobManagerCRUD:
         manager = JobManager(state_dir=tmp_path)
         job = manager.create_job(command="false", name="test")
         manager.mark_complete(job.id, 1)
-        retrieved = manager.get_job(job.id)
+        retrieved = _job(manager, job.id)
         assert retrieved.status == "failed"
         assert retrieved.exit_code == 1
 
@@ -187,8 +178,8 @@ class TestJobManagerCleanup:
 
         manager.clear_completed()
 
-        assert manager.get_job(job1.id) is not None
-        assert manager.get_job(job2.id) is None
+        assert _job(manager, job1.id) is not None
+        assert _job(manager, job2.id) is None
 
     def test_cleanup_completed_respects_retention(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
@@ -205,14 +196,14 @@ class TestJobManagerCleanup:
         manager.cleanup_completed(retention_hours=24)
 
         # Old job should be gone, new job should remain
-        assert manager.get_job(job.id) is None
-        assert manager.get_job(job2.id) is not None
+        assert _job(manager, job.id) is None
+        assert _job(manager, job2.id) is not None
 
     def test_cleanup_ignores_running_jobs(self, tmp_path):
         manager = JobManager(state_dir=tmp_path)
         job = manager.create_job(command="sleep 999", name="running")
         manager.cleanup_completed(retention_hours=0)
-        assert manager.get_job(job.id) is not None
+        assert _job(manager, job.id) is not None
 
 
 class TestJobManagerPersistence:
@@ -228,7 +219,7 @@ class TestJobManagerPersistence:
         job = manager1.create_job(command="echo hi", name="test")
 
         manager2 = JobManager(state_dir=tmp_path)
-        retrieved = manager2.get_job(job.id)
+        retrieved = _job(manager2, job.id)
         assert retrieved is not None
         assert retrieved.name == "test"
 

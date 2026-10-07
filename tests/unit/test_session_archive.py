@@ -11,7 +11,6 @@ import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -173,7 +172,6 @@ class TestJsonlArchive:
         settle(sm.archive_file)
         archived = sm.list_archived_sessions()
         assert [(s.id, s.name) for s in archived] == [("x", "x-second"), ("y", "y")]
-        assert sm.get_archived_session("x").name == "x-second"
         assert [(s.id, s.name) for s in sm.iter_archived_sessions()] == [
             ("x", "x-first"),
             ("y", "y"),
@@ -392,7 +390,6 @@ class TestDaemonArchivesTerminatedSessions:
         assert all(r["status"] == "archived" and r["end_time"] for r in archived.values())
         assert archived[t4]["name"] == "agent-04"
         assert daemon._terminated_since == {}
-        assert sm.get_archived_session(t5).status == "archived"
         # That tick published before its housekeeping staged the move; the
         # next tick's snapshot, and so its published state, no longer has them
         assert {s.session_id for s in daemon.state.sessions} >= {t4, t5}
