@@ -199,11 +199,28 @@ class StatusDetectorDispatcher:
         from .backends import session_backend_name
         polling, hooks = self._pair_for(session_backend_name(session))
         detector = hooks if self.resolve_mode(session) == "hooks" else polling
+        if detector is hooks and not self._has_hook_state(hooks, session):
+            # Hooks mode, but this agent has never written hook state: its
+            # plugin is missing or broken (an opencode autoupdate, telemetry
+            # off), or it hasn't fired yet. The hook detector would answer
+            # "waiting for first hook event" without reading the pane, so a
+            # busy agent showed red. Its pane is the only evidence: read it.
+            detector = polling
         result = detector.detect_status(session, num_lines=num_lines)
         # Cache for get_status_detail synthesis (#TBD).
         status, activity, _ = result
         self._last_seen[session.name] = (status, activity)
         return result
+
+    @staticmethod
+    def _has_hook_state(hooks, session: "Session") -> bool:
+        path_for = getattr(hooks, "_hook_state_path", None)
+        if path_for is None:
+            return True  # a detector without files (tests): trust it
+        try:
+            return path_for(session.name).exists()
+        except OSError:
+            return False
 
     def get_pane_content(self, window: str, num_lines: int = 0) -> Optional[str]:
         """Get pane content (delegates to the fleet-default detector).

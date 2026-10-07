@@ -545,13 +545,6 @@ V2_PLUGIN_MISSING_HOOKS_FLEET = Scenario(
 )
 
 
-_MISSING_PLUGIN_BUG = _bug(
-    "#plugin-missing: in a hooks-mode fleet an opencode agent with no telemetry "
-    "plugin is read by HookStatusDetector, whose no-hook-file branch returns "
-    "waiting_user ('Waiting for first hook event') without consulting the pane's "
-    "busy markers — so a working agent shows red. doctor claims it falls back "
-    "to pane polling."
-)
 
 SCENARIOS = [
     PLAIN_TURN,
@@ -569,7 +562,7 @@ SCENARIOS = [
     CHILD_REPORTS_BACK,
     CHILD_INTERRUPTED,
     PLUGIN_MISSING_POLLING_FLEET,
-    pytest.param(PLUGIN_MISSING_HOOKS_FLEET, marks=_MISSING_PLUGIN_BUG),
+    PLUGIN_MISSING_HOOKS_FLEET,
     V2_PLAIN_TURN,
     V2_QUICK_REPLY,
     V2_PERMISSION_APPROVED,
@@ -578,7 +571,7 @@ SCENARIOS = [
     V2_INTERRUPT,
     V2_EXECUTION_FAILED,
     V2_CHILD_REPORTS_BACK,
-    pytest.param(V2_PLUGIN_MISSING_HOOKS_FLEET, marks=_MISSING_PLUGIN_BUG),
+    V2_PLUGIN_MISSING_HOOKS_FLEET,
 ]
 
 
