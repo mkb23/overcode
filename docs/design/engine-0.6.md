@@ -215,11 +215,13 @@ As built (step 3):
 - The bell rings when the engine confirms an input-needed episode (G after
   it starts). A Stop inside the detector's sticky-green window (#448, 1.5 s)
   shows when the window ends: the wake scan re-detects the agent then.
-- Measured idle, 10 mock agents, private tmux server, top pane 200x23: the
-  TUI used 5.4–5.5% of a core before and 4.8–4.9% after. What is left is
-  Textual's rendering (the 250 ms row clock), the 10 Hz event-loop probe
-  and the focused capture; the removed work grew with fleet size and
-  activity, which an idle fleet does not show.
+- Measured with 10 mock agents on a private tmux server, top pane 200x23,
+  ps CPU time over 60 s, release/0.6.0 against this step, alternating runs:
+  idle, the TUI used 5.4–6.6% of a core before and 4.5–5.5% after; with a
+  hook event every 0.3 s across the fleet, 6.8–6.9% before and 6.5% after
+  (the engine 2.2% before, 2.7% after: it now re-detects a held Stop when
+  its window ends). What is left in the TUI is Textual's rendering (the
+  250 ms row clock), the 10 Hz event-loop probe and the focused capture.
 
 ## Build order (each step green on its own)
 
