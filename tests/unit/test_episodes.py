@@ -4,6 +4,8 @@ Unit cases drive EpisodeRecorder directly; the replay cases feed it the live
 colours the real hook handler + detector produce for the #507 scenarios.
 """
 
+import shutil
+
 import pytest
 
 from overcode.episodes import EPISODE_MERGE_SECONDS, Bell, EpisodeRecorder
@@ -16,6 +18,8 @@ from overcode.status_constants import (
 
 pytestmark = pytest.mark.unit
 G = EPISODE_MERGE_SECONDS
+needs_node = pytest.mark.skipif(shutil.which("node") is None,
+                                reason="node is required to run the opencode plugin")
 
 
 def run(steps, rec=None):
@@ -164,11 +168,12 @@ class TestReplayScenarios:
     """The #507 scenarios through the real hook handler and detector, recorded."""
 
     def _record(self, scenario, tmp_path, end=None):
-        from tests.status_replay import Scenario, replay
+        from dataclasses import replace
+
+        from tests.status_replay import replay
 
         if end is not None:
-            scenario = Scenario(scenario.name, scenario.steps, scenario.expect, end=end,
-                                child=scenario.child, initial_pane=scenario.initial_pane)
+            scenario = replace(scenario, end=end)
         samples = replay(scenario, tmp_path)
         return run([(s.t, s.colour) for s in samples])
 
@@ -212,6 +217,51 @@ class TestReplayScenarios:
         yellow = rec.episode if rec.episode.colour == Y_ else next(e for e in closed if e.colour == Y_)
         assert [b[0] for b in yellow.blips] == [O_]
         assert bells == []
+
+    # opencode: the live v1.18.29 captures through the real plugin
+    # (tests/unit/test_status_replay_opencode.py).
+
+    @needs_node
+    def test_an_opencode_stall_rings_once(self, tmp_path):
+        """A read-tool turn ends (Stop at 4.84) and nobody comes: one bell."""
+        from tests.unit.test_status_replay_opencode import PLAIN_TURN
+
+        rec, closed, bells, merges = self._record(PLAIN_TURN, tmp_path, end=90)
+        assert len(bells) == 1 and bells[0][1].colour == R_
+        assert 4.75 <= bells[0][1].start <= 5.0
+        assert [e.colour for e in closed] == [G_]
+        assert rec.episode.colour == R_
+        assert merges == []
+
+    @needs_node
+    def test_a_brief_opencode_permission_prompt_merges(self, tmp_path):
+        """An ~11.5 s orange "Permission required" mid-turn: a blip of green, no bell."""
+        from tests.unit.test_status_replay_opencode import PERMISSION_APPROVED
+
+        rec, closed, bells, merges = self._record(PERMISSION_APPROVED, tmp_path, end=15.5)
+        assert closed == []
+        assert rec.episode.colour == G_
+        assert [b[0] for b in rec.episode.blips] == [O_]
+        assert [m[0] for m in merges] == [O_]
+        assert bells == []
+
+    @needs_node
+    def test_an_opencode_permission_left_waiting_rings(self, tmp_path):
+        """The same dialog held past G is an orange stretch of its own: one bell."""
+        from dataclasses import replace
+
+        from tests.unit.test_status_replay_opencode import (
+            PERMISSION_APPROVED, capture, frame, pane,
+        )
+
+        held = replace(PERMISSION_APPROVED, steps=capture(
+            "permission_allow", hold={"permission.replied": 40.0}) + [
+            frame(0.0, pane("busy")), frame(1.70, pane("permission_required")),
+        ])
+        rec, closed, bells, merges = self._record(held, tmp_path, end=40.0)
+        assert len(bells) == 1 and bells[0][1].colour == O_
+        assert 1.5 <= bells[0][1].start <= 1.75
+        assert rec.episode.colour == O_
 
 
 class TestPublishing:
