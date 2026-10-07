@@ -211,3 +211,78 @@ class TestVisitsAndPersistence:
         d._engine_state_path().write_text('{"recorders": {"s1": {"episode": {"colour": "mauve"}}}}')
         d._load_recorders()
         assert d._recorders["s1"].episode is None
+
+
+class TestEngineOwnsTheNumbers:
+    """Stats, git and burn are computed by the engine on their contract cadences."""
+
+    def test_stats_sync_every_five_seconds_attended_sixty_unattended(self, tmp_path):
+        from datetime import timedelta
+
+        d = _daemon(tmp_path)
+        synced = []
+        d.sync_agent_stats = synced.append
+        t0 = datetime(2026, 10, 7, 12, 0, 0)
+        d._last_stats_sync = t0
+        d.state.interval_mode = "attended"
+        d._sync_session_stats(["s"], t0 + timedelta(seconds=5))
+        assert synced == ["s"]
+        d.state.interval_mode = "unattended"
+        d._sync_session_stats(["s"], t0 + timedelta(seconds=30))
+        assert synced == ["s"]
+        d._sync_session_stats(["s"], t0 + timedelta(seconds=66))
+        assert synced == ["s", "s"]
+
+    def test_git_is_read_once_per_directory_while_attended_only(self, tmp_path, monkeypatch):
+        from datetime import timedelta
+
+        from overcode import tui_helpers
+
+        calls = []
+        monkeypatch.setattr(tui_helpers, "get_git_diff_stats", lambda d: calls.append(d) or (2, 10, 3))
+        monkeypatch.setattr(tui_helpers, "get_git_untracked_count", lambda d: 4)
+        monkeypatch.setattr(tui_helpers, "effective_git_directory", lambda s: s.dir)
+        d = _daemon(tmp_path)
+        sessions = [SimpleNamespace(id="a", dir="/r1"), SimpleNamespace(id="b", dir="/r1"),
+                    SimpleNamespace(id="c", dir="/r2")]
+        t0 = datetime(2026, 10, 7, 12, 0, 0)
+        d.state.interval_mode = "unattended"
+        d._sync_git(sessions, t0)
+        assert calls == []
+        d.state.interval_mode = "attended"
+        d._sync_git(sessions, t0)
+        assert sorted(calls) == ["/r1", "/r2"]
+        d._sync_git(sessions, t0 + timedelta(seconds=10))  # inside GIT_SYNC_SECONDS
+        assert len(calls) == 2
+        state = SessionDaemonState(session_id="b")
+        d._attach_git_and_burn(sessions[1], state)
+        assert (state.git_diff, state.git_untracked) == ([2, 10, 3], 4)
+
+    def test_burn_is_computed_only_for_windows_visible_views_asked_for(self, tmp_path, monkeypatch):
+        from overcode import tui_logic
+        from overcode.tui_logic import WindowBurnStats
+
+        asked = []
+
+        def fake_burn(sessions, asleep, hours, now=None):
+            asked.append(hours)
+            stats = WindowBurnStats(window_hours=hours)
+            stats.per_session["s1"] = WindowBurnStats(window_hours=hours, input_tokens=100,
+                                                      cost_usd=0.5, energy_j=7.0)
+            return stats
+
+        monkeypatch.setattr(tui_logic, "compute_window_burn", fake_burn)
+        d = _daemon(tmp_path)
+        d.state.interval_mode = "attended"
+        d._engine = SimpleNamespace(burn_windows=set())
+        d._sync_burn([SimpleNamespace(id="s1")], datetime.now())
+        assert asked == []
+        d._engine = SimpleNamespace(burn_windows={1.0, 3.0})
+        d._sync_burn([SimpleNamespace(id="s1")], datetime.now())
+        assert asked == [1.0, 3.0]
+        state = SessionDaemonState(session_id="s1")
+        d._attach_git_and_burn(SimpleNamespace(id="s1", dir=None), state)
+        assert state.burn["1.0"]["input_tokens"] == 100 and state.burn["3.0"]["energy_j"] == 7.0
+        d.state.interval_mode = "unattended"
+        d._sync_burn([SimpleNamespace(id="s1")], datetime.now())
+        assert d._burn_by_session == {}

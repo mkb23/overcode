@@ -44,3 +44,17 @@ def test_quick_ticks_save_the_state_file_at_least_once_a_second():
     from overcode.monitor_daemon import QUICK_TICK_STATE_SAVE_SECONDS
 
     assert QUICK_TICK_STATE_SAVE_SECONDS <= 1.0
+
+
+def test_stats_columns_refresh_every_five_seconds_while_watched():
+    from overcode.monitor_daemon import STATS_SYNC_ATTENDED_SECONDS, STATS_SYNC_UNATTENDED_SECONDS
+
+    assert STATS_SYNC_ATTENDED_SECONDS <= 5
+    assert STATS_SYNC_UNATTENDED_SECONDS <= 60  # budgets still enforced unattended
+
+
+def test_git_columns_refresh_every_fifteen_seconds_and_burn_every_ten():
+    from overcode.monitor_daemon import BURN_SYNC_SECONDS, GIT_SYNC_SECONDS
+
+    assert GIT_SYNC_SECONDS <= 15
+    assert BURN_SYNC_SECONDS <= 10

@@ -185,6 +185,15 @@ class SessionDaemonState:
     # seconds. status_detail is the 4-colour detail with its badges; a
     # badge's countdown is published as eta_at (epoch) so it doesn't change
     # every tick.
+    # Git working-tree stats for the agent's (focal) directory, refreshed
+    # every GIT_SYNC_SECONDS while attended: [files, insertions, deletions]
+    # and the untracked-file count. None until first read.
+    git_diff: Optional[list] = None
+    git_untracked: Optional[int] = None
+    # Burn over each window a view asked for, keyed by window hours as a
+    # string: {"1.0": {"input_tokens", "output_tokens", ..., "cost_usd",
+    # "energy_j"}}. Computed only while attended.
+    burn: Optional[dict] = None
     live_colour: Optional[str] = None
     live_since: Optional[float] = None
     episode_colour: Optional[str] = None

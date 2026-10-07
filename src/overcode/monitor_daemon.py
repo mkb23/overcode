@@ -133,6 +133,14 @@ INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attenda
 # long instead of waiting for the next tick.
 WAKE_SCAN_ATTENDED_SECONDS = 0.25
 WAKE_SCAN_UNATTENDED_SECONDS = 2.0
+# Token/cost/energy columns: synced this often while someone is watching,
+# and at the old 60 s cadence (budgets, history) while nobody is.
+STATS_SYNC_ATTENDED_SECONDS = 5
+STATS_SYNC_UNATTENDED_SECONDS = 60
+# Git diff and untracked counts while attended; not read at all unattended.
+GIT_SYNC_SECONDS = 15
+# Burn over the windows views asked for, while attended.
+BURN_SYNC_SECONDS = 5
 # Between full ticks the state file is rewritten at most this often; views
 # on engine.sock get every change as it happens.
 QUICK_TICK_STATE_SAVE_SECONDS = 1.0
@@ -1406,6 +1414,69 @@ class MonitorDaemon:
         finally:
             self._flush_pending_writes()
 
+    def _attach_git_and_burn(self, session, state: SessionDaemonState) -> None:
+        from .tui_helpers import effective_git_directory
+
+        git = getattr(self, "_git_by_dir", {}).get(effective_git_directory(session))
+        if git is not None:
+            state.git_diff, state.git_untracked = git
+        state.burn = getattr(self, "_burn_by_session", {}).get(session.id)
+
+    def _sync_git(self, sessions: list, now: datetime) -> None:
+        """Git diff/untracked per distinct directory, every GIT_SYNC_SECONDS while attended."""
+        if self.state.interval_mode == "unattended":
+            return
+        last = getattr(self, "_last_git_sync", None)
+        if last is not None and (now - last).total_seconds() < GIT_SYNC_SECONDS:
+            return
+        self._last_git_sync = now
+        from concurrent.futures import ThreadPoolExecutor
+
+        from .tui_helpers import effective_git_directory, get_git_diff_stats, get_git_untracked_count
+
+        dirs = sorted({d for d in (effective_git_directory(s) for s in sessions
+                                   if not getattr(s, "is_remote", False)) if d})
+        if not dirs:
+            return
+
+        def scan(directory):
+            try:
+                diff = get_git_diff_stats(directory)
+                return directory, (list(diff) if diff else None, get_git_untracked_count(directory))
+            except Exception:
+                return directory, (None, None)
+
+        with ThreadPoolExecutor(max_workers=min(8, len(dirs))) as pool:
+            self._git_by_dir = dict(pool.map(scan, dirs))
+
+    def _sync_burn(self, sessions: list, now: datetime) -> None:
+        """Burn over each window a visible view asked for, every BURN_SYNC_SECONDS."""
+        engine = getattr(self, "_engine", None)
+        windows = engine.burn_windows if engine is not None else set()
+        if not windows or self.state.interval_mode == "unattended":
+            self._burn_by_session = {}
+            return
+        last = getattr(self, "_last_burn_sync", None)
+        if last is not None and (now - last).total_seconds() < BURN_SYNC_SECONDS:
+            return
+        self._last_burn_sync = now
+        from .tui_logic import compute_window_burn
+
+        asleep = {s.id for s in sessions if getattr(s, "is_asleep", False)}
+        by_session: Dict[str, dict] = {}
+        for hours in sorted(windows):
+            stats = compute_window_burn(sessions, asleep, hours, now=now)
+            for sid, burn in stats.per_session.items():
+                by_session.setdefault(sid, {})[str(float(hours))] = {
+                    "input_tokens": burn.input_tokens,
+                    "output_tokens": burn.output_tokens,
+                    "cache_creation_tokens": burn.cache_creation_tokens,
+                    "cache_read_tokens": burn.cache_read_tokens,
+                    "cost_usd": round(burn.cost_usd, 4),
+                    "energy_j": round(burn.energy_j, 1),
+                }
+        self._burn_by_session = by_session
+
     def _start_engine_socket(self) -> None:
         """Serve engine.sock next to the state file; log and carry on if it can't."""
         from .engine_socket import EngineServer, socket_path
@@ -1461,6 +1532,8 @@ class MonitorDaemon:
         self._sync_available_skills(sessions, now)
         self._sync_sandbox_state(sessions, now)
         self._sync_process_resources(sessions, now)
+        self._sync_git(sessions, now)
+        self._sync_burn(sessions, now)
         self._dispatch_heartbeats(sessions)
         try:
             self._apply_visits()
@@ -1606,7 +1679,9 @@ class MonitorDaemon:
 
         Ensures the first loop has accurate data (fixes #103).
         """
-        if should_sync_stats(self._last_stats_sync, now, self._stats_sync_interval):
+        interval = (STATS_SYNC_UNATTENDED_SECONDS if self.state.interval_mode == "unattended"
+                    else STATS_SYNC_ATTENDED_SECONDS)
+        if should_sync_stats(self._last_stats_sync, now, interval):
             for session in sessions:
                 self.sync_agent_stats(session)
             self._last_stats_sync = now
@@ -1862,6 +1937,7 @@ class MonitorDaemon:
 
             session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
+            self._attach_git_and_burn(session, session_state)
             self._record_episode(session, session_state, effective_status, now)
             session_states.append(session_state)
 

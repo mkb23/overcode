@@ -35,7 +35,7 @@ def socket_path(state_dir: Path) -> Path:
 
 
 class _Peer:
-    __slots__ = ("sock", "outbox", "inbox", "visible", "focus")
+    __slots__ = ("sock", "outbox", "inbox", "visible", "focus", "burn_hours")
 
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
@@ -43,6 +43,7 @@ class _Peer:
         self.inbox = bytearray()
         self.visible = False
         self.focus: Optional[str] = None
+        self.burn_hours: Optional[float] = None
 
 
 class EngineServer:
@@ -142,6 +143,13 @@ class EngineServer:
     def focused_agents(self) -> set:
         with self._lock:
             return {p.focus for p in self._peers.values() if p.visible and p.focus}
+
+    @property
+    def burn_windows(self) -> set:
+        """Burn windows (hours) the visible views want computed."""
+        with self._lock:
+            return {p.burn_hours for p in self._peers.values()
+                    if p.visible and p.burn_hours}
 
     @property
     def view_count(self) -> int:
@@ -251,6 +259,9 @@ class EngineServer:
             elif kind == "focus":
                 focus = message.get("agent")
                 peer.focus = focus if isinstance(focus, str) else None
+            elif kind == "burn_window":
+                hours = message.get("hours")
+                peer.burn_hours = float(hours) if isinstance(hours, (int, float)) and hours > 0 else None
             elif kind == "visit":
                 agent = message.get("agent")
                 if isinstance(agent, str):
@@ -290,6 +301,7 @@ class EngineClient:
         self._thread: Optional[threading.Thread] = None
         self._visible = False
         self._focus: Optional[str] = None
+        self._burn_hours: Optional[float] = None
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="engine-client", daemon=True)
@@ -309,6 +321,11 @@ class EngineClient:
     def set_visible(self, visible: bool) -> None:
         self._visible = visible
         self._send({"t": "visible", "visible": visible})
+
+    def set_burn_window(self, hours: Optional[float]) -> None:
+        """Ask the engine for burn over the last ``hours`` (None or 0: none)."""
+        self._burn_hours = hours
+        self._send({"t": "burn_window", "hours": hours or 0})
 
     def visit(self, agent: str) -> None:
         """The person looked at ``agent``: its next stall may ring again."""
@@ -353,6 +370,8 @@ class EngineClient:
             self._send({"t": "visible", "visible": self._visible})
             if self._focus is not None:
                 self._send({"t": "focus", "agent": self._focus})
+            if self._burn_hours:
+                self._send({"t": "burn_window", "hours": self._burn_hours})
             self._read(sock)
             with self._send_lock:
                 self._sock = None

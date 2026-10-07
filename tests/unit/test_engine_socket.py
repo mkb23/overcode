@@ -172,18 +172,32 @@ class TestAttendance:
         client.set_visible(True)
         assert wait_for(lambda: server.focused_agents == {"agent-7"})
 
+    def test_burn_windows_come_from_visible_views(self, server, client_factory):
+        a, _ = client_factory()
+        b, _ = client_factory()
+        a.set_burn_window(1.0)
+        b.set_burn_window(3.0)
+        a.set_visible(True)
+        assert wait_for(lambda: server.burn_windows == {1.0})
+        b.set_visible(True)
+        assert wait_for(lambda: server.burn_windows == {1.0, 3.0})
+        a.set_burn_window(None)
+        assert wait_for(lambda: server.burn_windows == {3.0})
+
     def test_visibility_and_focus_are_restated_after_a_reconnect(self, sock_path, client_factory):
         srv = EngineServer(sock_path)
         srv.start()
         client, _rec = client_factory()
         client.set_visible(True)
         client.set_focus("x")
+        client.set_burn_window(2.0)
         assert wait_for(lambda: srv.attended)
         srv.stop()
         srv2 = EngineServer(sock_path)
         srv2.start()
         try:
-            assert wait_for(lambda: srv2.attended and srv2.focused_agents == {"x"}, timeout=5)
+            assert wait_for(lambda: srv2.attended and srv2.focused_agents == {"x"}
+                            and srv2.burn_windows == {2.0}, timeout=5)
         finally:
             srv2.stop()
 
