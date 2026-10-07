@@ -41,6 +41,7 @@ from .backends import (
 )
 from .claude_pid import is_session_id_owned_by_others
 from .energy import estimate_energy_joules
+from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 from .monitor_daemon_state import (
     MonitorDaemonState,
@@ -356,6 +357,8 @@ class MonitorDaemon:
         # engine.sock (docs/design/engine-0.6.md): started by run(), so a
         # daemon object built for a test never binds a socket
         self._engine = None
+        # One recorded-colour history per agent (#507), by session id
+        self._recorders: Dict[str, EpisodeRecorder] = {}
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
@@ -1239,6 +1242,39 @@ class MonitorDaemon:
             except Exception as e:  # a view problem must never stop the tick
                 self.log.warn(f"engine.sock publish failed: {e}")
 
+    def _record_episode(self, session, state: SessionDaemonState, effective_status: str,
+                        now: datetime) -> None:
+        """Feed this tick's colour to the agent's recorder; publish, log, ring (#507)."""
+        from .hook_status_detector import augment_with_legacy_heartbeat
+
+        try:
+            detail = self.detector.get_status_detail(session.name)
+        except Exception:
+            detail = None
+        detail = augment_with_legacy_heartbeat(detail, effective_status)
+        ts = now.timestamp()
+        # Lifecycle states hold the record where it was
+        colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE) \
+            else (detail.color if detail else None)
+        recorder = self._recorders.get(session.id)
+        if recorder is None:
+            recorder = self._recorders[session.id] = EpisodeRecorder()
+        observed = recorder.observe(colour, ts)
+        state.live_colour = recorder.live_colour
+        state.live_since = recorder.live_since
+        state.episode_colour = recorder.episode.colour if recorder.episode else None
+        state.episode_start = recorder.episode.start if recorder.episode else None
+        state.status_detail = status_detail_view(detail, ts) if colour else None
+        for episode in observed.closed:
+            append_episode(self.state_path.parent, session.name, session.id, episode)
+        if observed.bell is not None:
+            self.log.info(f"[{session.name}] bell: {observed.bell.colour} since "
+                          f"{datetime.fromtimestamp(observed.bell.start).isoformat()}")
+            engine = getattr(self, "_engine", None)
+            if engine is not None:
+                engine.ring(session.id, {"colour": observed.bell.colour,
+                                         "start": observed.bell.start, "name": session.name})
+
     def _start_engine_socket(self) -> None:
         """Serve engine.sock next to the state file; log and carry on if it can't."""
         from .engine_socket import EngineServer, socket_path
@@ -1693,6 +1729,7 @@ class MonitorDaemon:
 
             session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
+            self._record_episode(session, session_state, effective_status, now)
             session_states.append(session_state)
 
             # Log status history to session-specific file — on change, on

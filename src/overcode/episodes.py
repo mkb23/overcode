@@ -213,3 +213,76 @@ class EpisodeRecorder:
                 out.bell = Bell(colour, stretch)
         else:
             self._input_needed_since = None
+
+
+# ── publishing and the episode log ───────────────────────────────────────
+
+# An agent's episode log is rotated to .1 past this size (one generation
+# kept): a busy agent closes a few hundred episodes a day at ~120 bytes each.
+EPISODE_LOG_MAX_BYTES = 2 << 20
+
+
+def status_detail_view(detail, now: float) -> Optional[dict]:
+    """A StatusDetail as the engine publishes it.
+
+    A badge's countdown (``eta_seconds``) shrinks every tick; publishing its
+    absolute ``eta_at`` instead keeps an unchanged agent's fields unchanged,
+    so a waiting fleet produces no deltas. Views count down from it.
+    """
+    if detail is None:
+        return None
+    badges = []
+    for badge in detail.badges:
+        entry = {"kind": badge.kind}
+        if badge.label:
+            entry["label"] = badge.label
+        if badge.count != 1:
+            entry["count"] = badge.count
+        if badge.eta_seconds is not None:
+            entry["eta_at"] = round(now + badge.eta_seconds)
+        badges.append(entry)
+    return {"color": detail.color, "badges": badges, "legacy_status": detail.legacy_status}
+
+
+def episode_log_path(state_dir, agent_name: str):
+    from pathlib import Path
+
+    return Path(state_dir) / f"episodes_{agent_name}.jsonl"
+
+
+def append_episode(state_dir, agent_name: str, session_id: str, episode: Episode) -> None:
+    """Append one closed episode to the agent's log; never raises."""
+    import json
+    import os
+
+    path = episode_log_path(state_dir, agent_name)
+    record = dict(episode.to_dict(), session_id=session_id)
+    try:
+        try:
+            if path.stat().st_size > EPISODE_LOG_MAX_BYTES:
+                os.replace(path, path.with_suffix(".jsonl.1"))
+        except FileNotFoundError:
+            pass
+        with open(path, "a") as f:
+            f.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except OSError:
+        pass
+
+
+def read_episodes(state_dir, agent_name: str) -> List[dict]:
+    """Every logged episode for an agent, oldest first (rotated file included)."""
+    import json
+
+    path = episode_log_path(state_dir, agent_name)
+    out: List[dict] = []
+    for candidate in (path.with_suffix(".jsonl.1"), path):
+        try:
+            with open(candidate) as f:
+                for line in f:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        continue
+        except OSError:
+            continue
+    return out

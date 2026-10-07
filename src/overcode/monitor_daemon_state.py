@@ -179,6 +179,18 @@ class SessionDaemonState:
     cpu_percent: float = 0.0
     rss_bytes: int = 0
 
+    # The engine's colour model (#507, docs/design/engine-0.6.md). The live
+    # colour is this tick's; the episode is the recorded one (blips merged
+    # at G), which timers, history and the bell use. Times are epoch
+    # seconds. status_detail is the 4-colour detail with its badges; a
+    # badge's countdown is published as eta_at (epoch) so it doesn't change
+    # every tick.
+    live_colour: Optional[str] = None
+    live_since: Optional[float] = None
+    episode_colour: Optional[str] = None
+    episode_start: Optional[float] = None
+    status_detail: Optional[dict] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return dataclasses.asdict(self)

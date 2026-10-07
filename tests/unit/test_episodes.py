@@ -212,3 +212,100 @@ class TestReplayScenarios:
         yellow = rec.episode if rec.episode.colour == Y_ else next(e for e in closed if e.colour == Y_)
         assert [b[0] for b in yellow.blips] == [O_]
         assert bells == []
+
+
+class TestPublishing:
+    def test_badges_publish_an_absolute_eta(self):
+        from overcode.episodes import status_detail_view
+        from overcode.status_constants import StatusBadge, StatusDetail
+
+        detail = StatusDetail(Y_, [StatusBadge("schedule_wakeup", eta_seconds=240.4),
+                                   StatusBadge("monitor", count=2)], "busy_sleeping")
+        a = status_detail_view(detail, 1000.0)
+        assert a == {"color": Y_, "legacy_status": "busy_sleeping", "badges": [
+            {"kind": "schedule_wakeup", "eta_at": 1240}, {"kind": "monitor", "count": 2}]}
+        # Two ticks later the countdown moved, the published view did not
+        later = StatusDetail(Y_, [StatusBadge("schedule_wakeup", eta_seconds=238.4),
+                                  StatusBadge("monitor", count=2)], "busy_sleeping")
+        assert status_detail_view(later, 1002.0) == a
+        assert status_detail_view(None, 0) is None
+
+    def test_episode_log_appends_rotates_and_reads_back(self, tmp_path, monkeypatch):
+        from overcode import episodes
+        from overcode.episodes import Episode, append_episode, read_episodes
+
+        monkeypatch.setattr(episodes, "EPISODE_LOG_MAX_BYTES", 300)
+        for i in range(10):
+            append_episode(tmp_path, "agent", "sid", Episode(G_, float(i), float(i) + 1))
+        got = read_episodes(tmp_path, "agent")
+        assert (tmp_path / "episodes_agent.jsonl.1").exists()
+        starts = [e["start"] for e in got]
+        assert starts == sorted(starts) and starts[-1] == 9.0
+        assert all(e["session_id"] == "sid" for e in got)
+
+    def test_an_unwritable_log_never_raises(self, tmp_path):
+        from overcode.episodes import Episode, append_episode
+
+        append_episode(tmp_path / "missing" / "dir", "a", "s", Episode(G_, 0.0, 1.0))
+
+
+class TestDaemonRecords:
+    """The monitor daemon feeds each tick's colour to the agent's recorder."""
+
+    def _daemon(self, tmp_path):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from overcode.monitor_daemon import MonitorDaemon
+
+        daemon = MonitorDaemon.__new__(MonitorDaemon)
+        daemon._recorders = {}
+        daemon.state_path = tmp_path / "state.json"
+        daemon.log = MagicMock()
+        daemon._engine = MagicMock()
+        daemon.detector = SimpleNamespace(detail=None)
+        daemon.detector.get_status_detail = lambda name: daemon.detector.detail
+        return daemon
+
+    def _tick(self, daemon, colour, t, status="running"):
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from overcode.monitor_daemon_state import SessionDaemonState
+        from overcode.status_constants import StatusDetail
+
+        daemon.detector.detail = StatusDetail(colour, [], status) if colour else None
+        state = SessionDaemonState(session_id="s1", name="a1")
+        daemon._record_episode(SimpleNamespace(id="s1", name="a1"), state, status,
+                               datetime.fromtimestamp(t))
+        return state
+
+    def test_publishes_live_and_recorded_colour(self, tmp_path):
+        daemon = self._daemon(tmp_path)
+        self._tick(daemon, G_, 1000)
+        state = self._tick(daemon, R_, 1010, "waiting_user")
+        assert (state.live_colour, state.live_since) == (R_, 1010)
+        assert (state.episode_colour, state.episode_start) == (G_, 1000)
+        assert state.status_detail["color"] == R_
+
+    def test_a_confirmed_stall_rings_the_engine_and_logs_the_episode(self, tmp_path):
+        from overcode.episodes import read_episodes
+
+        daemon = self._daemon(tmp_path)
+        self._tick(daemon, G_, 1000)
+        self._tick(daemon, R_, 1010, "waiting_user")
+        daemon._engine.ring.assert_not_called()
+        state = self._tick(daemon, R_, 1031, "waiting_user")
+        daemon._engine.ring.assert_called_once()
+        sid, bell = daemon._engine.ring.call_args.args
+        assert sid == "s1" and bell["colour"] == R_ and bell["start"] == 1010
+        assert state.episode_colour == R_
+        assert [(e["colour"], e["start"], e["end"]) for e in read_episodes(tmp_path, "a1")] == [
+            (G_, 1000, 1010)]
+
+    def test_lifecycle_states_hold_the_record(self, tmp_path):
+        daemon = self._daemon(tmp_path)
+        self._tick(daemon, G_, 1000)
+        state = self._tick(daemon, None, 1005, "terminated")
+        assert state.episode_colour == G_ and state.status_detail is None
+        assert not daemon._recorders["s1"].pending
