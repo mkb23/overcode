@@ -21,7 +21,7 @@ from overcode.backends.hermes import (
     HermesBackend,
     HermesStatusPatterns,
 )
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.status_constants import (
     STATUS_BUSY_SLEEPING,
     STATUS_RUNNING,

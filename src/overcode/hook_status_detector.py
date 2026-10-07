@@ -21,7 +21,6 @@ from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
-    STATUS_CAPTURE_LINES,
     STATUS_RUNNING,
     STATUS_BUSY_SLEEPING,
     STATUS_WAITING_APPROVAL,
@@ -43,7 +42,6 @@ from .status_patterns import (
     extract_active_monitor_count,
     extract_background_bash_count,
     get_patterns,
-    is_sleep_command,
     extract_sleep_duration,
     strip_ansi,
     is_shell_prompt,
@@ -53,7 +51,7 @@ from .status_patterns import (
 from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
+    from .protocols import TmuxInterface
     from .status_patterns import StatusPatterns
     from .session_manager import Session
 
@@ -485,20 +483,12 @@ class HookStatusDetector:
     whether the tmux window is alive and returns a sensible default.
     """
 
-    # Re-export status constants for backward compat (same interface as PollingStatusDetector)
-    STATUS_RUNNING = STATUS_RUNNING
-    STATUS_WAITING_USER = STATUS_WAITING_USER
-    STATUS_TERMINATED = STATUS_TERMINATED
-
     def __init__(
         self,
         tmux_session: str,
         tmux: "TmuxInterface" = None,
         patterns: "StatusPatterns" = None,
         state_dir: Optional[Path] = None,
-        # Legacy params kept for API compat — ignored
-        stale_threshold_seconds: float = 0,
-        polling_fallback=None,
     ):
         self.tmux_session = tmux_session
         self.capture_lines = DEFAULT_CAPTURE_LINES
@@ -923,7 +913,7 @@ class HookStatusDetector:
         """
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
         clean = strip_ansi(pane_content)
-        lines = [l.strip() for l in clean.strip().split('\n') if l.strip()]
+        lines = [ln.strip() for ln in clean.strip().split('\n') if ln.strip()]
 
         if not lines:
             return STATUS_TERMINATED, "Agent exited", pane_content

@@ -9,33 +9,7 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import Mock
 
-from overcode.tui_helpers import (
-    format_interval,
-    format_ago,
-    format_duration,
-    format_tokens,
-    format_cost,
-    format_line_count,
-    calculate_uptime,
-    calculate_percentiles,
-    presence_state_to_char,
-    agent_status_to_char,
-    status_to_color,
-    get_standing_orders_indicator,
-    get_current_state_times,
-    build_timeline_slots,
-    build_timeline_string,
-    get_status_symbol,
-    get_presence_color,
-    get_agent_timeline_color,
-    style_pane_line,
-    truncate_name,
-    get_daemon_status_style,
-    calculate_safe_break_duration,
-    get_git_diff_stats,
-    get_git_untracked_count,
-    get_summary_content_text,
-)
+from overcode.tui_helpers import format_interval, format_ago, format_duration, format_tokens, format_cost, format_line_count, calculate_uptime, presence_state_to_char, agent_status_to_char, get_current_state_times, build_timeline_slots, get_status_symbol, get_presence_color, get_agent_timeline_color, truncate_name, get_daemon_status_style, calculate_safe_break_duration, get_git_diff_stats, get_git_untracked_count, get_summary_content_text
 
 
 class TestFormatInterval:
@@ -216,33 +190,6 @@ class TestCalculateUptime:
         assert calculate_uptime("") == "0m"
 
 
-class TestCalculatePercentiles:
-    """Tests for calculate_percentiles function."""
-
-    def test_empty_list(self):
-        """Should return zeros for empty list."""
-        mean, p5, p95 = calculate_percentiles([])
-        assert mean == 0.0
-        assert p5 == 0.0
-        assert p95 == 0.0
-
-    def test_single_value(self):
-        """Should return same value for all percentiles."""
-        mean, p5, p95 = calculate_percentiles([100.0])
-        assert mean == 100.0
-        assert p5 == 100.0
-        assert p95 == 100.0
-
-    def test_multiple_values(self):
-        """Should calculate correct percentiles."""
-        times = list(range(1, 101))  # 1 to 100
-        mean, p5, p95 = calculate_percentiles(times)
-        assert mean == 50.5  # Mean of 1-100
-        # Percentile uses int(p * (n-1)): int(0.05 * 99) = 4, times[4] = 5
-        assert p5 == 5  # 5th percentile
-        assert p95 == 95  # 95th percentile (int(0.95 * 99) = 94, times[94] = 95)
-
-
 class TestPresenceStateToChar:
     """Tests for presence_state_to_char function."""
 
@@ -274,40 +221,6 @@ class TestAgentStatusToChar:
         """Waiting user should return a character."""
         char = agent_status_to_char("waiting_user")
         assert len(char) == 1
-
-
-class TestStatusToColor:
-    """Tests for status_to_color function."""
-
-    def test_running_color(self):
-        """Running should return a color name."""
-        color = status_to_color("running")
-        assert isinstance(color, str)
-        assert len(color) > 0
-
-    def test_waiting_user_color(self):
-        """Waiting user should return a color name."""
-        color = status_to_color("waiting_user")
-        assert isinstance(color, str)
-
-
-class TestGetStandingOrdersIndicator:
-    """Tests for get_standing_orders_indicator function."""
-
-    def test_no_instructions(self):
-        """Should return dash when no instructions."""
-        session = Mock(standing_instructions=None, standing_orders_complete=False)
-        assert get_standing_orders_indicator(session) == "➖"
-
-    def test_active_instructions(self):
-        """Should return clipboard when instructions active."""
-        session = Mock(standing_instructions="some instructions", standing_orders_complete=False)
-        assert get_standing_orders_indicator(session) == "📋"
-
-    def test_complete_instructions(self):
-        """Should return check when complete."""
-        session = Mock(standing_instructions="some instructions", standing_orders_complete=True)
-        assert get_standing_orders_indicator(session) == "✓"
 
 
 class TestGetCurrentStateTimes:
@@ -514,21 +427,6 @@ class TestBuildTimelineSlots:
         assert result[59] == "idle"
 
 
-class TestBuildTimelineString:
-    """Tests for build_timeline_string function."""
-
-    def test_empty_slots(self):
-        """Should return dashes for empty slots."""
-        result = build_timeline_string({}, width=5, state_to_char=lambda x: "X")
-        assert result == "─────"
-
-    def test_filled_slots(self):
-        """Should use state_to_char for filled slots."""
-        slots = {0: "A", 2: "B", 4: "C"}
-        result = build_timeline_string(slots, width=5, state_to_char=lambda x: x)
-        assert result == "A─B─C"
-
-
 class TestGetStatusSymbol:
     """Tests for get_status_symbol function."""
 
@@ -556,33 +454,6 @@ class TestGetAgentTimelineColor:
         """Should return color string for status."""
         assert isinstance(get_agent_timeline_color("running"), str)
         assert isinstance(get_agent_timeline_color("waiting_user"), str)
-
-
-class TestStylePaneLine:
-    """Tests for style_pane_line function."""
-
-    def test_success_line(self):
-        """Should return green styles for success."""
-        prefix, content = style_pane_line("✓ Test passed")
-        assert "green" in prefix
-        assert "green" in content
-
-    def test_error_line(self):
-        """Should return red styles for error."""
-        prefix, content = style_pane_line("✗ Test failed")
-        assert "red" in prefix
-        assert "red" in content
-
-    def test_command_line(self):
-        """Should return cyan/white for command prompt."""
-        prefix, content = style_pane_line("> command here")
-        assert "cyan" in prefix
-        assert "white" in content
-
-    def test_normal_line(self):
-        """Should return default styles for normal text."""
-        prefix, content = style_pane_line("normal text")
-        assert "cyan" in prefix
 
 
 class TestTruncateName:

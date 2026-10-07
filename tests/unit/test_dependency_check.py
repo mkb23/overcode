@@ -8,16 +8,8 @@ for checking and handling missing external dependencies.
 import pytest
 from unittest.mock import patch, MagicMock
 
-from overcode.dependency_check import (
-    find_executable,
-    check_tmux,
-    check_claude,
-    check_agent_cli,
-    require_tmux,
-    require_claude,
-    require_agent_cli,
-)
-from overcode.exceptions import TmuxNotFoundError, ClaudeNotFoundError
+from overcode.dependency_check import find_executable, check_tmux, check_agent_cli, require_tmux, require_agent_cli
+from overcode.exceptions import TmuxNotFoundError
 
 
 class TestFindExecutable:
@@ -82,34 +74,6 @@ class TestCheckTmux:
                 assert version is None
 
 
-class TestCheckClaude:
-    """Tests for check_claude."""
-
-    def test_claude_available(self):
-        """Should return True when claude is available."""
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = "/usr/local/bin/claude"
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Claude Code v2.0.75"
-                )
-                available, path, version = check_claude()
-                assert available is True
-                assert path == "/usr/local/bin/claude"
-                assert version == "Claude Code v2.0.75"
-
-    def test_claude_not_found(self):
-        """Should return False when claude is not found."""
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = None
-            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
-                available, path, version = check_claude()
-                assert available is False
-                assert path is None
-                assert version is None
-
-
 class TestRequireTmux:
     """Tests for require_tmux."""
 
@@ -130,28 +94,6 @@ class TestRequireTmux:
                 with pytest.raises(TmuxNotFoundError) as exc_info:
                     require_tmux()
                 assert "tmux is required but not found" in str(exc_info.value)
-
-
-class TestRequireClaude:
-    """Tests for require_claude."""
-
-    def test_returns_path_when_available(self):
-        """Should return path when claude is available."""
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = "/usr/local/bin/claude"
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="Claude Code v2.0.75")
-                path = require_claude()
-                assert path == "/usr/local/bin/claude"
-
-    def test_raises_when_not_found(self):
-        """Should raise ClaudeNotFoundError when claude missing."""
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = None
-            with patch("overcode.dependency_check._find_in_fallback_dirs", return_value=None):
-                with pytest.raises(ClaudeNotFoundError) as exc_info:
-                    require_claude()
-                assert "Claude Code CLI is required but not found" in str(exc_info.value)
 
 
 class TestCheckAgentCliRespectsOverride:

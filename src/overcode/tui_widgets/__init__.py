@@ -5,7 +5,6 @@ This package contains the individual widget classes extracted from tui.py
 for better maintainability and testability.
 """
 
-from .fullscreen_preview import FullscreenPreview
 from .help_overlay import HelpOverlay
 from .preview_pane import PreviewPane
 from .daemon_panel import DaemonPanel
@@ -24,7 +23,6 @@ from .agent_select_modal import AgentSelectModal
 from .sister_selection_modal import SisterSelectionModal
 from .new_agent_modal import NewAgentModal
 from .instruction_history_modal import InstructionHistoryModal
-from .new_agent_modal import NewAgentModal
 from .jump_modal import JumpCandidate
 from .command_palette import CommandPalette
 from .column_header import ColumnHeader
@@ -34,7 +32,6 @@ from .job_summary import JobSummary
 from .journey_panel import JourneyPanel
 
 __all__ = [
-    "FullscreenPreview",
     "HelpOverlay",
     "PreviewPane",
     "DaemonPanel",
@@ -43,6 +40,7 @@ __all__ = [
     "StatusTimeline",
     "SessionSummary",
     "CommandBar",
+    "ModalBase",
     "SummaryConfigModal",
     "NewAgentDefaultsModal",
     "SkillsModal",

@@ -36,12 +36,42 @@ class TestCLICommands:
         assert "list" in result.stdout
         assert "daemon" in result.stdout
 
-    def test_no_args_launches_tui(self):
-        """No arguments launches the TUI monitor (#185)"""
-        result = runner.invoke(app, [])
-        # TUI launch fails outside a real terminal
-        assert result.exit_code != 0
-        assert "TTY" in result.output or "terminal" in result.output.lower()
+    def test_no_args_opens_the_split(self):
+        """No arguments opens the monitor, i.e. the `overcode tmux` split (#185, #523)"""
+        from unittest.mock import patch
+        with patch("overcode.cli.split.open_split") as open_split:
+            result = runner.invoke(app, [])
+        assert result.exit_code == 0
+        open_split.assert_called_once_with("agents")
+
+    def test_monitor_is_an_alias_for_tmux(self):
+        """`overcode monitor` opens the split, passing its flags to the pane (#523)"""
+        from unittest.mock import patch
+        with patch("overcode.cli.split.open_split") as open_split, \
+             patch("overcode.tui.run_tui") as run_tui:
+            result = runner.invoke(app, ["monitor", "--jobs", "--restart", "--session", "s"])
+        assert result.exit_code == 0, result.output
+        open_split.assert_called_once_with("s", restart=True, monitor_args="--jobs")
+        run_tui.assert_not_called()
+
+    def test_monitor_with_sync_target_runs_the_pane(self):
+        """The split's top pane runs `monitor --sync-target`: the TUI itself"""
+        from unittest.mock import patch
+        with patch("overcode.cli.split.open_split") as open_split, \
+             patch("overcode.tui.run_tui") as run_tui:
+            result = runner.invoke(app, ["monitor", "--session", "s", "--sync-target", "oc-view-s"])
+        assert result.exit_code == 0, result.output
+        run_tui.assert_called_once_with("s", "oc-view-s", diagnostics=False, initial_jobs_mode=False)
+        open_split.assert_not_called()
+
+    def test_supervisor_is_a_deprecated_alias(self):
+        """`overcode supervisor` (removed in 0.6.0) says so and opens the split"""
+        from unittest.mock import patch
+        with patch("overcode.cli.split.open_split") as open_split:
+            result = runner.invoke(app, ["supervisor"])
+        assert result.exit_code == 0, result.output
+        assert "removed in 0.6.0" in result.output
+        open_split.assert_called_once_with("agents", restart=False)
 
 
 class TestLaunchCommand:
@@ -200,9 +230,9 @@ class TestShowCommandWithMocks:
         )
 
     def _make_mock_claude_stats(self):
-        """Create a mock ClaudeSessionStats."""
-        from overcode.history_reader import ClaudeSessionStats
-        return ClaudeSessionStats(
+        """Create a mock AgentSessionStats."""
+        from overcode.history_reader import AgentSessionStats
+        return AgentSessionStats(
             interaction_count=5,
             input_tokens=50000,
             output_tokens=10000,
@@ -517,8 +547,8 @@ def _make_session(name="test-agent", **kwargs):
 
 
 def _make_claude_stats(**kwargs):
-    """Helper to create a ClaudeSessionStats."""
-    from overcode.history_reader import ClaudeSessionStats
+    """Helper to create a AgentSessionStats."""
+    from overcode.history_reader import AgentSessionStats
     defaults = dict(
         interaction_count=5,
         input_tokens=50000,
@@ -531,7 +561,7 @@ def _make_claude_stats(**kwargs):
         background_task_count=0,
     )
     defaults.update(kwargs)
-    return ClaudeSessionStats(**defaults)
+    return AgentSessionStats(**defaults)
 
 
 class TestParseDuration:

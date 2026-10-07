@@ -6,8 +6,8 @@ registry (command_palette.COMMANDS, grouped by its CATEGORIES, titled as
 the palette titles them) and the keys from the effective keymap (#510), so
 help, palette and keymap cannot drift: remap a key and help shows the new
 one; bind a key to an action the palette doesn't list and it still appears
-(under App). The other key scopes — command bar, palette, fullscreen
-preview, prompt lab — follow, then the status reference.
+(under App). The other key scopes — command bar, palette, prompt lab —
+follow, then the status reference.
 
 Layout is responsive (#510): 1, 2 or 3 columns by width, a compact form on
 narrow terminals (shorter key column, unbound commands left out), and the
@@ -155,9 +155,6 @@ def key_sections(km: Any, compact: bool = False,
         f"COMMAND PALETTE ({km.label('command_palette') or km.label('jump_to_agent')})",
         _scope_rows(km, "command_palette")
         + [HelpRow(">", "Commands, from the agent list")]))
-    fs = km.label("expand_preview")
-    sections.append(HelpSection(f"FULLSCREEN PREVIEW ({fs})" if fs else "FULLSCREEN PREVIEW",
-                                _scope_rows(km, "fullscreen_preview")))
     if not compact:
         sections.append(HelpSection("SUMMARY PROMPT LAB", _scope_rows(km, "summary_prompt_lab")))
 

@@ -219,7 +219,6 @@ class TestHistoryIndexes:
             assert got == self._scan(entries, session)
             assert [id(e) for e in got] == [id(e) for e in self._scan(entries, session)]
         assert hf.get_session_ids_for_session(cases[3]) == ["s1"]
-        assert hf.count_interactions(cases[0]) == len(self._scan(entries, cases[0]))
 
     def test_indexes_follow_the_file(self, tmp_path):
         base = 1_800_000_000_000

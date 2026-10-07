@@ -166,13 +166,13 @@ def _parse_duration(s: str) -> float:
 
 @app.callback(invoke_without_command=True)
 def main_callback(ctx: typer.Context):
-    """Launch the TUI monitor when no command is given."""
+    """Open the monitor (the `overcode tmux` split) when no command is given."""
     if ctx.invoked_subcommand is not None:
         _record_cli_use()
     if ctx.invoked_subcommand is None:
-        from ..tui import run_tui
+        from .split import open_split
 
-        run_tui("agents")
+        open_split("agents")
 
 
 def _record_cli_use() -> None:

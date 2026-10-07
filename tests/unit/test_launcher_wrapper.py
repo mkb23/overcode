@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 
 
 @pytest.fixture(autouse=True)

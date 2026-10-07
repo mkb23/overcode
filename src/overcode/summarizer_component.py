@@ -18,7 +18,7 @@ from .status_constants import DEFAULT_CAPTURE_LINES
 from .summarizer_client import SummarizerClient
 
 if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
+    from .protocols import TmuxInterface
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class SummarizerComponent:
 
         # Dependency injection for testability
         if tmux is None:
-            from .interfaces import RealTmux
+            from .implementations import RealTmux
             tmux = RealTmux()
         self.tmux = tmux
 
@@ -309,17 +309,6 @@ class SummarizerComponent:
         except (subprocess.SubprocessError, OSError) as e:
             logger.warning(f"Failed to capture pane {window}: {e}")
             return None
-
-    def get_summary(self, session_id: str) -> Optional[AgentSummary]:
-        """Get summary for a specific session.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            AgentSummary or None if not available
-        """
-        return self.summaries.get(session_id)
 
     def stop(self) -> None:
         """Clean up resources."""

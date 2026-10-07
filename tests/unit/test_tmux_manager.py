@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.tmux_manager import TmuxManager
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 
 
 class TestTmuxManagerSession:
@@ -241,10 +241,9 @@ class TestTmuxManagerEdgeCases:
 # libtmux objects instead of using MockTmux.
 # =============================================================================
 
-from unittest.mock import MagicMock, patch, call
-import libtmux
-from libtmux.exc import LibTmuxException
-from libtmux._internal.query_list import ObjectDoesNotExist
+from unittest.mock import MagicMock, patch, call  # noqa: E402
+from libtmux.exc import LibTmuxException  # noqa: E402
+from libtmux._internal.query_list import ObjectDoesNotExist  # noqa: E402
 
 
 class TestTmuxManagerServerProperty:

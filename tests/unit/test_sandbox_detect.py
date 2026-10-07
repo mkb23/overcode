@@ -4,12 +4,7 @@ import subprocess
 from unittest.mock import patch, MagicMock
 
 from overcode import sandbox_detect
-from overcode.sandbox_detect import (
-    detect_sandbox_states,
-    is_sandbox_enabled,
-    _parse_loopback_counts,
-    _run_lsof,
-)
+from overcode.sandbox_detect import detect_sandbox_states, _parse_loopback_counts, _run_lsof
 
 
 def _lsof_result(stdout: str, returncode: int = 0):
@@ -157,16 +152,3 @@ class TestDetectSandboxStates:
             mock_sys.platform = "darwin"
             detect_sandbox_states([1, 2, 3, 4, 5])
             assert mock_run.call_count == 1
-
-
-class TestIsSandboxEnabled:
-    def test_none_pid_returns_none(self):
-        assert is_sandbox_enabled(None) is None
-
-    def test_delegates_to_batch(self):
-        with patch.object(sandbox_detect, "detect_sandbox_states", return_value={1234: True}):
-            assert is_sandbox_enabled(1234) is True
-
-    def test_missing_from_batch_returns_none(self):
-        with patch.object(sandbox_detect, "detect_sandbox_states", return_value={}):
-            assert is_sandbox_enabled(1234) is None

@@ -20,7 +20,7 @@ from overcode.hook_status_detector import HookStatusDetector
 from overcode.protocols import StatusDetectorProtocol
 from overcode.status_constants import ALL_STATUSES
 from overcode.status_patterns import get_patterns
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 from tests.unit.backend_doubles import HookedTestBackend
 

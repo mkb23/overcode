@@ -45,7 +45,7 @@ from overcode.backends.hermes import (
     version_in_tested_range,
 )
 from overcode.doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
-from overcode.exceptions import ClaudeNotFoundError
+from overcode.exceptions import AgentCliNotFoundError
 
 
 OVERCODE_BIN = "/usr/local/bin/overcode"
@@ -97,7 +97,7 @@ class TestRegistry:
         assert backend.display_name == "hermes"
 
     def test_not_found_error_is_catchable_as_the_legacy_one(self):
-        assert issubclass(HermesNotFoundError, ClaudeNotFoundError)
+        assert issubclass(HermesNotFoundError, AgentCliNotFoundError)
 
     def test_process_basenames_and_argv_markers(self, backend):
         # The pane runs Hermes's venv python, not a `hermes` binary — the

@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import mock_opencode2
 from overcode.backends.opencode2_patterns import OPENCODE2_PATTERNS
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER
 from overcode.status_detector import PollingStatusDetector
 from tests.fixtures import create_mock_session

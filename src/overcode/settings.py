@@ -16,9 +16,14 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import yaml
+
+from .pricing import ModelPricing, MODEL_PRICING
+
+if TYPE_CHECKING:
+    from .energy import EnergyConfig
 
 # =============================================================================
 # Version - increment when daemon code changes significantly
@@ -223,9 +228,6 @@ TUI = TUISettings()
 # =============================================================================
 # Config File Loading
 # =============================================================================
-
-# Re-exported from pricing module for backward compatibility
-from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401, E402
 
 
 def _clamp_fraction(value) -> float:
@@ -499,13 +501,6 @@ def get_user_config() -> UserConfig:
     return _user_config
 
 
-def reload_user_config() -> UserConfig:
-    """Reload the user configuration from disk."""
-    global _user_config
-    _user_config = UserConfig.load()
-    return _user_config
-
-
 # =============================================================================
 # Session-Specific Paths
 # =============================================================================
@@ -601,13 +596,6 @@ def read_detection_mode(session: str) -> str:
         return get_detection_mode_path(session).read_text().strip()
     except (FileNotFoundError, IOError):
         return "auto"
-
-
-def write_detection_mode(session: str, mode: str) -> None:
-    """Write the global detection mode for daemon/TUI synchronisation."""
-    path = get_detection_mode_path(session)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(mode)
 
 
 def resolve_detection_mode(session: str) -> str:
@@ -731,11 +719,6 @@ def get_default_standing_instructions() -> str:
     return _get()
 
 
-def get_default_tmux_session() -> str:
-    """Get default tmux session name from config."""
-    return get_user_config().tmux_session
-
-
 # =============================================================================
 # TUI Preferences (persisted between launches)
 # =============================================================================
@@ -761,12 +744,12 @@ def write_tui_heartbeat(session: str) -> None:
 
 
 # The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
-# client is attached to the pane it runs in (or while it runs outside tmux,
-# where nobody can tell), and the API server touches it whenever it serves
-# a status request (a sister TUI's poll). It is the monitor daemon's third
-# "someone is watching" signal, next to the keypress heartbeat above and the
-# attached count of the agents session: a TUI in another tmux session or a
-# plain terminal, a sister — all are invisible to both, and without this
+# client is attached to the pane it runs in, and the API server touches it
+# whenever it serves a status request (a sister TUI's poll). It is the
+# monitor daemon's third "someone is watching" signal, next to the keypress
+# heartbeat above and the attached count of the agents session: the split
+# (which lives in the `overcode` session), a sister — both are invisible to
+# those two, and without this
 # touch the daemon would stretch to its unattended interval while a sister
 # is watching. A touch is one utime, no content.
 TUI_ATTENDED_TOUCH_SECONDS = 5
@@ -816,8 +799,6 @@ class TUIPreferences:
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
     tui_log_panel_visible: bool = False
-    preview_visible: bool = False  # preview pane visibility
-    tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
     show_done: bool = False  # show "done" child agents (#244)

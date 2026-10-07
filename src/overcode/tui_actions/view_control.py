@@ -185,8 +185,6 @@ class ViewControlMixin:
         refusal = toggle_refusal(cmd.category)
         if refusal is not None:
             raise ViewCommandError(f"'{action}' {refusal}")
-        if self.compact and action in self._COMPACT_BLOCKED_ACTIONS:
-            raise ViewCommandError(f"'{action}' is not available in split mode")
         getattr(self, f"action_{action}")()
         result: dict[str, Any] = {"action": action, "title": cmd.title}
         if cmd.state is not None:
@@ -252,7 +250,6 @@ class ViewControlMixin:
             "show_terminated": bool(self.show_terminated),
             "hide_asleep": bool(self.hide_asleep),
             "show_done": bool(self.show_done),
-            "compact": bool(self.compact),
             "dialog": dialog,
             "recent_actions": list(self._recent_actions),
         }

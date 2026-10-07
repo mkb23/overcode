@@ -24,20 +24,8 @@ class StateError(OvercodeError):
     pass
 
 
-class StateReadError(StateError):
-    """Error reading state from file."""
-
-    pass
-
-
 class StateWriteError(StateError):
     """Error writing state to file."""
-
-    pass
-
-
-class StateCorruptedError(StateError):
-    """State file is corrupted or invalid."""
 
     pass
 
@@ -49,24 +37,6 @@ class StateCorruptedError(StateError):
 
 class TmuxError(OvercodeError):
     """Error related to tmux operations."""
-
-    pass
-
-
-class TmuxSessionError(TmuxError):
-    """Error with tmux session operations."""
-
-    pass
-
-
-class TmuxWindowError(TmuxError):
-    """Error with tmux window operations."""
-
-    pass
-
-
-class TmuxPaneError(TmuxError):
-    """Error with tmux pane operations."""
 
     pass
 
@@ -103,22 +73,6 @@ class InvalidSessionNameError(SessionError):
         super().__init__(msg)
 
 
-class SessionNotFoundError(SessionError):
-    """Agent session was not found."""
-
-    def __init__(self, name: str):
-        self.name = name
-        super().__init__(f"Session '{name}' not found")
-
-
-class SessionAlreadyExistsError(SessionError):
-    """Agent session already exists."""
-
-    def __init__(self, name: str):
-        self.name = name
-        super().__init__(f"Session '{name}' already exists")
-
-
 class AgentBusyError(SessionError):
     """The agent is mid-turn, so an operation that restarts it was refused (#478)."""
 
@@ -126,18 +80,6 @@ class AgentBusyError(SessionError):
         self.name = name
         self.status = status
         super().__init__(f"Agent '{name}' is busy ({status})")
-
-
-class SessionLaunchError(SessionError):
-    """Error launching an agent session."""
-
-    pass
-
-
-class SessionKillError(SessionError):
-    """Error killing an agent session."""
-
-    pass
 
 
 # =============================================================================
@@ -156,81 +98,3 @@ class AgentCliNotFoundError(AgentCliError):
 
     pass
 
-
-class AgentCliStartupError(AgentCliError):
-    """Error starting the agent CLI process."""
-
-    pass
-
-
-# Pre-backend names, kept so existing ``except ClaudeNotFoundError`` clauses
-# (and third-party callers) keep catching the same exceptions. Aliases rather
-# than subclasses so isinstance relationships are unchanged in both directions.
-ClaudeError = AgentCliError
-ClaudeNotFoundError = AgentCliNotFoundError
-ClaudeStartupError = AgentCliStartupError
-
-
-# =============================================================================
-# Configuration Errors
-# =============================================================================
-
-
-class ConfigError(OvercodeError):
-    """Error related to configuration."""
-
-    pass
-
-
-class ConfigReadError(ConfigError):
-    """Error reading configuration file."""
-
-    pass
-
-
-class ConfigValidationError(ConfigError):
-    """Configuration validation failed."""
-
-    pass
-
-
-# =============================================================================
-# Daemon Errors
-# =============================================================================
-
-
-class DaemonError(OvercodeError):
-    """Error related to daemon operations."""
-
-    pass
-
-
-class DaemonAlreadyRunningError(DaemonError):
-    """Daemon is already running."""
-
-    def __init__(self, pid: int):
-        self.pid = pid
-        super().__init__(f"Daemon already running (PID {pid})")
-
-
-class DaemonNotRunningError(DaemonError):
-    """Daemon is not running."""
-
-    pass
-
-
-# =============================================================================
-# Presence Logger Errors
-# =============================================================================
-
-
-class PresenceError(OvercodeError):
-    """Error related to presence logging."""
-
-    pass
-
-
-class PresenceApiUnavailableError(PresenceError):
-    """macOS presence APIs are not available."""
-
-    pass

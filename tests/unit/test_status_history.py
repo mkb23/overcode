@@ -4,23 +4,11 @@ Tests for status history tracking.
 
 import csv
 import gzip
-import pytest
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from overcode.status_history import (
-    StatusHistoryFile,
-    log_agent_status,
-    read_agent_status_history,
-    read_agent_status_history_range,
-    get_agent_timeline,
-    clear_old_history,
-    rotate_status_history,
-    apply_retention,
-    rotate_and_retain,
-    disk_usage_findings,
-)
+from overcode.status_history import StatusHistoryFile, log_agent_status, read_agent_status_history, rotate_status_history, apply_retention, rotate_and_retain, disk_usage_findings
 
 
 class TestLogAgentStatus:
@@ -132,88 +120,6 @@ class TestReadAgentStatusHistory:
             assert history[0][2] == "status1"
             assert history[1][2] == "status2"
             assert history[2][2] == "status3"
-
-
-class TestGetAgentTimeline:
-    """Tests for get_agent_timeline function."""
-
-    def test_returns_simplified_timeline(self):
-        """Should return (timestamp, status) tuples."""
-        with TemporaryDirectory() as tmpdir:
-            history_file = Path(tmpdir) / "history.csv"
-
-            log_agent_status("agent1", "running", "Activity 1", history_file)
-            log_agent_status("agent1", "waiting_user", "Activity 2", history_file)
-
-            timeline = get_agent_timeline("agent1", history_file=history_file)
-
-            assert len(timeline) == 2
-            # Each entry should be (datetime, status)
-            assert len(timeline[0]) == 2
-            assert isinstance(timeline[0][0], datetime)
-            assert timeline[0][1] == "running"
-
-
-class TestClearOldHistory:
-    """Tests for clear_old_history function."""
-
-    def test_removes_old_entries(self):
-        """Should remove entries older than max_age_hours."""
-        with TemporaryDirectory() as tmpdir:
-            history_file = Path(tmpdir) / "history.csv"
-
-            # Create file with old entry
-            old_time = datetime.now() - timedelta(hours=48)
-            with open(history_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['timestamp', 'agent', 'status', 'activity'])
-                writer.writerow([old_time.isoformat(), 'old_agent', 'running', ''])
-
-            # Add recent entry
-            log_agent_status("new_agent", "running", "", history_file)
-
-            # Clear old entries
-            removed = clear_old_history(max_age_hours=24.0, history_file=history_file)
-
-            assert removed == 1
-
-            # Read back
-            history = read_agent_status_history(hours=100, history_file=history_file)
-            assert len(history) == 1
-            assert history[0][1] == "new_agent"
-
-    def test_returns_zero_for_empty_file(self):
-        """Should return 0 when no entries removed."""
-        with TemporaryDirectory() as tmpdir:
-            history_file = Path(tmpdir) / "history.csv"
-
-            log_agent_status("agent1", "running", "", history_file)
-
-            removed = clear_old_history(max_age_hours=24.0, history_file=history_file)
-
-            assert removed == 0
-
-    def test_returns_zero_for_nonexistent_file(self):
-        """Should return 0 for nonexistent file."""
-        removed = clear_old_history(history_file=Path("/nonexistent.csv"))
-        assert removed == 0
-
-    def test_preserves_header(self):
-        """Should preserve CSV header after clearing."""
-        with TemporaryDirectory() as tmpdir:
-            history_file = Path(tmpdir) / "history.csv"
-
-            # Create file with entries
-            old_time = datetime.now() - timedelta(hours=48)
-            with open(history_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['timestamp', 'agent', 'status', 'activity'])
-                writer.writerow([old_time.isoformat(), 'old', 'running', ''])
-
-            clear_old_history(max_age_hours=24.0, history_file=history_file)
-
-            content = history_file.read_text()
-            assert "timestamp,agent,status,activity" in content
 
 
 def _write_test_csv(path, rows, with_header=True):
@@ -337,33 +243,6 @@ class TestStatusHistoryFile:
             assert result2[-1][2] == "appended2"
             # Offset should have advanced (incremental read)
             assert reader._read_offset > old_offset
-
-    def test_file_rewrite_invalidates_cache(self):
-        """If file shrinks (rewrite), cache is invalidated and full re-read occurs."""
-        with TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "history.csv"
-            now = datetime.now()
-            rows = [
-                (now - timedelta(minutes=i), "a1", f"s{i}", "x" * 50)
-                for i in range(20)
-            ]
-            _write_test_csv(path, rows)
-
-            reader = StatusHistoryFile(path)
-            result1 = reader.read(hours=1.0)
-            assert len(result1) == 20
-            old_size = reader._cached_size
-
-            # Rewrite with fewer rows (simulates clear_old_history)
-            small_rows = [
-                (now - timedelta(minutes=1), "a1", "only_one", ""),
-            ]
-            _write_test_csv(path, small_rows)
-            assert path.stat().st_size < old_size
-
-            result2 = reader.read(hours=1.0)
-            assert len(result2) == 1
-            assert result2[0][2] == "only_one"
 
     def test_nonexistent_file(self):
         """Should return empty list for nonexistent file."""
@@ -724,83 +603,6 @@ class TestRotateAndRetain:
         assert result["deleted"] == []
 
 
-class TestReadAgentStatusHistoryRange:
-    """Tests for the archive-aware deep-history reader (#465, #468)."""
-
-    def test_reads_active_file_only_when_no_archives(self, tmp_path):
-        path = tmp_path / "history.csv"
-        now = datetime.now()
-        rows = [
-            (now - timedelta(hours=2), "a1", "s1", ""),
-            (now - timedelta(minutes=1), "a1", "s2", ""),
-        ]
-        _write_test_csv(path, rows)
-
-        result = read_agent_status_history_range(
-            now - timedelta(hours=3), now, path
-        )
-
-        assert [r[2] for r in result] == ["s1", "s2"]
-
-    def test_merges_archive_and_active_rows(self, tmp_path):
-        path = tmp_path / "history.csv"
-        now = datetime.now()
-
-        # Rotate an old row into an archive, then log fresh rows to the active file.
-        # max_age_days=1 (not size) is the trigger here — a single-row file
-        # never gets big enough to trip the size threshold.
-        rows = [(now - timedelta(hours=40), "a1", "archived_status", "")]
-        _write_test_csv(path, rows)
-        archive = rotate_status_history(
-            path, rotate_mb=50, max_age_days=1, keep_hours=24, now=now
-        )
-        assert archive is not None
-        log_agent_status("a1", "active_status", "", path)
-
-        result = read_agent_status_history_range(
-            now - timedelta(hours=48), datetime.now() + timedelta(seconds=5), path
-        )
-
-        statuses = [r[2] for r in result]
-        assert "archived_status" in statuses
-        assert "active_status" in statuses
-        # Chronological order preserved across the merge.
-        assert result[0][0] <= result[-1][0]
-
-    def test_skips_archives_entirely_before_start(self, tmp_path):
-        path = tmp_path / "history.csv"
-        now = datetime.now()
-        rows = [(now - timedelta(hours=40), "a1", "archived_status", "")]
-        _write_test_csv(path, rows)
-        archive = rotate_status_history(
-            path, rotate_mb=50, max_age_days=1, keep_hours=24, now=now
-        )
-        assert archive is not None
-
-        # Query a range entirely after the archive's rotation time.
-        result = read_agent_status_history_range(
-            now - timedelta(minutes=5), now, path
-        )
-
-        assert result == []
-
-    def test_filters_by_agent_name(self, tmp_path):
-        path = tmp_path / "history.csv"
-        now = datetime.now()
-        rows = [
-            (now - timedelta(hours=40), "a1", "archived_a1", ""),
-            (now - timedelta(hours=40), "a2", "archived_a2", ""),
-        ]
-        _write_test_csv(path, rows)
-        rotate_status_history(path, rotate_mb=0.0001, max_age_days=7, keep_hours=24, now=now)
-
-        result = read_agent_status_history_range(
-            now - timedelta(hours=48), now, path, agent_name="a1"
-        )
-
-        assert [r[2] for r in result] == ["archived_a1"]
-
-
 class TestDiskUsageFindings:
     """Tests for the doctor disk-usage finding (#465, #468)."""
 
@@ -1134,63 +936,3 @@ class TestRotationShortCircuit:
         ])
         archive = rotate_status_history(path, rotate_mb=0.0, keep_hours=30, now=now)
         assert archive is not None
-
-
-class TestReadAgentStatusHistoryRangeCarry:
-    def _archive(self, tmp_path, history_file, rotated_at, rows):
-        from overcode.status_history import ARCHIVE_SUFFIX, ARCHIVE_TS_FORMAT
-        name = f"{history_file.stem}.{rotated_at.strftime(ARCHIVE_TS_FORMAT)}{ARCHIVE_SUFFIX}"
-        archive = tmp_path / name
-        with gzip.open(archive, "wt", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["timestamp", "agent", "status", "activity", "session_id", "hostname"])
-            for row in rows:
-                w.writerow([row[0].isoformat(), *row[1:]])
-        return archive
-
-    def test_carry_at_start_from_active_rows(self, tmp_path):
-        path = tmp_path / "history.csv"
-        end = datetime.now()
-        start = end - timedelta(hours=2)
-        _write_rows(path, [
-            (start - timedelta(minutes=10), "a1", "running", "", "s1", "h"),  # beyond the lookback
-            (start - timedelta(minutes=2), "a1", "waiting_user", "w", "s1", "h"),
-            (start - timedelta(minutes=1), "a2", "running", "r", "s2", "h"),
-            (start + timedelta(minutes=30), "a1", "running", "", "s1", "h"),
-        ])
-        plain = read_agent_status_history_range(start, end, path)
-        assert [(r[1], r[2]) for r in plain] == [("a1", "running")]
-
-        result = read_agent_status_history_range(start, end, path, carry=True)
-        assert [(r[0], r[1], r[2], r[3]) for r in result] == [
-            (start, "a1", "waiting_user", "w"),
-            (start, "a2", "running", "r"),
-            (start + timedelta(minutes=30), "a1", "running", ""),
-        ]
-
-    def test_carry_at_start_from_an_archive_within_the_lookback(self, tmp_path):
-        path = tmp_path / "history.csv"
-        end = datetime.now()
-        start = end - timedelta(hours=2)
-        _write_rows(path, [(start + timedelta(minutes=5), "a1", "running", "", "s1", "h")])
-        self._archive(tmp_path, path, start + timedelta(hours=1), [
-            (start - timedelta(minutes=2), "a2", "waiting_user", "", "s2", "h"),
-        ])
-        result = read_agent_status_history_range(start, end, path, carry=True)
-        assert [(r[0], r[1], r[2]) for r in result] == [
-            (start, "a2", "waiting_user"),
-            (start + timedelta(minutes=5), "a1", "running"),
-        ]
-
-    def test_archives_rotated_before_the_lookback_are_skipped(self, tmp_path):
-        path = tmp_path / "history.csv"
-        end = datetime.now()
-        start = end - timedelta(hours=2)
-        _write_rows(path, [(start + timedelta(minutes=5), "a1", "running", "", "s1", "h")])
-        # Rotated before the lookback opens: every row in it is older still
-        # (the file would not really hold this row; it proves the skip).
-        self._archive(tmp_path, path, start - timedelta(minutes=10), [
-            (start - timedelta(minutes=2), "a2", "waiting_user", "", "s2", "h"),
-        ])
-        result = read_agent_status_history_range(start, end, path, carry=True)
-        assert [r[1] for r in result] == ["a1"]

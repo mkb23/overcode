@@ -126,7 +126,9 @@ class Opencode2Backend:
         ensure_plugin_installed(spec.start_directory)
 
     def env_prefix(self, spec: LaunchSpec) -> "dict":
-        import json, os, shlex
+        import json
+        import os
+        import shlex
         env = {}
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
         if state_dir:
@@ -285,10 +287,6 @@ class Opencode2Backend:
         schema drift.
         """
         return version_findings()
-
-    def check_binary(self):
-        from ..dependency_check import check_agent_cli
-        return check_agent_cli(self)
 
 
 _backend: Optional[Opencode2Backend] = None

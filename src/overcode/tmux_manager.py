@@ -21,7 +21,7 @@ from libtmux._internal.query_list import ObjectDoesNotExist
 from .tmux_utils import EMPTY_PLACEHOLDER_WINDOW  # noqa: F401
 
 if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
+    from .protocols import TmuxInterface
 
 
 class TmuxManager:

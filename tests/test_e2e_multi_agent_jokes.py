@@ -20,11 +20,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List, Set
+from typing import Optional, List
 import json
-import signal
 import atexit
-import os
 
 try:
     import pytest
@@ -60,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from overcode.launcher import AgentLauncher
 from overcode.session_manager import SessionManager
-from overcode.status_detector import StatusDetector
+from overcode.status_detector import PollingStatusDetector
 from overcode.tmux_manager import TmuxManager
 
 
@@ -95,7 +93,7 @@ class E2ETestHelper:
         self.tmux_session = tmux_session
         self.tmux_manager = TmuxManager(tmux_session)
         self.session_manager = SessionManager()
-        self.status_detector = StatusDetector(tmux_session)
+        self.status_detector = PollingStatusDetector(tmux_session)
 
         # Register emergency cleanup handler (runs on exit/crash)
         atexit.register(self._emergency_cleanup)
@@ -225,11 +223,11 @@ class E2ETestHelper:
                 timeout=5
             )
             if result.returncode == 0:
-                print(f"    ✓ Tmux session killed")
+                print("    ✓ Tmux session killed")
             else:
-                print(f"    ℹ️  Tmux session already gone")
+                print("    ℹ️  Tmux session already gone")
         except subprocess.TimeoutExpired:
-            print(f"    ⚠️  Timeout killing tmux session (may be hung)")
+            print("    ⚠️  Timeout killing tmux session (may be hung)")
             # Try to kill tmux server process itself if needed
             try:
                 result = subprocess.run(
@@ -264,7 +262,7 @@ class E2ETestHelper:
                         f.seek(0)
                         f.truncate()
                         json.dump(updated, f, indent=2)
-                        print(f"    ✓ Cleaned state file")
+                        print("    ✓ Cleaned state file")
                     finally:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             except ImportError:
@@ -276,7 +274,7 @@ class E2ETestHelper:
                               if not v.get('name', '').startswith('test-')}
                     with open(state_file, 'w') as f:
                         json.dump(updated, f, indent=2)
-                    print(f"    ✓ Cleaned state file")
+                    print("    ✓ Cleaned state file")
                 except Exception as e:
                     print(f"    Warning: Could not clean state file: {e}")
             except Exception as e:
@@ -287,7 +285,7 @@ class E2ETestHelper:
             try:
                 import shutil
                 shutil.rmtree(TEST_WORK_DIR, ignore_errors=True)
-                print(f"    ✓ Removed test work directory")
+                print("    ✓ Removed test work directory")
             except Exception as e:
                 print(f"    Warning: Could not remove work dir: {e}")
 
@@ -344,7 +342,7 @@ class E2ETestHelper:
 
         except Exception as e:
             print(f"  ⚠️  Standard cleanup failed: {e}")
-            print(f"  Falling back to aggressive cleanup...")
+            print("  Falling back to aggressive cleanup...")
             self.aggressive_cleanup(timeout=20)
 
     def wait_for_file(self, file_path: Path, timeout: int = TIMEOUT_FILE_CREATION) -> bool:
@@ -469,7 +467,7 @@ class E2ETestHelper:
                 timeout=5,
                 capture_output=True
             )
-            print(f"    ✓ Sent Down+Enter to accept bypass permissions")
+            print("    ✓ Sent Down+Enter to accept bypass permissions")
             return True
         except Exception as e:
             print(f"    ✗ Failed to accept dialog: {e}")
@@ -644,12 +642,12 @@ def test_e2e_multi_agent_jokes_with_feedback(test_helper: E2ETestHelper):
     # This might show up as 'waiting_for_user' or similar
     one_liner_waiting = test_helper.wait_for_status(
         "test-one-liners",
-        "waiting_user",  # StatusDetector.STATUS_WAITING_USER
+        "waiting_user",  # PollingStatusDetector.STATUS_WAITING_USER
         timeout=TIMEOUT_STATUS_CHANGE
     )
     puns_waiting = test_helper.wait_for_status(
         "test-puns",
-        "waiting_user",  # StatusDetector.STATUS_WAITING_USER
+        "waiting_user",  # PollingStatusDetector.STATUS_WAITING_USER
         timeout=TIMEOUT_STATUS_CHANGE
     )
 
@@ -762,7 +760,7 @@ if __name__ == "__main__":
         print(f"\n✗ TEST FAILED: {e}")
         exit_code = 1
     except KeyboardInterrupt:
-        print(f"\n⚠️  TEST INTERRUPTED BY USER (Ctrl+C)")
+        print("\n⚠️  TEST INTERRUPTED BY USER (Ctrl+C)")
         exit_code = 130
     except Exception as e:
         print(f"\n✗ TEST ERROR: {e}")

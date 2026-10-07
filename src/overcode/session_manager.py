@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 from dataclasses import MISSING, dataclass, asdict, field, fields, replace
 import uuid
 import time
@@ -951,18 +951,6 @@ class SessionManager:
             self._append_archive_records(archived)
         return written
 
-    def _atomic_update(self, update_fn: Callable[[Dict[str, dict]], Dict[str, dict]]) -> None:
-        """Atomically read, modify, and write state with exclusive lock held throughout.
-
-        This prevents TOCTOU race conditions by holding the lock during the entire
-        read-modify-write cycle.
-
-        Args:
-            update_fn: Function that takes the current state dict and returns the updated state.
-        """
-        with self._locked_state() as state:
-            update_fn(state)
-
     @staticmethod
     def detect_focal_repo_candidates(start_directory: Optional[str]) -> List[str]:
         """Return one-layer-deep git-repo subdir names under ``start_directory`` (#170).
@@ -1301,10 +1289,6 @@ class SessionManager:
     # after a grace), so that cost would have run on a timer. A line per
     # record makes an archive O(record) and a read O(what was appended).
 
-    def _load_archive(self) -> Dict[str, dict]:
-        """Load archived sessions as a fresh, private dict (see ``_load_state``)."""
-        return self._read_archive_file()[1]
-
     def _migrate_legacy_archive(self) -> None:
         """One-time, idempotent move of a legacy ``archive.json`` into the JSONL.
 
@@ -1413,25 +1397,6 @@ class SessionManager:
         except OSError:
             return None, b"", 0
 
-    def _read_archive_file(self) -> Tuple[Optional[FileSignature], Dict[str, dict]]:
-        """Read and parse the whole archive under a shared lock — uncached raw records."""
-        self._migrate_legacy_archive()
-        if not self.archive_file.exists():
-            return None, {}
-        try:
-            with open(self.archive_file, 'rb') as f:
-                if HAS_FCNTL:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    sig = FileSignature.of(os.fstat(f.fileno()))
-                    data = f.read()
-                finally:
-                    if HAS_FCNTL:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except OSError:
-            return None, {}
-        return sig, _parse_archive_lines(data)[0]
-
     def _archive_snapshot(self) -> Dict[str, Session]:
         """The archived ``Session`` objects by entry id, extended when archive.jsonl grows."""
         return self._archive_cache.get(self.archive_file, self._parse_archive_file)
@@ -1535,10 +1500,6 @@ class SessionManager:
                     sessions.append(session)
         return sessions, start + end, st.st_ino, reset
 
-    def get_archived_session(self, session_id: str) -> Optional[Session]:
-        """Get an archived session by ID (shared snapshot, see ``get_session``)."""
-        return self._archive_snapshot().get(session_id)
-
     def update_session(self, session_id: str, **kwargs):
         """Update session fields.
 
@@ -1619,14 +1580,6 @@ class SessionManager:
             standing_instructions_preset=preset_name,
             standing_orders_complete=False
         )
-
-    def set_standing_orders_complete(self, session_id: str, complete: bool = True):
-        """Mark standing orders as complete or incomplete"""
-        self.update_session(session_id, standing_orders_complete=complete)
-
-    def set_permissiveness(self, session_id: str, mode: str):
-        """Set permissiveness mode (normal, permissive, strict)"""
-        self.update_session(session_id, permissiveness_mode=mode)
 
     def set_agent_value(self, session_id: str, value: int):
         """Set agent value for priority sorting (#61).

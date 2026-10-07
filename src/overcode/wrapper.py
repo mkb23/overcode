@@ -22,7 +22,7 @@ from typing import Optional
 
 
 # ── bundled wrapper content ──────────────────────────────────────────────
-# Reference copies shipped with overcode.  Auto-installed to
+# The one source of the shipped wrapper scripts. Auto-installed to
 # ~/.overcode/wrappers/ on first use; `overcode wrappers reset` restores them.
 
 BUNDLED_WRAPPERS: dict[str, str] = {

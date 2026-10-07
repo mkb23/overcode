@@ -34,7 +34,7 @@ from .status_patterns import (
 from .tui_helpers import format_duration
 
 if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
+    from .protocols import TmuxInterface
 
 # Pre-compiled regex patterns for hot-path methods (avoid re-compiling per call)
 import re as _re
@@ -62,7 +62,7 @@ class PollingStatusDetector:
 
         # Dependency injection for testability
         if tmux is None:
-            from .interfaces import RealTmux
+            from .implementations import RealTmux
             tmux = RealTmux()
         self.tmux = tmux
 
@@ -159,7 +159,7 @@ class PollingStatusDetector:
         content_changed = self._update_content_hash(session.id, clean_content)
 
         lines = clean_content.strip().split('\n')
-        last_lines = [l.strip() for l in lines[-10:] if l.strip()]
+        last_lines = [ln.strip() for ln in lines[-10:] if ln.strip()]
 
         if not last_lines:
             return STATUS_WAITING_USER, "No output", content
@@ -174,7 +174,7 @@ class PollingStatusDetector:
             return STATUS_TERMINATED, "Agent exited - shell prompt", content
 
         # Prepare filtered lines for remaining phases
-        content_lines = [l for l in last_lines if not is_status_bar_line(l, self.patterns)]
+        content_lines = [ln for ln in last_lines if not is_status_bar_line(ln, self.patterns)]
         last_few = ' '.join(content_lines[-6:]).lower() if content_lines else ''
 
         # Phase 4: Permission request (HIGHEST priority among active checks)
@@ -607,6 +607,3 @@ class PollingStatusDetector:
                     return line
         return None
 
-
-# Backward-compat alias: all existing imports continue working
-StatusDetector = PollingStatusDetector

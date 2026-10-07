@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 class OpencodeNotFoundError(AgentCliNotFoundError):
     """Raised when the opencode CLI isn't on PATH.
 
-    Subclasses ``AgentCliNotFoundError`` (aka ``ClaudeNotFoundError``) so the
+    Subclasses ``AgentCliNotFoundError`` so the
     launcher's existing "agent CLI missing" handling catches it without a new
     except clause.
     """
@@ -656,10 +656,6 @@ class OpencodeBackend:
     def doctor_findings(self) -> List[str]:
         """Fleet-level warnings for ``overcode doctor`` (see cli/doctor.py)."""
         return version_findings()
-
-    def check_binary(self):
-        from ..dependency_check import check_agent_cli
-        return check_agent_cli(self)
 
 
 _backend: Optional[OpencodeBackend] = None

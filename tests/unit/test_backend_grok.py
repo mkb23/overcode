@@ -29,7 +29,7 @@ from overcode.backends.grok import (
     GrokNotFoundError,
 )
 from overcode.doctor import VERDICT_OK
-from overcode.exceptions import ClaudeNotFoundError
+from overcode.exceptions import AgentCliNotFoundError
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ class TestRegistry:
         assert backend.display_name == "grok"
 
     def test_not_found_error_is_catchable_as_the_legacy_one(self):
-        assert issubclass(GrokNotFoundError, ClaudeNotFoundError)
+        assert issubclass(GrokNotFoundError, AgentCliNotFoundError)
 
     def test_process_basenames_are_bare_grok(self, backend):
         # No wrapper/child split like codex's npm shim.

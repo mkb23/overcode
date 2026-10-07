@@ -20,10 +20,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.backends import get_backend
-from overcode.backends.opencode import OPENCODE_PATTERNS, OpencodeBackend
+from overcode.backends.opencode import OPENCODE_PATTERNS
 from overcode.backends.opencode2 import Opencode2Backend
 from overcode.backends.opencode2_patterns import OPENCODE2_PATTERNS
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.status_constants import (
     STATUS_RUNNING,
     STATUS_TERMINATED,

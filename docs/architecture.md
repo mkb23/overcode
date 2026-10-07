@@ -93,6 +93,8 @@ The largest subsystem, split across:
 
 The TUI already has good separation between pure logic and UI code. The action mixin pattern keeps `tui.py` from being even larger, though the mixins themselves are tightly coupled to `SupervisorTUI`'s internal state.
 
+Since 0.6.0 the TUI has one layout: it is the top pane of the `overcode tmux` split, and navigating agents switches the window of a linked tmux session shown in the bottom pane. `overcode`, `overcode monitor` and `overcode tmux` all build that split (`cli/split.py` `open_split`), which runs `overcode monitor --sync-target <linked session>` in its top pane. The standalone (non-split) dashboard, its preview toggle, fullscreen preview and manual pane sync were removed; the preview pane remains only for sister agents and jobs view. (Line counts on this page predate that change.)
+
 ## Status Detection — 1,481 lines
 
 Four modules implementing a dual-strategy pattern:
@@ -440,7 +442,6 @@ Replace the four separate files (daemon state JSON, sessions JSON, status histor
 | `tui_actions/input.py` | 217 | TUI |
 | `tui_actions/daemon.py` | 201 | TUI |
 | `help_overlay.py` | 197 | TUI |
-| `logging_config.py` | 193 | Infra |
 | `protocols.py` | 189 | Tmux |
 | `testing/tui_eye.py` | 185 | Testing |
 | `claude_config.py` | 186 | Claude |
@@ -452,7 +453,6 @@ Replace the four separate files (daemon state JSON, sessions JSON, status histor
 | `notifier.py` | 145 | Infra |
 | `daemon_logging.py` | 144 | Infra |
 | `summary_groups.py` | 141 | TUI |
-| `fullscreen_preview.py` | 130 | TUI |
 | `tmux_utils.py` | 128 | Tmux |
 | `hook_handler.py` | 123 | Claude |
 | `usage_monitor.py` | 119 | Infra |
@@ -462,5 +462,4 @@ Replace the four separate files (daemon state JSON, sessions JSON, status histor
 | `daemon_utils.py` | 93 | Infra |
 | `preview_pane.py` | 101 | TUI |
 | `status_detector_factory.py` | 83 | Status |
-| `interfaces.py` | 49 | Tmux |
 | `web_chartjs.py` | 32 | Web |

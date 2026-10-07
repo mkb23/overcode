@@ -144,8 +144,8 @@ class TestRank:
         assert matches[0].positions == ()
 
     def test_all_words_must_match(self):
-        assert _titles("preview full") == ["Fullscreen preview"]
-        assert _titles("preview zzz") == []
+        assert _titles("column headers") == ["Column headers"]
+        assert _titles("column zzz") == []
 
 
 class TestStates:
@@ -366,10 +366,10 @@ class TestPaletteInTUI:
 class TestFooter:
     """The footer leads with `/` and keeps to the keys a newcomer needs."""
 
-    def _footer(self, compact=False, toggle=None, mode="agents"):
+    def _footer(self, toggle=None, mode="agents"):
         from types import SimpleNamespace
         from overcode.tui import SupervisorTUI
-        app = SimpleNamespace(compact=compact, tui_mode=mode)
+        app = SimpleNamespace(tui_mode=mode)
         with patch("overcode.config.get_tmux_toggle_key", return_value=toggle):
             return SupervisorTUI._build_footer_text(app).plain
 
@@ -378,11 +378,10 @@ class TestFooter:
         assert text.startswith(" / ") and "Commands" in text
         for part in ("n New agent", "j/k Next/prev", "^P Jump to agent", "? Help", "q Quit"):
             assert part in text
-        assert "Switch pane" not in text
 
-    def test_split_mode_names_the_configured_toggle_key(self):
-        assert "Tab Switch pane" in self._footer(compact=True)
-        assert "Ctrl+Space Switch pane" in self._footer(compact=True, toggle="C-Space")
+    def test_names_the_configured_toggle_key(self):
+        assert "Tab Switch pane" in self._footer()
+        assert "Ctrl+Space Switch pane" in self._footer(toggle="C-Space")
 
     def test_jobs_view(self):
         text = self._footer(mode="jobs")

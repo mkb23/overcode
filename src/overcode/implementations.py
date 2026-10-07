@@ -5,7 +5,6 @@ These are production implementations that use libtmux for tmux operations
 and perform real file I/O.
 """
 
-import json
 import os
 import subprocess
 import time
@@ -253,13 +252,6 @@ class RealTmux:
             return None
         return parse_pane_listing(proc.stdout)
 
-    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
-        """``{window_name: pane_pid}`` for ``session`` from one command; None if unavailable."""
-        panes = self.list_panes(session)
-        if panes is None:
-            return None
-        return {name: info.pane_pid for name, info in panes.items()}
-
     def attach(self, session: str, window: Optional[str] = None, bare: bool = False) -> None:
         if bare:
             self._attach_bare(session, window)
@@ -359,26 +351,6 @@ class RealTmux:
 class RealFileSystem:
     """Production implementation of FileSystemInterface"""
 
-    def read_json(self, path: Path) -> Optional[Dict[str, Any]]:
-        try:
-            if not path.exists():
-                return None
-            with open(path, 'r') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return None
-
-    def write_json(self, path: Path, data: Dict[str, Any]) -> bool:
-        try:
-            # Write atomically via temp file
-            temp_path = path.with_suffix('.tmp')
-            with open(temp_path, 'w') as f:
-                json.dump(data, f, indent=2)
-            temp_path.replace(path)
-            return True
-        except IOError:
-            return False
-
     def exists(self, path: Path) -> bool:
         return path.exists()
 
@@ -418,10 +390,4 @@ class RealSubprocess:
                 'stderr': result.stderr if capture_output else ''
             }
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return None
-
-    def popen(self, cmd: List[str], cwd: Optional[str] = None) -> Any:
-        try:
-            return subprocess.Popen(cmd, cwd=cwd)
-        except subprocess.SubprocessError:
             return None

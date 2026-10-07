@@ -7,7 +7,7 @@ They are used by MonitorDaemon but can be tested independently.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
@@ -106,10 +106,6 @@ def calculate_time_accumulation(
     )
 
 
-# Re-exported from pricing module for backward compatibility
-from .pricing import calculate_cost_estimate  # noqa: F401
-
-
 def calculate_total_tokens(
     input_tokens: int,
     output_tokens: int,
@@ -141,60 +137,6 @@ def calculate_median(values: List[float]) -> float:
     if n % 2 == 0:
         return (sorted_values[n // 2 - 1] + sorted_values[n // 2]) / 2
     return sorted_values[n // 2]
-
-
-def calculate_green_percentage(green_seconds: float, non_green_seconds: float) -> int:
-    """Calculate percentage of time spent in green (running) state.
-
-    Pure function - no side effects, fully testable.
-
-    Args:
-        green_seconds: Total green time
-        non_green_seconds: Total non-green time
-
-    Returns:
-        Integer percentage (0-100)
-    """
-    total = green_seconds + non_green_seconds
-    if total <= 0:
-        return 0
-    return int((green_seconds / total) * 100)
-
-
-def aggregate_session_stats(
-    sessions: List[dict],
-) -> Tuple[int, float, float, int]:
-    """Aggregate statistics across multiple sessions.
-
-    Pure function - no side effects, fully testable.
-
-    Args:
-        sessions: List of session dicts with 'status', 'green_time_seconds',
-                  'non_green_time_seconds', 'is_asleep' keys
-
-    Returns:
-        Tuple of (green_count, total_green_time, total_non_green_time, active_count)
-    """
-    green_count = 0
-    total_green = 0.0
-    total_non_green = 0.0
-    active_count = 0
-
-    for session in sessions:
-        # Skip asleep sessions
-        if session.get('is_asleep', False):
-            continue
-
-        active_count += 1
-        status = session.get('status', '')
-
-        if is_green_status(status):
-            green_count += 1
-
-        total_green += session.get('green_time_seconds', 0.0)
-        total_non_green += session.get('non_green_time_seconds', 0.0)
-
-    return green_count, total_green, total_non_green, active_count
 
 
 def should_sync_stats(

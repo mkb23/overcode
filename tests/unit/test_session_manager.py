@@ -14,7 +14,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.session_manager import SessionManager, Session, SessionStats
+from overcode.session_manager import SessionManager, Session
 
 
 class TestSessionManagerBasics:
@@ -25,7 +25,7 @@ class TestSessionManagerBasics:
         state_dir = tmp_path / "sessions"
         assert not state_dir.exists()
 
-        manager = SessionManager(state_dir=state_dir, skip_git_detection=True)
+        SessionManager(state_dir=state_dir, skip_git_detection=True)
 
         assert state_dir.exists()
 
@@ -161,7 +161,7 @@ class TestSessionManagerUpdates:
 
         # First set instructions and mark complete
         manager.set_standing_instructions(session.id, "Do the thing")
-        manager.set_standing_orders_complete(session.id, True)
+        manager.update_session(session.id, standing_orders_complete=True)
 
         # Verify complete
         updated = manager.get_session(session.id)
@@ -173,21 +173,6 @@ class TestSessionManagerUpdates:
         updated = manager.get_session(session.id)
         assert updated.standing_instructions == "Do a different thing"
         assert updated.standing_orders_complete is False
-
-    def test_set_permissiveness(self, tmp_path):
-        """Can set permissiveness mode"""
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        session = manager.create_session(
-            name="test",
-            tmux_session="agents",
-            tmux_window=1,
-            command=["claude"]
-        )
-
-        manager.set_permissiveness(session.id, "permissive")
-
-        updated = manager.get_session(session.id)
-        assert updated.permissiveness_mode == "permissive"
 
     def test_set_agent_value(self, tmp_path):
         """Can set agent value (#61)"""
@@ -563,21 +548,6 @@ class TestSessionUpdateMethods:
         updated = manager.get_session(session.id)
         assert updated.standing_instructions is None
 
-    def test_set_permissiveness_mode(self, tmp_path):
-        """Can set permissiveness mode."""
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        session = manager.create_session(
-            name="test",
-            tmux_session="agents",
-            tmux_window=1,
-            command=["claude"]
-        )
-
-        manager.set_permissiveness(session.id, "bypass")
-
-        updated = manager.get_session(session.id)
-        assert updated.permissiveness_mode == "bypass"
-
     def test_set_agent_value(self, tmp_path):
         """Can set agent value."""
         manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
@@ -607,21 +577,6 @@ class TestSessionUpdateMethods:
 
         updated = manager.get_session(session.id)
         assert updated.human_annotation == "Important task"
-
-    def test_set_standing_orders_complete(self, tmp_path):
-        """Can mark standing orders complete."""
-        manager = SessionManager(state_dir=tmp_path, skip_git_detection=True)
-        session = manager.create_session(
-            name="test",
-            tmux_session="agents",
-            tmux_window=1,
-            command=["claude"]
-        )
-
-        manager.set_standing_orders_complete(session.id, True)
-
-        updated = manager.get_session(session.id)
-        assert updated.standing_orders_complete is True
 
 
 class TestSessionStatsUpdate:
@@ -1605,7 +1560,6 @@ class TestPhase6FieldRenames:
         )
 
 
-
 # =============================================================================
 # Run tests directly
 # =============================================================================
@@ -1799,7 +1753,6 @@ class TestStatGatedArchiveCache:
         archived = sm.list_archived_sessions()
         assert [s.id for s in archived] == [s1.id]
         assert archived[0]._end_time is not None
-        assert sm.get_archived_session(s1.id) is archived[0]
         assert sm.list_archived_sessions()[0] is archived[0]
         assert len(parses) == 1
 

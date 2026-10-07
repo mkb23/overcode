@@ -1,8 +1,7 @@
 """Tests for tmux_utils module."""
 
 import os
-import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import subprocess
 
 from overcode.tmux_utils import (
@@ -447,7 +446,7 @@ class TestQueryPaneAttended:
 
 
 class TestListPanes:
-    """``list_panes`` / ``list_pane_pids``: one subprocess, None when tmux cannot answer."""
+    """``list_panes``: one subprocess, None when tmux cannot answer."""
 
     def test_one_list_panes_command_for_the_session(self):
         from overcode.tmux_utils import PANE_LISTING_FORMAT, list_panes
@@ -472,26 +471,16 @@ class TestListPanes:
         assert mock_run.call_args.args[0][:3] == ["tmux", "-L", "sock"]
 
     def test_missing_session_or_server_is_none(self):
-        from overcode.tmux_utils import list_pane_pids, list_panes
+        from overcode.tmux_utils import list_panes
 
         with patch("overcode.tmux_utils.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="can't find session")
             assert list_panes("agents") is None
-            assert list_pane_pids("agents") is None
         with patch(
             "overcode.tmux_utils.subprocess.run",
             side_effect=subprocess.TimeoutExpired("tmux", 5),
         ):
             assert list_panes("agents") is None
-
-    def test_pids_projection(self):
-        from overcode.tmux_utils import list_pane_pids
-
-        with patch("overcode.tmux_utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="a\t1\t10\t5\t0\t0\t0\tclaude\t0\n"
-            )
-            assert list_pane_pids("agents") == {"a": 10}
 
 
 class TestPaneForWindow:

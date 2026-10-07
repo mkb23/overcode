@@ -53,7 +53,7 @@ def _make_session(**overrides) -> Session:
 
 @dataclass
 class _FakeStats:
-    """Stand-in for history_reader.ClaudeSessionStats in data-finding tests.
+    """Stand-in for history_reader.AgentSessionStats in data-finding tests.
 
     We duck-type rather than constructing the real thing to keep these tests
     independent of history_reader's import chain.

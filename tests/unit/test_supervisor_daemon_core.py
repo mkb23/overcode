@@ -6,16 +6,7 @@ These test pure business logic with no I/O or mocking required.
 
 import pytest
 
-from overcode.supervisor_daemon_core import (
-    build_daemon_claude_context,
-    filter_non_green_sessions,
-    calculate_daemon_claude_run_seconds,
-    parse_intervention_log_line,
-    check_daemon_output_completion,
-    check_daemon_tool_activity,
-    determine_supervisor_action,
-    SupervisorAction,
-)
+from overcode.supervisor_daemon_core import build_daemon_claude_context, filter_non_green_sessions, calculate_daemon_claude_run_seconds, check_daemon_output_completion, check_daemon_tool_activity, determine_supervisor_action
 
 
 class TestBuildDaemonClaudeContext:
@@ -248,70 +239,6 @@ class TestCalculateDaemonClaudeRunSeconds:
             previous_total=0.0,
         )
         assert result == 60.0
-
-
-class TestParseInterventionLogLine:
-    """Tests for parse_intervention_log_line()."""
-
-    def test_no_match_returns_none(self):
-        """Should return None for unrelated lines."""
-        result = parse_intervention_log_line(
-            line="Some random log message",
-            session_names=["agent-1", "agent-2"],
-            action_phrases=["approved", "sent"],
-            no_action_phrases=["no intervention needed"],
-        )
-        assert result is None
-
-    def test_detects_approved_action(self):
-        """Should detect approved intervention."""
-        result = parse_intervention_log_line(
-            line="2025-01-15 10:30:00: agent-1 - Tool call approved",
-            session_names=["agent-1", "agent-2"],
-            action_phrases=["approved", "sent"],
-            no_action_phrases=["no intervention needed"],
-        )
-        assert result == "agent-1"
-
-    def test_detects_sent_action(self):
-        """Should detect sent intervention."""
-        result = parse_intervention_log_line(
-            line="2025-01-15 10:30:00: agent-2 - Sent prompt to window",
-            session_names=["agent-1", "agent-2"],
-            action_phrases=["approved", "sent"],
-            no_action_phrases=["no intervention needed"],
-        )
-        assert result == "agent-2"
-
-    def test_ignores_no_intervention_needed(self):
-        """Should return None for no-intervention lines."""
-        result = parse_intervention_log_line(
-            line="2025-01-15 10:30:00: agent-1 - No intervention needed",
-            session_names=["agent-1"],
-            action_phrases=["approved", "sent"],
-            no_action_phrases=["no intervention needed"],
-        )
-        assert result is None
-
-    def test_case_insensitive_action_phrases(self):
-        """Should match action phrases case-insensitively."""
-        result = parse_intervention_log_line(
-            line="agent-1 - APPROVED the request",
-            session_names=["agent-1"],
-            action_phrases=["approved"],
-            no_action_phrases=[],
-        )
-        assert result == "agent-1"
-
-    def test_session_name_requires_separator(self):
-        """Should require ' - ' separator after session name."""
-        result = parse_intervention_log_line(
-            line="agent-1-approved something",
-            session_names=["agent-1"],
-            action_phrases=["approved"],
-            no_action_phrases=[],
-        )
-        assert result is None
 
 
 class TestDetermineSupervisorAction:

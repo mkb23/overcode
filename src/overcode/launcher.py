@@ -1592,8 +1592,3 @@ class AgentLauncher:
             return None
         except subprocess.SubprocessError:
             return None
-
-
-# Pre-Phase-6 name. Kept so `from overcode.launcher import ClaudeLauncher`
-# — and mock.patch targets naming it — keep working.
-ClaudeLauncher = AgentLauncher

@@ -552,21 +552,6 @@ class TestStatusHistory:
             ("beta", "sid-1"), ("beta", "sid-1"), ("alpha", "sid-2"),
         ]
 
-    def test_the_range_reader_relabels_across_archives_too(self, tmp_path):
-        import gzip
-
-        from overcode.status_history import read_agent_status_history_range
-
-        now = datetime.now()
-        path = tmp_path / "agent_status_history.csv"
-        _write_history(path, [(now - timedelta(minutes=10), "beta", "running", "sid-1")])
-        archive = tmp_path / f"agent_status_history.{now.strftime('%Y%m%d-%H%M%S')}.csv.gz"
-        with gzip.open(archive, "wt") as f:
-            f.write("timestamp,agent,status,activity,session_id,hostname\n")
-            f.write(f"{(now - timedelta(hours=5)).isoformat()},alpha,running,,sid-1,host\n")
-        rows = read_agent_status_history_range(now - timedelta(hours=6), now, path)
-        assert [r[1] for r in rows] == ["beta", "beta"]
-
 
 # ── The rename note reaches the agent once ──────────────────────────
 

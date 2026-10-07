@@ -208,7 +208,7 @@ class TestToggleIsViewOnly:
         assert toggle_refusal(cmd.category)
 
     @pytest.mark.parametrize("action", [
-        "toggle_timeline", "toggle_preview", "cycle_summary", "jump_to_attention",
+        "toggle_timeline", "cycle_summary", "jump_to_attention",
         "open_journey", "open_column_config", "toggle_help",
     ])
     def test_view_actions_are_allowed(self, action):
@@ -232,7 +232,7 @@ class TestToggleIsViewOnly:
                 await pilot.pause()
                 kill.assert_not_called()
                 enter.assert_not_called()
-            acks = [json.loads(l) for l in ack_path("test-pilot").read_text().splitlines()]
+            acks = [json.loads(ln) for ln in ack_path("test-pilot").read_text().splitlines()]
             refused = [a for a in acks if a["verb"] == "toggle"][-3:]
             assert all(not a["ok"] for a in refused)
             assert "overcode" in refused[0]["error"] and "asks first" in refused[0]["error"]

@@ -7,40 +7,10 @@ sorting, filtering, and calculations for the TUI.
 
 import pytest
 from unittest.mock import Mock
-from dataclasses import dataclass
-from typing import Optional
 
 from datetime import datetime, timedelta
 
-from overcode.tui_logic import (
-    first_sight_stall_is_unvisited,
-    sort_sessions_alphabetical,
-    sort_sessions_by_status,
-    sort_sessions_by_value,
-    sort_sessions_by_tree,
-    sort_sessions,
-    filter_visible_sessions,
-    get_sort_mode_display_name,
-    sort_sessions_by_column,
-    sort_mode_for_column,
-    sort_column_for_mode,
-    sort_descending,
-    calculate_spin_stats,
-    calculate_mean_spin_from_history,
-    calculate_green_percentage,
-    calculate_human_interaction_count,
-    compute_tree_metadata,
-    compute_stall_state,
-    should_send_stall_notification,
-    compute_active_session_names,
-    compute_session_widget_diff,
-    detect_display_changes,
-    StallState,
-    TreeNodeMeta,
-    SpinStats,
-    STATUS_ORDER_BY_ATTENTION,
-    STATUS_ORDER_BY_VALUE,
-)
+from overcode.tui_logic import first_sight_stall_is_unvisited, sort_sessions_alphabetical, sort_sessions_by_status, sort_sessions_by_value, sort_sessions_by_tree, sort_sessions, filter_visible_sessions, get_sort_mode_display_name, sort_sessions_by_column, sort_mode_for_column, sort_column_for_mode, sort_descending, calculate_mean_spin_from_history, compute_tree_metadata, compute_stall_state, should_send_stall_notification, compute_active_session_names, compute_session_widget_diff, detect_display_changes, STATUS_ORDER_BY_ATTENTION, STATUS_ORDER_BY_VALUE
 
 
 def make_session(name: str, session_id: str = None, is_asleep: bool = False):
@@ -475,68 +445,6 @@ class TestColumnSort:
         assert get_sort_mode_display_name("col:cpu_pct") == "CPU %"
 
 
-class TestCalculateSpinStats:
-    """Tests for spin rate calculations."""
-
-    def test_empty_sessions(self):
-        """Should handle empty session list."""
-        result = calculate_spin_stats([], set())
-
-        assert result.green_count == 0
-        assert result.total_count == 0
-        assert result.sleeping_count == 0
-        assert result.mean_spin == 0.0
-        assert result.total_tokens == 0
-
-    def test_counts_green_sessions(self):
-        """Should count running sessions as green."""
-        sessions = [
-            make_daemon_session("1", "running"),
-            make_daemon_session("2", "waiting_user"),
-            make_daemon_session("3", "running"),
-        ]
-
-        result = calculate_spin_stats(sessions, set())
-
-        assert result.green_count == 2
-        assert result.total_count == 3
-
-    def test_excludes_asleep_from_active(self):
-        """Should exclude sleeping sessions from active stats."""
-        sessions = [
-            make_daemon_session("1", "running"),
-            make_daemon_session("2", "running"),
-        ]
-
-        result = calculate_spin_stats(sessions, asleep_session_ids={"2"})
-
-        assert result.total_count == 1
-        assert result.sleeping_count == 1
-
-    def test_includes_all_tokens(self):
-        """Should include all tokens, even from sleeping sessions."""
-        sessions = [
-            make_daemon_session("1", input_tokens=1000, output_tokens=500),
-            make_daemon_session("2", input_tokens=2000, output_tokens=1000),
-        ]
-
-        result = calculate_spin_stats(sessions, asleep_session_ids={"2"})
-
-        assert result.total_tokens == 4500  # All tokens included
-
-    def test_calculates_mean_spin(self):
-        """Should calculate mean spin rate."""
-        sessions = [
-            make_daemon_session("1", green_time=100, non_green_time=0),  # 100% green
-            make_daemon_session("2", green_time=50, non_green_time=50),  # 50% green
-        ]
-
-        result = calculate_spin_stats(sessions, set())
-
-        # mean_spin is sum of ratios, not average
-        assert result.mean_spin == 1.5  # 1.0 + 0.5
-
-
 class TestCalculateMeanSpinFromHistory:
     """Tests for history-based mean spin calculation.
 
@@ -730,42 +638,6 @@ class TestCalculateMeanSpinFromHistory:
             history, ["agent1", "agent1"], baseline_minutes=30, now=self.NOW
         )
         assert mean_spin == pytest.approx(2.0)
-
-
-class TestCalculateGreenPercentage:
-    """Tests for green percentage calculation."""
-
-    def test_all_green(self):
-        """100% green time should return 100."""
-        assert calculate_green_percentage(100, 0) == 100.0
-
-    def test_no_green(self):
-        """0% green time should return 0."""
-        assert calculate_green_percentage(0, 100) == 0.0
-
-    def test_half_green(self):
-        """50% green time should return 50."""
-        assert calculate_green_percentage(50, 50) == 50.0
-
-    def test_zero_total_time(self):
-        """Zero total time should return 0."""
-        assert calculate_green_percentage(0, 0) == 0.0
-
-
-class TestCalculateHumanInteractionCount:
-    """Tests for human interaction calculation."""
-
-    def test_subtracts_robot_interactions(self):
-        """Should subtract robot from total."""
-        assert calculate_human_interaction_count(10, 3) == 7
-
-    def test_none_total_returns_zero(self):
-        """None total should return 0."""
-        assert calculate_human_interaction_count(None, 5) == 0
-
-    def test_clamps_to_zero(self):
-        """Should not return negative values."""
-        assert calculate_human_interaction_count(3, 10) == 0
 
 
 class TestSortSessionsByTree:

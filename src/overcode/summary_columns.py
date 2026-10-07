@@ -13,7 +13,7 @@ Plain-text rendering for CLI: each column can optionally provide a
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from .status_constants import (
     ALL_STATUSES,
@@ -38,6 +38,9 @@ from .tui_helpers import (
     get_current_state_times,
     get_status_symbol,
 )
+
+if TYPE_CHECKING:
+    from rich.text import Text
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +139,6 @@ ColumnOutput = Optional[List[Tuple[str, str]]]
 ALL = {"low", "med", "high", "full"}
 MED_PLUS = {"med", "high", "full"}
 HIGH_PLUS = {"high", "full"}
-# Backward-compat alias
-FULL_PLUS = HIGH_PLUS
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +165,6 @@ class ColumnContext:
     any_has_budget: bool  # True if any agent has a cost budget (#173)
     expand_icon: str
     is_list_mode: bool
-    is_compact_mode: bool
     has_focus: bool
     is_unvisited_stalled: bool
 
@@ -785,8 +785,6 @@ def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
         return [(f" 🔥{format_tokens(int(rate)):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
 
 
-# Backward-compat alias
-render_tokens = render_token_count
 
 
 def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
@@ -1239,22 +1237,6 @@ def render_token_count_plain(ctx: ColumnContext) -> Optional[str]:
     return f"Σ {format_tokens(ctx.claude_stats.total_tokens)}"
 
 
-def render_context_usage_plain(ctx: ColumnContext) -> Optional[str]:
-    """Context window usage for CLI.
-
-    None when the model's context window is unknown (#469) — same "assume
-    nothing" rule as render_context_usage above.
-    """
-    if ctx.claude_stats is None:
-        return None
-    if ctx.claude_stats.current_context_tokens > 0:
-        max_context = ctx.claude_stats.max_context_tokens
-        if max_context:
-            ctx_pct = min(100, ctx.claude_stats.current_context_tokens / max_context * 100)
-            return f"context {ctx_pct:.0f}%"
-    return None
-
-
 def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     """Cost + budget for CLI."""
     s = ctx.session
@@ -1267,8 +1249,6 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     return format_cost(cost)
 
 
-# Backward-compat alias
-render_tokens_plain = render_token_count_plain
 
 
 def render_git_diff_plain(ctx: ColumnContext) -> Optional[str]:
@@ -1959,7 +1939,6 @@ def build_cli_context(
         any_has_budget=any_has_budget,
         expand_icon="",
         is_list_mode=False,
-        is_compact_mode=False,
         has_focus=False,
         is_unvisited_stalled=False,
         uptime=uptime,

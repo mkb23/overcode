@@ -363,7 +363,7 @@ overcode instruct my-agent --clear
 
 ### `overcode tmux`
 
-Open the tmux split layout: dashboard on top, agent terminal on bottom. This is the recommended way to use overcode.
+Open the tmux split layout: dashboard on top, agent terminal on bottom. This is the dashboard — `overcode` with no command and `overcode monitor` open the same layout. Inside tmux it switches your client to it; from a plain terminal it attaches.
 
 ```bash
 overcode tmux [options]
@@ -372,6 +372,7 @@ overcode tmux [options]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--ratio` | `-r` | Percentage of height for the dashboard pane (default: 25) |
+| `--restart` | | Restart the monitor daemon and API server on launch |
 | `--uninstall` | | Remove keybindings, kill split window and linked sessions |
 | `--yes` | `-y` | Skip the first-run confirmation prompt |
 | `--session` | | Tmux session name (default: `agents`) |
@@ -397,7 +398,7 @@ Removes keybindings, kills the split window and linked sessions. Global tmux opt
 
 ### `overcode monitor`
 
-Launch the standalone TUI dashboard (no tmux split).
+The same as `overcode tmux`: opens the split layout. Its flags are passed to the dashboard pane. (Before 0.6.0 this ran a standalone dashboard without the split; that mode is gone.)
 
 ```bash
 overcode monitor [options]
@@ -405,21 +406,12 @@ overcode monitor [options]
 
 | Option | Description |
 |--------|-------------|
+| `--jobs` | Start the dashboard in jobs view |
+| `--restart` | Restart the monitor daemon and API server first |
 | `--diagnostics` | Disable auto-refresh timers (for debugging) |
 | `--session` | Tmux session name |
 
-### `overcode supervisor`
-
-Launch the TUI with the embedded supervisor daemon.
-
-```bash
-overcode supervisor [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--restart` | Restart if already running |
-| `--session` | Tmux session name |
+`overcode supervisor`, which opened a pre-0.6.0 layout with the standalone dashboard and a Claude pane, now prints that it was removed and opens `overcode tmux`. Press `e` in the dashboard for an agent that drives overcode (the overagent); the supervisor daemon is `overcode supervisor-daemon`.
 
 ### `overcode web`
 
@@ -749,9 +741,9 @@ This allows managing multiple independent sets of agents:
 ```bash
 # Team A agents
 overcode launch -n task1 -d ~/project --session team-a
-overcode monitor --session team-a
+overcode tmux --session team-a
 
 # Team B agents
 overcode launch -n task1 -d ~/other --session team-b
-overcode monitor --session team-b
+overcode tmux --session team-b
 ```

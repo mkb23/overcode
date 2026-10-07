@@ -84,15 +84,3 @@ def detect_sandbox_states(pids: Iterable[int]) -> Dict[int, Optional[bool]]:
         return {p: None for p in pid_list}
     counts = _parse_loopback_counts(stdout)
     return {p: counts.get(p, 0) >= 2 for p in pid_list}
-
-
-def is_sandbox_enabled(claude_pid: Optional[int]) -> Optional[bool]:
-    """Return True if /sandbox appears to be ON for this claude PID.
-
-    Returns None when the signal can't be read (lsof missing, timeout, etc).
-    Only implemented for macOS; returns None on other platforms. Prefer
-    detect_sandbox_states() when querying more than one PID.
-    """
-    if claude_pid is None:
-        return None
-    return detect_sandbox_states([claude_pid]).get(claude_pid)

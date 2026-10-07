@@ -21,7 +21,7 @@ def test_jobs_column_and_orphans(oc, oc_wait, sandbox, screenshots):
     # here, and an unwatched TUI pauses its timers (jobs refresh included).
     sandbox.new_sized_session(
         TUI_SESSION,
-        f"env -u TMUX -u TMUX_PANE python -m overcode.cli monitor --session {oc.session}",
+        f"env -u TMUX -u TMUX_PANE python -m overcode.cli monitor --session {oc.session} --sync-target {oc.session}",
         env=oc.env, width=200, height=40,
     )
 

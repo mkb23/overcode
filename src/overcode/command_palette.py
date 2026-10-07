@@ -190,7 +190,7 @@ class PaletteCommand:
     """One command the palette can run.
 
     action:   the SupervisorTUI action name (method `action_<name>`).
-    title:    what the palette shows; nouns for toggles ("Preview pane"),
+    title:    what the palette shows; nouns for toggles ("Timeline"),
               since the state column already says off/on.
     keywords: extra words the matcher accepts but does not display.
     state:    reports the current state; None for one-shot commands.
@@ -229,9 +229,6 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
     _C("cycle_focal_repo", "Cycle focal repo", "Navigate", "workspace directory", agent=True),
 
     # View — panels and layout
-    _C("toggle_preview", "Preview pane", "View", "output terminal",
-       state=lambda app: _toggle(getattr(app, "preview_visible", None))),
-    _C("expand_preview", "Fullscreen preview", "View", "expand scrollback zoom"),
     _C("toggle_timeline", "Timeline", "View", "tl history bar",
        state=lambda app: _toggle(_widget_shown(app, "timeline"))),
     _C("toggle_daemon", "Daemon panel", "View", "logs supervisor monitor",
@@ -242,8 +239,6 @@ COMMANDS: Tuple[PaletteCommand, ...] = (
        state=lambda app: _toggle(getattr(getattr(app, "_prefs", None), "show_column_headers", None))),
     _C("toggle_copy_mode", "Copy mode", "View", "mouse select clipboard text",
        state=lambda app: _toggle(getattr(app, "_copy_mode", False))),
-    _C("toggle_tmux_sync", "Tmux pane sync", "View", "pane sync follow",
-       state=lambda app: _toggle(getattr(app, "tmux_sync", None))),
     _C("resize_focused_window", "Resize agent to pane", "View", "fit size", agent=True),
     _C("split_grow", "Grow monitor pane", "View", "split bigger taller resize"),
     _C("split_shrink", "Shrink monitor pane", "View", "split smaller shorter resize"),

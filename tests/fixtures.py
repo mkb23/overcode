@@ -96,7 +96,7 @@ class MockSession:
 
 
 # =============================================================================
-# Sample pane content for testing StatusDetector
+# Sample pane content for testing PollingStatusDetector
 # =============================================================================
 
 PANE_CONTENT_WAITING_USER = """
@@ -252,9 +252,9 @@ def create_mock_tmux_with_content(session: str, window: str, content: str):
 
     Usage:
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_WAITING_USER)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
     """
-    from overcode.interfaces import MockTmux
+    from overcode.mocks import MockTmux
 
     mock = MockTmux()
     mock.new_session(session)

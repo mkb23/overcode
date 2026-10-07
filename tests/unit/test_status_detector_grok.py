@@ -27,7 +27,7 @@ from overcode.backends.grok import (
     version_findings,
     version_in_tested_range,
 )
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.status_constants import (
     STATUS_RUNNING,
     STATUS_TERMINATED,

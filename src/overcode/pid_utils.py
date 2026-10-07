@@ -228,43 +228,6 @@ def spawn_daemon(args: List[str]) -> Optional[int]:
         return None
 
 
-def count_daemon_processes(pattern: str = "monitor_daemon", session: str = None) -> int:
-    """Count running daemon processes matching the pattern.
-
-    Uses pgrep to find processes matching the pattern.
-
-    Args:
-        pattern: Pattern to search for in process names/args
-        session: If provided, only count daemons for this specific session
-
-    Returns:
-        Number of matching processes
-    """
-    import subprocess
-
-    # Build pattern - if session provided, make it session-specific
-    if session:
-        search_pattern = f"{pattern} --session {session}"
-    else:
-        search_pattern = pattern
-
-    try:
-        # Use pgrep to find matching processes
-        result = subprocess.run(
-            ["pgrep", "-f", search_pattern],
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # Count non-empty lines (each line is a PID)
-            pids = [p for p in result.stdout.strip().split('\n') if p]
-            return len(pids)
-        return 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return 0
-
-
 def stop_process(pid_file: Path, timeout: float = 5.0) -> bool:
     """Stop a process by reading its PID file and sending SIGTERM.
 

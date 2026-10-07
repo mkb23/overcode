@@ -15,18 +15,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
-
-
-def get_agent_identity() -> Tuple[Optional[str], Optional[str]]:
-    """Get session name and tmux session from environment variables.
-
-    Returns:
-        (session_name, tmux_session) tuple, either may be None
-    """
-    name = os.environ.get("OVERCODE_SESSION_NAME")
-    tmux = os.environ.get("OVERCODE_TMUX_SESSION")
-    return name, tmux
+from typing import Optional
 
 
 def format_clock(now: datetime) -> str:

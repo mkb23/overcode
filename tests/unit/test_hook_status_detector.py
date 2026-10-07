@@ -35,7 +35,7 @@ from overcode.status_constants import (
     STATUS_COLOR_YELLOW,
     STATUS_COLOR_RED,
 )
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from tests.fixtures import create_mock_session, create_mock_tmux_with_content
 
 
@@ -122,7 +122,7 @@ class TestStalenessDetection:
         state_dir = tmp_path / "sessions" / "agents"
         _write_hook_state(state_dir, "test-agent", "Stop", timestamp=time.time())
 
-        detector = HookStatusDetector("agents", state_dir=state_dir, stale_threshold_seconds=120)
+        detector = HookStatusDetector("agents", state_dir=state_dir)
         state = detector._read_hook_state("test-agent")
 
         assert state is not None
@@ -555,13 +555,6 @@ class TestStatusDetectorAttributes:
         """Has tmux_session attribute."""
         detector = HookStatusDetector("test-session", state_dir=tmp_path)
         assert detector.tmux_session == "test-session"
-
-    def test_has_status_constants(self, tmp_path):
-        """Has backward-compat status constants."""
-        detector = HookStatusDetector("agents", state_dir=tmp_path)
-        assert detector.STATUS_RUNNING == STATUS_RUNNING
-        assert detector.STATUS_WAITING_USER == STATUS_WAITING_USER
-        assert detector.STATUS_TERMINATED == STATUS_TERMINATED
 
 
 class TestBusySleepingDetection:
@@ -1102,7 +1095,7 @@ class TestComputeStatusDetail:
 # Phase 2 task 6: legacy heartbeat status bridge
 # =============================================================================
 
-from overcode.status_constants import (
+from overcode.status_constants import (  # noqa: E402
     STATUS_RUNNING_HEARTBEAT,
     STATUS_WAITING_HEARTBEAT,
     StatusBadge,

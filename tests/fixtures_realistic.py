@@ -1,5 +1,5 @@
 """
-Realistic full-capture test fixtures for StatusDetector.
+Realistic full-capture test fixtures for PollingStatusDetector.
 
 These fixtures represent complete tmux pane captures as they actually appear,
 including the Claude Code welcome banner, multiple interactions, and full

@@ -83,7 +83,6 @@ from .tui_logic import (
     should_scan_git,
 )
 from .tui_widgets import (
-    FullscreenPreview,
     HelpOverlay,
     PreviewPane,
     DaemonPanel,
@@ -269,10 +268,6 @@ class SupervisorTUI(
         # The split's agent-pane keys work in the TUI pane too
         ("alt+j", "focus_next_session", "Next"),
         ("alt+k", "focus_previous_session", "Prev"),
-        # Preview pane toggle
-        ("m", "toggle_preview", "Preview"),
-        # Fullscreen preview (expand preview pane)
-        ("f", "expand_preview", "Fullscreen"),
         # Command bar (send instructions to agents)
         ("i", "focus_command_bar", "Send"),
         ("colon", "focus_command_bar", "Send"),
@@ -344,11 +339,9 @@ class SupervisorTUI(
         ("B", "edit_cost_budget", "Cost budget"),
         # Cycle summary content mode (#74)
         ("l", "cycle_summary_content", "Summary content"),
-        # Split resize (compact/tmux mode only)
+        # Split resize
         ("equals_sign", "split_shrink", "Split shrink"),
         ("minus", "split_grow", "Split grow"),
-        # Tmux sync - sync navigation to external tmux pane (demoted to shift)
-        ("P", "toggle_tmux_sync", "Pane sync"),
         # Baseline time adjustment for mean spin calculation
         ("comma", "baseline_back", "Baseline -15m"),
         ("full_stop", "baseline_forward", "Baseline +15m"),
@@ -397,8 +390,9 @@ class SupervisorTUI(
 
     sessions: reactive[List[Session]] = reactive(list)
     focused_session_index: reactive[int] = reactive(0, always_update=True)
-    preview_visible: reactive[bool] = reactive(False)  # preview pane visibility
-    tmux_sync: reactive[bool] = reactive(False)  # sync navigation to external tmux pane
+    # The preview pane shows only for a sister agent or in jobs view; local
+    # agents' terminals are the split's bottom pane.
+    preview_visible: reactive[bool] = reactive(False)
     show_terminated: reactive[bool] = reactive(False)  # show killed sessions in timeline
     hide_asleep: reactive[bool] = reactive(False)  # hide sleeping agents from display
     # Tag filter (#357): when set, only agents whose `tags` contains the
@@ -415,9 +409,13 @@ class SupervisorTUI(
     focused_job_index: reactive[int] = reactive(0, always_update=True)
     jobs: reactive[List[Job]] = reactive(list)
 
-    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False, initial_jobs_mode: bool = False):
+    def __init__(self, tmux_session: str = "agents", diagnostics: bool = False,
+                 initial_jobs_mode: bool = False, sync_target: Optional[str] = None):
         super().__init__()
         self.tmux_session = tmux_session
+        # The linked session the split's bottom pane shows (`overcode tmux`
+        # passes it). Navigation switches its window; see in_split.
+        self.tmux_sync_target: Optional[str] = sync_target
         # Effective keys (#510): BINDINGS + key preset + config overrides.
         from .keymap import effective_keymap
         self.apply_keymap(effective_keymap(), refresh=False)
@@ -426,7 +424,6 @@ class SupervisorTUI(
         self._init_mentor()  # occasional tips, off by default (#483)
         self.diagnostics = diagnostics  # Disable all auto-refresh timers
         self._initial_jobs_mode = initial_jobs_mode  # Start in jobs view
-        self.compact = False  # Compact mode: no preview (set by overcode tmux)
         self._sister_zoom_active = False  # True when zoomed for a remote/sister agent view
         self.session_manager = SessionManager()
         # One manager per process: the launcher's reads share the app's
@@ -458,6 +455,9 @@ class SupervisorTUI(
 
         # Load persisted TUI preferences
         self._prefs = TUIPreferences.load(tmux_session)
+        if self.in_split:
+            # The top pane is short: the timeline starts hidden (t shows it)
+            self._prefs.timeline_visible = False
         # Folded parents survive a TUI restart (#464)
         self.collapsed_parents = set(self._prefs.collapsed_parents)
 
@@ -516,8 +516,8 @@ class SupervisorTUI(
         # Attended state: whether a tmux client is attached to the pane this
         # TUI runs in. False pauses every timer in PAUSED_WHEN_UNATTENDED
         # (_on_attended_changed is the one place that reacts). Written only
-        # through _set_attended. Outside tmux nobody can tell, so it stays
-        # True; the watch still runs there for its liveness touch.
+        # through _set_attended. run_tui only runs inside tmux; an app with
+        # no pane (unit tests) stays attended.
         self.attended: bool = True
         self._tui_tmux_pane: Optional[str] = tui_pane_target()
         # This pane's own server, which the poll addresses explicitly (a
@@ -533,8 +533,6 @@ class SupervisorTUI(
         self._last_attended_touch: float = 0.0
         # Every periodic Timer by TIMER_INTERVALS name, for pause/resume.
         self._periodic_timers: dict[str, object] = {}
-        # Optional: target a linked session for sync (set by `overcode split`)
-        self.tmux_sync_target: str | None = None
         # SSH proxy windows for remote agents: session_id -> tmux window name
         self._ssh_proxies: dict[str, str] = {}
         # TmuxManager instance for creating proxy windows
@@ -549,8 +547,6 @@ class SupervisorTUI(
         # leaves the bottom pane stuck on whatever window tmux picked when
         # the split was opened.
         self._initial_tmux_sync_done: bool = False
-        # Initialize tmux_sync from preferences
-        self.tmux_sync = self._prefs.tmux_sync
         # Initialize show_terminated from preferences
         self.show_terminated = self._prefs.show_terminated
         # Initialize hide_asleep from preferences
@@ -674,7 +670,6 @@ class SupervisorTUI(
         yield InstructionHistoryModal(id="instruction-history-modal", classes="modal")
         # Command palette: jump to agent, filter by tag, run commands (#420, #482)
         yield CommandPalette(id="command-palette", classes="modal")
-        yield FullscreenPreview(id="fullscreen-preview")
         yield HelpOverlay(id="help-overlay")
         yield Static(
             self._build_footer_text(),
@@ -691,12 +686,9 @@ class SupervisorTUI(
         self._bindings = textual_bindings_map(type(self), km.bindings("app"))
         if not refresh:
             return
-        from .tui_widgets import FullscreenPreview
         from .tui_widgets.summary_prompt_lab import SummaryPromptLab
-        for widget, scope in ((FullscreenPreview, "fullscreen_preview"),
-                              (SummaryPromptLab, "summary_prompt_lab")):
-            for w in self.query(widget):
-                apply_to_widget(w, scope, km)
+        for w in self.query(SummaryPromptLab):
+            apply_to_widget(w, "summary_prompt_lab", km)
         try:
             self.query_one("#command-bar", CommandBar).refresh_key_hint()
         except NoMatches:
@@ -807,11 +799,6 @@ class SupervisorTUI(
         # Update footer with current detail level
         self._update_footer()
 
-        # Set preview visibility from preferences
-        # In compact mode (tmux split), preview is off (sister zoom enables it)
-        if not self.compact:
-            self.preview_visible = self._prefs.preview_visible
-
         # Apply pre-loaded sessions synchronously so widgets exist immediately
         if self._preloaded_sessions is not None:
             self._apply_sessions(self._preloaded_sessions)
@@ -835,8 +822,7 @@ class SupervisorTUI(
         self._start_periodic("activity_flush", self._flush_activity)
         self._start_periodic("view_control", self._view_control_tick)
         self.record_activity("tui", phase="start", version=__version__,
-                             size=f"{self.size.width}x{self.size.height}",
-                             compact=self.compact or None)
+                             size=f"{self.size.width}x{self.size.height}")
 
         if self.diagnostics:
             # DIAGNOSTICS MODE: No auto-refresh timers
@@ -876,9 +862,9 @@ class SupervisorTUI(
             # misfires after splits/zooms leave windows stuck at the old size.
             self._start_periodic("agent_resize", self._periodic_agent_resize)
             # Unattended low-power mode: once a second ask tmux whether a
-            # client is attached to this pane (outside tmux the tick only
-            # touches the liveness file that keeps the daemon fast); the
-            # 2 s daemon-status read runs only while none is.
+            # client is attached to this pane, and touch the liveness file
+            # that keeps the daemon fast; the 2 s daemon-status read runs
+            # only while none is.
             self._start_periodic("attended_watch", self._attended_watch_tick)
             self._start_periodic("unattended_status", self._unattended_status_tick)
 
@@ -928,11 +914,11 @@ class SupervisorTUI(
         session on the same server and such a reading is under a second
         old it is used and no command is spent. Otherwise one
         ``display-message`` asks this pane's own server about its session.
-        Outside tmux there is nothing to ask and the state stays attended.
-        Either way, while attended, the liveness file the monitor daemon
-        watches is touched every TUI_ATTENDED_TOUCH_SECONDS: it is how a
-        TUI outside the agents session — another tmux session, or a plain
-        terminal — keeps the daemon fast.
+        With no pane (unit tests) there is nothing to ask and the state
+        stays attended. Either way, while attended, the liveness file the
+        monitor daemon watches is touched every TUI_ATTENDED_TOUCH_SECONDS:
+        it is how a TUI outside the agents session — the split lives in the
+        `overcode` session — keeps the daemon fast.
         """
         now = time.monotonic()
         if self._tui_tmux_pane is not None:
@@ -1223,27 +1209,25 @@ class SupervisorTUI(
 
     def on_app_blur(self) -> None:
         """Terminal lost focus — show banner, remove header highlight."""
-        if self.compact:
-            try:
-                self.query_one("#terminal-active-banner").add_class("visible")
-            except NoMatches:
-                pass
-            try:
-                self.query_one("Header").remove_class("monitor-active")
-            except NoMatches:
-                pass
+        try:
+            self.query_one("#terminal-active-banner").add_class("visible")
+        except NoMatches:
+            pass
+        try:
+            self.query_one("Header").remove_class("monitor-active")
+        except NoMatches:
+            pass
 
     def on_app_focus(self) -> None:
         """Terminal gained focus — hide banner, highlight header."""
-        if self.compact:
-            try:
-                self.query_one("#terminal-active-banner").remove_class("visible")
-            except NoMatches:
-                pass
-            try:
-                self.query_one("Header").add_class("monitor-active")
-            except NoMatches:
-                pass
+        try:
+            self.query_one("#terminal-active-banner").remove_class("visible")
+        except NoMatches:
+            pass
+        try:
+            self.query_one("Header").add_class("monitor-active")
+        except NoMatches:
+            pass
 
     def on_resize(self) -> None:
         """Handle terminal resize events"""
@@ -1255,17 +1239,14 @@ class SupervisorTUI(
                 self.call_after_refresh(dialog.relayout)
         self.refresh()
         self.update_session_widgets()
-        # Cascade to nested agent tmux windows in compact (split) mode so
-        # they track the outer terminal size — otherwise you get either
-        # zoom artefacts (content cut off) or dotted-fill padding when the
-        # outer pane has grown.
-        if self.compact:
-            self._schedule_agent_window_resize()
+        # Cascade to the nested agent tmux windows so they track the outer
+        # terminal size — otherwise you get either zoom artefacts (content
+        # cut off) or dotted-fill padding when the outer pane has grown.
+        self._schedule_agent_window_resize()
 
     def _periodic_agent_resize(self) -> None:
-        """Reconcile agent tmux window sizes in compact mode."""
-        if self.compact:
-            self._schedule_agent_window_resize()
+        """Reconcile agent tmux window sizes with the bottom pane."""
+        self._schedule_agent_window_resize()
 
     def _schedule_agent_window_resize(self) -> None:
         """Resize every agent's tmux window to match the bottom pane.
@@ -1274,7 +1255,8 @@ class SupervisorTUI(
         calls (one per agent window). Called from on_resize and from a
         periodic timer to catch drift.
         """
-        self._resize_agent_windows_async()
+        if self.in_split:
+            self._resize_agent_windows_async()
 
     @work(thread=True, group="agent_resize")
     @single_flight("agent_resize")
@@ -1298,7 +1280,7 @@ class SupervisorTUI(
             width, height = int(parts[0]), int(parts[1])
         except ValueError:
             return
-        sync_session = self.tmux_sync_target or self.tmux_session
+        sync_session = self.tmux_sync_target
         # Local sessions only — remote sessions have their own resize path
         windows = [
             session.tmux_window for session in list(self.sessions)
@@ -1388,7 +1370,7 @@ class SupervisorTUI(
         # (see _user_navigated) would otherwise leave the bottom pane stranded
         # on whatever window tmux happened to pick when `overcode tmux` opened
         # the split.
-        if not self._initial_tmux_sync_done and self.tmux_sync and self.tmux_sync_target:
+        if not self._initial_tmux_sync_done and self.in_split:
             try:
                 widget = self._get_focused_widget()
             except Exception:
@@ -1630,6 +1612,16 @@ class SupervisorTUI(
             pass
         return False
 
+    @property
+    def in_split(self) -> bool:
+        """True when running as the top pane of the `overcode tmux` split.
+
+        run_tui always passes the linked session, so this is the normal
+        case. An app built without one (unit tests) never touches tmux:
+        no zoom, no window switching, no resizing, no detach.
+        """
+        return self.tmux_sync_target is not None
+
     def _tui_pane_target(self) -> str:
         """Return tmux target for the TUI (top) pane, respecting pane-base-index."""
         base = get_pane_base_index()
@@ -1641,12 +1633,12 @@ class SupervisorTUI(
         return f"overcode:overcode-tmux.{base + 1}"
 
     def _dialog_will_open(self) -> None:
-        """Zoom the tmux monitor pane when a dialog opens (compact mode only).
+        """Zoom the tmux monitor pane when a dialog opens.
 
         Uses tmux's pane zoom to temporarily hide the bottom (terminal)
         pane, giving the TUI the full window for rendering dialogs.
         """
-        if not self.compact:
+        if not self.in_split:
             return
         import subprocess
         target = self._tui_pane_target()
@@ -1663,8 +1655,8 @@ class SupervisorTUI(
         )
 
     def _dialog_did_close(self) -> None:
-        """Unzoom the tmux monitor pane when all dialogs are closed (compact mode only)."""
-        if not self.compact:
+        """Unzoom the tmux monitor pane when all dialogs are closed."""
+        if not self.in_split:
             return
         # Don't unzoom if another dialog is still visible
         if self._any_dialog_visible():
@@ -1681,6 +1673,8 @@ class SupervisorTUI(
 
         ``resize-pane -Z`` toggles, so check ``window_zoomed_flag`` first.
         """
+        if not self.in_split:
+            return
         import subprocess
         target = self._tui_pane_target()
         info = subprocess.run(
@@ -1696,8 +1690,7 @@ class SupervisorTUI(
     def _enter_sister_view(self) -> None:
         """Zoom TUI pane and show preview for viewing a sister agent.
 
-        Called automatically when navigating to a remote agent in compact
-        (tmux split) mode. The preview pane shows the sister's polled
+        Called automatically when navigating to a remote agent without SSH. The preview pane shows the sister's polled
         pane_content. The bottom terminal pane is hidden via tmux zoom.
         """
         if self._sister_zoom_active:
@@ -1709,7 +1702,7 @@ class SupervisorTUI(
         self.preview_visible = True
 
     def _exit_sister_view(self) -> None:
-        """Restore normal compact layout when navigating back to a local agent.
+        """Restore the split layout when navigating back to a local agent.
 
         Reverses _enter_sister_view(): hides preview pane and
         unzooms the TUI pane to reveal the bottom terminal pane.
@@ -1717,7 +1710,7 @@ class SupervisorTUI(
         if not self._sister_zoom_active:
             return
         self._sister_zoom_active = False
-        # Hide preview pane (compact mode default)
+        # Hide the preview pane (local agents show in the bottom pane)
         self.preview_visible = False
         # Unzoom — but only if no dialog is holding the zoom open
         if not self._any_dialog_visible():
@@ -1726,17 +1719,10 @@ class SupervisorTUI(
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
 
-        Returns False when an overlay is visible (fullscreen preview, help,
-        any modal), the command bar is open, or focus is already on a
-        session/input widget.
+        Returns False when an overlay is visible (help, any modal), the
+        command bar is open, or focus is already on a session/input widget.
         """
         # Don't steal focus from overlays
-        try:
-            fs = self.query_one("#fullscreen-preview")
-            if fs.has_class("visible"):
-                return False
-        except NoMatches:
-            pass
         try:
             ho = self.query_one("#help-overlay")
             if ho.has_class("visible"):
@@ -2773,9 +2759,6 @@ class SupervisorTUI(
                 # Apply per-level column overrides
                 current_level = self.SUMMARY_LEVELS[self.summary_level_index]
                 widget.column_overrides = self._prefs.column_config.get(current_level, {})
-                # Apply compact-mode class for prominent focus styling
-                if self.compact:
-                    widget.add_class("compact-mode")
                 # Mark terminated sessions with visual styling and status
                 if session.status == "terminated":
                     widget.add_class("terminated")
@@ -2876,7 +2859,7 @@ class SupervisorTUI(
 
     def on_session_summary_clicked(self, message: SessionSummary.Clicked) -> None:
         """A click on an agent's row selects it the way j/k do: focus,
-        preview, and the tmux pane switches to it when pane sync is on."""
+        and the split's bottom pane switches to it."""
         for i, widget in enumerate(self._get_widgets_in_session_order()):
             if widget.session.id != message.session_id:
                 continue
@@ -2993,27 +2976,27 @@ class SupervisorTUI(
     def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
         """Sync external tmux pane to show the focused session's window.
 
-        When tmux_sync_target is set (e.g. by `overcode split`), syncs to
-        that linked session. Otherwise syncs to the agents session directly.
+        Switches the window of the linked session (tmux_sync_target) that
+        the split's bottom pane shows.
 
         For remote agents with SSH configured, creates a local SSH proxy
         window that attaches to the remote tmux window. The proxy persists
         so switching back is instant.
 
         For remote agents without SSH, auto-zooms the TUI pane and shows
-        the preview pane with polled content (compact mode only).
+        the preview pane with polled content.
 
         Args:
             widget: The session widget to sync to. If None, uses self.focused.
         """
-        if not self.tmux_sync:
+        if not self.in_split:
             return
 
         try:
             target = widget if widget is not None else self.focused
             if isinstance(target, SessionSummary):
                 session = target.session
-                sync_session = self.tmux_sync_target or self.tmux_session
+                sync_session = self.tmux_sync_target
 
                 if session.is_remote and session.source_ssh:
                     # SSH proxy: create or reuse a local tmux window connected via SSH
@@ -3027,9 +3010,9 @@ class SupervisorTUI(
                     return
 
                 # Non-SSH remote: sister zoom (existing behavior)
-                if self.compact and session.is_remote and not self._sister_zoom_active:
+                if session.is_remote and not self._sister_zoom_active:
                     self._enter_sister_view()
-                elif self.compact and not session.is_remote and self._sister_zoom_active:
+                elif not session.is_remote and self._sister_zoom_active:
                     self._exit_sister_view()
 
                 window_index = session.tmux_window
@@ -3163,7 +3146,7 @@ class SupervisorTUI(
 
         The fix is silent and non-blocking — if it fails, navigation continues.
         """
-        if not self.tmux_sync or not self.size or self.size.height <= 0:
+        if not self.in_split or not self.size or self.size.height <= 0:
             return
 
         try:
@@ -3178,7 +3161,7 @@ class SupervisorTUI(
             if not window_index or window_index == "":
                 return
 
-            sync_session = self.tmux_sync_target or self.tmux_session
+            sync_session = self.tmux_sync_target
             # Get current terminal size from the active window
             # and apply it to the target window
             current_height = self.size.height
@@ -3257,10 +3240,9 @@ class SupervisorTUI(
                 jobs_container.add_class("visible")
                 jobs_container.display = True
                 self._refresh_jobs()
-                # In compact mode, zoom TUI and show preview (same as sister view)
-                if self.compact:
-                    self._dialog_will_open()
-                    self.preview_visible = True
+                # Zoom the TUI and show the preview (as in sister view)
+                self._dialog_will_open()
+                self.preview_visible = True
                 # Focus first job widget if available
                 job_widgets = list(self.query(JobSummary))
                 if job_widgets:
@@ -3270,10 +3252,9 @@ class SupervisorTUI(
                 jobs_container.remove_class("visible")
                 jobs_container.display = False
                 sessions_container.display = True
-                # In compact mode, hide preview and unzoom (same as exiting sister view)
-                if self.compact:
-                    self.preview_visible = False
-                    self._dialog_did_close()
+                # Hide the preview and unzoom (as on leaving sister view)
+                self.preview_visible = False
+                self._dialog_did_close()
                 # Refocus agents
                 widget = self._get_focused_widget()
                 if widget:
@@ -3476,13 +3457,8 @@ class SupervisorTUI(
 
     def _update_subtitle(self) -> None:
         """Update the header subtitle to show session info."""
-        mode_label = "Preview" if self.preview_visible else "List"
-        sync_label = " [Sync]" if self.tmux_sync else ""
         session_label = "jobs" if self.tui_mode == "jobs" else self.tmux_session
-        if self.diagnostics:
-            self.sub_title = f"{session_label} [{mode_label}]{sync_label} [DIAGNOSTICS]"
-        else:
-            self.sub_title = f"{session_label} [{mode_label}]{sync_label}"
+        self.sub_title = f"{session_label} [DIAGNOSTICS]" if self.diagnostics else session_label
 
     def _build_footer_text(self) -> Text:
         """The footer: a few keys to start with, leading with `/`.
@@ -3500,12 +3476,11 @@ class SupervisorTUI(
                                          km.label("focus_previous_session").split("/")[0])))
             keys = [(km.label("new_agent"), "New agent"), (nav, "Next/prev"),
                     (km.label("jump_to_agent"), "Jump to agent")]
-            if self.compact:
-                from .config import get_tmux_toggle_key
-                from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
-                toggle = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
-                label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == toggle), toggle)
-                keys.append((label.split(" ")[0], "Switch pane"))
+            from .config import get_tmux_toggle_key
+            from .cli.split import TOGGLE_KEY_CHOICES, DEFAULT_TOGGLE_KEY
+            toggle = get_tmux_toggle_key() or DEFAULT_TOGGLE_KEY
+            label = next((lbl for lbl, k in TOGGLE_KEY_CHOICES if k == toggle), toggle)
+            keys.append((label.split(" ")[0], "Switch pane"))
         keys += [(km.label("toggle_help").split("/")[-1], "Help"), (km.label("quit"), "Quit")]
 
         palette_key = km.label("command_palette").split("/")[0] or "/"
@@ -4805,10 +4780,7 @@ class SupervisorTUI(
             return
         target = message.focus_target
         self.screen.set_focus(target if target is not None and target.is_attached else None)
-        if self.compact and message.action in self._COMPACT_BLOCKED_ACTIONS:
-            self.notify("Not available in split mode", severity="information")
-        else:
-            method()
+        method()
         if message.keep_open:
             try:
                 palette = self.query_one("#command-palette", CommandPalette)
@@ -4917,16 +4889,6 @@ class SupervisorTUI(
             if widget is not None:
                 widget.focus()
 
-        # Handle Escape to close fullscreen preview
-        try:
-            from .tui_widgets import FullscreenPreview
-            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
-            if fs_preview.has_class("visible") and event.key == "escape":
-                fs_preview.hide()
-                event.stop()
-                return
-        except Exception:
-            pass
 
         # Handle Escape to close help overlay (#175)
         try:
@@ -4943,11 +4905,6 @@ class SupervisorTUI(
         except Exception:
             pass
 
-    # Actions incompatible with compact mode (overcode tmux)
-    _COMPACT_BLOCKED_ACTIONS = frozenset({
-        "toggle_preview",      # m — no preview pane toggle in compact
-        "expand_preview",      # f — no fullscreen preview
-    })
 
     def action_quit(self) -> None:
         """Quit: in split mode, detach the client AND stop the viewer process.
@@ -4959,7 +4916,7 @@ class SupervisorTUI(
         one-key relaunch. The monitor daemon is a separate process and keeps
         collecting stats throughout.
         """
-        if self.compact:
+        if self.in_split:
             # Detach first so the user returns to their previous session, then
             # exit so the viewer process stops consuming CPU.
             import subprocess
@@ -4967,8 +4924,8 @@ class SupervisorTUI(
         self.exit()
 
     def _resize_split(self, delta: int) -> None:
-        """Resize the tmux split pane by delta rows (compact mode only)."""
-        if not self.compact:
+        """Resize the tmux split pane by delta rows."""
+        if not self.in_split:
             return
         import subprocess
         subprocess.run(
@@ -5004,21 +4961,6 @@ class SupervisorTUI(
         When help overlay is visible, only allow help toggle and quit.
         Other actions are blocked - pressing those keys just closes help.
         """
-        # Block incompatible actions in compact mode (overcode tmux)
-        if self.compact and action in self._COMPACT_BLOCKED_ACTIONS:
-            return False
-
-        # Block actions when fullscreen preview is visible
-        try:
-            from .tui_widgets import FullscreenPreview
-            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
-            if fs_preview.has_class("visible"):
-                if action in ("expand_preview", "quit"):
-                    return True
-                fs_preview.hide()
-                return False
-        except Exception:
-            pass
 
         # Only intercept when help is visible
         try:
@@ -5143,11 +5085,10 @@ class SupervisorTUI(
         # the pane holds at a relaunch prompt (cli/split.py _hold_wrapper) or
         # is respawned by `overcode tmux`; a leftover zoom would keep the
         # bottom terminal pane hidden behind the monitor.
-        if self.compact:
-            try:
-                self._unzoom_tui_pane()
-            except Exception:
-                pass
+        try:
+            self._unzoom_tui_pane()
+        except Exception:
+            pass
         # Clean up SSH proxy windows
         self._cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)
@@ -5168,16 +5109,20 @@ class SupervisorTUI(
 
 
 def run_tui(
-    tmux_session: str = "agents",
+    tmux_session: str,
+    sync_target: str,
     diagnostics: bool = False,
-    sync_target: str | None = None,
     initial_jobs_mode: bool = False,
 ):
-    """Run the TUI supervisor.
+    """Run the monitor as the top pane of the `overcode tmux` split.
+
+    Only `overcode monitor --sync-target` (the command the split puts in its
+    top pane) calls this; `overcode`, `overcode monitor` and `overcode tmux`
+    build the split first, attaching to it from a plain terminal.
 
     Args:
-        sync_target: If set, auto-enable tmux_sync and target this session
-            for window switching (used by `overcode split`).
+        sync_target: the linked session the bottom pane shows; navigating
+            agents switches its window. `overcode tmux` creates it.
     """
     import os
     import sys
@@ -5194,25 +5139,7 @@ def run_tui(
     from . import spawn
     spawn.install()
 
-    app = SupervisorTUI(tmux_session, diagnostics=diagnostics, initial_jobs_mode=initial_jobs_mode)
-
-    # If a sync target is provided (e.g. from `overcode tmux`), enable compact mode:
-    # auto-sync, tree-only, no expand/preview/timeline
-    # Sisters ARE enabled — selecting a remote agent auto-zooms the TUI pane
-    # and shows the preview pane with polled sister content.
-    if sync_target:
-        app.tmux_sync_target = sync_target
-        app.tmux_sync = True
-        app.compact = True
-        # preview_visible defaults to False — correct for compact mode.
-        # Hide timeline (real estate is precious in the top pane)
-        app._prefs.timeline_visible = False
-
+    app = SupervisorTUI(tmux_session, diagnostics=diagnostics,
+                        initial_jobs_mode=initial_jobs_mode, sync_target=sync_target)
     # Use driver=None to auto-detect, and size will be detected from terminal
     app.run()
-
-
-if __name__ == "__main__":
-    import sys
-    tmux_session = sys.argv[1] if len(sys.argv) > 1 else "agents"
-    run_tui(tmux_session)

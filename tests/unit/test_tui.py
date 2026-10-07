@@ -14,27 +14,7 @@ from unittest.mock import Mock, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 # Import the helper functions we're testing
-from overcode.tui_helpers import (
-    format_duration,
-    format_interval,
-    format_line_count,
-    format_ago,
-    calculate_uptime,
-    calculate_percentiles,
-    presence_state_to_char,
-    agent_status_to_char,
-    status_to_color,
-    get_standing_orders_indicator,
-    get_current_state_times,
-    build_timeline_slots,
-    build_timeline_string,
-    get_status_symbol,
-    get_presence_color,
-    get_agent_timeline_color,
-    style_pane_line,
-    truncate_name,
-    get_daemon_status_style,
-)
+from overcode.tui_helpers import format_duration, format_interval, format_line_count, format_ago, calculate_uptime, presence_state_to_char, agent_status_to_char, get_current_state_times, build_timeline_slots, get_status_symbol, get_presence_color, get_agent_timeline_color, truncate_name, get_daemon_status_style
 
 # Import SessionStats for testing
 from overcode.session_manager import SessionStats
@@ -66,40 +46,6 @@ class TestFormatDuration:
         assert format_duration(86400) == "1.0d"
         assert format_duration(172800) == "2.0d"
         assert format_duration(129600) == "1.5d"
-
-
-class TestCalculatePercentiles:
-    """Test percentile calculation logic"""
-
-    def test_empty_list(self):
-        """Empty list returns zeros"""
-        mean, p5, p95 = calculate_percentiles([])
-        assert mean == 0.0
-        assert p5 == 0.0
-        assert p95 == 0.0
-
-    def test_single_value(self):
-        """Single value returns that value for all"""
-        mean, p5, p95 = calculate_percentiles([5.0])
-        assert mean == 5.0
-        assert p5 == 5.0
-        assert p95 == 5.0
-
-    def test_two_values(self):
-        """Two values calculates correctly"""
-        mean, p5, p95 = calculate_percentiles([2.0, 8.0])
-        assert mean == 5.0
-        # With 2 values, both percentiles hit first/last
-
-    def test_many_values(self):
-        """Many values calculates correct percentiles"""
-        # 100 values from 1-100
-        times = list(range(1, 101))
-        mean, p5, p95 = calculate_percentiles(times)
-
-        assert mean == 50.5  # Mean of 1-100
-        assert p5 <= 10  # 5th percentile should be low
-        assert p95 >= 90  # 95th percentile should be high
 
 
 class TestFormatInterval:
@@ -184,53 +130,6 @@ class TestSessionStatsDisplay:
         """Interaction count displays correctly"""
         stats = SessionStats(interaction_count=42)
         assert stats.interaction_count == 42
-
-
-class TestStatusColors:
-    """Test status to color mapping"""
-
-    def test_running_is_green(self):
-        """Running status maps to green"""
-        assert status_to_color("running") == "green"
-
-    def test_waiting_user_is_red(self):
-        """Waiting user maps to red"""
-        assert status_to_color("waiting_user") == "red"
-
-    def test_unknown_is_dim(self):
-        """Unknown status maps to dim"""
-        assert status_to_color("unknown") == "dim"
-
-
-class TestStandingOrdersDisplay:
-    """Test standing orders indicator logic"""
-
-    def test_no_instructions_shows_dash(self):
-        """No standing instructions shows dash emoji"""
-        session = Mock()
-        session.standing_instructions = ""
-        session.standing_orders_complete = False
-
-        indicator = get_standing_orders_indicator(session)
-        assert indicator == "➖"
-
-    def test_instructions_incomplete_shows_clipboard(self):
-        """Incomplete instructions shows clipboard emoji"""
-        session = Mock()
-        session.standing_instructions = "Keep working"
-        session.standing_orders_complete = False
-
-        indicator = get_standing_orders_indicator(session)
-        assert indicator == "📋"
-
-    def test_instructions_complete_shows_checkmark(self):
-        """Complete instructions shows checkmark"""
-        session = Mock()
-        session.standing_instructions = "Keep working"
-        session.standing_orders_complete = True
-
-        indicator = get_standing_orders_indicator(session)
-        assert indicator == "✓"
 
 
 class TestFormatAgo:
@@ -523,30 +422,6 @@ class TestBuildTimelineSlots:
         assert result[50] == "running"       # 30min ago in 3h window = slot 50
 
 
-class TestBuildTimelineString:
-    """Test timeline string construction"""
-
-    def test_empty_slots(self):
-        """Empty slots produce dashes"""
-        result = build_timeline_string({}, 10, lambda x: "X")
-        assert result == "──────────"
-
-    def test_filled_slots(self):
-        """Filled slots use state_to_char function"""
-        slots = {0: 1, 5: 2, 9: 3}
-        result = build_timeline_string(slots, 10, lambda x: str(x))
-        assert result[0] == "1"
-        assert result[5] == "2"
-        assert result[9] == "3"
-        assert result[1] == "─"
-
-    def test_full_timeline(self):
-        """Full timeline all filled"""
-        slots = {i: i for i in range(5)}
-        result = build_timeline_string(slots, 5, lambda x: "█")
-        assert result == "█████"
-
-
 class TestGetStatusSymbol:
     """Test status symbol retrieval"""
 
@@ -607,61 +482,6 @@ class TestGetAgentTimelineColor:
     def test_unknown_is_dim(self):
         """Unknown is dim"""
         assert get_agent_timeline_color("unknown") == "dim"
-
-
-class TestStylePaneLine:
-    """Test pane line styling logic"""
-
-    def test_success_line(self):
-        """Success indicator styled green"""
-        prefix, content = style_pane_line("✓ Test passed")
-        assert prefix == "bold green"
-        assert content == "green"
-
-    def test_success_keyword(self):
-        """Success keyword styled green"""
-        prefix, content = style_pane_line("Build SUCCESS!")
-        assert prefix == "bold green"
-        assert content == "green"
-
-    def test_error_line(self):
-        """Error indicator styled red"""
-        prefix, content = style_pane_line("✗ Test failed")
-        assert prefix == "bold red"
-        assert content == "red"
-
-    def test_error_keyword(self):
-        """Error keyword styled red"""
-        prefix, content = style_pane_line("ERROR: something broke")
-        assert prefix == "bold red"
-
-    def test_fail_keyword(self):
-        """Fail keyword styled red"""
-        prefix, content = style_pane_line("Test FAILED")
-        assert prefix == "bold red"
-
-    def test_prompt_chevron(self):
-        """Prompt chevron styled as command"""
-        prefix, content = style_pane_line("> npm install")
-        assert prefix == "bold cyan"
-        assert content == "bold white"
-
-    def test_prompt_dollar(self):
-        """Dollar prompt styled as command"""
-        prefix, content = style_pane_line("$ git status")
-        assert prefix == "bold cyan"
-        assert content == "bold white"
-
-    def test_prompt_fancy(self):
-        """Fancy prompt styled as command"""
-        prefix, content = style_pane_line("❯ ls -la")
-        assert prefix == "bold cyan"
-
-    def test_normal_line(self):
-        """Normal line has cyan bar for visibility"""
-        prefix, content = style_pane_line("Just some output text")
-        assert prefix == "cyan"
-        assert content == "white"
 
 
 class TestTruncateName:
@@ -975,10 +795,9 @@ class TestSessionSummaryRender:
         """Render shows session name and stats"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.history_reader import ClaudeSessionStats
-        from overcode.interfaces import MockTmux
-        from unittest.mock import patch, Mock
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.history_reader import AgentSessionStats
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -994,14 +813,14 @@ class TestSessionSummaryRender:
         session.branch = "main"
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
         widget.expanded = False
         widget.summary_detail = "full"  # Set to full to see repo:branch
         # Set mock stats (normally updated by update_status from Claude Code files)
-        widget.claude_stats = ClaudeSessionStats(
+        widget.claude_stats = AgentSessionStats(
             interaction_count=5,
             input_tokens=5000,
             output_tokens=10000,
@@ -1023,8 +842,8 @@ class TestSessionSummaryRender:
         """Render shows correct status emoji"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -1038,7 +857,7 @@ class TestSessionSummaryRender:
         session.stats = SessionStats()
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         # Test running status
         widget = SessionSummary(session, status_detector)
@@ -1056,8 +875,8 @@ class TestSessionSummaryRender:
         """Render shows pane content in expanded mode"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -1071,7 +890,7 @@ class TestSessionSummaryRender:
         session.stats = SessionStats()
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
@@ -1087,8 +906,8 @@ class TestSessionSummaryRender:
         """Render shows standing instructions in content area"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -1104,7 +923,7 @@ class TestSessionSummaryRender:
         session.standing_orders_complete = False
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
@@ -1413,8 +1232,6 @@ class TestHelpOverlayPilot:
             await pilot.press("h")
             help_overlay = app.query_one("#help-overlay")
             assert help_overlay.has_class("visible")
-
-
 
 
 # =============================================================================
@@ -1893,7 +1710,7 @@ class TestCalculateSafeBreakDuration:
 
 
 class TestFormatCostAndBudget:
-    """Test format_cost and format_budget helper functions."""
+    """Test the format_cost helper."""
 
     def test_format_cost_zero(self):
         """Should format zero cost with dollar sign."""
@@ -1927,64 +1744,9 @@ class TestFormatCostAndBudget:
         result = format_cost(1_500_000.0)
         assert "$1.5M" == result
 
-    def test_format_budget_no_budget(self):
-        """Should return cost only when budget is 0."""
-        from overcode.tui_helpers import format_budget
-        result = format_budget(1.5, 0.0)
-        assert "$" in result
-        assert "/" not in result
-
-    def test_format_budget_with_budget(self):
-        """Should format cost/budget when budget > 0."""
-        from overcode.tui_helpers import format_budget
-        result = format_budget(1.5, 5.0)
-        assert "/" in result
-        assert "$" in result
-
 
 class TestTuiLogicAdditional:
     """Additional tests for tui_logic.py functions."""
-
-    def test_calculate_green_percentage_zero_total(self):
-        """Should return 0 when total time is 0."""
-        from overcode.tui_logic import calculate_green_percentage
-        assert calculate_green_percentage(0, 0) == 0.0
-
-    def test_calculate_green_percentage_all_green(self):
-        """Should return 100 when all time is green."""
-        from overcode.tui_logic import calculate_green_percentage
-        assert calculate_green_percentage(100, 0) == 100.0
-
-    def test_calculate_green_percentage_all_non_green(self):
-        """Should return 0 when all time is non-green."""
-        from overcode.tui_logic import calculate_green_percentage
-        assert calculate_green_percentage(0, 100) == 0.0
-
-    def test_calculate_green_percentage_mixed(self):
-        """Should return correct percentage for mixed time."""
-        from overcode.tui_logic import calculate_green_percentage
-        result = calculate_green_percentage(75, 25)
-        assert result == 75.0
-
-    def test_calculate_human_interaction_count_none_total(self):
-        """Should return 0 when total_interactions is None."""
-        from overcode.tui_logic import calculate_human_interaction_count
-        assert calculate_human_interaction_count(None, 5) == 0
-
-    def test_calculate_human_interaction_count_zero(self):
-        """Should return 0 when total equals robot."""
-        from overcode.tui_logic import calculate_human_interaction_count
-        assert calculate_human_interaction_count(5, 5) == 0
-
-    def test_calculate_human_interaction_count_clamps_negative(self):
-        """Should clamp to 0 when robot > total."""
-        from overcode.tui_logic import calculate_human_interaction_count
-        assert calculate_human_interaction_count(3, 5) == 0
-
-    def test_calculate_human_interaction_count_positive(self):
-        """Should return difference when total > robot."""
-        from overcode.tui_logic import calculate_human_interaction_count
-        assert calculate_human_interaction_count(10, 3) == 7
 
     def test_get_sort_mode_display_name_all_modes(self):
         """Should return display names for all known modes."""
@@ -2271,47 +2033,6 @@ class TestMeanSpinFromHistory:
         assert mean_spin == pytest.approx(0.5, rel=0.01)
 
 
-class TestSpinStats:
-    """Tests for calculate_spin_stats."""
-
-    def test_empty_sessions(self):
-        """Should handle empty sessions."""
-        from overcode.tui_logic import calculate_spin_stats
-        result = calculate_spin_stats([], set())
-        assert result.green_count == 0
-        assert result.total_count == 0
-        assert result.sleeping_count == 0
-        assert result.mean_spin == 0.0
-        assert result.total_tokens == 0
-
-    def test_excludes_sleeping_from_active_counts(self):
-        """Should exclude sleeping agents from active counts."""
-        from overcode.tui_logic import calculate_spin_stats
-
-        s1 = Mock()
-        s1.session_id = "s1"
-        s1.current_status = "running"
-        s1.green_time_seconds = 100
-        s1.non_green_time_seconds = 0
-        s1.input_tokens = 1000
-        s1.output_tokens = 2000
-
-        s2 = Mock()
-        s2.session_id = "s2"
-        s2.current_status = "running"
-        s2.green_time_seconds = 50
-        s2.non_green_time_seconds = 50
-        s2.input_tokens = 500
-        s2.output_tokens = 500
-
-        result = calculate_spin_stats([s1, s2], {"s2"})
-
-        assert result.total_count == 1  # Only s1 is active
-        assert result.green_count == 1
-        assert result.sleeping_count == 1
-        assert result.total_tokens == 4000  # All tokens counted
-
-
 # =============================================================================
 # Run tests directly
 # =============================================================================
@@ -2447,7 +2168,7 @@ class TestSortSessionsKeepsSelection:
         tui._visible_remote_sessions.return_value = []
         tui._initial_tmux_sync_done = True
         tui._initial_sessions_loaded = True
-        tui.tmux_sync = False
+        tui.in_split = False
 
         refreshed = [self._session("alpha"), self._session("bravo", state="waiting_user")]
         tui._apply_sessions(refreshed)
@@ -2491,3 +2212,42 @@ class TestFlushStatusChangesCap:
 
         content = app._status_change_csv_path.read_text()
         assert content.count("\n") == 2
+
+
+class TestSyncTmuxWindow:
+    """Navigation drives the split's bottom pane (#523: the only layout)."""
+
+    def _tui(self, in_split=True):
+        tui = MagicMock()
+        tui.in_split = in_split
+        tui.tmux_sync_target = "oc-view-agents" if in_split else None
+        tui._sister_zoom_active = False
+        return tui
+
+    def _widget(self, **kw):
+        from overcode.tui_widgets import SessionSummary
+        widget = MagicMock(spec=SessionSummary)
+        widget.session = MagicMock(is_remote=False, source_ssh=None, tmux_window="agent-1",
+                                   parent_session_id=None, **kw)
+        return widget
+
+    def test_switches_the_linked_session_window(self):
+        from overcode.tui import SupervisorTUI
+        tui = self._tui()
+        SupervisorTUI._sync_tmux_window(tui, self._widget())
+        tui._tmux.select_window.assert_called_once_with("oc-view-agents", "agent-1")
+
+    def test_remote_agent_without_ssh_opens_the_sister_view(self):
+        from overcode.tui import SupervisorTUI
+        tui = self._tui()
+        widget = self._widget()
+        widget.session.is_remote = True
+        SupervisorTUI._sync_tmux_window(tui, widget)
+        tui._enter_sister_view.assert_called_once_with()
+
+    def test_no_split_no_tmux(self):
+        from overcode.tui import SupervisorTUI
+        tui = self._tui(in_split=False)
+        SupervisorTUI._sync_tmux_window(tui, self._widget())
+        tui._tmux.select_window.assert_not_called()
+        tui._enter_sister_view.assert_not_called()

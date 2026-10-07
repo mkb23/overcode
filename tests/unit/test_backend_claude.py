@@ -280,7 +280,7 @@ class TestLaunchCmdStr:
     """The rendered shell line: env prefix + wrapper/mock + argv."""
 
     def _launcher(self, tmp_path):
-        from overcode.interfaces import MockTmux
+        from overcode.mocks import MockTmux
         from overcode.tmux_manager import TmuxManager
 
         return AgentLauncher(
@@ -535,7 +535,7 @@ class TestLauncherDispatch:
     """The launcher resolves the backend from the Session."""
 
     def test_backend_for_defaults(self, tmp_path):
-        from overcode.interfaces import MockTmux
+        from overcode.mocks import MockTmux
         from overcode.tmux_manager import TmuxManager
 
         launcher = AgentLauncher(
@@ -547,7 +547,7 @@ class TestLauncherDispatch:
         assert launcher.backend_for(session).name == "claude-code"
 
     def test_build_relaunch_command_matches_backend(self, tmp_path):
-        from overcode.interfaces import MockTmux
+        from overcode.mocks import MockTmux
         from overcode.tmux_manager import TmuxManager
 
         launcher = AgentLauncher(

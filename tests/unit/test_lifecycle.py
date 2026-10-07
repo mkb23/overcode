@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.launcher import AgentLauncher
 from overcode.lifecycle import (
     ShutdownReport,

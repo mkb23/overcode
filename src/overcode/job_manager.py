@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .exceptions import StateWriteError
 
@@ -271,13 +271,6 @@ class JobManager:
             state[job.id] = job.to_dict()
 
         return job
-
-    def get_job(self, job_id: str) -> Optional[Job]:
-        """Get a job by ID."""
-        state = self._load_state()
-        if job_id in state:
-            return Job.from_dict(state[job_id])
-        return None
 
     def get_job_by_name(self, name: str) -> Optional[Job]:
         """Get a job by name."""

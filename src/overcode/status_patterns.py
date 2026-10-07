@@ -1,7 +1,7 @@
 """
 Centralized status detection patterns.
 
-This module contains all the pattern lists used by StatusDetector to identify
+This module contains all the pattern lists used by PollingStatusDetector to identify
 an agent's current state. One ``StatusPatterns`` instance per backend; the
 defaults describe Claude Code. Centralizing these makes them:
 - Easier to maintain and extend
@@ -550,21 +550,6 @@ def _looks_like_tool_execution(line: str, patterns: StatusPatterns = None) -> bo
     """Check if a line looks like tool execution rather than prose."""
     patterns = patterns or DEFAULT_PATTERNS
     return bool(patterns.tool_execution_re.match(line))
-
-
-def is_prompt_line(line: str, patterns: StatusPatterns = None) -> bool:
-    """Check if a line is an empty prompt waiting for input.
-
-    Args:
-        line: Line to check
-        patterns: StatusPatterns to use (defaults to DEFAULT_PATTERNS)
-
-    Returns:
-        True if line is an empty prompt
-    """
-    patterns = patterns or DEFAULT_PATTERNS
-    stripped = line.strip()
-    return stripped in patterns.prompt_chars
 
 
 def is_status_bar_line(line: str, patterns: StatusPatterns = None) -> bool:

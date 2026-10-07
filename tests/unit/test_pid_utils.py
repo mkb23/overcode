@@ -1,19 +1,9 @@
 """Tests for pid_utils module."""
 
 import os
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from overcode.pid_utils import (
-    is_process_running,
-    get_process_pid,
-    write_pid_file,
-    remove_pid_file,
-    acquire_daemon_lock,
-    count_daemon_processes,
-    stop_process,
-)
+from overcode.pid_utils import is_process_running, get_process_pid, write_pid_file, remove_pid_file, acquire_daemon_lock, stop_process
 
 
 class TestIsProcessRunning:
@@ -187,64 +177,6 @@ class TestAcquireDaemonLock:
 
         assert acquired is True
         assert existing_pid is None
-
-
-class TestCountDaemonProcesses:
-    """Tests for count_daemon_processes function."""
-
-    def test_returns_zero_when_no_processes(self):
-        """Should return 0 when no matching processes."""
-        # Use a pattern that won't match any real process
-        result = count_daemon_processes("__nonexistent_pattern_xyz_123__")
-
-        assert result == 0
-
-    def test_uses_session_in_pattern(self):
-        """Should include session in search pattern."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=1,
-                stdout="",
-            )
-
-            count_daemon_processes("test_daemon", session="test_session")
-
-            # Verify the pattern includes the session
-            call_args = mock_run.call_args
-            pattern = call_args[0][0][2]  # ["pgrep", "-f", pattern]
-            assert "test_session" in pattern
-
-    def test_handles_timeout(self):
-        """Should return 0 on timeout."""
-        import subprocess
-
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired("pgrep", 5)
-
-            result = count_daemon_processes("test")
-
-            assert result == 0
-
-    def test_handles_pgrep_not_found(self):
-        """Should return 0 when pgrep not found."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = FileNotFoundError()
-
-            result = count_daemon_processes("test")
-
-            assert result == 0
-
-    def test_counts_matching_processes(self):
-        """Should count matching processes correctly."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="1234\n5678\n9012\n",
-            )
-
-            result = count_daemon_processes("test")
-
-            assert result == 3
 
 
 class TestStopProcess:

@@ -21,7 +21,6 @@ from overcode.backends import (
     unregister_backend,
 )
 from overcode.backends.claude_code import ClaudeCodeBackend
-from overcode.history_reader import ClaudeSessionStats
 from overcode.stats_reader import (
     AgentSessionStats,
     ClaudeStatsReader,
@@ -88,14 +87,7 @@ def _make_stats(**overrides):
         current_context_tokens=1000,
     )
     defaults.update(overrides)
-    return ClaudeSessionStats(**defaults)
-
-
-class TestAlias:
-    def test_agent_session_stats_is_claude_session_stats(self):
-        # Phase 6 flipped which name is canonical; both still resolve.
-        assert AgentSessionStats is ClaudeSessionStats
-        assert AgentSessionStats.__name__ == "AgentSessionStats"
+    return AgentSessionStats(**defaults)
 
 
 class TestClaudeStatsReader:

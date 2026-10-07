@@ -36,7 +36,7 @@ from overcode.backends.opencode import (
     plugin_installed,
 )
 from overcode.doctor import VERDICT_OK
-from overcode.exceptions import ClaudeNotFoundError
+from overcode.exceptions import AgentCliNotFoundError
 
 
 @pytest.fixture
@@ -56,8 +56,8 @@ class TestRegistry:
 
     def test_not_found_error_is_catchable_as_the_legacy_one(self):
         # The launcher's existing "agent CLI missing" except clause names
-        # ClaudeNotFoundError; opencode's must be caught by it.
-        assert issubclass(OpencodeNotFoundError, ClaudeNotFoundError)
+        # AgentCliNotFoundError; opencode's must be caught by it.
+        assert issubclass(OpencodeNotFoundError, AgentCliNotFoundError)
 
     def test_process_basenames_cover_the_bun_shim(self, backend):
         # Homebrew/npm install `opencode` as a symlink to `opencode.exe`;

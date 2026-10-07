@@ -42,7 +42,7 @@ class TUIDriver:
         """Start a TUI application in a new tmux session.
 
         Args:
-            command: The command to run (e.g., "overcode supervisor")
+            command: The command to run (e.g., "overcode monitor --session test --sync-target test")
             width: Terminal width in characters
             height: Terminal height in characters
             env: Optional environment variables to set

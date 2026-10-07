@@ -195,10 +195,6 @@ class Signals:
                 total += self.summary.actions[i].user_uses
         return total
 
-    def key_uses(self, action: str) -> int:
-        a = self.summary.actions.get(action)
-        return a.by_via.get("key", 0) if a else 0
-
 
 @dataclass
 class Competency:
@@ -238,8 +234,6 @@ COMPETENCIES = (
                "basics", lambda s: s.uses("focus_command_bar") >= 1, ("b_navigate",), try_action="focus_command_bar"),
     Competency("b_approve", "Answer an agent from the list", "Enter, 1, 2, 3 go to the focused agent's prompt.",
                "basics", lambda s: s.uses(*APPROVE) >= 3, ("b_navigate",)),
-    Competency("b_fullscreen", "Read an agent's output fullscreen", "f expands the preview.",
-               "basics", lambda s: s.uses("expand_preview") >= 1, try_action="expand_preview"),
     # Fleet
     Competency("f_new", "Launch an agent", "n in the TUI, or overcode launch.", "fleet",
                lambda s: s.uses("new_agent", "cli_launch") >= 1 or s.residue.agents >= 2, try_action="new_agent"),

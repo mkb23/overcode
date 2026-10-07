@@ -176,7 +176,7 @@ class TestHelperFunctions:
 
     def test_default_log_path_creates_directory(self, tmp_path, monkeypatch):
         """default_log_path should create the directory."""
-        from overcode.presence_logger import default_log_path, OVERCODE_DIR
+        from overcode.presence_logger import default_log_path
 
         path = default_log_path()
         assert ".overcode" in path
@@ -274,7 +274,6 @@ class TestPresenceLogger:
 
     def test_init_default_config(self):
         """Should initialize with default config."""
-        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
 
         logger = PresenceLogger()
 
@@ -283,7 +282,7 @@ class TestPresenceLogger:
 
     def test_init_custom_config(self):
         """Should accept custom config."""
-        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+        from overcode.presence_logger import PresenceLoggerConfig
 
         config = PresenceLoggerConfig(sample_interval=30, idle_threshold=90)
         logger = PresenceLogger(config)
@@ -293,7 +292,7 @@ class TestPresenceLogger:
 
     def test_start_stop(self, tmp_path):
         """Should start and stop cleanly."""
-        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+        from overcode.presence_logger import PresenceLoggerConfig
 
         config = PresenceLoggerConfig(
             sample_interval=1,
@@ -308,7 +307,7 @@ class TestPresenceLogger:
 
     def test_get_current_state_returns_tuple(self, tmp_path):
         """get_current_state should return state tuple."""
-        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+        from overcode.presence_logger import PresenceLoggerConfig
 
         config = PresenceLoggerConfig(
             sample_interval=60,
@@ -327,18 +326,6 @@ class TestPresenceLogger:
 class TestSingletonFunctions:
     """Test singleton logger functions."""
 
-    def test_get_singleton_logger_returns_none_initially(self):
-        """Should return None when no logger started."""
-        from overcode import presence_logger
-
-        # Reset singleton state
-        with presence_logger._singleton_lock:
-            presence_logger._singleton_logger = None
-
-        result = presence_logger.get_singleton_logger()
-
-        assert result is None
-
     def test_start_background_logger_creates_singleton(self, tmp_path):
         """start_background_logger should create and start logger."""
         from overcode import presence_logger
@@ -356,7 +343,7 @@ class TestSingletonFunctions:
 
         try:
             assert logger is not None
-            assert presence_logger.get_singleton_logger() is logger
+            assert presence_logger._singleton_logger is logger
         finally:
             logger.stop(timeout=2.0)
             # Reset singleton
@@ -408,7 +395,7 @@ class TestLogWriting:
 
     def test_logger_creates_log_file(self, tmp_path):
         """Logger should create log file."""
-        from overcode.presence_logger import PresenceLogger, PresenceLoggerConfig
+        from overcode.presence_logger import PresenceLoggerConfig
 
         log_file = tmp_path / "presence.csv"
         config = PresenceLoggerConfig(

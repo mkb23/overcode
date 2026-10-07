@@ -7,21 +7,8 @@ These test the pure functions that have no I/O dependencies.
 import pytest
 from datetime import datetime, timedelta
 
-from overcode.monitor_daemon_core import (
-    TimeAccumulationResult,
-    calculate_time_accumulation,
-    calculate_cost_estimate,
-    calculate_total_tokens,
-    calculate_median,
-    calculate_green_percentage,
-    aggregate_session_stats,
-    should_sync_stats,
-    parse_datetime_safe,
-    is_heartbeat_eligible,
-    is_heartbeat_due,
-    should_auto_archive,
-    should_enforce_oversight_timeout,
-)
+from overcode.pricing import calculate_cost_estimate
+from overcode.monitor_daemon_core import calculate_time_accumulation, calculate_total_tokens, calculate_median, should_sync_stats, parse_datetime_safe, is_heartbeat_eligible, is_heartbeat_due, should_auto_archive, should_enforce_oversight_timeout
 
 
 class TestCalculateTimeAccumulation:
@@ -371,98 +358,6 @@ class TestCalculateMedian:
     def test_duplicate_values(self):
         """Should handle duplicate values."""
         assert calculate_median([5.0, 5.0, 5.0]) == 5.0
-
-
-class TestCalculateGreenPercentage:
-    """Tests for calculate_green_percentage function."""
-
-    def test_zero_total_returns_zero(self):
-        """Zero total time should return 0%."""
-        assert calculate_green_percentage(0.0, 0.0) == 0
-
-    def test_all_green(self):
-        """All green time should return 100%."""
-        assert calculate_green_percentage(100.0, 0.0) == 100
-
-    def test_all_non_green(self):
-        """All non-green time should return 0%."""
-        assert calculate_green_percentage(0.0, 100.0) == 0
-
-    def test_fifty_percent(self):
-        """Equal green/non-green should return 50%."""
-        assert calculate_green_percentage(50.0, 50.0) == 50
-
-    def test_seventy_five_percent(self):
-        """75% green should return 75."""
-        assert calculate_green_percentage(75.0, 25.0) == 75
-
-    def test_returns_integer(self):
-        """Should return integer percentage."""
-        result = calculate_green_percentage(33.33, 66.67)
-        assert isinstance(result, int)
-
-
-class TestAggregateSessionStats:
-    """Tests for aggregate_session_stats function."""
-
-    def test_empty_list(self):
-        """Empty list should return zeros."""
-        green_count, total_green, total_non_green, active = aggregate_session_stats([])
-        assert green_count == 0
-        assert total_green == 0.0
-        assert total_non_green == 0.0
-        assert active == 0
-
-    def test_single_running_session(self):
-        """Single running session."""
-        sessions = [
-            {'status': 'running', 'green_time_seconds': 100.0, 'non_green_time_seconds': 50.0}
-        ]
-        green_count, total_green, total_non_green, active = aggregate_session_stats(sessions)
-
-        assert green_count == 1
-        assert total_green == 100.0
-        assert total_non_green == 50.0
-        assert active == 1
-
-    def test_mixed_sessions(self):
-        """Multiple sessions with different statuses."""
-        sessions = [
-            {'status': 'running', 'green_time_seconds': 100.0, 'non_green_time_seconds': 50.0},
-            {'status': 'waiting_user', 'green_time_seconds': 80.0, 'non_green_time_seconds': 20.0},
-            {'status': 'running', 'green_time_seconds': 60.0, 'non_green_time_seconds': 40.0},
-        ]
-        green_count, total_green, total_non_green, active = aggregate_session_stats(sessions)
-
-        assert green_count == 2  # Two running
-        assert total_green == 240.0  # 100 + 80 + 60
-        assert total_non_green == 110.0  # 50 + 20 + 40
-        assert active == 3
-
-    def test_excludes_asleep_sessions(self):
-        """Asleep sessions should be excluded from all counts."""
-        sessions = [
-            {'status': 'running', 'green_time_seconds': 100.0, 'non_green_time_seconds': 50.0},
-            {'status': 'running', 'green_time_seconds': 200.0, 'non_green_time_seconds': 100.0, 'is_asleep': True},
-        ]
-        green_count, total_green, total_non_green, active = aggregate_session_stats(sessions)
-
-        assert green_count == 1  # Only non-asleep running
-        assert total_green == 100.0  # Excludes asleep session
-        assert total_non_green == 50.0
-        assert active == 1
-
-    def test_missing_fields_default_to_zero(self):
-        """Missing fields should default to zero/empty."""
-        sessions = [
-            {'status': 'running'},  # Missing time fields
-        ]
-        green_count, total_green, total_non_green, active = aggregate_session_stats(sessions)
-
-        assert green_count == 1
-        assert total_green == 0.0
-        assert total_non_green == 0.0
-        assert active == 1
 
 
 class TestShouldSyncStats:

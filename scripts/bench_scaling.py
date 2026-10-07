@@ -52,7 +52,7 @@ import sys
 import time
 import uuid
 from collections import Counter
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Sequence
@@ -1228,10 +1228,6 @@ class CountingTmux:
             name: PaneInfo(name, i + 1, self._pids.get(name, 0), 1_700_000_000, self._versions[name], 0, 0, "claude", 0)
             for i, name in enumerate(self._panes)
         }
-
-    def list_pane_pids(self, session: str) -> Optional[Dict[str, int]]:
-        self.calls["list_pane_pids"] += 1
-        return dict(self._pids) if session == self.session else None
 
     @property
     def total(self) -> int:

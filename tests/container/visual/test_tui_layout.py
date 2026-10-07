@@ -14,7 +14,7 @@ TUI_SESSION = "tuiview"
 
 @pytest.fixture
 def tui(oc, oc_wait, sandbox):
-    """A running `overcode monitor` TUI in a 120x40 pane, agents populated."""
+    """The monitor (the split's top pane, run directly) in a 120x40 pane, agents populated."""
     oc.launch("tui-busy", scenario="task_running")
     oc.launch("tui-idle", scenario="startup_idle")
     oc.start_monitor_daemon(interval=1)
@@ -26,7 +26,7 @@ def tui(oc, oc_wait, sandbox):
 
     sandbox.new_sized_session(
         TUI_SESSION,
-        f"python -m overcode.cli monitor --session {oc.session}",
+        f"python -m overcode.cli monitor --session {oc.session} --sync-target {oc.session}",
         env=oc.env,
         width=120,
         height=40,
@@ -66,7 +66,7 @@ def test_tui_fits_narrow_terminal(oc, oc_wait, sandbox, screenshots):
 
     sandbox.new_sized_session(
         "tuinarrow",
-        f"python -m overcode.cli monitor --session {oc.session}",
+        f"python -m overcode.cli monitor --session {oc.session} --sync-target {oc.session}",
         env=oc.env,
         width=80,
         height=24,

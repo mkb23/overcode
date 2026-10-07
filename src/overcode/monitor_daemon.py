@@ -3,7 +3,7 @@
 Monitor Daemon - Single source of truth for all session metrics.
 
 This daemon handles all monitoring responsibilities:
-- Agent status detection (via StatusDetector)
+- Agent status detection (hook or polling detector)
 - Time tracking (green_time_seconds, non_green_time_seconds)
 - Agent stats sync (tokens, interactions)
 - Presence tracking (graceful degradation on non-macOS)
@@ -78,13 +78,12 @@ from .status_constants import (
     is_green_status,
 )
 from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
-from .status_detector import StatusDetector
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
+from .pricing import calculate_cost_estimate
 from .monitor_daemon_core import (
     calculate_time_accumulation,
-    calculate_cost_estimate,
     calculate_total_tokens,
     calculate_median,
     should_sync_stats,
@@ -103,7 +102,7 @@ from .tmux_utils import (
 )
 
 if TYPE_CHECKING:
-    from .protocols import TmuxInterface
+    from .protocols import StatusDetectorProtocol, TmuxInterface
 
 
 # Check for macOS presence APIs (optional)
@@ -314,7 +313,7 @@ class MonitorDaemon:
         self,
         tmux_session: str = "agents",
         session_manager: Optional[SessionManager] = None,
-        status_detector: Optional[StatusDetector] = None,
+        status_detector: Optional["StatusDetectorProtocol"] = None,
         tmux: Optional["TmuxInterface"] = None,
     ):
         self.tmux_session = tmux_session
@@ -498,10 +497,6 @@ class MonitorDaemon:
     def _session_index(self) -> SessionIndex:
         """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
         return SessionIndex(self.session_manager.sessions_by_id())
-
-    def _get_parent_name(self, session, index: Optional[SessionIndex] = None) -> Optional[str]:
-        """Get the name of a session's parent, if any (#244)."""
-        return (index or self._session_index()).parent_name(session)
 
     def track_session_stats(
         self, session, status: str, index: Optional[SessionIndex] = None
@@ -1071,9 +1066,9 @@ class MonitorDaemon:
         (``session_attached``; an unknown count — listing failed — counts
         as attended), the TUI keypress heartbeat is not fresh
         (PresenceComponent's 60 s window), and no TUI has touched its
-        attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
-        TUI in another tmux session or a plain terminal has — the first
-        two cannot see it — and the API server makes the same touch when
+        attended file within TUI_ATTENDED_FRESHNESS. The touch is what the
+        split's TUI has (it lives in the `overcode` session, so the first
+        two cannot see it) — and the API server makes the same touch when
         it serves a status request (a sister TUI's poll), so the daemon
         never slows while a sister is watching this fleet.
         """

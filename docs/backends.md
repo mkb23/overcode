@@ -93,7 +93,7 @@ with a clean "backend X does not support …" — never a crash.
 | Detection-mode toggle | `K` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Per-session dispatch picks hooks mode automatically when state files are fresh |
 | Token / cost / context columns | — | ✅ | ✅ | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate | ✅ | ⚠️ tokens/context ✅, cost ⚠️ estimate unless Hermes priced it | opencode2: SQLite `session_v2`/`session_message` reader. codex: rollout-JSONL reader; cost has no local figure, but `pricing.py` now carries a `gpt-5.6-sol` entry (codex's account-default model), so it shows that model's real published rate applied to codex's real token counts — a list-price estimate, not a billed figure. grok: `GrokStatsReader` reads a full local token/cost split from `updates.jsonl` (summed per-turn `turn_completed.usage`, `costUsdTicks` converted from nano-dollars) — genuinely billing-accurate, not an estimate. hermes: `HermesStatsReader` reads cumulative tokens + the live prompt size from `state.db`; Hermes's own `estimated_cost_usd` is used when its `cost_status` isn't `unknown`, else overcode prices the real tokens itself |
 | AI summaries | `A` | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Preview pane | `m` | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Live terminal (split's bottom pane) | — | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Sleep mode / heartbeat | `z` / `H` | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Remote agents via sisters | `N` | ✅ | ✅ | ✅ | ✅ | ✅ | Capabilities travel with the agent, so remote gating matches local |
 | Devcontainer wrapper | — | ✅ | ✅ | ❓ untested | ✅ | ⚠️ installs, auth unverified | ⚠️ installs, unverified | codex installs via npm like Claude; grok and hermes have no npm package (curl installers) and neither container story has had a live docker run (see below); opencode2 in a container is untested |
@@ -1641,7 +1641,7 @@ SuperGrok/X Premium+ subscription login that writes `~/.grok/auth.json` on
 the host. `XAI_API_KEY` is forwarded if set, but whether grok's interactive
 browser login flow even works from inside a container's tmux pane has not
 been tested with a live docker build (out of scope for this pass — see
-`wrappers/README.md`). If you need grok to skip that login, mount your host
+[wrappers.md](wrappers.md)). If you need grok to skip that login, mount your host
 `~/.grok` into the container at the same path yourself; the wrapper does not
 do this automatically, and doing so also would not install the global hooks
 file (which the host-side launch already staged at `~/.grok/hooks/` on the
@@ -1668,15 +1668,14 @@ they effectively were.
 The launch flag for passing raw CLI arguments through is `--backend-arg`.
 `--claude-arg` is still accepted as a hidden deprecated alias.
 
-Internally the Claude-flavoured names were renamed in Phase 6 with
-backward-compatible aliases on every public surface — `ClaudeLauncher` →
+Internally the Claude-flavoured names were renamed in Phase 6 — `ClaudeLauncher` →
 `AgentLauncher`, `Session.claude_session_ids` → `agent_session_ids`,
 `Session.active_claude_session_id` → `active_agent_session_id`,
 `Session.extra_claude_args` → `extra_cli_args`, `Session.claude_agent` →
 `agent_persona`, `ClaudeNotFoundError` → `AgentCliNotFoundError`,
-`ClaudeSessionStats` → `AgentSessionStats`. Persisted `sessions.json` is read
-under both key sets and written under both for one release, so downgrading is
-safe. Deliberately *not* renamed: hook-state file keys, `OVERCODE_*` env vars,
+`ClaudeSessionStats` → `AgentSessionStats`. The old Python names were
+aliases until 0.6.0, which removed them. Persisted `sessions.json` is still
+read under both key sets, so state files from older releases load. Deliberately *not* renamed: hook-state file keys, `OVERCODE_*` env vars,
 `CLAUDE_COMMAND` (the mock-harness contract), supervisor-daemon internals, and
 web API response keys.
 
