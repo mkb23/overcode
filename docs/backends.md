@@ -807,8 +807,10 @@ docs/configuration.md, "Model metadata (context windows and pricing)".
 `CodexStatsReader` (`src/overcode/backends/codex_stats.py`) reads codex's
 own transcript format — one append-only JSONL file per conversation at
 `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO-ts>-<uuid>.jsonl` (`CODEX_HOME`
-honoured, defaulting to `~/.codex`) — read-only, one pass per lookup, never
-writing.
+honoured, defaulting to `~/.codex`) — read-only, never writing. The file is
+parsed incrementally: each call `stat`s it and reads only the bytes appended
+since the last call, so a quiet agent costs one `stat` (#524; see
+`docs/design/opencode-stats-reader-performance.md`).
 
 | overcode column | codex source |
 |---|---|
@@ -968,7 +970,9 @@ at all: `SESSION_ID_PRESCRIPTION` means overcode always minted the session
 id itself, so it keys straight into
 `~/.grok/sessions/<percent-encoded-abs-cwd>/<uuid>/` (`GROK_HOME` honoured,
 defaulting to `~/.grok`; the cwd encoding is a full absolute-path
-percent-encode, `/`→`%2F`, including the leading slash).
+percent-encode, `/`→`%2F`, including the leading slash). `updates.jsonl` and
+`prompt_history.jsonl` are parsed incrementally, the same way as codex's
+rollout (#525). The burn-rate window is a bisect over the folded turns.
 
 | overcode column | grok source |
 |---|---|
