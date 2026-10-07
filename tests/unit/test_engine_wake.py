@@ -35,6 +35,7 @@ def _daemon(tmp_path):
     d._shutdown = False
     d.tmux_session = "agents"
     d._refresh_detection_mode = lambda: None  # never reads a real state dir
+    d.detector = SimpleNamespace(mode="auto")
     return d
 
 
@@ -118,6 +119,26 @@ class TestStickyRecheck:
         d._session_index = lambda: SimpleNamespace(by_id={})
         d._quick_tick({"a"}, datetime.now())
         assert calls == [1]
+        # Once the fleet is on hooks, a quick tick does not re-read it (the
+        # full tick still does, for a mode the user changes by hand)
+        d.detector.mode = "hooks"
+        d._quick_tick({"a"}, datetime.now())
+        assert calls == [1]
+
+    def test_only_a_stop_is_rechecked(self, tmp_path):
+        """The sticky window only holds a Stop; other events need no second look."""
+        from overcode import monitor_daemon
+
+        d = _daemon(tmp_path)
+        d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
+        _touch(tmp_path, "a", "{}")
+        clock = [100.0]
+        with patch.object(monitor_daemon.time, "monotonic", lambda: clock[0]):
+            d._hook_changes()
+            _touch(tmp_path, "a", '{"event": "PostToolUse", "tool_name": "Read"}')
+            assert d._hook_changes() == {"a"}
+            clock[0] += 5
+            assert d._hook_changes() == set()
 
 
 class TestQuickTick:

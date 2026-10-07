@@ -21,6 +21,7 @@ from textual.widget import MountError
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual import events, work
+from rich.cells import cell_len
 from rich.text import Text
 
 from . import __version__, get_dev_version_suffix
@@ -1059,15 +1060,47 @@ class SupervisorTUI(
         self._repaint(changed)
 
     def _repaint(self, changed: list) -> None:
-        """Re-align columns, then repaint ``changed`` (every row if widths moved)."""
-        old_widths = list(self.column_widths)
-        self._column_widths_dirty = True
-        self._recompute_cell_column_widths()
-        rows = list(self.query(SessionSummary)) if self.column_widths != old_widths else changed
+        """Re-align columns if ``changed`` moved them, then repaint.
+
+        Only the changed rows are measured: the aligned widths are worked
+        out again from every row only when a changed row no longer fits
+        them, or was the widest in a column and narrowed. Then every row
+        repaints (its padding moved); otherwise only ``changed`` does.
+        """
+        if not self._column_widths_dirty and self._rows_fit_column_widths(changed):
+            rows = changed
+        else:
+            old_widths = list(self.column_widths)
+            self._column_widths_dirty = True
+            self._recompute_cell_column_widths()
+            rows = list(self.query(SessionSummary)) if self.column_widths != old_widths else changed
         for widget in rows:
             widget.refresh_if_changed()
         if self.preview_visible:
             self._update_preview()
+
+    def _rows_fit_column_widths(self, rows: list) -> bool:
+        """True if ``rows``, measured again, leave the aligned widths as they are."""
+        from .summary_columns import render_summary_cells
+
+        widths = self.column_widths
+        if not widths:
+            return False
+        measured = []
+        for widget in rows:
+            cells = render_summary_cells(widget._build_column_context(),
+                                         column_filter=widget.column_visible)
+            new = [cell_len(c.plain) for c in cells]
+            old = getattr(widget, "_cell_widths", None)
+            if old is None or len(new) != len(widths) or len(old) != len(widths):
+                return False
+            for n, o, w in zip(new, old, widths):
+                if n > w or (o == w and n < o):
+                    return False
+            measured.append((widget, new))
+        for widget, new in measured:
+            widget._cell_widths = new
+        return True
 
     def _repaint_rows(self) -> None:
         """Every row from what it holds now (after a detach, or a full refresh)."""
@@ -1085,7 +1118,7 @@ class SupervisorTUI(
             ),
             "any_has_subtree_cost": any(w.subtree_cost_usd > 0 for w in widgets),
             "any_is_sleeping": any(w.detected_status == "busy_sleeping" for w in widgets),
-            "any_has_status_detail": any(w.status_detail is not None for w in widgets),
+            "any_has_status_detail": any(w.engine.get("status_detail") for w in widgets),
         }
         flipped = False
         for widget in widgets:
@@ -1633,6 +1666,7 @@ class SupervisorTUI(
             ctx = w._build_column_context()
             cells = render_summary_cells(ctx, column_filter=w.column_visible)
             all_cells.append(cells)
+            w._cell_widths = [cell_len(c.plain) for c in cells]
         self.column_widths = compute_column_widths(all_cells)
         self._column_widths_dirty = False
         # Update column headers if visible

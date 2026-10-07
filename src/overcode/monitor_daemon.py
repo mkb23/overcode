@@ -1483,7 +1483,10 @@ class MonitorDaemon:
             self._hook_signatures[name] = sig
             if sig != previous:
                 changed.add(name)
-                rechecks[name] = now + _sticky_recheck_seconds()
+                if self._hook_event(directory, name) == "Stop":
+                    rechecks[name] = now + _sticky_recheck_seconds()
+                else:
+                    rechecks.pop(name, None)
             elif name in rechecks and now >= rechecks[name]:
                 changed.add(name)
                 del rechecks[name]
@@ -1506,9 +1509,22 @@ class MonitorDaemon:
             self.detector.mode = current_mode
             self.log.info(f"Fleet detection mode changed to: {current_mode}")
 
+    @staticmethod
+    def _hook_event(directory, name: str) -> Optional[str]:
+        """The event a changed hook state file holds (one small read, on change only)."""
+        import json
+
+        try:
+            with open(directory / f"hook_state_{name}.json") as f:
+                event = json.load(f).get("event")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return event if isinstance(event, str) else None
+
     def _quick_tick(self, names: set, now: datetime) -> None:
         """Re-detect only ``names`` and publish, between full ticks."""
-        self._refresh_detection_mode()
+        if self.detector.mode != "hooks":
+            self._refresh_detection_mode()
         index = self._session_index()
         changed = [s for s in index.by_id.values()
                    if s.tmux_session == self.tmux_session and s.name in names]

@@ -177,6 +177,27 @@ class TestRendersWhatTheEnginePublishes:
             assert applied == ["charlie"]
             assert _row(app, "alpha").detected_status == "running"
 
+    async def test_columns_realign_only_when_a_changed_row_needs_it(self, app, engine):
+        engine.publish(_snapshot())
+        async with app.run_test(size=(220, 40)) as pilot:
+            await _connected(pilot, app)
+            recomputes = []
+            original = app._recompute_cell_column_widths
+            app._recompute_cell_column_widths = lambda *a, **k: (recomputes.append(1),
+                                                                  original(*a, **k))
+            widths = list(app.column_widths)
+            # Same widths: a new activity line lives in the content area
+            engine.publish(_snapshot(bravo=dict(current_activity="Reading files")))
+            assert await _until(pilot, lambda: _row(app, "bravo").current_activity
+                                == "Reading files")
+            await pilot.pause(0.1)
+            assert recomputes == [] and app.column_widths == widths
+            # A wider git cell: every row realigns to it
+            engine.publish(_snapshot(bravo=dict(current_activity="Reading files",
+                                                git_diff=[123, 99999, 9999])))
+            assert await _until(pilot, lambda: app.column_widths != widths)
+            assert recomputes
+
     async def test_a_quiet_engine_repaints_nothing(self, app, engine):
         engine.publish(_snapshot())
         async with app.run_test(size=(200, 40)) as pilot:

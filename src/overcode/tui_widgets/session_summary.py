@@ -117,6 +117,8 @@ class SessionSummary(Static, can_focus=True):
             except (ValueError, TypeError):
                 pass
         self.last_command: str = ""  # Last instruction sent to this agent (#413)
+        # This row's cell widths when the columns were last aligned (TUI)
+        self._cell_widths: Optional[list] = None
         # session_with_view(session, engine), rebuilt when either changes
         self._overlay_key: Optional[tuple] = None
         self._overlay: Optional[Session] = None
