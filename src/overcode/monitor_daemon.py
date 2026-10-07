@@ -127,6 +127,16 @@ INTERVAL_SLOW = DAEMON.interval_slow    # When all agents need user input
 INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
 INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attendance)
 
+# Wake scan (docs/design/engine-0.6.md): between ticks the daemon stats each
+# agent's hook state file this often and re-detects only agents whose file
+# changed, so a hook-driven status change is published within about this
+# long instead of waiting for the next tick.
+WAKE_SCAN_ATTENDED_SECONDS = 0.25
+WAKE_SCAN_UNATTENDED_SECONDS = 2.0
+# Between full ticks the state file is rewritten at most this often; views
+# on engine.sock get every change as it happens.
+QUICK_TICK_STATE_SAVE_SECONDS = 1.0
+
 # A TUI touches its attended file every TUI_ATTENDED_TOUCH_SECONDS while a
 # client is attached to it; three missed touches and it is not there.
 TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
@@ -357,8 +367,14 @@ class MonitorDaemon:
         # engine.sock (docs/design/engine-0.6.md): started by run(), so a
         # daemon object built for a test never binds a socket
         self._engine = None
-        # One recorded-colour history per agent (#507), by session id
+        # One recorded-colour history per agent (#507), by session id;
+        # restored from the engine state file so a restart neither forgets
+        # nor re-rings (see _load_recorders)
         self._recorders: Dict[str, EpisodeRecorder] = {}
+        self._recorders_dirty = False
+        # Wake scan: each agent's hook state file signature, by agent name
+        self._hook_signatures: Dict[str, Tuple[int, int]] = {}
+        self._last_state_save = 0.0
 
         # Wall time of the previous complete tick, published so consumers can
         # size their staleness window (MonitorDaemonState.is_stale).
@@ -1109,14 +1125,21 @@ class MonitorDaemon:
         daemon is back within a second of the user's return; a bare
         ``tmux attach`` with no TUI is seen by the next tick's listing.
         """
-        chunk_size = 1
-        elapsed = 0
-
-        while elapsed < total_seconds and not self._shutdown:
+        # Time is counted in slept seconds (not the wall clock), so the loop
+        # is exact under a patched sleep and never oversleeps its interval.
+        elapsed = 0.0
+        last_scan = 0.0
+        while not self._shutdown:
             remaining = total_seconds - elapsed
-            sleep_time = min(chunk_size, remaining)
-            time.sleep(sleep_time)
-            elapsed += sleep_time
+            if remaining <= 1e-9:
+                return
+            attended = self.state.interval_mode != "unattended"
+            # Attended: wake every scan interval. Unattended: wake each
+            # second for the activity signal (a returning person is seen
+            # within a second), scan hooks every WAKE_SCAN_UNATTENDED_SECONDS.
+            step = min(WAKE_SCAN_ATTENDED_SECONDS if attended else 1.0, remaining)
+            time.sleep(step)
+            elapsed += step
 
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
@@ -1124,6 +1147,16 @@ class MonitorDaemon:
                 self.state.interval_mode = "attended"
                 self.state.save(self.state_path)
                 return
+            # Hook-driven changes publish now, not at the next tick
+            if not attended and elapsed - last_scan < WAKE_SCAN_UNATTENDED_SECONDS:
+                continue
+            last_scan = elapsed
+            changed = self._hook_changes()
+            if changed:
+                try:
+                    self._quick_tick(changed, datetime.now())
+                except Exception as e:  # the full tick will retry
+                    self.log.warn(f"quick tick failed: {e}")
 
     def _auto_archive_done_agents(self, sessions: list) -> None:
         """Auto-archive done agents that have been done for over 1 hour (#244).
@@ -1199,8 +1232,8 @@ class MonitorDaemon:
             self._pending.update_session_status(session.id, "done")
             self.log.info(f"[{session.name}] Oversight timeout expired, marked done")
 
-    def _publish_state(self, session_states: List[SessionDaemonState]) -> None:
-        """Publish current state to JSON file."""
+    def _publish_state(self, session_states: List[SessionDaemonState], save: bool = True) -> None:
+        """Publish current state: to engine.sock always, to the JSON file when ``save``."""
         now = datetime.now()
 
         # Update presence state
@@ -1234,7 +1267,9 @@ class MonitorDaemon:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        self.state.save(self.state_path)
+        if save:
+            self.state.save(self.state_path)
+            self._last_state_save = time.monotonic()
         engine = getattr(self, "_engine", None)
         if engine is not None:
             try:
@@ -1259,7 +1294,10 @@ class MonitorDaemon:
         recorder = self._recorders.get(session.id)
         if recorder is None:
             recorder = self._recorders[session.id] = EpisodeRecorder()
+            self._recorders_dirty = True
         observed = recorder.observe(colour, ts)
+        if observed.closed or observed.bell or observed.merged:
+            self._recorders_dirty = True
         state.live_colour = recorder.live_colour
         state.live_since = recorder.live_since
         state.episode_colour = recorder.episode.colour if recorder.episode else None
@@ -1274,6 +1312,99 @@ class MonitorDaemon:
             if engine is not None:
                 engine.ring(session.id, {"colour": observed.bell.colour,
                                          "start": observed.bell.start, "name": session.name})
+
+    # -- engine: recorder persistence, visits, wake scan -------------------
+
+    def _engine_state_path(self):
+        return self.state_path.parent / "engine_state.json"
+
+    def _load_recorders(self) -> None:
+        """Restore each agent's recorded episode, rung stretch and last visit."""
+        import json
+
+        try:
+            data = json.loads(self._engine_state_path().read_text())
+        except (OSError, ValueError):
+            return
+        recorders = data.get("recorders") if isinstance(data, dict) else None
+        if isinstance(recorders, dict):
+            self._recorders = {
+                sid: EpisodeRecorder.from_dict(rec) for sid, rec in recorders.items()
+            }
+
+    def _save_recorders(self, live_ids=None) -> None:
+        """Persist recorder state when it changed; forget agents that are gone."""
+        if not self._recorders_dirty:
+            return
+        import json
+
+        if live_ids is not None:
+            for sid in [s for s in self._recorders if s not in live_ids]:
+                del self._recorders[sid]
+        path = self._engine_state_path()
+        tmp = path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(
+                {"recorders": {sid: r.to_dict() for sid, r in self._recorders.items()}}))
+            os.replace(tmp, path)
+            self._recorders_dirty = False
+        except OSError as e:
+            self.log.warn(f"engine state not saved: {e}")
+
+    def _apply_visits(self) -> None:
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        for sid, ts in engine.take_visits():
+            recorder = self._recorders.get(sid)
+            if recorder is not None:
+                recorder.visit(ts)
+                self._recorders_dirty = True
+
+    def _hook_changes(self) -> set:
+        """Names of agents whose hook state file changed since the last scan.
+
+        One stat per live agent; an agent seen for the first time is
+        recorded, not reported (the next full tick covers it).
+        """
+        changed = set()
+        directory = self.state_path.parent
+        seen = set()
+        for state in self.state.sessions:
+            name = state.name
+            if not name:
+                continue
+            seen.add(name)
+            try:
+                st = os.stat(directory / f"hook_state_{name}.json")
+                sig = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                sig = None
+            previous = self._hook_signatures.get(name, sig)
+            self._hook_signatures[name] = sig
+            if sig != previous:
+                changed.add(name)
+        for name in [n for n in self._hook_signatures if n not in seen]:
+            del self._hook_signatures[name]
+        return changed
+
+    def _quick_tick(self, names: set, now: datetime) -> None:
+        """Re-detect only ``names`` and publish, between full ticks."""
+        index = self._session_index()
+        changed = [s for s in index.by_id.values()
+                   if s.tmux_session == self.tmux_session and s.name in names]
+        if not changed:
+            return
+        try:
+            self._apply_visits()
+            states, _ = self._detect_and_enrich(changed, now, index)
+            fresh = {s.session_id: s for s in states}
+            merged = [fresh.pop(s.session_id, s) for s in self.state.sessions]
+            merged += list(fresh.values())
+            save = time.monotonic() - self._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
+            self._publish_state(merged, save=save)
+        finally:
+            self._flush_pending_writes()
 
     def _start_engine_socket(self) -> None:
         """Serve engine.sock next to the state file; log and carry on if it can't."""
@@ -1332,9 +1463,11 @@ class MonitorDaemon:
         self._sync_process_resources(sessions, now)
         self._dispatch_heartbeats(sessions)
         try:
+            self._apply_visits()
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
             self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
+            self._save_recorders({s.id for s in sessions})
         finally:
             # One write for the whole tick, even when a phase raised: what
             # was staged before the failure lands, as it did when each
@@ -2024,6 +2157,7 @@ class MonitorDaemon:
         self.state.status = "active"
         self.state.current_interval = check_interval
         self.state.save(self.state_path)
+        self._load_recorders()
         self._start_engine_socket()
 
         try:

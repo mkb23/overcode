@@ -63,6 +63,8 @@ class EngineServer:
         self._wake_w.setblocking(False)
         self._last_ping = time.monotonic()
         self.dropped = 0  # views disconnected for falling behind (diagnostics)
+        # (agent id, epoch seconds) the person looked at, drained by the daemon
+        self._visits: list = []
 
     # -- lifecycle -------------------------------------------------------
 
@@ -249,6 +251,16 @@ class EngineServer:
             elif kind == "focus":
                 focus = message.get("agent")
                 peer.focus = focus if isinstance(focus, str) else None
+            elif kind == "visit":
+                agent = message.get("agent")
+                if isinstance(agent, str):
+                    self._visits.append((agent, time.time()))
+
+    def take_visits(self) -> list:
+        """Visits reported since the last call: [(agent id, epoch seconds)]."""
+        with self._lock:
+            visits, self._visits = self._visits, []
+        return visits
 
 
 class EngineClient:
@@ -297,6 +309,10 @@ class EngineClient:
     def set_visible(self, visible: bool) -> None:
         self._visible = visible
         self._send({"t": "visible", "visible": visible})
+
+    def visit(self, agent: str) -> None:
+        """The person looked at ``agent``: its next stall may ring again."""
+        self._send({"t": "visit", "agent": agent})
 
     def set_focus(self, agent: Optional[str]) -> None:
         self._focus = agent

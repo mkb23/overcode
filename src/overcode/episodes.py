@@ -113,6 +113,36 @@ class EpisodeRecorder:
     def pending(self) -> bool:
         return bool(self._excursion)
 
+    # -- persistence ------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """What survives an engine restart: the open episode, the stretch
+        being tracked, what already rang, and the last visit. A pending
+        excursion is not kept; it re-forms from the next observations."""
+        return {
+            "episode": self.episode.to_dict() if self.episode else None,
+            "input_needed_since": self._input_needed_since,
+            "rang_for": self._rang_for,
+            "visited_at": self.visited_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, merge_seconds: float = EPISODE_MERGE_SECONDS) -> "EpisodeRecorder":
+        rec = cls(merge_seconds=merge_seconds)
+        if not isinstance(data, dict):
+            return rec
+        ep = data.get("episode")
+        if isinstance(ep, dict) and ep.get("colour") in COLOURS and isinstance(
+                ep.get("start"), (int, float)):
+            blips = tuple(tuple(b) for b in ep.get("blips") or () if len(b) == 3)
+            rec.episode = Episode(ep["colour"], float(ep["start"]), None, blips)
+            rec._blips = list(blips)
+        for name in ("input_needed_since", "rang_for", "visited_at"):
+            value = data.get(name)
+            if isinstance(value, (int, float)):
+                setattr(rec, "_" + name if name != "visited_at" else name, float(value))
+        return rec
+
     # -- writing --------------------------------------------------------
 
     def visit(self, now: float) -> None:
