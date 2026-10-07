@@ -258,6 +258,43 @@ class TestTellsTheEngine:
             assert await _until(pilot, lambda: app._notifier.queue.called)
 
 
+class TestSisterAgents:
+    """Sisters stay on HTTP polling (0.6.0): no bell message reaches this TUI
+    for their agents, so a new input-needed stretch in a 0.6 sister's
+    forwarded state notifies here; first sight never does."""
+
+    def _app(self):
+        from overcode.tui import SupervisorTUI
+
+        app = SupervisorTUI.__new__(SupervisorTUI)
+        app._visited_here = {}
+        app._remote_stretch_seen = {}
+        app._notifier = MagicMock()
+        return app
+
+    def _row(self, since, unvisited=True):
+        row = MagicMock()
+        row.session.id = "remote-1"
+        row.session.name = "far"
+        row.session.remote_daemon_state = {"input_needed_since": since}
+        row.is_unvisited_stalled = unvisited
+        row.current_activity = "Waiting"
+        row.apply_remote.return_value = False
+        return row
+
+    def test_a_new_stretch_notifies_once(self):
+        app = self._app()
+        app._apply_remote(self._row(None, unvisited=False))  # first sight, working
+        app._apply_remote(self._row(100.0))  # starts needing input
+        app._apply_remote(self._row(100.0))  # same stretch, polled again
+        app._notifier.queue.assert_called_once_with("far", "Waiting")
+
+    def test_first_sight_of_a_stalled_agent_is_quiet(self):
+        app = self._app()
+        app._apply_remote(self._row(100.0))
+        app._notifier.queue.assert_not_called()
+
+
 @pytest.mark.asyncio
 class TestEngineAbsent:
 

@@ -62,7 +62,6 @@ class DaemonStatusBar(Static):
         # Window-scoped burn stats (#174) over the baseline window: the sum of
         # the engine's per-agent burn, set by the TUI
         self._burn_stats = None  # WindowBurnStats or None
-        self._burn_window_hours: float = 0.0
         # Running jobs with no live agent behind them — set by the TUI (#463)
         self.orphan_job_count: int = 0
 

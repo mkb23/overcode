@@ -10,7 +10,7 @@ that as a property.
 Wire format: one JSON object per line, UTF-8, each with a type ``t``:
 
     engine -> view   hello, snapshot, delta, ping, bell
-    view -> engine   subscribe, visible, focus
+    view -> engine   subscribe, visible, focus, burn_window, visit
 
 Fields are kept flat on purpose: a delta replaces whole values, and a field
 that disappears is listed in ``unset``, so applying never needs a deep merge.

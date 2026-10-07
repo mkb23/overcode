@@ -467,8 +467,9 @@ class SupervisorTUI(
         self._visited_here: dict[str, float] = {}
         # The focused-pane capture in flight (one at a time, never queued)
         self._focused_capture_in_flight = False
-        # Rows changed while detached; repainted on re-attach
-        self._repaint_on_attach = False
+        # Sisters' agents: the input-needed stretch each was last seen in,
+        # so a new one notifies (sisters stay on HTTP polling, no bell message)
+        self._remote_stretch_seen: dict[str, Optional[float]] = {}
         # Track whether sessions have been loaded at least once (for startup sequencing)
         self._initial_sessions_loaded = False
         # Track attention jump state (for 'b' key cycling)
@@ -1054,8 +1055,7 @@ class SupervisorTUI(
         if self._update_fleet_flags():
             changed = list(self.query(SessionSummary))
         if not self.attended:
-            self._repaint_on_attach = True
-            return
+            return  # nothing is drawn while detached; re-attaching repaints every row
         self._repaint(changed)
 
     def _repaint(self, changed: list) -> None:
@@ -1071,7 +1071,6 @@ class SupervisorTUI(
 
     def _repaint_rows(self) -> None:
         """Every row from what it holds now (after a detach, or a full refresh)."""
-        self._repaint_on_attach = False
         self._update_fleet_flags()
         self._repaint(list(self.query(SessionSummary)))
 
@@ -1109,7 +1108,6 @@ class SupervisorTUI(
         bar.presence_idle_since = self._engine_fleet.get("presence_idle_since")
         bar.engine_connected = self._engine_connected
         bar._asleep_session_ids = {s.id for s in self.sessions if s.is_asleep}
-        bar._burn_window_hours = self._burn_hours()
         bar._burn_stats = tui_engine.fleet_burn(agents, self._burn_hours())
         if self.attended:
             bar.refresh()
@@ -1185,6 +1183,23 @@ class SupervisorTUI(
         self._notifier.flush()
         if self.attended and self._selected_session_id() == agent:
             self._schedule_bell_dismiss(agent)
+
+    def _apply_remote(self, widget: "SessionSummary") -> bool:
+        """A sister's agent from its polled data; a new stretch needing input notifies.
+
+        A 0.6 sister publishes input_needed_since in its forwarded state.
+        The first sight of an agent never notifies (as the engine's bell
+        never rings on first sight); a stretch that starts later does.
+        """
+        changed = widget.apply_remote(self._visited_here.get(widget.session.id))
+        sid = widget.session.id
+        since = (widget.session.remote_daemon_state or {}).get("input_needed_since")
+        if sid in self._remote_stretch_seen and since is not None \
+                and since != self._remote_stretch_seen[sid] and widget.is_unvisited_stalled:
+            self._notifier.queue(widget.session.name, widget.current_activity)
+            self._notifier.flush()
+        self._remote_stretch_seen[sid] = since
+        return changed
 
     def _visit(self, session_id: str) -> None:
         """The person looked at ``session_id``: tell the engine, clear the 🔔 now."""
@@ -2015,7 +2030,7 @@ class SupervisorTUI(
                 widget.session = updated_session
                 # Sync pr_number from session (propagates both detection and clearing)
                 widget.pr_number = updated_session.pr_number
-                widget.apply_remote(self._visited_here.get(session_id))
+                self._apply_remote(widget)
                 widget.refresh()
                 break
 
@@ -2256,7 +2271,7 @@ class SupervisorTUI(
                     # Sync display modes
                     widget.emoji_free = self.emoji_free
                     if new_session.is_remote:
-                        changed = widget.apply_remote(self._visited_here.get(new_session.id)) or changed
+                        changed = self._apply_remote(widget) or changed
                         widget.subtree_cost_usd = remote_subtree.get(new_session.id, 0.0)
                     if "pr_number" not in widget.engine:
                         # Sync pr_number from session (propagates detection and clearing)
@@ -2331,7 +2346,7 @@ class SupervisorTUI(
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 # What the engine (or a sister) already says about it
                 if session.is_remote:
-                    widget.apply_remote(self._visited_here.get(session.id))
+                    self._apply_remote(widget)
                     widget.subtree_cost_usd = remote_subtree.get(session.id, 0.0)
                 elif session.id in self._engine_agents:
                     widget.apply_engine(self._engine_agents[session.id], self._burn_hours(),

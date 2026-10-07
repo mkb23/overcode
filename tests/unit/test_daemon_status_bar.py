@@ -49,7 +49,6 @@ def _make_bare_status_bar(**extra_attrs):
     widget._spin_baseline_minutes = 0
     widget._sister_states = []
     widget._burn_stats = None
-    widget._burn_window_hours = 0.0
     widget.orphan_job_count = 0
     # Each instance gets its own mock app
     widget._mock_app = MagicMock()
@@ -428,7 +427,6 @@ class TestDaemonStatusBarRenderSpinStats:
                 input_tokens=300, output_tokens=600,
                 cost_usd=0.05,
             ),
-            _burn_window_hours=3.0,
         )
         plain = widget.render().plain
         # 900 tokens / 3h = 300/h
@@ -450,7 +448,6 @@ class TestDaemonStatusBarRenderSpinStats:
                 input_tokens=0, output_tokens=0,
                 cost_usd=0.20,
             ),
-            _burn_window_hours=2.0,
         )
         plain = widget.render().plain
         # cost_per_hr = 0.10
@@ -465,7 +462,6 @@ class TestDaemonStatusBarRenderSpinStats:
             monitor_state=state,
             show_cost="tokens",
             _burn_stats=WindowBurnStats(window_hours=3.0),  # all zeros
-            _burn_window_hours=3.0,
         )
         plain = widget.render().plain
         assert "🔥" not in plain
