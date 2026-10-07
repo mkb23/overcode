@@ -132,6 +132,15 @@ INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attenda
 # long instead of waiting for the next tick.
 WAKE_SCAN_ATTENDED_SECONDS = 0.25
 WAKE_SCAN_UNATTENDED_SECONDS = 2.0
+# A Stop that lands within the hook detector's sticky-green window of the
+# turn's last activity is read as still working until the window passes
+# (#448). Nothing is written when it passes, so the wake scan re-detects an
+# agent once, this long after its hook file last changed: the Stop shows
+# when the window ends, not at the next full tick.
+def _sticky_recheck_seconds() -> float:
+    from .hook_status_detector import _RECENT_ACTIVITY_WINDOW_SECONDS
+
+    return _RECENT_ACTIVITY_WINDOW_SECONDS + 0.1
 # Token/cost/energy columns: synced this often while someone is watching,
 # and at the old 60 s cadence (budgets, history) while nobody is.
 STATS_SYNC_ATTENDED_SECONDS = 5
@@ -1450,11 +1459,15 @@ class MonitorDaemon:
         """Names of agents whose hook state file changed since the last scan.
 
         One stat per live agent; an agent seen for the first time is
-        recorded, not reported (the next full tick covers it).
+        recorded, not reported (the next full tick covers it). An agent
+        whose file changed is reported once more when the detector's
+        sticky-green window has passed (_sticky_recheck_seconds).
         """
         changed = set()
         directory = self.state_path.parent
         seen = set()
+        rechecks = self.__dict__.setdefault("_rechecks", {})
+        now = time.monotonic()
         for state in self.state.sessions:
             name = state.name
             if not name:
@@ -1469,12 +1482,32 @@ class MonitorDaemon:
             self._hook_signatures[name] = sig
             if sig != previous:
                 changed.add(name)
+                rechecks[name] = now + _sticky_recheck_seconds()
+            elif name in rechecks and now >= rechecks[name]:
+                changed.add(name)
+                del rechecks[name]
         for name in [n for n in self._hook_signatures if n not in seen]:
             del self._hook_signatures[name]
+            rechecks.pop(name, None)
         return changed
+
+    def _refresh_detection_mode(self) -> None:
+        """Re-read the fleet default detection mode.
+
+        The legacy global detection_mode file, or "auto": hooks once hook
+        files are fresh. Per-agent overrides are resolved inside the
+        dispatcher, on top of this default. Quick ticks re-read it too, so
+        the first hook event of an "auto" fleet is read as one at once.
+        """
+        from .settings import resolve_detection_mode
+        current_mode = resolve_detection_mode(self.tmux_session)
+        if self.detector.mode != current_mode:
+            self.detector.mode = current_mode
+            self.log.info(f"Fleet detection mode changed to: {current_mode}")
 
     def _quick_tick(self, names: set, now: datetime) -> None:
         """Re-detect only ``names`` and publish, between full ticks."""
+        self._refresh_detection_mode()
         index = self._session_index()
         changed = [s for s in index.by_id.values()
                    if s.tmux_session == self.tmux_session and s.name in names]
@@ -1588,14 +1621,7 @@ class MonitorDaemon:
 
     def _tick_phases(self, now: datetime) -> None:
         """The phases of one tick, in order."""
-        # Re-read the fleet default detection mode (the legacy global
-        # detection_mode file). Per-agent overrides are resolved inside the
-        # dispatcher, on top of this default.
-        from .settings import resolve_detection_mode
-        current_mode = resolve_detection_mode(self.tmux_session)
-        if self.detector.mode != current_mode:
-            self.detector.mode = current_mode
-            self.log.info(f"Fleet detection mode changed to: {current_mode}")
+        self._refresh_detection_mode()
         # One snapshot per tick: the index answers every parent/child lookup
         # the tick makes, and ``sessions`` is this tmux session's slice of it
         # in file order (what list_sessions() would return, filtered).

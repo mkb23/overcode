@@ -34,6 +34,7 @@ def _daemon(tmp_path):
     d._engine = None
     d._shutdown = False
     d.tmux_session = "agents"
+    d._refresh_detection_mode = lambda: None  # never reads a real state dir
     return d
 
 
@@ -75,6 +76,48 @@ class TestHookChanges:
         d.state.sessions = []
         d._hook_changes()
         assert d._hook_signatures == {}
+
+
+class TestStickyRecheck:
+    """A Stop inside the detector's sticky-green window (#448) reads as working
+    until the window passes; nothing is written then, so the scan re-detects
+    the agent once, and the Stop shows when the window ends rather than at
+    the next full tick."""
+
+    def test_a_changed_agent_is_reported_again_when_the_window_passes(self, tmp_path):
+        from overcode import monitor_daemon
+
+        d = _daemon(tmp_path)
+        d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
+        _touch(tmp_path, "a", "{}")
+        clock = [100.0]
+        with patch.object(monitor_daemon.time, "monotonic", lambda: clock[0]):
+            d._hook_changes()
+            _touch(tmp_path, "a", '{"event": "Stop"}')
+            assert d._hook_changes() == {"a"}
+            clock[0] += 0.5
+            assert d._hook_changes() == set()  # still inside the window
+            clock[0] += monitor_daemon._sticky_recheck_seconds()
+            assert d._hook_changes() == {"a"}  # once, at the window's end
+            clock[0] += 5
+            assert d._hook_changes() == set()
+
+    def test_the_recheck_follows_the_detectors_window(self):
+        from overcode import monitor_daemon
+        from overcode.hook_status_detector import _RECENT_ACTIVITY_WINDOW_SECONDS
+
+        assert monitor_daemon._sticky_recheck_seconds() > _RECENT_ACTIVITY_WINDOW_SECONDS
+        assert monitor_daemon._sticky_recheck_seconds() <= _RECENT_ACTIVITY_WINDOW_SECONDS + 0.5
+
+    def test_a_quick_tick_rereads_the_detection_mode(self, tmp_path):
+        """An "auto" fleet's first hook event is read as one at once, not
+        after the next full tick flips the mode."""
+        d = _daemon(tmp_path)
+        calls = []
+        d._refresh_detection_mode = lambda: calls.append(1)
+        d._session_index = lambda: SimpleNamespace(by_id={})
+        d._quick_tick({"a"}, datetime.now())
+        assert calls == [1]
 
 
 class TestQuickTick:

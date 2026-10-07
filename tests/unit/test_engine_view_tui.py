@@ -201,6 +201,18 @@ class TestBells:
             app._notifier.flush.assert_called()
             assert _row(app, "charlie").is_unvisited_stalled is True
 
+    async def test_the_focused_agent_needing_a_look_counts_as_seen(self, app, engine, monkeypatch):
+        """The focused agent is on screen (the split's bottom pane): its 🔔
+        clears after a few seconds, and the engine is told of the visit."""
+        monkeypatch.setattr("overcode.tui.BELL_SEEN_AFTER_SECONDS", 0.2)
+        engine.publish(_snapshot(alpha=dict(input_needed_since=100.0)))
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _connected(pilot, app)
+            visits = []
+            assert await _until(pilot, lambda: visits.extend(engine.take_visits()) or visits)
+            assert [v[0] for v in visits] == ["id-alpha"]
+            assert _row(app, "alpha").is_unvisited_stalled is False
+
     async def test_the_highlight_follows_the_attention_fields(self, app, engine):
         engine.publish(_snapshot(bravo=dict(input_needed_since=100.0, visited_at=50.0)))
         async with app.run_test(size=(200, 40)) as pilot:

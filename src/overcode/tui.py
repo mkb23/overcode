@@ -196,7 +196,11 @@ PAUSED_WHEN_UNATTENDED = frozenset(
 # while the engine stays away.
 ENGINE_BANNER_GRACE_SECONDS = 1.5
 ENGINE_RESTART_EVERY_SECONDS = 10.0
+ENGINE_RETRY_AFTER_DROP_SECONDS = 1.5
 ENGINE_BANNER_TEXT = "  ⚠ engine not running — starting…  (showing the last known state)  "
+# An agent that needs a look while it is the focused one (on screen in the
+# split's bottom pane) counts as visited after this long.
+BELL_SEEN_AFTER_SECONDS = 5.0
 
 
 class SupervisorTUI(
@@ -1040,6 +1044,13 @@ class SupervisorTUI(
         self._apply_engine_to_status_bar()
         if not changed:
             return
+        # The agent on screen (the split's bottom pane) that needs a look:
+        # seen after a few seconds, as when it rings while focused
+        focused_id = self._selected_session_id()
+        for widget in changed:
+            sid = widget.session.id
+            if widget.is_unvisited_stalled and sid == focused_id and self.attended:
+                self._schedule_bell_dismiss(sid)
         if self._update_fleet_flags():
             changed = list(self.query(SessionSummary))
         if not self.attended:
@@ -1115,6 +1126,11 @@ class SupervisorTUI(
             # Show the banner at once: the engine was there and went away
             self._show_engine_banner(True)
             self._start_engine()
+            # A daemon that is still shutting down holds its lock, so that
+            # start was a no-op: try again shortly, then every 10 s
+            self._engine_start_attempt = (
+                time.monotonic() - ENGINE_RESTART_EVERY_SECONDS + ENGINE_RETRY_AFTER_DROP_SECONDS
+            )
         try:
             bar = self.query_one("#daemon-status", DaemonStatusBar)
             bar.engine_connected = connected
@@ -2387,13 +2403,16 @@ class SupervisorTUI(
 
     def _schedule_bell_dismiss(self, session_id: str) -> None:
         """A bell for the agent already on screen counts as seen after 5 s."""
+        if session_id in self._bell_dismiss_timers:
+            return
+
         def _dismiss() -> None:
             self._bell_dismiss_timers.pop(session_id, None)
             # Only if still focused on this agent
             if self._selected_session_id() == session_id:
                 self._visit(session_id)
 
-        self._bell_dismiss_timers[session_id] = self.set_timer(5.0, _dismiss)
+        self._bell_dismiss_timers[session_id] = self.set_timer(BELL_SEEN_AFTER_SECONDS, _dismiss)
 
     def on_session_summary_clicked(self, message: SessionSummary.Clicked) -> None:
         """A click on an agent's row selects it the way j/k do: focus,
