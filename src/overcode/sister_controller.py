@@ -28,7 +28,7 @@ class ControlResult:
 
 
 class SisterController:
-    """HTTP client for sending commands to sister web servers."""
+    """HTTP client for sending commands to sister API servers."""
 
     def __init__(self, timeout: int = 10):
         self.timeout = timeout

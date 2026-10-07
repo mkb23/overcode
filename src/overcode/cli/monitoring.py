@@ -293,12 +293,12 @@ def monitor(
         if is_web_server_running(session):
             ok, msg = stop_web_server(session)
             if ok:
-                rprint("[green]✓[/green] Web server stopped")
+                rprint("[green]✓[/green] API server stopped")
                 started, start_msg = start_web_server(session)
                 if started:
-                    rprint(f"[green]✓[/green] Web server restarted ({start_msg})")
+                    rprint(f"[green]✓[/green] API server restarted ({start_msg})")
                 else:
-                    rprint(f"[yellow]Warning: web server failed to restart: {start_msg}[/yellow]")
+                    rprint(f"[yellow]Warning: API server failed to restart: {start_msg}[/yellow]")
 
     from ..tui import run_tui
 
@@ -340,18 +340,19 @@ def web(
         Optional[int], typer.Option("--port", "-p", help="Port to listen on (default from config or 8080)")
     ] = None,
     stop: Annotated[
-        bool, typer.Option("--stop", help="Stop the running web server")
+        bool, typer.Option("--stop", help="Stop the running API server")
     ] = False,
     session: SessionOption = "agents",
 ):
-    """Start or stop the web dashboard server (non-blocking).
+    """Start or stop the API server (non-blocking).
 
-    Starts the web server in the background and exits immediately.
+    Starts the API server in the background and exits immediately.
     If the server is already running, shows the current URL.
     Use --stop to stop a running server.
 
-    The server provides analytics (at /), live monitoring (at /dashboard),
-    and the /api/status endpoint used by sister instances.
+    The server serves the sister API only (/api/status, /api/timeline/raw,
+    /health and the /api/agents/* control routes) — what another machine's
+    overcode calls when it adds this one as a sister. There is no web UI.
 
     Examples:
         overcode web                          # Start (uses web.port/web.host from config, or 8080/127.0.0.1)
@@ -376,14 +377,14 @@ def web(
     if stop:
         success, msg = stop_web_server(session)
         if success:
-            print("Web server stopped.")
+            print("API server stopped.")
         else:
-            print(f"Web server: {msg}")
+            print(f"API server: {msg}")
         return
 
     if is_web_server_running(session):
         url = get_web_server_url(session)
-        print(f"Web server already running at {url}")
+        print(f"API server already running at {url}")
         return
 
     # Security: require API key when binding to non-localhost
@@ -399,9 +400,9 @@ def web(
 
     success, msg = start_web_server(session, port, host)
     if success:
-        print(f"Web server started: {msg}")
+        print(f"API server started: {msg}")
     else:
-        print(f"Failed to start web server: {msg}")
+        print(f"Failed to start API server: {msg}")
         raise typer.Exit(1)
 
 

@@ -4,7 +4,6 @@ Unit tests for config module.
 
 import pytest
 import socket
-from pathlib import Path
 
 from overcode import config
 
@@ -122,7 +121,7 @@ class TestSaveConfig:
         original = {
             "tmux_session": "agents",
             "hostname": "my-mac",
-            "relay": {"enabled": True, "url": "http://example.com"},
+            "sisters": [{"name": "mac", "url": "http://example.com"}],
         }
         config.save_config(original)
         loaded = config.load_config()
@@ -169,75 +168,6 @@ class TestGetDefaultStandingInstructions:
         result = config.get_default_standing_instructions()
 
         assert result == "Approve file read/write permissions"
-
-
-class TestGetRelayConfig:
-    """Test relay configuration retrieval."""
-
-    def test_returns_none_when_no_config(self, tmp_path, monkeypatch):
-        """Should return None when no config file."""
-        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
-        result = config.get_relay_config()
-        assert result is None
-
-    def test_returns_none_when_relay_disabled(self, tmp_path, monkeypatch):
-        """Should return None when relay is disabled."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("relay:\n  enabled: false\n  url: http://example.com\n  api_key: secret\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-        assert result is None
-
-    def test_returns_none_when_relay_not_configured(self, tmp_path, monkeypatch):
-        """Should return None when relay key is absent."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("tmux_session: agents\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-        assert result is None
-
-    def test_returns_none_when_url_missing(self, tmp_path, monkeypatch):
-        """Should return None when URL is missing."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("relay:\n  enabled: true\n  api_key: secret\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-        assert result is None
-
-    def test_returns_none_when_api_key_missing(self, tmp_path, monkeypatch):
-        """Should return None when API key is missing."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("relay:\n  enabled: true\n  url: http://example.com\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-        assert result is None
-
-    def test_returns_config_when_enabled(self, tmp_path, monkeypatch):
-        """Should return config when relay is properly configured."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("relay:\n  enabled: true\n  url: http://example.com\n  api_key: secret\n  interval: 60\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-
-        assert result is not None
-        assert result["url"] == "http://example.com"
-        assert result["api_key"] == "secret"
-        assert result["interval"] == 60
-
-    def test_uses_default_interval(self, tmp_path, monkeypatch):
-        """Should use default interval when not specified."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("relay:\n  enabled: true\n  url: http://example.com\n  api_key: secret\n")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_relay_config()
-
-        assert result["interval"] == 30  # Default
 
 
 class TestGetSummarizerConfig:
@@ -364,164 +294,6 @@ class TestGetTimelineConfig:
         assert result["hours"] == 3.0
 
 
-class TestGetWebTimePresets:
-    """Test web time presets retrieval."""
-
-    def test_returns_defaults_when_no_config(self, tmp_path, monkeypatch):
-        """Should return default presets when no config file."""
-        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
-
-        result = config.get_web_time_presets()
-
-        assert len(result) > 0
-        preset_names = [p["name"] for p in result]
-        assert "Morning" in preset_names
-        assert "Afternoon" in preset_names
-        assert "Full Day" in preset_names
-        assert "Evening" in preset_names
-        assert "All Time" in preset_names
-
-    def test_default_presets_have_correct_times(self, tmp_path, monkeypatch):
-        """Default presets should have correct start/end times."""
-        monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "nonexistent.yaml")
-
-        result = config.get_web_time_presets()
-
-        morning = next(p for p in result if p["name"] == "Morning")
-        assert morning["start"] == "09:00"
-        assert morning["end"] == "12:00"
-
-        all_time = next(p for p in result if p["name"] == "All Time")
-        assert all_time["start"] is None
-        assert all_time["end"] is None
-
-    def test_returns_custom_presets(self, tmp_path, monkeypatch):
-        """Should return custom presets from config."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets:
-    - name: "Custom"
-      start: "08:00"
-      end: "16:00"
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        assert any(p["name"] == "Custom" for p in result)
-        # Should add "All Time" automatically
-        assert any(p["name"] == "All Time" for p in result)
-
-    def test_custom_presets_with_all_time_no_duplicate(self, tmp_path, monkeypatch):
-        """If custom presets already include All Time, don't add a duplicate."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets:
-    - name: "Custom"
-      start: "08:00"
-      end: "16:00"
-    - name: "All Time"
-      start: null
-      end: null
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        all_time_count = sum(1 for p in result if p["name"] == "All Time")
-        assert all_time_count == 1
-
-    def test_ignores_invalid_presets(self, tmp_path, monkeypatch):
-        """Should ignore presets missing required fields."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets:
-    - name: "Valid"
-      start: "08:00"
-      end: "16:00"
-    - start: "00:00"
-      end: "01:00"
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        # Should only have Valid and All Time
-        names = [p["name"] for p in result]
-        assert "Valid" in names
-        assert "" not in names  # Invalid preset should be filtered
-
-    def test_ignores_non_dict_presets(self, tmp_path, monkeypatch):
-        """Should ignore preset entries that are not dicts."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets:
-    - name: "Valid"
-      start: "08:00"
-      end: "16:00"
-    - "just a string"
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        names = [p["name"] for p in result]
-        assert "Valid" in names
-        assert len(result) == 2  # Valid + All Time
-
-    def test_returns_defaults_for_empty_presets(self, tmp_path, monkeypatch):
-        """Should return defaults when presets list is empty or invalid."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets: []
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        # Should return defaults
-        preset_names = [p["name"] for p in result]
-        assert "Morning" in preset_names
-
-    def test_returns_defaults_when_presets_not_list(self, tmp_path, monkeypatch):
-        """Should return defaults when presets is not a list."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets: "not a list"
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        preset_names = [p["name"] for p in result]
-        assert "Morning" in preset_names
-
-    def test_returns_defaults_when_all_presets_invalid(self, tmp_path, monkeypatch):
-        """Should return defaults when all presets are invalid (no name)."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
-web:
-  time_presets:
-    - start: "08:00"
-      end: "16:00"
-    - start: "10:00"
-      end: "14:00"
-""")
-        monkeypatch.setattr(config, "CONFIG_PATH", config_file)
-
-        result = config.get_web_time_presets()
-
-        # All presets are invalid (no name), should fall back to defaults
-        preset_names = [p["name"] for p in result]
-        assert "Morning" in preset_names
-
-
 class TestGetTimeContextConfig:
     """Test time context configuration retrieval."""
 
@@ -621,7 +393,7 @@ class TestGetWebApiKey:
 
     def test_returns_none_when_key_not_set(self, tmp_path, monkeypatch):
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("web:\n  time_presets: []\n")
+        config_file.write_text("web:\n  port: 8080\n")
         monkeypatch.setattr(config, "CONFIG_PATH", config_file)
         assert config.get_web_api_key() is None
 

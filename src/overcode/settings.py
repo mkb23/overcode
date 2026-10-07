@@ -14,17 +14,17 @@ TODO: Make INTERVAL_FAST/SLOW/IDLE configurable via config.yaml
 
 import dataclasses
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+import yaml
 
 # =============================================================================
 # Version - increment when daemon code changes significantly
 # =============================================================================
 
 DAEMON_VERSION = 2  # Increment when daemon behavior changes
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Set
-
-import yaml
 
 
 # =============================================================================
@@ -225,7 +225,7 @@ TUI = TUISettings()
 # =============================================================================
 
 # Re-exported from pricing module for backward compatibility
-from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401
+from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401, E402
 
 
 def _clamp_fraction(value) -> float:
@@ -567,12 +567,12 @@ def get_supervisor_log_path(session: str) -> Path:
 
 
 def get_web_server_pid_path(session: str) -> Path:
-    """Get web server PID file path for a specific session."""
+    """Get API server PID file path for a specific session."""
     return get_session_dir(session) / "web_server.pid"
 
 
 def get_web_server_port_path(session: str) -> Path:
-    """Get web server port file path for a specific session."""
+    """Get API server port file path for a specific session."""
     return get_session_dir(session) / "web_server.port"
 
 
@@ -751,14 +751,13 @@ def write_tui_heartbeat(session: str) -> None:
 
 # The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
 # client is attached to the pane it runs in (or while it runs outside tmux,
-# where nobody can tell), and the web server touches it whenever it serves
-# a status request (the dashboard's poll, a sister TUI's). It is the monitor
-# daemon's third "someone is watching" signal, next to the keypress
-# heartbeat above and the attached count of the agents session: a TUI in
-# another tmux session or a plain terminal, a browser, a sister — all are
-# invisible to both, and without this touch the daemon would stretch to its
-# unattended interval under a dashboard someone is reading. A touch is one
-# utime, no content.
+# where nobody can tell), and the API server touches it whenever it serves
+# a status request (a sister TUI's poll). It is the monitor daemon's third
+# "someone is watching" signal, next to the keypress heartbeat above and the
+# attached count of the agents session: a TUI in another tmux session or a
+# plain terminal, a sister — all are invisible to both, and without this
+# touch the daemon would stretch to its unattended interval while a sister
+# is watching. A touch is one utime, no content.
 TUI_ATTENDED_TOUCH_SECONDS = 5
 
 

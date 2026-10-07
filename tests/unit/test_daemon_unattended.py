@@ -30,7 +30,6 @@ from overcode.monitor_daemon_state import MonitorDaemonState
 from overcode.settings import (
     DAEMON,
     touch_tui_attended,
-    tui_attended_age_seconds,
     write_tui_heartbeat,
 )
 from overcode.tmux_utils import PaneInfo
@@ -63,7 +62,6 @@ def _daemon(root, tmux_session="agents"):
             daemon = MonitorDaemon(tmux_session=tmux_session, tmux=MagicMock())
     finally:
         monitor_daemon.PresenceLogger = original
-    daemon._relay_config = None
     return daemon
 
 
@@ -148,22 +146,6 @@ class TestAttendance:
         daemon._tmux.list_panes.return_value = {"w": PaneInfo("w", 1, 10, 5, 0, 0, 0, "claude", 1)}
         daemon._panes_at(START + timedelta(seconds=6))
         assert daemon.session_attached == 1
-
-    def test_the_relay_push_is_not_a_reader(self, root):
-        """The daemon's own get_status_data call for the relay must not touch
-        the attended file, or the daemon would keep itself attended; the
-        touch belongs to the web server's request handlers."""
-        daemon = _daemon(root)
-        daemon._relay_config = {"url": "http://relay.test/push", "api_key": "k", "interval": 30}
-        daemon._last_relay_push = datetime.now() - timedelta(hours=1)
-        with (
-            patch("overcode.web_api.get_monitor_daemon_state", return_value=None),
-            patch("urllib.request.urlopen") as urlopen,
-        ):
-            urlopen.return_value.__enter__.return_value.status = 200
-            daemon._maybe_push_to_relay()
-        assert daemon.state.relay_last_status == "ok"
-        assert tui_attended_age_seconds("agents") is None
 
     def test_nobody_is_unattended(self, root):
         daemon = _daemon(root)

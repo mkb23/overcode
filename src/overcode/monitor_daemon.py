@@ -63,7 +63,7 @@ from .settings import (
     tui_attended_age_seconds,
     TUI_ATTENDED_TOUCH_SECONDS,
 )
-from .config import get_monitor_daemon_config, get_relay_config
+from .config import get_monitor_daemon_config
 from .status_constants import (
     STATUS_ASLEEP,
     STATUS_DONE,
@@ -428,19 +428,13 @@ class MonitorDaemon:
         self._model_metadata_failure_backoff = 6 * 3600  # seconds
 
         # Loop interval while nobody is watching (config.yaml
-        # monitor_daemon.interval_unattended_seconds; read once, like relay).
+        # monitor_daemon.interval_unattended_seconds; read once).
         self._interval_unattended: int = get_monitor_daemon_config()["interval_unattended"]
 
         # Housekeeping is wall-clock: first pass HOUSEKEEPING_INTERVAL_SECONDS
         # after the first tick (loop 60 at 2 s used to be 2 minutes in), then
         # every interval, whatever the loop length.
         self._last_housekeeping: Optional[datetime] = None
-
-        # Relay configuration (for pushing state to cloud)
-        self._relay_config = get_relay_config()
-        self._last_relay_push = datetime.min
-        if self._relay_config:
-            self.log.info(f"Relay enabled: {self._relay_config['url']}")
 
         # Shutdown flag
         self._shutdown = False
@@ -1038,11 +1032,9 @@ class MonitorDaemon:
         (PresenceComponent's 60 s window), and no TUI has touched its
         attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
         TUI in another tmux session or a plain terminal has — the first
-        two cannot see it — and the web server makes the same touch when
-        it serves a status request (the dashboard's 5 s poll, a sister
-        TUI's), so the daemon never slows under a dashboard someone is
-        reading, in whatever form. The daemon's own relay push reads the
-        same status data without touching: it is not a reader.
+        two cannot see it — and the API server makes the same touch when
+        it serves a status request (a sister TUI's poll), so the daemon
+        never slows while a sister is watching this fleet.
         """
         attached = self.session_attached
         if attached is None or attached > 0:
@@ -1223,66 +1215,6 @@ class MonitorDaemon:
                 pass
 
         self.state.save(self.state_path)
-
-        # Push to relay if configured and interval elapsed
-        self._maybe_push_to_relay()
-
-    def _maybe_push_to_relay(self) -> None:
-        """Push state to cloud relay if configured."""
-        # Update relay enabled status
-        self.state.relay_enabled = self._relay_config is not None
-
-        if not self._relay_config:
-            self.state.relay_last_status = "disabled"
-            return
-
-        now = datetime.now()
-        interval = self._relay_config.get("interval", 30)
-        if (now - self._last_relay_push).total_seconds() < interval:
-            return
-
-        self._last_relay_push = now
-
-        try:
-            import json
-            import urllib.request
-            import urllib.error
-
-            # Build status payload using web_api format
-            from .web_api import get_status_data
-
-            payload = get_status_data(self.tmux_session)
-
-            # Optionally include timeline (less frequent)
-            # payload["timeline"] = get_timeline_data(self.tmux_session)
-
-            data = json.dumps(payload).encode("utf-8")
-
-            req = urllib.request.Request(
-                self._relay_config["url"],
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-API-Key": self._relay_config["api_key"],
-                },
-                method="POST",
-            )
-
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    self.state.relay_last_push = now.isoformat()
-                    self.state.relay_last_status = "ok"
-                    self.log.debug("Relay push OK")
-                else:
-                    self.state.relay_last_status = "error"
-                    self.log.warn(f"Relay push failed: HTTP {resp.status}")
-
-        except urllib.error.URLError as e:
-            self.state.relay_last_status = "error"
-            self.log.warn(f"Relay push failed: {e.reason}")
-        except Exception as e:
-            self.state.relay_last_status = "error"
-            self.log.warn(f"Relay push error: {e}")
 
     # ------------------------------------------------------------------
     # Tick phases — decomposed from the monolithic run() loop

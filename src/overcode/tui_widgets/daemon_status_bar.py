@@ -475,18 +475,7 @@ class DaemonStatusBar(Static):
             content.append(f"{icon}", style=color)
             content.append(f" {int(idle)}s", style="dim")
 
-        # Relay status (small indicator)
-        if monitor_running and self.monitor_state.relay_enabled:
-            content.append(" │ ", style="dim")
-            relay_status = self.monitor_state.relay_last_status
-            if relay_status == "ok":
-                content.append("📡", style="green")
-            elif relay_status == "error":
-                content.append("📡", style="red")
-            else:
-                content.append("📡", style="dim")
-
-        # Web server status (cached)
+        # API server status (cached)
         if self._web_running:
             content.append(" │ ", style="dim")
             content.append("🌐", style="green")
@@ -508,7 +497,7 @@ class DaemonStatusBar(Static):
                         style="green",
                     )
                 elif sister.reachable and not sister.daemon_running:
-                    # Web server up but daemon down
+                    # API server up but daemon down
                     content.append(
                         f"{sister.name}({sister.total_agents}⚠)",
                         style="bold yellow",

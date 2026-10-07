@@ -111,7 +111,7 @@ Backends guide. Unsupported actions are grayed out for that agent.
 | `[` | Start supervisor daemon |
 | `]` | Stop supervisor daemon |
 | `\` | Restart monitor daemon |
-| `w` | Toggle web dashboard server |
+| `w` | Toggle the API server (sister API) |
 | `A` | Toggle AI summarizer |
 
 ### Utility
@@ -192,7 +192,7 @@ This helps compare current activity against a past baseline, useful for ignoring
 Press `d` to show the daemon log panel at the bottom. This displays:
 - Monitor daemon status and logs
 - Supervisor daemon activity
-- Web server URL when running
+- API server port when running
 - Recent interventions and decisions
 
 ## Tmux Split Layout
@@ -326,4 +326,4 @@ to you.
 - **Approve quickly**: `Enter` sends Enter to approve permission prompts
 - **Numbered options**: Press `1-5` to quickly select menu options
 - **Bulk sleep**: Use `z` to sleep agents you're not actively using—they won't count toward stats
-- **Monitor remotely**: Press `w` to start the web server, then access from your phone
+- **Watch from another machine**: Press `w` to start the API server, then add this machine as a sister on the other one

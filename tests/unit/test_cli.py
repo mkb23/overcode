@@ -104,7 +104,7 @@ class TestInstructCommand:
 # Extended CLI tests with mocked dependencies
 # =============================================================================
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock  # noqa: E402
 
 
 class TestListCommandWithMocks:
@@ -900,7 +900,7 @@ class TestFollowCommand:
 
     def test_follow_propagates_exit_code(self):
         """Follow propagates non-zero exit code."""
-        with patch('overcode.follow_mode.follow_agent', return_value=1) as mock_follow:
+        with patch('overcode.follow_mode.follow_agent', return_value=1):
             result = runner.invoke(app, ["follow", "my-agent"])
             assert result.exit_code == 1
 
@@ -1236,7 +1236,6 @@ class TestBudgetShowCommand:
 
     def test_budget_show_all_agents(self):
         """Budget show with no name shows all agents."""
-        from overcode.session_manager import SessionStats
         with patch('overcode.session_manager.SessionManager') as mock_sm_cls:
             mock_sm = MagicMock()
             agent = _make_session(name="a1", cost_budget_usd=10.0)
@@ -2584,8 +2583,6 @@ class TestConfigShowCommand:
         config = {
             "default_standing_instructions": "Be concise",
             "summarizer": {"api_url": "https://api.example.com", "model": "gpt-4", "api_key_var": "KEY"},
-            "relay": {"enabled": True, "url": "https://relay.example.com", "interval": 30},
-            "web": {"time_presets": [{"name": "Morning", "start": "09:00", "end": "12:00"}]},
             "sisters": [{"name": "macbook", "url": "http://localhost:5337"}],
         }
         with patch('overcode.config.CONFIG_PATH', config_path):
@@ -2594,7 +2591,7 @@ class TestConfigShowCommand:
                 assert result.exit_code == 0
                 assert "Be concise" in result.output
                 assert "summarizer" in result.output
-                assert "relay" in result.output
+                assert "relay" not in result.output
                 assert "macbook" in result.output
 
     def test_config_show_lists_new_agent_defaults(self, tmp_path):

@@ -1,14 +1,14 @@
 """
-Web server for Overcode dashboard and control API.
+API server for Overcode: the sister API.
 
-Provides a mobile-optimized dashboard for monitoring agents (GET)
-and a control API for remote agent management (POST/PUT/DELETE).
-Uses Python stdlib http.server - no additional dependencies required.
+Serves fleet status (GET) and a control API (POST/PUT/DELETE) that sister
+overcode instances call over HTTP (sister_poller, sister_controller,
+ssh_provisioner). There is no HTML UI. Uses Python stdlib http.server -
+no additional dependencies required.
 """
 
 import json
 import sys
-from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs
@@ -21,38 +21,25 @@ from .settings import (
 )
 from .config import get_web_api_key, get_web_allow_control
 from .pid_utils import is_process_running, stop_process
-from .web_templates import get_dashboard_html, get_analytics_html
 from .web_api import (
     get_status_data,
     get_single_agent_status,
-    get_timeline_data,
     get_raw_timeline_data,
     get_health_data,
-    # Analytics API functions
-    get_analytics_sessions,
-    get_analytics_timeline,
-    get_analytics_stats,
-    get_analytics_daily,
-    get_time_presets,
 )
 
 
-# Route table: path -> method name on OvercodeHandler
+# Route table: path -> method name on OvercodeHandler.
+# Sisters call every GET route and every control route below except
+# /api/daemon/summarizer/toggle (kept as part of the control API).
+# tests/unit/test_sister_api_routes.py hits each one over real HTTP.
 _GET_ROUTES = {
-    "/": "_serve_analytics_dashboard",
-    "/index.html": "_serve_analytics_dashboard",
-    "/static/chart.min.js": "_serve_chartjs",
-    "/dashboard": "_serve_dashboard",
-    "/api/status": "_serve_api_status",
-    "/api/analytics/sessions": "_serve_analytics_sessions",
-    "/api/analytics/timeline": "_serve_analytics_timeline",
-    "/api/analytics/stats": "_serve_analytics_stats",
-    "/api/analytics/daily": "_serve_analytics_daily",
-    "/api/analytics/presets": "_serve_analytics_presets",
-    "/api/timeline": "_serve_timeline",
-    "/api/timeline/raw": "_serve_timeline_raw",
-    "/health": "_serve_health",
+    "/api/status": "_serve_api_status",          # sister_poller, ssh_provisioner
+    "/api/timeline/raw": "_serve_timeline_raw",  # sister_poller.poll_all_timelines
+    "/health": "_serve_health",                  # ssh_provisioner
 }
+# Plus the dynamic GET /api/agents/{name}/status (sister_poller.poll_single_agent),
+# handled in do_GET.
 
 # Control API route tables (POST/PUT/DELETE).
 # Fixed routes: (method, path) -> handler(api, ts, body)
@@ -130,10 +117,7 @@ _AGENT_CONTROL_ROUTES = {
 
 
 class OvercodeHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for overcode dashboard.
-
-    Serves both the live monitoring dashboard and historical analytics.
-    """
+    """HTTP request handler for the overcode sister API."""
 
     # Set by run_server before starting
     tmux_session: str = "agents"
@@ -169,84 +153,17 @@ class OvercodeHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
-    def _parse_datetime(self, value: Optional[str]) -> Optional[datetime]:
-        """Parse ISO datetime string from query param."""
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None
-
-    def _parse_time_range(self, query) -> Tuple[Optional[datetime], Optional[datetime]]:
-        """Parse start/end datetime from query params."""
-        return (
-            self._parse_datetime(query.get("start", [None])[0]),
-            self._parse_datetime(query.get("end", [None])[0]),
-        )
-
     # -----------------------------------------------------------------
     # GET route handlers
     # -----------------------------------------------------------------
 
-    def _serve_content(self, content: str, content_type: str = "text/html; charset=utf-8", cache_control: str = "no-cache") -> None:
-        """Serve string content with given content type and cache headers."""
-        try:
-            content_bytes = content.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(content_bytes)))
-            self.send_header("Cache-Control", cache_control)
-            self.end_headers()
-            self.wfile.write(content_bytes)
-        except Exception as e:
-            self.send_error(500, f"Internal error: {e}")
-
-    def _serve_dashboard(self, query=None) -> None:
-        """Serve the live monitoring dashboard HTML page."""
-        self._serve_content(get_dashboard_html())
-
-    def _serve_analytics_dashboard(self, query=None) -> None:
-        """Serve the analytics dashboard HTML page."""
-        self._serve_content(get_analytics_html())
-
-    def _serve_chartjs(self, query=None) -> None:
-        """Serve the embedded Chart.js library."""
-        from .web_chartjs import CHARTJS_JS
-        self._serve_content(CHARTJS_JS, "application/javascript", "public, max-age=31536000")
-
     def _serve_api_status(self, query) -> None:
-        # Someone is reading the fleet through this server — the dashboard's
-        # 5 s poll, a sister TUI's 10 s one. The touch the TUI makes while
-        # attended keeps the monitor daemon on its fast loop for them too
-        # (the daemon's own relay push calls get_status_data directly and
-        # must not count as a reader, which is why this lives in the handler).
+        # Someone is reading the fleet through this server — a sister TUI's
+        # 10 s poll. The touch the TUI makes while attended keeps the
+        # monitor daemon on its fast loop for them too (it lives in the
+        # handler so a direct get_status_data call does not count as a reader).
         touch_tui_attended(self.tmux_session)
         self._serve_json(get_status_data(self.tmux_session))
-
-    def _serve_analytics_sessions(self, query) -> None:
-        start, end = self._parse_time_range(query)
-        self._serve_json(get_analytics_sessions(start, end))
-
-    def _serve_analytics_timeline(self, query) -> None:
-        start, end = self._parse_time_range(query)
-        self._serve_json(get_analytics_timeline(self.tmux_session, start, end))
-
-    def _serve_analytics_stats(self, query) -> None:
-        start, end = self._parse_time_range(query)
-        self._serve_json(get_analytics_stats(self.tmux_session, start, end))
-
-    def _serve_analytics_daily(self, query) -> None:
-        start, end = self._parse_time_range(query)
-        self._serve_json(get_analytics_daily(start, end))
-
-    def _serve_analytics_presets(self, query) -> None:
-        self._serve_json(get_time_presets())
-
-    def _serve_timeline(self, query) -> None:
-        hours = float(query.get("hours", [3.0])[0])
-        slots = int(query.get("slots", [60])[0])
-        self._serve_json(get_timeline_data(self.tmux_session, hours=hours, slots=slots))
 
     def _serve_timeline_raw(self, query) -> None:
         hours = float(query.get("hours", [3.0])[0])
@@ -403,7 +320,7 @@ def run_server(
     port: int = 8080,
     tmux_session: str = "agents"
 ) -> None:
-    """Run the web dashboard server.
+    """Run the API server in the foreground.
 
     Args:
         host: Host to bind to (default: 127.0.0.1 for localhost only)
@@ -437,12 +354,10 @@ def run_server(
     # Get actual bound address for display
     bound_host, bound_port = server.server_address
 
-    print("Overcode Web Server")
-    print("====================")
+    print("Overcode API Server (sister API)")
+    print("================================")
     print(f"Monitoring tmux session: {tmux_session}")
     print("")
-    print(f"  Analytics:  http://localhost:{bound_port}/")
-    print(f"  Dashboard:  http://localhost:{bound_port}/dashboard")
     print(f"  API Status: http://localhost:{bound_port}/api/status")
     print("")
     print(f"Local:   http://localhost:{bound_port}")
@@ -471,7 +386,7 @@ def run_server(
 
 
 # =============================================================================
-# Web Server Management (for TUI toggle)
+# API Server Management (for TUI toggle and `overcode web`)
 # =============================================================================
 
 
@@ -492,7 +407,7 @@ def _find_available_port(start_port: int = 8080, max_attempts: int = 10) -> int:
 
 
 def is_web_server_running(session: str) -> bool:
-    """Check if the web server is running for the given session."""
+    """Check if the API server is running for the given session."""
     pid_path = get_web_server_pid_path(session)
     return is_process_running(pid_path)
 
@@ -514,7 +429,7 @@ def get_web_server_url(session: str) -> Optional[str]:
 
 
 def _log_to_file(session: str, message: str) -> None:
-    """Write a debug message to the web server log."""
+    """Write a debug message to the API server log."""
     from datetime import datetime
     from .settings import get_session_dir
     try:
@@ -531,7 +446,7 @@ def _log_to_file(session: str, message: str) -> None:
 
 
 def start_web_server(session: str, port: int | None = None, host: str | None = None) -> Tuple[bool, str]:
-    """Start the analytics web server for a session.
+    """Start the API server for a session.
 
     Args:
         session: tmux session name
@@ -598,11 +513,11 @@ def start_web_server(session: str, port: int | None = None, host: str | None = N
         _log_to_file(session, f"Waiting for server... attempt {i+1}/10")
 
     _log_to_file(session, "Server failed to start within timeout")
-    return False, "Failed to start web server"
+    return False, "Failed to start API server"
 
 
 def stop_web_server(session: str) -> Tuple[bool, str]:
-    """Stop the analytics web server for a session.
+    """Stop the API server for a session.
 
     Args:
         session: tmux session name
@@ -637,7 +552,7 @@ def stop_web_server(session: str) -> Tuple[bool, str]:
 
 
 def toggle_web_server(session: str, port: int | None = None, host: str | None = None) -> Tuple[bool, str]:
-    """Toggle the web server on/off for a session.
+    """Toggle the API server on/off for a session.
 
     Args:
         session: tmux session name

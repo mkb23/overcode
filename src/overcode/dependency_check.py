@@ -9,14 +9,14 @@ import shutil
 import subprocess
 from typing import Callable, Optional, Tuple, Type
 
-from .exceptions import TmuxNotFoundError, AgentCliNotFoundError
+from .exceptions import TmuxNotFoundError
 
 
 def find_executable(name: str) -> Optional[str]:
     """Find the path to an executable.
 
     Checks PATH first, then common install locations that may not be on PATH
-    in non-login shells (e.g., web server subprocesses, SSH non-interactive).
+    in non-login shells (e.g., API server subprocesses, SSH non-interactive).
 
     Args:
         name: Name of the executable
@@ -24,9 +24,6 @@ def find_executable(name: str) -> Optional[str]:
     Returns:
         Full path to executable, or None if not found
     """
-    import os
-    from pathlib import Path
-
     path = shutil.which(name)
     if path:
         return path

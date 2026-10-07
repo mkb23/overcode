@@ -424,8 +424,6 @@ class TestSyncClaudeCodeStats:
 
     def test_updates_stats_when_session_stats_available(self, tmp_path, monkeypatch):
         """Should call update_stats with token and cost data from Claude history."""
-        from overcode.monitor_daemon import MonitorDaemon
-        from unittest.mock import MagicMock
 
         daemon = self._make_daemon(tmp_path, monkeypatch)
 
@@ -1123,15 +1121,6 @@ class TestPublishState:
         assert daemon.state.presence_state == 3
         assert daemon.state.presence_idle_seconds == 5.0
 
-    def test_calls_maybe_push_to_relay(self, tmp_path, monkeypatch):
-        """Should call _maybe_push_to_relay after saving state."""
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-
-        with patch.object(daemon, '_maybe_push_to_relay') as mock_relay:
-            daemon._publish_state([])
-
-        mock_relay.assert_called_once()
-
     def test_publishes_last_tick_duration(self, tmp_path, monkeypatch):
         """The measured tick duration lands in the state file (rounded to ms)."""
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -1199,8 +1188,7 @@ class TestTickTiming:
 
         def phases(_now):
             _time.sleep(0.02)
-            with patch.object(daemon, "_maybe_push_to_relay"):
-                daemon._publish_state([])
+            daemon._publish_state([])
             published.append(daemon.state.last_tick_duration_seconds)
 
         with patch.object(daemon, "_tick_phases", side_effect=phases):
@@ -1209,107 +1197,6 @@ class TestTickTiming:
 
         assert published[0] == 0.0
         assert published[1] >= 0.02
-
-
-class TestMaybePushToRelay:
-    """Test _maybe_push_to_relay method."""
-
-    def _make_daemon(self, tmp_path, monkeypatch):
-        """Helper to create a minimal MonitorDaemon for testing."""
-        from overcode.monitor_daemon import MonitorDaemon
-
-        monkeypatch.setattr('overcode.monitor_daemon.ensure_session_dir', lambda x: tmp_path)
-        monkeypatch.setattr(
-            'overcode.monitor_daemon.get_monitor_daemon_pid_path',
-            lambda x: tmp_path / "pid"
-        )
-        monkeypatch.setattr(
-            'overcode.monitor_daemon.get_monitor_daemon_state_path',
-            lambda x: tmp_path / "state.json"
-        )
-        monkeypatch.setattr(
-            'overcode.monitor_daemon.get_agent_history_path',
-            lambda x: tmp_path / "history.csv"
-        )
-
-        with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
-        return daemon
-
-    def test_disabled_when_no_relay_config(self, tmp_path, monkeypatch):
-        """Should set status to disabled when relay_config is None."""
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon._relay_config = None
-
-        daemon._maybe_push_to_relay()
-
-        assert daemon.state.relay_enabled is False
-        assert daemon.state.relay_last_status == "disabled"
-
-    def test_skips_push_when_interval_not_elapsed(self, tmp_path, monkeypatch):
-        """Should not push when interval has not elapsed since last push."""
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon._relay_config = {"url": "https://example.com/update", "api_key": "key", "interval": 30}
-        daemon._last_relay_push = datetime.now()  # Just pushed
-
-        with patch('urllib.request.urlopen') as mock_urlopen:
-            daemon._maybe_push_to_relay()
-
-        # Should not have made a request (interval hasn't elapsed)
-        mock_urlopen.assert_not_called()
-        assert daemon.state.relay_enabled is True
-
-    def test_successful_push(self, tmp_path, monkeypatch):
-        """Should push state and update relay status on success."""
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon._relay_config = {"url": "https://example.com/update", "api_key": "secret", "interval": 30}
-        daemon._last_relay_push = datetime.min  # Force push
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=False)
-
-        mock_status_data = {"agents": [], "status": "active"}
-
-        with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
-            with patch('overcode.web_api.get_status_data', return_value=mock_status_data):
-                daemon._maybe_push_to_relay()
-
-        assert daemon.state.relay_enabled is True
-        assert daemon.state.relay_last_status == "ok"
-        assert daemon.state.relay_last_push is not None
-
-    def test_failed_push_sets_error_status(self, tmp_path, monkeypatch):
-        """Should set error status on push failure."""
-        import urllib.error
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon._relay_config = {"url": "https://example.com/update", "api_key": "secret", "interval": 30}
-        daemon._last_relay_push = datetime.min  # Force push
-
-        mock_status_data = {"agents": [], "status": "active"}
-
-        with patch('urllib.request.urlopen', side_effect=urllib.error.URLError("connection refused")):
-            with patch('overcode.web_api.get_status_data', return_value=mock_status_data):
-                daemon._maybe_push_to_relay()
-
-        assert daemon.state.relay_last_status == "error"
-
-    def test_handles_generic_exception(self, tmp_path, monkeypatch):
-        """Should handle generic exceptions during relay push."""
-        daemon = self._make_daemon(tmp_path, monkeypatch)
-        daemon._relay_config = {"url": "https://example.com/update", "api_key": "secret", "interval": 30}
-        daemon._last_relay_push = datetime.min  # Force push
-
-        mock_status_data = {"agents": [], "status": "active"}
-
-        with patch('urllib.request.urlopen', side_effect=RuntimeError("unexpected")):
-            with patch('overcode.web_api.get_status_data', return_value=mock_status_data):
-                daemon._maybe_push_to_relay()
-
-        assert daemon.state.relay_last_status == "error"
 
 
 class TestDaemonTerminatedSessionGuard:
@@ -1371,7 +1258,6 @@ class TestDaemonTerminatedSessionGuard:
 
     def test_done_session_skips_detect_status(self, tmp_path, monkeypatch):
         """Daemon should not call detect_status for sessions with status='done'."""
-        from overcode.monitor_daemon import MonitorDaemon
         from overcode.status_constants import STATUS_DONE
 
         daemon = self._make_daemon(tmp_path, monkeypatch)
@@ -1625,7 +1511,7 @@ class TestPrBranchMismatchClearing:
     def test_pr_cleared_on_branch_mismatch(self):
         """When branch changes away from pr_branch, both pr_number and pr_branch should clear."""
         from overcode.monitor_daemon import MonitorDaemon
-        from overcode.session_manager import Session, SessionStats
+        from overcode.session_manager import Session
 
         session = Session(
             id="test-1",
@@ -2106,7 +1992,8 @@ class TestMaybeRefreshModelMetadata:
 
     def test_loop_does_not_wait_on_a_slow_fetch(self):
         """A fetch that hangs (packet-dropping network) must not block the caller."""
-        import threading, time
+        import threading
+        import time
         release = threading.Event()
 
         def slow_refresh():

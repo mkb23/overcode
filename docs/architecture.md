@@ -18,7 +18,7 @@ header-includes: |
 
 # Overview
 
-Overcode is a CLI/TUI orchestration layer for managing multiple Claude Code agent sessions running in tmux. It provides real-time status monitoring, time tracking, cost estimation, heartbeat automation, and a web dashboard — all built on top of tmux as the process host and Claude Code's JSONL history as the data source.
+Overcode is a CLI/TUI orchestration layer for managing multiple Claude Code agent sessions running in tmux. It provides real-time status monitoring, time tracking, cost estimation, heartbeat automation, and an HTTP API for sister instances — all built on top of tmux as the process host and Claude Code's JSONL history as the data source.
 
 **The codebase is 28,950 lines of Python across 72 source files.**
 
@@ -66,7 +66,7 @@ The core data pipeline is simple: tmux panes are scraped for status, the monitor
 
 3. **Consumers** read the published state file:
    - **TUI** (Textual, ~2s refresh) — merges daemon state + session registry + sister data
-   - **Web Dashboard** (stdlib HTTP) — serves JSON API + HTML dashboard
+   - **API Server** (stdlib HTTP) — serves the JSON sister API (no HTML UI since the web UI was removed)
    - **Supervisor Daemon** — reads state to decide when to launch intervention agents
 
 \newpage
@@ -114,6 +114,11 @@ Four modules implementing a dual-strategy pattern:
 - `supervisor_daemon_core.py` (314 lines): pure logic for context building, session filtering, action determination
 
 ## Web Server — 3,699 lines (13% of codebase)
+
+> **Update:** the HTML dashboard, analytics pages, `web_templates.py`,
+> `web_chartjs.py` and the Cloudflare relay have since been removed. The
+> server (`web_server.py`, `web_api.py`, `web_control_api.py`) now serves the
+> sister API only. The figures below are from the original analysis.
 
 - `web_templates.py` (1,656 lines): **the single biggest contributor to bloat** — entire HTML/CSS/JS dashboard as Python string literals
 - `web_server.py` (642 lines): stdlib `http.server` routing

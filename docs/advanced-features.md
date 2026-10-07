@@ -298,13 +298,12 @@ Quickly reset an agent to the main branch.
 - Starting fresh on a new task
 - Pulling in changes from other agents
 
-## Remote Monitoring
+## API Server
 
-Monitor agents from anywhere with the web dashboard.
-
-### Web Dashboard
-
-Start the dashboard server:
+`overcode web` runs a small HTTP API server. It serves the **sister API only** —
+what another machine's overcode calls when it adds this one as a sister (see
+[Sister Integration](#sister-integration)). There is no web UI: the HTML
+dashboard, analytics pages and the Cloudflare relay were removed.
 
 ```bash
 overcode web                          # Start on localhost:8080
@@ -315,20 +314,20 @@ overcode web --stop                   # Stop the server
 
 The server runs in the background — the command exits immediately. Run `overcode web` again to see the URL if already running.
 
-Access `http://<your-ip>:8080` from your phone, tablet, or another machine.
+Routes (all JSON; `X-API-Key` required when `web.api_key` is set):
 
-Features:
-- Summary statistics and daily activity charts
-- Session browser with sorting
-- Timeline visualization with agent status and user presence
-- Efficiency metrics and cost analysis
-- Live agent monitoring at `/dashboard`
-- Sister-compatible `/api/status` endpoint
-- Auto-refreshes, optimized for mobile screens
+| Route | Used by |
+|-------|---------|
+| `GET /api/status` | sister TUI poll, SSH provisioner version check |
+| `GET /api/agents/{name}/status` | sister TUI focused-agent poll |
+| `GET /api/timeline/raw` | sister TUI timeline |
+| `GET /health` | SSH provisioner |
+| `POST/PUT/DELETE /api/agents/...`, `/api/daemon/...` | sister control actions (needs `web.allow_control: true`) |
+| `POST /api/shutdown` | SSH provisioner (stops services, agents keep running) |
 
 ### TUI Toggle
 
-Press `w` in the TUI to start/stop the web server. The URL appears in the daemon panel.
+Press `w` in the TUI to start/stop the API server. Its port appears in the daemon status bar.
 
 ## AI Summarizer
 
@@ -463,38 +462,6 @@ Presence tracking works on all platforms. Sleep detection (gap inference), TUI h
 ~/.overcode/presence_log.csv
 ```
 
-### Analytics
-
-The web dashboard (`overcode web`) overlays presence data on timelines, showing when agents were working while you were away vs. actively monitoring.
-
-## Cloud Relay
-
-Push status to a remote endpoint for custom integrations.
-
-### Configuration
-
-```yaml
-relay:
-  enabled: true
-  url: https://your-worker.workers.dev/update
-  api_key: your-secret-key
-  interval: 30  # seconds
-```
-
-### Payload
-
-The relay sends JSON with:
-- All agent statuses
-- Token usage
-- Costs
-- Current activity
-
-### Use Cases
-
-- Custom dashboards
-- Slack notifications
-- Integration with project management tools
-
 ## Sister Integration
 
 Aggregate agents from multiple machines into a single TUI. When running overcode on 2-3 machines simultaneously, sister integration gives you read-only visibility into all agents from one place.
@@ -545,7 +512,7 @@ sisters:
 
 ### Setup Option B: Direct LAN with API Key
 
-Expose the web server directly on the LAN. Requires an API key for security.
+Expose the API server directly on the LAN. Requires an API key for security.
 
 On each **remote machine**, add to `~/.overcode/config.yaml`:
 

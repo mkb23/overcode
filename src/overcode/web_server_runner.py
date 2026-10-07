@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Web server runner - standalone script for running the analytics server.
+API server runner - standalone script for running the sister API server.
 
 This is invoked as a subprocess from the TUI to avoid multiprocessing issues
 with Textual's file descriptor management.
@@ -17,13 +17,13 @@ from pathlib import Path
 
 
 def get_log_path(session: str) -> Path:
-    """Get path for web server log file."""
+    """Get path for API server log file."""
     from .settings import get_session_dir
     return get_session_dir(session) / "web_server.log"
 
 
 def log(session: str, message: str) -> None:
-    """Write a log message to the web server log file."""
+    """Write a log message to the API server log file."""
     try:
         log_path = get_log_path(session)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,7 +35,7 @@ def log(session: str, message: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Overcode analytics web server")
+    parser = argparse.ArgumentParser(description="Run the Overcode API server (sister API)")
     parser.add_argument("--session", "-s", required=True, help="Session name")
     parser.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
@@ -45,7 +45,7 @@ def main():
     port = args.port
     host = args.host
 
-    log(session, f"Starting web server on port {port}")
+    log(session, f"Starting API server on port {port}")
 
     try:
         from .settings import get_web_server_pid_path, get_web_server_port_path

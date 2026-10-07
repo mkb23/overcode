@@ -46,7 +46,7 @@ def _sister_list():
 @sister_app.command("add")
 def sister_add(
     name: Annotated[str, typer.Argument(help="Name for this sister instance")],
-    url: Annotated[str, typer.Argument(help="URL of the sister's web server")],
+    url: Annotated[str, typer.Argument(help="URL of the sister's API server")],
     api_key: Annotated[
         Optional[str], typer.Option("--api-key", help="API key for authentication")
     ] = None,
@@ -141,7 +141,7 @@ def sister_status():
         pass
 
     rprint(f"[bold]Local version:[/bold] {local_version}\n")
-    rprint(f"[bold]Sister instances:[/bold]\n")
+    rprint("[bold]Sister instances:[/bold]\n")
 
     # Poll all sisters (this fetches current state)
     poller.poll_all()
@@ -168,7 +168,7 @@ def sister_status():
             if sister.last_fetch:
                 rprint(f"  Last poll: {sister.last_fetch}")
         else:
-            rprint(f"  Status: [red]Unreachable[/red]")
+            rprint("  Status: [red]Unreachable[/red]")
             if sister.last_error:
                 rprint(f"  Error: [dim]{sister.last_error}[/dim]")
 
@@ -180,7 +180,7 @@ def sister_allow_control(
     on: Annotated[bool, typer.Option("--on", help="Enable remote control")] = False,
     off: Annotated[bool, typer.Option("--off", help="Disable remote control")] = False,
 ):
-    """Show or toggle remote control for this machine's web server.
+    """Show or toggle remote control for this machine's API server.
 
     When enabled, sister instances can send commands (kill, restart, send
     instructions, etc.) to agents on this machine via POST endpoints.
@@ -213,7 +213,7 @@ def sister_allow_control(
             rprint()
             rprint("  web:")
             rprint('    api_key: "your-secret-key"')
-        rprint("  Restart web server for changes to take effect.")
+        rprint("  Restart API server for changes to take effect.")
     elif off:
         web["allow_control"] = False
         save_config(config)
