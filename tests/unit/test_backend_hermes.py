@@ -506,3 +506,84 @@ class TestConfigHelpers:
         assert configured_context_length() == 256000
         write_hermes_config(isolated_hermes_home, "model:\n  context_length: '256K'\n")
         assert configured_context_length() is None
+
+
+class TestConfigParseCache:
+    """#527: config.yaml is parsed once per version of the file, and every
+    caller sees an edit on its next call."""
+
+    @pytest.fixture
+    def parses(self, monkeypatch):
+        import yaml
+
+        from overcode.backends import hermes
+
+        hermes.clear_config_cache()
+        calls = []
+        real = yaml.safe_load
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(yaml, "safe_load", counting)
+        yield calls
+        hermes.clear_config_cache()
+
+    def test_unchanged_file_parses_once(self, isolated_hermes_home, parses):
+        write_hermes_config(isolated_hermes_home, "model:\n  context_length: 256000\n")
+        for _ in range(5):
+            assert configured_context_length() == 256000
+        assert plugin_enabled() is False
+        assert provider_configured() is False
+        assert len(parses) == 1
+
+    def test_same_size_edit_with_new_mtime_is_reparsed(self, isolated_hermes_home, parses):
+        path = write_hermes_config(isolated_hermes_home, "model:\n  context_length: 256000\n")
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        assert configured_context_length() == 256000
+        path.write_text("model:\n  context_length: 128000\n")  # same size
+        os.utime(path, ns=(2_000_000_000, 2_000_000_000))
+        assert configured_context_length() == 128000
+        assert len(parses) == 2
+
+    def test_size_change_with_same_mtime_is_reparsed(self, isolated_hermes_home, parses):
+        path = write_hermes_config(isolated_hermes_home, "plugins:\n  enabled: []\n")
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        assert plugin_enabled() is False
+        path.write_text("plugins:\n  enabled:\n    - overcode\n")
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))  # mtime unchanged
+        assert plugin_enabled() is True
+        assert len(parses) == 2
+
+    def test_deleted_file_returns_none(self, isolated_hermes_home, parses):
+        path = write_hermes_config(isolated_hermes_home, "model:\n  context_length: 256000\n")
+        assert configured_context_length() == 256000
+        path.unlink()
+        assert configured_context_length() is None
+        assert plugin_enabled() is None
+        assert provider_configured() is None
+
+    def test_hermes_home_change_is_honoured(self, tmp_path, monkeypatch, parses):
+        a = tmp_path / "home-a"
+        b = tmp_path / "home-b"
+        a.mkdir()
+        b.mkdir()
+        # Same bytes, same mtime: only the path tells them apart.
+        for home, length in ((a, 111000), (b, 222000)):
+            path = write_hermes_config(home, f"model:\n  context_length: {length}\n")
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        monkeypatch.setenv("HERMES_HOME", str(a))
+        assert configured_context_length() == 111000
+        monkeypatch.setenv("HERMES_HOME", str(b))
+        assert configured_context_length() == 222000
+        monkeypatch.setenv("HERMES_HOME", str(a))
+        assert configured_context_length() == 111000
+
+    def test_unparseable_file_returns_none_until_fixed(self, isolated_hermes_home, parses):
+        path = write_hermes_config(isolated_hermes_home, "model: [unclosed\n")
+        assert configured_context_length() is None
+        assert configured_context_length() is None
+        assert len(parses) == 1  # a broken file is not re-parsed either
+        path.write_text("model:\n  context_length: 64000\n")
+        assert configured_context_length() == 64000

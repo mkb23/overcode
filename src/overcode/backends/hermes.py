@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
@@ -196,16 +197,51 @@ def ensure_plugin_installed() -> Optional[Path]:
     return target_dir
 
 
+# The last parse of config.yaml, keyed on (path, st_mtime_ns, st_size) (#527).
+# The stats reader asks for ``model.context_length`` once per hermes agent
+# per 5 s sweep, and PyYAML is pure Python (~2 ms for a 4 KB config), so
+# re-parsing an unchanged file every time cost about a third of the sweep.
+# The key is taken from a stat *before* the read, so an edit racing the
+# read is caught by the next call's stat; any edit is seen on the next call.
+_config_cache: Tuple[Optional[Tuple[str, int, int]], Optional[dict]] = (None, None)
+_config_cache_lock = threading.Lock()
+
+
+def clear_config_cache() -> None:
+    """Forget the cached config.yaml parse (tests)."""
+    global _config_cache
+    with _config_cache_lock:
+        _config_cache = (None, None)
+
+
 def _load_config() -> Optional[dict]:
-    text = _read(config_path())
-    if not text:
-        return None
+    """Hermes's config.yaml as a dict, or None when absent or unparseable.
+
+    Parsed once per version of the file. The dict is shared between
+    callers: treat it as read-only.
+    """
+    global _config_cache
+    path = config_path()
     try:
-        import yaml
-        data = yaml.safe_load(text)
-    except Exception:
+        st = path.stat()
+    except OSError:
         return None
-    return data if isinstance(data, dict) else None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    cached_key, cached = _config_cache
+    if cached_key == key:
+        return cached
+    text = _read(path)
+    data: Optional[dict] = None
+    if text:
+        try:
+            import yaml
+            parsed = yaml.safe_load(text)
+        except Exception:
+            parsed = None
+        data = parsed if isinstance(parsed, dict) else None
+    with _config_cache_lock:
+        _config_cache = (key, data)
+    return data
 
 
 def plugin_enabled(config: Optional[dict] = None) -> Optional[bool]:

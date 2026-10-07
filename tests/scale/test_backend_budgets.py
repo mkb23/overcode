@@ -128,11 +128,10 @@ def test_grok_fleet_within_budget(cadence):
 
 
 def test_hermes_fleet_within_budget(cadence):
-    # today: ~33 ms/s (~21 once #527 lands); 80 leaves room for slower boxes
+    # today: ~21-26 ms/s (~33 before #527); 80 leaves room for slower boxes
     assert cadence["hermes"].ms_per_second < 80.0, cadence["hermes"].line()
 
 
-@_known(527, "one YAML parse of config.yaml per agent per sweep")
 def test_hermes_warm_sweep_parses_no_config(fleets):
     import yaml
 

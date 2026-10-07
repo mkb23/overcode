@@ -386,12 +386,14 @@ def build_fleets(root: Path, spec: BackendFleetSpec, backends=BACKENDS,
 
 
 def clear_reader_caches() -> None:
-    """Cold module caches (row cache, window indexes, JSONL folds) so each fleet starts equal."""
-    from overcode.backends import jsonl_tail, opencode_stats
+    """Cold module caches (row cache, window indexes, JSONL folds, hermes
+    config) so each fleet starts equal."""
+    from overcode.backends import hermes, jsonl_tail, opencode_stats
 
     opencode_stats.clear_row_cache()
     opencode_stats.clear_window_indexes()
     jsonl_tail.clear()
+    hermes.clear_config_cache()
 
 
 def time_cadence(fleet: Fleet, seconds: int = 10, now: Optional[datetime] = None) -> CadenceResult:
