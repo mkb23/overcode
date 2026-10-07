@@ -66,7 +66,7 @@ These are the default keys. Any of them can be remapped, or switched to the VSCo
 | `s` | Cycle summary detail: low → med → high → full |
 | `l` | Cycle summary content: AI short → AI long → orders → annotation → heartbeat |
 | `S` | Sort by any column or tree order (picker; choosing the current sort reverses it) |
-| `$` | Cycle cost display (tokens / dollars / joules) |
+| `$` | Cycle cost display (tokens / dollars / energy: joules, with the burn rate in watts) |
 | `C` | Open column configuration |
 | `L` | Toggle column headers |
 | `M` | Toggle monochrome mode |

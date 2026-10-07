@@ -400,15 +400,16 @@ class DaemonStatusBar(Static):
                             f" 🔥{format_cost(burn.cost_per_hour)}/h", style=bold_color,
                         )
                 elif self.show_cost == "joules":
-                    from ..tui_helpers import format_joules, usd_to_joules
-                    if burn.cost_usd > 0:
+                    # Estimated energy over the window, and its average power (#521)
+                    from ..energy import format_watts
+                    from ..tui_helpers import format_joules
+                    if burn.energy_j > 0:
                         content.append(
-                            f" Δ⚡{format_joules(usd_to_joules(burn.cost_usd))}", style=color,
+                            f" Δ⚡{format_joules(burn.energy_j).strip()}", style=color,
                         )
-                    if burn.cost_per_hour > 0:
+                    if burn.watts > 0:
                         content.append(
-                            f" 🔥{format_joules(usd_to_joules(burn.cost_per_hour))}/h",
-                            style=bold_color,
+                            f" 🔥{format_watts(burn.watts).strip()}", style=bold_color,
                         )
                 else:
                     if burn.total_tokens > 0:
@@ -429,14 +430,14 @@ class DaemonStatusBar(Static):
                     content.append(" │ ", style="dim")
                     content.append(f"Σ{format_cost(total_cost)}", style="orange1")
             elif self.show_cost == "joules":
-                total_cost = sum(s.estimated_cost_usd for s in local_sessions)
-                total_cost += sum(s.total_cost for s in reachable_sisters)
-                if total_cost > 0:
-                    from ..tui_helpers import format_joules, usd_to_joules
+                total_energy = sum(s.estimated_energy_j for s in local_sessions)
+                for sister in reachable_sisters:
+                    total_energy += sum(sess.stats.estimated_energy_j for sess in sister.sessions)
+                if total_energy > 0:
+                    from ..tui_helpers import format_joules
                     content.append(" │ ", style="dim")
                     content.append(
-                        f"Σ⚡{format_joules(usd_to_joules(total_cost))}",
-                        style="orange1",
+                        f"Σ⚡{format_joules(total_energy).strip()}", style="orange1",
                     )
             else:
                 total_tokens = sum(s.input_tokens + s.output_tokens for s in local_sessions)

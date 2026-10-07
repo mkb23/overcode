@@ -91,6 +91,7 @@ class SessionStats:
     """Runtime statistics for an agent session"""
     interaction_count: int = 0
     estimated_cost_usd: float = 0.0
+    estimated_energy_j: float = 0.0  # tokens x the model's guessed GPU energy (#522)
     total_tokens: int = 0
     operation_times: List[float] = field(default_factory=list)  # seconds per operation
     steers_count: int = 0  # number of overcode interventions

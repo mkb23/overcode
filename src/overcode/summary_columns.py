@@ -27,6 +27,7 @@ from .status_constants import (
     get_permissiveness_emoji,
 )
 from .status_patterns import extract_sleep_duration
+from .energy import format_watts
 from .tui_helpers import (
     format_cost,
     format_duration,
@@ -36,7 +37,6 @@ from .tui_helpers import (
     calculate_uptime,
     get_current_state_times,
     get_status_symbol,
-    usd_to_joules,
 )
 
 
@@ -673,11 +673,10 @@ def render_cost(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_joules(ctx: ColumnContext) -> ColumnOutput:
-    """Energy in joules."""
+    """Estimated energy in joules (#522; see energy.py)."""
     s = ctx.session
     if ctx.claude_stats is not None:
-        cost = s.stats.estimated_cost_usd
-        joules = usd_to_joules(cost)
+        joules = s.stats.estimated_energy_j
         style = ctx.mono(f"bold orange1{ctx.bg}", "bold")
         return [(f" ⚡{format_joules(joules)}", style)]
     else:
@@ -748,9 +747,9 @@ def render_burn_rate_plain(ctx: ColumnContext) -> Optional[str]:
     if ctx.show_cost == "cost":
         return f"{format_cost(burn.cost_per_hour)}/h" if burn.cost_per_hour > 0 else None
     elif ctx.show_cost == "joules":
-        if burn.cost_per_hour <= 0:
+        if burn.watts <= 0:
             return None
-        return f"{format_joules(usd_to_joules(burn.cost_per_hour))}/h"
+        return format_watts(burn.watts).strip()
     else:
         return f"{format_tokens(int(burn.tokens_per_hour))}/h" if burn.tokens_per_hour > 0 else None
 
@@ -758,7 +757,7 @@ def render_burn_rate_plain(ctx: ColumnContext) -> Optional[str]:
 def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
     """Burn rate (🔥123K/h) over the timeline window (#174).
 
-    Switches units with show_cost (tokens / cost / joules), like the
+    Switches units with show_cost (tokens / cost / watts), like the
     aggregate burn in the spin stats line. Color always tracks the $/hr
     rate (per burn_thresholds in user config), regardless of which unit
     is on screen — burn intensity is what matters, the unit just changes
@@ -775,10 +774,10 @@ def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
             return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
         return [(f" 🔥{format_cost(rate):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
     elif ctx.show_cost == "joules":
-        rate = burn.cost_per_hour
-        if rate <= 0:
+        # Energy mode shows power: estimated watts over the window (#521)
+        if burn.watts <= 0:
             return [("        -", ctx.mono(f"dim red{ctx.bg}", "dim"))]
-        return [(f" 🔥{format_joules(usd_to_joules(rate))}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
+        return [(f" 🔥{format_watts(burn.watts)}  ", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
     else:
         rate = burn.tokens_per_hour
         if rate <= 0:
@@ -1689,7 +1688,7 @@ COLUMN_HELP: dict[str, str] = {
     "sleep_time": "Total time spent asleep",
     "active_pct": "Share of awake time spent working rather than waiting",
     "token_count": "Total tokens used (input + output + cache)",
-    "joules": "Estimated energy used, converted from cost",
+    "joules": "Estimated energy: tokens x a guess at the model's GPU energy (config: energy)",
     "cost": "Estimated spend in dollars, from token usage and model pricing",
     "budget": "Cost budget set for this agent (B to edit)",
     "subtree_cost": "Cost of this agent plus all its children",
@@ -1816,7 +1815,7 @@ COLUMN_SORT: dict[str, Tuple[Callable[[ColumnContext], object], bool]] = {
     "sleep_time": (lambda ctx: ctx.sleep_time, True),
     "active_pct": (_sort_active_pct, True),
     "token_count": (_if_stats(lambda ctx: ctx.claude_stats.total_tokens), True),
-    "joules": (_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd), True),
+    "joules": (_if_stats(lambda ctx: ctx.session.stats.estimated_energy_j), True),
     "cost": (_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd), True),
     "budget": (lambda ctx: ctx.session.cost_budget_usd or None, True),
     "subtree_cost": (lambda ctx: ctx.subtree_cost_usd or None, True),

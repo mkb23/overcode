@@ -322,6 +322,11 @@ def _get_list_pricing(model: str | None, fallback: "UserConfig") -> ModelPricing
     )
 
 
+def _default_energy_config():
+    from .energy import EnergyConfig
+    return EnergyConfig()
+
+
 @dataclass
 class UserConfig:
     """User-configurable settings from config.yaml."""
@@ -358,6 +363,10 @@ class UserConfig:
     # rates below the lowest cutoff get its color, etc., above all cutoffs
     # gets red. Color names must be valid Rich colors (e.g. "orange1", not
     # plain "orange", which Rich doesn't recognize).
+    # Energy estimate coefficients (#522), from config.yaml's energy section;
+    # see energy.py for the model and the defaults
+    energy: "EnergyConfig" = field(default_factory=lambda: _default_energy_config())
+
     burn_thresholds: list = field(default_factory=lambda: [
         ("green", 1.0),
         ("yellow", 10.0),
@@ -471,6 +480,8 @@ class UserConfig:
                 )
                 if burn_parsed is not None:
                     kwargs["burn_thresholds"] = burn_parsed
+                from .energy import EnergyConfig
+                kwargs["energy"] = EnergyConfig.from_dict(data.get("energy"))
                 return cls(**kwargs)
         except (yaml.YAMLError, IOError):
             return cls()

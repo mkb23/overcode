@@ -122,40 +122,14 @@ def format_cost(cost_usd: float) -> str:
         return f"${cost_usd:.2f}"
 
 
-# Conversion: $0.07/kWh typical US datacenter electricity price.
-# 1 kWh = 3,600,000 J  →  $1 ≈ 51.43 MJ
-USD_PER_KWH = 0.07
-USD_TO_JOULES = (1.0 / USD_PER_KWH) * 3_600_000  # ~51,428,571 J per USD
-
-
-def usd_to_joules(cost_usd: float) -> float:
-    """Convert USD cost to estimated energy in joules."""
-    return cost_usd * USD_TO_JOULES
-
-
 def format_joules(joules: float) -> str:
-    """Format energy in joules to human readable with stable 5-char width.
+    """Energy with an SI prefix in a stable 5-cell field, e.g. "5.1MJ".
 
-    Returns a fixed 5-character string like "5.1MJ", " 51MJ", "514MJ", "2.6GJ".
     Caller adds the ⚡ prefix.
-
-    Args:
-        joules: Energy in joules
-
-    Returns:
-        Formatted 5-char string with SI prefix and J suffix
     """
-    for threshold, unit in [(1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k")]:
-        if joules >= threshold:
-            v = joules / threshold
-            if v >= 100:
-                s = f"{v:.0f}{unit}J"
-            elif v >= 10:
-                s = f"{v:.0f}{unit}J"
-            else:
-                s = f"{v:.1f}{unit}J"
-            return f"{s:>5}"
-    return f"{joules:.0f}J".rjust(5)
+    from .energy import format_si
+
+    return format_si(joules, "J")
 
 
 def format_budget(cost_usd: float, budget_usd: float) -> str:

@@ -609,6 +609,7 @@ class WindowBurnStats:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     cost_usd: float = 0.0
+    energy_j: float = 0.0  # estimated, see energy.py (#522)
     per_session: dict = None  # Optional[Dict[str, WindowBurnStats]]
 
     def __post_init__(self):
@@ -618,6 +619,13 @@ class WindowBurnStats:
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+    @property
+    def watts(self) -> float:
+        """Average power over the window: estimated joules per second (#521)."""
+        if self.window_hours <= 0:
+            return 0.0
+        return self.energy_j / (self.window_hours * 3600)
 
     @property
     def tokens_per_hour(self) -> float:
@@ -650,6 +658,7 @@ def compute_window_burn(
     typical 5-15 session range; cache externally if you have hundreds.
     """
     from .stats_reader import stats_reader_for_session
+    from .energy import estimate_energy_joules
     from .pricing import calculate_cost_estimate
     from .settings import get_user_config, get_model_pricing
 
@@ -698,6 +707,11 @@ def compute_window_burn(
         stats.cache_creation_tokens += u["cache_creation_tokens"]
         stats.cache_read_tokens += u["cache_read_tokens"]
         stats.cost_usd += cost
+        energy = estimate_energy_joules(
+            getattr(session, 'model', None), u["input_tokens"], u["output_tokens"],
+            u["cache_creation_tokens"], u["cache_read_tokens"],
+        )
+        stats.energy_j += energy
 
         # Per-session breakdown for the burn-rate column (#174)
         stats.per_session[session.id] = WindowBurnStats(
@@ -707,6 +721,7 @@ def compute_window_burn(
             cache_creation_tokens=u["cache_creation_tokens"],
             cache_read_tokens=u["cache_read_tokens"],
             cost_usd=cost,
+            energy_j=energy,
         )
 
     return stats

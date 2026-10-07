@@ -40,6 +40,7 @@ from .backends import (
     session_supports,
 )
 from .claude_pid import is_session_id_owned_by_others
+from .energy import estimate_energy_joules
 from .stats_reader import AgentSessionStats, stats_reader_for_session
 from .monitor_daemon_state import (
     MonitorDaemonState,
@@ -573,6 +574,7 @@ class MonitorDaemon:
             cache_creation_tokens=stats.cache_creation_tokens,
             cache_read_tokens=stats.cache_read_tokens,
             estimated_cost_usd=stats.estimated_cost_usd,
+            estimated_energy_j=stats.estimated_energy_j,
             current_context_tokens=stats.current_context_tokens,
             median_work_time=self._calculate_median_work_time(stats.operation_times),
             repo_name=session.repo_name,
@@ -906,6 +908,10 @@ class MonitorDaemon:
             cache_creation_tokens=stats.cache_creation_tokens,
             cache_read_tokens=stats.cache_read_tokens,
             estimated_cost_usd=round(cost, 4),
+            estimated_energy_j=round(estimate_energy_joules(
+                detected_model or session.model, stats.input_tokens, stats.output_tokens,
+                stats.cache_creation_tokens, stats.cache_read_tokens,
+            ), 1),
             current_context_tokens=stats.current_context_tokens,
             last_stats_update=now.isoformat(),
         )
@@ -1015,6 +1021,10 @@ class MonitorDaemon:
                 cache_creation_tokens=stats.cache_creation_tokens,
                 cache_read_tokens=stats.cache_read_tokens,
                 estimated_cost_usd=round(cost_estimate, 4),
+                estimated_energy_j=round(estimate_energy_joules(
+                    stats.model or session.model, stats.input_tokens, stats.output_tokens,
+                    stats.cache_creation_tokens, stats.cache_read_tokens,
+                ), 1),
                 current_context_tokens=stats.current_context_tokens,
                 last_stats_update=now.isoformat(),
             )

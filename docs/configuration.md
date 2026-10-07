@@ -114,6 +114,13 @@ skill_emoji:
   simplify: ✨            # Default: ✨ (built-in)
   shirka: 🔬             # Custom skill example
   my-custom-skill: 🚀    # Add any custom skill with any emoji
+
+# Energy estimate coefficients for the ⚡ column and the 🔥 watts rate
+# See "Energy Estimates" below
+energy:
+  pue: 1.2
+  models:
+    opus: large
 ```
 
 ## Environment Variables
@@ -202,6 +209,54 @@ back to pane polling automatically; `overcode doctor` reports the agent as
 `telemetry-disabled` (informational) rather than `missing-settings` (broken).
 See [Backends](backends.md) ("Opting out of telemetry") for each backend's
 exact footprint and the `overcode hooks uninstall-backend` cleanup commands.
+
+## Energy Estimates
+
+`$` cycles the cost display through tokens, dollars and energy. In energy mode
+the ENRG column (⚡) shows each agent's estimated joules, and the burn rate (🔥)
+shows average power in watts over the spin-baseline window.
+
+Energy is estimated from token counts, not from dollars. Each model is treated
+as one serving replica: some GPUs at some wattage, producing and ingesting
+tokens at some rate across its whole batch.
+
+```
+joules per output token = gpus × gpu_watts × pue / decode_tps
+joules per input token  = gpus × gpu_watts × pue / prefill_tps
+cache read  = input × cache_read_factor   (default 0.1: the prefix isn't recomputed)
+cache write = input × cache_write_factor  (default 1.0)
+```
+
+Providers don't publish replica sizes or throughput, so **every coefficient is
+a guess**. The built-in size classes, with `gpu_watts` per GPU including its
+share of the host:
+
+| Class | gpus | gpu_watts | decode_tps | prefill_tps | ≈ J per output token |
+|---|---|---|---|---|---|
+| `large` (Opus, Fable, GPT-5, Grok) | 16 | 1000 | 1500 | 50,000 | 13 |
+| `medium` (Sonnet; the default) | 8 | 1000 | 3000 | 100,000 | 3.2 |
+| `small` (Haiku, `mini`, `nano`, `flash`) | 4 | 1000 | 6000 | 200,000 | 0.8 |
+
+Everything can be overridden in `config.yaml`:
+
+```yaml
+energy:
+  pue: 1.2                  # datacentre overhead multiplier
+  cache_read_factor: 0.1
+  cache_write_factor: 1.0
+  default_class: medium     # for models no rule matches
+  classes:                  # change a built-in class (unstated keys keep their defaults)
+    large: {gpus: 32}       # ...or add your own
+    local: {gpus: 1, gpu_watts: 450, decode_tps: 40, prefill_tps: 1500}
+  models:                   # model-name substring -> class or profile, checked in
+    llama: local            # file order before the built-in rules
+    opus: large
+    my-model: {joules_per_output_token: 2.0, joules_per_input_token: 0.05}
+```
+
+Before 0.5.9 overcode converted dollars to joules as if the whole API price
+were electricity at $0.07/kWh. Electricity is a few percent of a token's
+price, so that overstated energy by one to two orders of magnitude (#522).
 
 ## Passthru Keys
 

@@ -23,7 +23,6 @@ from .tui_helpers import (
     get_status_symbol,
     get_daemon_status_style,
     calculate_uptime,
-    usd_to_joules,
 )
 from .settings import DAEMON_VERSION
 
@@ -231,9 +230,9 @@ def render_spin_stats(
         if total_cost > 0:
             content.append(f" {format_cost(total_cost)}", style="orange1")
     elif show_cost == "joules":
-        total_cost = sum(s.estimated_cost_usd for s in sessions)
-        if total_cost > 0:
-            content.append(f" ⚡{format_joules(usd_to_joules(total_cost))}", style="orange1")
+        total_energy = sum(getattr(s, "estimated_energy_j", 0.0) for s in sessions)
+        if total_energy > 0:
+            content.append(f" ⚡{format_joules(total_energy)}", style="orange1")
     else:
         total_tokens = sum(s.input_tokens + s.output_tokens for s in sessions)
         if total_tokens > 0:
@@ -294,6 +293,7 @@ def render_session_summary_line(
     max_repo_info_width: int = 18,
     show_cost: str = "tokens",
     estimated_cost_usd: float = 0.0,
+    estimated_energy_j: float = 0.0,
 ) -> Text:
     """Render a single session summary line.
 
@@ -405,7 +405,7 @@ def render_session_summary_line(
         if show_cost == "cost":
             content.append(f" {format_cost(estimated_cost_usd):>7}", style=f"bold orange1{bg}")
         elif show_cost == "joules":
-            content.append(f" ⚡{format_joules(usd_to_joules(estimated_cost_usd))}", style=f"bold orange1{bg}")
+            content.append(f" ⚡{format_joules(estimated_energy_j)}", style=f"bold orange1{bg}")
         else:
             content.append(f" Σ{format_tokens(total_tokens):>6}", style=f"bold orange1{bg}")
         if current_context_tokens and current_context_tokens > 0:
