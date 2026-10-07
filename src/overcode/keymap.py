@@ -41,9 +41,13 @@ SCOPES: Dict[str, str] = {
     "app": "Main screen",
     "command_bar": "Command bar",
     "command_palette": "Command palette",
-    "fullscreen_preview": "Fullscreen preview",
     "summary_prompt_lab": "Summary prompt lab",
 }
+
+# Removed with the standalone monitor in 0.6.0 (#523). A config that still
+# names one gets a warning that says so; it is otherwise ignored.
+REMOVED_SCOPES = frozenset({"fullscreen_preview"})
+REMOVED_ACTIONS = frozenset({"toggle_preview", "expand_preview", "toggle_tmux_sync"})
 
 # Scopes where the user types text: a bare printable key bound there would
 # stop that character being typed.
@@ -256,6 +260,9 @@ def parse_layer(section: Any, where: str) -> Tuple[Dict[str, Dict[str, List[str]
         if not isinstance(mapping, Mapping):
             warnings.append(f"{where}: {label} should map actions to keys")
             return
+        if scope in REMOVED_SCOPES:
+            warnings.append(f"{where}: scope '{scope}' was removed in 0.6.0 — ignored")
+            return
         if scope not in SCOPES:
             warnings.append(f"{where}: unknown scope '{scope}' (known: {', '.join(SCOPES)})")
             return
@@ -393,7 +400,10 @@ def _apply_layer(
     out = list(entries)
     for action, keys in layer.items():
         if action not in known:
-            warnings.append(f"{source}: unknown action '{action}' in {scope}")
+            if action in REMOVED_ACTIONS:
+                warnings.append(f"{source}: action '{action}' was removed in 0.6.0 — ignored")
+            else:
+                warnings.append(f"{source}: unknown action '{action}' in {scope}")
             continue
         old = [b for b in out if b.action == action]
         at = next((i for i, b in enumerate(out) if b.action == action), len(out))
@@ -497,13 +507,11 @@ def default_scope_bindings() -> Dict[str, List[KeyBinding]]:
     from .tui import SupervisorTUI
     from .tui_widgets.command_bar import CommandBar
     from .tui_widgets.command_palette import CommandPalette
-    from .tui_widgets.fullscreen_preview import FullscreenPreview
     from .tui_widgets.summary_prompt_lab import SummaryPromptLab
     return {
         "app": default_entries(SupervisorTUI.BINDINGS),
         "command_bar": default_entries(CommandBar.KEYS),
         "command_palette": default_entries(CommandPalette.KEYS),
-        "fullscreen_preview": default_entries(FullscreenPreview.BINDINGS),
         "summary_prompt_lab": default_entries(SummaryPromptLab.BINDINGS),
     }
 

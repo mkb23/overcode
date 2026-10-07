@@ -732,6 +732,16 @@ def tmux_layout(
         rprint("  tmux set -g terminal-features ''")
         return
 
+    open_split(session, ratio, restart=restart, yes=yes)
+
+
+def open_split(session: str = "agents", ratio: int = 25, *, restart: bool = False,
+               yes: bool = False, monitor_args: str = "") -> None:
+    """Create or switch to the split (the body of `overcode tmux`).
+
+    Also what `overcode` with no command and `overcode monitor` run.
+    monitor_args: extra flags for the monitor pane (e.g. ``--jobs``).
+    """
     # Create agents session if it doesn't exist (#397)
     if not _tmux_check("has-session", "-t", session):
         rprint(f"[dim]Creating tmux session '{session}'...[/dim]")
@@ -782,12 +792,13 @@ def tmux_layout(
         raise typer.Exit(1)
 
     try:
-        _tmux_layout_locked(session, ratio, rprint, restart=restart)
+        _tmux_layout_locked(session, ratio, rprint, restart=restart, monitor_args=monitor_args)
     finally:
         _release_setup_lock()
 
 
-def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = False) -> None:
+def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = False,
+                        monitor_args: str = "") -> None:
     """Create or re-attach to the tmux split layout. Called under setup lock."""
     in_tmux = os.environ.get("TMUX")
 
@@ -821,6 +832,8 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     # and respawning the top pane on relaunch.
     overcode_cmd = _find_overcode_cmd()
     monitor_cmd = f"{overcode_cmd} monitor --session {session} --sync-target {linked}"
+    if monitor_args:
+        monitor_cmd += f" {monitor_args}"
     relaunch_cmd = monitor_cmd  # without --restart, for in-pane relaunch
     if restart:
         monitor_cmd += " --restart"

@@ -360,7 +360,7 @@ class TestHelpLayout:
     def test_three_columns_put_sections_side_by_side(self):
         from overcode.tui_widgets.help_overlay import build_help
         lines = build_help(170, _km()).plain.split("\n")
-        heads = [l for l in lines if l.count("───") >= 3]
+        heads = [ln for ln in lines if ln.count("───") >= 3]
         assert heads, "expected a line with three section rules"
 
     def test_one_column_is_taller_than_three(self):
@@ -546,14 +546,14 @@ def tui_small(tmp_path, monkeypatch):
 
 class TestWidgetScopes:
 
-    def test_fullscreen_preview_takes_scope_keys(self):
-        from overcode.tui_widgets import FullscreenPreview
-        km = _km({"scopes": {"fullscreen_preview": {"scroll_down_20": ["J"]}}})
-        km_mod.set_active(km)
-        w = FullscreenPreview()
-        keys = w._bindings.key_to_bindings
-        assert "J" in keys and keys["J"][0].action == "scroll_down_20"
-        assert "j" not in keys or keys["j"][0].action != "scroll_down_20"
+    def test_config_naming_removed_keys_only_warns(self):
+        """A pre-0.6.0 config naming the standalone monitor's keys still loads (#523)."""
+        km = _km({"overrides": {"toggle_preview": "m", "toggle_tmux_sync": "P"},
+                  "scopes": {"fullscreen_preview": {"scroll_down_20": ["J"]}}})
+        assert "fullscreen_preview" not in km.scopes
+        assert km.keys_for("toggle_preview") == []
+        removed = [w for w in km.warnings if "removed in 0.6.0" in w]
+        assert len(removed) == 3
 
     def test_default_entries_from_binding_objects(self):
         from textual.binding import Binding

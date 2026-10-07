@@ -6,7 +6,7 @@ isolated from the full TUI.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 class TestToggleTimeline:
@@ -109,17 +109,18 @@ class TestToggleHelp:
 class TestResizeFocusedWindow:
     """Test action_resize_focused_window method."""
 
-    def test_warns_when_not_compact(self):
-        """Should notify warning when not in compact mode."""
+    def test_does_nothing_outside_the_split(self):
+        """Without a split there is no bottom pane to match: no tmux, no notice."""
         from overcode.tui_actions.view import ViewActionsMixin
 
         mock_tui = MagicMock()
-        mock_tui.compact = False
+        mock_tui.in_split = False
 
-        ViewActionsMixin.action_resize_focused_window(mock_tui)
+        with patch("subprocess.run") as run:
+            ViewActionsMixin.action_resize_focused_window(mock_tui)
 
-        mock_tui.notify.assert_called_once()
-        assert "tmux split mode" in mock_tui.notify.call_args[0][0]
+        run.assert_not_called()
+        mock_tui.notify.assert_not_called()
 
 
 class TestCycleSummary:
@@ -223,75 +224,6 @@ class TestCycleSummaryContent:
 
         # index 0 -> next is index 1
         assert mock_tui.summary_content_mode == "ai_long"
-
-
-class TestTogglePreview:
-    """Test action_toggle_preview method."""
-
-    def test_enables_preview(self):
-        """Should enable preview and save preference."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = False
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_toggle_preview(mock_tui)
-
-        assert mock_tui.preview_visible is True
-        assert mock_tui._prefs.preview_visible is True
-        mock_tui._save_prefs.assert_called_once()
-
-    def test_disables_preview(self):
-        """Should disable preview and save preference."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_toggle_preview(mock_tui)
-
-        assert mock_tui.preview_visible is False
-        assert mock_tui._prefs.preview_visible is False
-        mock_tui._save_prefs.assert_called_once()
-
-
-class TestToggleTmuxSync:
-    """Test action_toggle_tmux_sync method."""
-
-    def test_enables_tmux_sync(self):
-        """Should enable tmux sync and trigger immediate sync."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.tmux_sync = False
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_toggle_tmux_sync(mock_tui)
-
-        assert mock_tui.tmux_sync is True
-        assert mock_tui._prefs.tmux_sync is True
-        mock_tui._save_prefs.assert_called_once()
-        mock_tui._update_subtitle.assert_called_once()
-        mock_tui._sync_tmux_window.assert_called_once()
-
-    def test_disables_tmux_sync(self):
-        """Should disable tmux sync and not trigger immediate sync."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.tmux_sync = True
-        mock_tui._prefs = MagicMock()
-
-        ViewActionsMixin.action_toggle_tmux_sync(mock_tui)
-
-        assert mock_tui.tmux_sync is False
-        assert mock_tui._prefs.tmux_sync is False
-        mock_tui._save_prefs.assert_called_once()
-        mock_tui._update_subtitle.assert_called_once()
-        # Should NOT call _sync_tmux_window when disabling
-        mock_tui._sync_tmux_window.assert_not_called()
 
 
 class TestToggleShowTerminated:
@@ -1198,139 +1130,6 @@ class TestToggleCostDisplay:
         assert mock_tui.show_cost == "cost"
         mock_tui._save_prefs.assert_called_once()
         mock_tui.notify.assert_called_once()
-
-
-class TestExpandPreview:
-    """Test action_expand_preview method."""
-
-    def test_warns_when_preview_not_visible(self):
-        """Should notify and return when preview pane is not visible."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = False
-
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "preview pane" in mock_tui.notify.call_args[0][0]
-
-    def test_warns_when_no_agent_focused(self):
-        """Should notify when focused widget is not a SessionSummary."""
-        from overcode.tui_actions.view import ViewActionsMixin
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        # focused returns a non-SessionSummary object; isinstance check fails
-        mock_tui.focused = MagicMock()
-
-        # We need isinstance to return False for the focused widget
-        # The code does isinstance(focused, SessionSummary), and since
-        # mock_tui.focused is a MagicMock (not a SessionSummary), isinstance
-        # will return False.
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "No agent focused" in mock_tui.notify.call_args[0][0]
-
-    def test_warns_when_no_tmux_window(self):
-        """Should warn when focused session has no tmux window."""
-        from overcode.tui_actions.view import ViewActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.tmux_window = None
-
-        mock_focused = MagicMock(spec=SessionSummary)
-        mock_focused.session = mock_session
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        mock_tui.focused = mock_focused
-
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "No tmux window" in mock_tui.notify.call_args[0][0]
-        assert mock_tui.notify.call_args[1]["severity"] == "warning"
-
-    def test_warns_when_capture_returns_none(self):
-        """Should warn when pane capture returns None."""
-        from overcode.tui_actions.view import ViewActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.tmux_window = "window-1"
-
-        mock_focused = MagicMock(spec=SessionSummary)
-        mock_focused.session = mock_session
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        mock_tui.focused = mock_focused
-        mock_tui.detector.capture_lines = 200
-        mock_tui.detector.polling.tmux.capture_pane.return_value = None
-
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        mock_tui.notify.assert_called_once()
-        assert "Could not capture" in mock_tui.notify.call_args[0][0]
-
-    def test_successful_expand(self):
-        """Should capture pane and show fullscreen preview on success."""
-        from overcode.tui_actions.view import ViewActionsMixin
-        from overcode.tui_widgets import SessionSummary
-
-        mock_session = MagicMock()
-        mock_session.tmux_window = "window-1"
-        mock_session.name = "test-agent"
-
-        mock_focused = MagicMock(spec=SessionSummary)
-        mock_focused.session = mock_session
-
-        mock_fs_preview = MagicMock()
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        mock_tui.focused = mock_focused
-        mock_tui.monochrome = False
-        mock_tui.detector.capture_lines = 200
-        mock_tui.detector.polling.tmux.capture_pane.return_value = "line1\nline2\nline3"
-        mock_tui.query_one.return_value = mock_fs_preview
-
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        mock_tui.detector.polling.tmux.capture_pane.assert_called_once()
-        mock_fs_preview.show.assert_called_once_with(
-            ["line1", "line2", "line3"], "test-agent", False
-        )
-
-    def test_uses_max_of_default_and_detector_capture_lines(self):
-        """Should use the larger of DEFAULT_CAPTURE_LINES and detector.capture_lines."""
-        from overcode.tui_actions.view import ViewActionsMixin
-        from overcode.tui_widgets import SessionSummary
-        from overcode.status_constants import DEFAULT_CAPTURE_LINES
-
-        mock_session = MagicMock()
-        mock_session.tmux_window = "window-1"
-        mock_session.name = "test-agent"
-
-        mock_focused = MagicMock(spec=SessionSummary)
-        mock_focused.session = mock_session
-
-        mock_tui = MagicMock()
-        mock_tui.preview_visible = True
-        mock_tui.focused = mock_focused
-        mock_tui.monochrome = True
-        # Set detector.capture_lines higher than DEFAULT_CAPTURE_LINES
-        mock_tui.detector.capture_lines = DEFAULT_CAPTURE_LINES + 100
-        mock_tui.detector.polling.tmux.capture_pane.return_value = "output"
-        mock_tui.query_one.return_value = MagicMock()
-
-        ViewActionsMixin.action_expand_preview(mock_tui)
-
-        call_kwargs = mock_tui.detector.polling.tmux.capture_pane.call_args
-        assert call_kwargs[1]["lines"] == DEFAULT_CAPTURE_LINES + 100
 
 
 class TestCycleNotifications:

@@ -1,7 +1,7 @@
 """
 The `e` key: open the overagent (#484).
 
-Focuses the most recent overagent row; in `overcode tmux` split mode the
+Focuses the most recent overagent row; the split's
 bottom pane follows it and gets the keyboard, so you can type to it at
 once. With none running, launches one named "overagent" in ~/.overcode.
 """
@@ -38,17 +38,15 @@ class OveragentMixin:
         else:
             self.notify("The overagent is hidden by a filter", severity="warning")
             return
-        if self.compact:
-            # The bottom pane now shows the overagent's window: hand it the keyboard.
-            try:
-                from ..tui import _tmux_base
-                subprocess.run([*_tmux_base(), "select-pane", "-t", self._bottom_pane_target()],
-                               capture_output=True, timeout=2)
-            except (subprocess.SubprocessError, OSError):
-                pass
-        else:
-            self.notify("Overagent focused — i to talk to it, or attach its window",
-                        severity="information")
+        if not self.in_split:
+            return
+        # The bottom pane now shows the overagent's window: hand it the keyboard.
+        try:
+            from ..tui import _tmux_base
+            subprocess.run([*_tmux_base(), "select-pane", "-t", self._bottom_pane_target()],
+                           capture_output=True, timeout=2)
+        except (subprocess.SubprocessError, OSError):
+            pass
 
     def _launch_overagent(self) -> None:
         from ..overagent import DEFAULT_NAME, OVERAGENT_BACKEND

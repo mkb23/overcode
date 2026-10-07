@@ -497,13 +497,18 @@ class TestTUIPreferences:
         assert hasattr(prefs, 'summary_detail')
         assert prefs.summary_detail in ["low", "med", "full"]
 
-    def test_has_preview_visible(self):
-        """TUIPreferences should have preview_visible field."""
-        from overcode.settings import TUIPreferences
+    def test_loads_prefs_saved_before_0_6_0(self, tmp_path):
+        """A prefs file with the standalone monitor's fields still loads (#523)."""
+        import json
+        from overcode.settings import TUIPreferences, ensure_session_dir
 
-        prefs = TUIPreferences()
-        assert hasattr(prefs, 'preview_visible')
-        assert prefs.preview_visible is False
+        with patch.dict(os.environ, {"OVERCODE_STATE_DIR": str(tmp_path)}):
+            ensure_session_dir("old")
+            (tmp_path / "old" / "tui_preferences.json").write_text(json.dumps(
+                {"preview_visible": True, "tmux_sync": True, "show_terminated": True}))
+            prefs = TUIPreferences.load("old")
+        assert prefs.show_terminated is True
+        assert not hasattr(prefs, "preview_visible")
 
     def test_load_returns_default_when_no_file(self, tmp_path):
         """TUIPreferences.load should return defaults when file doesn't exist."""
@@ -534,13 +539,13 @@ class TestTUIPreferences:
             ensure_session_dir("test-session")
 
             # Save preferences
-            original = TUIPreferences(show_terminated=True, preview_visible=True)
+            original = TUIPreferences(show_terminated=True, hide_asleep=True)
             original.save("test-session")
 
             # Load and verify
             loaded = TUIPreferences.load("test-session")
             assert loaded.show_terminated is True
-            assert loaded.preview_visible is True
+            assert loaded.hide_asleep is True
 
     def test_has_column_config(self):
         """TUIPreferences should have column_config field for per-level overrides."""

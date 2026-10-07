@@ -4,14 +4,7 @@ View action methods for TUI.
 Handles display settings, toggles, and visual modes.
 """
 
-from typing import TYPE_CHECKING
-
 from textual.css.query import NoMatches
-
-from ..status_constants import DEFAULT_CAPTURE_LINES
-
-if TYPE_CHECKING:
-    from ..tui_widgets import SessionSummary, StatusTimeline, HelpOverlay, FullscreenPreview
 
 
 def _toggle_widget(tui, widget_id: str, widget_class, pref_attr: str, label: str, on_show=None) -> None:
@@ -66,11 +59,9 @@ class ViewActionsMixin:
         """Resize the focused agent's tmux window to match the bottom pane size.
 
         Useful when nested tmux windows get the wrong size after terminal resizes.
-        Only works in compact (tmux split) mode.
         For remote agents with SSH, sends resize via the sister API.
         """
-        if not self.compact:
-            self.notify("Resize only works in tmux split mode", severity="warning", timeout=2)
+        if not self.in_split:
             return
         try:
             import subprocess
@@ -110,8 +101,7 @@ class ViewActionsMixin:
                 window_name = session.tmux_window
                 if not window_name:
                     return
-                sync_session = self.tmux_sync_target or self.tmux_session
-                target = f"{sync_session}:{window_name}"
+                target = f"{self.tmux_sync_target}:{window_name}"
                 result = subprocess.run(
                     ["tmux", "resize-window", "-t", target,
                      "-x", str(pane_width), "-y", str(pane_height)],
@@ -176,32 +166,6 @@ class ViewActionsMixin:
             "last_command": "Last User Command",
         }
         self.notify(f"{mode_names.get(self.summary_content_mode, self.summary_content_mode)}", severity="information")
-
-    def action_toggle_preview(self) -> None:
-        """Toggle preview pane visibility."""
-        self.preview_visible = not self.preview_visible
-
-        # Save preference
-        self._prefs.preview_visible = self.preview_visible
-        self._save_prefs()
-
-        state = "shown" if self.preview_visible else "hidden"
-        self.notify(f"Preview {state}", severity="information")
-
-    def action_toggle_tmux_sync(self) -> None:
-        """Toggle tmux pane sync - syncs navigation to external tmux pane."""
-        self.tmux_sync = not self.tmux_sync
-
-        # Save preference
-        self._prefs.tmux_sync = self.tmux_sync
-        self._save_prefs()
-
-        # Update subtitle to show sync state
-        self._update_subtitle()
-
-        # If enabling, sync to currently focused session immediately
-        if self.tmux_sync:
-            self._sync_tmux_window()
 
     def action_toggle_show_terminated(self) -> None:
         """Toggle showing killed/terminated sessions in the timeline."""
@@ -615,43 +579,6 @@ class ViewActionsMixin:
                 return i
         # No exact match (user has custom config) — cycle from position 0
         return len(self._COST_PRESETS) - 1
-
-    def action_expand_preview(self) -> None:
-        """Expand the preview pane into a fullscreen scrollable overlay (#190)."""
-        from ..tui_widgets import FullscreenPreview, SessionSummary
-
-        # Only works when preview pane is visible
-        if not self.preview_visible:
-            self.notify("Fullscreen preview requires preview pane (press m)", severity="information")
-            return
-
-        # Get the focused session widget
-        focused = self.focused
-        if not isinstance(focused, SessionSummary):
-            self.notify("No agent focused", severity="information")
-            return
-
-        session = focused.session
-        if session.tmux_window is None:
-            self.notify("No tmux window for this agent", severity="warning")
-            return
-
-        # Do a fresh deep capture for scrollback review
-        capture_depth = max(DEFAULT_CAPTURE_LINES, self.detector.capture_lines)
-        raw = self.detector.polling.tmux.capture_pane(
-            self.tmux_session, session.tmux_window, lines=capture_depth
-        )
-        if raw is None:
-            self.notify("Could not capture pane output", severity="warning")
-            return
-
-        lines = raw.split("\n")
-
-        try:
-            fs_preview = self.query_one("#fullscreen-preview", FullscreenPreview)
-            fs_preview.show(lines, session.name, self.monochrome)
-        except NoMatches:
-            pass
 
     def action_cycle_notifications(self) -> None:
         """Cycle macOS notification mode: off → sound → banner → both → off (#235)."""

@@ -149,7 +149,7 @@ class ActivityMixin:
     # ── context ────────────────────────────────────────────────────────
 
     def _activity_current_dialog(self) -> Optional[str]:
-        """The dialog showing now: a modal's id, "help", "fullscreen", or None."""
+        """The dialog showing now: a modal's id, "help", or None."""
         for modal in self.query(".modal.visible"):
             return modal.id or type(modal).__name__
         for dialog_id, name in (("#help-overlay", "help"), ("#fullscreen-preview", "fullscreen")):
@@ -161,7 +161,7 @@ class ActivityMixin:
         return None
 
     def _activity_ctx(self) -> str:
-        """Where input is going: command_bar:<mode>, modal:<id>, help, fullscreen, jobs or list."""
+        """Where input is going: command_bar:<mode>, modal:<id>, help, jobs or list."""
         from ..tui_widgets import CommandBar
         focused = self.focused
         if focused is not None:
@@ -172,7 +172,7 @@ class ActivityMixin:
                     return f"modal:{node.id or type(node).__name__}"
         dialog = self._activity_current_dialog()
         if dialog is not None:
-            return dialog if dialog in ("help", "fullscreen") else f"modal:{dialog}"
+            return dialog if dialog == "help" else f"modal:{dialog}"
         if getattr(self, "tui_mode", "") == "jobs":
             return "jobs"
         return "list"

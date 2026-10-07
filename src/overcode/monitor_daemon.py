@@ -1040,9 +1040,9 @@ class MonitorDaemon:
         (``session_attached``; an unknown count — listing failed — counts
         as attended), the TUI keypress heartbeat is not fresh
         (PresenceComponent's 60 s window), and no TUI has touched its
-        attended file within TUI_ATTENDED_FRESHNESS. The touch is what a
-        TUI in another tmux session or a plain terminal has — the first
-        two cannot see it — and the API server makes the same touch when
+        attended file within TUI_ATTENDED_FRESHNESS. The touch is what the
+        split's TUI has (it lives in the `overcode` session, so the first
+        two cannot see it) — and the API server makes the same touch when
         it serves a status request (a sister TUI's poll), so the daemon
         never slows while a sister is watching this fleet.
         """

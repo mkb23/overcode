@@ -30,7 +30,7 @@ REVIVABLE_STATUSES = frozenset({STATUS_TERMINATED, STATUS_WAITING_OVERSIGHT})
 
 JOBS_TMUX_SESSION = "jobs"
 SPLIT_TMUX_SESSION = "overcode"  # cli/split.py: the split layout's own session
-CONTROLLER_TMUX_SESSION = "overcode-controller"  # supervisor_layout.sh
+CONTROLLER_TMUX_SESSION = "overcode-controller"  # the pre-0.6.0 `overcode supervisor` layout
 LINKED_SESSION_PREFIX = "oc-view"  # cli/split.py
 
 

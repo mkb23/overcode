@@ -13,7 +13,7 @@ Plain-text rendering for CLI: each column can optionally provide a
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from .status_constants import (
     ALL_STATUSES,
@@ -38,6 +38,9 @@ from .tui_helpers import (
     get_current_state_times,
     get_status_symbol,
 )
+
+if TYPE_CHECKING:
+    from rich.text import Text
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +167,6 @@ class ColumnContext:
     any_has_budget: bool  # True if any agent has a cost budget (#173)
     expand_icon: str
     is_list_mode: bool
-    is_compact_mode: bool
     has_focus: bool
     is_unvisited_stalled: bool
 
@@ -1959,7 +1961,6 @@ def build_cli_context(
         any_has_budget=any_has_budget,
         expand_icon="",
         is_list_mode=False,
-        is_compact_mode=False,
         has_focus=False,
         is_unvisited_stalled=False,
         uptime=uptime,

@@ -16,9 +16,12 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import yaml
+
+if TYPE_CHECKING:
+    from .energy import EnergyConfig
 
 # =============================================================================
 # Version - increment when daemon code changes significantly
@@ -761,12 +764,12 @@ def write_tui_heartbeat(session: str) -> None:
 
 
 # The TUI touches this file every TUI_ATTENDED_TOUCH_SECONDS while a tmux
-# client is attached to the pane it runs in (or while it runs outside tmux,
-# where nobody can tell), and the API server touches it whenever it serves
-# a status request (a sister TUI's poll). It is the monitor daemon's third
-# "someone is watching" signal, next to the keypress heartbeat above and the
-# attached count of the agents session: a TUI in another tmux session or a
-# plain terminal, a sister — all are invisible to both, and without this
+# client is attached to the pane it runs in, and the API server touches it
+# whenever it serves a status request (a sister TUI's poll). It is the
+# monitor daemon's third "someone is watching" signal, next to the keypress
+# heartbeat above and the attached count of the agents session: the split
+# (which lives in the `overcode` session), a sister — both are invisible to
+# those two, and without this
 # touch the daemon would stretch to its unattended interval while a sister
 # is watching. A touch is one utime, no content.
 TUI_ATTENDED_TOUCH_SECONDS = 5
@@ -816,8 +819,6 @@ class TUIPreferences:
     timeline_visible: bool = True
     daemon_panel_visible: bool = False
     tui_log_panel_visible: bool = False
-    preview_visible: bool = False  # preview pane visibility
-    tmux_sync: bool = False  # sync navigation to external tmux pane
     show_terminated: bool = False  # keep killed sessions visible in timeline
     hide_asleep: bool = False  # hide sleeping agents from display
     show_done: bool = False  # show "done" child agents (#244)

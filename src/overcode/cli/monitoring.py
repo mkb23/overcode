@@ -3,7 +3,6 @@ Monitoring commands: monitor, supervisor, web, export, instruct, heartbeat,
 history, hook_handler_cmd, usage.
 """
 
-from pathlib import Path
 from typing import Annotated, Optional, List
 
 import typer
@@ -277,7 +276,21 @@ def monitor(
         bool, typer.Option("--jobs", help="Start in jobs view")
     ] = False,
 ):
-    """Launch the standalone TUI monitor."""
+    """Open the monitor — the same as `overcode tmux`.
+
+    The monitor runs as the top pane of the tmux split, with the focused
+    agent's terminal below it; this creates the split or switches to it.
+    --restart, --jobs and --diagnostics are passed to the monitor pane.
+    """
+    if not sync_target:
+        # The standalone (non-split) monitor was removed in 0.6.0 (#523).
+        from .split import open_split
+        flags = " ".join(f for f, on in (("--jobs", jobs), ("--diagnostics", diagnostics)) if on)
+        open_split(session, restart=restart, monitor_args=flags)
+        return
+
+    # Inside the split's top pane: `overcode tmux` launched us with the
+    # linked session to drive.
     if restart:
         from ..monitor_daemon import stop_monitor_daemon, is_monitor_daemon_running, get_monitor_daemon_pid
         from ..web_server import is_web_server_running, stop_web_server, start_web_server
@@ -302,33 +315,21 @@ def monitor(
 
     from ..tui import run_tui
 
-    run_tui(session, diagnostics=diagnostics, sync_target=sync_target or None, initial_jobs_mode=jobs)
+    run_tui(session, sync_target, diagnostics=diagnostics, initial_jobs_mode=jobs)
 
 
-@app.command()
+@app.command(hidden=True)
 def supervisor(
     restart: Annotated[
-        bool, typer.Option("--restart", help="Restart if already running")
+        bool, typer.Option("--restart", help="Restart the monitor daemon and API server")
     ] = False,
     session: SessionOption = "agents",
 ):
-    """Launch the TUI monitor with embedded controller Claude."""
-    import subprocess
-    import os
-
-    if restart:
-        rprint("[dim]Killing existing controller session...[/dim]")
-        result = subprocess.run(
-            ["tmux", "kill-session", "-t", "overcode-controller"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            rprint("[green]✓[/green] Existing session killed")
-
-    script_dir = Path(__file__).parent.parent
-    layout_script = script_dir / "supervisor_layout.sh"
-
-    os.execvp("bash", ["bash", str(layout_script), session])
+    """Removed in 0.6.0: opens `overcode tmux` instead."""
+    rprint("[yellow]`overcode supervisor` was removed in 0.6.0 — opening `overcode tmux`. "
+           "Press e in the monitor for a controlling agent (the overagent).[/yellow]")
+    from .split import open_split
+    open_split(session, restart=restart)
 
 
 @app.command()

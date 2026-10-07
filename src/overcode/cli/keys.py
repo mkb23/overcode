@@ -68,7 +68,7 @@ def keys(
     presets: Annotated[bool, typer.Option("--presets", help="List the shipped presets")] = False,
     scope: Annotated[Optional[str], typer.Option(
         "--scope", help="Only this scope: app, command_bar, command_palette, "
-                        "fullscreen_preview, summary_prompt_lab")] = None,
+                        "summary_prompt_lab")] = None,
     show_all: Annotated[bool, typer.Option(
         "--all", help="Also list palette commands that have no key")] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output")] = False,

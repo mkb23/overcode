@@ -179,7 +179,7 @@ class TestOpenOveragentKey:
         tui.sessions = sessions
         tui._overagent_pending = False
         tui._get_widgets_in_session_order.return_value = list(widgets)
-        tui.compact = False
+        tui.in_split = False
         for name in ("action_open_overagent", "_focus_overagent", "_launch_overagent"):
             setattr(tui, name, getattr(OveragentMixin, name).__get__(tui))
         return tui
