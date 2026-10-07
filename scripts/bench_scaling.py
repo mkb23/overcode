@@ -1346,10 +1346,10 @@ def time_list_sessions(paths: FixturePaths, reps: int = 3) -> List[SiteResult]:
     sm.list_sessions()
     note = "TUI: 4/s fast path + 2/s status bar + 1/5 s + 1/10 s; daemon 1/2 s"
     return [
-        _result("list_sessions (cold)", "TUI 1 s status", _ms(cold, reps), 2, note=note),
+        _result("list_sessions (cold)", "TUI 250 ms focused", _ms(cold, reps), 1, note=note),
         _result(
             "list_sessions (warm, unchanged file)",
-            "TUI 1 s status",
+            "TUI 250 ms focused",
             _ms(sm.list_sessions, reps),
             2,
             note=note,
@@ -1368,10 +1368,10 @@ def time_daemon_state_load(paths: FixturePaths, reps: int = 3) -> List[SiteResul
     cold = _ms(load, 1)
     note = "TUI: 4/s fast path + 1/s status bar + 1/10 s"
     return [
-        _result("daemon-state load (cold)", "TUI 250 ms fast", cold, 1, note=note),
+        _result("daemon-state load (cold)", "state-file readers", cold, 1, note=note),
         _result(
             "daemon-state load (warm, unchanged file)",
-            "TUI 250 ms fast",
+            "state-file readers",
             _ms(load, reps),
             1,
             note=note,
@@ -1396,9 +1396,9 @@ def time_window_burn(paths: FixturePaths, hours: float = 1.0, reps: int = 2) -> 
     stats = burn()
     note = f"window {hours:g} h, {len(stats.per_session)} sessions with tokens, {stats.total_tokens} tokens"
     return [
-        _result("compute_window_burn (cold)", "TUI 1 s status", cold, 1, note=note),
+        _result("compute_window_burn (cold)", "engine 5 s burn", cold, 1, note=note),
         _result(
-            "compute_window_burn (warm, no file changed)", "TUI 1 s status", warm, 1, note=note
+            "compute_window_burn (warm, no file changed)", "engine 5 s burn", warm, 1, note=note
         ),
     ]
 
@@ -1436,7 +1436,7 @@ def _append_transcript_line(paths: FixturePaths, session) -> None:
 
 
 def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
-    """The TUI 5 s sweep: the app's ``HistoryFile`` + ``ClaudeStatsReader.get_stats`` per session.
+    """The 5 s stats sweep (the engine's since 0.6.0): a ``HistoryFile`` + ``get_stats`` per session.
 
     Mirrors ``tui._update_stats_async`` (one ``HistoryFile`` held by the app
     across sweeps, one ``get_stats`` per widget) minus the thread pool — the
@@ -1459,7 +1459,7 @@ def time_stats_sweep(paths: FixturePaths, reps: int = 2) -> List[SiteResult]:
     warm = _ms(sweep, reps)
     _append_transcript_line(paths, sessions[0])
     touched = _ms(sweep, 1)
-    tick = "TUI 5 s stats"
+    tick = "engine 5 s stats"
     return [
         _result(
             "stats sweep get_stats (cold)",
@@ -1615,88 +1615,6 @@ def time_discover_session_ids(paths: FixturePaths, reps: int = 2) -> List[SiteRe
         _result("discover_session_ids (cold)", tick, cold, 1, note=note),
         _result("discover_session_ids (warm, history unchanged)", tick, warm, 1, note=note),
     ]
-
-
-def time_capture_selection(paths: FixturePaths, reps: int = 5) -> List[SiteResult]:
-    """The TUI fast path's tmux commands per 250 ms tick.
-
-    Row 1: ``tui_logic.select_capture_sessions`` alone — the rotation's picks,
-    one capture-pane each, the same with a fresh, slow or absent daemon.
-    Rows 2-3: the picks after ``gate_capture_ids`` over one ``list-panes`` per
-    tick (R11): an idle fleet (no pane signature moves) and an all-active one
-    (every signature moves every tick). ``tmux`` counts the list-panes plus
-    the capture-panes a tick issues, at the worst tick of a rotation period,
-    once every session has been seen once.
-    """
-    from overcode.pane_capture_gate import PaneChangeTracker
-    from overcode.tmux_utils import PaneInfo
-    from overcode.tui_logic import (
-        capture_rotation_period,
-        gate_capture_ids,
-        select_capture_sessions,
-    )
-
-    sessions = live_sessions(paths)
-    ids = [s.id for s in sessions]
-    windows = {s.id: s.tmux_window for s in sessions}
-    focused = ids[0] if ids else None
-    every = capture_rotation_period(max(0, len(ids) - 1))
-    per_tick = max(len(select_capture_sessions(ids, focused, t)) for t in range(1, every + 1))
-    ms = _ms(lambda: select_capture_sessions(ids, focused, 7), reps)
-    results = [
-        _result(
-            "capture selection (per tick, any daemon state)",
-            "TUI 250 ms fast",
-            ms,
-            1,
-            tmux_cmds=per_tick,
-            spawns=per_tick,
-            note=(
-                f"{len(ids)} agents: focused + 1-in-{every} rotation = {per_tick} capture-pane/tick "
-                f"({per_tick * 4}/s); was {len(ids)}/tick ({len(ids) * 4}/s) with a stale daemon"
-            ),
-        )
-    ]
-
-    versions: Counter = Counter()
-
-    def listing():
-        return {
-            w: PaneInfo(w, i + 1, 1000 + i, 1_700_000_000, versions[w], 0, 0, "claude", 0)
-            for i, w in enumerate(windows.values())
-        }
-
-    for label, active in (("idle fleet", False), ("all-active fleet", True)):
-        tracker = PaneChangeTracker()
-        worst, gate_ms = 0, 0.0
-        # Every session seen once, then a full rotation period at 250 ms ticks
-        for tick in range(1, 2 * every + 1):
-            if active:
-                versions.update(windows.values())
-            picks = select_capture_sessions(
-                ids, focused, tick, always_ids={sid for sid in ids if tick == 1}
-            )
-            panes = listing()
-            t0 = time.perf_counter()
-            kept = gate_capture_ids(picks, focused, windows, panes, tracker, tick * 0.25)
-            gate_ms = max(gate_ms, (time.perf_counter() - t0) * 1000)
-            if tick > every:
-                worst = max(worst, 1 + len(kept))
-        results.append(
-            _result(
-                f"capture gating (per tick, {label})",
-                "TUI 250 ms fast",
-                gate_ms,
-                1,
-                tmux_cmds=worst,
-                spawns=worst,
-                note=(
-                    f"{len(ids)} agents: 1 list-panes + {worst - 1} capture-pane/tick "
-                    f"({worst * 4}/s); rotation alone {per_tick}/tick ({per_tick * 4}/s)"
-                ),
-            )
-        )
-    return results
 
 
 # ---- daemon -----------------------------------------------------------------
@@ -1949,7 +1867,6 @@ SITES: Dict[str, Callable[..., List[SiteResult]]] = {
     "presence": time_presence,
     "timeline": time_timeline_slots,
     "discover_ids": time_discover_session_ids,
-    "capture_rotation": time_capture_selection,
     "daemon": time_daemon_phases,
 }
 
