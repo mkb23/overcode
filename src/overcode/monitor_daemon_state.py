@@ -199,6 +199,34 @@ class SessionDaemonState:
     episode_colour: Optional[str] = None
     episode_start: Optional[float] = None
     status_detail: Optional[dict] = None
+    # Attention (#507): when the recorded input-needed (red/orange) stretch
+    # began, and when the person last visited the agent (epoch seconds). A
+    # stretch that began after the visit is "unvisited": the 🔔 highlight.
+    input_needed_since: Optional[float] = None
+    visited_at: Optional[float] = None
+
+    # Transcript-derived values the views render beside the token columns
+    # (synced with them, every STATS_SYNC_*). stats_available is False for
+    # a backend whose reader reports nothing (its columns show "-"), None
+    # before the first sync.
+    stats_available: Optional[bool] = None
+    work_median_seconds: float = 0.0  # median prompt-to-prompt work cycle
+    context_window: Optional[int] = None  # the model's window, None if unknown
+    file_subagent_count: int = 0  # subagents whose transcripts moved lately (#256)
+
+    # Pane-derived signals (status_patterns.extract_from_pane) from the
+    # text the tick's detection read.
+    background_bash_count: int = 0
+    bash_count_ambiguous: bool = False
+    live_subagent_count: int = 0
+    auto_accept_mode: bool = False
+
+    # Green / non-green / sleep seconds as of time_base_at (epoch), re-based
+    # only when the status changes. Views add the time since, in
+    # current_status, so the published values hold still between changes
+    # (green_time_seconds etc. grow every tick and are not published).
+    time_base: Optional[list] = None
+    time_base_at: Optional[float] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -233,6 +261,10 @@ class MonitorDaemonState:
     # duration to its window: a slow-but-alive daemon is not declared dead.
     tick_started_at: Optional[str] = None  # ISO timestamp
     last_tick_duration_seconds: float = 0.0
+    # The last tick's duration when it overran current_interval, else None:
+    # what views show as "daemon slow" (the duration itself moves every tick
+    # and is not published on engine.sock).
+    slow_tick_seconds: Optional[float] = None
     # "attended" (interval_fast) or "unattended" (DAEMON.interval_unattended:
     # no client on the tmux session, no fresh TUI heartbeat, no TUI touching
     # its attended file). current_interval is the number; this is the why.
@@ -298,6 +330,13 @@ class MonitorDaemonState:
     # pings, so pushing these would turn every quiet tick into a delta.
     ENGINE_TICK_FIELDS = frozenset({
         "loop_count", "last_loop_time", "tick_started_at", "last_tick_duration_seconds",
+        # sums of the per-agent accumulators below
+        "total_green_time", "total_non_green_time", "total_sleep_time",
+    })
+    # Per-agent accumulators that grow every tick; views get them as
+    # time_base / time_base_at instead.
+    ENGINE_TICK_AGENT_FIELDS = frozenset({
+        "green_time_seconds", "non_green_time_seconds", "sleep_time_seconds",
     })
 
     def to_engine_snapshot(self):
@@ -321,7 +360,11 @@ class MonitorDaemonState:
         fleet["presence_idle_since"] = (
             int(time.time() - idle) if isinstance(idle, (int, float)) else None
         )
-        agents = {s.session_id: s.to_dict() for s in self.sessions if s.session_id}
+        skip = self.ENGINE_TICK_AGENT_FIELDS
+        agents = {
+            s.session_id: {k: v for k, v in s.to_dict().items() if k not in skip}
+            for s in self.sessions if s.session_id
+        }
         return Snapshot(agents=agents, fleet=fleet)
 
     def update_summaries(self) -> None:

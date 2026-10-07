@@ -113,6 +113,15 @@ class EpisodeRecorder:
     def pending(self) -> bool:
         return bool(self._excursion)
 
+    @property
+    def input_needed_since(self) -> Optional[float]:
+        """Start of the recorded input-needed stretch the agent is in, if any.
+
+        With ``visited_at`` it says whether the person has looked since the
+        agent started needing them: the views' unvisited highlight.
+        """
+        return self._input_needed_since
+
     # -- persistence ------------------------------------------------------
 
     def to_dict(self) -> dict:

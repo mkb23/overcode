@@ -406,6 +406,15 @@ class MonitorDaemon:
         self._last_logged: Dict[str, Tuple[str, str]] = {}
         self._last_keepalive: Dict[str, datetime] = {}
 
+        # What views render beside the status, per session id (0.6.0: the
+        # TUI computes none of it). Time accounting as of the last status
+        # change: ([green, non_green, sleep], epoch). The transcript-derived
+        # values of the last stats sync. The pane-derived counts, with the
+        # pane text they were extracted from (unchanged text, no re-parse).
+        self._time_bases: Dict[str, Tuple[list, float]] = {}
+        self._stats_views: Dict[str, dict] = {}
+        self._pane_views: Dict[str, Tuple[str, dict]] = {}
+
         # Everything a tick wants persisted to sessions.json is staged here
         # and written once at the end of the tick (audit R5); see
         # _flush_pending_writes. Reads inside the tick go through
@@ -554,6 +563,7 @@ class MonitorDaemon:
 
         # Build session state for publishing
         stats = session.stats
+        base = self._time_bases.get(session_id)
 
         # Calculate next heartbeat due time (#171)
         next_heartbeat_due = None
@@ -648,6 +658,9 @@ class MonitorDaemon:
             # Resource usage (summed over the agent process tree)
             cpu_percent=session.cpu_percent,
             rss_bytes=session.rss_bytes,
+            time_base=list(base[0]) if base else None,
+            time_base_at=base[1] if base else None,
+            **self._stats_views.get(session_id, {}),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -728,6 +741,11 @@ class MonitorDaemon:
             if last_time is None:
                 last_time = now
             self.last_state_times[session_id] = last_time
+            self._time_bases[session_id] = (
+                [current_stats.green_time_seconds, current_stats.non_green_time_seconds,
+                 current_stats.sleep_time_seconds],
+                last_time.timestamp(),
+            )
             return  # Don't accumulate on first observation
 
         # Calculate elapsed time
@@ -779,6 +797,11 @@ class MonitorDaemon:
         )
 
         self.last_state_times[session_id] = now
+        if result.state_changed or result.was_capped or session_id not in self._time_bases:
+            self._time_bases[session_id] = (
+                [result.green_seconds, result.non_green_seconds, result.sleep_seconds],
+                now.timestamp(),
+            )
 
     def sync_session_id(self, session) -> None:
         """Detect and bind Claude session IDs (#116, #373).
@@ -893,6 +916,7 @@ class MonitorDaemon:
         """Persist stats read from inside a container agent's filesystem."""
         detected_model = stats.model
         detected_provider = stats.provider
+        self._note_stats_view(session, stats)
 
         # Update model/provider if detected
         self._sync_model(session, detected_model)
@@ -956,6 +980,7 @@ class MonitorDaemon:
             self.sync_session_id(session)
 
             stats = reader.get_stats(session)
+            self._note_stats_view(session, stats)
             if stats is None:
                 return
 
@@ -1054,6 +1079,50 @@ class MonitorDaemon:
     # Pre-backend name, kept until the Phase 6 rename sweep.
     sync_claude_code_stats = sync_agent_stats
 
+    def _note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
+        """Keep the transcript-derived values views render, from one sync.
+
+        ``stats`` None means the backend's reader reports nothing (its
+        columns render a dash), not a failed read: failures raise and leave
+        the previous values in place.
+        """
+        if stats is None:
+            self._stats_views[session.id] = {"stats_available": False}
+            return
+        def number(value, default):
+            return value if isinstance(value, (int, float)) else default
+
+        self._stats_views[session.id] = {
+            "stats_available": True,
+            "work_median_seconds": round(number(stats.median_work_time, 0.0), 1),
+            "context_window": number(stats.max_context_tokens, None),
+            "file_subagent_count": number(stats.live_subagent_count, 0),
+        }
+
+    def _pane_view(self, session, pane_content: str) -> dict:
+        """The pane-derived counts views render, from the text detection read.
+
+        Detection serves an unchanged pane from the capture gate's cache,
+        so the same text comes back tick after tick; it is parsed once.
+        """
+        cached = self._pane_views.get(session.id)
+        if cached is not None and cached[0] == pane_content:
+            return cached[1]
+        if pane_content:
+            from .status_patterns import extract_from_pane, get_patterns
+
+            extracted = extract_from_pane(pane_content, get_patterns(session_backend_name(session)))
+            view = {
+                "background_bash_count": extracted.background_bash_count,
+                "bash_count_ambiguous": extracted.bash_count_ambiguous,
+                "live_subagent_count": extracted.live_subagent_count,
+                "auto_accept_mode": extracted.auto_accept_mode,
+            }
+        else:
+            view = {}
+        self._pane_views[session.id] = (pane_content, view)
+        return view
+
     def _calculate_median_work_time(self, operation_times: List[float]) -> float:
         """Calculate median operation time."""
         return calculate_median(operation_times)
@@ -1144,6 +1213,12 @@ class MonitorDaemon:
             time.sleep(step)
             elapsed += step
 
+            engine = getattr(self, "_engine", None)
+            if not attended and engine is not None and engine.attended:
+                # A view on engine.sock is being looked at again: back to
+                # the attended cadences now, not at the end of the long sleep
+                self.log.info("A view became visible → waking up")
+                return
             if check_activity_signal(self.tmux_session):
                 self.log.info("User activity detected → waking up")
                 self.state.current_interval = INTERVAL_FAST
@@ -1247,6 +1322,10 @@ class MonitorDaemon:
         self.state.last_tick_duration_seconds = round(
             getattr(self, "_last_tick_duration_seconds", 0.0), 3
         )
+        self.state.slow_tick_seconds = (
+            round(self.state.last_tick_duration_seconds, 1)
+            if self.state.last_tick_duration_seconds > self.state.current_interval else None
+        )
         self.state.sessions = session_states
         self.state.presence_available = self.presence.available
         self.state.presence_state = presence_state
@@ -1306,6 +1385,8 @@ class MonitorDaemon:
         state.episode_colour = recorder.episode.colour if recorder.episode else None
         state.episode_start = recorder.episode.start if recorder.episode else None
         state.status_detail = status_detail_view(detail, ts) if colour else None
+        state.input_needed_since = recorder.input_needed_since
+        state.visited_at = recorder.visited_at
         for episode in observed.closed:
             append_episode(self.state_path.parent, session.name, session.id, episode)
         if observed.bell is not None:
@@ -1932,6 +2013,8 @@ class MonitorDaemon:
 
             session_state = self.track_session_stats(session, effective_status, index)
             session_state.current_activity = activity
+            for name, value in self._pane_view(session, pane_content).items():
+                setattr(session_state, name, value)
             self._attach_git_and_burn(session, session_state)
             self._record_episode(session, session_state, effective_status, now)
             session_states.append(session_state)
@@ -2108,6 +2191,9 @@ class MonitorDaemon:
         for stale_id in set(self._last_logged) - current_session_ids:
             del self._last_logged[stale_id]
             self._last_keepalive.pop(stale_id, None)
+        for per_session in (self._time_bases, self._stats_views, self._pane_views):
+            for stale_id in set(per_session) - current_session_ids:
+                del per_session[stale_id]
         self._pane_tracker.forget(current_session_ids)
         self._capture_gate.forget({s.tmux_window for s in sessions})
 
