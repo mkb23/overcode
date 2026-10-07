@@ -200,6 +200,27 @@ The TUI keeps:
 Expected: the TUI's idle CPU becomes rendering only, and the fleet pays for
 status and stats once.
 
+As built (step 3):
+- Every per-agent value a row draws is a `SessionDaemonState` field: besides
+  status, episodes, stats, git and burn, the engine publishes the
+  transcript values beside the token columns (`stats_available`,
+  `work_median_seconds`, `context_window`, `file_subagent_count`), the
+  pane-derived counts, `pr_number`, the attention fields behind the 🔔
+  (`input_needed_since`, `visited_at`), and `time_base`/`time_base_at`
+  instead of the green/non-green accumulators, which grow every tick.
+- The TUI keeps one capture, the focused agent's pane at 250 ms, for that
+  row's pane-derived columns (the preview pane only shows sisters and jobs).
+- The mean spin (μ) stays in the TUI: one incremental read of the history
+  CSV a second. It moves to the episode log with the CSV in 0.7.
+- The bell rings when the engine confirms an input-needed episode (G after
+  it starts). A Stop inside the detector's sticky-green window (#448, 1.5 s)
+  shows when the window ends: the wake scan re-detects the agent then.
+- Measured idle, 10 mock agents, private tmux server, top pane 200x23: the
+  TUI used 5.4–5.5% of a core before and 4.8–4.9% after. What is left is
+  Textual's rendering (the 250 ms row clock), the 10 Hz event-loop probe
+  and the focused capture; the removed work grew with fleet size and
+  activity, which an idle fleet does not show.
+
 ## Build order (each step green on its own)
 
 1. `engine_protocol.py` (AgentView, messages, snapshot/delta application)

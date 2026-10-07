@@ -153,8 +153,9 @@ BURN_SYNC_SECONDS = 5
 # on engine.sock get every change as it happens.
 QUICK_TICK_STATE_SAVE_SECONDS = 1.0
 
-# A TUI touches its attended file every TUI_ATTENDED_TOUCH_SECONDS while a
-# client is attached to it; three missed touches and it is not there.
+# The API server touches the attended file when it serves a sister's status
+# request (TUIs report on engine.sock instead); three missed touches and the
+# sister is not watching.
 TUI_ATTENDED_FRESHNESS = 3 * TUI_ATTENDED_TOUCH_SECONDS
 
 # The every-60-loops housekeeping (done-agent auto-archive, untracked window
@@ -1140,16 +1141,16 @@ class MonitorDaemon:
     def attendance(self) -> str:
         """``"attended"`` or ``"unattended"``: is anyone watching this fleet?
 
-        Unattended only when all three say nobody is: this tick's pane
-        listing counted no client attached to the agents tmux session
+        Attended when a view on engine.sock says it is visible (the
+        split's TUI does, from its tmux attached-client check). Otherwise
+        unattended only when the fallbacks agree nobody is: this tick's
+        pane listing counted no client attached to the agents tmux session
         (``session_attached``; an unknown count — listing failed — counts
         as attended), the TUI keypress heartbeat is not fresh
-        (PresenceComponent's 60 s window), and no TUI has touched its
-        attended file within TUI_ATTENDED_FRESHNESS. The touch is what the
-        split's TUI has (it lives in the `overcode` session, so the first
-        two cannot see it) — and the API server makes the same touch when
-        it serves a status request (a sister TUI's poll), so the daemon
-        never slows while a sister is watching this fleet.
+        (PresenceComponent's 60 s window), and the attended file is older
+        than TUI_ATTENDED_FRESHNESS: the API server touches it when it
+        serves a status request (a sister TUI's poll), so the daemon never
+        slows while a sister is watching this fleet.
         """
         engine = getattr(self, "_engine", None)
         if engine is not None and engine.attended:

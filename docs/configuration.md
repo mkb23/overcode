@@ -536,32 +536,27 @@ shut. Both now notice when nobody is looking, and both come straight back
 when someone is.
 
 **The TUI** watches whether a tmux client is attached to the pane it runs
-in (one `tmux display-message` a second, or for free from the pane listing
-its fast path already issues). While none is, every pane capture, the
-stats sweep, the timeline read, the AI summaries, the sister polls, the
-jobs and sessions refreshes and the resize sweep are paused; the only
-thing left running is a 2 s read of the daemon's published state, which
-keeps the stall bell and the macOS notifications working from the
-daemon's status with no capture. The moment a client attaches (or a key is
-pressed) every timer resumes and one full refresh runs. Nothing changes
-while you are attached, and a TUI run outside tmux can't tell, so it
-always behaves as attended (and keeps telling the daemon so — see the
-touch below).
+in (one `tmux display-message` a second) and tells the engine (the monitor
+daemon) over `engine.sock`. While none is, the focused-pane capture, the
+timeline read, the AI summaries, the sister polls, the jobs and sessions
+refreshes and the resize sweep are paused, and nothing is repainted. The
+engine keeps recording, and its bells still reach the TUI, so macOS
+notifications keep working while you are away. The moment a client
+attaches (or a key is pressed) every timer resumes and one full refresh
+runs. A TUI run outside tmux can't tell, so it always behaves as attended.
 
 **The monitor daemon** stretches its loop from `interval_fast` (2 s) to
-`interval_unattended_seconds` (default 10 s) when all three of these say
-nobody is watching: no client is attached to the agents tmux session, no
-TUI keypress heartbeat is fresh (60 s), and nothing has touched the
-`tui_attended` file in the last 15 s. An attended TUI touches it every
-5 s — including one in another tmux session or in a plain terminal, which
-the first two signals cannot see — and the API server touches it whenever
-it serves a status request, so a fleet watched through a sister TUI stays
-on the fast loop too. It returns to the
-fast interval within one loop of a client attaching, and within about two
-seconds of a TUI re-attaching or a key being pressed (the activity signal
-ends the sleep at its next 1 s chunk). The published state
-carries `interval_mode` (`attended` / `unattended`) and the TUI's daemon
-status bar shows `(unattended)` next to the interval when the daemon is
+`interval_unattended_seconds` (default 10 s) when nothing says anyone is
+watching: no view on `engine.sock` reports itself visible, no client is
+attached to the agents tmux session, no TUI keypress heartbeat is fresh
+(60 s), and the API server has not touched the `tui_attended` file in the
+last 15 s (it does whenever it serves a status request, so a fleet watched
+through a sister TUI stays on the fast loop too). It returns to the fast
+interval as soon as a view says it is visible again (the sleep ends at its
+next 1 s chunk), within one loop of a client attaching, and within about a
+second of a key being pressed. The published state carries
+`interval_mode` (`attended` / `unattended`) and the TUI's daemon status
+bar shows `(unattended)` next to the interval when the daemon is
 still in that mode — normally only for the loop after you return.
 
 What the coarser loop does *not* change: `agent_status_history.csv` is

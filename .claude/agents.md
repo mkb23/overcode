@@ -32,6 +32,13 @@ add an entry when something bites.
 - The preview pane is only for sister agents and jobs view.
 - Timer cadences in `tui.py` `TIMER_INTERVALS` are the product's freshness
   contract. Fix CPU by doing the work cheaper, never by polling slower.
+- The TUI is a view of the engine (`docs/design/engine-0.6.md`): it renders
+  each agent's published view (`SessionSummary.apply_engine`, `tui_engine.py`)
+  and computes nothing about agents. A new per-agent value goes into
+  `SessionDaemonState`, computed in the daemon, and published as an absolute
+  time or a value that holds still between ticks (no countdowns), so a quiet
+  fleet sends no deltas. The one capture left in the TUI is the focused
+  agent's pane.
 
 ## Keys, palette and help come from one place
 
