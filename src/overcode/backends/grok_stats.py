@@ -49,6 +49,7 @@ expects is a ``schema_findings()`` doctor warning, not a crash.
 """
 
 import json
+from bisect import bisect_left, bisect_right
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -60,6 +61,7 @@ from ..stats_reader import (
     empty_window_usage,
 )
 from .grok import grok_home
+from .jsonl_tail import fold_jsonl
 
 # costUsdTicks unit, empirically determined (see module docstring point 2):
 # nano-dollars, i.e. 1e9 ticks == $1.00.
@@ -146,27 +148,29 @@ def _turn_completed_usage(entry: Any) -> Optional[dict]:
     return usage if isinstance(usage, dict) else None
 
 
-def _scan_updates(path: Path, *, since_ts: Optional[float] = None) -> Dict[str, Any]:
-    """One pass over an ``updates.jsonl`` file for the fields the columns need.
+class _UpdatesFold:
+    """Running totals of one ``updates.jsonl``, answerable for any window.
 
     ``turn_completed.usage`` objects are per-turn batches, not a running
-    cumulative total (module docstring point 1) — summed across every one in
-    the file (or, when ``since_ts`` is given, every one at/after it).
-    ``_meta.totalTokens`` IS a running total, so the latest one seen in file
-    order (unfiltered by ``since_ts`` — there's no reliable way to isolate a
-    windowed context size) is "current context".
+    cumulative total (module docstring point 1), so they are summed.
+    ``_times``/``_prefix`` hold each turn's timestamp in ascending order and
+    the token sums of the turns before it, so the usage at/after any
+    ``since_ts`` is the grand total minus one prefix: a bisect, not a scan.
     """
-    out: Dict[str, Any] = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_creation_tokens": 0,
-        "cost_usd": 0.0,
-        "current_context_tokens": 0,
-    }
-    for entry in _iter_jsonl(path):
+
+    __slots__ = ("cost_usd", "current_context_tokens", "_times", "_prefix")
+
+    def __init__(self) -> None:
+        self.cost_usd = 0.0
+        self.current_context_tokens = 0
+        self._times: List[float] = []
+        # _prefix[i] = (input, output, cache_read, cache_creation) summed
+        # over the turns before _times[i]; _prefix[-1] is the grand total.
+        self._prefix: List[Tuple[int, int, int, int]] = [(0, 0, 0, 0)]
+
+    def apply(self, entry: Any) -> None:
         if not isinstance(entry, dict):
-            continue
+            return
 
         # `_meta` sits inside `params`, not at the envelope's top level —
         # confirmed against the real xway session file (413-message,
@@ -174,26 +178,88 @@ def _scan_updates(path: Path, *, since_ts: Optional[float] = None) -> Dict[str, 
         params = entry.get("params")
         meta = params.get("_meta") if isinstance(params, dict) else None
         if isinstance(meta, dict) and "totalTokens" in meta:
-            out["current_context_tokens"] = _as_int(meta.get("totalTokens"))
+            self.current_context_tokens = _as_int(meta.get("totalTokens"))
 
         usage = _turn_completed_usage(entry)
         if usage is None:
-            continue
-        if since_ts is not None and _as_number(entry.get("timestamp")) < since_ts:
-            continue
-        out["input_tokens"] += _as_int(usage.get("inputTokens"))
+            return
         # reasoning has no bucket of its own, so it folds into output rather
         # than vanishing from the totals — matches the codex/opencode
         # convention this reader follows elsewhere.
-        out["output_tokens"] += _as_int(usage.get("outputTokens")) + _as_int(
-            usage.get("reasoningTokens")
+        turn = (
+            _as_int(usage.get("inputTokens")),
+            _as_int(usage.get("outputTokens")) + _as_int(usage.get("reasoningTokens")),
+            _as_int(usage.get("cachedReadTokens")),
+            _as_int(usage.get("cacheCreationTokens")),
         )
-        out["cache_read_tokens"] += _as_int(usage.get("cachedReadTokens"))
-        out["cache_creation_tokens"] += _as_int(usage.get("cacheCreationTokens"))
         ticks = usage.get("costUsdTicks")
         if isinstance(ticks, (int, float)):
-            out["cost_usd"] += ticks / _COST_TICKS_PER_USD
-    return out
+            # Summed in file order, so the float total is bit-identical to
+            # a from-scratch scan's.
+            self.cost_usd += ticks / _COST_TICKS_PER_USD
+        ts = _as_number(entry.get("timestamp"))
+        if ts != ts:
+            # NaN is never `< since_ts`, so a from-scratch window always
+            # counted it: the same as +inf, which sorts.
+            ts = float("inf")
+        if not self._times or ts >= self._times[-1]:
+            last = self._prefix[-1]
+            self._times.append(ts)
+            self._prefix.append(tuple(a + b for a, b in zip(last, turn)))
+        else:
+            self._insert(ts, turn)
+
+    def _insert(self, ts: float, turn: Tuple[int, int, int, int]) -> None:
+        """An out-of-order timestamp: rebuild the prefix sums past it."""
+        at = bisect_right(self._times, ts)
+        prefix = self._prefix
+        deltas = [
+            tuple(b - a for a, b in zip(prefix[i], prefix[i + 1]))
+            for i in range(at, len(self._times))
+        ]
+        self._times.insert(at, ts)
+        del prefix[at + 1:]
+        for delta in [turn] + deltas:
+            prefix.append(tuple(a + b for a, b in zip(prefix[-1], delta)))
+
+    def view(self, since_ts: Optional[float]) -> Dict[str, Any]:
+        total = self._prefix[-1]
+        if since_ts is None:
+            sums = total
+        else:
+            before = self._prefix[bisect_left(self._times, since_ts)]
+            sums = tuple(a - b for a, b in zip(total, before))
+        out: Dict[str, Any] = {
+            "input_tokens": sums[0],
+            "output_tokens": sums[1],
+            "cache_read_tokens": sums[2],
+            "cache_creation_tokens": sums[3],
+            "current_context_tokens": self.current_context_tokens,
+        }
+        if since_ts is None:
+            # Cost is offered whole only: no caller windows it, and a float
+            # difference of prefix sums would not be bit-identical to the
+            # sum of the window's own turns.
+            out["cost_usd"] = self.cost_usd
+        return out
+
+
+def _scan_updates(path: Path, *, since_ts: Optional[float] = None) -> Dict[str, Any]:
+    """The fields the columns need, from ``updates.jsonl`` as it is now.
+
+    Token sums cover every ``turn_completed`` in the file, or, when
+    ``since_ts`` is given, every one at/after it. ``cost_usd`` is present
+    only for the whole file (``since_ts`` None). ``_meta.totalTokens`` is a
+    running total, so the latest one in file order is "current context",
+    never windowed: there's no reliable way to isolate a windowed context
+    size. ``jsonl_tail`` keeps one
+    ``_UpdatesFold`` per file and parses only bytes appended since the last
+    call (#525); ``get_stats``, ``get_stored_cost`` and the window share it.
+    """
+    return fold_jsonl(
+        path, "grok-updates", _UpdatesFold, _UpdatesFold.apply,
+        lambda fold: fold.view(since_ts),
+    )
 
 
 def _read_model_and_effort(session_dir_path: Path) -> Tuple[Optional[str], Optional[str]]:
@@ -212,13 +278,23 @@ def _read_model_and_effort(session_dir_path: Path) -> Tuple[Optional[str], Optio
     )
 
 
+def _count_prompt(counts: Dict[str, int], entry: Any) -> None:
+    if isinstance(entry, dict):
+        sid = entry.get("session_id")
+        if isinstance(sid, str):
+            counts[sid] = counts.get(sid, 0) + 1
+
+
 def _count_prompts(project_dir_path: Path, session_id: str) -> int:
-    path = project_dir_path / "prompt_history.jsonl"
-    count = 0
-    for entry in _iter_jsonl(path):
-        if isinstance(entry, dict) and entry.get("session_id") == session_id:
-            count += 1
-    return count
+    """Prompts ``session_id`` logged in the project's shared prompt history.
+
+    One fold per ``prompt_history.jsonl`` counts every session's prompts, so
+    sibling agents in one project share a single incremental read (#525).
+    """
+    return fold_jsonl(
+        project_dir_path / "prompt_history.jsonl", "grok-prompts", dict, _count_prompt,
+        lambda counts: counts.get(session_id, 0),
+    )
 
 
 def schema_findings() -> List[str]:

@@ -52,6 +52,7 @@ from ..stats_reader import (
     DiscoveredSessionIds,
     empty_window_usage,
 )
+from .jsonl_tail import fold_jsonl
 
 # How many calendar days either side of a timestamp to scan when locating
 # rollout files by date. Bounded so a fallback cwd+time match never turns
@@ -151,14 +152,8 @@ def _launch_datetime(session: Any) -> Optional[datetime]:
         return None
 
 
-def _scan_rollout(path: Path) -> Dict[str, Any]:
-    """One pass over a rollout file for the fields the stats columns need.
-
-    ``token_count`` events carry a running total, not a delta, so later
-    events simply overwrite earlier ones — the last one read in file order
-    is "the latest", matching §2.4's "latest total_token_usage" mapping.
-    """
-    out: Dict[str, Any] = {
+def _new_rollout_state() -> Dict[str, Any]:
+    return {
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_read_tokens": 0,
@@ -169,83 +164,97 @@ def _scan_rollout(path: Path) -> Dict[str, Any]:
         "interaction_count": 0,
         "model_context_window": None,
     }
-    for entry in _iter_jsonl(path):
-        if not isinstance(entry, dict):
-            continue
-        payload = entry.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        etype = entry.get("type")
 
-        if etype == "event_msg" and payload.get("type") == "token_count":
-            info = payload.get("info")
-            usage = info.get("total_token_usage") if isinstance(info, dict) else None
-            if isinstance(usage, dict):
-                out["input_tokens"] = _as_int(usage.get("input_tokens"))
-                # codex bills reasoning as output and reports it separately
-                # (matching the opencode convention this reader follows
-                # elsewhere) — folded into output rather than dropped.
-                out["output_tokens"] = _as_int(usage.get("output_tokens")) + _as_int(
-                    usage.get("reasoning_output_tokens")
-                )
-                out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
-                out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
-            # Context occupancy comes from last_token_usage (the latest
-            # request: its input already contains the whole conversation,
-            # plus its output), NOT total_token_usage — the cumulative
-            # totals re-count the resent context every turn, so a tiny
-            # two-turn session read as 2x its real window usage (29.1K vs
-            # codex's own "/status: 14.5K used"). total_token_usage keeps
-            # feeding the Σ token columns above, where cumulative is the
-            # point. Falls back to the cumulative figure only when
-            # last_token_usage is absent (single-turn files: identical).
-            last = info.get("last_token_usage") if isinstance(info, dict) else None
-            if isinstance(last, dict) and last.get("total_tokens") is not None:
-                out["current_context_tokens"] = _as_int(last.get("total_tokens"))
-            elif isinstance(usage, dict):
-                out["current_context_tokens"] = _as_int(usage.get("total_tokens"))
-            # model_context_window is a sibling of total_token_usage inside
-            # `info`, not nested inside it (#469) — codex's own CLI reports
-            # this per token_count event; a running total like the usage
-            # fields, so "latest wins" here too. Preferred by
-            # AgentSessionStats.max_context_tokens over the static
-            # history_reader.MODEL_CONTEXT_WINDOWS table when present.
-            if isinstance(info, dict):
-                window = _as_int(info.get("model_context_window"))
-                if window > 0:
-                    out["model_context_window"] = window
-            continue
 
-        if etype == "turn_context":
-            model = payload.get("model")
-            if not model:
-                collab = payload.get("collaboration_mode")
-                settings = collab.get("settings") if isinstance(collab, dict) else None
-                if isinstance(settings, dict):
-                    model = settings.get("model")
-            if model:
-                out["model"] = model
-            # Reasoning effort (#497): `effort` on the turn context, with the
-            # collaboration-mode settings' `reasoning_effort` as fallback —
-            # the same two places the model lives.
-            effort = payload.get("effort")
-            if not effort:
-                collab = payload.get("collaboration_mode")
-                settings = collab.get("settings") if isinstance(collab, dict) else None
-                if isinstance(settings, dict):
-                    effort = settings.get("reasoning_effort")
-            if effort and isinstance(effort, str):
-                out["effort"] = effort
-            continue
+def _scan_rollout(path: Path) -> Dict[str, Any]:
+    """The fields the stats columns need, from the rollout as it is now.
 
-        if etype == "response_item" and payload.get("type") == "message" and payload.get("role") == "user":
-            meta = payload.get("internal_chat_message_metadata_passthrough")
-            kinds = meta.get("content_item_kinds") if isinstance(meta, dict) else None
-            if isinstance(kinds, list) and "user.text" in kinds:
-                out["interaction_count"] += 1
-            continue
+    ``token_count`` events carry a running total, not a delta, so later
+    events simply overwrite earlier ones — the last one read in file order
+    is "the latest", matching §2.4's "latest total_token_usage" mapping.
+    Every field is "latest wins" or a count, so the scan folds line by line:
+    ``jsonl_tail`` keeps the state and parses only bytes appended since the
+    last call (#524). ``get_stats`` and ``get_window_token_usage`` share it.
+    """
+    return fold_jsonl(path, "codex-rollout", _new_rollout_state, _apply_rollout_entry, dict)
 
-    return out
+
+def _apply_rollout_entry(out: Dict[str, Any], entry: Any) -> None:
+    """Fold one rollout line into the ``_new_rollout_state`` dict."""
+    if not isinstance(entry, dict):
+        return
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return
+    etype = entry.get("type")
+
+    if etype == "event_msg" and payload.get("type") == "token_count":
+        info = payload.get("info")
+        usage = info.get("total_token_usage") if isinstance(info, dict) else None
+        if isinstance(usage, dict):
+            out["input_tokens"] = _as_int(usage.get("input_tokens"))
+            # codex bills reasoning as output and reports it separately
+            # (matching the opencode convention this reader follows
+            # elsewhere) — folded into output rather than dropped.
+            out["output_tokens"] = _as_int(usage.get("output_tokens")) + _as_int(
+                usage.get("reasoning_output_tokens")
+            )
+            out["cache_read_tokens"] = _as_int(usage.get("cached_input_tokens"))
+            out["cache_write_tokens"] = _as_int(usage.get("cache_write_input_tokens"))
+        # Context occupancy comes from last_token_usage (the latest
+        # request: its input already contains the whole conversation,
+        # plus its output), NOT total_token_usage — the cumulative
+        # totals re-count the resent context every turn, so a tiny
+        # two-turn session read as 2x its real window usage (29.1K vs
+        # codex's own "/status: 14.5K used"). total_token_usage keeps
+        # feeding the Σ token columns above, where cumulative is the
+        # point. Falls back to the cumulative figure only when
+        # last_token_usage is absent (single-turn files: identical).
+        last = info.get("last_token_usage") if isinstance(info, dict) else None
+        if isinstance(last, dict) and last.get("total_tokens") is not None:
+            out["current_context_tokens"] = _as_int(last.get("total_tokens"))
+        elif isinstance(usage, dict):
+            out["current_context_tokens"] = _as_int(usage.get("total_tokens"))
+        # model_context_window is a sibling of total_token_usage inside
+        # `info`, not nested inside it (#469) — codex's own CLI reports
+        # this per token_count event; a running total like the usage
+        # fields, so "latest wins" here too. Preferred by
+        # AgentSessionStats.max_context_tokens over the static
+        # history_reader.MODEL_CONTEXT_WINDOWS table when present.
+        if isinstance(info, dict):
+            window = _as_int(info.get("model_context_window"))
+            if window > 0:
+                out["model_context_window"] = window
+        return
+
+    if etype == "turn_context":
+        model = payload.get("model")
+        if not model:
+            collab = payload.get("collaboration_mode")
+            settings = collab.get("settings") if isinstance(collab, dict) else None
+            if isinstance(settings, dict):
+                model = settings.get("model")
+        if model:
+            out["model"] = model
+        # Reasoning effort (#497): `effort` on the turn context, with the
+        # collaboration-mode settings' `reasoning_effort` as fallback —
+        # the same two places the model lives.
+        effort = payload.get("effort")
+        if not effort:
+            collab = payload.get("collaboration_mode")
+            settings = collab.get("settings") if isinstance(collab, dict) else None
+            if isinstance(settings, dict):
+                effort = settings.get("reasoning_effort")
+        if effort and isinstance(effort, str):
+            out["effort"] = effort
+        return
+
+    if etype == "response_item" and payload.get("type") == "message" and payload.get("role") == "user":
+        meta = payload.get("internal_chat_message_metadata_passthrough")
+        kinds = meta.get("content_item_kinds") if isinstance(meta, dict) else None
+        if isinstance(kinds, list) and "user.text" in kinds:
+            out["interaction_count"] += 1
+        return
 
 
 def _hook_state_path(session: Any) -> Optional[Path]:

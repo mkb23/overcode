@@ -273,8 +273,53 @@ At the TUI's cadence on the 2.3 GB generated store, 23 agents:
 lookup per window call. Tests: `TestWindowIndexReuse`, `TestWindowIndex` and
 `TestWindowIndexStore` in `tests/unit/test_opencode_scan_cost.py`.
 
+## Follow-up: codex and grok read only what was appended (#524, #525)
+
+The codex and grok readers had the same shape of problem with JSONL logs
+instead of SQLite. Each call re-parsed the whole rollout or `updates.jsonl`
+from byte 0: every 5 s for the stats and every second for the burn rate.
+At 30 agents with 4 MB logs that came to ~410 ms/s per backend.
+
+Both logs only ever grow, so `backends/jsonl_tail.py` folds them
+incrementally. It keeps one entry per (kind, path) holding the offset
+parsed so far, `(dev, inode, size, mtime_ns)`, and the reader's
+accumulators. Every call `stat`s the file:
+
+- unchanged: answer from the accumulators, no read;
+- grown: parse only the appended bytes. A line still missing its newline is
+  re-read next time, unless it already parses as an object. In that case it
+  is folded now, and the fold resets if that line later turns out invalid;
+- shrunk, another inode, mtime moved back, or a new mtime at the same size:
+  re-parse from 0. Growth also re-checks the last 64 parsed bytes, which
+  catches a truncate-and-regrow nobody observed.
+
+No TTL is involved: each answer reflects the file at the moment of the call.
+codex's accumulators are its "latest wins" fields and counts. grok's are its
+totals plus `(timestamp, usage)` per `turn_completed`, held sorted with
+prefix sums, so any window `since` is answered with a bisect. Late
+timestamps are inserted in order. `get_stats`, `get_stored_cost` and the
+window all read the same fold. grok's `prompt_history.jsonl` is folded too,
+into per-session counts, so sibling agents in one project share one read.
+
+Each entry has its own lock, because the TUI calls readers from a thread
+pool. The table holds at most 256 entries: past that, entries idle for an
+hour go first, then the least recently used.
+
+| backend, 30 agents, TUI cadence | before | after |
+|---|---|---|
+| codex | 425 ms/s | 5 ms/s |
+| grok | 420 ms/s | 0.7 ms/s |
+
+codex's remaining cost is not the fold. It is `_path_for` globbing and
+stat-ing the day directories on every call to find the rollout file. The
+oracle is `tests/unit/stats_jsonl_reference.py`, the old full-scan parsers
+kept verbatim. `tests/unit/test_jsonl_incremental.py` checks the folds
+against it after random appends (cut mid-line and mid-character),
+truncations, replacements and in-place rewrites. It also counts bytes read
+and races eight readers against a writer.
+
 ## References
 
-- Issues #476, #517
+- Issues #476, #517, #524, #525
 - `scripts/make_opencode_store.py`, `scripts/bench_opencode_scan.py`
 - `docs/design/agent-agnostic-backends-opencode.md` (the reader's origin)

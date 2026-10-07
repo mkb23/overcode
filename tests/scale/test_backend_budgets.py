@@ -112,13 +112,16 @@ def test_opencode_burn_rate_reuses_the_stats_scan(cadence, name):
     assert cadence[name].window_ms_per_second < 25.0, cadence[name].line()
 
 
-@_known(524, "~407 ms/s: the whole rollout is re-read every 5 s and every second")
 def test_codex_fleet_within_budget(cadence):
+    # today: ~5 ms/s, nearly all of it locating the rollout file; the fold
+    # itself is one stat per call. Before #524: ~407 ms/s (the whole rollout
+    # re-read every 5 s and every second)
     assert cadence["codex"].ms_per_second < FLEET_BUDGET_MS_PER_S, cadence["codex"].line()
 
 
-@_known(525, "~412 ms/s: the whole updates.jsonl is re-read every 5 s and every second")
 def test_grok_fleet_within_budget(cadence):
+    # today: ~1 ms/s. Before #525: ~412 ms/s (the whole updates.jsonl
+    # re-read every 5 s and every second)
     assert cadence["grok"].ms_per_second < FLEET_BUDGET_MS_PER_S, cadence["grok"].line()
 
 
