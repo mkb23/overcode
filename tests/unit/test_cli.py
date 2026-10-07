@@ -230,9 +230,9 @@ class TestShowCommandWithMocks:
         )
 
     def _make_mock_claude_stats(self):
-        """Create a mock ClaudeSessionStats."""
-        from overcode.history_reader import ClaudeSessionStats
-        return ClaudeSessionStats(
+        """Create a mock AgentSessionStats."""
+        from overcode.history_reader import AgentSessionStats
+        return AgentSessionStats(
             interaction_count=5,
             input_tokens=50000,
             output_tokens=10000,
@@ -547,8 +547,8 @@ def _make_session(name="test-agent", **kwargs):
 
 
 def _make_claude_stats(**kwargs):
-    """Helper to create a ClaudeSessionStats."""
-    from overcode.history_reader import ClaudeSessionStats
+    """Helper to create a AgentSessionStats."""
+    from overcode.history_reader import AgentSessionStats
     defaults = dict(
         interaction_count=5,
         input_tokens=50000,
@@ -561,7 +561,7 @@ def _make_claude_stats(**kwargs):
         background_task_count=0,
     )
     defaults.update(kwargs)
-    return ClaudeSessionStats(**defaults)
+    return AgentSessionStats(**defaults)
 
 
 class TestParseDuration:

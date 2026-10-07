@@ -1,5 +1,5 @@
 """
-Realistic integration tests for StatusDetector.
+Realistic integration tests for PollingStatusDetector.
 
 These tests use full tmux pane captures (as they actually appear) to verify
 status detection works correctly with real-world content including:
@@ -17,9 +17,9 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.status_detector import StatusDetector
+from overcode.status_detector import PollingStatusDetector
 from overcode.status_constants import STATUS_RUNNING, STATUS_WAITING_USER, STATUS_TERMINATED
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from tests.fixtures import create_mock_session
 from tests.fixtures_realistic import (
     REALISTIC_AUTOCOMPLETE_IDLE,
@@ -39,11 +39,11 @@ from tests.fixtures_realistic import (
 
 
 def create_detector_with_content(content: str, session_name: str = "agents", window: int = 1):
-    """Create a StatusDetector with mock tmux containing the given content."""
+    """Create a PollingStatusDetector with mock tmux containing the given content."""
     mock_tmux = MockTmux()
     mock_tmux.new_session(session_name)
     mock_tmux.sessions[session_name][window] = content
-    return StatusDetector(session_name, tmux=mock_tmux)
+    return PollingStatusDetector(session_name, tmux=mock_tmux)
 
 
 class TestRealisticAutocomplete:
@@ -294,7 +294,7 @@ class TestRealisticContentChangeDetection:
         mock_tmux = MockTmux()
         mock_tmux.new_session("agents")
 
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # First call with one content

@@ -57,7 +57,6 @@ def _daemon(root, tmux_session="agents"):
     try:
         with (
             patch("overcode.monitor_daemon.SessionManager"),
-            patch("overcode.monitor_daemon.StatusDetector"),
         ):
             daemon = MonitorDaemon(tmux_session=tmux_session, tmux=MagicMock())
     finally:

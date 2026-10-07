@@ -1637,7 +1637,7 @@ SuperGrok/X Premium+ subscription login that writes `~/.grok/auth.json` on
 the host. `XAI_API_KEY` is forwarded if set, but whether grok's interactive
 browser login flow even works from inside a container's tmux pane has not
 been tested with a live docker build (out of scope for this pass — see
-`wrappers/README.md`). If you need grok to skip that login, mount your host
+[wrappers.md](wrappers.md)). If you need grok to skip that login, mount your host
 `~/.grok` into the container at the same path yourself; the wrapper does not
 do this automatically, and doing so also would not install the global hooks
 file (which the host-side launch already staged at `~/.grok/hooks/` on the

@@ -152,9 +152,6 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "kimi-k2-thinking": 256_000,
     "kimi-k2-thinking-turbo": 256_000,
 }
-DEFAULT_CONTEXT_WINDOW = 200_000  # Retained for callers predating #469; no
-                                   # longer used as an automatic fallback by
-                                   # model_context_window() itself.
 
 # Model ID → human-readable short name for display (MDL column).
 #
@@ -447,10 +444,6 @@ class AgentSessionStats:
         if n % 2 == 0:
             return (sorted_times[n // 2 - 1] + sorted_times[n // 2]) / 2
         return sorted_times[n // 2]
-
-
-# Pre-backend name, kept for callers that still import it.
-ClaudeSessionStats = AgentSessionStats
 
 
 def synthesize_remote_stats(session) -> "AgentSessionStats":

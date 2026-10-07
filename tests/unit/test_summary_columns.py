@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from overcode.summary_columns import ALL, MED_PLUS, FULL_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_pr_number_plain, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
+from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_pr_number_plain, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
 from overcode.summary_groups import SUMMARY_GROUPS_BY_ID
 
 
@@ -143,7 +143,7 @@ class TestColumnStructure:
         """Verify convenience constant values."""
         assert ALL == {"low", "med", "high", "full"}
         assert MED_PLUS == {"med", "high", "full"}
-        assert FULL_PLUS == {"high", "full"}  # FULL_PLUS is alias for HIGH_PLUS
+        assert HIGH_PLUS == {"high", "full"}  # HIGH_PLUS is alias for HIGH_PLUS
 
     def test_every_column_has_render_callable(self):
         """Every column must have a callable render function."""
@@ -216,9 +216,9 @@ class TestColumnGating:
                 assert "low" not in col.detail_levels
 
     def test_low_detail_skips_full_plus_columns(self):
-        """Columns with FULL_PLUS detail should be skipped in 'low' mode."""
+        """Columns with HIGH_PLUS detail should be skipped in 'low' mode."""
         for col in SUMMARY_COLUMNS:
-            if col.detail_levels == FULL_PLUS:
+            if col.detail_levels == HIGH_PLUS:
                 assert "low" not in col.detail_levels
 
     def test_all_detail_includes_every_level(self):

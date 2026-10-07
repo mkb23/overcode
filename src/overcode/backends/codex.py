@@ -73,7 +73,7 @@ def _codex_hook_toml_array(command: str) -> str:
 class CodexNotFoundError(AgentCliNotFoundError):
     """Raised when the codex CLI isn't on PATH.
 
-    Subclasses ``AgentCliNotFoundError`` (aka ``ClaudeNotFoundError``) so the
+    Subclasses ``AgentCliNotFoundError`` so the
     launcher's existing "agent CLI missing" handling catches it without a new
     except clause.
     """

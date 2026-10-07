@@ -35,7 +35,7 @@ from overcode.session_manager import (  # noqa: E402
     read_git_context_from_disk,
 )
 from overcode.tmux_manager import TmuxManager  # noqa: E402
-from overcode.interfaces import MockTmux  # noqa: E402
+from overcode.mocks import MockTmux  # noqa: E402
 
 
 # ── select_capture_sessions ──────────────────────────────────────────

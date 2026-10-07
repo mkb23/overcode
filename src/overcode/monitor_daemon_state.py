@@ -73,7 +73,7 @@ class SessionDaemonState:
     name: str = ""
     tmux_window: str = ""
 
-    # Status (from StatusDetector)
+    # Status (from the status detector)
     current_status: str = "unknown"  # running, waiting_user, waiting_approval, waiting_heartbeat, terminated
     current_activity: str = ""
     status_since: Optional[str] = None  # ISO timestamp

@@ -98,16 +98,3 @@ class AgentCliNotFoundError(AgentCliError):
 
     pass
 
-
-class AgentCliStartupError(AgentCliError):
-    """Error starting the agent CLI process."""
-
-    pass
-
-
-# Pre-backend names, kept so existing ``except ClaudeNotFoundError`` clauses
-# (and third-party callers) keep catching the same exceptions. Aliases rather
-# than subclasses so isinstance relationships are unchanged in both directions.
-ClaudeError = AgentCliError
-ClaudeNotFoundError = AgentCliNotFoundError
-ClaudeStartupError = AgentCliStartupError

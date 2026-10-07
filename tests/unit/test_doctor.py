@@ -1,14 +1,12 @@
 """Tests for overcode.doctor — hook-health inspection."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import List, Optional
 
 import pytest
 
 from overcode.doctor import (
-    AgentHealth,
     FINDING_BUDGET_EXCEEDED,
     FINDING_CONTEXT_ZERO,
     FINDING_COST_ZERO,
@@ -23,7 +21,6 @@ from overcode.doctor import (
     FINDING_TOKENS_ZERO,
     Finding,
     SEVERITY_ERROR,
-    SEVERITY_WARNING,
     VERDICT_MISSING_SETTINGS,
     VERDICT_NO_CLAUDE,
     VERDICT_OK,
@@ -55,7 +52,7 @@ def _make_session(**overrides) -> Session:
 
 @dataclass
 class _FakeStats:
-    """Stand-in for history_reader.ClaudeSessionStats in data-finding tests.
+    """Stand-in for history_reader.AgentSessionStats in data-finding tests.
 
     We duck-type rather than constructing the real thing to keep these tests
     independent of history_reader's import chain.

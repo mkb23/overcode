@@ -27,7 +27,7 @@ from overcode.backends.codex import (
     CodexNotFoundError,
 )
 from overcode.doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
-from overcode.exceptions import ClaudeNotFoundError
+from overcode.exceptions import AgentCliNotFoundError
 from overcode.hook_handler import CODEX_HOOK_EVENTS
 
 
@@ -80,8 +80,8 @@ class TestRegistry:
 
     def test_not_found_error_is_catchable_as_the_legacy_one(self):
         # The launcher's existing "agent CLI missing" except clause names
-        # ClaudeNotFoundError; codex's must be caught by it.
-        assert issubclass(CodexNotFoundError, ClaudeNotFoundError)
+        # AgentCliNotFoundError; codex's must be caught by it.
+        assert issubclass(CodexNotFoundError, AgentCliNotFoundError)
 
     def test_process_basenames_are_the_vendored_child(self, backend):
         # The top-level process is `node .../codex` (the npm wrapper); the

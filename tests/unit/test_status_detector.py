@@ -1,5 +1,5 @@
 """
-Unit tests for StatusDetector.
+Unit tests for PollingStatusDetector.
 
 These tests use MockTmux to inject fake pane content, allowing us to
 test all detection paths without requiring real tmux.
@@ -12,8 +12,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from overcode.status_detector import StatusDetector
-from overcode.interfaces import MockTmux
+from overcode.status_detector import PollingStatusDetector
+from overcode.mocks import MockTmux
 from overcode.status_constants import STATUS_BUSY_SLEEPING, STATUS_RUNNING, STATUS_WAITING_USER, STATUS_WAITING_APPROVAL, STATUS_TERMINATED, STATUS_ERROR
 from tests.fixtures import (
     create_mock_session,
@@ -51,7 +51,7 @@ class TestStatusDetectorBasics:
     def test_detects_waiting_user_at_empty_prompt(self):
         """When Claude shows an empty '>' prompt, user input is expected"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_WAITING_USER)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -62,7 +62,7 @@ class TestStatusDetectorBasics:
     def test_detects_permission_prompt(self):
         """Permission prompts should be detected as waiting_user"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_PERMISSION_PROMPT)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -73,7 +73,7 @@ class TestStatusDetectorBasics:
     def test_detects_running_with_spinner(self):
         """Spinner characters indicate active work"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_RUNNING_WITH_SPINNER)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         status, activity, _ = detector.detect_status(session)
@@ -83,7 +83,7 @@ class TestStatusDetectorBasics:
     def test_detects_running_with_tool_execution(self):
         """Tool execution indicators mean Claude is working"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_RUNNING_WITH_TOOL)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Do the thing")
 
         status, activity, _ = detector.detect_status(session)
@@ -94,7 +94,7 @@ class TestStatusDetectorBasics:
     def test_detects_thinking(self):
         """'thinking' keyword indicates active work"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_THINKING)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Think hard")
 
         status, activity, _ = detector.detect_status(session)
@@ -108,7 +108,7 @@ class TestStatusDetectorStalledDetection:
     def test_detects_stalled_with_nbsp(self):
         """User input with non-breaking space and no response = stalled"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_STALLED)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -125,7 +125,7 @@ class TestStatusDetectorContentChange:
         mock_tmux = MockTmux()
         mock_tmux.new_session("agents")
 
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # First call - set initial content
@@ -151,7 +151,7 @@ More idle text
 No spinners or tools running
 """
 
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)  # No standing instructions
 
         # Two calls with same content
@@ -189,7 +189,7 @@ More text here
 >
 """
 
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)  # No standing instructions
 
         # First call with v1
@@ -219,7 +219,7 @@ class TestStatusDetectorNoInstructions:
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 """
         mock_tmux = create_mock_tmux_with_content("agents", 1, content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
 
         # Session WITHOUT standing instructions
         session = create_mock_session(tmux_window=1, standing_instructions="")
@@ -245,7 +245,7 @@ class TestStatusDetectorNoInstructions:
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 """
         mock_tmux = create_mock_tmux_with_content("agents", 1, content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
 
         # Session WITH standing instructions
         session = create_mock_session(
@@ -275,7 +275,7 @@ class TestApprovalDetection:
         so "plan mode" matched approval_patterns on idle sessions.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_PLAN_MODE_IDLE)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # Prime content hash
@@ -289,7 +289,7 @@ class TestApprovalDetection:
     def test_genuine_plan_approval_detected(self):
         """Claude output with approval text should be waiting_approval."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_PLAN_APPROVAL)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # Prime content hash
@@ -316,7 +316,7 @@ class TestStatusDetectorAutocomplete:
         had standing instructions, which was incorrect.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_AUTOCOMPLETE_SUGGESTION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         # Session WITH standing instructions - previously this caused green status
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
@@ -341,7 +341,7 @@ class TestStatusDetectorEdgeCases:
     def test_handles_empty_pane(self):
         """Empty pane content should return waiting_user"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, "")
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -355,7 +355,7 @@ class TestStatusDetectorEdgeCases:
         mock_tmux.new_session("agents")
         # Don't create window 1 — simulates a killed tmux window
 
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -366,7 +366,7 @@ class TestStatusDetectorEdgeCases:
     def test_handles_whitespace_only_content(self):
         """Whitespace-only content should be treated as no output"""
         mock_tmux = create_mock_tmux_with_content("agents", 1, "   \n\n   \n")
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -392,7 +392,7 @@ class TestStatusDetectorEdgeCases:
   ⏵⏵ bypass permissions on (shift+tab to cycle)"""
 
         mock_tmux = create_mock_tmux_with_content("agents", 1, content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -408,7 +408,7 @@ class TestStatusDetectorHelperMethods:
     def test_clean_line_removes_prefixes(self):
         """_clean_line should strip common prefixes"""
         mock_tmux = MockTmux()
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
 
         assert detector._clean_line("> some text") == "some text"
         assert detector._clean_line("› other text") == "other text"
@@ -418,7 +418,7 @@ class TestStatusDetectorHelperMethods:
     def test_clean_line_truncates_long_lines(self):
         """_clean_line should truncate lines over 80 chars"""
         mock_tmux = MockTmux()
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
 
         long_line = "x" * 100
         result = detector._clean_line(long_line)
@@ -430,7 +430,7 @@ class TestStatusDetectorHelperMethods:
         """get_pane_content should respect num_lines limit"""
         many_lines = "\n".join([f"Line {i}" for i in range(100)])
         mock_tmux = create_mock_tmux_with_content("agents", 1, many_lines)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
 
         content = detector.get_pane_content(1, num_lines=10)
 
@@ -461,7 +461,7 @@ class TestStatusDetectorNewPermissionFormat:
         from the permission dialog option text.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_WEB_SEARCH_PERMISSION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash (first call)
@@ -480,7 +480,7 @@ class TestStatusDetectorNewPermissionFormat:
         Similar to web search - 'Bash commands in' should not trigger active detection.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_PERMISSION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -498,7 +498,7 @@ class TestStatusDetectorNewPermissionFormat:
         The text 'Reading' is a tool execution indicator that could falsely match.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_READ_PERMISSION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -513,7 +513,7 @@ class TestStatusDetectorNewPermissionFormat:
     def test_permission_activity_mentions_permission_or_proceed(self):
         """Activity text for permission prompts should be descriptive."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_WEB_SEARCH_PERMISSION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -548,7 +548,7 @@ class TestStatusDetectorSpawnFailure:
         from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_BASH
 
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_BASH)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -568,7 +568,7 @@ class TestStatusDetectorSpawnFailure:
         from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_ZSH
 
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_ZSH)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -585,7 +585,7 @@ class TestStatusDetectorSpawnFailure:
         from tests.fixtures import PANE_CONTENT_SPAWN_FAILED_PERMISSION
 
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_SPAWN_FAILED_PERMISSION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -611,7 +611,7 @@ class TestBusySleepingDetection:
     def test_detects_bash_sleep_as_busy_sleeping(self):
         """Running Bash('sleep 60') should be detected as busy_sleeping."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -625,7 +625,7 @@ class TestBusySleepingDetection:
     def test_activity_string_includes_duration(self):
         """Activity string should include parsed duration like 'Sleeping 1.0m'."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -640,7 +640,7 @@ class TestBusySleepingDetection:
     def test_detects_bash_sleep_variant(self):
         """'Bash  sleep 300' format should also be detected."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP_VARIANT)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -654,7 +654,7 @@ class TestBusySleepingDetection:
     def test_detects_compound_sleep_command(self):
         """'sleep 900 && echo ...' should be detected as busy_sleeping."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_BASH_SLEEP_COMPOUND)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -673,7 +673,7 @@ class TestBusySleepingDetection:
   Running Bash("pytest tests/ -v")
 """
         mock_tmux = create_mock_tmux_with_content("agents", 1, content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1, standing_instructions="Keep working")
 
         # Prime content hash
@@ -701,7 +701,7 @@ class TestErrorDetection:
     def test_detects_api_overloaded_error(self):
         """529 overloaded with retry should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_API_OVERLOADED)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # First call sets baseline, second detects static content
@@ -716,7 +716,7 @@ class TestErrorDetection:
     def test_detects_request_timeout_error(self):
         """Request timeout with retry should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_TIMEOUT)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -729,7 +729,7 @@ class TestErrorDetection:
     def test_detects_final_error_after_retries(self):
         """Final API error (retries exhausted) should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_FINAL)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -743,7 +743,7 @@ class TestErrorDetection:
     def test_detects_connection_error(self):
         """Connection error with TypeError should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_CONNECTION)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -756,7 +756,7 @@ class TestErrorDetection:
     def test_detects_econnreset_error(self):
         """ECONNRESET should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_ECONNRESET)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -769,7 +769,7 @@ class TestErrorDetection:
     def test_detects_rate_limit_banner(self):
         """Rate limit banner should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_RATE_LIMIT)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -783,7 +783,7 @@ class TestErrorDetection:
     def test_detects_auth_error(self):
         """Auth error should be detected as error."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_ERROR_AUTH)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -796,7 +796,7 @@ class TestErrorDetection:
     def test_narrative_errors_not_detected_as_error(self):
         """Claude discussing errors in response text should NOT trigger error (#216)."""
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_NARRATIVE_ERRORS)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # First call sets baseline, second detects static content
@@ -815,7 +815,7 @@ class TestErrorDetection:
         discussion about error detection, not as actual system errors.
         """
         mock_tmux = create_mock_tmux_with_content("agents", 1, PANE_CONTENT_NARRATIVE_ERROR_PATTERNS)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         detector.detect_status(session)
@@ -844,7 +844,7 @@ claude --resume d0c16531-fef4-44ec-b3ba-bc64dda5027e
 mike@shirka overcode-main %
 """
         mock_tmux = create_mock_tmux_with_content("agents", 1, content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         status, activity, _ = detector.detect_status(session)
@@ -858,7 +858,7 @@ mike@shirka overcode-main %
         # First poll with error content
         error_content = PANE_CONTENT_ERROR_API_OVERLOADED
         mock_tmux = create_mock_tmux_with_content("agents", 1, error_content)
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         session = create_mock_session(tmux_window=1)
 
         # First call establishes baseline
@@ -881,7 +881,7 @@ class TestPollingDetectorCaptureGate:
         from unittest.mock import patch
 
         mock_tmux = create_mock_tmux_with_content("agents", "w1", "line")
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         assert detector.capture_gate is None
         with patch.object(mock_tmux, "capture_pane", wraps=mock_tmux.capture_pane) as cap:
             detector.get_pane_content("w1")
@@ -894,7 +894,7 @@ class TestPollingDetectorCaptureGate:
         from overcode.pane_capture_gate import PaneCaptureGate
 
         mock_tmux = create_mock_tmux_with_content("agents", "w1", "first")
-        detector = StatusDetector("agents", tmux=mock_tmux)
+        detector = PollingStatusDetector("agents", tmux=mock_tmux)
         gate = PaneCaptureGate()
         detector.capture_gate = gate
         gate.begin_loop()

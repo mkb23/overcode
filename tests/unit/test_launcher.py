@@ -17,7 +17,7 @@ from overcode.exceptions import InvalidSessionNameError
 from overcode.launcher import AgentLauncher
 from overcode.tmux_manager import TmuxManager
 from overcode.session_manager import SessionManager
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 
 
 @pytest.fixture(autouse=True)
@@ -322,7 +322,7 @@ class TestLauncherSendToSession:
             session_manager=session_manager
         )
 
-        session = launcher.launch(name="test-agent")
+        launcher.launch(name="test-agent")
         initial_keys = len(mock_tmux.sent_keys)
 
         result = launcher.send_to_session("test-agent", "hello world")
@@ -541,7 +541,7 @@ class TestLauncherCleanup:
         )
 
         # Launch two sessions, then kill one window
-        session1 = launcher.launch(name="alive")
+        launcher.launch(name="alive")
         session2 = launcher.launch(name="dead")
         mock_tmux.kill_window("agents", session2.tmux_window)
 
@@ -866,7 +866,7 @@ class TestGetSessionOutput:
             session_manager=session_manager
         )
 
-        session = launcher.launch(name="test-agent")
+        launcher.launch(name="test-agent")
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
@@ -894,7 +894,7 @@ class TestGetSessionOutput:
             session_manager=session_manager
         )
 
-        session = launcher.launch(name="test-agent")
+        launcher.launch(name="test-agent")
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1)
@@ -933,7 +933,7 @@ class TestGetSessionOutput:
             session_manager=session_manager
         )
 
-        session = launcher.launch(name="test-agent")
+        launcher.launch(name="test-agent")
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired("tmux", 5)
@@ -1161,11 +1161,10 @@ class TestLauncherHierarchy:
         )
 
         # Build chain up to max depth
-        prev = launcher.launch(name="level-0")
+        launcher.launch(name="level-0")
         for i in range(1, AgentLauncher.MAX_HIERARCHY_DEPTH):
             child = launcher.launch(name=f"level-{i}", parent_name=f"level-{i-1}")
             assert child is not None, f"Should succeed at depth {i}"
-            prev = child
 
         # One more should fail
         too_deep = launcher.launch(
@@ -1188,7 +1187,7 @@ class TestLauncherHierarchy:
             session_manager=session_manager,
         )
 
-        parent = launcher.launch(name="env-parent")
+        launcher.launch(name="env-parent")
         child = launcher.launch(name="env-child", parent_name="env-parent")
 
         assert child is not None
@@ -1380,9 +1379,9 @@ class TestCascadeKill:
             session_manager=session_manager,
         )
 
-        parent = launcher.launch(name="parent")
-        child1 = launcher.launch(name="child1", parent_name="parent")
-        child2 = launcher.launch(name="child2", parent_name="parent")
+        launcher.launch(name="parent")
+        launcher.launch(name="child1", parent_name="parent")
+        launcher.launch(name="child2", parent_name="parent")
 
         result = launcher.kill_session("parent", cascade=True)
         assert result is True
@@ -1404,8 +1403,8 @@ class TestCascadeKill:
             session_manager=session_manager,
         )
 
-        parent = launcher.launch(name="parent")
-        child = launcher.launch(name="child", parent_name="parent")
+        launcher.launch(name="parent")
+        launcher.launch(name="child", parent_name="parent")
 
         result = launcher.kill_session("parent", cascade=False)
         assert result is True
@@ -1428,9 +1427,9 @@ class TestCascadeKill:
             session_manager=session_manager,
         )
 
-        root = launcher.launch(name="root")
-        child = launcher.launch(name="child", parent_name="root")
-        grandchild = launcher.launch(name="grandchild", parent_name="child")
+        launcher.launch(name="root")
+        launcher.launch(name="child", parent_name="root")
+        launcher.launch(name="grandchild", parent_name="child")
 
         result = launcher.kill_session("root", cascade=True)
         assert result is True
@@ -2164,7 +2163,6 @@ class TestSettingsInjection:
 
     def test_settings_contains_hooks(self, tmp_path):
         """Injected settings JSON contains all overcode hooks."""
-        import json
         from overcode.hook_handler import OVERCODE_HOOKS
 
         mock_tmux = MockTmux()

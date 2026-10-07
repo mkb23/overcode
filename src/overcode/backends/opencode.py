@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 class OpencodeNotFoundError(AgentCliNotFoundError):
     """Raised when the opencode CLI isn't on PATH.
 
-    Subclasses ``AgentCliNotFoundError`` (aka ``ClaudeNotFoundError``) so the
+    Subclasses ``AgentCliNotFoundError`` so the
     launcher's existing "agent CLI missing" handling catches it without a new
     except clause.
     """

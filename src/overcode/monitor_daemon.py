@@ -3,7 +3,7 @@
 Monitor Daemon - Single source of truth for all session metrics.
 
 This daemon handles all monitoring responsibilities:
-- Agent status detection (via StatusDetector)
+- Agent status detection (hook or polling detector)
 - Time tracking (green_time_seconds, non_green_time_seconds)
 - Agent stats sync (tokens, interactions)
 - Presence tracking (graceful degradation on non-macOS)
@@ -77,13 +77,12 @@ from .status_constants import (
     is_green_status,
 )
 from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
-from .status_detector import StatusDetector
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
+from .pricing import calculate_cost_estimate
 from .monitor_daemon_core import (
     calculate_time_accumulation,
-    calculate_cost_estimate,
     calculate_total_tokens,
     calculate_median,
     should_sync_stats,
@@ -102,7 +101,7 @@ from .tmux_utils import (
 )
 
 if TYPE_CHECKING:
-    from .protocols import TmuxInterface
+    from .protocols import StatusDetectorProtocol, TmuxInterface
 
 
 # Check for macOS presence APIs (optional)
@@ -295,7 +294,7 @@ class MonitorDaemon:
         self,
         tmux_session: str = "agents",
         session_manager: Optional[SessionManager] = None,
-        status_detector: Optional[StatusDetector] = None,
+        status_detector: Optional["StatusDetectorProtocol"] = None,
         tmux: Optional["TmuxInterface"] = None,
     ):
         self.tmux_session = tmux_session

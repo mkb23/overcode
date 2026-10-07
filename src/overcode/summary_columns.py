@@ -139,8 +139,6 @@ ColumnOutput = Optional[List[Tuple[str, str]]]
 ALL = {"low", "med", "high", "full"}
 MED_PLUS = {"med", "high", "full"}
 HIGH_PLUS = {"high", "full"}
-# Backward-compat alias
-FULL_PLUS = HIGH_PLUS
 
 
 # ---------------------------------------------------------------------------
@@ -787,8 +785,6 @@ def render_burn_rate(ctx: ColumnContext) -> ColumnOutput:
         return [(f" 🔥{format_tokens(int(rate)):>5}/h", ctx.mono(f"bold {color}{ctx.bg}", "bold"))]
 
 
-# Backward-compat alias
-render_tokens = render_token_count
 
 
 def render_git_diff(ctx: ColumnContext) -> ColumnOutput:
@@ -1253,8 +1249,6 @@ def render_cost_plain(ctx: ColumnContext) -> Optional[str]:
     return format_cost(cost)
 
 
-# Backward-compat alias
-render_tokens_plain = render_token_count_plain
 
 
 def render_git_diff_plain(ctx: ColumnContext) -> Optional[str]:

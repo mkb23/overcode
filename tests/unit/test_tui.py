@@ -795,9 +795,9 @@ class TestSessionSummaryRender:
         """Render shows session name and stats"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.history_reader import ClaudeSessionStats
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.history_reader import AgentSessionStats
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -813,14 +813,14 @@ class TestSessionSummaryRender:
         session.branch = "main"
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
         widget.expanded = False
         widget.summary_detail = "full"  # Set to full to see repo:branch
         # Set mock stats (normally updated by update_status from Claude Code files)
-        widget.claude_stats = ClaudeSessionStats(
+        widget.claude_stats = AgentSessionStats(
             interaction_count=5,
             input_tokens=5000,
             output_tokens=10000,
@@ -842,8 +842,8 @@ class TestSessionSummaryRender:
         """Render shows correct status emoji"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -857,7 +857,7 @@ class TestSessionSummaryRender:
         session.stats = SessionStats()
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         # Test running status
         widget = SessionSummary(session, status_detector)
@@ -875,8 +875,8 @@ class TestSessionSummaryRender:
         """Render shows pane content in expanded mode"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -890,7 +890,7 @@ class TestSessionSummaryRender:
         session.stats = SessionStats()
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"
@@ -906,8 +906,8 @@ class TestSessionSummaryRender:
         """Render shows standing instructions in content area"""
         from overcode.tui import SessionSummary
         from overcode.session_manager import Session, SessionStats
-        from overcode.status_detector import StatusDetector
-        from overcode.interfaces import MockTmux
+        from overcode.status_detector import PollingStatusDetector
+        from overcode.mocks import MockTmux
 
         session = Session(
             id="test-session",
@@ -923,7 +923,7 @@ class TestSessionSummaryRender:
         session.standing_orders_complete = False
 
         mock_tmux = MockTmux()
-        status_detector = StatusDetector("test", tmux=mock_tmux)
+        status_detector = PollingStatusDetector("test", tmux=mock_tmux)
 
         widget = SessionSummary(session, status_detector)
         widget.detected_status = "running"

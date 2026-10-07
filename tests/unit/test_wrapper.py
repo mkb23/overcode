@@ -6,7 +6,6 @@ import os
 import stat
 import subprocess
 import sys
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.wrapper import (
     resolve_wrapper, list_available_wrappers, _wrappers_dir,
-    install_all_bundled, reset_wrapper, BUNDLED_WRAPPERS, _install_bundled,
+    install_all_bundled, reset_wrapper, BUNDLED_WRAPPERS,
 )
 
 
@@ -404,13 +403,6 @@ class TestDevcontainerBackendSelection:
         assert "OPENAI_API_KEY" in self.SCRIPT
         assert "ANTHROPIC_API_KEY" in self.SCRIPT
         assert "XAI_API_KEY" in self.SCRIPT
-
-    def test_repo_copy_matches_the_bundled_source(self):
-        # wrappers/ holds reference copies; drift there means users who
-        # hand-install from the repo get a different script.
-        repo_copy = Path(__file__).parent.parent.parent / "wrappers" / "devcontainer.sh"
-        if repo_copy.exists():
-            assert repo_copy.read_text() == self.SCRIPT
 
 
 class TestResetWrapper:

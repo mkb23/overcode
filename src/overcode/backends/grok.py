@@ -86,7 +86,7 @@ _HOOK_TIMEOUT_SECONDS = 5
 class GrokNotFoundError(AgentCliNotFoundError):
     """Raised when the grok CLI isn't on PATH.
 
-    Subclasses ``AgentCliNotFoundError`` (aka ``ClaudeNotFoundError``) so the
+    Subclasses ``AgentCliNotFoundError`` so the
     launcher's existing "agent CLI missing" handling catches it without a new
     except clause.
     """

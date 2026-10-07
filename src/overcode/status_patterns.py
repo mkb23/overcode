@@ -1,7 +1,7 @@
 """
 Centralized status detection patterns.
 
-This module contains all the pattern lists used by StatusDetector to identify
+This module contains all the pattern lists used by PollingStatusDetector to identify
 an agent's current state. One ``StatusPatterns`` instance per backend; the
 defaults describe Claude Code. Centralizing these makes them:
 - Easier to maintain and extend

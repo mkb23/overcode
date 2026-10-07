@@ -151,8 +151,7 @@ class TestTrackSessionStats:
         )
 
         with patch('overcode.monitor_daemon.SessionManager'):
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
+            daemon = MonitorDaemon(tmux_session="test")
 
         # Create mock session
         mock_session = Mock()
@@ -221,8 +220,7 @@ class TestCalculateInterval:
         )
 
         with patch('overcode.monitor_daemon.SessionManager'):
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
+            daemon = MonitorDaemon(tmux_session="test")
 
         result = daemon.calculate_interval([], all_waiting_user=True)
 
@@ -417,9 +415,8 @@ class TestSyncClaudeCodeStats:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def test_updates_stats_when_session_stats_available(self, tmp_path, monkeypatch):
@@ -608,9 +605,8 @@ class TestUpdateStateTime:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def _make_session(self, session_id="sess-1", green_time=0.0, non_green_time=0.0,
@@ -738,9 +734,8 @@ class TestCheckAndSendHeartbeats:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def _make_heartbeat_session(self, session_id="sess-hb", enabled=True,
@@ -955,9 +950,8 @@ class TestInterruptibleSleep:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def test_returns_immediately_when_shutdown_set(self, tmp_path, monkeypatch):
@@ -1040,9 +1034,8 @@ class TestPublishState:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def test_saves_state_to_file(self, tmp_path, monkeypatch):
@@ -1221,9 +1214,8 @@ class TestDaemonTerminatedSessionGuard:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def test_terminated_session_skips_detect_status(self, tmp_path, monkeypatch):
@@ -1322,9 +1314,8 @@ class TestDaemonPersistsTerminatedStatus:
         )
 
         with patch('overcode.monitor_daemon.SessionManager') as mock_sm_cls:
-            with patch('overcode.monitor_daemon.StatusDetector'):
-                daemon = MonitorDaemon(tmux_session="test")
-                daemon.session_manager = mock_sm_cls.return_value
+            daemon = MonitorDaemon(tmux_session="test")
+            daemon.session_manager = mock_sm_cls.return_value
         return daemon
 
     def test_persists_terminated_when_window_gone(self, tmp_path, monkeypatch):

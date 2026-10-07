@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.backends import DEFAULT_BACKEND, register_backend, unregister_backend
-from overcode.interfaces import MockTmux
+from overcode.mocks import MockTmux
 from overcode.status_constants import (
     STATUS_RUNNING,
     STATUS_WAITING_USER,

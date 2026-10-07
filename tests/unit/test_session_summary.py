@@ -1,11 +1,10 @@
 """Tests for session_summary widget module."""
 
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, PropertyMock
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 from overcode.session_manager import Session, SessionStats
-from overcode.history_reader import ClaudeSessionStats
+from overcode.history_reader import AgentSessionStats
 from overcode.tui_widgets.session_summary import (
     SessionSummary,
     _scraped_recap_from_stats,
@@ -232,15 +231,15 @@ class TestApplyStatusNoRefresh:
         assert widget._status_changed_at is None
 
     def test_claude_stats_stored_when_provided(self):
-        """Pre-fetched ClaudeSessionStats are saved on the widget."""
-        stats = MagicMock(spec=ClaudeSessionStats)
+        """Pre-fetched AgentSessionStats are saved on the widget."""
+        stats = MagicMock(spec=AgentSessionStats)
         widget = _make_bare_widget()
         widget.apply_status_no_refresh("running", "", "", stats, None)
         assert widget.claude_stats is stats
 
     def test_claude_stats_not_overwritten_when_none(self):
         """Passing None for claude_stats does not clear a previously set value."""
-        old_stats = MagicMock(spec=ClaudeSessionStats)
+        old_stats = MagicMock(spec=AgentSessionStats)
         widget = _make_bare_widget()
         widget.claude_stats = old_stats
         widget.apply_status_no_refresh("running", "", "", None, None)

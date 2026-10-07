@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import yaml
 
+from .pricing import ModelPricing, MODEL_PRICING
+
 if TYPE_CHECKING:
     from .energy import EnergyConfig
 
@@ -226,9 +228,6 @@ TUI = TUISettings()
 # =============================================================================
 # Config File Loading
 # =============================================================================
-
-# Re-exported from pricing module for backward compatibility
-from .pricing import ModelPricing, MODEL_PRICING  # noqa: F401, E402
 
 
 def _clamp_fraction(value) -> float:

@@ -18,7 +18,7 @@ from .status_constants import DEFAULT_CAPTURE_LINES
 from .summarizer_client import SummarizerClient
 
 if TYPE_CHECKING:
-    from .interfaces import TmuxInterface
+    from .protocols import TmuxInterface
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class SummarizerComponent:
 
         # Dependency injection for testability
         if tmux is None:
-            from .interfaces import RealTmux
+            from .implementations import RealTmux
             tmux = RealTmux()
         self.tmux = tmux
 

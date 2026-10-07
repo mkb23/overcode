@@ -431,13 +431,13 @@ class TestProviderFromMessageId:
 
 
 class TestClaudeSessionStats:
-    """Test ClaudeSessionStats dataclass."""
+    """Test AgentSessionStats dataclass."""
 
     def test_total_tokens(self):
         """Should sum input and output tokens."""
-        from overcode.history_reader import ClaudeSessionStats
+        from overcode.history_reader import AgentSessionStats
 
-        stats = ClaudeSessionStats(
+        stats = AgentSessionStats(
             interaction_count=5,
             input_tokens=1000,
             output_tokens=2000,
@@ -450,9 +450,9 @@ class TestClaudeSessionStats:
 
     def test_total_tokens_with_cache(self):
         """Should sum all token types including cache."""
-        from overcode.history_reader import ClaudeSessionStats
+        from overcode.history_reader import AgentSessionStats
 
-        stats = ClaudeSessionStats(
+        stats = AgentSessionStats(
             interaction_count=5,
             input_tokens=1000,
             output_tokens=2000,
@@ -465,9 +465,9 @@ class TestClaudeSessionStats:
 
     def test_median_work_time_odd_count(self):
         """Should return median for odd number of work times."""
-        from overcode.history_reader import ClaudeSessionStats
+        from overcode.history_reader import AgentSessionStats
 
-        stats = ClaudeSessionStats(
+        stats = AgentSessionStats(
             interaction_count=3,
             input_tokens=0,
             output_tokens=0,
@@ -480,9 +480,9 @@ class TestClaudeSessionStats:
 
     def test_median_work_time_even_count(self):
         """Should return average of middle two for even count."""
-        from overcode.history_reader import ClaudeSessionStats
+        from overcode.history_reader import AgentSessionStats
 
-        stats = ClaudeSessionStats(
+        stats = AgentSessionStats(
             interaction_count=4,
             input_tokens=0,
             output_tokens=0,
@@ -495,9 +495,9 @@ class TestClaudeSessionStats:
 
     def test_median_work_time_empty(self):
         """Should return 0 for empty work times."""
-        from overcode.history_reader import ClaudeSessionStats
+        from overcode.history_reader import AgentSessionStats
 
-        stats = ClaudeSessionStats(
+        stats = AgentSessionStats(
             interaction_count=0,
             input_tokens=0,
             output_tokens=0,
@@ -634,8 +634,7 @@ class TestReadTokenUsageFromSessionFile:
         # Current context should be most recent: 8 + 129504 + 232 = 129744
         assert result["current_context_tokens"] == 129744
         # Verify it's ~65% of default 200K context window
-        from overcode.history_reader import DEFAULT_CONTEXT_WINDOW
-        assert result["current_context_tokens"] / DEFAULT_CONTEXT_WINDOW * 100 == pytest.approx(64.872, rel=0.01)
+        assert result["current_context_tokens"] / 200_000 * 100 == pytest.approx(64.872, rel=0.01)
 
     def test_cache_write_turn_counts_full_prompt(self, tmp_path):
         """A cache-*writing* turn must not read as a near-empty context.
