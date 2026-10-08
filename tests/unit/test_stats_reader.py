@@ -5,6 +5,7 @@ transcripts must report "unknown" (None) rather than zeros, and must not
 make the daemon write garbage stats.
 """
 
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -98,6 +99,14 @@ class TestAlias:
         assert AgentSessionStats.__name__ == "AgentSessionStats"
 
 
+def _write_hook_state(state_dir, session, active, ids=()):
+    path = state_dir / session.tmux_session / f"hook_state_{session.name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "agent_session_id": active, "agent_session_ids": [*ids, active],
+    }))
+
+
 class TestClaudeStatsReader:
     """Delegates to history_reader without reshaping anything."""
 
@@ -127,6 +136,70 @@ class TestClaudeStatsReader:
         ) as m:
             assert reader.get_current_session_id(session, since) == "sid-abc"
         m.assert_called_once_with("/tmp/project", since)
+
+    def test_get_current_session_id_prefers_the_hooks_id(self, tmp_path, monkeypatch):
+        """Another Claude prompted last in the same directory; the hooks know better.
+
+        The newest history.jsonl entry for a directory is whichever Claude
+        took a prompt there last: an IDE session, a terminal, a sibling
+        agent. Adopting it showed that session's model and effort.
+        """
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        session = _make_session(agent_session_ids=["mine-old", "mine-new"],
+                                active_agent_session_id="mine-new")
+        _write_hook_state(tmp_path, session, active="mine-new", ids=["mine-old"])
+        with patch(
+            "overcode.history_reader.get_current_session_id_for_directory",
+            return_value="someone-elses",
+        ):
+            got = ClaudeStatsReader().get_current_session_id(session, datetime.now())
+        assert got == "mine-new"
+
+    def test_hook_state_left_by_a_dead_namesake_is_ignored(self, tmp_path, monkeypatch):
+        """kill + relaunch under the same name leaves the old hook_state file.
+
+        Until the new agent's first hook rewrites it, it names the dead
+        agent's conversation, which this record has never held.
+        """
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        session = _make_session(active_agent_session_id="prescribed")
+        _write_hook_state(tmp_path, session, active="dead-agents")
+        reader = ClaudeStatsReader()
+        with patch(
+            "overcode.history_reader.get_current_session_id_for_directory",
+            return_value=None,
+        ):
+            assert reader.get_current_session_id(session, datetime.now()) is None
+        assert reader._own_hook_ids(session) == []
+
+    def test_get_current_session_id_falls_back_without_hook_state(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        session = _make_session()
+        with patch(
+            "overcode.history_reader.get_current_session_id_for_directory",
+            return_value="from-history",
+        ):
+            got = ClaudeStatsReader().get_current_session_id(session, datetime.now())
+        assert got == "from-history"
+
+    def test_discover_session_ids_adopts_nothing_when_hooks_track_the_agent(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        session = _make_session(agent_session_ids=["mine"])
+        _write_hook_state(tmp_path, session, active="mine")
+        stranger = Mock(session_id="stranger", project="/tmp/project",
+                        timestamp_ms=int(datetime.now().timestamp() * 1000))
+        fake_history = Mock()
+        fake_history.iter_entries.return_value = [stranger]
+        fake_history.signature.return_value = ("sig", 1)
+        monkeypatch.setattr("overcode.history_reader._default_history", fake_history)
+
+        found = ClaudeStatsReader().discover_session_ids(
+            session, datetime.now() - timedelta(hours=1), [session]
+        )
+
+        assert found == DiscoveredSessionIds()
 
     def test_get_current_session_id_without_directory(self):
         reader = ClaudeStatsReader()
@@ -459,6 +532,47 @@ class TestDaemonWithStatslessBackend:
         # Staged for the tick's single sessions.json write (R5)
         daemon.session_manager.update_stats.assert_not_called()
         assert daemon._pending.stats[session.id]["input_tokens"] == 100
+
+
+class TestDaemonSessionIdOwnership:
+    """The daemon must not hand an agent another Claude's conversation."""
+
+    _make_daemon = TestDaemonWithStatslessBackend._make_daemon
+
+    def test_hooked_agent_keeps_its_own_conversation(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = _make_session(agent_session_ids=["mine"], active_agent_session_id="mine")
+        _write_hook_state(tmp_path, session, active="mine")
+        daemon.session_manager.list_sessions.return_value = [session]
+        monkeypatch.setattr(
+            "overcode.history_reader.get_current_session_id_for_directory",
+            lambda d, s: "ide-session",
+        )
+
+        daemon.sync_session_id(session)
+
+        for call in daemon.session_manager.add_agent_session_id.call_args_list:
+            assert call.args[1] != "ide-session"
+        for call in daemon.session_manager.set_active_agent_session_id.call_args_list:
+            assert call.args[1] == "mine"
+
+    def test_ownership_spans_tmux_sessions(self, tmp_path, monkeypatch):
+        """An agent in another overcode tmux session owns its ids too."""
+        daemon = self._make_daemon(tmp_path, monkeypatch)
+        session = _make_session()
+        elsewhere = _make_session(tmux_session="other-session", agent_session_ids=["theirs"])
+        elsewhere.id = "sess-elsewhere"
+        daemon.session_manager.list_sessions.return_value = [session, elsewhere]
+        monkeypatch.setattr(
+            "overcode.history_reader.get_current_session_id_for_directory",
+            lambda d, s: "theirs",
+        )
+
+        daemon.sync_session_id(session)
+
+        daemon.session_manager.add_agent_session_id.assert_not_called()
+        daemon.session_manager.set_active_agent_session_id.assert_not_called()
 
 
 class TestUsageWidgetGate:

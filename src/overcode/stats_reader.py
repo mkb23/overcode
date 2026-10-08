@@ -8,9 +8,12 @@ readable transcripts (Claude Code) return a reader that wraps
 zeros.  See ``docs/design/agent-agnostic-backends-opencode.md`` §2.1, §5.
 """
 
+import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from .history_reader import AgentSessionStats
@@ -38,6 +41,34 @@ class DiscoveredSessionIds:
 
     ids: List[str] = field(default_factory=list)
     latest: Optional[str] = None
+
+
+def hook_session_ids(session: Any) -> List[str]:
+    """Backend session ids the agent's own hooks recorded, newest last.
+
+    ``hook_handler`` writes ``agent_session_id`` into the agent's hook state
+    only after ``advance_active_agent_session_id`` has accepted it, so the
+    id is the conversation this agent's process is in, never a guess. Empty
+    when the agent has no hook state (polling mode, or no event yet).
+    """
+    tmux_session = getattr(session, "tmux_session", None)
+    name = getattr(session, "name", None)
+    if not isinstance(tmux_session, str) or not isinstance(name, str):
+        return []
+    state_dir = os.environ.get("OVERCODE_STATE_DIR")
+    base = Path(state_dir) if state_dir else Path.home() / ".overcode" / "sessions"
+    try:
+        state = json.loads((base / tmux_session / f"hook_state_{name}.json").read_text())
+    except (OSError, ValueError):
+        return []
+    if not isinstance(state, dict):
+        return []
+    ids = [sid for sid in state.get("agent_session_ids") or ()
+           if isinstance(sid, str) and sid]
+    active = state.get("agent_session_id")
+    if isinstance(active, str) and active:
+        ids = [sid for sid in ids if sid != active] + [active]
+    return ids
 
 
 class StatsReader(Protocol):
@@ -137,11 +168,40 @@ class ClaudeStatsReader:
             return get_session_stats(session, history_file=history_file)
         return get_session_stats(session)
 
+    @staticmethod
+    def _own_hook_ids(session: Any) -> List[str]:
+        """``hook_session_ids`` that this agent's record already holds.
+
+        The hook handler records an id in sessions.json before writing it to
+        hook state, so the agent's own hooks always pass. A hook state file
+        left by an earlier agent of the same name does not: its ids were
+        never this record's, and adopting one would pin the new agent to a
+        dead agent's conversation (#500 then rejects the real id as stale).
+        """
+        from_hooks = hook_session_ids(session)
+        if not from_hooks:
+            return []
+        known = set(getattr(session, "agent_session_ids", None) or ())
+        active = getattr(session, "active_agent_session_id", None)
+        if active:
+            known.add(active)
+        return [sid for sid in from_hooks if sid in known]
+
     def get_current_session_id(
         self, session: Any, since: datetime
     ) -> Optional[str]:
+        """The agent's current conversation.
+
+        The id its hooks recorded when there is one. The newest history.jsonl
+        entry for the directory is only a fallback for hookless agents: it is
+        whichever Claude last took a prompt there (another agent, the IDE, a
+        terminal), and an agent that has just reset has no entry yet.
+        """
         from .history_reader import get_current_session_id_for_directory
 
+        from_hooks = self._own_hook_ids(session)
+        if from_hooks:
+            return from_hooks[-1]
         if not session.start_directory:
             return None
         return get_current_session_id_for_directory(session.start_directory, since)
@@ -167,6 +227,10 @@ class ClaudeStatsReader:
         from . import history_reader
 
         if not session.start_directory:
+            return DiscoveredSessionIds()
+        if self._own_hook_ids(session):
+            # The hooks name this agent's conversations; anything else in
+            # the directory belongs to some other Claude.
             return DiscoveredSessionIds()
 
         hf = history_reader._default_history
