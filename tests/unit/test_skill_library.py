@@ -214,6 +214,9 @@ class TestLauncher:
     def _top_level(self, monkeypatch):
         # Run from inside an overcode agent, launches would become its children.
         monkeypatch.delenv("OVERCODE_SESSION_NAME", raising=False)
+        # CI has no claude binary; the launcher's pre-flight would refuse.
+        monkeypatch.setattr("overcode.launcher.require_tmux", lambda *a, **k: None)
+        monkeypatch.setattr("overcode.launcher.require_agent_cli", lambda *a, **k: None)
 
     def _launcher(self, tmp_path):
         tmux = MockTmux()
