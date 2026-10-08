@@ -28,10 +28,6 @@ from overcode import history_reader
 from overcode.hook_handler import handle_hook_event
 from overcode.session_manager import SessionManager
 
-# The bug, reproduced: these fail until the daemon trusts the agent's hooks.
-REPRO = pytest.mark.xfail(strict=True, reason="daemon adopts the newest history.jsonl "
-                          "entry for the directory as the agent's conversation")
-
 OWN_MODEL, OWN_EFFORT = "claude-opus-5-5", "high"
 OTHER_MODEL, OTHER_EFFORT = "claude-haiku-4-5", "low"
 
@@ -160,7 +156,6 @@ def _assert_own_conversation(agent, sid):
 
 class TestAnotherClaudeInTheSameRepo:
 
-    @REPRO
     def test_an_ide_session_prompted_after_the_agent(self, world):
         """Claude in VS Code (or a terminal) in the agent's repo, outside overcode."""
         alpha = world.launch("alpha", "alpha-1")
@@ -175,7 +170,6 @@ class TestAnotherClaudeInTheSameRepo:
         _assert_own_conversation(agent, "alpha-1")
         assert "ide-1" not in agent.agent_session_ids
 
-    @REPRO
     def test_an_agent_in_another_tmux_session(self, world):
         """Two overcode sessions (`agents`, `work`) with agents in one repo."""
         alpha = world.launch("alpha", "alpha-1", tmux_session="agents")
@@ -192,7 +186,6 @@ class TestAnotherClaudeInTheSameRepo:
 
 class TestTheAgentsOwnConversations:
 
-    @REPRO
     def test_clear_before_the_next_prompt_keeps_the_new_conversation(self, world):
         """After /clear the new conversation has no history.jsonl entry yet.
 

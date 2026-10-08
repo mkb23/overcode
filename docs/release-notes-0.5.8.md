@@ -1,7 +1,8 @@
 # Overcode 0.5.8 Release Notes
 
-- **Skill profiles (#499).** Named sets of skills switched on per agent, for Claude Code and opencode. Other personal skills are hidden for that agent. `W` edits profiles, `overcode skills pin` gives a folder a default. See [Skill Profiles](skill-profiles.md).
-- **One `overcode` skill.** `delegating-to-agents` is merged into it and rewritten for every backend. Run `overcode skills install` to update.
-- **Multi-line first prompts now submit.** A launch prompt with a line break used to sit unsent.
-- **Learning journey:** a Skills track, and backends counted per agent CLI.
-- **The overagent can launch top-level agents** (`--no-parent`), and its children are ordinary agents.
+- **Agents show their own model and effort.** Another Claude in the same repo (the IDE, a terminal, an agent in another overcode session) could become an agent's conversation, and `/clear` could move an agent back to the one it left. The agent's hooks now decide.
+- **Skill profiles (#499).** Named sets of skills per agent, edited with `W`. `delegating-to-agents` is merged into one rewritten `overcode` skill (`overcode skills install` to update).
+- **Status colours (#507).** Background shells and subagents show yellow, not red. A re-prompt after an interrupt or an answered permission shows the right colour. Restarting the TUI no longer rings every red agent's bell.
+- **`restart` keeps the agent's model (#505)**, and `restart --model` changes it. Light mode, bulk revive, `shutdown` and configurable keys (#508–#510).
+- **PR column reads Claude Code's own PR link (#489).** A JOB column per agent (#463), and clicking a row switches the pane to it.
+- **Fixes:** multi-line launch prompts submit; no emoji too new for VS Code's terminal (#504); the overagent can launch top-level agents.

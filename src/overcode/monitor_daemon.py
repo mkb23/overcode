@@ -843,10 +843,9 @@ class MonitorDaemon:
             # Handles post-/clear detection.
             current_id = reader.get_current_session_id(session, session_start)
             if current_id:
-                all_sessions = [
-                    s for s in self.session_manager.list_sessions()
-                    if s.tmux_session == self.tmux_session
-                ]
+                # Every tmux session's agents: one in another session can be
+                # working in the same directory.
+                all_sessions = self.session_manager.list_sessions()
                 if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
                     self.session_manager.add_agent_session_id(session.id, current_id)
                     self.session_manager.set_active_agent_session_id(session.id, current_id)
@@ -879,10 +878,7 @@ class MonitorDaemon:
         owns; this method persists what it finds.
         """
         reader = reader or stats_reader_for_session(session)
-        all_sessions = [
-            s for s in self.session_manager.list_sessions()
-            if s.tmux_session == self.tmux_session
-        ]
+        all_sessions = self.session_manager.list_sessions()
 
         discovered = reader.discover_session_ids(session, session_start, all_sessions)
 

@@ -30,8 +30,6 @@ AGENT_MODEL, INTRUDER_MODEL = "haiku", "sonnet"
 WATCH_SECONDS = 90  # past one session-id sync (10 s) and one stats sync (60 s)
 
 
-@pytest.mark.xfail(strict=True, reason="daemon adopts the newest history.jsonl entry "
-                   "for the directory as the agent's conversation")
 @pytest.mark.parametrize("spec", [_BY_NAME["claude-code"]], indirect=True, ids=["claude-code"])
 def test_a_second_claude_in_the_repo_is_not_adopted(spec, live_env):
     env, session, workdir = live_env["env"], live_env["session"], live_env["workdir"]
