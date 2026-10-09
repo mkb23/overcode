@@ -561,11 +561,11 @@ class TestBusySleepingDetection:
     """Tests for busy_sleeping detection in hook-based detector (#289)."""
 
     def test_sleep_in_tool_input_command(self, tmp_path):
-        """PostToolUse with tool_input containing sleep → busy_sleeping."""
+        """PreToolUse with tool_input containing sleep → busy_sleeping."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
         data = {
-            "event": "PostToolUse",
+            "event": "PreToolUse",
             "timestamp": time.time(),
             "tool_name": "Bash",
             "tool_input": {"command": "sleep 60"},
@@ -586,7 +586,7 @@ class TestBusySleepingDetection:
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
         data = {
-            "event": "PostToolUse",
+            "event": "PreToolUse",
             "timestamp": time.time(),
             "tool_name": "Bash",
             "tool_input": {"command": "sleep 300"},
@@ -603,11 +603,11 @@ class TestBusySleepingDetection:
         assert "5.0m" in activity, f"Activity should include '5.0m' (300s), got: {activity}"
 
     def test_sleep_in_tool_input(self, tmp_path):
-        """PostToolUse with tool_input containing sleep → busy_sleeping."""
+        """PreToolUse with tool_input containing sleep → busy_sleeping."""
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
         data = {
-            "event": "PostToolUse",
+            "event": "PreToolUse",
             "timestamp": time.time(),
             "tool_name": "Bash",
             "tool_input": {"command": "sleep 300"},
@@ -1501,3 +1501,251 @@ class TestDeadShellDetection:
         session = create_mock_session(name="oc", tmux_window="w1")
         status, _, _ = detector.detect_status(session)
         assert status == STATUS_TERMINATED
+
+
+# The incident of 2026-10-08: UserPromptSubmit, then no Stop. The pane went
+# back to the prompt and the agent showed "Processing prompt" for 34 hours.
+_IDLE_PANE = (
+    "⏺ Done.\n"
+    "──────────────────────────────\n"
+    "❯ \n"
+    "──────────────────────────────\n"
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent\n"
+)
+_BUSY_PANE = (
+    "✽ Testing…\n"
+    "──────────────────────────────\n"
+    "❯ \n"
+    "──────────────────────────────\n"
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← 1 agent\n"
+    "  ⏺ main\n"
+    "  ◯ general-purpose  Tracing things     45s · ↓ 69.8k tokens\n"
+)
+
+
+class TestForegroundSleepEnds:
+    """A sleep is only "sleeping" while its PreToolUse stands, and not forever."""
+
+    def _status(self, tmp_path, monkeypatch, event, command, age):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        base = 1_800_000_000.0
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps({
+            "event": event, "timestamp": base - age, "tool_name": "Bash",
+            "tool_input": {"command": command},
+        }))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, "⏺ Bash(...)")
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        monkeypatch.setattr(hsd.time, "time", lambda: base)
+        return detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"))
+
+    def test_a_finished_sleep_is_not_sleeping(self, tmp_path, monkeypatch):
+        status, activity, _ = self._status(tmp_path, monkeypatch, "PostToolUse", "sleep 300", 1)
+        assert status == STATUS_RUNNING
+        assert "Sleeping" not in activity
+
+    def test_a_sleep_long_past_its_end_is_not_sleeping(self, tmp_path, monkeypatch):
+        assert self._status(tmp_path, monkeypatch, "PreToolUse", "sleep 60", 600)[0] == STATUS_RUNNING
+        assert self._status(tmp_path, monkeypatch, "PreToolUse", "sleep 60", 30)[0] == STATUS_BUSY_SLEEPING
+
+    def test_a_command_that_mentions_sleep_is_not_sleeping(self, tmp_path, monkeypatch):
+        for command in ("grep -n 'sleep 30' x.py", "make test; sleep 5", "python -c 'time.sleep(9)'"):
+            assert self._status(tmp_path, monkeypatch, "PreToolUse", command, 1)[0] == STATUS_RUNNING, command
+        assert self._status(tmp_path, monkeypatch, "PreToolUse", "cd /tmp && sleep 30", 1)[0] \
+            == STATUS_BUSY_SLEEPING
+
+    def test_an_esc_during_a_sleep_ends_it(self, tmp_path, monkeypatch):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        base = 1_800_000_000.0
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps({
+            "event": "PreToolUse", "timestamp": base - 10, "tool_name": "Bash",
+            "tool_input": {"command": "sleep 300"},
+        }))
+        pane = "⏺ Bash(sleep 300)\n  ⎿  Interrupted · What should Claude do instead?\n❯ \n"
+        detector = HookStatusDetector("agents", tmux=create_mock_tmux_with_content("agents", 1, pane),
+                                      state_dir=state_dir)
+        monkeypatch.setattr(hsd.time, "time", lambda: base)
+        status, activity, _ = detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"))
+        assert status == STATUS_WAITING_USER
+        assert "Sleeping" not in activity
+
+
+class TestTurnEndedWithoutStop:
+    """Hooks say running, but the pane shows the CLI idle: trust the pane after a while."""
+
+    def _detect(self, tmp_path, monkeypatch, pane, event="UserPromptSubmit", hook_age=3600.0,
+                ticks=(0.0, 20.0), tool_name=None, parent=None):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        _write_hook_state(state_dir, "test-agent", event, timestamp=base - hook_age,
+                          tool_name=tool_name)
+        mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        session.parent_session_id = parent
+        results = []
+        for t in ticks:
+            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
+            status, activity, _ = detector.detect_status(session)
+            results.append((status, activity, detector.get_status_detail("test-agent")))
+        return results
+
+    def test_an_idle_pane_settles_a_running_hook_after_the_wait(self, tmp_path, monkeypatch):
+        first, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE)
+        assert first[0] == STATUS_RUNNING  # not on first sight: a redraw is not proof
+        assert later[0] == STATUS_WAITING_USER
+        assert "without a Stop" in later[1]
+        assert later[2].color == STATUS_COLOR_RED
+
+    def test_a_busy_marker_keeps_it_running(self, tmp_path, monkeypatch):
+        results = self._detect(tmp_path, monkeypatch, _BUSY_PANE, ticks=(0.0, 20.0, 60.0))
+        assert [r[0] for r in results] == [STATUS_RUNNING] * 3
+
+    def test_a_pane_with_no_chrome_proves_nothing(self, tmp_path, monkeypatch):
+        """A dialog or menu covering the bar: keep what the hooks say."""
+        results = self._detect(tmp_path, monkeypatch, "⏺ Reading file...", ticks=(0.0, 60.0))
+        assert [r[0] for r in results] == [STATUS_RUNNING] * 2
+
+    def test_a_hook_after_the_pane_went_idle_restarts_the_wait(self, tmp_path, monkeypatch):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        _write_hook_state(state_dir, "test-agent", "PreToolUse", timestamp=base - 5, tool_name="Read")
+        mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        monkeypatch.setattr(hsd.time, "time", lambda: base)
+        detector.detect_status(session)
+        # The turn is alive after all: a new hook lands while the pane read idle
+        _write_hook_state(state_dir, "test-agent", "PostToolUse", timestamp=base + 10, tool_name="Read")
+        monkeypatch.setattr(hsd.time, "time", lambda: base + 20)
+        assert detector.detect_status(session)[0] == STATUS_RUNNING
+        monkeypatch.setattr(hsd.time, "time", lambda: base + 40)
+        assert detector.detect_status(session)[0] == STATUS_WAITING_USER
+
+    def test_a_foreground_sleep_that_was_interrupted_settles_too(self, tmp_path, monkeypatch):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        state_dir.mkdir(parents=True)
+        (state_dir / "hook_state_test-agent.json").write_text(json.dumps({
+            "event": "PreToolUse", "timestamp": base - 3600, "tool_name": "Bash",
+            "tool_input": {"command": "sleep 300"},
+        }))
+        mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        for t in (0.0, 20.0):
+            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
+            status, activity, _ = detector.detect_status(session)
+        assert status == STATUS_WAITING_USER
+        assert "Sleeping" not in activity
+
+    def test_a_child_settles_to_waiting_oversight(self, tmp_path, monkeypatch):
+        _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, parent="parent-id")
+        assert later[0] == STATUS_WAITING_OVERSIGHT
+
+    def test_a_stop_is_unaffected(self, tmp_path, monkeypatch):
+        _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, event="Stop")
+        assert later[0] == STATUS_WAITING_USER
+        assert "without a Stop" not in later[1]
+
+    def test_backends_without_a_verified_marker_are_left_alone(self, tmp_path, monkeypatch):
+        from overcode import hook_status_detector as hsd
+        from overcode.status_patterns import StatusPatterns
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit", timestamp=base - 3600)
+        mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir,
+                                      patterns=StatusPatterns())  # pane_confirms_idle off
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        for t in (0.0, 60.0):
+            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
+            status = detector.detect_status(session)[0]
+        assert status == STATUS_RUNNING
+
+
+class TestPaneShowsIdle:
+    def test_idle_busy_and_unknown(self):
+        from overcode.status_patterns import DEFAULT_PATTERNS, pane_shows_idle
+
+        assert pane_shows_idle(_IDLE_PANE, DEFAULT_PATTERNS) is True
+        assert pane_shows_idle(_BUSY_PANE, DEFAULT_PATTERNS) is False
+        assert pane_shows_idle("⏺ Reading file...", DEFAULT_PATTERNS) is None
+        assert pane_shows_idle("", DEFAULT_PATTERNS) is None
+
+    def test_the_input_hint_counts_as_chrome(self):
+        from overcode.status_patterns import DEFAULT_PATTERNS, pane_shows_idle
+
+        assert pane_shows_idle("❯ \n  ? for shortcuts\n", DEFAULT_PATTERNS) is True
+        assert pane_shows_idle("✽ Thinking… (esc to interrupt)\n❯ \n  ? for shortcuts\n",
+                               DEFAULT_PATTERNS) is False
+
+    def test_only_claude_opts_in(self):
+        from overcode.status_patterns import DEFAULT_PATTERNS, get_patterns
+
+        assert DEFAULT_PATTERNS.pane_confirms_idle
+        for name in ("codex", "grok", "opencode", "hermes", "shell"):
+            assert not get_patterns(name).pane_confirms_idle, name
+
+
+class TestOverdueWakeup:
+    def test_an_overdue_wakeup_alone_turns_red_overdue(self, monkeypatch):
+        from overcode import hook_status_detector as hsd
+        from overcode.hook_status_detector import _WAKEUP_OVERDUE_SECONDS
+
+        monkeypatch.setattr(hsd.time, "time", lambda: 1000.0 + _WAKEUP_OVERDUE_SECONDS + 1)
+        session = create_mock_session(name="a")
+        state = {"event": "Stop", "timestamp": 900.0,
+                 "pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": 1000.0}]}
+        detail = compute_status_detail(state, "Stop", session, "", 0, False, None, STATUS_WAITING_USER)
+        assert detail.color == STATUS_COLOR_RED
+        assert [b.kind for b in detail.badges] == ["overdue"]
+        # Still within its slack: armed (yellow)
+        monkeypatch.setattr(hsd.time, "time", lambda: 1000.0)
+        detail = compute_status_detail(state, "Stop", session, "", 0, False, None, STATUS_WAITING_USER)
+        assert detail.color == STATUS_COLOR_YELLOW
+
+    def test_a_wakeup_long_past_its_time_is_not_armed(self):
+        from overcode.hook_status_detector import _WAKEUP_OVERDUE_SECONDS, _live_obligations
+
+        obl = {"kind": "schedule_wakeup", "eta_absolute": 1000.0}
+        cron = {"kind": "cron"}
+        assert _live_obligations([obl, cron], 1000.0 + _WAKEUP_OVERDUE_SECONDS - 1) == [obl, cron]
+        assert _live_obligations([obl, cron], 1000.0 + _WAKEUP_OVERDUE_SECONDS + 1) == [cron]
+
+
+class TestSecondInterrupt:
+    def test_a_new_marker_after_a_reprompt_counts_again(self, tmp_path, monkeypatch):
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        d = HookStatusDetector("agents", state_dir=state_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        log = state_dir / "hook_events_test-agent.jsonl"
+
+        def running_at(t):
+            with open(log, "a") as f:
+                f.write(json.dumps({"event": "PreToolUse", "timestamp": base + t}) + "\n")
+
+        def check(t, count):
+            monkeypatch.setattr(hsd.time, "time", lambda: base + t)
+            return d._interrupt_still_current("test-agent", True, count)
+
+        running_at(0)
+        assert check(1, 1)          # first Esc
+        running_at(5)               # re-prompted: the old marker is history
+        assert not check(6, 1)
+        assert check(8, 2)          # a second Esc: one more marker in the tail

@@ -204,3 +204,25 @@ class TestDispatcherCaptureGate:
             "agents", polling_detector=polling, capture_gate=gate
         )
         assert polling.capture_gate is gate
+
+
+class TestDetailComesFromTheDetectorThatDecided:
+    """A cached hook detail must not stand in for a status the pane decided."""
+
+    def test_a_polled_tick_does_not_reuse_an_old_hook_colour(self):
+        from unittest.mock import MagicMock
+        from overcode.hook_status_detector import StatusDetail
+        from overcode.status_constants import STATUS_COLOR_GREEN, STATUS_WAITING_USER
+        from overcode.status_detector_factory import StatusDetectorDispatcher
+
+        polling, hooks = MagicMock(), MagicMock()
+        polling.detect_status.return_value = (STATUS_WAITING_USER, "Waiting", "")
+        polling.get_status_detail = None
+        hooks.get_status_detail.return_value = StatusDetail(color=STATUS_COLOR_GREEN, badges=[])
+        hooks._hook_state_path.return_value.exists.return_value = False  # no hook state: poll
+        d = StatusDetectorDispatcher("agents", polling_detector=polling, hook_detector=hooks, mode="hooks")
+        session = MagicMock(backend=None, detection_mode=None)
+        session.name = "a"
+        d.detect_status(session)
+        detail = d.get_status_detail("a")
+        assert detail is not None and detail.color != STATUS_COLOR_GREEN

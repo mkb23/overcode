@@ -143,6 +143,9 @@ class StatusDetectorDispatcher:
         self._mode = mode
         # Cache last (status, activity) so get_status_detail can synthesize in polling mode (#TBD).
         self._last_seen: dict = {}
+        # The detector that produced each session's last status: its detail
+        # (and only its) describes that status
+        self._last_detector: dict = {}
 
     @property
     def mode(self) -> str:
@@ -210,7 +213,13 @@ class StatusDetectorDispatcher:
         # Cache for get_status_detail synthesis (#TBD).
         status, activity, _ = result
         self._last_seen[session.name] = (status, activity)
+        self._last_detector[session.name] = detector
         return result
+
+    def get_last_hook_at(self, session_name: str) -> Optional[float]:
+        """When the hook behind this session's last status was written (None: not hooks)."""
+        getter = getattr(self._last_detector.get(session_name), "get_last_hook_at", None)
+        return getter(session_name) if getter is not None else None
 
     @staticmethod
     def _has_hook_state(hooks, session: "Session") -> bool:
@@ -254,13 +263,23 @@ class StatusDetectorDispatcher:
              plus a generic badge.
           3. Falls back to None if neither is available — column hides.
         """
-        for _polling, hooks in self._pairs.values():
-            getter = getattr(hooks, 'get_status_detail', None)
-            if getter is None:
-                continue
-            detail = getter(session_name)
+        detector = self._last_detector.get(session_name)
+        if detector is not None:
+            # Only the detector that produced this tick's status: another
+            # pair's (or the hook detector's, when the pane decided) cached
+            # detail is from an earlier tick and would freeze the colour
+            getter = getattr(detector, 'get_status_detail', None)
+            detail = getter(session_name) if getter is not None else None
             if detail is not None:
                 return detail
+        else:
+            for _polling, hooks in self._pairs.values():
+                getter = getattr(hooks, 'get_status_detail', None)
+                if getter is None:
+                    continue
+                detail = getter(session_name)
+                if detail is not None:
+                    return detail
         last = self._last_seen.get(session_name)
         if last is None:
             return None

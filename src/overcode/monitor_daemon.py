@@ -617,7 +617,10 @@ class MonitorDaemon:
                 and bool(session.heartbeat_instruction))
         )
 
+        last_hook_at = getattr(self.detector, "get_last_hook_at", None)
+        last_hook_at = last_hook_at(session.name) if callable(last_hook_at) else None
         return SessionDaemonState(
+            last_hook_at=last_hook_at if isinstance(last_hook_at, (int, float)) else None,
             session_id=session_id,
             name=session.name,
             tmux_window=session.tmux_window,

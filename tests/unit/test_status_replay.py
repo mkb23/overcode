@@ -231,7 +231,8 @@ INTERRUPT_THEN_REPROMPT = Scenario(
     steps=[
         ev(0.0, "UserPromptSubmit"),
         ev(1.0, "PreToolUse", "Bash", "i1", command="make test"),
-        frame(3.0, claude_pane(body="⏺ Bash(make test)\n  ⎿  Interrupted by user")),
+        # An Esc fires no hook; the status bar drops "esc to interrupt"
+        frame(3.0, claude_pane(body="⏺ Bash(make test)\n  ⎿  Interrupted by user"), busy=False),
         ev(10.0, "UserPromptSubmit"),
         ev(11.0, "PreToolUse", "Read", "i2", file_path="Makefile"),
         ev(11.1, "PostToolUse", "Read", "i2", file_path="Makefile"),
@@ -252,7 +253,8 @@ PERMISSION_DENIED = Scenario(
         ev(1.1, "PermissionRequest", "Bash", "p1", command="rm -rf build"),
         frame(1.2, claude_pane(body="Do you want to proceed?\n❯ 1. Yes\n  2. No")),
         frame(4.0, claude_pane(
-            body="⏺ Bash(rm -rf build)\n  ⎿  Interrupted · What should Claude do instead?")),
+            body="⏺ Bash(rm -rf build)\n  ⎿  Interrupted · What should Claude do instead?"),
+            busy=False),
     ],
     expect=[(1.25, 3.75, ORANGE), (4.0, 15.0, RED)],
 )
@@ -334,12 +336,66 @@ INTERRUPT_SEEN_AFTER_RESTART = Scenario(
     steps=[
         ev(-30.0, "UserPromptSubmit"),
         ev(-29.0, "PreToolUse", "Bash", "i1", command="make test"),
+        frame(-28.0, claude_pane(body="⏺ Bash(make test)\n  ⎿  Interrupted by user"), busy=False),
         ev(12.0, "UserPromptSubmit"),
     ],
     initial_pane=claude_pane(body="⏺ Bash(make test)\n  ⎿  Interrupted by user"),
     expect=[(0.0, 11.75, RED), (12.0, 15.0, GREEN)],
 )
 
+
+# 2026-10-08: a prompt, then the turn ends with no Stop and no interrupt
+# marker on screen (a slash command, an Esc whose marker scrolled away). The
+# status bar loses "esc to interrupt"; after the idle wait the agent is red,
+# not "Processing prompt" for a day and a half.
+TURN_ENDS_WITHOUT_STOP = Scenario(
+    "turn_ends_without_stop",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        frame(2.0, claude_pane(body="⏺ Done."), busy=False),
+    ],
+    expect=[(0.0, 16.75, GREEN), (18.0, 40.0, RED)],
+)
+
+# The same, but Claude's idle_prompt Notification arrives (a minute after the
+# prompt goes idle) and settles it as a Stop for good.
+TURN_ENDS_WITHOUT_STOP_IDLE_PROMPT = Scenario(
+    "turn_ends_without_stop_idle_prompt",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "Bash", "t1", command="sleep 300"),
+        frame(2.0, claude_pane(body="⏺ Bash(sleep 300)\n  ⎿  Interrupted"), busy=False),
+        ev(62.0, "Notification", notification_type="idle_prompt"),
+    ],
+    expect=[(0.0, 16.75, GREEN), (18.0, 90.0, RED)],
+)
+
+# #536: Claude routes a question and a plan through PermissionRequest (seen
+# in live hook logs). A question is red (it needs an answer), a plan orange.
+ASK_USER_QUESTION = Scenario(
+    "ask_user_question",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "AskUserQuestion", "q1", questions=[{"question": "Which?"}]),
+        ev(1.05, "PermissionRequest", "AskUserQuestion", "q1", questions=[{"question": "Which?"}]),
+        frame(1.1, claude_pane(body="☐ Which?\n❯ 1. This\n  2. That"), busy=False),
+        ev(20.0, "PostToolUse", "AskUserQuestion", "q1", questions=[{"question": "Which?"}]),
+        frame(20.05, claude_pane(body="⏺ User answered")),
+        ev(22.0, "Stop"),
+    ],
+    expect=[(0.0, 0.75, GREEN), (1.25, 19.75, RED), (20.25, 21.75, GREEN), (24.0, 30.0, RED)],
+)
+
+EXIT_PLAN_MODE = Scenario(
+    "exit_plan_mode",
+    steps=[
+        ev(0.0, "UserPromptSubmit"),
+        ev(1.0, "PreToolUse", "ExitPlanMode", "x1", plan="..."),
+        ev(1.05, "PermissionRequest", "ExitPlanMode", "x1", plan="..."),
+        frame(1.1, claude_pane(body="Would you like to proceed?\n❯ 1. Yes\n  2. No"), busy=False),
+    ],
+    expect=[(0.0, 0.75, GREEN), (1.25, 10.0, ORANGE)],
+)
 
 SCENARIOS = [
     PLAIN_TURN,
@@ -363,6 +419,10 @@ SCENARIOS = [
     MONITOR_ENDS,
     BACKGROUND_SHELL_STATUS_BAR_COVERED,
     INTERRUPT_SEEN_AFTER_RESTART,
+    TURN_ENDS_WITHOUT_STOP,
+    TURN_ENDS_WITHOUT_STOP_IDLE_PROMPT,
+    ASK_USER_QUESTION,
+    EXIT_PLAN_MODE,
 ]
 
 
@@ -403,3 +463,12 @@ class TestHarness:
         text = timeline(replay(QUICK_TEXT_REPLY, tmp_path))
         assert text.startswith(f"{GREEN} 0-")
         assert f"| {RED} " in text
+
+
+
+def test_question_and_plan_badges(tmp_path):
+    """#536: the badges say which kind of wait it is."""
+    q = replay(ASK_USER_QUESTION, tmp_path / "q")
+    assert any(s.badges == ("ask_question",) for s in q if 2.0 <= s.t <= 19.0)
+    p = replay(EXIT_PLAN_MODE, tmp_path / "p")
+    assert all(s.badges == ("plan_approval",) for s in p if 2.0 <= s.t <= 10.0)

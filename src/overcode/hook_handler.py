@@ -45,7 +45,9 @@ logger = logging.getLogger(__name__)
 #   - Bash/Agent/Workflow with run_in_background → PostToolUse(same id) removes
 #   - Monitor                                    → PostToolUse(same id) removes
 #   - ScheduleWakeup                             → next UserPromptSubmit
-#                                                   (wakeup fires as a prompt)
+#                                                   (wakeup fires as a prompt),
+#                                                   a newer ScheduleWakeup, or
+#                                                   ScheduleWakeup(stop: true)
 #   - CronCreate                                 → CronDelete(matching id) or
 #                                                   SessionEnd
 #   - TaskCreate                                 → PostToolUse(same id) plus
@@ -174,6 +176,13 @@ def _update_obligations(
                     if not (o.get("kind") == "cron" and o.get("cron_id") == target)
                 ]
             return obligations
+
+        if tool_name == "ScheduleWakeup":
+            # One pending wakeup at a time: a new one replaces the last, and
+            # ScheduleWakeup(stop: true) is how a /loop ends, arming nothing
+            obligations = [o for o in obligations if o.get("kind") != "schedule_wakeup"]
+            if isinstance(tool_input, dict) and tool_input.get("stop"):
+                return obligations
 
         kind = _obligation_kind(tool_name, tool_input)
         if not kind:
@@ -309,6 +318,9 @@ def _write_state_file(path: Path, state: dict) -> None:
 # out so a nested `claude -p` never fires it (#500). Not in OVERCODE_HOOKS,
 # whose (event, command) pairs the legacy global `hooks install` also writes.
 CLAUDE_SESSION_START_MATCHER = "clear|resume"
+# And Notification, for idle_prompt only: the backstop for a turn that ends
+# with no Stop (see _settle_idle_prompt).
+CLAUDE_NOTIFICATION_MATCHER = "idle_prompt"
 
 OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("UserPromptSubmit", "overcode hook-handler"),
@@ -1057,6 +1069,38 @@ def _normalize_hook_payload(data: dict) -> dict:
     return translated
 
 
+_RUNNING_EVENTS = frozenset({
+    "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+})
+
+
+def _is_idle_prompt(data: dict) -> bool:
+    if data.get("notification_type") == "idle_prompt":
+        return True
+    # Older Claude builds send only the message
+    message = data.get("message")
+    return isinstance(message, str) and "waiting for your input" in message.lower()
+
+
+def _settle_idle_prompt(data: dict, tmux_session: str, session_name: str) -> None:
+    """A Claude idle_prompt Notification: write Stop if the snapshot still says running."""
+    if not _is_idle_prompt(data):
+        return
+    session_id = data.get("session_id")
+    with _locked_hook_state(tmux_session, session_name) as prev_state:
+        if prev_state.get("event") not in _RUNNING_EVENTS:
+            return
+        current = prev_state.get("agent_session_id")
+        if session_id and current and session_id != current:
+            return  # another conversation's prompt (a nested CLI), not this turn
+        write_hook_state(
+            "Stop", tmux_session, session_name,
+            pending_session_id=prev_state.get("agent_session_id_pending"),
+            prev_state=prev_state,
+        )
+    append_hook_event("Stop", tmux_session, session_name)
+
+
 def handle_hook_event() -> None:
     """Main entry point: read stdin JSON, write state file, output time-context if UserPromptSubmit.
 
@@ -1118,6 +1162,15 @@ def handle_hook_event() -> None:
             )
         append_hook_event(event, tmux_session, session_name,
                           tool_name=tool_name, tool_input=tool_input, agent_id=agent_id)
+        return
+
+    if event == "Notification":
+        # Claude's idle_prompt (registered with that matcher only) fires once
+        # the prompt has sat idle for about a minute. It is the backstop for
+        # a turn that ended with no Stop (an Esc, a crash), which would
+        # otherwise read as running forever. It only settles a snapshot that
+        # still says the turn is running, and only for this conversation.
+        _settle_idle_prompt(data, tmux_session, session_name)
         return
 
     tool_use_id = data.get("tool_use_id")

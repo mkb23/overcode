@@ -86,6 +86,7 @@ class Step:
     pane: Optional[str] = None      # a pane frame
     record: Optional[dict] = None   # an opencode plugin-hook record
     write: Optional[dict] = None    # what the plugin wrote for a record
+    busy: Optional[bool] = None     # force the busy marker on/off from here
 
 
 def ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
@@ -95,6 +96,8 @@ def ev(t: float, event: str, tool: str = None, tool_use_id: str = None,
     if tool is not None:
         payload["tool_name"] = tool
         payload["tool_input"] = tool_input
+    else:
+        payload.update(tool_input)  # a tool-less event's own fields
     if tool_use_id is not None:
         payload["tool_use_id"] = tool_use_id
     if agent_id is not None:
@@ -107,9 +110,13 @@ def rec(t: float, record: dict) -> Step:
     return Step(t, record=record)
 
 
-def frame(t: float, pane: str) -> Step:
-    """The pane changes to ``pane`` at time ``t``."""
-    return Step(t, pane=pane)
+def frame(t: float, pane: str, busy: Optional[bool] = None) -> Step:
+    """The pane changes to ``pane`` at time ``t``.
+
+    ``busy`` pins whether the status bar shows Claude's "esc to interrupt";
+    left None, the marker follows the hook timeline (see ``_Tmux``).
+    """
+    return Step(t, pane=pane, busy=busy)
 
 
 def claude_pane(footer: str = "", body: str = "", status_line: str = "") -> str:
@@ -173,18 +180,48 @@ class _Clock:
         return self.now
 
 
+# Claude Code shows "esc to interrupt" in its status bar for the whole of a
+# turn: from the prompt to its Stop (verified live on 2.1.295)
+_TURN_STARTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure"}
+_TURN_ENDS = {"Stop", "StopFailure", "SessionEnd"}
+
+
 class _Tmux:
-    def __init__(self, pane: str) -> None:
+    """The pane: the scenario's frames, with the busy marker a real Claude draws."""
+
+    def __init__(self, pane: str, draws_busy: bool = True) -> None:
         self.pane = pane
+        self.draws_busy = draws_busy
+        self.in_turn = False      # from the parent's hook events
+        self.pinned: Optional[bool] = None
+
+    def hear(self, payload: dict) -> None:
+        if payload.get("agent_id"):
+            return
+        event = payload["hook_event_name"]
+        if event in _TURN_STARTS:
+            self.in_turn = True
+        elif event in _TURN_ENDS:
+            self.in_turn = False
 
     def capture_pane(self, session, window, lines=0):
-        return self.pane
+        busy = self.in_turn if self.pinned is None else self.pinned
+        if not (busy and self.draws_busy):
+            return self.pane
+        out = self.pane.split("\n")
+        for i in range(len(out) - 1, -1, -1):
+            if out[i].lstrip().startswith("⏵⏵"):
+                out[i] += " · esc to interrupt"
+                break
+        return "\n".join(out)
 
 
 def _delivered(payload: dict) -> bool:
     event = payload["hook_event_name"]
     if event == "SessionStart":
         return payload.get("source") in RESET_SOURCES
+    if event == "Notification":
+        return payload.get("notification_type") == hook_handler.CLAUDE_NOTIFICATION_MATCHER
     return event in REGISTERED_EVENTS
 
 
@@ -283,7 +320,7 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
     from overcode.status_detector_factory import StatusDetectorDispatcher
 
     clock = _Clock()
-    tmux = _Tmux(scenario.initial_pane)
+    tmux = _Tmux(scenario.initial_pane, draws_busy=scenario.backend == "claude-code")
     session = SimpleNamespace(
         id="replay-id", name=AGENT, tmux_window=AGENT,
         parent_session_id="parent-id" if scenario.child else None,
@@ -312,10 +349,12 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                 clock.now = EPOCH + step.t
                 if step.pane is not None:
                     tmux.pane = step.pane
+                    tmux.pinned = step.busy
                 elif step.write is not None:
                     _apply_write(state_dir, step.write)
                 elif step.payload is not None and _delivered(step.payload):
                     _deliver(step.payload)
+                    tmux.hear(step.payload)
                 i += 1
             clock.now = EPOCH + t
             status, _, _ = detector.detect_status(session)

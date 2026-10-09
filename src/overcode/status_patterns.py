@@ -260,6 +260,12 @@ class StatusPatterns:
     # these are what distinguish "working" from "waiting" (#393).
     busy_markers: List[str] = field(default_factory=lambda: ["esc to interrupt"])
 
+    # Whether the pane's lack of a busy marker is trusted as "the turn is
+    # over" when hooks still say running (a turn that ended with no Stop).
+    # Only for a backend whose busy marker is verified to show for the whole
+    # turn; Claude Code's "esc to interrupt" sits in its status bar.
+    pane_confirms_idle: bool = False
+
     # Input-hint markers — appear only in the live input prompt, never in
     # scrollback after the CLI exits. Used to rule out a shell prompt match.
     input_hint_markers: List[str] = field(default_factory=lambda: ["? for shortcuts"])
@@ -394,7 +400,7 @@ class StatusPatterns:
 
 
 # Default patterns instance — Claude Code's chrome.
-DEFAULT_PATTERNS = StatusPatterns()
+DEFAULT_PATTERNS = StatusPatterns(pane_confirms_idle=True)
 
 # Patterns keyed by backend name. Invalidated by
 # backends.register_backend via _invalidate_derived_caches().
@@ -634,6 +640,33 @@ def status_bar_visible(content: str, patterns: StatusPatterns = None) -> bool:
     two apart.
     """
     return _find_status_bar_line(content, patterns) is not None
+
+
+# How far up from the bottom a busy marker counts: the status bar and the
+# spinner line above the prompt, plus the subagent list drawn under the bar
+_IDLE_TAIL_LINES = 15
+
+
+def pane_shows_idle(content: str, patterns: StatusPatterns = None) -> Optional[bool]:
+    """Whether the pane shows a CLI that is between turns.
+
+    True: the CLI's own chrome (status bar or input hint) is on screen and
+    no busy marker is, in the bar or near the bottom. False: a busy marker
+    is showing. None: no chrome to read (a dialog, a menu, an unknown
+    screen), so the pane says nothing either way.
+    """
+    patterns = patterns or DEFAULT_PATTERNS
+    if not content or not patterns.busy_markers:
+        return None
+    clean = strip_ansi(content)
+    lines = [line for line in clean.splitlines() if line.strip()]
+    tail = lines[-_IDLE_TAIL_LINES:]
+    bar = _find_status_bar_line(content, patterns, clean_content=clean)
+    if patterns.is_busy(tail, tail=0) or (bar is not None and patterns.is_busy([bar], tail=0)):
+        return False
+    if bar is not None or patterns.shows_input_hint("\n".join(tail)):
+        return True
+    return None
 
 
 def shows_permission_prompt(content: str, patterns: StatusPatterns = None, tail: int = 20) -> bool:

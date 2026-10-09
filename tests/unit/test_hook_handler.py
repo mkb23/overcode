@@ -196,6 +196,69 @@ class TestSubagentRouting:
         assert self._state()["event"] == "Stop"  # the old file is intact
 
 
+class TestIdlePromptBackstop:
+    """Claude's idle_prompt Notification settles a turn that ended with no Stop."""
+
+    _send = TestSubagentRouting._send
+    _state = TestSubagentRouting._state
+
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        self.state_path = tmp_path / "agents" / "hook_state_test-agent.json"
+        self.log_path = tmp_path / "agents" / "hook_events_test-agent.jsonl"
+
+    def _idle(self, **extra):
+        self._send({"hook_event_name": "Notification", "notification_type": "idle_prompt",
+                    "message": "Claude is waiting for your input", **extra})
+
+    def test_a_running_turn_is_settled_as_stop(self):
+        self._send({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                    "tool_input": {"file_path": "x"}, "tool_use_id": "t1"})
+        self._idle()
+        assert self._state()["event"] == "Stop"
+        last = json.loads(self.log_path.read_text().splitlines()[-1])
+        assert last["event"] == "Stop"
+
+    def test_the_message_alone_is_enough(self):
+        self._send({"hook_event_name": "PostToolUse", "tool_name": "Read"})
+        self._send({"hook_event_name": "Notification",
+                    "message": "Claude is waiting for your input"})
+        assert self._state()["event"] == "Stop"
+
+    def test_a_settled_or_waiting_snapshot_is_left_alone(self):
+        for event in ("Stop", "PermissionRequest", "StopFailure"):
+            self._send({"hook_event_name": event})
+            before = self._state()
+            self._idle()
+            assert self._state() == before, event
+
+    def test_other_notifications_are_dropped(self):
+        self._send({"hook_event_name": "PostToolUse", "tool_name": "Read"})
+        self._send({"hook_event_name": "Notification", "notification_type": "permission_prompt",
+                    "message": "Claude needs your permission"})
+        assert self._state()["event"] == "PostToolUse"
+
+    def test_another_conversations_idle_prompt_is_ignored(self):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps({
+            "event": "UserPromptSubmit", "timestamp": 1.0, "agent_session_id": "mine",
+        }))
+        self._idle(session_id="a-nested-claude")
+        assert self._state()["event"] == "UserPromptSubmit"
+        self._idle(session_id="mine")
+        assert self._state()["event"] == "Stop"
+        assert self._state()["agent_session_id"] == "mine"
+
+    def test_claude_launch_settings_register_it_for_idle_prompt_only(self):
+        from overcode.backends.claude_code import _build_launch_settings
+
+        hooks = _build_launch_settings("/bin/overcode")["hooks"]
+        assert [g["matcher"] for g in hooks["Notification"]] == ["idle_prompt"]
+
+
 class TestHandleHookEvent:
 
     def test_missing_env_vars_silent_exit(self, monkeypatch):
@@ -1357,3 +1420,29 @@ class TestEventLogBytes:
         before = path.read_bytes()
         hh._rotate_event_log(path)
         assert path.read_bytes() == before
+
+
+class TestScheduleWakeupLifecycle:
+    """Ending a /loop must not leave the agent yellow "armed" forever."""
+
+    def _apply(self, obligations, tool_input, now=100.0):
+        from overcode.hook_handler import _update_obligations
+
+        return _update_obligations(obligations, "PreToolUse", "ScheduleWakeup", tool_input, "w", now)
+
+    def test_stop_true_disarms_and_arms_nothing(self):
+        armed = self._apply([], {"delaySeconds": 300, "prompt": "x"})
+        assert [o["kind"] for o in armed] == ["schedule_wakeup"]
+        assert self._apply(armed, {"stop": True}) == []
+
+    def test_a_new_wakeup_replaces_the_last(self):
+        armed = self._apply([], {"delaySeconds": 300}, now=100.0)
+        again = self._apply(armed, {"delaySeconds": 60}, now=200.0)
+        assert len(again) == 1
+        assert again[0]["eta_absolute"] == 260.0
+
+    def test_other_obligations_survive_a_stop(self):
+        from overcode.hook_handler import _update_obligations
+
+        obls = _update_obligations([], "PreToolUse", "Monitor", {"command": "tail -f x"}, "m1", 1.0)
+        assert [o["kind"] for o in self._apply(obls, {"stop": True})] == ["monitor"]

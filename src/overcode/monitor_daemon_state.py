@@ -206,6 +206,10 @@ class SessionDaemonState:
     # stretch that began after the visit is "unvisited": the 🔔 highlight.
     input_needed_since: Optional[float] = None
     visited_at: Optional[float] = None
+    # When the hook event behind current_status was written (epoch seconds;
+    # None when the pane decided). Holds still between events, so views can
+    # tell a status hooks reported a moment ago from one that is hours old.
+    last_hook_at: Optional[float] = None
 
     # Transcript-derived values the views render beside the token columns
     # (synced with them, every STATS_SYNC_*). stats_available is False for

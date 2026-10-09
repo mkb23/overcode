@@ -108,7 +108,16 @@ keeps the current **episode** (colour, start time) and the previous one.
   stopgap goes).
 - **Overdue yellow.** A yellow episode whose wakeup is overdue, or whose
   obligations have been silent past their bound, escalates to red with an
-  `overdue` badge, so red is trustworthy in both directions.
+  `overdue` badge, so red is trustworthy in both directions. As built: a
+  wakeup 2 min past its time with nothing else pending.
+- **Green is checked too.** A hook "running" whose Claude pane has shown
+  no "esc to interrupt" for 15 s, with no hook since, is a turn that ended
+  without a Stop: red. Claude's `idle_prompt` Notification settles it for
+  good as a Stop. Each agent's `last_hook_at` is published.
+- **A frozen engine is shown.** Each ping carries the main loop's beat
+  age; a view hearing an age past 30 s (or nothing for 15 s) dims the list
+  and says so. A watchdog in the daemon signals the stuck loop, and exits
+  for a restart after 5 min.
 
 Episodes are appended to `episodes_<agent>.jsonl`, one line per closed or
 merged episode, rotated by size. The timeline and history read this instead

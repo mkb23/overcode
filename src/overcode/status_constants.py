@@ -452,6 +452,7 @@ BADGE_KINDS: dict[str, Tuple[str, str, str]] = {
     "ask_question":    ("❓", STATUS_COLOR_RED,   "??"),   # AskUserQuestion open
     "awaiting_input":  ("📥", STATUS_COLOR_RED,   "In"),   # Stop fired, no obligations, awaiting next prompt
     "error":           ("❗", STATUS_COLOR_RED,   "!W"),    # API/hook error needing intervention
+    "overdue":         ("⌛", STATUS_COLOR_RED,   "Od"),    # a wakeup well past its time never came
 }
 
 
@@ -474,6 +475,7 @@ BADGE_MEANINGS: dict[str, str] = {
     "ask_question":    "asking you a question",
     "awaiting_input":  "waiting for your next prompt",
     "error":           "error needs attention",
+    "overdue":         "a scheduled wakeup never came",
 }
 
 
