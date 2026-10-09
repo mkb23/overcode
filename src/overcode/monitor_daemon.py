@@ -25,6 +25,7 @@ import signal
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -83,9 +84,11 @@ from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
 from .pricing import calculate_cost_estimate
 from .monitor_daemon_core import (
+    UNOBSERVED_GAP_SECONDS,
     calculate_time_accumulation,
     calculate_total_tokens,
     calculate_median,
+    elapsed_seconds,
     should_sync_stats,
     parse_datetime_safe,
     is_heartbeat_eligible,
@@ -132,6 +135,13 @@ INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attenda
 # long instead of waiting for the next tick.
 WAKE_SCAN_ATTENDED_SECONDS = 0.25
 WAKE_SCAN_UNATTENDED_SECONDS = 2.0
+# Watchdog: the main loop beats engine.sock every tick and sleep step. Once
+# the beat is engine_socket.STALL_SECONDS old the socket thread logs the
+# main thread's stack and signals it (SIGUSR1 ends a sleep the kernel never
+# woke: seen on macOS after a machine sleep, a 0.25 s sleep that lasted
+# 26 hours). Still stuck this long, the daemon exits so the TUI starts a
+# fresh one rather than serving frozen status.
+WATCHDOG_EXIT_SECONDS = 300.0
 # A Stop that lands within the hook detector's sticky-green window of the
 # turn's last activity is read as still working until the window passes
 # (#448). Nothing is written when it passes, so the wake scan re-detects an
@@ -152,6 +162,11 @@ BURN_SYNC_SECONDS = 5
 # Between full ticks the state file is rewritten at most this often; views
 # on engine.sock get every change as it happens.
 QUICK_TICK_STATE_SAVE_SECONDS = 1.0
+# Recorder state (engine_state.json) is written when it changes, and at
+# least this often while agents are observed: each recorder's last
+# observation time must stay well inside UNOBSERVED_GAP_SECONDS on disk, or
+# a quick restart would read as a gap and split every agent's episode.
+RECORDER_SEEN_SAVE_SECONDS = 30.0
 
 # The API server touches the attended file when it serves a sister's status
 # request (TUIs report on engine.sock instead); three missed touches and the
@@ -334,11 +349,12 @@ class MonitorDaemon:
         # One tmux client for the daemon's lifetime (audit R7). The periodic
         # syncs used to build a fresh RealTmux each, so its 30 s cache never
         # hit and every pane-pid lookup was list-sessions + list-windows +
-        # list-panes. Injected by tests and the bench.
+        # list-panes. Injected by tests and the bench. Its reads are bounded:
+        # a wedged tmux server costs a tick one timeout, not the daemon.
         if tmux is None:
-            from .implementations import RealTmux
+            from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
 
-            tmux = RealTmux()
+            tmux = RealTmux(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
         self._tmux = tmux
 
         # Session-specific paths
@@ -384,6 +400,9 @@ class MonitorDaemon:
         # engine.sock (docs/design/engine-0.6.md): started by run(), so a
         # daemon object built for a test never binds a socket
         self._engine = None
+        # The stall's age at its last wake-up signal (None: not stalled)
+        self._stall_signalled_at: Optional[float] = None
+        self._main_thread_id = threading.main_thread().ident
         # One recorded-colour history per agent (#507), by session id;
         # restored from the engine state file so a restart neither forgets
         # nor re-rings (see _load_recorders)
@@ -511,7 +530,7 @@ class MonitorDaemon:
                     self.session_manager.update_session(session.id, tmux_window=new_name)
                     self.log.info(f"Migrated {session.name} window: {session.tmux_window} → {new_name}")
         except Exception as e:
-            self.log.warning(f"Legacy window migration failed: {e}")
+            self.log.warn(f"Legacy window migration failed: {e}")
 
     def _session_index(self) -> SessionIndex:
         """A ``SessionIndex`` over the manager's current snapshot (one stat)."""
@@ -735,8 +754,24 @@ class MonitorDaemon:
 
         return triggered
 
+    def _unobserved_gap_seconds(self) -> float:
+        """An agent unseen this long was not watched (freeze, downtime, sleep).
+
+        UNOBSERVED_GAP_SECONDS, or three unattended loops if those are
+        configured longer, so a slow configured loop is never a gap.
+        """
+        interval = getattr(self, "_interval_unattended", 0) or 0
+        return max(UNOBSERVED_GAP_SECONDS, 3.0 * interval)
+
     def _update_state_time(self, session, status: str, now: datetime) -> None:
-        """Update green_time_seconds and non_green_time_seconds."""
+        """Update green_time_seconds and non_green_time_seconds.
+
+        Time between two observations goes to the status seen. A gap longer
+        than _unobserved_gap_seconds (the daemon was frozen or down, or the
+        machine slept — including the downtime before a restart, measured
+        from the persisted last_time_accumulation) goes to no status: it is
+        dropped, and the view's time base restarts from now.
+        """
         session_id = session.id
         current_stats = session.stats
 
@@ -752,15 +787,20 @@ class MonitorDaemon:
             if last_time is None:
                 last_time = now
             self.last_state_times[session_id] = last_time
+            # The views count on from the base; after a long downtime they
+            # count from now, as the next tick will (the gap is not counted)
+            base_at = last_time.timestamp()
+            if now.timestamp() - base_at > self._unobserved_gap_seconds():
+                base_at = now.timestamp()
             self._time_bases[session_id] = (
                 [current_stats.green_time_seconds, current_stats.non_green_time_seconds,
                  current_stats.sleep_time_seconds],
-                last_time.timestamp(),
+                base_at,
             )
             return  # Don't accumulate on first observation
 
-        # Calculate elapsed time
-        elapsed = (now - last_time).total_seconds()
+        # Calculate elapsed time (by the clock: DST-safe)
+        elapsed = elapsed_seconds(last_time, now)
         if elapsed <= 0:
             return
 
@@ -778,7 +818,13 @@ class MonitorDaemon:
             current_sleep=current_stats.sleep_time_seconds,
             session_start=session_start,
             now=now,
+            max_elapsed_seconds=self._unobserved_gap_seconds(),
         )
+        if result.unobserved:
+            self.log.info(
+                f"[{session.name}] {elapsed / 60:.0f} min unobserved "
+                f"(daemon down, frozen or machine asleep); not counted"
+            )
 
         if result.was_capped:
             total = current_stats.green_time_seconds + current_stats.non_green_time_seconds + current_stats.sleep_time_seconds
@@ -808,7 +854,8 @@ class MonitorDaemon:
         )
 
         self.last_state_times[session_id] = now
-        if result.state_changed or result.was_capped or session_id not in self._time_bases:
+        if (result.state_changed or result.was_capped or result.unobserved
+                or session_id not in self._time_bases):
             self._time_bases[session_id] = (
                 [result.green_seconds, result.non_green_seconds, result.sleep_seconds],
                 now.timestamp(),
@@ -1191,7 +1238,7 @@ class MonitorDaemon:
         if last is None:
             self._last_housekeeping = now
             return False
-        if (now - last).total_seconds() >= HOUSEKEEPING_INTERVAL_SECONDS:
+        if elapsed_seconds(last, now) >= HOUSEKEEPING_INTERVAL_SECONDS:
             self._last_housekeeping = now
             return True
         return False
@@ -1219,6 +1266,7 @@ class MonitorDaemon:
             step = min(WAKE_SCAN_ATTENDED_SECONDS if attended else 1.0, remaining)
             time.sleep(step)
             elapsed += step
+            self._beat()
 
             engine = getattr(self, "_engine", None)
             if not attended and engine is not None and engine.attended:
@@ -1382,7 +1430,8 @@ class MonitorDaemon:
             else (detail.color if detail else None)
         recorder = self._recorders.get(session.id)
         if recorder is None:
-            recorder = self._recorders[session.id] = EpisodeRecorder()
+            recorder = self._recorders[session.id] = EpisodeRecorder(
+                gap_seconds=self._unobserved_gap_seconds())
             self._recorders_dirty = True
         observed = recorder.observe(colour, ts)
         if observed.closed or observed.bell or observed.merged:
@@ -1419,17 +1468,29 @@ class MonitorDaemon:
             return
         recorders = data.get("recorders") if isinstance(data, dict) else None
         if isinstance(recorders, dict):
+            gap = self._unobserved_gap_seconds()
             self._recorders = {
-                sid: EpisodeRecorder.from_dict(rec) for sid, rec in recorders.items()
+                sid: EpisodeRecorder.from_dict(rec, gap_seconds=gap)
+                for sid, rec in recorders.items()
             }
 
-    def _save_recorders(self, live_ids=None) -> None:
-        """Persist recorder state when it changed; forget agents that are gone."""
-        if not self._recorders_dirty:
+    def _save_recorders(self, live_ids=None, force: bool = False) -> None:
+        """Persist recorder state when it changed; forget agents that are gone.
+
+        Each recorder's last observation time changes every tick without
+        marking it dirty; it is written at least every
+        RECORDER_SEEN_SAVE_SECONDS (and at shutdown, ``force``), so a
+        restarted daemon can tell a short restart from a long gap. An
+        empty ``live_ids`` (a session index that came back empty) forgets
+        nobody.
+        """
+        stale = (bool(self._recorders) and time.monotonic()
+                 - getattr(self, "_recorders_saved_at", 0.0) >= RECORDER_SEEN_SAVE_SECONDS)
+        if not (self._recorders_dirty or force or stale):
             return
         import json
 
-        if live_ids is not None:
+        if live_ids:
             for sid in [s for s in self._recorders if s not in live_ids]:
                 del self._recorders[sid]
         path = self._engine_state_path()
@@ -1439,6 +1500,7 @@ class MonitorDaemon:
                 {"recorders": {sid: r.to_dict() for sid, r in self._recorders.items()}}))
             os.replace(tmp, path)
             self._recorders_dirty = False
+            self._recorders_saved_at = time.monotonic()
         except OSError as e:
             self.log.warn(f"engine state not saved: {e}")
 
@@ -1534,6 +1596,11 @@ class MonitorDaemon:
             merged += list(fresh.values())
             save = time.monotonic() - self._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
             self._publish_state(merged, save=save)
+            # Hook-driven transitions land here: persist what they recorded
+            # (a closed episode, a bell) now, not at the next full tick, so a
+            # restart in between neither replays nor re-rings them. Only
+            # when something changed (_save_recorders checks).
+            self._save_recorders()
         finally:
             self._flush_pending_writes()
 
@@ -1550,7 +1617,7 @@ class MonitorDaemon:
         if self.state.interval_mode == "unattended":
             return
         last = getattr(self, "_last_git_sync", None)
-        if last is not None and (now - last).total_seconds() < GIT_SYNC_SECONDS:
+        if last is not None and elapsed_seconds(last, now) < GIT_SYNC_SECONDS:
             return
         self._last_git_sync = now
         from concurrent.futures import ThreadPoolExecutor
@@ -1580,7 +1647,7 @@ class MonitorDaemon:
             self._burn_by_session = {}
             return
         last = getattr(self, "_last_burn_sync", None)
-        if last is not None and (now - last).total_seconds() < BURN_SYNC_SECONDS:
+        if last is not None and elapsed_seconds(last, now) < BURN_SYNC_SECONDS:
             return
         self._last_burn_sync = now
         from .tui_logic import compute_window_burn
@@ -1610,12 +1677,81 @@ class MonitorDaemon:
         except OSError as e:
             self.log.warn(f"engine.sock unavailable, views fall back to the state file: {e}")
             return
+        server.on_stall = self._on_main_loop_stall
         self._engine = server
         self.log.info(f"engine.sock: {server.path}")
+
+    def _beat(self) -> None:
+        """The main loop is alive: tell engine.sock (and re-arm the watchdog)."""
+        engine = getattr(self, "_engine", None)
+        if engine is not None:
+            engine.beat()
+        self._stall_signalled_at = None
+
+    def _on_main_loop_stall(self, age: float) -> None:
+        """Socket thread, each second while the main loop has not beaten for ``age`` s."""
+        if age >= WATCHDOG_EXIT_SECONDS:
+            self.log.error(f"Main loop stuck {age:.0f}s after a wake-up signal; exiting for a restart")
+            os._exit(1)
+        # Signal again every 30 s: one signal can land outside the sleep
+        last = self._stall_signalled_at
+        if last is not None and age - last < 30.0:
+            return
+        self._stall_signalled_at = age
+        if last is None:
+            frame = sys._current_frames().get(self._main_thread_id)
+            stack = "".join(traceback.format_stack(frame)) if frame is not None else "(no frame)"
+            self.log.warn(f"Main loop stalled {age:.0f}s; signalling it. Its stack:\n{stack}")
+        try:
+            signal.pthread_kill(self._main_thread_id, signal.SIGUSR1)
+        except (OSError, ValueError) as e:
+            self.log.warn(f"could not signal the main loop: {e}")
 
     # ------------------------------------------------------------------
     # Tick phases — decomposed from the monolithic run() loop
     # ------------------------------------------------------------------
+
+    def _run_tick(self, now: datetime) -> None:
+        """One tick, which may fail without ending the daemon.
+
+        A failing tick (a bug in one phase, a corrupt sessions.json) used
+        to end the process and with it monitoring for the whole fleet. It
+        is logged, published, and the loop carries on: the next tick tries
+        again at the usual interval.
+        """
+        try:
+            self._tick(now)
+        except Exception as e:
+            self._tick_failed(e)
+            return
+        failed = getattr(self, "_tick_errors", 0)
+        if failed:
+            self.log.info(f"Tick recovered after {failed} failed tick(s)")
+            self._tick_errors = 0
+            self._last_tick_error = None
+
+    def _tick_failed(self, error: Exception) -> None:
+        """Log a failed tick and publish the daemon status as ``error``.
+
+        The traceback is logged when the error is new; the same error
+        again logs one line at 1, 2, 4, 8... failures in a row, so a tick
+        that fails every loop is visible without filling the log. The
+        published status (the views' "Monitor:" symbol) stays ``error``
+        until a tick completes; the agents keep their last published state.
+        """
+        count = getattr(self, "_tick_errors", 0) + 1
+        self._tick_errors = count
+        message = f"{type(error).__name__}: {error}"
+        if message != getattr(self, "_last_tick_error", None):
+            self.log.error(f"Tick failed ({count} in a row): {message}\n{traceback.format_exc()}")
+        elif count & (count - 1) == 0:
+            self.log.error(f"Tick failed ({count} in a row): {message}")
+        self._last_tick_error = message
+        self.state.status = "error"
+        try:
+            self._publish_state(self.state.sessions)
+        except Exception as e:
+            self.log.warn(f"could not publish the failed tick: {e}")
 
     def _tick(self, now: datetime) -> None:
         """Execute one monitoring loop iteration.
@@ -1748,7 +1884,7 @@ class MonitorDaemon:
             if age is not None and age < cfg["max_age_days"]:
                 return
         except Exception as e:
-            self.log.warning(f"Model metadata auto-refresh check failed: {e}")
+            self.log.warn(f"Model metadata auto-refresh check failed: {e}")
             return
 
         thread = threading.Thread(
@@ -1775,7 +1911,7 @@ class MonitorDaemon:
                 seconds=self._model_metadata_failure_backoff
             )
             hours = self._model_metadata_failure_backoff / 3600
-            self.log.warning(
+            self.log.warn(
                 f"Model metadata auto-refresh failed; not retrying for {hours:g}h "
                 f"(lookups keep using the catalog already on disk): {e}"
             )
@@ -1964,8 +2100,11 @@ class MonitorDaemon:
             index = self._session_index()
         pending = self._pending
         self._plan_captures(sessions, now)
+        # session id -> (first failure, last error): see _detection_failed
+        detect_failures = self.__dict__.setdefault("_detect_failures", {})
 
         for snapshot in sessions:
+            self._beat()  # a long tick over many agents is slow, not stalled
             # Earlier phases of this tick may have staged changes for this
             # session (a heartbeat stamp, tokens, a model, CPU); read through
             # them, as the per-write path re-read the file after each.
@@ -1975,7 +2114,18 @@ class MonitorDaemon:
                 status, activity = STATUS_DONE, "Completed"
             else:
                 # Detect status - dispatches per-session via dispatcher (#5)
-                status, activity, pane_content = self.detector.detect_status(session)
+                try:
+                    status, activity, pane_content = self.detector.detect_status(session)
+                except Exception as e:
+                    # tmux not answering (TmuxTimeoutError) or a detector
+                    # bug: this agent is unknown this tick, the others go on
+                    unknown = self._detection_failed(session, e, now)
+                    if unknown is not None:
+                        session_states.append(unknown)
+                    all_waiting_user = False
+                    continue
+                if detect_failures.pop(session.id, None) is not None:
+                    self.log.info(f"[{session.name}] status detected again")
 
                 # Log hook events when they change (diagnostic visibility)
                 self._log_hook_event(session, status, activity)
@@ -2088,6 +2238,53 @@ class MonitorDaemon:
         self._compute_subtree_costs(session_states)
 
         return session_states, all_waiting_user
+
+    def _detection_failed(
+        self, session, error: Exception, now: datetime
+    ) -> Optional[SessionDaemonState]:
+        """This tick could not detect ``session``'s status: what to publish for it.
+
+        A short failure (one tmux read that timed out) keeps the agent's
+        last published state; one tick's hiccup is not news. Failing for
+        longer than _unobserved_gap_seconds, the agent is published as
+        ``unknown`` with no colour, rather than its last colour held for as
+        long as tmux stays wedged. Nothing is recorded for it meanwhile (no
+        time, no episode, no history row), so when detection is back the
+        time totals and the recorder see a gap and attribute it to nothing.
+        Logged when the error starts or changes, with the traceback unless
+        it is a tmux timeout.
+        """
+        import dataclasses
+
+        from .protocols import TmuxTimeoutError
+
+        failures = self.__dict__.setdefault("_detect_failures", {})
+        message = f"{type(error).__name__}: {error}"
+        first, last_message = failures.get(session.id, (now, None))
+        failures[session.id] = (first, message)
+        if message != last_message:
+            if isinstance(error, TmuxTimeoutError):
+                self.log.warn(f"[{session.name}] status not detected: {message}")
+            else:
+                self.log.error(f"[{session.name}] status detection failed: {message}\n"
+                               f"{traceback.format_exc()}")
+        previous = next(
+            (s for s in self.state.sessions if s.session_id == session.id), None
+        )
+        if previous is not None and elapsed_seconds(first, now) <= self._unobserved_gap_seconds():
+            return previous
+        unknown = dict(
+            current_status="unknown",
+            current_activity=f"Status unknown: {message}"[:100],
+            live_colour=None, live_since=None, episode_colour=None, episode_start=None,
+            status_detail=None,
+        )
+        if previous is None:
+            return SessionDaemonState(
+                session_id=session.id, name=session.name, tmux_window=session.tmux_window,
+                **unknown,
+            )
+        return dataclasses.replace(previous, **unknown)
 
     def _plan_captures(self, sessions: list, now: datetime) -> None:
         """Decide which panes this loop captures; the rest come from the gate's cache.
@@ -2350,6 +2547,9 @@ class MonitorDaemon:
 
         signal.signal(signal.SIGTERM, handle_shutdown)
         signal.signal(signal.SIGINT, handle_shutdown)
+        # The watchdog's wake-up: a handler (even a no-op) makes the signal
+        # interrupt a stuck sleep, which then sees its deadline has passed
+        signal.signal(signal.SIGUSR1, lambda signum, frame: None)
 
         self.state.status = "active"
         self.state.current_interval = check_interval
@@ -2360,14 +2560,21 @@ class MonitorDaemon:
         try:
             while not self._shutdown:
                 self.state.loop_count += 1
+                self._beat()
                 now = datetime.now()
-                self._tick(now)
+                self._run_tick(now)
                 self._interruptible_sleep(self.state.current_interval)
         except Exception as e:
-            self.log.error(f"Monitor daemon error: {e}")
+            self.log.error(f"Monitor daemon error: {e}\n{traceback.format_exc()}")
             raise
         finally:
             self.log.info("Monitor daemon shutting down")
+            # What the last quick tick recorded (a closed episode, a bell)
+            # must not be replayed by the next daemon
+            try:
+                self._save_recorders(force=True)
+            except Exception as e:
+                self.log.warn(f"engine state not saved at shutdown: {e}")
             self.presence.stop()
             if self._engine is not None:
                 self._engine.stop()
@@ -2398,6 +2605,10 @@ def main() -> int:
     # tmux many times a second: start it with posix_spawn (#486)
     from . import spawn
     spawn.install()
+    # Every tmux client in this process (the detectors build their own)
+    # waits a bounded time for an answer; a wedged server must not hang a tick
+    from .implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+    RealTmux.default_command_timeout = TMUX_COMMAND_TIMEOUT_SECONDS
 
     daemon = MonitorDaemon(tmux_session=args.session)
     daemon.run(check_interval=args.interval)

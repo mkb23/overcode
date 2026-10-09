@@ -113,6 +113,10 @@ class BaseDaemonLogger:
         """Log warning message."""
         self._log("warn", "⚠", message, "WARN")
 
+    # The stdlib logging name: a handler that calls it must not raise
+    # AttributeError in place of the warning it meant to log.
+    warning = warn
+
     def error(self, message: str):
         """Log error message."""
         self._log("error", "✗", message, "ERROR")

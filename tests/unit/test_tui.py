@@ -400,11 +400,11 @@ class TestBuildTimelineSlots:
         assert result[30] == 3
 
     def test_entry_before_window_forward_fills(self):
-        """Entry before window forward-fills all slots"""
+        """Entry before window forward-fills all slots (unbounded fill)"""
         now = datetime.now()
         ts = now - timedelta(hours=5)  # 5 hours ago (outside 3h window)
         history = [(ts, 3)]
-        result = build_timeline_slots(history, 60, 3.0, now)
+        result = build_timeline_slots(history, 60, 3.0, now, max_fill_seconds=float("inf"))
         assert len(result) == 60
         assert all(v == 3 for v in result.values())
 

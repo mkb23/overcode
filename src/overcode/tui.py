@@ -199,6 +199,7 @@ ENGINE_BANNER_GRACE_SECONDS = 1.5
 ENGINE_RESTART_EVERY_SECONDS = 10.0
 ENGINE_RETRY_AFTER_DROP_SECONDS = 1.5
 ENGINE_BANNER_TEXT = "  ⚠ engine not running — starting…  (showing the last known state)  "
+ENGINE_STALLED_TEXT = "  ⚠ engine frozen for {age} — statuses are not updating  (showing the last known state)  "
 # An agent that needs a look while it is the focused one (on screen in the
 # split's bottom pane) counts as visited after this long.
 BELL_SEEN_AFTER_SECONDS = 5.0
@@ -460,6 +461,7 @@ class SupervisorTUI(
         self._engine_agents: dict = {}
         self._engine_fleet: dict = {}
         self._engine_down_since: float = time.monotonic()
+        self._engine_stalled = False
         self._engine_start_attempt: float = float("-inf")
         self._engine_focus: Optional[str] = None
         self._engine_pending = None  # the latest snapshot, not yet applied
@@ -1149,6 +1151,8 @@ class SupervisorTUI(
         """Main thread: the subscription came up or went away."""
         if connected == self._engine_connected:
             return
+        if self._engine_stalled:
+            self._show_engine_stalled(None)  # back to the not-running banner text
         self._engine_connected = connected
         if connected:
             self._show_engine_banner(False)
@@ -1170,8 +1174,10 @@ class SupervisorTUI(
             pass
 
     def _engine_watch(self) -> None:
-        """Each second: a missing engine is shown, and started again now and then."""
+        """Each second: a missing or frozen engine is shown; a missing one is started again now and then."""
         if self._engine_connected:
+            client = self._engine_client
+            self._show_engine_stalled(client.stalled_for() if client is not None else None)
             return
         now = time.monotonic()
         if now - self._engine_down_since >= ENGINE_BANNER_GRACE_SECONDS:
@@ -1183,6 +1189,28 @@ class SupervisorTUI(
         """Start the monitor daemon (the engine) unless it is already starting."""
         self._engine_start_attempt = time.monotonic()
         self._ensure_monitor_daemon()
+
+    def _show_engine_stalled(self, age: Optional[float]) -> None:
+        """Connected but frozen (``age`` s, None: live): the banner says so and the list dims."""
+        stalled = age is not None
+        if not stalled and not self._engine_stalled:
+            return
+        self._engine_stalled = stalled
+        try:
+            banner = self.query_one("#engine-banner", Static)
+        except NoMatches:
+            return
+        if stalled:
+            banner.update(ENGINE_STALLED_TEXT.format(age=format_duration(age)))
+        else:
+            banner.update(ENGINE_BANNER_TEXT)
+        self._show_engine_banner(stalled)
+        try:
+            bar = self.query_one("#daemon-status", DaemonStatusBar)
+        except NoMatches:
+            return
+        bar.engine_stalled_for = age
+        bar.refresh()
 
     def _show_engine_banner(self, show: bool) -> None:
         """The "engine not running" banner; the agent list dims while it shows."""

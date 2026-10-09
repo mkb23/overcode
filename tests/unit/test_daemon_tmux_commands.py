@@ -215,9 +215,12 @@ class TestOnePersistentClient:
             assert "RealTmux(" not in inspect.getsource(getattr(MonitorDaemon, name)), name
 
     def test_daemon_builds_one_real_client_when_none_is_injected(self, root):
+        from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS
+
         with patch("overcode.implementations.RealTmux") as real_tmux:
             _fleet(root, 1)
-        real_tmux.assert_called_once_with()
+        # ...with its reads bounded (a wedged tmux server must not hang a tick)
+        real_tmux.assert_called_once_with(command_timeout=TMUX_COMMAND_TIMEOUT_SECONDS)
 
     def test_injected_client_serves_the_untracked_count_and_the_migration(self, root):
         sm, sessions, tmux, detector, daemon = _fleet(root, 2)

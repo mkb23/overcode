@@ -273,7 +273,7 @@ class TestWakeOnVisibleView:
         d.tmux_session = "agents"
         d.log = MagicMock()
         d._shutdown = False
-        d._engine = SimpleNamespace(attended=False)
+        d._engine = SimpleNamespace(attended=False, beat=lambda: None)
         d._hook_changes = lambda: set()
         slept = []
 

@@ -168,9 +168,15 @@ class TestTimelineIdentity:
             new_hist.setdefault(agent, []).append((ts, status))
 
         assert set(old_hist) == set(new_hist)
+        # Unbounded fill: the bound on carrying a row across silence counts
+        # from the last row, which the change-only logger writes up to a
+        # keepalive earlier for an agent that has gone (the terminator)
+        unbounded = float("inf")
         for agent in AGENTS:
-            old_slots = build_timeline_slots(old_hist.get(agent, []), width, hours, now)
-            new_slots = build_timeline_slots(new_hist.get(agent, []), width, hours, now)
+            old_slots = build_timeline_slots(old_hist.get(agent, []), width, hours, now,
+                                             max_fill_seconds=unbounded)
+            new_slots = build_timeline_slots(new_hist.get(agent, []), width, hours, now,
+                                             max_fill_seconds=unbounded)
             assert old_slots == new_slots, agent
 
     def test_without_the_carry_the_left_edge_would_differ(self, files):

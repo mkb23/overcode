@@ -369,7 +369,8 @@ def build_timeline_slots(
     history: list,
     width: int,
     hours: float,
-    now: Optional[datetime] = None
+    now: Optional[datetime] = None,
+    max_fill_seconds: Optional[float] = None,
 ) -> dict:
     """Build a dictionary mapping slot indices to states from history data.
 
@@ -378,12 +379,22 @@ def build_timeline_slots(
         width: Number of slots in the timeline
         hours: Number of hours the timeline covers
         now: Reference time (defaults to datetime.now())
+        max_fill_seconds: How long after a row its state is carried into
+            empty slots. Rows come at least once a keepalive (agent status)
+            or a minute (presence) while anything is logging, so a longer
+            silence is unobserved time (the daemon frozen or down, the
+            machine asleep) and is left empty rather than drawn as the last
+            state. None: status_history.CARRY_LOOKBACK_SECONDS (five
+            keepalives); ``float("inf")`` fills without a bound.
 
     Returns:
         Dict mapping slot index to state value
     """
     if now is None:
         now = datetime.now()
+    if max_fill_seconds is None:
+        from .status_history import CARRY_LOOKBACK_SECONDS
+        max_fill_seconds = CARRY_LOOKBACK_SECONDS
 
     if not history:
         return {}
@@ -391,27 +402,33 @@ def build_timeline_slots(
     start_time = now - timedelta(hours=hours)
     slot_duration_sec = (hours * 3600) / width
     slot_states = {}
+    slot_seen = {}  # slot index -> time of the latest row in it
 
     # Track the most recent state before the visible window for forward-fill
     last_state = None
+    last_ts = None
     for ts, state in history:
         if ts < start_time:
-            last_state = state
+            last_state, last_ts = state, ts
             continue
         elapsed = (ts - start_time).total_seconds()
         slot_idx = int(elapsed / slot_duration_sec)
         if 0 <= slot_idx < width:
             slot_states[slot_idx] = state
+            slot_seen[slot_idx] = ts
 
     # Forward-fill: carry last known state into empty slots.
     # Sparse data (e.g. presence sampled every 60s) leaves gaps when
-    # zoomed in — the state is continuous between samples.
+    # zoomed in — the state is continuous between samples — but only up to
+    # max_fill_seconds after the row: past that nothing was observed.
     if slot_states or last_state is not None:
         for i in range(width):
             if i in slot_states:
-                last_state = slot_states[i]
+                last_state, last_ts = slot_states[i], slot_seen[i]
             elif last_state is not None:
-                slot_states[i] = last_state
+                slot_start = start_time + timedelta(seconds=i * slot_duration_sec)
+                if (slot_start - last_ts).total_seconds() <= max_fill_seconds:
+                    slot_states[i] = last_state
 
     return slot_states
 

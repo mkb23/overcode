@@ -46,6 +46,8 @@ class DaemonStatusBar(Static):
         # whether engine.sock is connected: the bar's "Monitor" section
         self.monitor_state: Optional[MonitorDaemonState] = None
         self.engine_connected: bool = False
+        # Connected but the engine's main loop is frozen (seconds), else None
+        self.engine_stalled_for: Optional[float] = None
         self.presence_idle_since: Optional[float] = None  # epoch, from the engine
         self._asleep_session_ids: set = set()  # Cache of asleep session IDs
         self.show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
@@ -161,7 +163,11 @@ class DaemonStatusBar(Static):
         content.append("Monitor: ", style="bold")
         monitor_running = bool(self.engine_connected and self.monitor_state)
 
-        if monitor_running:
+        stalled_for = getattr(self, "engine_stalled_for", None)
+        if monitor_running and stalled_for is not None:
+            content.append("⚠ ", style="bold red")
+            content.append(f"frozen {format_duration(stalled_for)}", style="bold red")
+        elif monitor_running:
             state = self.monitor_state
             symbol, style = get_daemon_status_style(state.status)
             content.append(f"{symbol} ", style=style)

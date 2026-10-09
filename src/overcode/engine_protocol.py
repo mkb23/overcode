@@ -131,8 +131,12 @@ def delta_message(delta: Delta) -> bytes:
     return encode(msg)
 
 
-def ping(seq: int) -> bytes:
-    return encode({"t": "ping", "seq": seq})
+def ping(seq: int, beat_age: Optional[float] = None) -> bytes:
+    """Keepalive. ``beat_age``: seconds since the daemon's main loop last ran."""
+    message: Dict[str, Any] = {"t": "ping", "seq": seq}
+    if beat_age is not None:
+        message["beat_age"] = round(beat_age, 1)
+    return encode(message)
 
 
 def bell(seq: int, agent: str, episode: Dict[str, Any]) -> bytes:

@@ -14,9 +14,25 @@ if TYPE_CHECKING:
     from .tmux_utils import PaneInfo
 
 
+class TmuxTimeoutError(Exception):
+    """The tmux server did not answer a read within the client's timeout.
+
+    Only a tmux client built with a command timeout raises it (the monitor
+    daemon's: ``RealTmux(command_timeout=...)``). It is raised, not turned
+    into None/False/[], from the reads whose empty answer means "gone"
+    (``capture_pane``, ``has_session``, ``list_windows``, ``get_pane_pid``),
+    so a wedged server reads as "no answer this tick", never as a dead
+    agent. ``list_panes`` returns its documented no-answer None instead.
+    """
+
+
 @runtime_checkable
 class TmuxInterface(Protocol):
-    """Interface for tmux operations"""
+    """Interface for tmux operations.
+
+    Reads may raise ``TmuxTimeoutError`` when the client has a command
+    timeout and the server does not answer in time.
+    """
 
     def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
         """Capture content from a tmux pane.
@@ -28,6 +44,10 @@ class TmuxInterface(Protocol):
 
         Returns:
             Pane content as string, or None on failure
+
+        Raises:
+            TmuxTimeoutError: the server did not answer in time (timed
+                clients only)
         """
         ...
 
@@ -109,7 +129,7 @@ class TmuxInterface(Protocol):
         Returns:
             {window_name: tmux_utils.PaneInfo} (pid, change signature,
             attached-client count), or None when tmux or the session is
-            unavailable
+            unavailable, or the server did not answer in time
         """
         ...
 

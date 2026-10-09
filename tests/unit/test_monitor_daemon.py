@@ -2024,13 +2024,13 @@ class TestMaybeRefreshModelMetadata:
                    side_effect=OSError("no network")) as mock_refresh:
             daemon._maybe_refresh_model_metadata(now)
             self._join(daemon)
-            assert daemon.log.warning.call_count == 1
+            assert daemon.log.warn.call_count == 1
             assert daemon._model_metadata_backoff_until is not None
             # The next few hourly ticks stay quiet and fetch nothing
             for h in (1, 2, 5):
                 daemon._maybe_refresh_model_metadata(now + timedelta(hours=h))
             assert mock_refresh.call_count == 1
-            assert daemon.log.warning.call_count == 1
+            assert daemon.log.warn.call_count == 1
             # After the backoff window it tries again
             daemon._maybe_refresh_model_metadata(daemon._model_metadata_backoff_until + timedelta(minutes=1))
             self._join(daemon)

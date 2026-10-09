@@ -164,6 +164,80 @@ class TestEpisodes:
         assert all(b.colour in (R_, O_) for _, b in bells)
 
 
+class TestGaps:
+    """Nothing observed for longer than gap_seconds (a frozen or stopped daemon,
+    a sleeping machine) is attributed to no colour."""
+
+    HOUR = 3600.0
+
+    def test_the_same_colour_after_a_gap_is_a_fresh_episode(self):
+        # The incident: green at 12:47, daemon stuck for 26 h, green again
+        rec, closed, bells, _ = run([(0, G_), (10, G_), (10 + 26 * self.HOUR, G_)])
+        assert [(e.colour, e.start, e.end) for e in closed] == [(G_, 0, 10)]
+        assert rec.episode.colour == G_ and rec.episode.start == 10 + 26 * self.HOUR
+        assert rec.live_since == 10 + 26 * self.HOUR
+        assert bells == []
+
+    def test_a_new_colour_after_a_gap_starts_when_seen_and_does_not_ring(self):
+        rec, closed, bells, _ = run([(0, G_), (10, G_), (5000, R_), (5100, R_)])
+        # green ends when it was last seen, not when red was first seen
+        assert [(e.colour, e.start, e.end) for e in closed] == [(G_, 0, 10)]
+        assert rec.episode.colour == R_ and rec.episode.start == 5000
+        assert rec.input_needed_since == 5000
+        assert bells == []
+
+    def test_a_visited_stall_still_stalled_after_a_gap_is_not_new(self):
+        rec = EpisodeRecorder()
+        rec.observe(R_, 0)
+        rec.visit(5)
+        rec, closed, bells, _ = run([(10, R_), (10 + self.HOUR, R_)], rec)
+        assert [(e.colour, e.start, e.end) for e in closed] == [(R_, 0, 10)]
+        assert rec.episode.start == 10 + self.HOUR
+        # the input-needed stretch carries on: not unvisited again, no bell
+        assert rec.input_needed_since == 0 and bells == []
+
+    def test_a_pending_excursion_stands_as_far_as_it_was_seen(self):
+        rec, closed, bells, _ = run([(0, G_), (10, G_), (12, R_), (15, R_), (5000, G_)])
+        assert [(e.colour, e.start, e.end) for e in closed] == [(G_, 0, 12), (R_, 12, 15)]
+        assert rec.episode.colour == G_ and rec.episode.start == 5000
+        assert not rec.pending and bells == []
+
+    def test_gaps_up_to_the_bound_carry_on(self):
+        rec, closed, _, _ = run([(0, G_), (100, G_), (220, G_)], EpisodeRecorder(gap_seconds=120))
+        assert closed == [] and rec.episode.start == 0
+
+    def test_a_long_lifecycle_hold_is_a_gap(self):
+        # asleep for 10 h: the red stall from before is not "red 10 h"
+        rec, closed, _, _ = run([(0, R_), (5, R_), (6, None), (10 * self.HOUR, None),
+                                 (10 * self.HOUR + 1, R_)])
+        assert [(e.colour, e.start, e.end) for e in closed] == [(R_, 0, 5)]
+        assert rec.episode.start == 10 * self.HOUR + 1
+
+    def test_a_restart_after_a_long_downtime_is_a_gap(self):
+        rec, _, _, _ = run([(0, G_), (60, G_)])
+        restored = EpisodeRecorder.from_dict(rec.to_dict())
+        assert restored.last_seen == 60
+        out = restored.observe(G_, 60 + 26 * self.HOUR)
+        assert [(e.colour, e.start, e.end) for e in out.closed] == [(G_, 0, 60)]
+        assert restored.episode.start == 60 + 26 * self.HOUR
+
+    def test_a_quick_restart_keeps_a_pending_excursion(self):
+        rec, _, _, _ = run([(0, G_), (10, R_), (12, R_)])
+        restored = EpisodeRecorder.from_dict(rec.to_dict())
+        assert restored.pending and restored.live_since == 10
+        out = restored.observe(R_, 31)
+        # confirmed from its real start, and it rings as it would have
+        assert out.closed[0].end == 10 and out.bell is not None and out.bell.start == 10
+
+    def test_old_saved_state_without_the_new_fields_still_loads(self):
+        rec = EpisodeRecorder.from_dict({"episode": {"colour": G_, "start": 5.0, "end": None,
+                                                     "blips": []},
+                                         "input_needed_since": None, "rang_for": None,
+                                         "visited_at": 3.0})
+        assert rec.episode.start == 5.0 and rec.last_seen is None and not rec.pending
+        assert rec.observe(G_, 10 * self.HOUR).closed == []  # nothing to measure a gap from
+
+
 class TestReplayScenarios:
     """The #507 scenarios through the real hook handler and detector, recorded."""
 

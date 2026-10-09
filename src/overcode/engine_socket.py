@@ -28,6 +28,14 @@ from . import engine_protocol as proto
 # A view this far behind (bytes queued) is dropped and must resync
 MAX_QUEUED_BYTES = 4 << 20
 PING_SECONDS = 5.0
+# The daemon's main loop beats every tick and every sleep step (at most a
+# second apart). A beat this old means the loop has stopped while this
+# thread still runs: views are told (each ping carries the beat's age) and
+# the daemon's ``on_stall`` is called each second until it beats again.
+STALL_SECONDS = 30.0
+# A connected view that hears nothing (not even a ping) for this long is
+# looking at an engine whose socket thread has stopped too
+SILENT_SECONDS = 3 * PING_SECONDS
 
 
 def socket_path(state_dir: Path) -> Path:
@@ -66,6 +74,9 @@ class EngineServer:
         self.dropped = 0  # views disconnected for falling behind (diagnostics)
         # (agent id, epoch seconds) the person looked at, drained by the daemon
         self._visits: list = []
+        self._beat = time.monotonic()
+        # Called on the socket thread with the beat's age while it is stale
+        self.on_stall: Optional[Callable[[float], None]] = None
 
     # -- lifecycle -------------------------------------------------------
 
@@ -125,6 +136,14 @@ class EngineServer:
                     self._queue(peer, message)
         self._poke()
         return delta
+
+    def beat(self) -> None:
+        """The daemon's main loop is alive (called from that loop)."""
+        self._beat = time.monotonic()
+
+    @property
+    def beat_age(self) -> float:
+        return time.monotonic() - self._beat
 
     def ring(self, agent: str, episode: dict) -> None:
         with self._lock:
@@ -202,12 +221,18 @@ class EngineServer:
                 else:
                     self._service(key.data, mask)
             now = time.monotonic()
+            beat_age = now - self._beat
             if now - self._last_ping >= PING_SECONDS:
                 self._last_ping = now
                 with self._lock:
-                    message = proto.ping(self._snapshot.seq)
+                    message = proto.ping(self._snapshot.seq, beat_age)
                     for peer in list(self._peers.values()):
                         self._queue(peer, message)
+            if beat_age >= STALL_SECONDS and self.on_stall is not None:
+                try:
+                    self.on_stall(beat_age)
+                except Exception:
+                    pass  # the watchdog must never take the socket thread down
 
     def _accept(self) -> None:
         try:
@@ -302,6 +327,26 @@ class EngineClient:
         self._visible = False
         self._focus: Optional[str] = None
         self._burn_hours: Optional[float] = None
+        # When this view last heard the engine, and the main loop's beat age
+        # in its last ping (None: an engine too old to send one)
+        self._heard_at = time.monotonic()
+        self._beat_age: Optional[float] = None
+
+    def stalled_for(self) -> Optional[float]:
+        """Seconds the connected engine has been frozen, or None while it is live.
+
+        Frozen is either its main loop not beating (the ping says so) or
+        the connection going silent. Both clocks are monotonic, so a
+        machine sleep is not mistaken for a stall.
+        """
+        if not self.connected:
+            return None
+        silent = time.monotonic() - self._heard_at
+        if silent >= SILENT_SECONDS:
+            return silent
+        if self._beat_age is not None and self._beat_age >= STALL_SECONDS:
+            return self._beat_age
+        return None
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="engine-client", daemon=True)
@@ -366,6 +411,8 @@ class EngineClient:
             backoff = 0.1
             self._sock = sock
             self.state = proto.ViewState()
+            self._heard_at = time.monotonic()
+            self._beat_age = None
             # Restate what this view is, on every (re)connect
             self._send({"t": "visible", "visible": self._visible})
             if self._focus is not None:
@@ -388,7 +435,11 @@ class EngineClient:
             if not data:
                 return
             buffer += data
+            self._heard_at = time.monotonic()
             for message in proto.decode_lines(buffer):
+                if message.get("t") == "ping":
+                    age = message.get("beat_age")
+                    self._beat_age = float(age) if isinstance(age, (int, float)) else None
                 if message.get("t") == "bell":
                     if self.on_bell is not None:
                         self.on_bell(str(message.get("agent")), message.get("episode") or {})

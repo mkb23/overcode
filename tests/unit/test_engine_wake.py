@@ -350,3 +350,50 @@ class TestEngineOwnsTheNumbers:
         d.state.interval_mode = "unattended"
         d._sync_burn([SimpleNamespace(id="s1")], datetime.now())
         assert d._burn_by_session == {}
+
+
+class TestWatchdog:
+    """The socket thread's watchdog for a main loop that stopped beating."""
+
+    def _armed(self, tmp_path):
+        d = _daemon(tmp_path)
+        d._stall_signalled_at = None
+        d._main_thread_id = 12345
+        return d
+
+    def test_a_stall_logs_the_stack_once_and_signals_every_30s(self, tmp_path):
+        import signal as _signal
+        d = self._armed(tmp_path)
+        with patch("overcode.monitor_daemon.signal.pthread_kill") as kill:
+            for age in (31.0, 32.0, 60.0, 61.0):
+                d._on_main_loop_stall(age)
+        assert kill.call_count == 2  # at 31 s and 61 s
+        kill.assert_called_with(12345, _signal.SIGUSR1)
+        assert d.log.warn.call_count == 1
+        assert "stalled" in d.log.warn.call_args.args[0]
+
+    def test_a_beat_rearms_the_watchdog(self, tmp_path):
+        d = self._armed(tmp_path)
+        with patch("overcode.monitor_daemon.signal.pthread_kill") as kill:
+            d._on_main_loop_stall(31.0)
+            d._beat()
+            d._on_main_loop_stall(31.0)
+        assert kill.call_count == 2
+
+    def test_still_stuck_long_after_exits_for_a_restart(self, tmp_path):
+        from overcode import monitor_daemon
+        d = self._armed(tmp_path)
+        with patch("overcode.monitor_daemon.os._exit") as exit_, \
+                patch("overcode.monitor_daemon.signal.pthread_kill"):
+            d._on_main_loop_stall(monitor_daemon.WATCHDOG_EXIT_SECONDS)
+        exit_.assert_called_once_with(1)
+
+    def test_every_sleep_step_beats(self, tmp_path):
+        d = self._armed(tmp_path)
+        d._engine = MagicMock(attended=False)
+        d.state.interval_mode = "attended"
+        d._hook_changes = lambda: set()
+        with patch("overcode.monitor_daemon.time.sleep"), \
+                patch("overcode.monitor_daemon.check_activity_signal", return_value=False):
+            d._interruptible_sleep(1)
+        assert d._engine.beat.call_count == 4  # 1 s in 0.25 s steps

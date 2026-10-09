@@ -6,16 +6,89 @@ and perform real file I/O.
 """
 
 import os
+import shutil
 import subprocess
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Iterator, Optional, List, Dict, Any
 
 import libtmux
+import libtmux.neo
+import libtmux.server
+from libtmux import exc as libtmux_exc
+from libtmux.common import tmux_cmd as _libtmux_cmd
 from libtmux.exc import LibTmuxException
 from libtmux._internal.query_list import ObjectDoesNotExist
 
+from .protocols import TmuxTimeoutError
 from .tmux_utils import PANE_LISTING_FORMAT, PaneInfo, _build_tmux_cmd, parse_pane_listing
+
+# How long the monitor daemon waits for any one tmux read. A healthy server
+# answers in milliseconds; one that has wedged (tmux 3.3-3.6 server bugs, a
+# client stuck on a blocked tty) never does, and libtmux waits on it with no
+# limit, which froze every agent's status at its last value.
+TMUX_COMMAND_TIMEOUT_SECONDS = 3.0
+
+# The timeout of the RealTmux call running on this thread, read by
+# _BoundedTmuxCmd. libtmux builds its commands deep inside its objects
+# (Server.cmd, neo.fetch_objs), so a per-call timeout cannot be passed down.
+_command_timeout = threading.local()
+
+
+class _BoundedTmuxCmd(_libtmux_cmd):
+    """libtmux's ``tmux_cmd`` that honours the calling RealTmux's timeout.
+
+    Without one (every caller but a timed RealTmux) it is libtmux's own
+    command, unchanged. With one, it is the same command with the wait
+    bounded: a server that does not answer gets its client killed and the
+    call raises TmuxTimeoutError.
+    """
+
+    def __init__(self, *args: Any) -> None:
+        timeout = getattr(_command_timeout, "seconds", None)
+        if timeout is None:
+            super().__init__(*args)
+            return
+        tmux_bin = shutil.which("tmux")
+        if not tmux_bin:
+            raise libtmux_exc.TmuxCommandNotFound
+        self.cmd = [str(c) for c in (tmux_bin, *args)]
+        self.process = subprocess.Popen(
+            self.cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="backslashreplace",
+        )
+        try:
+            stdout, stderr = self.process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.communicate()
+            # Some libtmux listings swallow every exception (Server.sessions
+            # reads as "no sessions"); the flag lets RealTmux see it anyway
+            _command_timeout.timed_out = True
+            raise TmuxTimeoutError(
+                f"tmux did not answer in {timeout:g}s: {' '.join(self.cmd[1:3])}"
+            ) from None
+        self.returncode = self.process.returncode
+        # The rest is libtmux's own output handling
+        stdout_split = stdout.split("\n")
+        while stdout_split and stdout_split[-1] == "":
+            stdout_split.pop()
+        self.stderr = [line for line in stderr.split("\n") if line]
+        if "has-session" in self.cmd and self.stderr and not stdout_split:
+            self.stdout = [self.stderr[0]]
+        else:
+            self.stdout = stdout_split
+
+
+# Every libtmux command goes through these two names (Server.cmd and the
+# object listings); the subclass is a no-op for any caller without a timeout.
+libtmux.server.tmux_cmd = _BoundedTmuxCmd
+libtmux.neo.tmux_cmd = _BoundedTmuxCmd
 
 
 class RealTmux:
@@ -28,18 +101,61 @@ class RealTmux:
     # Cache TTL in seconds - pane objects rarely change
     _CACHE_TTL = 30.0
 
-    def __init__(self, socket_name: Optional[str] = None):
+    # The command timeout of an instance built without one. None: libtmux's
+    # unbounded wait. The monitor daemon's entry point sets it for its whole
+    # process, so the status detectors' own clients are bounded too.
+    default_command_timeout: Optional[float] = None
+
+    def __init__(self, socket_name: Optional[str] = None,
+                 command_timeout: Optional[float] = None):
         """Initialize with optional socket name for test isolation.
 
         If no socket_name is provided, checks OVERCODE_TMUX_SOCKET env var.
+
+        ``command_timeout`` bounds each read (capture_pane, has_session,
+        list_windows, list_panes, get_pane_pid): one the server does not
+        answer in time raises TmuxTimeoutError (list_panes returns None),
+        and for ``command_timeout`` seconds after that the reads fail at
+        once instead of each waiting out its own timeout, so a tick over
+        many agents costs one timeout, not one per agent. None (the
+        default) takes ``default_command_timeout``.
         """
         # Support OVERCODE_TMUX_SOCKET env var for testing
         self._socket_name = socket_name or os.environ.get("OVERCODE_TMUX_SOCKET")
         self._server: Optional[libtmux.Server] = None
+        self._command_timeout = (
+            command_timeout if command_timeout is not None else self.default_command_timeout
+        )
+        self._unresponsive_until = 0.0  # time.monotonic() deadline
         # Cache: (session_name, window_index) -> (pane, timestamp)
         self._pane_cache: Dict[tuple, tuple] = {}
         # Cache: session_name -> (session_obj, timestamp)
         self._session_cache: Dict[str, tuple] = {}
+
+    @contextmanager
+    def _bounded(self) -> Iterator[None]:
+        """Run the enclosed tmux reads under this client's command timeout."""
+        timeout = self._command_timeout
+        if timeout is None:
+            yield
+            return
+        if time.monotonic() < self._unresponsive_until:
+            raise TmuxTimeoutError("tmux server not responding (recent timeout)")
+        previous = getattr(_command_timeout, "seconds", None)
+        _command_timeout.seconds = timeout
+        _command_timeout.timed_out = False
+        try:
+            yield
+            if _command_timeout.timed_out:
+                # libtmux turned the timeout into an empty answer ("no such
+                # session"), which would read as the agent being gone
+                raise TmuxTimeoutError(f"tmux did not answer in {timeout:g}s")
+        except TmuxTimeoutError:
+            self._unresponsive_until = time.monotonic() + timeout
+            raise
+        finally:
+            _command_timeout.seconds = previous
+            _command_timeout.timed_out = False
 
     @property
     def server(self) -> libtmux.Server:
@@ -125,20 +241,21 @@ class RealTmux:
                 del self._pane_cache[k]
 
     def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
-        try:
-            pane = self._get_pane(session, window)
-            if pane is None:
+        with self._bounded():
+            try:
+                pane = self._get_pane(session, window)
+                if pane is None:
+                    return None
+                # capture_pane returns list of lines
+                # escape_sequences=True preserves ANSI color codes for TUI rendering
+                captured = pane.capture_pane(start=-lines, escape_sequences=True)
+                if isinstance(captured, list):
+                    return '\n'.join(captured)
+                return captured
+            except LibTmuxException:
+                # Pane may have been killed - invalidate cache and retry once
+                self.invalidate_cache(session, window)
                 return None
-            # capture_pane returns list of lines
-            # escape_sequences=True preserves ANSI color codes for TUI rendering
-            captured = pane.capture_pane(start=-lines, escape_sequences=True)
-            if isinstance(captured, list):
-                return '\n'.join(captured)
-            return captured
-        except LibTmuxException:
-            # Pane may have been killed - invalidate cache and retry once
-            self.invalidate_cache(session, window)
-            return None
 
     def send_keys(self, session: str, window: str, keys: str, enter: bool = True) -> bool:
         try:
@@ -153,10 +270,11 @@ class RealTmux:
             return False
 
     def has_session(self, session: str) -> bool:
-        try:
-            return self.server.has_session(session)
-        except LibTmuxException:
-            return False
+        with self._bounded():
+            try:
+                return self.server.has_session(session)
+            except LibTmuxException:
+                return False
 
     def new_session(self, session: str) -> bool:
         try:
@@ -212,24 +330,25 @@ class RealTmux:
             return False
 
     def list_windows(self, session: str) -> List[Dict[str, Any]]:
-        try:
-            sess = self._get_session(session)
-            if sess is None:
-                return []
+        with self._bounded():
+            try:
+                sess = self._get_session(session)
+                if sess is None:
+                    return []
 
-            windows = []
-            for win in sess.windows:
-                windows.append({
-                    'index': int(win.window_index),
-                    'name': win.window_name,
-                    'active': win.window_active == '1'
-                })
-            return windows
-        except LibTmuxException:
-            # The cached session object is stale (server restarted, session
-            # gone); drop it so the next call looks the session up again.
-            self.invalidate_cache(session)
-            return []
+                windows = []
+                for win in sess.windows:
+                    windows.append({
+                        'index': int(win.window_index),
+                        'name': win.window_name,
+                        'active': win.window_active == '1'
+                    })
+                return windows
+            except LibTmuxException:
+                # The cached session object is stale (server restarted, session
+                # gone); drop it so the next call looks the session up again.
+                self.invalidate_cache(session)
+                return []
 
     def list_panes(self, session: str) -> Optional[Dict[str, PaneInfo]]:
         """Every window's first pane in ``session`` from one ``list-panes -s``.
@@ -240,10 +359,14 @@ class RealTmux:
         three commands each on a fresh instance. Goes straight to the server
         (the object cache is not involved). None when the server or session
         is unavailable, in which case the cached objects for the session are
-        dropped as well.
+        dropped as well. Also None when the server does not answer within
+        the command timeout (the cache is kept: nothing is known to be gone).
         """
         try:
-            proc = self.server.cmd("list-panes", "-s", "-t", session, "-F", PANE_LISTING_FORMAT)
+            with self._bounded():
+                proc = self.server.cmd("list-panes", "-s", "-t", session, "-F", PANE_LISTING_FORMAT)
+        except TmuxTimeoutError:
+            return None
         except LibTmuxException:
             self.invalidate_cache(session)
             return None
@@ -268,13 +391,14 @@ class RealTmux:
 
     def get_pane_pid(self, session: str, window: str) -> Optional[int]:
         """Get the PID of the shell process in a window's first pane."""
-        try:
-            pane = self._get_pane(session, window)
-            if pane is None:
+        with self._bounded():
+            try:
+                pane = self._get_pane(session, window)
+                if pane is None:
+                    return None
+                return int(pane.pane_pid)
+            except (LibTmuxException, ValueError, TypeError):
                 return None
-            return int(pane.pane_pid)
-        except (LibTmuxException, ValueError, TypeError):
-            return None
 
     def select_window(self, session: str, window: str) -> bool:
         """Select a window in a tmux session (for external pane sync)."""

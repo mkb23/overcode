@@ -283,3 +283,94 @@ class TestResilience:
         finally:
             srv.stop()
         assert not sock_path.exists()
+
+
+class TestLiveness:
+    """A daemon whose main loop stops must not look live (2026-10-09: a
+    26-hour freeze showed as current status because pings kept coming)."""
+
+    def test_a_beating_engine_is_not_stalled(self, server, client_factory, monkeypatch):
+        monkeypatch.setattr(engine_socket, "PING_SECONDS", 0.05)
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.5)
+        server.publish(proto.Snapshot(agents={"a": {"status": "running"}}))
+        client, _ = client_factory()
+        stop = threading.Event()
+
+        def beat():
+            while not stop.is_set():
+                server.beat()
+                time.sleep(0.02)
+
+        t = threading.Thread(target=beat, daemon=True)
+        t.start()
+        try:
+            assert wait_for(lambda: client.connected)
+            time.sleep(0.8)
+            assert client.stalled_for() is None
+        finally:
+            stop.set()
+            t.join()
+
+    def test_a_frozen_main_loop_is_reported_then_clears(self, server, client_factory, monkeypatch):
+        monkeypatch.setattr(engine_socket, "PING_SECONDS", 0.05)
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.3)
+        server.publish(proto.Snapshot(agents={"a": {"status": "running"}}))
+        client, _ = client_factory()
+        assert wait_for(lambda: client.connected)
+        # Nothing beats: the socket thread keeps pinging, but with a growing age
+        assert wait_for(lambda: client.stalled_for() is not None)
+        assert client.stalled_for() >= 0.3
+        # The loop comes back: it beats again (every step, as the daemon does)
+        stop = threading.Event()
+
+        def beat():
+            while not stop.is_set():
+                server.beat()
+                time.sleep(0.02)
+
+        t = threading.Thread(target=beat, daemon=True)
+        t.start()
+        try:
+            assert wait_for(lambda: client.stalled_for() is None)
+        finally:
+            stop.set()
+            t.join()
+
+    def test_a_silent_connection_is_stalled(self, server, client_factory, monkeypatch):
+        monkeypatch.setattr(engine_socket, "PING_SECONDS", 60.0)
+        monkeypatch.setattr(engine_socket, "SILENT_SECONDS", 0.3)
+        server.publish(proto.Snapshot(agents={"a": {}}))
+        client, _ = client_factory()
+        assert wait_for(lambda: client.connected)
+        assert wait_for(lambda: client.stalled_for() is not None)
+
+    def test_an_engine_without_beat_age_is_never_called_stalled(self, server, client_factory, monkeypatch):
+        """An older daemon's pings carry no beat age: no false alarm."""
+        monkeypatch.setattr(engine_socket, "PING_SECONDS", 0.05)
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.1)
+        monkeypatch.setattr(proto, "ping", lambda seq, beat_age=None: proto.encode({"t": "ping", "seq": seq}))
+        server.publish(proto.Snapshot(agents={"a": {}}))
+        client, _ = client_factory()
+        assert wait_for(lambda: client.connected)
+        time.sleep(0.4)
+        assert client.stalled_for() is None
+
+    def test_on_stall_is_called_while_the_beat_is_old(self, server, monkeypatch):
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.2)
+        ages = []
+        server.on_stall = ages.append
+        server._poke()
+        assert wait_for(lambda: ages, timeout=4.0)
+        assert ages[0] >= 0.2
+
+    def test_a_failing_on_stall_does_not_kill_the_socket_thread(self, server, client_factory, monkeypatch):
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.0)
+
+        def boom(age):
+            raise RuntimeError("watchdog bug")
+
+        server.on_stall = boom
+        time.sleep(0.2)
+        server.publish(proto.Snapshot(agents={"a": {"status": "running"}}))
+        client, rec = client_factory()
+        assert wait_for(lambda: rec.latest is not None and "a" in rec.latest.agents)

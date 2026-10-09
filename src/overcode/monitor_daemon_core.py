@@ -11,6 +11,28 @@ from typing import Optional, List
 
 from .status_constants import STATUS_TERMINATED, STATUS_ASLEEP, is_green_status
 
+# An agent not observed for longer than this was not being watched: the
+# daemon was frozen, stopped, or the machine slept. Far above any normal
+# gap between two observations (the 2 s loop, the 10 s unattended loop, a
+# slow tick), so a gap this long is unknown time: it is attributed to no
+# status (time totals) and no colour (the recorded episode). Status history
+# rows are at most a keepalive (60 s) apart, so the timeline uses its own,
+# keepalive-based bound (status_history.CARRY_LOOKBACK_SECONDS).
+UNOBSERVED_GAP_SECONDS = 120.0
+
+
+def elapsed_seconds(since: datetime, now: datetime) -> float:
+    """Seconds from ``since`` to ``now``, by the clock, not the calendar.
+
+    The daemon's times are naive local ``datetime.now()`` values; their
+    difference jumps back an hour when daylight saving ends (and forward
+    when it starts), which stalled every ``now - last >= interval``
+    cadence for an hour. ``timestamp()`` places a naive local time on the
+    epoch (honouring ``fold`` in the repeated hour, which ``datetime.now()``
+    sets), and handles aware datetimes too.
+    """
+    return now.timestamp() - since.timestamp()
+
 
 @dataclass
 class TimeAccumulationResult:
@@ -20,6 +42,8 @@ class TimeAccumulationResult:
     sleep_seconds: float  # Track sleep time separately (#141)
     state_changed: bool
     was_capped: bool  # True if time was capped to uptime
+    # True if the elapsed time was an unobserved gap and was not counted
+    unobserved: bool = False
 
 
 def calculate_time_accumulation(
@@ -32,6 +56,7 @@ def calculate_time_accumulation(
     session_start: Optional[datetime],
     now: datetime,
     tolerance: float = 1.1,  # 10% tolerance for timing jitter
+    max_elapsed_seconds: Optional[float] = None,
 ) -> TimeAccumulationResult:
     """Calculate accumulated green/non-green/sleep time based on current status.
 
@@ -47,6 +72,9 @@ def calculate_time_accumulation(
         session_start: When the session started (for cap calculation)
         now: Current time
         tolerance: How much accumulated time can exceed uptime (1.1 = 10%)
+        max_elapsed_seconds: A longer ``elapsed_seconds`` was not observed
+            (a freeze, downtime, a machine sleep): it is counted as nothing,
+            rather than all as ``current_status``. None: no bound.
 
     Returns:
         TimeAccumulationResult with updated times and metadata
@@ -58,6 +86,15 @@ def calculate_time_accumulation(
             sleep_seconds=current_sleep,
             state_changed=False,
             was_capped=False,
+        )
+    if max_elapsed_seconds is not None and elapsed_seconds > max_elapsed_seconds:
+        return TimeAccumulationResult(
+            green_seconds=current_green,
+            non_green_seconds=current_non_green,
+            sleep_seconds=current_sleep,
+            state_changed=previous_status is not None and previous_status != current_status,
+            was_capped=False,
+            unobserved=True,
         )
 
     green = current_green
@@ -158,7 +195,7 @@ def should_sync_stats(
     """
     if last_sync is None:
         return True
-    return (now - last_sync).total_seconds() >= interval_seconds
+    return elapsed_seconds(last_sync, now) >= interval_seconds
 
 
 def should_auto_archive(
@@ -186,7 +223,7 @@ def should_auto_archive(
         return False
     try:
         done_since = datetime.fromisoformat(state_since)
-        return (now - done_since).total_seconds() >= timeout_seconds
+        return elapsed_seconds(done_since, now) >= timeout_seconds
     except (ValueError, TypeError):
         return False
 
@@ -204,7 +241,7 @@ def should_archive_terminated(
     """
     if grace_seconds < 0:
         return False
-    return (now - terminated_since).total_seconds() >= grace_seconds
+    return elapsed_seconds(terminated_since, now) >= grace_seconds
 
 
 def should_enforce_oversight_timeout(
@@ -299,8 +336,7 @@ def is_heartbeat_due(
         last_hb = parse_datetime_safe(session_start_time)
     if last_hb is None:
         return False
-    elapsed = (now - last_hb).total_seconds()
-    return elapsed >= frequency_seconds
+    return elapsed_seconds(last_hb, now) >= frequency_seconds
 
 
 def parse_datetime_safe(value: Optional[str]) -> Optional[datetime]:

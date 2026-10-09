@@ -16,6 +16,16 @@ class MockTmux:
         self.sessions: Dict[str, Dict[str, str]] = {}  # session -> {window_name: content}
         self.sent_keys: List[tuple] = []  # Record of sent keys
         self._next_window = 1
+        # True: a wedged server, as a timed RealTmux reports it — the reads
+        # whose empty answer means "gone" raise TmuxTimeoutError and
+        # list_panes answers None.
+        self.unresponsive = False
+
+    def _check_responsive(self) -> None:
+        if self.unresponsive:
+            from .protocols import TmuxTimeoutError
+
+            raise TmuxTimeoutError("mock tmux server not responding")
 
     def set_pane_content(self, session: str, window: str, content: str):
         """Set up mock pane content for testing"""
@@ -24,6 +34,7 @@ class MockTmux:
         self.sessions[session][window] = content
 
     def capture_pane(self, session: str, window: str, lines: int = 100) -> Optional[str]:
+        self._check_responsive()
         if session in self.sessions and window in self.sessions[session]:
             content = self.sessions[session][window]
             # Simulate line limit
@@ -36,6 +47,7 @@ class MockTmux:
         return session in self.sessions
 
     def has_session(self, session: str) -> bool:
+        self._check_responsive()
         return session in self.sessions
 
     def new_session(self, session: str) -> bool:
@@ -72,6 +84,7 @@ class MockTmux:
         return False
 
     def list_windows(self, session: str) -> List[Dict[str, Any]]:
+        self._check_responsive()
         if session not in self.sessions:
             return []
         # Windows are indexed in creation order, as tmux does, so callers
@@ -86,6 +99,7 @@ class MockTmux:
 
     def get_pane_pid(self, session: str, window: str) -> Optional[int]:
         """Return None in tests — no real pane PIDs."""
+        self._check_responsive()
         return None
 
     def list_panes(self, session: str) -> Optional[Dict[str, Any]]:
@@ -97,7 +111,7 @@ class MockTmux:
         """
         from .tmux_utils import PaneInfo
 
-        if session not in self.sessions:
+        if self.unresponsive or session not in self.sessions:
             return None
         panes = {}
         for index, (name, content) in enumerate(self.sessions[session].items()):

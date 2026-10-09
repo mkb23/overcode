@@ -388,13 +388,14 @@ class TestBuildTimelineSlots:
         assert len(result) > 0
 
     def test_forward_fills_from_old_entry(self):
-        """Old entry before window should forward-fill all slots."""
+        """Old entry before window should forward-fill all slots (unbounded fill)."""
         now = datetime.now()
         history = [
             (now - timedelta(hours=5), 3),  # Before window, but state carries forward
         ]
 
-        result = build_timeline_slots(history, width=60, hours=1.0, now=now)
+        result = build_timeline_slots(history, width=60, hours=1.0, now=now,
+                                      max_fill_seconds=float("inf"))
 
         # All 60 slots filled with forward-carried state
         assert len(result) == 60
@@ -407,14 +408,15 @@ class TestBuildTimelineSlots:
         assert result == {}
 
     def test_forward_fills_gaps_between_samples(self):
-        """Sparse samples should forward-fill gaps between them."""
+        """Sparse samples should forward-fill gaps between them (unbounded fill)."""
         now = datetime.now()
         history = [
             (now - timedelta(minutes=50), "active"),
             (now - timedelta(minutes=20), "idle"),
         ]
 
-        result = build_timeline_slots(history, width=60, hours=1.0, now=now)
+        result = build_timeline_slots(history, width=60, hours=1.0, now=now,
+                                      max_fill_seconds=float("inf"))
 
         # Slots 0-9 empty (no state before first sample), 10-59 filled
         assert len(result) == 50
@@ -425,6 +427,42 @@ class TestBuildTimelineSlots:
         # Slot at minute 40 (index 40) = "idle", forward-filled to end
         assert result[40] == "idle"
         assert result[59] == "idle"
+
+    def test_does_not_fill_across_an_unobserved_gap(self):
+        """Rows stop (daemon frozen/down, machine asleep): the silence is not
+        drawn as the last state, and is left out of the green % (no slot)."""
+        now = datetime(2026, 10, 10, 12, 0, 0)
+        # Keepalive rows every minute until 40 min ago, then nothing
+        history = [(now - timedelta(minutes=m), "running") for m in range(60, 39, -1)]
+
+        result = build_timeline_slots(history, width=60, hours=1.0, now=now)
+
+        assert result[0] == "running" and result[20] == "running"
+        # Filled up to the default bound (5 keepalives) after the last row...
+        assert result[25] == "running"
+        # ...and nothing past it, up to now
+        assert 26 not in result and 59 not in result
+
+    def test_carry_from_before_the_window_is_bounded_too(self):
+        now = datetime(2026, 10, 10, 12, 0, 0)
+        history = [(now - timedelta(hours=26), "running")]  # the last row before a freeze
+
+        assert build_timeline_slots(history, width=60, hours=1.0, now=now) == {}
+
+    def test_fill_resumes_when_rows_resume(self):
+        now = datetime(2026, 10, 10, 12, 0, 0)
+        history = [
+            (now - timedelta(minutes=59), "running"),
+            (now - timedelta(minutes=10), "waiting_user"),
+        ]
+
+        result = build_timeline_slots(history, width=60, hours=1.0, now=now,
+                                      max_fill_seconds=120)
+
+        assert result[1] == "running" and result[3] == "running"
+        assert 4 not in result and 49 not in result
+        assert result[50] == "waiting_user" and result[52] == "waiting_user"
+        assert 53 not in result
 
 
 class TestGetStatusSymbol:

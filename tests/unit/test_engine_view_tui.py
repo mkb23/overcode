@@ -355,3 +355,27 @@ class TestEngineAbsent:
                 assert not app.query_one("#sessions-container").has_class("engine-stale")
             finally:
                 server.stop()
+
+    async def test_a_frozen_engine_is_shown_not_trusted(self, app, engine, monkeypatch):
+        """Connected but its main loop stopped (2026-10-09: 26 h of frozen
+        status looked live): the banner says frozen and the list dims."""
+        from overcode import engine_socket
+
+        monkeypatch.setattr(engine_socket, "PING_SECONDS", 0.05)
+        monkeypatch.setattr(engine_socket, "STALL_SECONDS", 0.3)
+        engine.publish(_snapshot())
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _connected(pilot, app)
+            banner = app.query_one("#engine-banner")
+            container = app.query_one("#sessions-container")
+            # Nothing beats the engine here: its pings soon carry a stale age
+            assert await _until(pilot, lambda: banner.has_class("visible"), timeout=4)
+            assert container.has_class("engine-stale")
+            assert "frozen" in str(banner.render())
+            assert app.query_one("#daemon-status").engine_stalled_for is not None
+            assert app._engine_connected  # frozen, not gone: the daemon's watchdog acts
+            # The loop beats again: the banner goes
+            monkeypatch.setattr(engine_socket, "STALL_SECONDS", 1e9)
+            assert await _until(pilot, lambda: not banner.has_class("visible"), timeout=4)
+            assert not container.has_class("engine-stale")
+            assert app.query_one("#daemon-status").engine_stalled_for is None

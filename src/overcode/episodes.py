@@ -18,6 +18,15 @@ pending:
   red between green and yellow is history (a short red episode), not a
   merge, because merging only applies to a return to where it came from.
 
+A **gap** — no coloured observation for longer than ``gap_seconds``
+(the daemon frozen or stopped, the machine asleep, or the agent asleep or
+terminated in between) — is not attributed to any colour. The open
+episode closes when the agent was last seen, a pending excursion stands
+as observed, and the colour after the gap opens a fresh episode by the
+first-sight rule (no bell: when it began is unknown). A red or orange
+stretch that is still red or orange after the gap carries on as the same
+stretch, so a visited stall is not shown as unvisited again.
+
 The **bell** rings once per stretch of input-needed colour (red or orange)
 on the recorded layer. It rings when such a stretch is confirmed, and only
 if it began after the person last visited the agent. orange → red inside
@@ -32,6 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from .monitor_daemon_core import UNOBSERVED_GAP_SECONDS
 from .status_constants import (
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
@@ -79,9 +89,14 @@ class EpisodeRecorder:
     """One agent's recorded colour history."""
 
     def __init__(self, merge_seconds: float = EPISODE_MERGE_SECONDS,
-                 visited_at: Optional[float] = None) -> None:
+                 visited_at: Optional[float] = None,
+                 gap_seconds: float = UNOBSERVED_GAP_SECONDS) -> None:
         self.merge_seconds = merge_seconds
+        self.gap_seconds = gap_seconds
         self.visited_at = visited_at
+        # When a colour was last observed (lifecycle states and unknowns
+        # don't count): what a gap is measured from
+        self.last_seen: Optional[float] = None
         self.episode: Optional[Episode] = None  # the open recorded episode
         # The pending excursion, as segments [(colour, start)], oldest first
         self._excursion: List[Tuple[str, float]] = []
@@ -125,19 +140,23 @@ class EpisodeRecorder:
     # -- persistence ------------------------------------------------------
 
     def to_dict(self) -> dict:
-        """What survives an engine restart: the open episode, the stretch
-        being tracked, what already rang, and the last visit. A pending
-        excursion is not kept; it re-forms from the next observations."""
+        """What survives an engine restart: the open episode, the pending
+        excursion, the stretch being tracked, what already rang, the last
+        visit, and when a colour was last seen (so a restart after a long
+        downtime is read as a gap, not as the same episode carrying on)."""
         return {
             "episode": self.episode.to_dict() if self.episode else None,
+            "excursion": [list(segment) for segment in self._excursion],
             "input_needed_since": self._input_needed_since,
             "rang_for": self._rang_for,
             "visited_at": self.visited_at,
+            "last_seen": self.last_seen,
         }
 
     @classmethod
-    def from_dict(cls, data: dict, merge_seconds: float = EPISODE_MERGE_SECONDS) -> "EpisodeRecorder":
-        rec = cls(merge_seconds=merge_seconds)
+    def from_dict(cls, data: dict, merge_seconds: float = EPISODE_MERGE_SECONDS,
+                  gap_seconds: float = UNOBSERVED_GAP_SECONDS) -> "EpisodeRecorder":
+        rec = cls(merge_seconds=merge_seconds, gap_seconds=gap_seconds)
         if not isinstance(data, dict):
             return rec
         ep = data.get("episode")
@@ -146,10 +165,18 @@ class EpisodeRecorder:
             blips = tuple(tuple(b) for b in ep.get("blips") or () if len(b) == 3)
             rec.episode = Episode(ep["colour"], float(ep["start"]), None, blips)
             rec._blips = list(blips)
-        for name in ("input_needed_since", "rang_for", "visited_at"):
+            excursion = data.get("excursion")
+            if isinstance(excursion, list):
+                rec._excursion = [
+                    (segment[0], float(segment[1])) for segment in excursion
+                    if isinstance(segment, list) and len(segment) == 2
+                    and segment[0] in COLOURS and isinstance(segment[1], (int, float))
+                ]
+        for name in ("input_needed_since", "rang_for", "visited_at", "last_seen"):
             value = data.get(name)
             if isinstance(value, (int, float)):
-                setattr(rec, "_" + name if name != "visited_at" else name, float(value))
+                setattr(rec, "_" + name if name in ("input_needed_since", "rang_for") else name,
+                        float(value))
         return rec
 
     # -- writing --------------------------------------------------------
@@ -164,15 +191,22 @@ class EpisodeRecorder:
             # Lifecycle states (terminated, asleep) and unknowns carry no
             # colour: hold everything as it is.
             return out
+        last_seen, self.last_seen = self.last_seen, now
+        if (self.episode is not None and last_seen is not None
+                and now - last_seen > self.gap_seconds):
+            self._close_at_gap(out, last_seen)
         if self.episode is None:
-            # First sight: when this colour really began is unknown (the
-            # restart replay supplies it when history exists), so it is
-            # recorded from now and never rings. A restart must not ring
-            # every red agent's bell (d679fff).
+            # First sight, or the first sight after a gap: when this colour
+            # really began is unknown (the restart replay supplies it when
+            # history exists), so it is recorded from now and never rings.
+            # A restart must not ring every red agent's bell (d679fff).
             self.episode = Episode(colour, now)
             if colour in INPUT_NEEDED:
-                self._input_needed_since = now
-                self._rang_for = now
+                if self._input_needed_since is None:
+                    self._input_needed_since = now
+                    self._rang_for = now
+            else:
+                self._input_needed_since = None
             return out
 
         recorded = self.episode.colour
@@ -205,6 +239,22 @@ class EpisodeRecorder:
         return out
 
     # -- internals ------------------------------------------------------
+
+    def _close_at_gap(self, out: Observation, last_seen: float) -> None:
+        """Nothing was observed after ``last_seen``: close the record there.
+
+        A pending excursion stands as far as it was seen (without ringing:
+        it is over by the time anyone hears of it). The open episode then
+        ends at ``last_seen``, and the next observation opens a fresh one.
+        The input-needed stretch is left for the caller to carry on or end.
+        """
+        if self._excursion:
+            self._confirm(out, current=False)
+        ep = self.episode
+        if ep is not None and last_seen > ep.start:
+            out.closed.append(Episode(ep.colour, ep.start, last_seen, tuple(self._blips)))
+        self._blips = []
+        self.episode = None
 
     def _confirm(self, out: Observation, current: bool = True) -> None:
         """The excursion stood: its segments become episodes.
