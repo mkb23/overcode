@@ -141,8 +141,9 @@ class TestRealTmux:
             tmux = RealTmux()
             assert tmux._socket_name == "env_socket"
 
-    def test_server_lazy_load(self):
+    def test_server_lazy_load(self, monkeypatch):
         """Should lazy-load server on first access."""
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
         with patch('overcode.implementations.libtmux.Server') as mock_server:
             tmux = RealTmux()
             assert tmux._server is None

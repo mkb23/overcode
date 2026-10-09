@@ -1173,18 +1173,26 @@ class TestSupervisorTUIPilot:
             assert container is not None
 
     @pytest.mark.asyncio
-    async def test_expand_all_agents(self):
-        """Pressing e expands all session summaries"""
+    async def test_e_starts_the_overagent(self):
+        """Pressing e with no overagent asks the launcher for one.
+
+        The launch itself is stubbed: unstubbed, every run started a real
+        Claude overagent in a tmux session named after this test.
+        """
+        from unittest.mock import MagicMock
         from overcode.tui import SupervisorTUI
 
         app = SupervisorTUI(tmux_session="test-pilot")
+        app._launch_overagent_async = MagicMock()
 
         async with app.run_test() as pilot:
             await pilot.pause()  # let mount lifecycle complete
-            # Press e to expand all
             await pilot.press("e")
-            # This tests the binding works without crashing
-            # (no sessions to verify in this test)
+            await pilot.pause()
+
+        app._launch_overagent_async.assert_called_once()
+        name, _directory, backend = app._launch_overagent_async.call_args[0]
+        assert backend == "overagent" and name.startswith("overagent")
 
     @pytest.mark.asyncio
     async def test_collapse_all_agents(self):

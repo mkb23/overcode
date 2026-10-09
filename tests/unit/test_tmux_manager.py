@@ -947,6 +947,12 @@ class TestTmuxManagerLibtmuxKillSession:
 class TestTmuxManagerAttachSession:
     """Test attach_session (mock os.execvp)."""
 
+    @pytest.fixture(autouse=True)
+    def _default_socket(self, monkeypatch):
+        # These pin the argv for the default server; the run's private socket
+        # (tests/conftest.py) would add -L. The tmux calls are all mocked.
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
+
     @patch("overcode.tmux_manager.os.execvp")
     def test_attach_session_default(self, mock_execvp):
         """attach_session calls os.execvp with session name."""
@@ -993,6 +999,12 @@ class TestTmuxManagerAttachSession:
 
 class TestTmuxManagerAttachBare:
     """Test _attach_bare (mock subprocess.run and os.execlp)."""
+
+    @pytest.fixture(autouse=True)
+    def _default_socket(self, monkeypatch):
+        # These pin the argv for the default server; the run's private socket
+        # (tests/conftest.py) would add -L. The tmux calls are all mocked.
+        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
 
     @patch("overcode.tmux_manager.os.execlp")
     @patch("subprocess.run")

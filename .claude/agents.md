@@ -9,9 +9,11 @@ add an entry when something bites.
   (`pytest.ini` puts `src` on the path). `-m e2e` and
   `OVERCODE_SCALE_TESTS=1 ... tests/scale` are the slower tiers.
 - The user's `agents` tmux session, the `overcode` split session and
-  `~/.overcode` are live. Isolate with `OVERCODE_STATE_DIR`, `OVERCODE_DIR`
-  and `OVERCODE_TMUX_SOCKET` (a private tmux server), and run pytest with
-  `TMUX`/`TMUX_PANE` unset when you are inside tmux.
+  `~/.overcode` are live. `tests/conftest.py` isolates every run (temp
+  `OVERCODE_DIR`/`OVERCODE_STATE_DIR`, a private tmux socket, `TMUX` unset);
+  `tests/unit/conftest.py` also moves `HOME`, refuses daemon spawns and
+  fails the run if state leaks. A test that clears those variables must
+  not reach the real ones: keep the guards, don't route around them.
 - `overcode`, `overcode monitor` and `overcode tmux` call
   `cli.split.open_split`, which creates/switches tmux sessions, respawns the
   monitor pane and finally `exec`s `tmux attach`. A CLI test that reaches it

@@ -134,9 +134,10 @@ class TestBasePaths:
 class TestOvercodePaths:
     """Test OvercodePaths dataclass."""
 
-    def test_paths_default_values(self):
+    def test_paths_default_values(self, monkeypatch):
         """OvercodePaths should have sensible defaults."""
         from overcode.settings import OvercodePaths
+        monkeypatch.delenv("OVERCODE_DIR", raising=False)
 
         paths = OvercodePaths()
         assert paths.base_dir == Path.home() / ".overcode"
