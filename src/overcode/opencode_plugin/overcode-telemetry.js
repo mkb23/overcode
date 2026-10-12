@@ -204,11 +204,13 @@ function computeForeground(event, toolName, toolInput) {
 }
 
 /**
- * Resolve the hook-state directory the same way hook_handler._get_hook_state_path
- * does: OVERCODE_STATE_DIR when set, else ~/.overcode/sessions.
+ * Resolve the hook-state directory the same way overcode's paths.session_dir
+ * does: OVERCODE_STATE_DIR when set, else $OVERCODE_DIR/sessions (default
+ * ~/.overcode/sessions).
  */
 function resolveStateDir(env, homedir) {
-  const base = env.OVERCODE_STATE_DIR || path.join(homedir, ".overcode", "sessions")
+  const base = env.OVERCODE_STATE_DIR ||
+    path.join(env.OVERCODE_DIR || path.join(homedir, ".overcode"), "sessions")
   return path.join(base, env.OVERCODE_TMUX_SESSION)
 }
 
