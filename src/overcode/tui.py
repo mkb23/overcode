@@ -482,6 +482,8 @@ class SupervisorTUI(
         self._engine_focus: Optional[str] = None
         self._engine_pending = None  # the latest snapshot, not yet applied
         self._engine_apply_posted = False
+        # What the status bar was last built from (_apply_engine_to_status_bar)
+        self._status_bar_inputs: Optional[tuple] = None
         # Visits this TUI made that the engine may not have published yet
         self._visited_here: dict[str, float] = {}
         # The focused-pane capture in flight (one at a time, never queued),
@@ -1160,21 +1162,33 @@ class SupervisorTUI(
         return flipped
 
     def _apply_engine_to_status_bar(self) -> None:
-        """The daemon status bar's fleet fields and the aggregate burn, from the snapshot."""
+        """The daemon status bar's fleet fields and the aggregate burn, from the snapshot.
+
+        Rebuilt only when what it reads moved (the fleet fields, an agent's
+        bar fields or burn, which agents are local or asleep, the
+        connection): most deltas touch none of that.
+        """
         try:
             bar = self.query_one("#daemon-status", DaemonStatusBar)
         except NoMatches:
             return
         local_ids = {s.id for s in self.sessions if not s.is_remote}
+        asleep = {s.id for s in self.sessions if s.is_asleep}
         agents = {sid: v for sid, v in self._engine_agents.items()
                   if not local_ids or sid in local_ids}
+        hours = self._burn_hours()
+        inputs = (tui_engine.status_bar_inputs(self._engine_fleet, agents, hours),
+                  asleep, self._engine_connected)
+        if inputs == self._status_bar_inputs:
+            return
+        self._status_bar_inputs = inputs
         bar.monitor_state = tui_engine.monitor_state(self._engine_fleet, agents)
         bar.presence_idle_since = self._engine_fleet.get("presence_idle_since")
         bar.engine_connected = self._engine_connected
-        bar._asleep_session_ids = {s.id for s in self.sessions if s.is_asleep}
-        bar._burn_stats = tui_engine.fleet_burn(agents, self._burn_hours())
+        bar._asleep_session_ids = asleep
+        bar._burn_stats = tui_engine.fleet_burn(agents, hours)
         if self.attended:
-            bar.refresh()
+            bar.refresh_if_changed()
 
     def _set_engine_connected(self, connected: bool) -> None:
         """Main thread: the subscription came up or went away."""
@@ -1515,7 +1529,7 @@ class SupervisorTUI(
         """Main thread: repaint the status bar (no I/O)."""
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
         daemon_bar.engine_connected = self._engine_connected
-        daemon_bar.refresh()
+        daemon_bar.refresh_if_changed()
 
     def update_timeline(self) -> None:
         """Update the status timeline widget (kicks off background worker)"""

@@ -125,7 +125,27 @@ class TestMonitorState:
         )
         assert state.status == "active" and state.interval_mode == "unattended"
         assert state.slow_tick_seconds == 3.1
-        assert [(s.name, s.estimated_cost_usd) for s in state.sessions] == [("a", 1.5)]
+        # Only what the bar draws is carried
+        assert [(s.session_id, s.current_status, s.estimated_cost_usd, s.name)
+                for s in state.sessions] == [("s1", "running", 1.5, "")]
+
+    def test_status_bar_inputs_ignore_fields_the_bar_does_not_draw(self):
+        fleet = {"status": "active"}
+        view = {"session_id": "s1", "current_status": "running", "input_tokens": 5,
+                "current_activity": "reading", "burn": {"1.0": {"cost_usd": 1.0}}}
+        before = tui_engine.status_bar_inputs(fleet, {"s1": view}, 1.0)
+        same = tui_engine.status_bar_inputs(
+            fleet, {"s1": {**view, "current_activity": "writing", "cpu_percent": 9}}, 1.0)
+        assert same == before
+        for changed in (
+            tui_engine.status_bar_inputs({"status": "idle"}, {"s1": view}, 1.0),
+            tui_engine.status_bar_inputs(fleet, {"s1": {**view, "input_tokens": 6}}, 1.0),
+            tui_engine.status_bar_inputs(
+                fleet, {"s1": {**view, "burn": {"1.0": {"cost_usd": 2.0}}}}, 1.0),
+            tui_engine.status_bar_inputs(fleet, {"s1": view}, 2.0),
+            tui_engine.status_bar_inputs(fleet, {}, 1.0),
+        ):
+            assert changed != before
 
 
 def test_socket_path_is_next_to_the_state_file(monkeypatch, tmp_path):

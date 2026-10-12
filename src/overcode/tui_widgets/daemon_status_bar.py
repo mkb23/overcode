@@ -66,6 +66,20 @@ class DaemonStatusBar(Static):
         self._burn_stats = None  # WindowBurnStats or None
         # Running jobs with no live agent behind them — set by the TUI (#463)
         self.orphan_job_count: int = 0
+        # What render() last returned (refresh_if_changed)
+        self._last_rendered: Optional[Text] = None
+
+    def refresh_if_changed(self) -> bool:
+        """Refresh only if the bar would now draw differently.
+
+        A ticking value (presence idle, a run duration, a reset countdown)
+        still shows on the tick it moves; an unchanged bar skips Textual's
+        layout and compositing.
+        """
+        if self._last_rendered is not None and self._render_bar() == self._last_rendered:
+            return False
+        self.refresh()
+        return True
 
     def fetch_local_state(
         self,
@@ -138,6 +152,11 @@ class DaemonStatusBar(Static):
         Shows Monitor Daemon and Supervisor Daemon status explicitly.
         All data comes from cached instance variables — NO I/O here.
         """
+        content = self._render_bar()
+        self._last_rendered = content
+        return content
+
+    def _render_bar(self) -> Text:
         content = Text()
 
         # Usage section (prepended before Monitor)

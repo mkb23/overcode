@@ -235,10 +235,43 @@ def is_unvisited(view: AgentView, visited_here: Optional[float] = None) -> bool:
     return not visits or since > max(visits)
 
 
+# The agent fields the status bar draws from (spin, Σ spend, the safe
+# break). Only these reach its MonitorDaemonState, and only a change in one
+# of them (or the fleet, or an agent's burn) rebuilds it.
+STATUS_BAR_AGENT_FIELDS = (
+    "session_id", "current_status", "status_since", "median_work_time",
+    "input_tokens", "output_tokens", "estimated_cost_usd", "estimated_energy_j",
+)
+
+
+def status_bar_inputs(fleet: Mapping[str, Any], agents: Mapping[str, AgentView],
+                      hours: float) -> tuple:
+    """Everything the status bar's rebuild reads: equal inputs, equal bar.
+
+    One small tuple per agent (its bar fields and its burn entry), far
+    cheaper than the ``MonitorDaemonState`` it saves building.
+    """
+    key = burn_key(hours) if hours and hours > 0 else None
+    fields = STATUS_BAR_AGENT_FIELDS
+    return (
+        dict(fleet),
+        key,
+        tuple(
+            (sid, tuple(view.get(f) for f in fields),
+             (view.get("burn") or {}).get(key) if key else None)
+            for sid, view in agents.items()
+        ),
+    )
+
+
 def monitor_state(fleet: Mapping[str, Any], agents: Mapping[str, AgentView]):
-    """A ``MonitorDaemonState`` for the status bar, built from a snapshot."""
+    """A ``MonitorDaemonState`` for the status bar, built from a snapshot.
+
+    Its sessions carry only STATUS_BAR_AGENT_FIELDS.
+    """
     from .monitor_daemon_state import MonitorDaemonState
 
     data = {k: v for k, v in fleet.items() if k != "presence_idle_since"}
-    data["sessions"] = list(agents.values())
+    data["sessions"] = [{f: view[f] for f in STATUS_BAR_AGENT_FIELDS if f in view}
+                        for view in agents.values()]
     return MonitorDaemonState.from_dict(data)

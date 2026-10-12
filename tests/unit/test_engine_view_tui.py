@@ -478,3 +478,58 @@ class TestFocusedCaptureThread:
             app._apply_focused_capture(None, None, {**rows, "id-bravo": renamed})
             assert _row(app, "bravo").session is renamed
             app._focused_capture_in_flight = False
+
+
+@pytest.mark.asyncio
+class TestStatusBarRebuildsOnlyOnItsInputs:
+    """Quality review item 21: a delta that touches nothing the status bar
+    draws neither rebuilds its MonitorDaemonState nor repaints it."""
+
+    async def test_an_activity_delta_does_not_rebuild_the_bar(self, app, engine):
+        from overcode import tui_engine
+
+        engine.publish(_snapshot())
+        async with app.run_test(size=(220, 40)) as pilot:
+            await _connected(pilot, app)
+            bar = app.query_one("#daemon-status")
+            builds = []
+            real = tui_engine.monitor_state
+
+            def counting(fleet, agents):
+                builds.append(1)
+                return real(fleet, agents)
+
+            refreshes = []
+            real_refresh = bar.refresh
+            bar.refresh = lambda *a, **kw: (refreshes.append(1), real_refresh(*a, **kw))[1]
+            with patch.object(tui_engine, "monitor_state", counting):
+                engine.publish(_snapshot(alpha=dict(current_activity="Reading files")))
+                assert await _until(pilot, lambda: _row(app, "alpha").current_activity
+                                    == "Reading files")
+                await pilot.pause(0.1)
+                assert builds == []
+                assert refreshes == []
+                # A fleet field moved: rebuilt and drawn
+                snap = _snapshot(alpha=dict(current_activity="Reading files"))
+                snap.fleet["current_interval"] = 7
+                engine.publish(snap)
+                assert await _until(pilot, lambda: builds)
+                assert await _until(pilot, lambda: "@7s" in bar.render().plain)
+                assert refreshes
+                # An agent's bar field moved (its tokens): rebuilt
+                count = len(builds)
+                snap = _snapshot(alpha=dict(current_activity="Reading files", input_tokens=9000))
+                snap.fleet["current_interval"] = 7
+                engine.publish(snap)
+                assert await _until(pilot, lambda: len(builds) > count)
+
+    async def test_the_bar_skips_an_unchanged_repaint(self, app, engine):
+        engine.publish(_snapshot())
+        async with app.run_test(size=(220, 40)) as pilot:
+            await _connected(pilot, app)
+            bar = app.query_one("#daemon-status")
+            await pilot.pause(0.1)
+            assert bar._last_rendered is not None
+            assert bar.refresh_if_changed() is False
+            bar.orphan_job_count = 2
+            assert bar.refresh_if_changed() is True
