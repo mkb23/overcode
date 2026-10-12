@@ -32,10 +32,11 @@ add an entry when something bites.
   (`run_tui(session, sync_target)`). There is no standalone mode, no `compact`
   flag, no preview toggle and no pane-sync toggle.
 - Everything that acts on tmux (zoom for dialogs and the sister view, window
-  switching, agent-window resizing, split resize, detach on `q`) is gated on
-  `SupervisorTUI.in_split`, i.e. a linked session was passed. Unit tests build
-  the app without one, so they never touch tmux. Keep new tmux side effects
-  behind that gate.
+  switching, agent-window resizing, split resize, ssh proxies, detach on `q`)
+  goes through `app.split` (`tui_split.py`): a `TmuxSplit` when a linked
+  session was passed, else `NullSplit`, whose methods do nothing. Unit tests
+  build the app without one, so they never touch tmux. Put new tmux side
+  effects on the split object, not behind ad-hoc `in_split` checks.
 - The preview pane is only for sister agents and jobs view.
 - Timer cadences in `tui_timers.py` `TIMER_INTERVALS` are the product's freshness
   contract. Fix CPU by doing the work cheaper, never by polling slower.

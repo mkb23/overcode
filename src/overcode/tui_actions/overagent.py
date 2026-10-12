@@ -8,7 +8,6 @@ once. With none running, launches one named "overagent" in ~/.overcode.
 
 from __future__ import annotations
 
-import subprocess
 
 from ..keymap import keymap_of
 
@@ -38,15 +37,8 @@ class OveragentMixin:
         else:
             self.notify("The overagent is hidden by a filter", severity="warning")
             return
-        if not self.in_split:
-            return
         # The bottom pane now shows the overagent's window: hand it the keyboard.
-        try:
-            from ..tui import _tmux_base
-            subprocess.run([*_tmux_base(), "select-pane", "-t", self._bottom_pane_target()],
-                           capture_output=True, timeout=2)
-        except (subprocess.SubprocessError, OSError):
-            pass
+        self.split.focus_bottom_pane()
 
     def _launch_overagent(self) -> None:
         from ..overagent import DEFAULT_NAME, OVERAGENT_BACKEND

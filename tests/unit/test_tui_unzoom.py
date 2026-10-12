@@ -4,22 +4,28 @@ Dialogs and the sister view zoom the TUI pane to hide the bottom terminal
 pane. If the viewer exits in that state (``q`` from a dialog, a crash), the
 zoom survives: the pane holds at the relaunch prompt or is respawned by
 ``overcode tmux``, and the split shows only the monitor with the integrated
-terminal hidden. ``on_unmount`` clears the zoom; ``_unzoom_tui_pane`` is the
-shared helper behind dialog close, sister-view exit and that cleanup.
+terminal hidden. ``on_unmount`` clears the zoom; ``split.unzoom`` (tui_split)
+is the shared helper behind dialog close, sister-view exit and that cleanup.
 """
 
 import subprocess
 from unittest.mock import MagicMock, patch
 
 from overcode.tui import SupervisorTUI
+from overcode.tui_split import NULL_SPLIT, TmuxSplit
 
 
-def _tui(in_split: bool = True) -> MagicMock:
+def _tui() -> MagicMock:
     tui = MagicMock()
-    tui.in_split = in_split
     tui._prefs.status_change_logging = False
-    tui._tui_pane_target.return_value = "overcode:overcode-tmux.1"
     return tui
+
+
+def _split():
+    split = TmuxSplit.__new__(TmuxSplit)
+    split.app = MagicMock()
+    split.sync_target = "oc-view-agents"
+    return split
 
 
 class TestUnzoomTuiPane:
@@ -32,9 +38,10 @@ class TestUnzoomTuiPane:
             stdout = f"{zoomed_flag}\n" if "display-message" in cmd else ""
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout)
 
-        with patch("overcode.tui._tmux_base", return_value=["tmux"]), \
+        with patch("overcode.tui_split._tmux_base", return_value=["tmux"]), \
+             patch("overcode.tui_split.get_pane_base_index", return_value=1), \
              patch("subprocess.run", side_effect=fake_run):
-            SupervisorTUI._unzoom_tui_pane(_tui(in_split))
+            (_split() if in_split else NULL_SPLIT).unzoom()
         return calls
 
     def test_unzooms_when_zoomed(self):
@@ -50,17 +57,24 @@ class TestUnzoomTuiPane:
         # An app built without a linked session (unit tests) never touches tmux
         assert self._run("1", in_split=False) == []
 
+    def test_pane_targets_come_from_the_split_layout(self):
+        from overcode.cli.split import SPLIT_SESSION_NAME, SPLIT_WINDOW_NAME
+        with patch("overcode.tui_split.get_pane_base_index", return_value=0):
+            split = _split()
+            assert split.tui_pane_target() == f"{SPLIT_SESSION_NAME}:{SPLIT_WINDOW_NAME}.0"
+            assert split.bottom_pane_target() == f"{SPLIT_SESSION_NAME}:{SPLIT_WINDOW_NAME}.1"
+
 
 class TestOnUnmountUnzooms:
 
     def test_exit_unzooms(self):
         tui = _tui()
         SupervisorTUI.on_unmount(tui)
-        tui._unzoom_tui_pane.assert_called_once_with()
+        tui.split.unzoom.assert_called_once_with()
 
     def test_unzoom_failure_does_not_block_cleanup(self):
         tui = _tui()
-        tui._unzoom_tui_pane.side_effect = OSError("no tmux")
+        tui.split.unzoom.side_effect = OSError("no tmux")
         SupervisorTUI.on_unmount(tui)
-        tui._cleanup_ssh_proxies.assert_called_once()
+        tui.split.cleanup_ssh_proxies.assert_called_once()
         tui._summarizer.stop.assert_called_once()

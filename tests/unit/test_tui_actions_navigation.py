@@ -21,7 +21,7 @@ class TestFocusNextSession:
         NavigationActionsMixin.action_focus_next_session(mock_tui)
 
         # Should not try to focus anything
-        mock_tui._sync_tmux_window.assert_not_called()
+        mock_tui.split.show_agent.assert_not_called()
 
     def test_cycles_to_next_widget(self):
         """Should set focused_session_index to next widget (watcher handles focus)."""
@@ -69,7 +69,7 @@ class TestFocusPreviousSession:
 
         NavigationActionsMixin.action_focus_previous_session(mock_tui)
 
-        mock_tui._sync_tmux_window.assert_not_called()
+        mock_tui.split.show_agent.assert_not_called()
 
     def test_cycles_to_previous_widget(self):
         """Should set focused_session_index to previous widget (watcher handles focus)."""

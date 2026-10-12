@@ -31,20 +31,20 @@ class TestClickHandler:
         handler(app, MagicMock(session_id="c"))
         assert app.focused_session_index == 2
         assert app._user_navigated is True  # the index watcher syncs tmux
-        app._sync_tmux_window.assert_not_called()
+        app.split.show_agent.assert_not_called()
 
     def test_clicking_the_selected_row_resyncs_the_pane(self):
         app, handler = self._app(focused=1)
         handler(app, MagicMock(session_id="b"))
         assert app.focused_session_index == 1
         [widget] = [w for w in app._get_widgets_in_session_order() if w.session.id == "b"]
-        app._sync_tmux_window.assert_called_once_with(widget)
+        app.split.show_agent.assert_called_once_with(widget)
 
     def test_unknown_row_is_ignored(self):
         app, handler = self._app(focused=1)
         handler(app, MagicMock(session_id="zz"))
         assert app.focused_session_index == 1
-        app._sync_tmux_window.assert_not_called()
+        app.split.show_agent.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -53,8 +53,13 @@ class TestClickInTUI:
     async def test_click_switches_the_tmux_pane_to_that_agent(self, tui):
         from overcode.tui_widgets import SessionSummary
         synced = []
-        tui._sync_tmux_window = lambda widget=None: synced.append(widget.session.id)
-        tui._fix_window_size_if_needed = lambda widget: None
+        from overcode.tui_split import NullSplit
+
+        class RecordingSplit(NullSplit):
+            def show_agent(self, widget):
+                synced.append(widget.session.id)
+
+        tui.split = RecordingSplit()
         async with tui.run_test(size=(200, 40)) as pilot:
             await _ready(pilot)
             rows = tui._get_widgets_in_session_order()

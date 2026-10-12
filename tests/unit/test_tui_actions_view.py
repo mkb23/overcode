@@ -113,8 +113,10 @@ class TestResizeFocusedWindow:
         """Without a split there is no bottom pane to match: no tmux, no notice."""
         from overcode.tui_actions.view import ViewActionsMixin
 
+        from overcode.tui_split import NULL_SPLIT
+
         mock_tui = MagicMock()
-        mock_tui.in_split = False
+        mock_tui.split = NULL_SPLIT
 
         with patch("subprocess.run") as run:
             ViewActionsMixin.action_resize_focused_window(mock_tui)

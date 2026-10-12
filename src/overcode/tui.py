@@ -35,6 +35,7 @@ from .status_constants import DEFAULT_CAPTURE_LINES
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from . import tui_engine
+from .tui_split import make_split
 from .tui_engine_link import (
     ENGINE_BANNER_GRACE_SECONDS,  # noqa: F401 (re-exported for tests)
     ENGINE_BANNER_TEXT,
@@ -47,7 +48,6 @@ from .monitor_daemon import (
     is_monitor_daemon_running,
 )
 from .pid_utils import spawn_daemon
-from .tmux_utils import _build_tmux_cmd as _tmux_base
 from .tmux_utils import (
     query_pane_attended,
     tui_pane_target,
@@ -60,8 +60,6 @@ from .summarizer_component import (
 )
 from .sister_poller import SisterPoller, SisterState
 from .usage_monitor import UsageMonitor
-from .implementations import RealTmux
-from .tmux_utils import get_pane_base_index, SSH_PROXY_WINDOW_PREFIX
 from .worker_guard import single_flight, worker_cancelled
 from .tui_helpers import (
     format_duration,
@@ -74,7 +72,6 @@ from .tui_logic import (
     compute_tree_metadata,
     compute_session_widget_diff,
     detect_display_changes,
-    windows_needing_resize,
 )
 from .tui_widgets import (
     HelpOverlay,
@@ -426,8 +423,6 @@ class SupervisorTUI(
         self._instruction_history: list = []
         # Pending double-press confirmations: action_key -> (session_name | None, timestamp)
         self._pending_confirmations: dict[str, tuple[str | None, float]] = {}
-        # Tmux interface for sync operations
-        self._tmux = RealTmux()
         # Attended state: whether a tmux client is attached to the pane this
         # TUI runs in. False pauses every timer in PAUSED_WHEN_UNATTENDED
         # (_on_attended_changed is the one place that reacts). Written only
@@ -443,11 +438,6 @@ class SupervisorTUI(
         # timers=False only in tests (tests/tui_harness.py): no periodic
         # timer starts, and the test calls the tick methods itself.
         self.periodic = PeriodicScheduler(self, enabled=timers)
-        # SSH proxy windows for remote agents: session_id -> tmux window name
-        self._ssh_proxies: dict[str, str] = {}
-        # TmuxManager instance for creating proxy windows
-        from .tmux_manager import TmuxManager
-        self._tmux_manager = TmuxManager(tmux_session)
         # Flag: set by user navigation (j/k), cleared after sync.
         # Prevents programmatic focused_session_index changes (from
         # refresh_sessions) from switching the bottom pane.
@@ -652,7 +642,7 @@ class SupervisorTUI(
         self._ensure_monitor_daemon()
 
         # Clean up stale SSH proxy windows from previous TUI sessions
-        self._cleanup_stale_ssh_proxies()
+        self.split.cleanup_stale_ssh_proxies()
 
         # Provision SSH-configured sisters in background
         self._provision_ssh_sisters()
@@ -1327,71 +1317,13 @@ class SupervisorTUI(
         calls (one per agent window). Called from on_resize and from a
         periodic timer to catch drift.
         """
-        if self.in_split:
-            self._resize_agent_windows_async()
+        self.split.schedule_agent_window_resize()
 
     @work(thread=True, group="agent_resize")
     @single_flight("agent_resize")
-    def _resize_agent_windows_async(self) -> None:
-        """Worker: read bottom-pane size, then resize each agent window."""
-        import subprocess
-        try:
-            result = subprocess.run(
-                [*_tmux_base(), "display-message", "-t", self._bottom_pane_target(),
-                 "-p", "#{pane_width} #{pane_height}"],
-                capture_output=True, text=True, timeout=2,
-            )
-        except (subprocess.SubprocessError, OSError):
-            return
-        if result.returncode != 0 or not result.stdout.strip():
-            return
-        parts = result.stdout.strip().split()
-        if len(parts) != 2:
-            return
-        try:
-            width, height = int(parts[0]), int(parts[1])
-        except ValueError:
-            return
-        sync_session = self.tmux_sync_target
-        # Local sessions only — remote sessions have their own resize path
-        windows = [
-            session.tmux_window for session in list(self.sessions)
-            if not getattr(session, "is_remote", False)
-            and getattr(session, "tmux_window", None)
-        ]
-        # One list-windows call tells us which windows are already the right
-        # size; resize-window is not free even when nothing changes (it fires
-        # layout hooks and redraws), so in the steady state this sweep sends
-        # no per-window commands at all.
-        current_sizes: dict[str, tuple[int, int]] = {}
-        try:
-            listed = subprocess.run(
-                [*_tmux_base(), "list-windows", "-t", sync_session,
-                 "-F", "#{window_name}\t#{window_width}\t#{window_height}"],
-                capture_output=True, text=True, timeout=2,
-            )
-            if listed.returncode == 0:
-                for line in listed.stdout.splitlines():
-                    parts = line.split("\t")
-                    if len(parts) == 3:
-                        try:
-                            current_sizes[parts[0]] = (int(parts[1]), int(parts[2]))
-                        except ValueError:
-                            continue
-        except (subprocess.SubprocessError, OSError):
-            pass  # Unknown sizes → resize everything, as before
-        for window in windows_needing_resize(current_sizes, windows, width, height):
-            if worker_cancelled():
-                return  # app exit; the next pass picks up the remaining windows
-            target = f"{sync_session}:{window}"
-            try:
-                subprocess.run(
-                    [*_tmux_base(), "resize-window", "-t", target,
-                     "-x", str(width), "-y", str(height)],
-                    capture_output=True, timeout=2,
-                )
-            except (subprocess.SubprocessError, OSError):
-                continue
+    def _resize_agent_windows_async(self, windows: list) -> None:
+        """Worker: resize each of ``windows`` to the bottom pane (tui_split)."""
+        self.split.resize_agent_windows(windows)
 
     def _update_capture_lines(self) -> None:
         """Scale capture buffer to at least 2x terminal height."""
@@ -1446,13 +1378,13 @@ class SupervisorTUI(
         # (see _user_navigated) would otherwise leave the bottom pane stranded
         # on whatever window tmux happened to pick when `overcode tmux` opened
         # the split.
-        if not self._initial_tmux_sync_done and self.in_split:
+        if not self._initial_tmux_sync_done and self.split.active:
             try:
                 widget = self._get_focused_widget()
             except Exception:
                 widget = None
             if widget is not None:
-                self._sync_tmux_window(widget)
+                self.split.show_agent(widget)
                 self._initial_tmux_sync_done = True
 
         # Trigger timeline refresh when new sessions appear (child agents) (#244)
@@ -1695,15 +1627,22 @@ class SupervisorTUI(
         """
         return self.tmux_sync_target is not None
 
-    def _tui_pane_target(self) -> str:
-        """Return tmux target for the TUI (top) pane, respecting pane-base-index."""
-        base = get_pane_base_index()
-        return f"overcode:overcode-tmux.{base}"
+    @property
+    def split(self):
+        """Every tmux side effect (tui_split): a TmuxSplit in the split, else the null one.
 
-    def _bottom_pane_target(self) -> str:
-        """Return tmux target for the bottom (terminal) pane, respecting pane-base-index."""
-        base = get_pane_base_index()
-        return f"overcode:overcode-tmux.{base + 1}"
+        Made on first use from ``tmux_sync_target`` (so bare test apps get
+        one too); tests may assign a stand-in.
+        """
+        split = self.__dict__.get("_split")
+        if split is None:
+            split = make_split(self, getattr(self, "tmux_sync_target", None))
+            self.__dict__["_split"] = split
+        return split
+
+    @split.setter
+    def split(self, split) -> None:
+        self.__dict__["_split"] = split
 
     def _dialog_will_open(self) -> None:
         """Zoom the tmux monitor pane when a dialog opens.
@@ -1711,26 +1650,10 @@ class SupervisorTUI(
         Uses tmux's pane zoom to temporarily hide the bottom (terminal)
         pane, giving the TUI the full window for rendering dialogs.
         """
-        if not self.in_split:
-            return
-        import subprocess
-        target = self._tui_pane_target()
-        # Don't zoom if already zoomed
-        info = subprocess.run(
-            [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
-            capture_output=True, text=True,
-        )
-        if info.returncode == 0 and info.stdout.strip() == "1":
-            return
-        subprocess.run(
-            [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
-            capture_output=True,
-        )
+        self.split.zoom()
 
     def _dialog_did_close(self) -> None:
         """Unzoom the tmux monitor pane when all dialogs are closed."""
-        if not self.in_split:
-            return
         # Don't unzoom if another dialog is still visible
         if self._any_dialog_visible():
             return
@@ -1739,26 +1662,7 @@ class SupervisorTUI(
             return
         if self.tui_mode == "jobs":
             return
-        self._unzoom_tui_pane()
-
-    def _unzoom_tui_pane(self) -> None:
-        """Clear the tmux zoom on the TUI pane, if set, revealing the bottom pane.
-
-        ``resize-pane -Z`` toggles, so check ``window_zoomed_flag`` first.
-        """
-        if not self.in_split:
-            return
-        import subprocess
-        target = self._tui_pane_target()
-        info = subprocess.run(
-            [*_tmux_base(), "display-message", "-t", target, "-p", "#{window_zoomed_flag}"],
-            capture_output=True, text=True,
-        )
-        if info.returncode == 0 and info.stdout.strip() == "1":
-            subprocess.run(
-                [*_tmux_base(), "resize-pane", "-t", target, "-Z"],
-                capture_output=True,
-            )
+        self.split.unzoom()
 
     def _enter_sister_view(self) -> None:
         """Zoom TUI pane and show preview for viewing a sister agent.
@@ -1787,7 +1691,7 @@ class SupervisorTUI(
         self.preview_visible = False
         # Unzoom — but only if no dialog is holding the zoom open
         if not self._any_dialog_visible():
-            self._unzoom_tui_pane()
+            self.split.unzoom()
 
     def _should_recover_focus(self) -> bool:
         """Check if focus recovery should run.
@@ -1851,8 +1755,8 @@ class SupervisorTUI(
         # land on a local agent and switch the bottom pane away.
         if getattr(self, '_user_navigated', False):
             self._user_navigated = False
-            self._sync_tmux_window(widget)
-            self._fix_window_size_if_needed(widget)
+            self.split.show_agent(widget)
+            self.split.fit_window(widget)
 
     # ── Sister integration (#245) ──────────────────────────────────────
 
@@ -2336,8 +2240,8 @@ class SupervisorTUI(
             if i == self.focused_session_index:
                 # Already selected, so the index watcher won't fire. The
                 # pane may have been switched by hand since; bring it back.
-                self._sync_tmux_window(widget)
-                self._fix_window_size_if_needed(widget)
+                self.split.show_agent(widget)
+                self.split.fit_window(widget)
             else:
                 self._user_navigated = True
                 self.focused_session_index = i
@@ -2442,248 +2346,6 @@ class SupervisorTUI(
                 widget.child_count = remote_children
         for widget in ordered_widgets:
             widget.job_count = self._job_counts.get(widget.session.id, 0)
-
-    def _sync_tmux_window(self, widget: Optional["SessionSummary"] = None) -> None:
-        """Sync external tmux pane to show the focused session's window.
-
-        Switches the window of the linked session (tmux_sync_target) that
-        the split's bottom pane shows.
-
-        For remote agents with SSH configured, creates a local SSH proxy
-        window that attaches to the remote tmux window. The proxy persists
-        so switching back is instant.
-
-        For remote agents without SSH, auto-zooms the TUI pane and shows
-        the preview pane with polled content.
-
-        Args:
-            widget: The session widget to sync to. If None, uses self.focused.
-        """
-        if not self.in_split:
-            return
-
-        try:
-            target = widget if widget is not None else self.focused
-            if isinstance(target, SessionSummary):
-                session = target.session
-                sync_session = self.tmux_sync_target
-
-                if session.is_remote and session.source_ssh:
-                    # SSH proxy: create or reuse a local tmux window connected via SSH
-                    # Exit sister zoom if it was active (SSH proxy uses the bottom pane)
-                    if self._sister_zoom_active:
-                        self._exit_sister_view()
-
-                    proxy_window = self._get_or_create_ssh_proxy(session)
-                    if proxy_window:
-                        self._tmux.select_window(sync_session, proxy_window)
-                    return
-
-                # Non-SSH remote: sister zoom (existing behavior)
-                if session.is_remote and not self._sister_zoom_active:
-                    self._enter_sister_view()
-                elif not session.is_remote and self._sister_zoom_active:
-                    self._exit_sister_view()
-
-                window_index = session.tmux_window
-                # For remote agents without a tmux window, try to sync to parent's window
-                if (not window_index or window_index == "") and session.is_remote and session.parent_session_id:
-                    parent = self.session_manager.get_session(session.parent_session_id)
-                    if parent:
-                        window_index = parent.tmux_window
-
-                if window_index is not None and window_index != "":
-                    if not self._tmux.select_window(sync_session, window_index):
-                        self._select_empty_placeholder(sync_session, session.name)
-                        self.notify(
-                            f"Window for '{session.name}' no longer exists",
-                            severity="warning",
-                        )
-                else:
-                    # Local agent with no tmux_window value — same dead-window
-                    # symptom for the user. Fall back to the placeholder.
-                    self._select_empty_placeholder(sync_session, session.name)
-        except Exception:
-            pass  # Silent fail - don't disrupt navigation
-
-    def _select_empty_placeholder(self, sync_session: str, agent_name: str) -> None:
-        """Switch the bottom pane to a static placeholder window (#457).
-
-        Called when a real agent window is missing so the user sees a clear
-        empty-state instead of stale content from the previous focus target.
-        Idempotent — the placeholder is created on first need and reused.
-        """
-        from .tmux_manager import EMPTY_PLACEHOLDER_WINDOW
-        msg = (
-            f"\n  This agent has no tmux window.\n"
-            f"  ({agent_name} may have been killed, is mid-launch,\n"
-            f"   or its window vanished.)\n"
-        )
-        try:
-            if self._tmux.ensure_empty_placeholder_window(
-                sync_session, EMPTY_PLACEHOLDER_WINDOW, msg
-            ):
-                self._tmux.select_window(sync_session, EMPTY_PLACEHOLDER_WINDOW)
-        except Exception:
-            pass
-
-    def _get_or_create_ssh_proxy(self, session: Session) -> Optional[str]:
-        """Get or create an SSH proxy window for a remote agent.
-
-        Returns the local tmux window name, or None on failure.
-        """
-        proxy_name = f"{SSH_PROXY_WINDOW_PREFIX}{session.source_host}:{session.name}"
-
-        # Check if proxy already exists in our cache
-        if session.id in self._ssh_proxies:
-            window_name = self._ssh_proxies[session.id]
-            # Verify it still exists
-            if self._tmux_manager.window_exists(window_name):
-                return window_name
-            # Window was closed — remove stale entry
-            del self._ssh_proxies[session.id]
-
-        # Kill any stale proxy windows with this name (e.g., leftover from
-        # a previous TUI session) to avoid duplicates that break window lookup.
-        try:
-            sess = self._tmux_manager._get_session()
-            if sess:
-                for win in list(sess.windows):
-                    if win.window_name == proxy_name:
-                        win.kill()
-        except Exception:
-            pass
-
-        # Need the remote window name to attach to.
-        # tmux_window may be empty if remote runs an older version — fall back to agent name
-        # (the SSH command does prefix matching to find "name-uuid" windows).
-        remote_window = session.tmux_window or session.name
-        if not remote_window:
-            return None
-
-        # Create proxy window
-        remote_tmux_session = session.source_tmux_session or "agents"
-
-        window_name = self._tmux_manager.create_ssh_proxy_window(
-            window_name=proxy_name,
-            ssh_target=session.source_ssh,
-            remote_tmux_session=remote_tmux_session,
-            remote_window=remote_window,
-        )
-        if window_name:
-            self._ssh_proxies[session.id] = window_name
-        return window_name
-
-    def _cleanup_stale_ssh_proxies(self) -> None:
-        """Kill any ssh: proxy windows left over from a previous TUI session.
-
-        Called on startup to prevent duplicate window names that break
-        libtmux's window lookup. Uses direct libtmux iteration to handle
-        duplicates safely (TmuxManager.kill_window fails on duplicate names).
-        """
-        try:
-            sess = self._tmux_manager._get_session()
-            if sess is None:
-                return
-            for win in list(sess.windows):
-                if win.window_name.startswith(SSH_PROXY_WINDOW_PREFIX):
-                    try:
-                        win.kill()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    def _cleanup_ssh_proxies(self) -> None:
-        """Kill all SSH proxy windows. Called on TUI exit."""
-        for session_id, window_name in list(self._ssh_proxies.items()):
-            try:
-                self._tmux_manager.kill_window(window_name)
-            except Exception:
-                pass
-        self._ssh_proxies.clear()
-
-    def _fix_window_size_if_needed(self, widget: "SessionSummary") -> None:
-        """Auto-fix tmux window size mismatch when switching sessions.
-
-        When terminal is resized while a session is not active, only the active
-        window gets resized. When switching to that session, its window might be
-        the wrong size. This method detects the mismatch and sends a tmux command
-        to resize it to match the current terminal dimensions.
-
-        For remote agents with SSH, sends a resize command via the sister API
-        so the remote tmux window matches the local proxy pane dimensions.
-
-        The fix is silent and non-blocking — if it fails, navigation continues.
-        """
-        if not self.in_split or not self.size or self.size.height <= 0:
-            return
-
-        try:
-            session = widget.session
-
-            # Remote agents with SSH: resize via API
-            if session.is_remote and session.source_ssh and session.name:
-                self._resize_remote_agent(session)
-                return
-
-            window_index = session.tmux_window
-            if not window_index or window_index == "":
-                return
-
-            sync_session = self.tmux_sync_target
-            # Get current terminal size from the active window
-            # and apply it to the target window
-            current_height = self.size.height
-            current_width = self.size.width
-
-            # Get the target window's current size by querying tmux
-            # If sizes don't match, resize the target window
-            self._tmux.resize_window(sync_session, window_index, current_width, current_height)
-        except Exception:
-            pass  # Silent fail - size mismatch isn't critical
-
-    @work(thread=True)
-    def _resize_remote_agent(self, session: Session) -> None:
-        """Resize a remote agent's tmux window via the sister API.
-
-        Reads the bottom pane dimensions from tmux and sends them to the
-        remote overcode instance, which resizes the agent's window to match.
-        Runs in a background thread to avoid blocking navigation.
-        """
-        import subprocess
-
-        try:
-            # Get the bottom pane dimensions. The split layout has 2 panes
-            # in the overcode session — find the one that isn't the TUI.
-            from .tmux_utils import get_pane_base_index
-            tui_pane_index = get_pane_base_index()
-
-            result = subprocess.run(
-                [*_tmux_base(), "list-panes", "-t", "overcode:0",
-                 "-F", "#{pane_index} #{pane_width} #{pane_height}"],
-                capture_output=True, text=True, timeout=2,
-            )
-            if result.returncode != 0:
-                return
-
-            width = height = 0
-            for line in result.stdout.strip().splitlines():
-                parts = line.split()
-                if len(parts) == 3 and parts[0] != str(tui_pane_index):
-                    width, height = int(parts[1]), int(parts[2])
-                    break
-
-            if width <= 0 or height <= 0:
-                return
-
-            from .sister_controller import SisterController
-            SisterController(timeout=3).resize_agent(
-                session.source_url, session.source_api_key,
-                session.name, width, height,
-            )
-        except Exception:
-            pass  # Silent fail
 
     # =========================================================================
     # Jobs Mode
@@ -4388,44 +4050,18 @@ class SupervisorTUI(
         one-key relaunch. The monitor daemon is a separate process and keeps
         collecting stats throughout.
         """
-        if self.in_split:
-            # Detach first so the user returns to their previous session, then
-            # exit so the viewer process stops consuming CPU.
-            import subprocess
-            subprocess.run([*_tmux_base(), "detach-client"], capture_output=True)
+        # Detach first so the user returns to their previous session, then
+        # exit so the viewer process stops consuming CPU.
+        self.split.detach()
         self.exit()
-
-    def _resize_split(self, delta: int) -> None:
-        """Resize the tmux split pane by delta rows."""
-        if not self.in_split:
-            return
-        import subprocess
-        subprocess.run(
-            [*_tmux_base(), "resize-pane", "-t", self._tui_pane_target(),
-             "-U" if delta > 0 else "-D", str(abs(delta))],
-            capture_output=True,
-        )
-        # Resize linked session windows to match the new bottom pane size
-        linked = self.tmux_sync_target
-        if linked:
-            result = subprocess.run(
-                [*_tmux_base(), "list-windows", "-t", linked, "-F", "#{window_id}"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                for win_id in result.stdout.strip().splitlines():
-                    subprocess.run(
-                        [*_tmux_base(), "resize-window", "-t", win_id, "-A"],
-                        capture_output=True,
-                    )
 
     def action_split_grow(self) -> None:
         """Grow the monitor pane (shrink terminal pane)."""
-        self._resize_split(3)
+        self.split.resize_split(3)
 
     def action_split_shrink(self) -> None:
         """Shrink the monitor pane (grow terminal pane)."""
-        self._resize_split(-3)
+        self.split.resize_split(-3)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Check if an action should be allowed (#175).
@@ -4558,13 +4194,13 @@ class SupervisorTUI(
         # is respawned by `overcode tmux`; a leftover zoom would keep the
         # bottom terminal pane hidden behind the monitor.
         try:
-            self._unzoom_tui_pane()
+            self.split.unzoom()
         except Exception:
             pass
         self._stop_capture_thread()
         self.engine_link.stop()
         # Clean up SSH proxy windows
-        self._cleanup_ssh_proxies()
+        self.split.cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)
         self._summarizer.stop()
 

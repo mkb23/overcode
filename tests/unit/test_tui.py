@@ -2069,8 +2069,8 @@ class TestSortSessionsKeepsSelection:
         tui._sort_sessions()
         assert tui.focused_session_index == 0
         assert tui._suppress_focus_watcher is False  # restored afterwards
-        tui._sync_tmux_window.assert_not_called()
-        tui._fix_window_size_if_needed.assert_not_called()
+        tui.split.show_agent.assert_not_called()
+        tui.split.fit_window.assert_not_called()
 
     def test_explicit_selected_id_survives_list_replacement(self):
         """_apply_sessions replaces self.sessions before sorting; the id it
@@ -2187,12 +2187,19 @@ class TestFlushStatusChangesCap:
 class TestSyncTmuxWindow:
     """Navigation drives the split's bottom pane (#523: the only layout)."""
 
-    def _tui(self, in_split=True):
+    def _split(self, in_split=True):
+        from overcode.tui_split import NULL_SPLIT, TmuxSplit
         tui = MagicMock()
-        tui.in_split = in_split
-        tui.tmux_sync_target = "oc-view-agents" if in_split else None
         tui._sister_zoom_active = False
-        return tui
+        if not in_split:
+            return tui, NULL_SPLIT
+        split = TmuxSplit.__new__(TmuxSplit)
+        split.app = tui
+        split.sync_target = "oc-view-agents"
+        split._tmux = MagicMock()
+        split._tmux_manager = MagicMock()
+        split._ssh_proxies = {}
+        return tui, split
 
     def _widget(self, **kw):
         from overcode.tui_widgets import SessionSummary
@@ -2202,22 +2209,20 @@ class TestSyncTmuxWindow:
         return widget
 
     def test_switches_the_linked_session_window(self):
-        from overcode.tui import SupervisorTUI
-        tui = self._tui()
-        SupervisorTUI._sync_tmux_window(tui, self._widget())
-        tui._tmux.select_window.assert_called_once_with("oc-view-agents", "agent-1")
+        tui, split = self._split()
+        split.show_agent(self._widget())
+        split._tmux.select_window.assert_called_once_with("oc-view-agents", "agent-1")
 
     def test_remote_agent_without_ssh_opens_the_sister_view(self):
-        from overcode.tui import SupervisorTUI
-        tui = self._tui()
+        tui, split = self._split()
         widget = self._widget()
         widget.session.is_remote = True
-        SupervisorTUI._sync_tmux_window(tui, widget)
+        split.show_agent(widget)
         tui._enter_sister_view.assert_called_once_with()
 
     def test_no_split_no_tmux(self):
-        from overcode.tui import SupervisorTUI
-        tui = self._tui(in_split=False)
-        SupervisorTUI._sync_tmux_window(tui, self._widget())
-        tui._tmux.select_window.assert_not_called()
+        from overcode.tui_split import make_split
+        tui, split = self._split(in_split=False)
+        assert make_split(tui, None) is split and not split.active
+        split.show_agent(self._widget())
         tui._enter_sister_view.assert_not_called()

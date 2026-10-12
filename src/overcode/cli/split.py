@@ -134,6 +134,8 @@ def _find_overcode_cmd() -> str:
     return shutil.which("overcode") or "overcode"
 
 
+# The split lives in its own session, in one window: SESSION:WINDOW
+SPLIT_SESSION_NAME = "overcode"
 SPLIT_WINDOW_NAME = "overcode-tmux"
 LINKED_SESSION_PREFIX = "oc-view"
 
@@ -848,7 +850,7 @@ def _tmux_layout_locked(session: str, ratio: int, rprint, *, restart: bool = Fal
     # This is critical: if the split window were inside the "agents" session,
     # the monitor's tmux sync (which switches windows on the linked session)
     # would also navigate the outer window away from the split view.
-    oc_session = "overcode"
+    oc_session = SPLIT_SESSION_NAME
 
     # Build the monitor command early — needed for both fresh creation
     # and respawning the top pane on relaunch.
