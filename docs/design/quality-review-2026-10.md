@@ -282,12 +282,18 @@ move-only commits.
 | 17 unpriced models | done: doctor flags a budget on an unpriced model | 0777ba5 |
 | 18 build and CI traps | done: CI gates, `test-unit`, safe `clean-sessions`, unit timeouts, `tui-eye` | 3d9d7a5, baa7e4b |
 | 19 row clock rebuilds every row | done: cached non-ticking cells; 40 idle agents 4.2% → 2.3% CPU | (see log) |
+| 20 focused capture: a worker per tick | done: one long-lived capture thread | (see log) |
+| 21 status bar rebuilt every delta | done: rebuilt on its inputs only; `refresh_if_changed` | (see log) |
 | 22 delta copies every agent | done: copy on write, identity check in the TUI | 3ebd582 |
+| 23 `d` panel polls the state file | done: reads the engine fleet; `detection_mode` published; log followed by size | (see log) |
 | 24 state file every tick | done: on change plus a 10 s liveness rewrite, compact | 3ebd582 |
 | 25 one status rule table | done: `TickContext` → named rules → `Verdict`; legacy enum from one table; phase names the rule; one `now` (part of 34). A scheduled-only agent stays waiting (c4f48a3) | (see log) |
+| 26 split monitor_daemon | done: 2,754 → 1,875 lines; cadence, presence, housekeeping, stats sync, process probe (one `ps`), recorders, wake, `git_stats`/`burn`; `for_test()` replaces `__new__` | (see log) |
+| 28 split session_manager / launcher | done: 1,790 → 1,052 and 1,585 → 887 lines; `LaunchError` (a refused launch exits 1; the TUI shows the reason); `resolve_launch_settings` | (see log) |
 | 32 Session model | part: canonical names only on write, aliases gone; old files still load | (see log) |
 | 36 shared pilot harness | done: `make_tui` (tests/tui_harness.py), no timers unless asked, an in-memory engine connected from mount; 17 files moved onto it | (see log) |
 | 38 less mocking | part: `test_tui_actions_session` builds real `Session`s | (see log) |
+| 40 coverage targets | done: codex, grok and hermes replay scenarios (17); the polling-prose, PID-reuse, disk-full and phase-label tests landed with their fixes | 6132d3d and earlier |
 | Dead code | done (the confirmed list) | c7c2284 |
 
 Found while doing these: libtmux 0.55+ broke every tmux call on a fresh
@@ -296,4 +302,11 @@ tests' timing budgets needed a factor for CI runners (fc7598a); a socket
 test only failed on Linux (9bb2a07); `sleep 1m` read as one second
 (4048242).
 
-Still open: 20, 21, 23 (in progress), 26–31, 33–35, 37, 39, 40, the rest of 10, 32 and 38.
+Also: the 250 ms tick no longer queries the DOM to keep focus (dba2254); a
+flaky test counted other threads' sleeps (see log).
+
+Still open: 27 (split tui.py), 29 (paths.py), 30 (rest of the backend
+sharing), 31 (summary_columns), 33 (tmux layers), 34 (one clock beyond the
+detector), 35 (files keyed by session id, needs a migration), 37
+(work-counting tests beyond the row cache), 39 (test speed), and the rest of
+10, 32 and 38.
