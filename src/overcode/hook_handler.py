@@ -586,25 +586,6 @@ def append_hook_event(
         pass
 
 
-def _peek_active_prompt_id(tmux_session: str, session_name: str) -> str | None:
-    """Read the last-recorded ``active_prompt_id`` without writing anything.
-
-    Used by ``handle_hook_event`` to decide *before* calling
-    ``write_hook_state`` whether a grok turn-end report (Stop/StopFailure) is
-    stale — a report for a turn superseded by a later UserPromptSubmit — and
-    should be dropped rather than settling a session that has already moved
-    on (~/.grok/docs/user-guide/10-hooks.md: "Track the newest promptId and
-    ignore reports for older turns").
-    """
-    state_path = _get_hook_state_path(tmux_session, session_name)
-    try:
-        state = json.loads(state_path.read_text())
-    except (json.JSONDecodeError, FileNotFoundError, OSError):
-        return None
-    if not isinstance(state, dict):
-        return None
-    value = state.get("active_prompt_id")
-    return value if isinstance(value, str) and value else None
 
 
 def _get_hook_state_lock_path(tmux_session: str, session_name: str) -> Path:
@@ -800,7 +781,7 @@ def write_hook_state(
 
     ``active_prompt_id`` is grok-only: set on ``UserPromptSubmit`` to the
     turn's ``promptId``, then preserved across later events (mirroring
-    ``agent_session_id``) so ``_peek_active_prompt_id`` can compare a later
+    ``agent_session_id``) so the stale-turn check can compare a later
     turn-end report's ``promptId`` against it.
     """
     state_path = _get_hook_state_path(tmux_session, session_name)
@@ -1033,7 +1014,10 @@ def _apply_grok_semantics(data: dict) -> dict | None:
         if notification_type == "permission_prompt":
             event = "PermissionRequest"
         elif notification_type == "idle_prompt":
-            event = "Stop"
+            # Through the same path as Claude's (_settle_idle_prompt): it
+            # settles only a turn still reading running, in this conversation,
+            # never a pending permission or another conversation's state
+            pass
         else:
             return None
     elif event == "StopCancelled":
@@ -1205,10 +1189,7 @@ def handle_hook_event() -> None:
     # the session-end Stop) always settle unconditionally — that's the
     # session reporting on itself, not a turn.
     prompt_id = data.get("prompt_id") if is_grok_dialect else None
-    if is_grok_dialect and event in ("Stop", "StopFailure") and prompt_id:
-        active_prompt_id = _peek_active_prompt_id(tmux_session, session_name)
-        if active_prompt_id and active_prompt_id != prompt_id:
-            return
+    stale_check = is_grok_dialect and event in ("Stop", "StopFailure") and prompt_id
 
     # One locked cycle per event over this agent's hook state: read it once,
     # settle the session id against the session record, then write. The id in
@@ -1216,6 +1197,12 @@ def handle_hook_event() -> None:
     # so an older event must not be able to write it after a newer one has
     # moved on — hence the lock rather than two independent read/writes.
     with _locked_hook_state(tmux_session, session_name) as prev_state:
+        # Under the lock: checked before it, a UserPromptSubmit landing in
+        # between let a stale report settle the turn that had just begun
+        if stale_check:
+            active_prompt_id = prev_state.get("active_prompt_id")
+            if active_prompt_id and active_prompt_id != prompt_id:
+                return
         effective_session_id = session_id
         synced_session_id = None
         # A reset whose write didn't land durably leaves its id pending, so a

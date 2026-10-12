@@ -225,9 +225,12 @@ class TestGrokEventSemantics:
         result = _apply_grok_semantics(self._normalized(NOTIFICATION_PERMISSION_PROMPT))
         assert result["hook_event_name"] == "PermissionRequest"
 
-    def test_idle_prompt_notification_becomes_stop(self):
+    def test_idle_prompt_notification_is_kept_for_the_guarded_settle(self):
+        # Not mapped to Stop here: handle_hook_event settles it only over a
+        # turn still reading running (_settle_idle_prompt), as for Claude
         result = _apply_grok_semantics(self._normalized(NOTIFICATION_IDLE_PROMPT))
-        assert result["hook_event_name"] == "Stop"
+        assert result["hook_event_name"] == "Notification"
+        assert result["notification_type"] == "idle_prompt"
 
     def test_other_notification_types_are_dropped(self):
         payload = dict(NOTIFICATION_IDLE_PROMPT)
@@ -385,11 +388,21 @@ class TestHandleHookEventGrokIntegration:
         self._send(tmp_path, monkeypatch, stop)
         assert self._state(tmp_path)["event"] == "Stop"
 
-    def test_idle_prompt_backstop_settles_unconditionally(self, tmp_path, monkeypatch):
-        # idle_prompt carries no promptId — must settle even with no prior
-        # UserPromptSubmit recorded at all.
+    def test_idle_prompt_backstop_settles_a_running_turn(self, tmp_path, monkeypatch):
+        # idle_prompt carries no promptId: it settles whichever turn is
+        # still reading running, with no promptId comparison
+        self._send(tmp_path, monkeypatch, USER_PROMPT_SUBMIT)
         self._send(tmp_path, monkeypatch, NOTIFICATION_IDLE_PROMPT)
         assert self._state(tmp_path)["event"] == "Stop"
+
+    def test_idle_prompt_leaves_a_pending_permission_alone(self, tmp_path, monkeypatch):
+        self._send(tmp_path, monkeypatch, USER_PROMPT_SUBMIT)
+        before = self._state(tmp_path)
+        before["event"] = "PermissionRequest"
+        state_path = next((tmp_path).rglob("hook_state_*.json"))
+        state_path.write_text(json.dumps(before))
+        self._send(tmp_path, monkeypatch, NOTIFICATION_IDLE_PROMPT)
+        assert self._state(tmp_path)["event"] == "PermissionRequest"
 
     def test_subagent_stop_never_flips_the_session_state(self, tmp_path, monkeypatch):
         self._send(tmp_path, monkeypatch, USER_PROMPT_SUBMIT)
