@@ -10,6 +10,7 @@ TODO: Split this file into smaller modules for maintainability:
 
 from datetime import datetime
 from typing import List, Optional
+import logging
 import sys
 import threading
 import time
@@ -483,8 +484,18 @@ class SupervisorTUI(
         self._engine_apply_posted = False
         # Visits this TUI made that the engine may not have published yet
         self._visited_here: dict[str, float] = {}
-        # The focused-pane capture in flight (one at a time, never queued)
+        # The focused-pane capture in flight (one at a time, never queued),
+        # and the one long-lived thread that does it: the 250 ms tick sets
+        # _capture_request and the Event, the thread posts a FocusedCapture
+        # back (started on the first tick, stopped on unmount)
         self._focused_capture_in_flight = False
+        self._capture_request: tuple = (None, None)
+        self._capture_wake = threading.Event()
+        self._capture_stop = threading.Event()
+        self._capture_thread: Optional[threading.Thread] = None
+        # The session table every row was last given by a capture (None:
+        # rows may since hold other objects); see _apply_focused_capture
+        self._capture_fresh_applied: Optional[dict] = None
         # Sisters' agents: the input-needed stretch each was last seen in,
         # so a new one notifies (sisters stay on HTTP polling, no bell message)
         self._remote_stretch_seen: dict[str, Optional[float]] = {}
@@ -1317,7 +1328,7 @@ class SupervisorTUI(
             ):
                 window = widget.session.tmux_window
             self._focused_capture_in_flight = True
-            self._capture_focused_async(widget.session.id if window else None, window)
+            self._request_focused_capture(widget.session.id if window else None, window)
         for row in self.query(SessionSummary):
             row.refresh_if_changed()
         self._notifier.flush()
@@ -1329,24 +1340,72 @@ class SupervisorTUI(
             if focused is not None:
                 focused.focus()
 
-    @work(thread=True, exclusive=True, group="focused_pane")
-    def _capture_focused_async(self, session_id: Optional[str], window: Optional[str]) -> None:
-        """Worker: one capture-pane of the focused agent (if any), and the session table.
+    class FocusedCapture(events.Message):
+        """The capture thread's result, for the main thread."""
+
+        def __init__(self, args: tuple) -> None:
+            super().__init__()
+            self.args = args
+
+    def _request_focused_capture(self, session_id: Optional[str], window: Optional[str]) -> None:
+        """Main thread: hand one capture to the capture thread (started on first use).
+
+        The caller has set ``_focused_capture_in_flight``; the result's
+        handler clears it, so there is never more than one capture queued
+        or running.
+        """
+        self._capture_request = (session_id, window)
+        if self._capture_thread is None:
+            self._capture_thread = threading.Thread(
+                target=self._capture_loop, name="focused-capture", daemon=True)
+            self._capture_thread.start()
+        self._capture_wake.set()
+
+    def _capture_loop(self) -> None:
+        """The capture thread: sleep until woken, capture, post, until stopped."""
+        while True:
+            self._capture_wake.wait()
+            self._capture_wake.clear()
+            if self._capture_stop.is_set():
+                return
+            session_id, window = self._capture_request
+            try:
+                args = self._capture_focused(session_id, window)
+            except Exception:  # a failed capture must not end the loop
+                logging.getLogger("overcode.tui").exception("focused-pane capture failed")
+                self._focused_capture_in_flight = False
+                continue
+            # A message, not call_from_thread: the thread never blocks on
+            # the main thread (and so never deadlocks an exit that joins it)
+            if not self.post_message(self.FocusedCapture(args)):
+                self._focused_capture_in_flight = False
+
+    def _capture_focused(self, session_id: Optional[str], window: Optional[str]) -> tuple:
+        """Capture thread: one capture-pane of the focused agent (if any), and the session table.
 
         The session table is a stat while sessions.json is unchanged; a
         changed one (a rename, standing orders, a value) reaches the rows
         within a tick, and so does a new or removed agent (``local``, this
         tmux session's agents, read-only).
         """
+        content = (self.detector.get_pane_content(window) or "") if window else None
+        fresh = {s.id: s for s in self.session_manager.list_sessions()}
+        local = self.launcher.list_sessions()
+        # The key is built here, off the main thread; the main thread compares
+        return (session_id, content, fresh, local, session_row_key(local))
+
+    def on_supervisor_tui_focused_capture(self, event: "SupervisorTUI.FocusedCapture") -> None:
         try:
-            content = (self.detector.get_pane_content(window) or "") if window else None
-            fresh = {s.id: s for s in self.session_manager.list_sessions()}
-            local = self.launcher.list_sessions()
-            # The key is built here, off the main thread; the main thread compares
-            self.call_from_thread(self._apply_focused_capture, session_id, content, fresh,
-                                  local, session_row_key(local))
+            self._apply_focused_capture(*event.args)
         finally:
             self._focused_capture_in_flight = False
+
+    def _stop_capture_thread(self) -> None:
+        self._capture_stop.set()
+        self._capture_wake.set()
+        thread = self._capture_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2)
 
     def _apply_focused_capture(self, session_id: Optional[str], content: Optional[str],
                                fresh: dict, local: Optional[list] = None,
@@ -1364,6 +1423,20 @@ class SupervisorTUI(
                 local_key = session_row_key(local)
             if local_key != self._session_row_key:
                 self._apply_sessions(local)
+        # Most ticks the session table is the same snapshot objects the rows
+        # already hold: then only the focused row's pane is news, and no
+        # row needs walking (_apply_sessions forgets what was applied)
+        applied = self._capture_fresh_applied
+        if applied is not None and len(applied) == len(fresh) \
+                and all(applied.get(k) is v for k, v in fresh.items()):
+            if content is not None:
+                widget = self._get_focused_widget()
+                if widget is not None and widget.session.id == session_id:
+                    widget.local_pane = True
+                    if widget.apply_pane_content(content):
+                        self._repaint([widget])
+            self._mark_event("apply_focused_end")
+            return
         changed = []
         focused_id = self._selected_session_id()
         for widget in self.query(SessionSummary):
@@ -1377,6 +1450,7 @@ class SupervisorTUI(
                 widget.local_pane = True
                 if widget.apply_pane_content(content) and widget not in changed:
                     changed.append(widget)
+        self._capture_fresh_applied = fresh
         if changed:
             self._repaint(changed)
         self._mark_event("apply_focused_end")
@@ -2265,6 +2339,7 @@ class SupervisorTUI(
                 Focus is only restored to a SessionSummary if one had Textual
                 focus before the update (never steals from command bar).
         """
+        self._capture_fresh_applied = None  # rows get other session objects here
         # Capture focus state before DOM mutations
         if preserve_focus:
             _focused_widget = self._get_focused_widget()
@@ -4760,6 +4835,7 @@ class SupervisorTUI(
             self._unzoom_tui_pane()
         except Exception:
             pass
+        self._stop_capture_thread()
         if self._engine_client is not None:
             self._engine_client.stop()
         # Clean up SSH proxy windows

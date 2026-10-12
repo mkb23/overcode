@@ -379,3 +379,102 @@ class TestEngineAbsent:
             assert await _until(pilot, lambda: not banner.has_class("visible"), timeout=4)
             assert not container.has_class("engine-stale")
             assert app.query_one("#daemon-status").engine_stalled_for is None
+
+
+@pytest.mark.asyncio
+class TestFocusedCaptureThread:
+    """The 250 ms capture runs on one long-lived thread woken by the tick
+    (quality review item 20), not a Textual worker per tick."""
+
+    async def test_delivers_within_a_tick_on_one_thread_and_stops_on_exit(self, app, engine):
+        import threading
+        import time
+
+        engine.publish(_snapshot())
+        applied = []
+        real_apply = app._apply_focused_capture
+
+        def spy(session_id, content, *rest):
+            applied.append((time.monotonic(), session_id, content))
+            real_apply(session_id, content, *rest)
+
+        app._apply_focused_capture = spy
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _connected(pilot, app)
+            # The tick keeps it going: one thread, a delivery every tick
+            assert await _until(pilot, lambda: len(applied) >= 3, timeout=2)
+            thread = app._capture_thread
+            assert thread is not None and thread.is_alive()
+            assert [t for t in threading.enumerate() if t.name == "focused-capture"] == [thread]
+            # A capture of a window: the pane arrives within one tick
+            app.detector.get_pane_content = MagicMock(return_value="pane text")
+            assert await _until(pilot, lambda: not app._focused_capture_in_flight, timeout=1)
+            app._focused_capture_in_flight = True
+            asked = time.monotonic()
+            app._request_focused_capture("id-alpha", "w0")
+            assert await _until(pilot, lambda: any(c == "pane text" for _, _, c in applied),
+                                timeout=1)
+            got = next(t for t, _, c in applied if c == "pane text")
+            assert got - asked < 0.25
+            app.detector.get_pane_content.assert_called_with("w0")
+            assert not app._focused_capture_in_flight
+            # Single flight: while one is in flight the tick asks for nothing
+            app._focused_capture_in_flight = True
+            count = len(applied)
+            await pilot.pause(0.6)
+            assert len(applied) == count
+            app._focused_capture_in_flight = False
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+
+    async def test_a_failed_capture_keeps_the_thread(self, app, engine):
+        engine.publish(_snapshot())
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _connected(pilot, app)
+            assert await _until(pilot, lambda: app._capture_thread is not None)
+            app.detector.get_pane_content = MagicMock(side_effect=[RuntimeError("tmux"), "ok"])
+            assert await _until(pilot, lambda: not app._focused_capture_in_flight, timeout=1)
+            app._focused_capture_in_flight = True
+            app._request_focused_capture("id-alpha", "w0")
+            assert await _until(pilot, lambda: not app._focused_capture_in_flight, timeout=1)
+            app._focused_capture_in_flight = True
+            app._request_focused_capture("id-alpha", "w0")
+            assert await _until(pilot, lambda: app.detector.get_pane_content.call_count == 2,
+                                timeout=1)
+            assert app._capture_thread.is_alive()
+
+    async def test_an_unchanged_session_table_walks_no_rows(self, app, engine):
+        import dataclasses
+
+        from overcode.tui_widgets import SessionSummary
+
+        engine.publish(_snapshot())
+        async with app.run_test(size=(200, 40)) as pilot:
+            await _connected(pilot, app)
+            app._focused_capture_in_flight = True  # the tick stays out of the way
+            await pilot.pause(0.3)
+            rows = {w.session.id: w.session for w in app.query(SessionSummary)}
+            app._apply_focused_capture(None, None, dict(rows))
+            walks = []
+            real_query = app.query
+
+            def query(selector=None):
+                if selector is SessionSummary:
+                    walks.append(1)
+                return real_query(selector)
+
+            app.query = query
+            app._apply_focused_capture(None, None, dict(rows))
+            assert walks == []
+            # The focused row's pane still lands, through the focused row alone
+            focused = app._get_focused_widget()
+            walks.clear()
+            with patch.object(SessionSummary, "apply_pane_content", return_value=False) as pane:
+                app._apply_focused_capture(focused.session.id, "pane", dict(rows))
+            pane.assert_called_once_with("pane")
+            assert focused.local_pane and len(walks) <= 1
+            # A changed session (a new snapshot object) reaches its row
+            renamed = dataclasses.replace(rows["id-bravo"], standing_instructions="ship it")
+            app._apply_focused_capture(None, None, {**rows, "id-bravo": renamed})
+            assert _row(app, "bravo").session is renamed
+            app._focused_capture_in_flight = False

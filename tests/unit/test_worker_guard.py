@@ -176,8 +176,9 @@ class TestWorkerCancelled:
 class TestTuiWorkersAreGuarded:
     """Every periodic thread worker in the TUI must carry the guard, non-exclusive.
 
-    The focused-pane capture keeps its own main-thread flag
-    (_focused_capture_in_flight) so it is never coupled to slower groups.
+    The focused-pane capture is not a worker: one long-lived thread with
+    its own main-thread flag (_focused_capture_in_flight), so it is never
+    coupled to slower groups.
     ``exclusive=True`` on a guarded worker would cancel the in-flight pass
     that the arriving tick then fails to replace (it is coalesced, not run),
     halving throughput of any pass longer than its period.
@@ -214,15 +215,13 @@ class TestTuiWorkersAreGuarded:
         assert options["group"] == group
         assert options["exclusive"] is False, f"{method} must not be exclusive"
 
-    def test_focused_capture_worker_is_independent_of_the_guard(self):
-        """The 250 ms capture is exclusive and unguarded by design (own main-thread flag)."""
+    def test_focused_capture_is_one_thread_not_a_worker(self):
+        """The 250 ms capture is one long-lived thread with its own main-thread flag."""
         from overcode.tui import SupervisorTUI
 
-        decorated = SupervisorTUI._capture_focused_async
-        assert getattr(decorated.__wrapped__, "single_flight_group", None) is None
-        options = self._work_options(decorated)
-        assert options["group"] == "focused_pane"
-        assert options["exclusive"] is True
+        assert not hasattr(SupervisorTUI, "_capture_focused_async")
+        assert getattr(SupervisorTUI._capture_focused, "single_flight_group", None) is None
+        assert not hasattr(SupervisorTUI._capture_focused, "__wrapped__")
 
     def test_guard_coalesces_a_second_run_of_a_real_tui_worker(self):
         """Drive the real worker body (via __wrapped__) on a bare app instance.
