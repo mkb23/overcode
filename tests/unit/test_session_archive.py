@@ -397,6 +397,27 @@ class TestDaemonArchivesTerminatedSessions:
         self._tick(daemon, 181, start + timedelta(minutes=62, seconds=2))
         assert {s.session_id for s in daemon.state.sessions} == {s.id for s in sessions[:4]}
 
+    def test_a_child_that_never_reported_leaves_once_its_window_is_gone(self, env):
+        """It stays waiting_oversight (the timeout still applies) but can never
+        report: it used to stay in sessions.json, and its follower waiting, for ever."""
+        daemon, sm, sessions, start = self._setup(env)
+        parent, gone, alive = sessions[0], sessions[4], sessions[1]
+        for child in (gone, alive):
+            sm.update_session(child.id, parent_session_id=parent.id)
+            sm.update_session_status(child.id, "waiting_oversight")
+        settle(sm.state_file)
+        stopped = {gone.name, alive.name}
+        daemon.detector.hooks._read_hook_state = (
+            lambda name: {"event": "Stop"} if name in stopped else None)
+        self._tick(daemon, 60, start)
+        assert sm.get_session(gone.id).status == "waiting_oversight"
+        assert gone.id in daemon.housekeeping.terminated_since
+        assert alive.id not in daemon.housekeeping.terminated_since
+        self._tick(daemon, 180, start + timedelta(minutes=62))
+        assert sm.get_session(gone.id) is None
+        assert sm.get_session(alive.id).status == "waiting_oversight"
+        assert gone.id in {r["id"] for r in _lines(sm.archive_file)}
+
     def test_a_revived_session_drops_its_clock(self, env):
         daemon, sm, sessions, start = self._setup(env)
         t4 = sessions[4].id

@@ -1854,13 +1854,20 @@ class MonitorDaemon:
         # Count untracked tmux windows every 2 minutes (#344)
         # Move terminated sessions to the archive once past their grace
         housekeeping = self.housekeeping
+        published_terminated = {st.session_id for st in session_states
+                                if st.current_status == STATUS_TERMINATED}
         if housekeeping.due(now):
             housekeeping.auto_archive_done_agents(sessions, self._pending)
             self.state.untracked_window_count = housekeeping.count_untracked_windows(sessions)
             all_sessions = (
                 index.by_id.values() if index is not None else self.session_manager.list_sessions()
             )
-            housekeeping.archive_terminated_sessions(all_sessions, now, self._pending)
+            window_gone = frozenset(
+                s.id for s in sessions
+                if s.status == STATUS_WAITING_OVERSIGHT and s.id in published_terminated
+            )
+            housekeeping.archive_terminated_sessions(all_sessions, now, self._pending,
+                                                     window_gone=window_gone)
             housekeeping.prune_finished_jobs()
 
         # Log summary

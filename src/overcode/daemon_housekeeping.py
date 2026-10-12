@@ -140,8 +140,17 @@ class Housekeeping:
         except Exception:
             return 0
 
-    def archive_terminated_sessions(self, all_sessions, now: datetime, pending: PendingUpdates) -> None:
+    def archive_terminated_sessions(self, all_sessions, now: datetime, pending: PendingUpdates,
+                                    window_gone: frozenset = frozenset()) -> None:
         """Stage terminated entries that have outstayed the grace for the archive.
+
+        ``window_gone`` are the ids of this tmux session's children kept
+        waiting_oversight after their window went (published terminated,
+        persisted waiting_oversight so the oversight timeout still applies:
+        ``MonitorDaemon._is_waiting_on_oversight``). They can never report,
+        so they go the same way: left alone, every child that stopped
+        without a report stayed in sessions.json for ever, and a follower
+        of it waited for ever.
 
         Runs from the every-60-loops housekeeping over every entry in
         sessions.json, whatever its tmux session: an entry left behind by
@@ -158,7 +167,7 @@ class Housekeeping:
         grace = get_session_archive_config()["terminated_grace_seconds"]
         seen = set()
         for session in all_sessions:
-            if session.status != STATUS_TERMINATED:
+            if session.status != STATUS_TERMINATED and session.id not in window_gone:
                 continue
             seen.add(session.id)
             since = self.terminated_since.setdefault(session.id, now)
