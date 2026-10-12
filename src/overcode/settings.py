@@ -16,7 +16,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Iterable, List, Optional, Set
 
 import yaml
 
@@ -580,51 +580,54 @@ def read_detection_mode(session: str) -> str:
         return "auto"
 
 
-def resolve_detection_mode(session: str) -> str:
+def resolve_detection_mode(
+    session: str, live_names: Optional[Iterable[str]] = None
+) -> str:
     """Resolve 'auto' to 'hooks' or 'polling' (#TBD).
 
     Detection order:
       1. Explicit user choice ('hooks' or 'polling' written to disk).
-      2. Recent hook_state_*.json files in this session's directory —
-         proof that hooks ARE firing, regardless of whether the user-level
-         Claude config has them. Overcode-launched sessions inject hooks
-         via `--settings` JSON inline, so the user-level config check
-         below misses them.
+      2. A live agent of this session with a hook_state file: proof that
+         hooks fire, regardless of whether the user-level Claude config has
+         them. Overcode-launched sessions inject hooks via `--settings` JSON
+         inline, so the user-level config check below misses them.
       3. User-level Claude config (legacy fallback for manually-run
          Claude Code sessions that read ~/.claude/settings.json).
+
+    ``live_names`` are the session's live agents (the daemon passes its
+    tick's); without them sessions.json is read.
     """
     mode = read_detection_mode(session)
     if mode in ("hooks", "polling"):
         return mode
-    if _session_has_recent_hook_activity(session):
+    if _session_has_hook_activity(session, live_names):
         return "hooks"
     from .claude_config import ClaudeConfigEditor
     return "hooks" if ClaudeConfigEditor.are_overcode_hooks_installed() else "polling"
 
 
-# A hook_state file modified within this many seconds counts as "hooks
-# are live for this session". 10 minutes covers a quiet agent between
-# turns without false-positiving a long-dormant session.
-_RECENT_HOOK_ACTIVITY_SECONDS = 600
+def _live_agent_names(session: str) -> List[str]:
+    from .session_manager import SessionManager
+
+    return [s.name for s in SessionManager().list_sessions() if s.tmux_session == session]
 
 
-def _session_has_recent_hook_activity(session: str) -> bool:
-    """True if any hook_state file in the session dir is recent enough."""
-    import time as _time
+def _session_has_hook_activity(
+    session: str, live_names: Optional[Iterable[str]] = None
+) -> bool:
+    """True if a live agent of ``session`` has a hook_state file.
+
+    Stats one known path per live agent, never lists the directory: hook
+    files of finished agents pile up there (thousands for a heavy fan-out
+    user), and a listing every tick cost 140 ms at 15K of them. A quiet
+    live agent still counts: its hooks fired, they just have nothing to say.
+    """
+    if live_names is None:
+        live_names = _live_agent_names(session)
     session_dir = get_session_dir(session)
-    if not session_dir.exists():
-        return False
-    now = _time.time()
-    cutoff = now - _RECENT_HOOK_ACTIVITY_SECONDS
-    try:
-        for path in session_dir.glob("hook_state_*.json"):
-            try:
-                if path.stat().st_mtime >= cutoff:
-                    return True
-            except OSError:
-                continue
-    except OSError:
-        return False
+    for name in live_names:
+        if (session_dir / f"hook_state_{name}.json").exists():
+            return True
     return False
 
 

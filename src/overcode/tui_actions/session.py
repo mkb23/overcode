@@ -357,10 +357,10 @@ class SessionActionsMixin:
                     severity="warning",
                 )
                 return
-            from ..settings import _session_has_recent_hook_activity
+            from ..settings import _session_has_hook_activity
             from ..claude_config import ClaudeConfigEditor
             user_level = ClaudeConfigEditor.are_overcode_hooks_installed()
-            session_active = _session_has_recent_hook_activity(self.tmux_session)
+            session_active = _session_has_hook_activity(self.tmux_session)
             if not (user_level or session_active):
                 self.notify(
                     "No hook activity detected. Launch an overcode agent first, "

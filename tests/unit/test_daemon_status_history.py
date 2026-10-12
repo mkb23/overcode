@@ -126,6 +126,19 @@ class TestChangeOnlyRows:
         assert len(rows) == 6
         assert sorted(rows[3:]) == sorted(rows[:3])
 
+    def test_a_finished_agent_gets_no_keepalives(self, root):
+        """Records kept past their end must not write a row a minute for ever."""
+        def script(tick, session):
+            if session.name == "agent-01":
+                return "terminated", "Window no longer exists", ""
+            return "running", "Working", "pane"
+
+        fleet = _Fleet(root, script)
+        with FrozenClock(START).installed() as clock:
+            fleet.run(3 * STATUS_HISTORY_KEEPALIVE_SECONDS // 2 + 1, clock)
+        rows = [r for r in _rows(fleet.history) if r[0] == "agent-01"]
+        assert rows == [("agent-01", "terminated", "Window no longer exists")]
+
     def test_keepalive_clock_restarts_at_each_written_row(self, root):
         def script(tick, session):
             if tick >= 5 and session.name == "agent-01":

@@ -851,7 +851,7 @@ class TestToggleHookDetection:
         mock_tui = self._make_tui(fleet_mode="polling", session=session)
 
         with patch("overcode.claude_config.ClaudeConfigEditor.are_overcode_hooks_installed", return_value=False), \
-             patch("overcode.settings._session_has_recent_hook_activity", return_value=False):
+             patch("overcode.settings._session_has_hook_activity", return_value=False):
             SessionActionsMixin.action_toggle_hook_detection(mock_tui)
 
         mock_tui.session_manager.update_session.assert_not_called()

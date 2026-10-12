@@ -10,6 +10,7 @@ Covers the three seams introduced with the backend-aware detector stack:
 
 import json
 import sys
+import os
 import time
 from pathlib import Path
 
@@ -200,6 +201,50 @@ class TestResolveSessionDetectionMode:
         assert resolve_session_detection_mode(_session("a", 1), fleet_mode) == "hooks"
         overridden = _session("b", 2, detection_mode_override="polling")
         assert resolve_session_detection_mode(overridden, fleet_mode) == "polling"
+
+
+class TestAutoDetectionMode:
+    """"auto" asks the live agents' hook files, never the whole directory."""
+
+    def _setup(self, tmp_path, monkeypatch, files):
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        from overcode import claude_config
+        monkeypatch.setattr(claude_config.ClaudeConfigEditor,
+                            "are_overcode_hooks_installed", staticmethod(lambda: False))
+        d = tmp_path / "agents"
+        d.mkdir()
+        for name, age in files.items():
+            p = d / f"hook_state_{name}.json"
+            p.write_text("{}")
+            os.utime(p, (time.time() - age, time.time() - age))
+
+    def test_a_quiet_live_agent_keeps_the_fleet_on_hooks(self, tmp_path, monkeypatch):
+        """An idle fleet used to read as polling after 10 minutes."""
+        from overcode.settings import resolve_detection_mode
+
+        self._setup(tmp_path, monkeypatch, {"a": 3 * 3600})
+        assert resolve_detection_mode("agents", ["a"]) == "hooks"
+
+    def test_finished_agents_files_do_not_count(self, tmp_path, monkeypatch):
+        from overcode.settings import resolve_detection_mode
+
+        self._setup(tmp_path, monkeypatch, {"old": 0})
+        assert resolve_detection_mode("agents", ["new"]) == "polling"
+
+    def test_the_directory_is_never_listed(self, tmp_path, monkeypatch):
+        """Thousands of finished agents' files: a listing a tick cost 140 ms."""
+        from pathlib import Path
+        from overcode.settings import resolve_detection_mode
+
+        self._setup(tmp_path, monkeypatch, {"a": 0})
+
+        def boom(*a, **k):
+            raise AssertionError("listed the session directory")
+        monkeypatch.setattr(Path, "glob", boom)
+        monkeypatch.setattr(Path, "iterdir", boom)
+        monkeypatch.setattr(os, "scandir", boom)
+        monkeypatch.setattr(os, "listdir", boom)
+        assert resolve_detection_mode("agents", ["a"]) == "hooks"
 
 
 class TestMixedFleetDispatch:

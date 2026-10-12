@@ -457,6 +457,11 @@ class MonitorDaemon:
         self._pending: PendingUpdates = PendingUpdates()
 
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
+        # The last tick's live agent names, for detection-mode checks between ticks
+        self._live_names: Optional[List[str]] = None
+        # Finished agents the id and stats syncs have read since they finished
+        self._ids_settled: set = set()
+        self._stats_settled: set = set()
         # Transcript stats: tokens, cost, model, PR, session ids, and the
         # values views render beside the token columns
         self.stats_sync = StatsSync(session_manager=session_manager, log=log)
@@ -1036,16 +1041,19 @@ class MonitorDaemon:
         if previous:
             self.log.info("State file saved again")
 
-    def _refresh_detection_mode(self) -> None:
+    def _refresh_detection_mode(self, sessions: Optional[list] = None) -> None:
         """Re-read the fleet default detection mode.
 
-        The legacy global detection_mode file, or "auto": hooks once hook
-        files are fresh. Per-agent overrides are resolved inside the
+        The legacy global detection_mode file, or "auto": hooks once a live
+        agent has a hook file. Per-agent overrides are resolved inside the
         dispatcher, on top of this default. Quick ticks re-read it too, so
-        the first hook event of an "auto" fleet is read as one at once.
+        the first hook event of an "auto" fleet is read as one at once;
+        they pass no sessions and use the last tick's.
         """
         from .settings import resolve_detection_mode
-        current_mode = resolve_detection_mode(self.tmux_session)
+        if sessions is not None:
+            self._live_names = [s.name for s in sessions]
+        current_mode = resolve_detection_mode(self.tmux_session, self._live_names)
         self.state.detection_mode = current_mode
         if self.detector.mode != current_mode:
             self.detector.mode = current_mode
@@ -1221,12 +1229,12 @@ class MonitorDaemon:
 
     def _tick_phases(self, now: datetime) -> None:
         """The phases of one tick, in order."""
-        self._refresh_detection_mode()
         # One snapshot per tick: the index answers every parent/child lookup
         # the tick makes, and ``sessions`` is this tmux session's slice of it
         # in file order (what list_sessions() would return, filtered).
         index = self._session_index()
         sessions = [s for s in index.by_id.values() if s.tmux_session == self.tmux_session]
+        self._refresh_detection_mode(sessions)
         if not self._legacy_windows_migrated:
             self._migrate_legacy_window_ids(sessions)
             self._legacy_windows_migrated = True
@@ -1280,9 +1288,30 @@ class MonitorDaemon:
         Ensures active_agent_session_id updates promptly after /clear.
         """
         if self.cadence.session_ids.due(now):
-            for session in sessions:
+            for session in self._unsettled(sessions, self._ids_settled):
                 self.sync_session_id(session)
             self.cadence.session_ids.mark(now)
+
+    def _unsettled(self, sessions: list, settled: set) -> list:
+        """``sessions`` less the finished ones this sync has already read.
+
+        A terminated or done agent's transcript and ids no longer change: it
+        is read once more after it finishes (for its last turn), then never.
+        Records kept past their end (children awaiting oversight, a long
+        grace) would otherwise cost every sync a read each, for ever. One
+        that comes back (revive, restart) is read again.
+        """
+        out = []
+        for session in sessions:
+            if session.status not in ("terminated", "done"):
+                settled.discard(session.id)
+                out.append(session)
+            elif session.id not in settled:
+                settled.add(session.id)
+                out.append(session)
+        live = {s.id for s in sessions}
+        settled.intersection_update(live)
+        return out
 
     def _sync_session_stats(self, sessions: list, now: datetime) -> None:
         """Full transcript stats sync every 60s (heavier I/O).
@@ -1292,7 +1321,7 @@ class MonitorDaemon:
         interval = (STATS_SYNC_UNATTENDED_SECONDS if self.state.interval_mode == "unattended"
                     else STATS_SYNC_ATTENDED_SECONDS)
         if self.cadence.stats.due(now, interval):
-            for session in sessions:
+            for session in self._unsettled(sessions, self._stats_settled):
                 self.sync_agent_stats(session)
             self.cadence.stats.mark(now)
 
@@ -1301,6 +1330,8 @@ class MonitorDaemon:
         if self.cadence.skills.due(now):
             from .bundled_skills import get_available_skills
             for session in sessions:
+                if session.status in ("terminated", "done"):
+                    continue  # its skill list no longer matters
                 available = get_available_skills(session.start_directory)
                 if available != session.available_skills:
                     self._pending.update_session(session.id, available_skills=available)
@@ -1537,13 +1568,17 @@ class MonitorDaemon:
 
             # Log status history to session-specific file — on change, on
             # keepalive, and on first sight; a row stands until the next.
+            # A finished agent gets its one row and no keepalives: it does
+            # not change, and records kept past their end would otherwise
+            # write a row each a minute for ever.
             if status_row_due(
                 self._last_logged.get(session.id),
                 self._last_keepalive.get(session.id),
                 effective_status,
                 activity,
                 now,
-                STATUS_HISTORY_KEEPALIVE_SECONDS,
+                (float("inf") if effective_status in (STATUS_TERMINATED, STATUS_DONE)
+                 else STATUS_HISTORY_KEEPALIVE_SECONDS),
             ):
                 try:
                     log_agent_status(
@@ -1768,7 +1803,8 @@ class MonitorDaemon:
         for stale_id in set(self._last_logged) - current_session_ids:
             del self._last_logged[stale_id]
             self._last_keepalive.pop(stale_id, None)
-        for per_session in (self._time_bases, self.stats_sync.stats_views, self._pane_views):
+        for per_session in (self._time_bases, self.stats_sync.stats_views, self._pane_views,
+                            self.last_state_times, self._last_hook_phases, self._detect_failures):
             for stale_id in set(per_session) - current_session_ids:
                 del per_session[stale_id]
         self._pane_tracker.forget(current_session_ids)

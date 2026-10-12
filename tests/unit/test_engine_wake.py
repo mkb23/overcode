@@ -120,7 +120,7 @@ class TestStickyRecheck:
         from overcode.monitor_daemon import MonitorDaemon
 
         d = _daemon(tmp_path)
-        with patch("overcode.settings.resolve_detection_mode", lambda session: "hooks"):
+        with patch("overcode.settings.resolve_detection_mode", lambda session, *a: "hooks"):
             MonitorDaemon._refresh_detection_mode(d)
         assert d.detector.mode == "hooks"
         assert d.state.to_engine_snapshot().fleet["detection_mode"] == "hooks"
@@ -309,14 +309,35 @@ class TestEngineOwnsTheNumbers:
         d.sync_agent_stats = synced.append
         t0 = datetime(2026, 10, 7, 12, 0, 0)
         d.cadence.stats.last = t0
+        s = SimpleNamespace(id="s", status="running")
         d.state.interval_mode = "attended"
-        d._sync_session_stats(["s"], t0 + timedelta(seconds=5))
-        assert synced == ["s"]
+        d._sync_session_stats([s], t0 + timedelta(seconds=5))
+        assert synced == [s]
         d.state.interval_mode = "unattended"
-        d._sync_session_stats(["s"], t0 + timedelta(seconds=30))
-        assert synced == ["s"]
-        d._sync_session_stats(["s"], t0 + timedelta(seconds=66))
-        assert synced == ["s", "s"]
+        d._sync_session_stats([s], t0 + timedelta(seconds=30))
+        assert synced == [s]
+        d._sync_session_stats([s], t0 + timedelta(seconds=66))
+        assert synced == [s, s]
+
+    def test_a_finished_agent_is_read_once_more_then_never(self, tmp_path):
+        """Records kept past their end must not cost every stats sync a read."""
+        from datetime import timedelta
+
+        d = _daemon(tmp_path)
+        synced = []
+        d.sync_agent_stats = lambda s: synced.append(s.id)
+        d.state.interval_mode = "attended"
+        t = datetime(2026, 10, 7, 12, 0, 0)
+        live = SimpleNamespace(id="live", status="running")
+        gone = SimpleNamespace(id="gone", status="terminated")
+        for i in range(3):
+            t += timedelta(seconds=6)
+            d._sync_session_stats([live, gone], t)
+        assert synced == ["live", "gone", "live", "live"]
+        # Brought back (revive): read again
+        gone.status = "running"
+        d._sync_session_stats([live, gone], t + timedelta(seconds=6))
+        assert synced[-2:] == ["live", "gone"]
 
     def test_git_is_read_once_per_directory_while_attended_only(self, tmp_path, monkeypatch):
         from datetime import timedelta
