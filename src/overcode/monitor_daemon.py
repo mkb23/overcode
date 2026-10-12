@@ -37,7 +37,6 @@ from .backends import (
     session_backend_name,
     session_capabilities,
 )
-from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
@@ -78,6 +77,7 @@ from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
+from .engine_recorders import RecorderStore
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -147,11 +147,6 @@ QUICK_TICK_STATE_SAVE_SECONDS = 1.0
 # this often, so readers that judge liveness by its last_loop_time (is_stale:
 # the expected gap plus 30 s) never see a quiet daemon as dead.
 STATE_FILE_LIVENESS_SECONDS = 10.0
-# Recorder state (engine_state.json) is written when it changes, and at
-# least this often while agents are observed: each recorder's last
-# observation time must stay well inside UNOBSERVED_GAP_SECONDS on disk, or
-# a quick restart would read as a gap and split every agent's episode.
-RECORDER_SEEN_SAVE_SECONDS = 30.0
 
 # The every-60-loops housekeeping (done-agent auto-archive, untracked window
 # count, terminated-session archive) was 120 s of wall clock at the 2 s
@@ -389,13 +384,9 @@ class MonitorDaemon:
         # The stall's age at its last wake-up signal (None: not stalled)
         self._stall_signalled_at: Optional[float] = None
         self._main_thread_id = threading.main_thread().ident
-        # One recorded-colour history per agent (#507), by session id;
-        # restored from the engine state file so a restart neither forgets
-        # nor re-rings (see _load_recorders)
-        self._recorders: Dict[str, EpisodeRecorder] = {}
-        self._recorders_dirty = False
-        # monotonic time of the last engine_state.json write
-        self._recorders_saved_at = 0.0
+        # The recorded colour per agent (#507): episodes, bells, visits,
+        # persisted in engine_state.json beside the state file
+        self.recorder_store = RecorderStore(state_path.parent, log, self._unobserved_gap_seconds)
         # Wake scan: each agent's hook state file signature, by agent name
         self._hook_signatures: Dict[str, Tuple[int, int]] = {}
         # Wake scan: agents to re-detect once the sticky-green window has
@@ -1079,105 +1070,7 @@ class MonitorDaemon:
         if previous:
             self.log.info("State file saved again")
 
-    def _record_episode(self, session, state: SessionDaemonState, effective_status: str,
-                        now: datetime) -> None:
-        """Feed this tick's colour to the agent's recorder; publish, log, ring (#507)."""
-        from .hook_status_detector import augment_with_legacy_heartbeat
-
-        try:
-            detail = self.detector.get_status_detail(session.name)
-        except Exception:
-            detail = None
-        detail = augment_with_legacy_heartbeat(detail, effective_status)
-        ts = now.timestamp()
-        # Lifecycle states hold the record where it was
-        colour = None if effective_status in (STATUS_TERMINATED, STATUS_ASLEEP, STATUS_DONE) \
-            else (detail.color if detail else None)
-        recorder = self._recorders.get(session.id)
-        if recorder is None:
-            recorder = self._recorders[session.id] = EpisodeRecorder(
-                gap_seconds=self._unobserved_gap_seconds())
-            self._recorders_dirty = True
-        observed = recorder.observe(colour, ts)
-        if observed.closed or observed.bell or observed.merged:
-            self._recorders_dirty = True
-        state.live_colour = recorder.live_colour
-        state.live_since = recorder.live_since
-        state.episode_colour = recorder.episode.colour if recorder.episode else None
-        state.episode_start = recorder.episode.start if recorder.episode else None
-        state.status_detail = status_detail_view(detail, ts) if colour else None
-        state.input_needed_since = recorder.input_needed_since
-        state.visited_at = recorder.visited_at
-        for episode in observed.closed:
-            append_episode(self.state_path.parent, session.name, session.id, episode)
-        if observed.bell is not None:
-            self.log.info(f"[{session.name}] bell: {observed.bell.colour} since "
-                          f"{datetime.fromtimestamp(observed.bell.start).isoformat()}")
-            engine = self._engine
-            if engine is not None:
-                engine.ring(session.id, {"colour": observed.bell.colour,
-                                         "start": observed.bell.start, "name": session.name})
-
-    # -- engine: recorder persistence, visits, wake scan -------------------
-
-    def _engine_state_path(self):
-        return self.state_path.parent / "engine_state.json"
-
-    def _load_recorders(self) -> None:
-        """Restore each agent's recorded episode, rung stretch and last visit."""
-        import json
-
-        try:
-            data = json.loads(self._engine_state_path().read_text())
-        except (OSError, ValueError):
-            return
-        recorders = data.get("recorders") if isinstance(data, dict) else None
-        if isinstance(recorders, dict):
-            gap = self._unobserved_gap_seconds()
-            self._recorders = {
-                sid: EpisodeRecorder.from_dict(rec, gap_seconds=gap)
-                for sid, rec in recorders.items()
-            }
-
-    def _save_recorders(self, live_ids=None, force: bool = False) -> None:
-        """Persist recorder state when it changed; forget agents that are gone.
-
-        Each recorder's last observation time changes every tick without
-        marking it dirty; it is written at least every
-        RECORDER_SEEN_SAVE_SECONDS (and at shutdown, ``force``), so a
-        restarted daemon can tell a short restart from a long gap. An
-        empty ``live_ids`` (a session index that came back empty) forgets
-        nobody.
-        """
-        stale = (bool(self._recorders) and time.monotonic()
-                 - self._recorders_saved_at >= RECORDER_SEEN_SAVE_SECONDS)
-        if not (self._recorders_dirty or force or stale):
-            return
-        import json
-
-        if live_ids:
-            for sid in [s for s in self._recorders if s not in live_ids]:
-                del self._recorders[sid]
-        path = self._engine_state_path()
-        tmp = path.with_suffix(".tmp")
-        try:
-            tmp.write_text(json.dumps(
-                {"recorders": {sid: r.to_dict() for sid, r in self._recorders.items()}}))
-            os.replace(tmp, path)
-            self._recorders_dirty = False
-            self._recorders_saved_at = time.monotonic()
-        except OSError as e:
-            self.log.warn(f"engine state not saved: {e}")
-
-    def _apply_visits(self) -> None:
-        engine = self._engine
-        if engine is None:
-            return
-        for sid, ts in engine.take_visits():
-            recorder = self._recorders.get(sid)
-            if recorder is not None:
-                recorder.visit(ts)
-                self._recorders_dirty = True
+    # -- engine: wake scan ----------------------------------------------------
 
     def _hook_changes(self) -> set:
         """Names of agents whose hook state file changed since the last scan.
@@ -1255,7 +1148,7 @@ class MonitorDaemon:
         if not changed:
             return
         try:
-            self._apply_visits()
+            self.recorder_store.apply_visits(self._engine)
             states, _ = self._detect_and_enrich(changed, now, index)
             fresh = {s.session_id: s for s in states}
             merged = [fresh.pop(s.session_id, s) for s in self.state.sessions]
@@ -1268,8 +1161,8 @@ class MonitorDaemon:
             # Hook-driven transitions land here: persist what they recorded
             # (a closed episode, a bell) now, not at the next full tick, so a
             # restart in between neither replays nor re-rings them. Only
-            # when something changed (_save_recorders checks).
-            self._save_recorders()
+            # when something changed (RecorderStore.save checks).
+            self.recorder_store.save()
         finally:
             self._flush_pending_writes()
 
@@ -1462,12 +1355,12 @@ class MonitorDaemon:
         self._dispatch_heartbeats(sessions)
         newly_done: list = []
         try:
-            self._apply_visits()
+            self.recorder_store.apply_visits(self._engine)
             newly_done = self._settle_children(sessions)
             session_states, all_waiting = self._detect_and_enrich(sessions, now, index)
             self._cleanup_stale(sessions)
             self._publish_and_enforce(sessions, session_states, all_waiting, index, now)
-            self._save_recorders({s.id for s in sessions})
+            self.recorder_store.save({s.id for s in sessions})
         finally:
             # One write for the whole tick, even when a phase raised: what
             # was staged before the failure lands, as it did when each
@@ -1753,7 +1646,8 @@ class MonitorDaemon:
             for name, value in self._pane_view(session, pane_content).items():
                 setattr(session_state, name, value)
             self._attach_git_and_burn(session, session_state)
-            self._record_episode(session, session_state, effective_status, now)
+            self.recorder_store.record(session, session_state, effective_status, now,
+                                       detector=self.detector, engine=self._engine)
             session_states.append(session_state)
 
             # Log status history to session-specific file — on change, on
@@ -2088,7 +1982,7 @@ class MonitorDaemon:
         self.state.status = "active"
         self.state.current_interval = check_interval
         self.state.save(self.state_path)
-        self._load_recorders()
+        self.recorder_store.load()
         self._start_engine_socket()
 
         try:
@@ -2106,7 +2000,7 @@ class MonitorDaemon:
             # What the last quick tick recorded (a closed episode, a bell)
             # must not be replayed by the next daemon
             try:
-                self._save_recorders(force=True)
+                self.recorder_store.save(force=True)
             except Exception as e:
                 self.log.warn(f"engine state not saved at shutdown: {e}")
             self.presence.stop()

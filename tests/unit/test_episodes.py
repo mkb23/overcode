@@ -397,8 +397,9 @@ class TestDaemonRecords:
 
         daemon.detector.detail = StatusDetail(colour, [], status) if colour else None
         state = SessionDaemonState(session_id="s1", name="a1")
-        daemon._record_episode(SimpleNamespace(id="s1", name="a1"), state, status,
-                               datetime.fromtimestamp(t))
+        daemon.recorder_store.record(SimpleNamespace(id="s1", name="a1"), state, status,
+                                     datetime.fromtimestamp(t), detector=daemon.detector,
+                                     engine=daemon._engine)
         return state
 
     def test_publishes_live_and_recorded_colour(self, tmp_path):
@@ -429,4 +430,4 @@ class TestDaemonRecords:
         self._tick(daemon, G_, 1000)
         state = self._tick(daemon, None, 1005, "terminated")
         assert state.episode_colour == G_ and state.status_detail is None
-        assert not daemon._recorders["s1"].pending
+        assert not daemon.recorder_store.recorders["s1"].pending

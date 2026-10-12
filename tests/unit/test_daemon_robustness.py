@@ -329,41 +329,41 @@ class TestRecorderSaves:
         daemon = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         rec = EpisodeRecorder()
         rec.observe(STATUS_COLOR_GREEN, 100.0)
-        daemon._recorders = {"s1": rec}
-        daemon._recorders_saved_at = time.monotonic()
+        daemon.recorder_store.recorders = {"s1": rec}
+        daemon.recorder_store.saved_at = time.monotonic()
         return daemon
 
     def _saved(self, daemon):
         import json
 
         try:
-            return json.loads(daemon._engine_state_path().read_text())["recorders"]
+            return json.loads(daemon.recorder_store.path.read_text())["recorders"]
         except FileNotFoundError:
             return None
 
     def test_last_seen_is_written_periodically_without_a_change(self, tmp_path):
-        from overcode.monitor_daemon import RECORDER_SEEN_SAVE_SECONDS
+        from overcode.engine_recorders import RECORDER_SEEN_SAVE_SECONDS
 
         daemon = self._daemon(tmp_path)
-        daemon._save_recorders({"s1"})
+        daemon.recorder_store.save({"s1"})
         assert self._saved(daemon) is None  # nothing changed, recently saved
-        daemon._recorders_saved_at -= RECORDER_SEEN_SAVE_SECONDS
-        daemon._save_recorders({"s1"})
+        daemon.recorder_store.saved_at -= RECORDER_SEEN_SAVE_SECONDS
+        daemon.recorder_store.save({"s1"})
         assert self._saved(daemon)["s1"]["last_seen"] == 100.0
 
     def test_shutdown_saves_whatever_the_state(self, tmp_path):
         daemon = self._daemon(tmp_path)
-        daemon._save_recorders(force=True)
+        daemon.recorder_store.save(force=True)
         assert self._saved(daemon)["s1"]["last_seen"] == 100.0
 
     def test_an_empty_session_index_forgets_nobody(self, tmp_path):
         daemon = self._daemon(tmp_path)
-        daemon._recorders_dirty = True
-        daemon._save_recorders(set())
-        assert "s1" in daemon._recorders and "s1" in self._saved(daemon)
-        daemon._recorders_dirty = True
-        daemon._save_recorders({"s2"})
-        assert daemon._recorders == {}
+        daemon.recorder_store.dirty = True
+        daemon.recorder_store.save(set())
+        assert "s1" in daemon.recorder_store.recorders and "s1" in self._saved(daemon)
+        daemon.recorder_store.dirty = True
+        daemon.recorder_store.save({"s2"})
+        assert daemon.recorder_store.recorders == {}
 
 
 # ── time totals across a gap ─────────────────────────────────────────────

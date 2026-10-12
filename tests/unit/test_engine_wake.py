@@ -250,10 +250,10 @@ class TestQuickTick:
 class TestVisitsAndPersistence:
     def test_a_visit_from_a_view_reaches_the_recorder(self, tmp_path):
         d = _daemon(tmp_path)
-        d._recorders["s1"] = EpisodeRecorder()
+        d.recorder_store.recorders["s1"] = EpisodeRecorder()
         d._engine = SimpleNamespace(take_visits=lambda: [("s1", 500.0), ("gone", 1.0)])
-        d._apply_visits()
-        assert d._recorders["s1"].visited_at == 500.0 and d._recorders_dirty
+        d.recorder_store.apply_visits(d._engine)
+        assert d.recorder_store.recorders["s1"].visited_at == 500.0 and d.recorder_store.dirty
 
     def test_recorders_survive_a_restart_without_re_ringing(self, tmp_path):
         d = _daemon(tmp_path)
@@ -262,13 +262,13 @@ class TestVisitsAndPersistence:
             last = rec.observe(c, t)
         assert last.bell is not None  # rang before the restart
         rec.visit(40)
-        d._recorders = {"s1": rec}
-        d._recorders_dirty = True
-        d._save_recorders({"s1"})
+        d.recorder_store.recorders = {"s1": rec}
+        d.recorder_store.dirty = True
+        d.recorder_store.save({"s1"})
 
         d2 = _daemon(tmp_path)
-        d2._load_recorders()
-        again = d2._recorders["s1"]
+        d2.recorder_store.load()
+        again = d2.recorder_store.recorders["s1"]
         assert again.episode.colour == R_ and again.episode.start == 10
         assert again.visited_at == 40
         # Still the same stretch after the restart: no second bell
@@ -279,23 +279,23 @@ class TestVisitsAndPersistence:
 
     def test_gone_agents_are_dropped_and_clean_state_is_not_rewritten(self, tmp_path):
         d = _daemon(tmp_path)
-        d._recorders = {"s1": EpisodeRecorder(), "old": EpisodeRecorder()}
-        d._recorders_dirty = True
-        d._save_recorders({"s1"})
-        assert set(d._recorders) == {"s1"}
-        path = d._engine_state_path()
+        d.recorder_store.recorders = {"s1": EpisodeRecorder(), "old": EpisodeRecorder()}
+        d.recorder_store.dirty = True
+        d.recorder_store.save({"s1"})
+        assert set(d.recorder_store.recorders) == {"s1"}
+        path = d.recorder_store.path
         mtime = path.stat().st_mtime_ns
-        d._save_recorders({"s1"})
+        d.recorder_store.save({"s1"})
         assert path.stat().st_mtime_ns == mtime
 
     def test_a_corrupt_engine_state_starts_fresh(self, tmp_path):
         d = _daemon(tmp_path)
-        d._engine_state_path().write_text("{not json")
-        d._load_recorders()
-        assert d._recorders == {}
-        d._engine_state_path().write_text('{"recorders": {"s1": {"episode": {"colour": "mauve"}}}}')
-        d._load_recorders()
-        assert d._recorders["s1"].episode is None
+        d.recorder_store.path.write_text("{not json")
+        d.recorder_store.load()
+        assert d.recorder_store.recorders == {}
+        d.recorder_store.path.write_text('{"recorders": {"s1": {"episode": {"colour": "mauve"}}}}')
+        d.recorder_store.load()
+        assert d.recorder_store.recorders["s1"].episode is None
 
 
 class TestEngineOwnsTheNumbers:

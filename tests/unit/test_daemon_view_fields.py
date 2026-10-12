@@ -203,7 +203,7 @@ class TestAttentionFields:
 
     def test_a_red_stretch_and_the_last_visit_are_published(self, tmp_path):
         d = self._daemon(tmp_path)
-        rec = d._recorders["s1"] = EpisodeRecorder(visited_at=50.0)
+        rec = d.recorder_store.recorders["s1"] = EpisodeRecorder(visited_at=50.0)
         rec.observe(G_, 100.0)
         rec.observe(R_, 200.0)
         rec.observe(R_, 230.0)  # confirmed after G
@@ -212,7 +212,7 @@ class TestAttentionFields:
         d.detector = MagicMock()
         d.detector.get_status_detail.return_value = detail
         session = SimpleNamespace(id="s1", name="a")
-        d._record_episode(session, state, "waiting_user", datetime.fromtimestamp(240.0))
+        d.recorder_store.record(session, state, "waiting_user", datetime.fromtimestamp(240.0), detector=d.detector)
         assert state.input_needed_since == 200.0
         assert state.visited_at == 50.0
 
@@ -222,8 +222,8 @@ class TestAttentionFields:
         d.detector = MagicMock()
         d.detector.get_status_detail.return_value = SimpleNamespace(
             color=G_, badges=[], legacy_status="running")
-        d._record_episode(SimpleNamespace(id="s1", name="a"), state, "running",
-                          datetime.fromtimestamp(100.0))
+        d.recorder_store.record(SimpleNamespace(id="s1", name="a"), state, "running",
+                                datetime.fromtimestamp(100.0), detector=d.detector)
         assert state.input_needed_since is None
 
 
