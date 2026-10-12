@@ -966,6 +966,13 @@ class TestVerdicts:
             {"kind": "cron", "cron_id": "c1", "label": "@hourly"}]})
         assert d.color == STATUS_COLOR_YELLOW
         assert d.badges[0].kind == "cron"
+        # Only scheduled: nothing runs, so it is still waiting (not green time)
+        assert d.legacy_status == STATUS_WAITING_USER
+
+    def test_stop_with_a_running_monitor_is_busy_sleeping(self):
+        d = _detail("Stop", state={"pending_obligations": [
+            {"kind": "cron", "cron_id": "c1"}, {"kind": "monitor", "tool_use_id": "m"}]})
+        assert d.color == STATUS_COLOR_YELLOW
         assert d.legacy_status == STATUS_BUSY_SLEEPING
 
     def test_obligations_stack_by_kind(self):
@@ -1827,7 +1834,7 @@ class TestOverdueWakeup:
         # Still within its slack: armed (yellow)
         detail = decide(TickContext(state, now=1000.0))[0].detail()
         assert detail.color == STATUS_COLOR_YELLOW
-        assert detail.legacy_status == STATUS_BUSY_SLEEPING
+        assert detail.legacy_status == STATUS_WAITING_USER
 
     def test_a_wakeup_long_past_its_time_is_not_armed(self):
         from overcode.hook_status_detector import _WAKEUP_OVERDUE_SECONDS, _live_obligations

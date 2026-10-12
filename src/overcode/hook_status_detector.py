@@ -401,6 +401,10 @@ class Verdict:
     ``armable``: the turn is over, so background work (monitors, shells,
     subagents, obligations) can still wake it and lift it to yellow.
     ``final``: no later rule may change it.
+    ``rests_as``: the legacy status when it differs from the colour's, for
+    a turn that is over and only scheduled to wake (a cron, a wakeup): it
+    is yellow, but nothing is working, so it stays waiting (and its time
+    is not green time), as before the rule table.
     """
 
     color: Optional[str]
@@ -408,6 +412,7 @@ class Verdict:
     activity: str
     armable: bool = False
     final: bool = False
+    rests_as: Optional[str] = None
 
     @property
     def lead(self) -> Optional[str]:
@@ -415,7 +420,7 @@ class Verdict:
 
     @property
     def legacy_status(self) -> str:
-        return legacy_status_for(self.color, self.lead)
+        return self.rests_as or legacy_status_for(self.color, self.lead)
 
     def detail(self) -> Optional[StatusDetail]:
         if self.color is None:
@@ -565,6 +570,10 @@ def rule_sticky_green(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
                    v.activity)
 
 
+# Obligations that wake an agent later without anything running meanwhile
+_SCHEDULED_KINDS = frozenset({"schedule_wakeup", "cron", "heartbeat"})
+
+
 def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
     """A turn that is over, with something that will wake it: yellow (#441, #507).
 
@@ -605,7 +614,12 @@ def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
         activity = f"Waiting on {_plural(ctx.shells, 'background shell')}"
     else:
         activity = "Armed: " + ", ".join(_ARMED_WORDS.get(b.kind, b.kind) for b in badges)
-    return Verdict(STATUS_COLOR_YELLOW, badges, activity)
+    # Only scheduled to wake (no monitor, shell, subagent or background
+    # task running): the turn is still over, so the status stays the one
+    # it rests in (waiting, or oversight for a child); only the colour arms
+    working = any(b.kind not in _SCHEDULED_KINDS for b in badges)
+    return Verdict(STATUS_COLOR_YELLOW, badges, activity,
+                   rests_as=None if working else v.legacy_status)
 
 
 def rule_overdue(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
