@@ -474,6 +474,49 @@ class TestPaneForWindow:
         assert pane_for_window(self._panes(), "missing") is None
 
 
+class TestAttachBare:
+    """A bare attach: a private linked session, chrome off, then exec tmux."""
+
+    def _attach(self, socket_path=None, new_session_rc=0):
+        from overcode.tmux_utils import attach_bare
+
+        ran = []
+
+        def run(cmd, **kwargs):
+            ran.append(cmd)
+            return subprocess.CompletedProcess(
+                cmd, new_session_rc if "new-session" in cmd else 0, b"", b"")
+
+        with patch("overcode.tmux_utils.subprocess.run", run), \
+                patch("overcode.tmux_utils.os.execlp") as execlp:
+            attach_bare("agents", "my-window", socket_path=socket_path)
+        return ran, execlp
+
+    def test_builds_the_linked_session_then_attaches(self):
+        ran, execlp = self._attach()
+        bare = "bare-agents-my-window"
+        assert ran == [
+            ["tmux", "kill-session", "-t", bare],  # a stale one from last time
+            ["tmux", "new-session", "-d", "-s", bare, "-t", "agents"],
+            ["tmux", "set", "-t", bare, "status", "off"],
+            ["tmux", "set", "-t", bare, "mouse", "off"],
+            # destroy-unattached on a detached session would kill it at once
+            ["tmux", "set-hook", "-t", bare, "client-attached", "set destroy-unattached on"],
+            ["tmux", "select-window", "-t", f"{bare}:=my-window"],
+        ]
+        execlp.assert_called_once_with("tmux", "tmux", "attach-session", "-t", bare)
+
+    def test_uses_the_given_socket(self):
+        ran, execlp = self._attach(socket_path="oc-sock")
+        assert all(cmd[:3] == ["tmux", "-L", "oc-sock"] for cmd in ran)
+        assert execlp.call_args.args[:4] == ("tmux", "tmux", "-L", "oc-sock")
+
+    def test_no_attach_when_the_linked_session_cannot_be_made(self):
+        ran, execlp = self._attach(new_session_rc=1)
+        assert len(ran) == 2
+        execlp.assert_not_called()
+
+
 class _RecordingPane:
     """A pane that records what it is sent, into a shared timeline."""
 

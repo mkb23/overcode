@@ -1,405 +1,197 @@
-"""
-Unit tests for TmuxManager.
+"""TmuxManager: one tmux session's facade over a tmux client.
 
-These tests use MockTmux to test all tmux operations without
-requiring a real tmux installation.
+The behaviour is tested against ``MockTmux`` (what the session ends up
+holding), not against libtmux call shapes; RealTmux's own libtmux use is
+tested in test_implementations, and its timeouts in test_daemon_robustness.
 """
+
+from unittest.mock import patch
 
 import pytest
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
-from overcode.tmux_manager import TmuxManager
+from overcode.implementations import TMUX_COMMAND_TIMEOUT_SECONDS, RealTmux
+from overcode.protocols import TmuxTimeoutError
+from overcode.tmux_manager import TmuxManager, ssh_proxy_command
 from tests.tmux_doubles import MockTmux
 
 
-class TestTmuxManagerSession:
-    """Test session management operations"""
+@pytest.fixture
+def tmux():
+    return MockTmux()
 
-    def test_session_exists_returns_false_when_no_session(self):
-        """Returns False when session doesn't exist"""
-        mock_tmux = MockTmux()
-        manager = TmuxManager("agents", tmux=mock_tmux)
 
+@pytest.fixture
+def manager(tmux):
+    return TmuxManager("agents", tmux=tmux)
+
+
+class TestDefaultClient:
+    def test_is_a_bounded_uncached_real_tmux(self):
+        client = TmuxManager("agents", socket="oc-sock").client
+        assert isinstance(client, RealTmux)
+        assert client._command_timeout == TMUX_COMMAND_TIMEOUT_SECONDS
+        # it creates and kills windows, so it never reuses a stale object
+        assert client._cache_ttl == 0
+        assert client._socket_name == "oc-sock"
+
+    def test_socket_defaults_to_the_environment(self, monkeypatch):
+        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "env-socket")
+        manager = TmuxManager("agents")
+        assert manager.socket == "env-socket"
+        assert manager.client._socket_name == "env-socket"
+
+
+class TestSession:
+    def test_exists_only_once_created(self, manager):
         assert manager.session_exists() is False
-
-    def test_session_exists_returns_true_when_session_exists(self):
-        """Returns True when session exists"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
+        assert manager.ensure_session() is True
         assert manager.session_exists() is True
 
-    def test_ensure_session_creates_session(self):
-        """ensure_session creates session if it doesn't exist"""
-        mock_tmux = MockTmux()
-        manager = TmuxManager("agents", tmux=mock_tmux)
+    def test_ensure_session_keeps_an_existing_session(self, manager, tmux):
+        tmux.new_session("agents")
+        tmux.set_pane_content("agents", "w", "hello")
+        assert manager.ensure_session() is True
+        assert tmux.capture_pane("agents", "w") == "hello"
+
+    def test_kill_session(self, manager, tmux):
+        manager.ensure_session()
+        assert manager.kill_session() is True
+        assert not tmux.has_session("agents")
+        assert manager.kill_session() is False
+
+    def test_managers_of_different_sessions_do_not_mix(self, tmux):
+        one = TmuxManager("one", tmux=tmux)
+        two = TmuxManager("two", tmux=tmux)
+        one.create_window("w1")
+        two.create_window("w2")
+        assert [w["name"] for w in one.list_windows()] == ["w1"]
+        assert [w["name"] for w in two.list_windows()] == ["w2"]
+
+
+class TestWindows:
+    def test_create_window_makes_the_session_and_a_ready_shell(self, manager, tmux):
+        assert manager.create_window("agent-1", start_directory="/tmp/x") == "agent-1"
+        assert tmux.has_session("agents")
+        created = tmux.windows_created[-1]
+        assert created["cwd"] == "/tmp/x"
+        # the launch command is typed next: the shell must be at its prompt
+        assert created["wait_for_prompt"] is True
+        assert created["command"] is None
+
+    def test_list_windows_in_creation_order(self, manager):
+        for name in ("a", "b", "c"):
+            manager.create_window(name)
+        assert [(w["index"], w["name"]) for w in manager.list_windows()] == [
+            (0, "a"), (1, "b"), (2, "c")]
+
+    def test_no_session_lists_no_windows(self, manager):
+        assert manager.list_windows() == []
+        assert manager.window_exists("anything") is False
+
+    def test_window_exists_by_name_or_legacy_index(self, manager):
+        manager.create_window("shell")
+        manager.create_window("agent-1")
+        assert manager.window_exists("agent-1") is True
+        assert manager.window_exists("agent") is False  # never a prefix match
+        # pre-name-based sessions stored the window index as a digit string
+        assert manager.window_exists("1") is True
+        assert manager.window_exists("7") is False
+
+    def test_kill_window(self, manager):
+        manager.create_window("doomed")
+        assert manager.kill_window("doomed") is True
+        assert manager.window_exists("doomed") is False
+        assert manager.kill_window("doomed") is False
+
+    def test_kill_windows_by_predicate(self, manager):
+        for name in ("ssh:a:x", "agent-1", "ssh:b:y"):
+            manager.create_window(name)
+        killed = manager.kill_windows(lambda n: n.startswith("ssh:"))
+        assert sorted(killed) == ["ssh:a:x", "ssh:b:y"]
+        assert [w["name"] for w in manager.list_windows()] == ["agent-1"]
+
+    def test_rename_window_keeps_its_content(self, manager, tmux):
+        manager.create_window("old")
+        tmux.set_pane_content("agents", "old", "$ claude")
+        assert manager.rename_window("old", "new") is True
+        assert manager.capture_pane("new") == "$ claude"
+        assert manager.rename_window("gone", "x") is False
+
+    def test_capture_pane_last_lines(self, manager, tmux):
+        tmux.set_pane_content("agents", "w", "1\n2\n3")
+        assert manager.capture_pane("w", lines=2) == "2\n3"
+        assert manager.capture_pane("missing") is None
+
+
+class TestSshProxyWindow:
+    def test_creates_a_tagged_window_running_the_proxy(self, manager, tmux):
+        name = manager.create_ssh_proxy_window(
+            "ssh:desk:agent", "me@desk", "agents", "agent")
+
+        assert name == "ssh:desk:agent"
+        assert tmux.has_session("agents")
+        created = tmux.windows_created[-1]
+        # tagged so scrollback keys go to the remote tmux
+        assert created["options"] == {"@is_ssh_proxy": "on"}
+        assert created["command"] == [ssh_proxy_command("me@desk", "agents", "agent")]
+        assert created["wait_for_prompt"] is False
+
+    def test_proxy_attaches_a_private_linked_session(self):
+        cmd = ssh_proxy_command("me@desk", "agents", "agent")
+        assert cmd.startswith("ssh -t ")
+        assert "me@desk" in cmd
+        assert "grep -m1 ^agent" in cmd
+        assert "tmux new-session -d -s $LS -t agents" in cmd
+        assert 'client-detached "kill-session -t $LS"' in cmd
+        assert cmd.endswith("tmux attach-session -t $LS'")
+
+    def test_target_is_shell_quoted(self):
+        assert "'me@desk; rm -rf /'" in ssh_proxy_command("me@desk; rm -rf /", "agents", "a")
+
 
-        result = manager.ensure_session()
-
-        assert result is True
-        assert mock_tmux.has_session("agents")
-
-    def test_ensure_session_returns_true_if_exists(self):
-        """ensure_session returns True if session already exists"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        result = manager.ensure_session()
-
-        assert result is True
-
-    def test_kill_session(self):
-        """Can kill a session"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        result = manager.kill_session()
-
-        assert result is True
-        assert not mock_tmux.has_session("agents")
-
-
-class TestTmuxManagerWindows:
-    """Test window management operations"""
-
-    def test_create_window(self):
-        """Can create a new window"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        window_name = manager.create_window("my-window")
-
-        assert window_name is not None
-        assert window_name == "my-window"
-
-    def test_create_window_with_directory(self):
-        """Can create window with start directory"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        window_idx = manager.create_window("my-window", start_directory="/tmp")
-
-        assert window_idx is not None
-
-    def test_create_multiple_windows(self):
-        """Can create multiple windows with unique indices"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        idx1 = manager.create_window("window-1")
-        idx2 = manager.create_window("window-2")
-        idx3 = manager.create_window("window-3")
-
-        assert idx1 != idx2 != idx3
-        assert len({idx1, idx2, idx3}) == 3
-
-    def test_window_exists(self):
-        """Can check if window exists"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        window_idx = manager.create_window("my-window")
-
-        assert manager.window_exists(window_idx) is True
-        assert manager.window_exists("nonexistent") is False
-
-    def test_list_windows(self):
-        """Can list all windows"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        manager.create_window("window-1")
-        manager.create_window("window-2")
-
-        windows = manager.list_windows()
-
-        assert len(windows) >= 2
-        names = [w['name'] for w in windows]
-        assert "window-1" in names
-        assert "window-2" in names
-
-    def test_kill_window(self):
-        """Can kill a specific window"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        window_idx = manager.create_window("to-kill")
-        assert manager.window_exists(window_idx)
-
-        result = manager.kill_window(window_idx)
-
-        assert result is True
-        assert manager.window_exists(window_idx) is False
-
-    def test_list_windows_empty_session(self):
-        """list_windows returns empty list for non-existent session"""
-        mock_tmux = MockTmux()
-        manager = TmuxManager("nonexistent", tmux=mock_tmux)
-
-        windows = manager.list_windows()
-
-        assert windows == []
-
-
-class TestTmuxManagerKeys:
-    """Test key sending operations"""
-
-    def test_send_keys(self):
-        """Can send keys to a window"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-        window_idx = manager.create_window("my-window")
-
-        result = manager.send_keys(window_idx, "echo hello")
-
-        assert result is True
-        # Check that keys were recorded
-        assert len(mock_tmux.sent_keys) == 1
-        assert mock_tmux.sent_keys[0] == ("agents", window_idx, "echo hello", True)
-
-    def test_send_keys_without_enter(self):
-        """Can send keys without pressing Enter"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-        window_idx = manager.create_window("my-window")
-
-        result = manager.send_keys(window_idx, "partial", enter=False)
-
-        assert result is True
-        assert mock_tmux.sent_keys[0] == ("agents", window_idx, "partial", False)
-
-    def test_send_multiple_keys(self):
-        """Can send multiple key sequences"""
-        mock_tmux = MockTmux()
-        mock_tmux.new_session("agents")
-        manager = TmuxManager("agents", tmux=mock_tmux)
-        window_idx = manager.create_window("my-window")
-
-        manager.send_keys(window_idx, "line 1")
-        manager.send_keys(window_idx, "line 2")
-        manager.send_keys(window_idx, "line 3")
-
-        assert len(mock_tmux.sent_keys) == 3
-
-
-class TestTmuxManagerEdgeCases:
-    """Test edge cases and error handling"""
-
-    def test_create_window_without_session(self):
-        """Creating window auto-creates session"""
-        mock_tmux = MockTmux()
-        manager = TmuxManager("agents", tmux=mock_tmux)
-
-        # Session doesn't exist yet
-        assert not mock_tmux.has_session("agents")
-
-        window_idx = manager.create_window("my-window")
-
-        # Session should be created
-        assert mock_tmux.has_session("agents")
-        assert window_idx is not None
-
-    def test_different_session_names(self):
-        """Can manage multiple different sessions"""
-        mock_tmux = MockTmux()
-
-        manager1 = TmuxManager("session1", tmux=mock_tmux)
-        manager2 = TmuxManager("session2", tmux=mock_tmux)
-
-        manager1.ensure_session()
-        manager2.ensure_session()
-
-        assert mock_tmux.has_session("session1")
-        assert mock_tmux.has_session("session2")
-
-        # Windows are session-specific
-        w1 = manager1.create_window("win1")
-        w2 = manager2.create_window("win2")
-
-        assert manager1.window_exists(w1)
-        assert manager2.window_exists(w2)
-
-
-from unittest.mock import MagicMock, patch, call  # noqa: E402
-
-
-class TestTmuxManagerAttachSession:
-    """Test attach_session (mock os.execvp)."""
-
-    @pytest.fixture(autouse=True)
-    def _default_socket(self, monkeypatch):
-        # These pin the argv for the default server; the run's private socket
-        # (tests/conftest.py) would add -L. The tmux calls are all mocked.
-        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
-
-    @patch("overcode.tmux_manager.os.execvp")
-    def test_attach_session_default(self, mock_execvp):
-        """attach_session calls os.execvp with session name."""
-        manager = TmuxManager("agents")
-
-        manager.attach_session()
-
-        mock_execvp.assert_called_once_with(
-            "tmux", ["tmux", "attach-session", "-t", "agents"]
-        )
-
-    @patch("overcode.tmux_manager.os.execvp")
-    def test_attach_session_with_window(self, mock_execvp):
-        """attach_session includes window in target when specified."""
-        manager = TmuxManager("agents")
-
-        manager.attach_session(window="my-window")
-
-        mock_execvp.assert_called_once_with(
-            "tmux", ["tmux", "attach-session", "-t", "agents:=my-window"]
-        )
-
-    @patch("overcode.tmux_manager.os.execvp")
-    def test_attach_session_respects_socket_env(self, mock_execvp, monkeypatch):
-        """attach_session adds -L when OVERCODE_TMUX_SOCKET is set."""
-        monkeypatch.setenv("OVERCODE_TMUX_SOCKET", "mysock")
-        manager = TmuxManager("agents")
-
-        manager.attach_session()
-
-        mock_execvp.assert_called_once_with(
-            "tmux", ["tmux", "-L", "mysock", "attach-session", "-t", "agents"]
-        )
-
-    @patch("overcode.tmux_utils.attach_bare")
-    def test_attach_session_bare_delegates(self, mock_attach_bare):
-        """attach_session with bare=True delegates to attach_bare."""
-        manager = TmuxManager("agents")
-
-        manager.attach_session(window="my-window", bare=True)
-
-        mock_attach_bare.assert_called_once_with("agents", "my-window", socket_path=None)
-
-
-class TestTmuxManagerAttachBare:
-    """Test _attach_bare (mock subprocess.run and os.execlp)."""
-
-    @pytest.fixture(autouse=True)
-    def _default_socket(self, monkeypatch):
-        # These pin the argv for the default server; the run's private socket
-        # (tests/conftest.py) would add -L. The tmux calls are all mocked.
-        monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
-
-    @patch("overcode.tmux_manager.os.execlp")
-    @patch("subprocess.run")
-    def test_attach_bare_success(self, mock_run, mock_execlp):
-        """_attach_bare creates linked session with correct config and attaches."""
-        manager = TmuxManager("agents")
-        # All subprocess.run calls succeed
-        mock_run.return_value = MagicMock(returncode=0)
-
-        manager.attach_session(window="my-window", bare=True)
-
-        # Verify the subprocess.run calls
-        calls = mock_run.call_args_list
-
-        # 1. Kill stale bare session
-        assert calls[0] == call(
-            ["tmux", "kill-session", "-t", "bare-agents-my-window"],
-            capture_output=True,
-        )
-
-        # 2. Create linked session
-        assert calls[1] == call(
-            ["tmux", "new-session", "-d", "-s", "bare-agents-my-window", "-t", "agents"],
-            capture_output=True,
-        )
-
-        # 3. Configure: status off
-        assert calls[2] == call(
-            ["tmux", "set", "-t", "bare-agents-my-window", "status", "off"],
-            capture_output=True,
-        )
-
-        # 4. Configure: mouse off
-        assert calls[3] == call(
-            ["tmux", "set", "-t", "bare-agents-my-window", "mouse", "off"],
-            capture_output=True,
-        )
-
-        # 5. Configure: destroy-unattached hook
-        assert calls[4] == call(
-            ["tmux", "set-hook", "-t", "bare-agents-my-window", "client-attached",
-             "set destroy-unattached on"],
-            capture_output=True,
-        )
-
-        # 6. Select window
-        assert calls[5] == call(
-            ["tmux", "select-window", "-t", "bare-agents-my-window:=my-window"],
-            capture_output=True,
-        )
-
-        # 7. Final attach via execlp
-        mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "bare-agents-my-window"
-        )
-
-    @patch("overcode.tmux_manager.os.execlp")
-    @patch("subprocess.run")
-    def test_attach_bare_fails_to_create_linked_session(self, mock_run, mock_execlp):
-        """_attach_bare returns early when linked session creation fails."""
-        manager = TmuxManager("agents")
-
-        def run_side_effect(cmd, **kwargs):
-            result = MagicMock()
-            if "new-session" in cmd:
-                result.returncode = 1
-                result.stderr = b"session creation failed"
-            else:
-                result.returncode = 0
-            return result
-
-        mock_run.side_effect = run_side_effect
-
-        manager.attach_session(window="my-window", bare=True)
-
-        # Should have called kill-session and new-session, then stopped
-        assert mock_run.call_count == 2
-        # Should NOT have called execlp
-        mock_execlp.assert_not_called()
-
-    @patch("overcode.tmux_manager.os.execlp")
-    @patch("subprocess.run")
-    def test_attach_bare_session_name_includes_window(self, mock_run, mock_execlp):
-        """_attach_bare constructs session name as bare-{session}-{window}."""
-        manager = TmuxManager("my-session")
-        mock_run.return_value = MagicMock(returncode=0)
-
-        manager.attach_session(window="win-7", bare=True)
-
-        # Check the bare session name in kill-session call
-        first_call_cmd = mock_run.call_args_list[0][0][0]
-        assert first_call_cmd == ["tmux", "kill-session", "-t", "bare-my-session-win-7"]
-
-        # Check attach target
-        mock_execlp.assert_called_once_with(
-            "tmux", "tmux", "attach-session", "-t", "bare-my-session-win-7"
-        )
-
-
-# =============================================================================
-# Run tests directly
-# =============================================================================
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+class TestKeys:
+    def test_send_keys_to_the_bound_session(self, manager, tmux):
+        manager.create_window("w")
+        assert manager.send_keys("w", "echo hello") is True
+        assert manager.send_keys("w", "partial", enter=False) is True
+        assert tmux.sent_keys == [
+            ("agents", "w", "echo hello", True),
+            ("agents", "w", "partial", False),
+        ]
+
+
+class TestUnresponsiveServer:
+    """A wedged server is never read as "gone"."""
+
+    def test_reads_raise_instead_of_answering_gone(self, manager, tmux):
+        manager.create_window("w")
+        tmux.unresponsive = True
+        with pytest.raises(TmuxTimeoutError):
+            manager.window_exists("w")
+        with pytest.raises(TmuxTimeoutError):
+            manager.session_exists()
+        with pytest.raises(TmuxTimeoutError):
+            manager.capture_pane("w")
+        with pytest.raises(TmuxTimeoutError):
+            manager.get_pane_pid("w")
+
+
+class TestAttach:
+    @pytest.mark.parametrize("window, socket, argv", [
+        (None, None, ["tmux", "attach-session", "-t", "agents"]),
+        ("my-window", None, ["tmux", "attach-session", "-t", "agents:=my-window"]),
+        (None, "mysock", ["tmux", "-L", "mysock", "attach-session", "-t", "agents"]),
+    ])
+    def test_attach_replaces_this_process_with_tmux(self, monkeypatch, window, socket, argv):
+        if socket:
+            monkeypatch.setenv("OVERCODE_TMUX_SOCKET", socket)
+        else:
+            monkeypatch.delenv("OVERCODE_TMUX_SOCKET", raising=False)
+        with patch("overcode.implementations.os.execvp") as execvp:
+            TmuxManager("agents").attach_session(window=window)
+        execvp.assert_called_once_with("tmux", argv)
+
+    def test_bare_attach_uses_the_managers_socket(self):
+        with patch("overcode.tmux_utils.attach_bare") as attach_bare:
+            TmuxManager("agents", socket="oc-sock").attach_session(window="w", bare=True)
+        attach_bare.assert_called_once_with("agents", "w", socket_path="oc-sock")
