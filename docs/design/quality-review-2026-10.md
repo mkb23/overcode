@@ -275,6 +275,7 @@ move-only commits.
 | 14 values that don't hold still | done: absolute badge `eta_at`, subtree cost over the fleet | (this batch) |
 | 15 snapshot applied twice | done | (this batch) |
 | 18 build and CI traps | done: CI gates, `test-unit`, safe `clean-sessions`, unit timeouts, `tui-eye` | 3d9d7a5, baa7e4b |
+| 25 one status rule table | done: `TickContext` → named `RULES` → `Verdict`; legacy enum from one table; phase names the rule; one `now` per tick (part of 34) | (this branch) |
 
 Found while doing these: libtmux 0.55+ broke every tmux call on a fresh
 install (e31452a); ruff's defaults changed under CI (4d75f85); the scale

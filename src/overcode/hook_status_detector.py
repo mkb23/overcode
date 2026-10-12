@@ -6,10 +6,16 @@ PreToolUse, PostToolUse, Stop, PermissionRequest, SessionEnd) to determine
 agent status without tmux pane scraping.
 
 Design:
-- Hook state is the sole authority for status. No polling fallback.
+- Hook state is the authority for status. No polling fallback.
 - Running-state hooks (UserPromptSubmit, PreToolUse, PostToolUse) are
-  trusted indefinitely — Claude will send Stop or SessionEnd when done.
-- Pane content is read only for activity enrichment, never for status.
+  trusted until the pane proves otherwise (an interrupt marker, a CLI idle
+  for a while, a dead shell).
+- One tick is one ``TickContext`` (hook state, pane, one ``now``, the
+  counts) run through an ordered table of named rules (``RULES``). Each
+  rule may replace the ``Verdict`` (colour, badges, activity); the last one
+  that did names the phase. The legacy status enum is derived from the
+  verdict through one table (``legacy_status_for``), so colour and enum
+  cannot disagree.
 """
 
 import json
@@ -17,8 +23,9 @@ import re
 import os
 import subprocess
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .status_constants import (
     DEFAULT_CAPTURE_LINES,
@@ -37,7 +44,6 @@ from .status_constants import (
     STATUS_COLOR_RED,
     StatusBadge,
     StatusDetail,
-    color_priority,
 )
 from .status_patterns import (
     extract_active_monitor_count,
@@ -57,9 +63,9 @@ if TYPE_CHECKING:
     from .session_manager import Session
 
 
-def _pane_shows_interrupt_prompt(
-    pane_content: str, patterns: "StatusPatterns" = None
-) -> bool:
+# Pane helpers take the pane already stripped of ANSI codes (once per tick)
+
+def _pane_shows_interrupt_prompt(clean: str, patterns: "StatusPatterns" = None) -> bool:
     """Return True if the pane shows the escape-interrupt prompt (#431).
 
     The markers live on the backend's StatusPatterns
@@ -67,27 +73,26 @@ def _pane_shows_interrupt_prompt(
     user hits Escape mid-turn, and no Stop hook fires for it, so status
     would otherwise stay stuck as RUNNING.
     """
-    if not pane_content:
+    if not clean:
         return False
     if patterns is None:
         patterns = get_patterns()
-    clean = strip_ansi(pane_content)
     # Only look at the tail — older interrupt prompts may linger in scrollback
     tail = "\n".join(clean.splitlines()[-40:])
     return patterns.shows_interrupt_prompt(tail)
 
 
-def _interrupt_marker_count(pane_content: str, patterns: "StatusPatterns" = None) -> int:
+def _interrupt_marker_count(clean: str, patterns: "StatusPatterns" = None) -> int:
     """Interrupt markers in the pane's tail: one more than before is a new Esc."""
-    if not pane_content:
+    if not clean:
         return 0
     if patterns is None:
         patterns = get_patterns()
-    tail = "\n".join(strip_ansi(pane_content).splitlines()[-40:])
+    tail = "\n".join(clean.splitlines()[-40:])
     return sum(tail.count(marker) for marker in patterns.interrupt_prompt_markers)
 
 
-def _pane_shows_dead_shell(pane_content: str, patterns: "StatusPatterns" = None) -> bool:
+def _pane_shows_dead_shell(clean: str, patterns: "StatusPatterns" = None) -> bool:
     """True when the agent process is gone and the pane sits at a bare shell prompt (#474).
 
     Claude Code fires SessionEnd on exit, but opencode emits nothing at all
@@ -97,11 +102,10 @@ def _pane_shows_dead_shell(pane_content: str, patterns: "StatusPatterns" = None)
     pane; only a dead one leaves the shell prompt as the last line with no
     input-hint marker anywhere near it.
     """
-    if not pane_content:
+    if not clean:
         return False
     if patterns is None:
         patterns = get_patterns()
-    clean = strip_ansi(pane_content)
     lines = [line.strip() for line in clean.splitlines() if line.strip()]
     if not lines or not is_shell_prompt(lines[-1]):
         return False
@@ -114,8 +118,7 @@ def _pane_shows_dead_shell(pane_content: str, patterns: "StatusPatterns" = None)
 _DEAD_SHELL_TAIL_LINES = 12
 
 
-# Events that mean Claude is in the middle of an active turn — drives the
-# GREEN "acting" bucket in compute_status_detail.
+# Events that mean Claude is in the middle of an active turn: GREEN
 _ACTING_EVENTS = frozenset({
     "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
 })
@@ -126,14 +129,16 @@ _QUESTION_TOOLS = frozenset({"AskUserQuestion"})
 _PLAN_TOOLS = frozenset({"ExitPlanMode"})
 
 
-# Hook event → status mapping
+# Hook event → status mapping. The rules below decide the status; this map
+# only says which events are RUNNING-class for the event log (sticky green),
+# and documents what each event means on its own.
 _HOOK_STATUS_MAP = {
     "UserPromptSubmit": STATUS_RUNNING,
     "PreToolUse": STATUS_RUNNING,
     "PostToolUse": STATUS_RUNNING,
     "PostToolUseFailure": STATUS_RUNNING,  # Tool failed but agent is still working
     "Stop": STATUS_WAITING_USER,
-    "StopFailure": STATUS_ERROR,  # API error ended the turn (purple indicator)
+    "StopFailure": STATUS_ERROR,  # API error ended the turn
     "UserPromptSubmitRejected": STATUS_ERROR,  # Hook blocked prompt e.g. budget exceeded (#428)
     "PermissionRequest": STATUS_WAITING_APPROVAL,
     "SessionEnd": STATUS_TERMINATED,
@@ -141,14 +146,11 @@ _HOOK_STATUS_MAP = {
     # mid-turn. Unlike Claude Code, which prints no Stop/SessionEnd hook on
     # interrupt and relies entirely on the pane-scraped
     # `interrupt_prompt_markers` fallback above, codex's hook stdin says so
-    # directly — the map alone downgrades a stuck RUNNING straight to
-    # waiting_user without needing a pane read.
+    # directly: a turn that is over, like a Stop.
     "Interrupt": STATUS_WAITING_USER,
     # Codex-only event: session start. Not itself status-bearing (a
-    # UserPromptSubmit typically follows immediately), so it falls through
-    # to the same STATUS_WAITING_USER default unmapped events get — listed
-    # explicitly here so the mapping is self-documenting rather than
-    # silently relying on the .get() default.
+    # UserPromptSubmit typically follows immediately); listed so the
+    # mapping is self-documenting.
     "SessionStart": STATUS_WAITING_USER,
 }
 
@@ -220,7 +222,38 @@ def _live_obligations(obligations: list, now: float) -> list:
     return [o for o in obligations if not _is_overdue(o, now)]
 
 
-def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
+def _foreground_sleep_seconds(hook_state: dict, now: float) -> Optional[int]:
+    """The foreground ``sleep N`` in flight, from hook state's tool_input (#289).
+
+    Only a PreToolUse whose command *is* a sleep (``sleep N``, perhaps
+    after a ``cd``) counts: a PostToolUse means the sleep is over, and a
+    command that merely mentions one ("grep 'sleep 30'", "make; sleep 5")
+    is not sleeping. Past its end (plus slack) it is not sleeping either.
+    """
+    if hook_state.get("event") != "PreToolUse":
+        return None
+    tool_input = hook_state.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command", "")
+    m = _FOREGROUND_SLEEP_RE.match(command) if isinstance(command, str) else None
+    if m is None:
+        return None
+    dur = int(m.group(1))
+    try:
+        started = float(hook_state.get("timestamp", 0))
+    except (TypeError, ValueError):
+        return dur
+    if now > started + dur + _SLEEP_OVERRUN_SECONDS:
+        return None
+    return dur
+
+
+# =============================================================================
+# Badges
+# =============================================================================
+
+def _badges_from_obligations(obligations: list[dict], now: float) -> list[StatusBadge]:
     """Convert raw obligation dicts into stacked StatusBadge entries.
 
     Identical kinds stack: monitor×2 is one badge with count=2 rather than
@@ -231,7 +264,6 @@ def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
     stored absolute wake time) over the original delay, so the column
     counts down rather than showing a static "in Ns".
     """
-    now = time.time()
     by_kind: dict[str, StatusBadge] = {}
     for obl in obligations:
         if not isinstance(obl, dict):
@@ -267,7 +299,7 @@ def _badges_from_obligations(obligations: list[dict]) -> list[StatusBadge]:
     return sorted(by_kind.values(), key=lambda b: rank.get(b.kind, 99))
 
 
-def _sleep_badge(hook_state: dict, duration: Optional[int]) -> StatusBadge:
+def _sleep_badge(hook_state: dict, duration: Optional[int], now: float) -> StatusBadge:
     """A foreground sleep's badge, ending ``duration`` after its PreToolUse.
 
     Its end is fixed, so the badge carries it (``eta_at``) and counts down;
@@ -279,174 +311,419 @@ def _sleep_badge(hook_state: dict, duration: Optional[int]) -> StatusBadge:
         end = float(hook_state.get("timestamp")) + duration
     except (TypeError, ValueError):
         return StatusBadge(kind="blocked_sleep", eta_seconds=float(duration))
-    return StatusBadge(kind="blocked_sleep", eta_seconds=max(0.0, end - time.time()), eta_at=end)
+    return StatusBadge(kind="blocked_sleep", eta_seconds=max(0.0, end - now), eta_at=end)
 
 
-def _green_badges(
-    event: str,
-    hook_state: dict,
-    sleep_duration_seconds: Optional[int],
-) -> list[StatusBadge]:
-    """Build the column-2 badges for the GREEN (acting) bucket."""
+def _green_badges(event: str, hook_state: dict) -> list[StatusBadge]:
+    """The badges of a turn in progress: generating, or the tool in flight.
+
+    A foreground ``sleep`` gets its badge from the ``sleep`` rule, which
+    alone knows whether the sleep is still running.
+    """
+    if event == "UserPromptSubmit":
+        return [StatusBadge(kind="generating")]
     tool_name = hook_state.get("tool_name") or ""
     foreground = hook_state.get("foreground") or {}
     blocked_on = foreground.get("blocked_on") if isinstance(foreground, dict) else None
-
-    if event == "UserPromptSubmit":
-        return [StatusBadge(kind="generating")]
-
     if blocked_on == "ci":
         return [StatusBadge(kind="blocked_ci", label=tool_name or None)]
     if blocked_on == "process":
         return [StatusBadge(kind="blocked_process", label=tool_name or None)]
-    if blocked_on == "sleep" or sleep_duration_seconds is not None:
-        return [_sleep_badge(hook_state, sleep_duration_seconds)]
-
-    if tool_name:
-        return [StatusBadge(kind="tool", label=tool_name)]
-    return [StatusBadge(kind="tool")]
+    return [StatusBadge(kind="tool", label=tool_name or None)]
 
 
-def compute_status_detail(
-    hook_state: Optional[dict],
-    event: str,
-    session: "Session",
-    pane_content: str,
-    monitor_count: int,
-    has_interrupt: bool,
-    sleep_duration_seconds: Optional[int],
-    legacy_status: str,
-    background_shells: int = 0,
-    subagent_count: int = 0,
-) -> StatusDetail:
-    """Reduce hook state + side signals into a 4-color StatusDetail.
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
-    Pure-ish: reads `session.parent_session_id` and counts already-extracted
-    monitor streams, but otherwise just consumes the inputs. The reducer
-    builds candidate (color, badges) tuples for each bucket the agent is in,
-    then picks the highest-priority color. Badges from the winning bucket
-    are returned; losing-bucket badges drop on the floor (we'll surface them
-    as sidecars in a follow-up).
+
+# What an armed agent is waiting on, in words that hold still between ticks
+_ARMED_WORDS = {
+    "schedule_wakeup": "scheduled wakeup",
+    "cron": "cron",
+    "monitor": "monitor",
+    "bg_task": "background task",
+    "subagent": "background agent",
+    "heartbeat": "heartbeat",
+}
+
+
+# =============================================================================
+# The tick: context, verdict, rules
+# =============================================================================
+
+@dataclass
+class TickContext:
+    """Everything one detection tick knows, gathered once.
+
+    The detector fills the pane-derived signals (its stateful probes run
+    while gathering, never inside a rule); tests build one directly. All
+    times are against the one ``now``.
     """
-    if hook_state is None:
-        return StatusDetail(
-            color=STATUS_COLOR_RED,
-            badges=[StatusBadge(kind="awaiting_input")],
-            legacy_status=legacy_status,
-        )
 
-    raw_obligations = hook_state.get("pending_obligations") or []
-    obligations = _live_obligations(raw_obligations, time.time())
-    overdue = len(raw_obligations) - len(obligations)
-    # Monitor streams seen in the pane but never registered as obligations
-    # (Claude installed Monitor before overcode's hook started, or the
-    # PostToolUse already cleared it). Synthesize a badge so the user still
-    # sees the active stream.
-    obligation_monitor_count = sum(
-        1 for o in obligations if isinstance(o, dict) and o.get("kind") == "monitor"
-    )
-    synthetic_monitors = max(0, monitor_count - obligation_monitor_count)
+    hook_state: dict
+    now: float
+    event: str = ""
+    pane: str = ""
+    clean: str = ""                       # the pane stripped of ANSI codes, once
+    is_child: bool = False
+    patterns: Optional["StatusPatterns"] = None
+    dead_shell: bool = False              # the CLI is gone: a bare shell prompt
+    permission_answered: bool = False     # this PermissionRequest's dialog came and went
+    sleep_seconds: Optional[int] = None   # a foreground ``sleep N`` still in flight
+    interrupted: bool = False             # a current interrupt marker (an Esc)
+    idle_confirmed: bool = False          # the pane has read idle long enough
+    running_age: Optional[float] = None   # seconds since the last RUNNING-class event (Stop only)
+    monitors: int = 0                     # status-bar counts, held while the bar is covered
+    shells: int = 0
+    subagents: Optional[int] = None       # default: live entries in the hook state's map
+    obligations: list = field(init=False)  # pending obligations that can still fire
+    overdue: int = field(init=False)       # wakeups that never came
 
-    # --- Candidate buckets -------------------------------------------------
-    candidates: list[tuple[str, list[StatusBadge]]] = []
+    def __post_init__(self):
+        if not self.event:
+            self.event = self.hook_state.get("event", "") or ""
+        if self.subagents is None:
+            self.subagents = _live_subagent_count(self.hook_state, self.now)
+        raw = self.hook_state.get("pending_obligations") or []
+        self.obligations = _live_obligations(raw, self.now)
+        self.overdue = len(raw) - len(self.obligations)
 
-    # RED — needs substantive input
-    if has_interrupt:
-        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="awaiting_input")]))
-    if event == "StopFailure" or legacy_status == STATUS_ERROR:
-        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="error")]))
-    if event == "UserPromptSubmitRejected":
-        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="error", label="rejected")]))
+    @property
+    def tool_name(self) -> str:
+        return self.hook_state.get("tool_name") or ""
 
-    # Claude asks a question and offers a plan through PermissionRequest
-    # too (live hook logs, #536): a question needs a real answer (red), a
-    # plan a yes/no (orange, its own badge)
-    tool = (hook_state.get("tool_name") or "") if event == "PermissionRequest" else ""
-    if tool in _QUESTION_TOOLS:
-        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="ask_question")]))
 
-    # ORANGE — quick yes/no approval
-    if event == "PermissionRequest" and tool not in _QUESTION_TOOLS:
-        kind = "plan_approval" if tool in _PLAN_TOOLS else "permission"
-        candidates.append((
-            STATUS_COLOR_ORANGE,
-            [StatusBadge(kind=kind, label=(tool or None) if kind == "permission" else None)],
-        ))
-    if legacy_status == STATUS_WAITING_OVERSIGHT:
-        # A child's Stop — unless the sticky-green window or its own
-        # background work (#507) already lifted it out of waiting: a child
-        # still mid-burst or waiting on a subagent isn't ready to report.
-        candidates.append((STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")]))
+@dataclass
+class Verdict:
+    """What one tick says about an agent: colour, badges and activity.
 
-    # GREEN — actively working
+    ``color`` None is a lifecycle end (terminated): no colour, no detail.
+    ``armable``: the turn is over, so background work (monitors, shells,
+    subagents, obligations) can still wake it and lift it to yellow.
+    ``final``: no later rule may change it.
+    """
+
+    color: Optional[str]
+    badges: List[StatusBadge]
+    activity: str
+    armable: bool = False
+    final: bool = False
+
+    @property
+    def lead(self) -> Optional[str]:
+        return self.badges[0].kind if self.badges else None
+
+    @property
+    def legacy_status(self) -> str:
+        return legacy_status_for(self.color, self.lead)
+
+    def detail(self) -> Optional[StatusDetail]:
+        if self.color is None:
+            return None
+        return StatusDetail(color=self.color, badges=list(self.badges),
+                            legacy_status=self.legacy_status)
+
+
+# The legacy status enum, derived from the verdict: (colour, lead badge) →
+# status, with (colour, None) as each colour's default. The one place the
+# enum is decided, so it cannot disagree with the colour.
+_LEGACY_BY_VERDICT: Dict[Tuple[Optional[str], Optional[str]], str] = {
+    (None, None): STATUS_TERMINATED,
+    (STATUS_COLOR_GREEN, "blocked_sleep"): STATUS_BUSY_SLEEPING,  # a foreground sleep
+    (STATUS_COLOR_GREEN, None): STATUS_RUNNING,                   # generating, a tool
+    (STATUS_COLOR_YELLOW, None): STATUS_BUSY_SLEEPING,            # armed: background work
+    (STATUS_COLOR_ORANGE, "oversight"): STATUS_WAITING_OVERSIGHT, # a child that is done
+    (STATUS_COLOR_ORANGE, None): STATUS_WAITING_APPROVAL,         # permission, plan
+    (STATUS_COLOR_RED, "error"): STATUS_ERROR,
+    (STATUS_COLOR_RED, None): STATUS_WAITING_USER,                # awaiting input, question, overdue
+}
+
+
+def legacy_status_for(color: Optional[str], lead_badge: Optional[str]) -> str:
+    """The legacy status enum for a verdict's colour and lead badge kind."""
+    status = _LEGACY_BY_VERDICT.get((color, lead_badge))
+    if status is None:
+        status = _LEGACY_BY_VERDICT.get((color, None), STATUS_WAITING_USER)
+    return status
+
+
+def _awaiting(activity: str, armable: bool = True) -> Verdict:
+    return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="awaiting_input")], activity, armable=armable)
+
+
+def _turn_over(ctx: TickContext, activity: str) -> Verdict:
+    """A turn that ended: a child is ready for oversight, anyone else needs input."""
+    if ctx.is_child:
+        return Verdict(STATUS_COLOR_ORANGE, [StatusBadge(kind="oversight")], activity, armable=True)
+    return _awaiting(activity)
+
+
+def base_verdict(ctx: TickContext) -> Verdict:
+    """What the hook event says on its own."""
+    event, hook_state = ctx.event, ctx.hook_state
+    activity = build_activity(event, hook_state, ctx.is_child)
     if event in _ACTING_EVENTS:
-        candidates.append((STATUS_COLOR_GREEN, _green_badges(event, hook_state, sleep_duration_seconds)))
-    elif legacy_status == STATUS_RUNNING or (
-        legacy_status == STATUS_BUSY_SLEEPING and sleep_duration_seconds is not None
-    ):
-        # Sticky-green burst (event got overwritten) or a foreground sleep
-        # that lifted Stop back to RUNNING. Monitor-driven BUSY_SLEEPING is
-        # *armed*, not acting — that case falls through to YELLOW below.
-        if sleep_duration_seconds is not None:
-            candidates.append((STATUS_COLOR_GREEN, [
-                _sleep_badge(hook_state, sleep_duration_seconds),
-            ]))
-        else:
-            tool = hook_state.get("tool_name") or ""
-            candidates.append((
-                STATUS_COLOR_GREEN,
-                [StatusBadge(kind="tool", label=tool or None)],
-            ))
+        return Verdict(STATUS_COLOR_GREEN, _green_badges(event, hook_state), activity)
+    if event == "Stop":
+        return _turn_over(ctx, activity)
+    if event == "StopFailure":
+        return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="error")], activity)
+    if event == "UserPromptSubmitRejected":
+        return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="error", label="rejected")], activity)
+    if event == "PermissionRequest":
+        tool = ctx.tool_name
+        if tool in _PLAN_TOOLS:
+            return Verdict(STATUS_COLOR_ORANGE, [StatusBadge(kind="plan_approval")], activity)
+        return Verdict(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission", label=tool or None)],
+                       activity)
+    # Interrupt (codex), SessionStart and anything unknown: nothing is running
+    return _awaiting(activity)
 
-    # YELLOW — armed
-    yellow_badges = _badges_from_obligations(obligations)
-    if synthetic_monitors > 0:
-        # Add or bump the monitor badge
-        for b in yellow_badges:
-            if b.kind == "monitor":
-                b.count += synthetic_monitors
+
+# --- Rules ------------------------------------------------------------------
+# Each takes the context and the verdict so far and returns a new verdict,
+# or None to leave it. Order matters; a final verdict ends the run.
+
+def rule_session_end(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """SessionEnd fires on exit and on /clear: the pane's last line tells them apart."""
+    if ctx.event != "SessionEnd":
+        return None
+    lines = [ln.strip() for ln in ctx.clean.strip().split("\n") if ln.strip()]
+    if not lines:
+        return Verdict(None, [], "Agent exited", final=True)
+    if is_shell_prompt(lines[-1]):
+        return Verdict(None, [], "Agent exited - shell prompt", final=True)
+    # No shell prompt: /clear, and the CLI waits for input
+    v = _awaiting("Waiting for user input", armable=False)
+    v.final = True
+    return v
+
+
+def rule_dead_shell(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A CLI that exited without a SessionEnd (opencode's /exit, a crash) (#474)."""
+    if not ctx.dead_shell:
+        return None
+    return Verdict(None, [], "Agent exited - shell prompt", final=True)
+
+
+def rule_question(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A question comes through PermissionRequest too, and wants an answer (#536)."""
+    if ctx.event != "PermissionRequest" or ctx.tool_name not in _QUESTION_TOOLS:
+        return None
+    return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="ask_question")], v.activity)
+
+
+def rule_permission_answered(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """Nothing fires when a dialog is answered: once it has gone, the tool runs (#507)."""
+    if ctx.event != "PermissionRequest" or not ctx.permission_answered:
+        return None
+    return Verdict(STATUS_COLOR_GREEN, _green_badges("PreToolUse", ctx.hook_state),
+                   build_activity("PreToolUse", ctx.hook_state, ctx.is_child))
+
+
+def rule_sleep(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A foreground ``sleep N`` in flight: working, but only waiting (#289)."""
+    if ctx.sleep_seconds is None or v.color != STATUS_COLOR_GREEN:
+        return None
+    return Verdict(STATUS_COLOR_GREEN, [_sleep_badge(ctx.hook_state, ctx.sleep_seconds, ctx.now)],
+                   f"Sleeping {format_duration(ctx.sleep_seconds)}" if ctx.sleep_seconds
+                   else "Sleeping")
+
+
+def rule_interrupt(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """An Esc ends a working turn with no hook; the pane's marker says so (#431).
+
+    It ends a working verdict, and a turn that is over (a Stop: opencode
+    settles an interrupt to one): an interrupted agent, a child too, wants
+    the person, not a report, so background work does not lift it. A
+    permission, question or error keeps its own verdict; an Esc on a
+    permission dialog arrives here as an answered permission.
+    """
+    if not ctx.interrupted or not (v.color == STATUS_COLOR_GREEN or v.armable):
+        return None
+    return _awaiting("Interrupted - waiting for user input", armable=False)
+
+
+def rule_idle_confirmed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A turn that ended without a Stop reads like a Stop (engine-0.6.md).
+
+    A child's reads like a child's Stop: ready for oversight.
+    """
+    if not ctx.idle_confirmed or v.color != STATUS_COLOR_GREEN:
+        return None
+    who = "oversight report" if ctx.is_child else "user input"
+    return _turn_over(ctx, f"Waiting for {who} (turn ended without a Stop)")
+
+
+def rule_sticky_green(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A Stop inside a burst of tool use is not a real stop yet (#448)."""
+    if ctx.event != "Stop" or not v.armable or ctx.interrupted:
+        return None
+    if ctx.running_age is None or ctx.running_age > _RECENT_ACTIVITY_WINDOW_SECONDS:
+        return None
+    return Verdict(STATUS_COLOR_GREEN, [StatusBadge(kind="tool", label=ctx.tool_name or None)],
+                   v.activity)
+
+
+def rule_armed(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """A turn that is over, with something that will wake it: yellow (#441, #507).
+
+    Obligations (wakeups, crons, registered monitors) and the status bar's
+    live counts (monitors, background shells) plus subagents all arm it. A
+    child is lifted only by its own background work: one with just a cron
+    is ready to report.
+    """
+    if not v.armable:
+        return None
+    if v.color == STATUS_COLOR_ORANGE and not (ctx.monitors or ctx.shells or ctx.subagents):
+        return None
+    badges = _badges_from_obligations(ctx.obligations, ctx.now)
+    # Monitor streams and background shells seen in the status bar but not
+    # registered as obligations (installed before overcode's hook, or the
+    # PostToolUse already cleared it; a background Bash's PostToolUse lands
+    # at launch and nothing fires when it exits).
+    for kind, seen in (("monitor", ctx.monitors), ("bg_task", ctx.shells)):
+        registered = sum(1 for o in ctx.obligations if isinstance(o, dict) and o.get("kind") == kind)
+        extra = max(0, seen - registered)
+        if not extra:
+            continue
+        for b in badges:
+            if b.kind == kind:
+                b.count += extra
                 break
         else:
-            yellow_badges.append(StatusBadge(kind="monitor", count=synthetic_monitors))
-    # Background shells and subagents (#507). A background Bash's own
-    # PostToolUse lands as soon as it launches and nothing fires when it
-    # exits, so the status bar's shell count is the live signal for those.
-    obligation_bg_count = sum(
-        1 for o in obligations if isinstance(o, dict) and o.get("kind") == "bg_task"
-    )
-    synthetic_shells = max(0, background_shells - obligation_bg_count)
-    if synthetic_shells > 0:
-        for b in yellow_badges:
-            if b.kind == "bg_task":
-                b.count += synthetic_shells
-                break
-        else:
-            yellow_badges.append(StatusBadge(kind="bg_task", count=synthetic_shells))
-    if subagent_count > 0:
-        yellow_badges.append(StatusBadge(kind="subagent", count=subagent_count))
-    if yellow_badges:
-        candidates.append((STATUS_COLOR_YELLOW, yellow_badges))
-    elif overdue and not candidates:
-        # Yellow only on the strength of a wakeup that never came: red, and
-        # saying why, so red is trustworthy in both directions
-        candidates.append((STATUS_COLOR_RED, [StatusBadge(kind="overdue", count=overdue)]))
+            badges.append(StatusBadge(kind=kind, count=extra))
+    if ctx.subagents:
+        badges.append(StatusBadge(kind="subagent", count=ctx.subagents))
+    if not badges:
+        return None
+    if ctx.monitors:
+        activity = f"Watching {_plural(ctx.monitors, 'monitor')}"
+    elif ctx.subagents:
+        activity = f"Waiting on {_plural(ctx.subagents, 'background agent')}"
+    elif ctx.shells:
+        activity = f"Waiting on {_plural(ctx.shells, 'background shell')}"
+    else:
+        activity = "Armed: " + ", ".join(_ARMED_WORDS.get(b.kind, b.kind) for b in badges)
+    return Verdict(STATUS_COLOR_YELLOW, badges, activity)
 
-    # --- Resolve ----------------------------------------------------------
-    if not candidates:
-        # Stop fired (or unknown event) with nothing pending → genuine RED idle.
-        return StatusDetail(
-            color=STATUS_COLOR_RED,
-            badges=[StatusBadge(kind="awaiting_input")],
-            legacy_status=legacy_status,
-        )
 
-    candidates.sort(key=lambda c: color_priority(c[0]), reverse=True)
-    winning_color, winning_badges = candidates[0]
-    return StatusDetail(
-        color=winning_color,
-        badges=winning_badges,
-        legacy_status=legacy_status,
-    )
+def rule_overdue(ctx: TickContext, v: Verdict) -> Optional[Verdict]:
+    """Waiting only on a wakeup that never came: red, saying why (engine-0.6.md)."""
+    if not ctx.overdue or not v.armable or v.color != STATUS_COLOR_RED:
+        return None
+    return Verdict(STATUS_COLOR_RED, [StatusBadge(kind="overdue", count=ctx.overdue)],
+                   "Waiting for user input (a scheduled wakeup never came)")
+
+
+Rule = Callable[[TickContext, Verdict], Optional[Verdict]]
+
+RULES: Tuple[Tuple[str, Rule], ...] = (
+    ("session_end", rule_session_end),
+    ("dead_shell", rule_dead_shell),
+    ("question", rule_question),
+    ("permission_answered", rule_permission_answered),
+    ("sleep", rule_sleep),
+    ("interrupt", rule_interrupt),
+    ("idle_confirmed", rule_idle_confirmed),
+    ("sticky_green", rule_sticky_green),
+    ("armed", rule_armed),
+    ("overdue", rule_overdue),
+)
+
+
+def decide(ctx: TickContext) -> Tuple[Verdict, str]:
+    """Run the rules over the base verdict: (verdict, name of the rule that set it)."""
+    verdict, winner = base_verdict(ctx), "base"
+    for name, rule in RULES:
+        if verdict.final:
+            break
+        new = rule(ctx, verdict)
+        if new is not None:
+            verdict, winner = new, name
+    return verdict, winner
+
+
+def phase_label(event: str, rule: str) -> str:
+    """The diagnostic phase: the hook event, and the rule that decided, if not the event."""
+    return f"hook:{event}" if rule == "base" else f"hook:{event}+{rule}"
+
+
+def build_activity(event: str, hook_state: dict, is_child: bool = False) -> str:
+    """The activity line for a hook event on its own."""
+    if event in ("PreToolUse", "PostToolUse"):
+        # For Bash, show the actual command for better visibility
+        bash_activity = _parse_bash_activity(hook_state)
+        if bash_activity:
+            return bash_activity
+        tool_name = hook_state.get("tool_name", "")
+        if tool_name:
+            return f"Using {tool_name}"
+        return "Running tool"
+
+    if event == "PostToolUseFailure":
+        tool_name = hook_state.get("tool_name", "")
+        if tool_name:
+            return f"Tool failed: {tool_name}"
+        return "Tool failed"
+
+    if event == "UserPromptSubmit":
+        return "Processing prompt"
+
+    if event == "UserPromptSubmitRejected":
+        return "Prompt blocked by hook"
+
+    if event == "Stop":
+        if is_child:
+            return "Waiting for oversight report"
+        return "Waiting for user input"
+
+    if event == "StopFailure":
+        # The opencode/opencode2 plugins record a bounded reason (#474).
+        reason = hook_state.get("error")
+        if isinstance(reason, str) and reason.strip():
+            return f"API error: {reason.strip()}"
+        return "API error"
+
+    if event == "PermissionRequest":
+        tool = hook_state.get("tool_name")
+        if tool in _QUESTION_TOOLS:
+            return "Question: waiting for your answer"
+        if tool in _PLAN_TOOLS:
+            return "Plan: waiting for approval"
+        return "Permission: approval required"
+
+    if event == "SessionEnd":
+        return "Agent exited"
+
+    return "Unknown state"
+
+
+def _parse_bash_activity(hook_state: dict) -> str | None:
+    """Parse a Bash tool_input command into a concise activity string.
+
+    Returns a human-readable summary of what the Bash command does,
+    or None if the command isn't parseable or isn't Bash.
+    """
+    if hook_state.get("tool_name") != "Bash":
+        return None
+    tool_input = hook_state.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command", "")
+    if not command:
+        return None
+    # Truncate long commands
+    if len(command) > 80:
+        command = command[:77] + "..."
+    return f"Bash: {command}"
+
+
+# BUSY_SLEEPING's activity says which kind it is: armed (yellow) or a
+# foreground sleep (green), as the verdict table has it
+_ARMED_ACTIVITY_RE = re.compile(
+    r"^(?:Watching (\d+) monitor|Waiting on (\d+) background agent|Waiting on (\d+) background shell)"
+)
 
 
 def synthesize_status_detail_from_legacy(
@@ -480,6 +757,17 @@ def synthesize_status_detail_from_legacy(
                 tool_label = "Bash"
         return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="tool", label=tool_label)], status)
     if status == STATUS_BUSY_SLEEPING:
+        # Armed work (yellow) says what it waits on; anything else, and
+        # every polling-mode BUSY_SLEEPING, is a foreground sleep (green)
+        m = _ARMED_ACTIVITY_RE.match(activity or "")
+        if m:
+            kind = ("monitor", "subagent", "bg_task")[[g is not None for g in m.groups()].index(True)]
+            count = int(next(g for g in m.groups() if g is not None))
+            return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind=kind, count=count)], status)
+        if (activity or "").startswith("Armed: "):
+            first = activity[len("Armed: "):].split(",")[0].strip()
+            kind = next((k for k, w in _ARMED_WORDS.items() if w == first), "bg_task")
+            return StatusDetail(STATUS_COLOR_YELLOW, [StatusBadge(kind=kind)], status)
         return StatusDetail(STATUS_COLOR_GREEN, [StatusBadge(kind="blocked_sleep")], status)
     if status == STATUS_WAITING_APPROVAL:
         return StatusDetail(STATUS_COLOR_ORANGE, [StatusBadge(kind="permission")], status)
@@ -761,15 +1049,20 @@ class HookStatusDetector:
         except (subprocess.TimeoutExpired, OSError):
             return None
 
-    def detect_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
+    def detect_status(
+        self, session: "Session", num_lines: int = 0, *, now: Optional[float] = None
+    ) -> Tuple[str, str, str]:
         """Detect session status using hook state files.
 
         No polling fallback. When no hook state exists, checks if the
-        tmux window is alive and returns a sensible default.
+        tmux window is alive and returns a sensible default. ``now`` is the
+        tick's one clock reading (default: the wall clock).
 
         Returns:
             Tuple of (status, current_activity, pane_content)
         """
+        if now is None:
+            now = time.time()
         hook_state = self._read_hook_state(session.name)
         # This call decides the detail afresh: a path that returns early
         # leaves none, so a previous tick's colour can never stand in
@@ -783,7 +1076,7 @@ class HookStatusDetector:
             if pane_content is None:
                 self._last_detect_phase[session.id] = "hook:no_state+no_window"
                 return STATUS_TERMINATED, "Window no longer exists", ""
-            if _pane_shows_dead_shell(pane_content, self._patterns):
+            if _pane_shows_dead_shell(strip_ansi(pane_content), self._patterns):
                 # The CLI died before its first hook (bad flag, missing
                 # binary) and the window is back at the shell.
                 self._last_detect_phase[session.id] = "hook:no_state+dead_shell"
@@ -801,177 +1094,81 @@ class HookStatusDetector:
                 self._loaded_skills[session.name] = set()
             self._loaded_skills[session.name].update(persisted_skills)
 
-        # Hook state exists — use it for status
-        event = hook_state.get("event", "")
         self._last_hook_at[session.name] = float(hook_state["timestamp"])
 
-        if event == "SessionEnd":
-            self._last_detect_phase[session.id] = "hook:SessionEnd"
-            return self._detect_session_end_status(session, num_lines)
-
-        status = _HOOK_STATUS_MAP.get(event, STATUS_WAITING_USER)
-
-        # A question wants an answer, not an approval (#536)
-        if event == "PermissionRequest" and hook_state.get("tool_name") in _QUESTION_TOOLS:
-            status = STATUS_WAITING_USER
-
-        # For child agents, Stop → waiting_oversight instead of waiting_user
-        if event == "Stop" and session.parent_session_id is not None:
-            status = STATUS_WAITING_OVERSIGHT
-
-        # Read pane for activity enrichment and content return value
         pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
+        ctx = self._tick_context(session, hook_state, pane_content, now)
+        verdict, rule = decide(ctx)
+        self._last_detect_phase[session.id] = phase_label(ctx.event, rule)
+        detail = verdict.detail()
+        if detail is not None:
+            self._status_details[session.name] = detail
+        return verdict.legacy_status, verdict.activity, pane_content
 
-        # A CLI that exits without a SessionEnd (opencode's /exit, any
-        # crash) leaves its last hook state behind; the bare shell prompt
-        # in the pane is the only evidence it is gone (#474).
-        if _pane_shows_dead_shell(pane_content, self._patterns):
-            self._last_detect_phase[session.id] = f"hook:{event}+dead_shell"
-            self._status_details.pop(session.name, None)
-            return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
+    def _tick_context(
+        self, session: "Session", hook_state: dict, pane_content: str, now: float
+    ) -> TickContext:
+        """Gather one tick's signals. The detector's stateful probes run here, in order.
 
-        # An answered permission prompt: nothing fires on approval, so the
-        # approved tool would show orange until its PostToolUse (#507).
-        if event == "PermissionRequest" and self._permission_answered(
-            session.name, hook_state, pane_content
-        ):
-            event = "PreToolUse"
-            status = STATUS_RUNNING
-            self._last_detect_phase[session.id] = "hook:PermissionRequest+answered"
-
-        # Check for busy-sleeping: agent is "running" but executing a sleep command (#289)
-        sleep_dur = None
-        if status == STATUS_RUNNING:
-            sleep_dur = self._find_sleep_duration(hook_state)
-            if sleep_dur is not None:
-                status = STATUS_BUSY_SLEEPING
-
-        # Claude Code does not fire a Stop/SessionEnd hook when the user
-        # hits Escape to interrupt the turn, so status can stay stuck as
-        # RUNNING indefinitely. Detect the interrupt prompt that Claude
-        # Code prints ("Interrupted · What should Claude do instead?") in
-        # the pane and downgrade to waiting_user in that case (#431).
-        has_interrupt = bool(pane_content) and _pane_shows_interrupt_prompt(
-            pane_content, self._patterns
+        A CLI that has ended (SessionEnd, or a bare shell prompt) gets no
+        probes: nothing about it is tracked across ticks.
+        """
+        name = session.name
+        patterns = self._patterns
+        event = hook_state.get("event", "") or ""
+        clean = strip_ansi(pane_content) if pane_content else ""
+        base = dict(
+            hook_state=hook_state, now=now, event=event, pane=pane_content, clean=clean,
+            is_child=session.parent_session_id is not None, patterns=patterns,
         )
-        # A marker above a live busy marker is an old one: the turn is running
-        if has_interrupt and pane_shows_idle(pane_content, self._patterns) is False:
-            has_interrupt = False
-        has_interrupt = self._interrupt_still_current(
-            session.name, has_interrupt, _interrupt_marker_count(pane_content, self._patterns),
-        )
-        if status in (STATUS_RUNNING, STATUS_BUSY_SLEEPING) and has_interrupt:
-            # An Esc during a foreground sleep ends the sleep too
-            status = STATUS_WAITING_USER
-            sleep_dur = None
-            self._last_detect_phase[session.id] = f"hook:{event}+interrupt"
+        if event == "SessionEnd":
+            return TickContext(**base)
+        if _pane_shows_dead_shell(clean, patterns):
+            return TickContext(**base, dead_shell=True)
 
-        # A turn that ended with no Stop and no interrupt marker: the pane
-        # itself has been idle for a while with no hook since. Trust it.
-        ended_without_stop = (
-            status in (STATUS_RUNNING, STATUS_BUSY_SLEEPING)
-            and event in _ACTING_EVENTS
-            and self._pane_idle_confirmed(session.name, hook_state, pane_content)
-        )
-        if not (status in (STATUS_RUNNING, STATUS_BUSY_SLEEPING) and event in _ACTING_EVENTS):
-            self._idle_seen_at.pop(session.name, None)
-        if ended_without_stop:
-            status = (STATUS_WAITING_OVERSIGHT if session.parent_session_id is not None
-                      else STATUS_WAITING_USER)
-            sleep_dur = None
-            has_interrupt = True  # the detail's red "awaiting input", as for an Esc
+        answered = event == "PermissionRequest" and self._permission_answered(name, hook_state, clean)
 
-        # Sticky-green upgrade (#448). A Stop hook firing between bursts of
-        # RUNNING-class events would otherwise flash yellow on every poll
-        # that lands after Stop but before the next UserPromptSubmit. If
-        # the event log shows a RUNNING-class event within the last
-        # _RECENT_ACTIVITY_WINDOW_SECONDS, treat the agent as still
-        # running. Skip when the pane shows a real interrupt prompt — that
-        # is a genuine pause, not a burst.
-        if (
-            event == "Stop"
-            and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT)
-            and not has_interrupt
-        ):
-            age = self._most_recent_running_event_age(session.name)
-            if age is not None and age <= _RECENT_ACTIVITY_WINDOW_SECONDS:
-                status = STATUS_RUNNING
-                self._last_detect_phase[session.id] = (
-                    f"hook:{event}+sticky_green({age:.2f}s)"
-                )
-
-        # Monitor tool leaves a persistent stream that can wake the agent
-        # after Stop/SessionEnd has fired. Treat that as STATUS_BUSY_SLEEPING
-        # — same "idle but externally trigger-able" category as a bash sleep
-        # (#441 reuses the #289 state instead of minting a new one).
-        monitor_count = (
-            extract_active_monitor_count(pane_content, self._patterns) if pane_content else 0
-        )
-        shell_count = (
-            extract_background_bash_count(pane_content, self._patterns) if pane_content else 0
-        )
-        monitor_count, shell_count = self._hold_status_bar_counts(
-            session.name, pane_content, monitor_count, shell_count
-        )
-        if monitor_count > 0 and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT):
-            status = STATUS_BUSY_SLEEPING
-            self._last_detect_phase[session.id] = f"hook:{event}+monitors={monitor_count}"
-
-        # Background shells and subagents will wake the agent too (#507)
-        subagent_count = _live_subagent_count(hook_state, time.time())
-        if (shell_count or subagent_count) and status in (
-            STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT,
-        ):
-            status = STATUS_BUSY_SLEEPING
-
-        # Build activity description
-        activity = self._build_activity(event, hook_state, pane_content, session)
-
-        # Enrich activity for busy_sleeping: either a parsed sleep duration (#289)
-        # or a live Monitor count (#441). Monitor count wins if both apply.
-        if status == STATUS_BUSY_SLEEPING:
-            if monitor_count > 0:
-                plural = "s" if monitor_count != 1 else ""
-                activity = f"Watching {monitor_count} monitor{plural}"
-            elif subagent_count > 0:
-                plural = "s" if subagent_count != 1 else ""
-                activity = f"Waiting on {subagent_count} background agent{plural}"
-            elif shell_count > 0 and sleep_dur is None:
-                plural = "s" if shell_count != 1 else ""
-                activity = f"Waiting on {shell_count} background shell{plural}"
-            else:
-                activity = f"Sleeping {format_duration(sleep_dur)}" if sleep_dur else "Sleeping"
-
-        # Record hook phase for diagnostics
-        self._last_detect_phase[session.id] = f"hook:{event}"
-        if ended_without_stop and status in (STATUS_WAITING_USER, STATUS_WAITING_OVERSIGHT):
-            activity = "Waiting for user input (turn ended without a Stop)"
-            self._last_detect_phase[session.id] = f"hook:{event}+idle_pane"
-
-        # Cache the structured 2-column detail for the ⏰ column to read.
-        # Parallel to the legacy status — does not affect the tuple return.
-        self._status_details[session.name] = compute_status_detail(
-            hook_state=hook_state,
-            event=event,
-            session=session,
-            pane_content=pane_content,
-            monitor_count=monitor_count,
-            has_interrupt=has_interrupt,
-            sleep_duration_seconds=sleep_dur,
-            legacy_status=status,
-            background_shells=shell_count,
-            subagent_count=subagent_count,
+        # An interrupt marker above a live busy marker is an old one
+        shown = bool(clean) and _pane_shows_interrupt_prompt(clean, patterns)
+        if shown and pane_shows_idle(clean, patterns, clean_content=clean) is False:
+            shown = False
+        interrupted = self._interrupt_still_current(
+            name, shown, _interrupt_marker_count(clean, patterns), now=now,
         )
 
-        return status, activity, pane_content
+        # The idle wait runs while hooks say a turn is working
+        idle_confirmed = False
+        if (event in _ACTING_EVENTS or answered) and not interrupted:
+            idle_confirmed = self._pane_idle_confirmed(name, hook_state, clean, now=now)
+        else:
+            self._idle_seen_at.pop(name, None)
+
+        running_age = None
+        if event == "Stop" and not interrupted:
+            running_age = self._most_recent_running_event_age(name, now)
+
+        monitors = extract_active_monitor_count(clean, patterns, clean_content=clean) if clean else 0
+        shells = extract_background_bash_count(clean, patterns, clean_content=clean) if clean else 0
+        monitors, shells = self._hold_status_bar_counts(name, clean, monitors, shells, now=now)
+
+        return TickContext(
+            **base,
+            permission_answered=answered,
+            sleep_seconds=_foreground_sleep_seconds(hook_state, now),
+            interrupted=interrupted,
+            idle_confirmed=idle_confirmed,
+            running_age=running_age,
+            monitors=monitors,
+            shells=shells,
+        )
 
     def _pane_idle_confirmed(
-        self, session_name: str, hook_state: dict, pane_content: str
+        self, session_name: str, hook_state: dict, clean: str, now: Optional[float] = None
     ) -> bool:
         """True once the pane has read idle for _IDLE_CONFIRM_SECONDS with no hook since."""
         if not self._patterns.pane_confirms_idle:
             return False
-        idle = pane_shows_idle(pane_content, self._patterns)
+        idle = pane_shows_idle(clean, self._patterns, clean_content=clean)
         if idle is False:
             self._busy_marker_seen = True
             self._idle_seen_at.pop(session_name, None)
@@ -980,7 +1177,8 @@ class HookStatusDetector:
             return False  # covered or unreadable: neither starts nor ends the wait
         if not self._busy_marker_seen:
             return False  # the marker is unproven on this CLI version: can't tell
-        now = time.time()
+        if now is None:
+            now = time.time()
         try:
             hook_at = float(hook_state.get("timestamp", 0))
         except (TypeError, ValueError):
@@ -991,7 +1189,9 @@ class HookStatusDetector:
             first = self._idle_seen_at[session_name] = now
         return now - first >= _IDLE_CONFIRM_SECONDS
 
-    def _interrupt_still_current(self, session_name: str, shown: bool, count: int = 1) -> bool:
+    def _interrupt_still_current(
+        self, session_name: str, shown: bool, count: int = 1, now: Optional[float] = None
+    ) -> bool:
         """Whether an on-screen interrupt marker still means "interrupted" (#507).
 
         The marker stays in the pane's tail after the person types a new
@@ -1003,7 +1203,8 @@ class HookStatusDetector:
             self._interrupt_seen_at.pop(session_name, None)
             self._interrupt_counts.pop(session_name, None)
             return False
-        now = time.time()
+        if now is None:
+            now = time.time()
         if count > self._interrupt_counts.get(session_name, count):
             self._interrupt_seen_at[session_name] = now
         self._interrupt_counts[session_name] = count
@@ -1011,24 +1212,23 @@ class HookStatusDetector:
         age = self._most_recent_running_event_age(session_name, now)
         return age is None or now - age <= first_seen
 
-    def _permission_answered(
-        self, session_name: str, hook_state: dict, pane_content: str
-    ) -> bool:
+    def _permission_answered(self, session_name: str, hook_state: dict, clean: str) -> bool:
         """True once this PermissionRequest's dialog was seen and has gone (#507).
 
         A dialog never recognised in the pane (another backend's wording, a
         restart mid-run) proves nothing, so that case stays orange.
         """
         request = float(hook_state.get("timestamp", 0))
-        if not pane_content:
+        if not clean:
             return False
-        if shows_permission_prompt(pane_content, self._patterns):
+        if shows_permission_prompt(clean, self._patterns, clean_content=clean):
             self._permission_prompt_seen[session_name] = request
             return False
         return self._permission_prompt_seen.get(session_name) == request
 
     def _hold_status_bar_counts(
-        self, session_name: str, pane_content: str, monitors: int, shells: int
+        self, session_name: str, clean: str, monitors: int, shells: int,
+        now: Optional[float] = None,
     ) -> Tuple[int, int]:
         """Status-bar counts, held briefly while the bar is covered (#507).
 
@@ -1036,8 +1236,9 @@ class HookStatusDetector:
         without anything having stopped; reading that as 0 would drop a
         waiting agent to red for as long as the cover stays.
         """
-        now = time.time()
-        if pane_content and status_bar_visible(pane_content, self._patterns):
+        if now is None:
+            now = time.time()
+        if clean and status_bar_visible(clean, self._patterns, clean_content=clean):
             self._status_bar_counts[session_name] = (now, monitors, shells)
             return monitors, shells
         held = self._status_bar_counts.get(session_name)
@@ -1056,124 +1257,6 @@ class HookStatusDetector:
         to render column-2 badges; absent → render nothing.
         """
         return self._status_details.get(session_name)
-
-    def _detect_session_end_status(self, session: "Session", num_lines: int = 0) -> Tuple[str, str, str]:
-        """Determine status after a SessionEnd hook event.
-
-        SessionEnd fires both on actual exit AND on /clear. We distinguish
-        by checking the last line of the pane:
-        - Shell prompt (user@host path %) → actual exit → TERMINATED
-        - Claude's prompt (› or >) → /clear was used → WAITING_USER
-        """
-        pane_content = self.get_pane_content(session.tmux_window, num_lines=num_lines) or ""
-        clean = strip_ansi(pane_content)
-        lines = [ln.strip() for ln in clean.strip().split('\n') if ln.strip()]
-
-        if not lines:
-            return STATUS_TERMINATED, "Agent exited", pane_content
-
-        last_line = lines[-1]
-
-        if is_shell_prompt(last_line):
-            return STATUS_TERMINATED, "Agent exited - shell prompt", pane_content
-
-        # No shell prompt → likely /clear, agent is waiting for input
-        return STATUS_WAITING_USER, "Waiting for user input", pane_content
-
-    def _find_sleep_duration(self, hook_state: dict) -> int | None:
-        """The foreground ``sleep N`` in flight, from hook state's tool_input (#289).
-
-        Only a PreToolUse whose command *is* a sleep (``sleep N``, perhaps
-        after a ``cd``) counts: a PostToolUse means the sleep is over, and a
-        command that merely mentions one ("grep 'sleep 30'", "make; sleep 5")
-        is not sleeping. Past its end (plus slack) it is not sleeping either.
-        """
-        if hook_state.get("event") != "PreToolUse":
-            return None
-        tool_input = hook_state.get("tool_input")
-        if not isinstance(tool_input, dict):
-            return None
-        command = tool_input.get("command", "")
-        m = _FOREGROUND_SLEEP_RE.match(command) if isinstance(command, str) else None
-        if m is None:
-            return None
-        dur = int(m.group(1))
-        try:
-            started = float(hook_state.get("timestamp", 0))
-        except (TypeError, ValueError):
-            return dur
-        if time.time() > started + dur + _SLEEP_OVERRUN_SECONDS:
-            return None
-        return dur
-
-    @staticmethod
-    def _parse_bash_activity(hook_state: dict) -> str | None:
-        """Parse a Bash tool_input command into a concise activity string.
-
-        Returns a human-readable summary of what the Bash command does,
-        or None if the command isn't parseable or isn't Bash.
-        """
-        if hook_state.get("tool_name") != "Bash":
-            return None
-        tool_input = hook_state.get("tool_input")
-        if not isinstance(tool_input, dict):
-            return None
-        command = tool_input.get("command", "")
-        if not command:
-            return None
-        # Truncate long commands
-        if len(command) > 80:
-            command = command[:77] + "..."
-        return f"Bash: {command}"
-
-    def _build_activity(self, event: str, hook_state: dict, pane_content: str, session: "Session" = None) -> str:
-        """Build an activity description from hook event and pane content."""
-        if event in ("PreToolUse", "PostToolUse"):
-            # For Bash, show the actual command for better visibility
-            bash_activity = self._parse_bash_activity(hook_state)
-            if bash_activity:
-                return bash_activity
-            tool_name = hook_state.get("tool_name", "")
-            if tool_name:
-                return f"Using {tool_name}"
-            return "Running tool"
-
-        if event == "PostToolUseFailure":
-            tool_name = hook_state.get("tool_name", "")
-            if tool_name:
-                return f"Tool failed: {tool_name}"
-            return "Tool failed"
-
-        if event == "UserPromptSubmit":
-            return "Processing prompt"
-
-        if event == "UserPromptSubmitRejected":
-            return "Prompt blocked by hook"
-
-        if event == "Stop":
-            if session and session.parent_session_id is not None:
-                return "Waiting for oversight report"
-            return "Waiting for user input"
-
-        if event == "StopFailure":
-            # The opencode/opencode2 plugins record a bounded reason (#474).
-            reason = hook_state.get("error")
-            if isinstance(reason, str) and reason.strip():
-                return f"API error: {reason.strip()}"
-            return "API error"
-
-        if event == "PermissionRequest":
-            tool = hook_state.get("tool_name")
-            if tool in _QUESTION_TOOLS:
-                return "Question: waiting for your answer"
-            if tool in _PLAN_TOOLS:
-                return "Plan: waiting for approval"
-            return "Permission: approval required"
-
-        if event == "SessionEnd":
-            return "Agent exited"
-
-        return "Unknown state"
 
     def get_loaded_skills(self, session_name: str) -> list[str]:
         """Return skills observed via Skill tool_use for a session (#252)."""

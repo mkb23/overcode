@@ -16,10 +16,13 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.hook_status_detector import (
+    RULES,
     HookStatusDetector,
+    TickContext,
     _live_subagent_count,
     augment_with_legacy_heartbeat,
-    compute_status_detail,
+    decide,
+    legacy_status_for,
     synthesize_status_detail_from_legacy,
 )
 from overcode.status_constants import (
@@ -874,243 +877,320 @@ class TestStickyGreen:
 
 
 # =============================================================================
-# Phase 1: compute_status_detail reducer (#TBD — two-column status model)
+# The rule table: TickContext → Verdict (colour, badges) → legacy status
 # =============================================================================
 
-class TestComputeStatusDetail:
-    """Reducer maps (hook_state + side signals) → (color, badges).
+NOW = 1_800_000_000.0
 
-    Color priority RED>ORANGE>GREEN>YELLOW when multiple buckets apply.
-    """
 
-    def _session(self, parent_session_id=None):
-        s = create_mock_session(name="a1")
-        s.parent_session_id = parent_session_id
-        return s
+def _decide(event, child=False, now=NOW, **kw):
+    """Run the rules over a context: ``state`` extends the hook state, the rest are signals."""
+    state = {"event": event, "timestamp": now}
+    state.update(kw.pop("state", {}))
+    return decide(TickContext(state, now=now, is_child=child, **kw))
 
-    def _state(self, event, **kw):
-        d = {"event": event, "timestamp": time.time()}
-        d.update(kw)
-        return d
 
-    # ---- None hook_state → RED awaiting_input ----
-    def test_no_hook_state_red_awaiting(self):
-        d = compute_status_detail(
-            hook_state=None, event="", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
-        assert d.color == STATUS_COLOR_RED
-        assert d.badges[0].kind == "awaiting_input"
+def _detail(event, **kw):
+    return _decide(event, **kw)[0].detail()
+
+
+class TestVerdicts:
+    """Each hook event and signal → (colour, badges), and the enum derived from it."""
 
     # ---- GREEN — acting events ----
     def test_user_prompt_submit_green_generating(self):
-        st = self._state("UserPromptSubmit")
-        d = compute_status_detail(
-            hook_state=st, event="UserPromptSubmit", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
-        )
+        d = _detail("UserPromptSubmit")
         assert d.color == STATUS_COLOR_GREEN
-        assert d.badges == [d.badges[0]]
-        assert d.badges[0].kind == "generating"
+        assert [b.kind for b in d.badges] == ["generating"]
+        assert d.legacy_status == STATUS_RUNNING
 
     def test_pre_tool_use_green_with_tool_label(self):
-        st = self._state("PreToolUse", tool_name="Read")
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
-        )
+        d = _detail("PreToolUse", state={"tool_name": "Read"})
         assert d.color == STATUS_COLOR_GREEN
         assert d.badges[0].kind == "tool"
         assert d.badges[0].label == "Read"
 
     def test_bash_blocked_on_ci_shows_blocked_ci(self):
-        st = self._state(
-            "PreToolUse", tool_name="Bash",
-            foreground={"kind": "tool", "tool": "Bash", "blocked_on": "ci"},
-        )
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
-        )
+        d = _detail("PreToolUse", state={
+            "tool_name": "Bash", "foreground": {"kind": "tool", "tool": "Bash", "blocked_on": "ci"}})
         assert d.color == STATUS_COLOR_GREEN
         assert d.badges[0].kind == "blocked_ci"
 
-    def test_sleep_duration_overrides_to_blocked_sleep(self):
-        st = self._state("PreToolUse", tool_name="Bash",
-                         foreground={"kind": "tool", "tool": "Bash", "blocked_on": "sleep"})
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=60, legacy_status=STATUS_BUSY_SLEEPING,
-        )
+    def test_sleep_is_green_blocked_sleep_and_busy_sleeping(self):
+        state = {"timestamp": NOW, "tool_name": "Bash",
+                 "foreground": {"kind": "tool", "tool": "Bash", "blocked_on": "sleep"}}
+        d = _detail("PreToolUse", state=state, sleep_seconds=60, now=NOW + 1)
         assert d.color == STATUS_COLOR_GREEN
         assert d.badges[0].kind == "blocked_sleep"
         # It ends 60 s after the PreToolUse: a fixed moment that counts down
-        assert d.badges[0].eta_at == pytest.approx(st["timestamp"] + 60.0)
-        assert 59.0 < d.badges[0].eta_seconds <= 60.0
+        assert d.badges[0].eta_at == pytest.approx(NOW + 60.0)
+        assert d.badges[0].eta_seconds == pytest.approx(59.0)
+        assert d.legacy_status == STATUS_BUSY_SLEEPING
 
-    def test_a_sleeping_agents_published_detail_holds_still(self, monkeypatch):
+    def test_a_sleep_that_is_over_is_a_plain_tool(self):
+        """blocked_on alone is not sleeping: the sleep rule decides (past its end, not)."""
+        state = {"tool_name": "Bash", "foreground": {"kind": "tool", "tool": "Bash", "blocked_on": "sleep"}}
+        d = _detail("PreToolUse", state=state, sleep_seconds=None)
+        assert (d.color, d.badges[0].kind, d.legacy_status) == (STATUS_COLOR_GREEN, "tool", STATUS_RUNNING)
+
+    def test_a_sleeping_agents_published_detail_holds_still(self):
         """Published every tick, the badge must not change while it counts
         down: eta_at was now + duration, a delta every tick (review item 14)."""
-        from overcode import hook_status_detector as hsd
         from overcode.episodes import status_detail_view
 
-        st = self._state("PreToolUse", tool_name="Bash",
-                         foreground={"kind": "tool", "tool": "Bash", "blocked_on": "sleep"})
+        state = {"tool_name": "Bash", "foreground": {"kind": "tool", "tool": "Bash", "blocked_on": "sleep"}}
         views = []
         for t in (0.0, 2.0, 4.0):
-            now = st["timestamp"] + t
-            monkeypatch.setattr(hsd.time, "time", lambda now=now: now)
-            d = compute_status_detail(
-                hook_state=st, event="PreToolUse", session=self._session(),
-                pane_content="", monitor_count=0, has_interrupt=False,
-                sleep_duration_seconds=60, legacy_status=STATUS_BUSY_SLEEPING,
-            )
-            views.append(status_detail_view(d, now))
+            d = decide(TickContext({"event": "PreToolUse", "timestamp": NOW, **state},
+                                   now=NOW + t, sleep_seconds=60))[0].detail()
+            views.append(status_detail_view(d, NOW + t))
         assert views[0] == views[1] == views[2]
 
     # ---- ORANGE — approval ----
     def test_permission_request_is_orange(self):
-        st = self._state("PermissionRequest", tool_name="Bash")
-        d = compute_status_detail(
-            hook_state=st, event="PermissionRequest", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_APPROVAL,
-        )
+        d = _detail("PermissionRequest", state={"tool_name": "Bash"})
         assert d.color == STATUS_COLOR_ORANGE
         assert d.badges[0].kind == "permission"
         assert d.badges[0].label == "Bash"
+        assert d.legacy_status == STATUS_WAITING_APPROVAL
 
     def test_child_stop_is_orange_oversight(self):
-        st = self._state("Stop")
-        d = compute_status_detail(
-            hook_state=st, event="Stop", session=self._session(parent_session_id="p1"),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_OVERSIGHT,
-        )
+        d = _detail("Stop", child=True)
         assert d.color == STATUS_COLOR_ORANGE
         assert d.badges[0].kind == "oversight"
+        assert d.legacy_status == STATUS_WAITING_OVERSIGHT
 
     # ---- YELLOW — armed ----
     def test_stop_with_obligation_is_yellow(self):
-        st = self._state(
-            "Stop",
-            pending_obligations=[
-                {"kind": "cron", "cron_id": "c1", "label": "@hourly"},
-            ],
-        )
-        d = compute_status_detail(
-            hook_state=st, event="Stop", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
+        d = _detail("Stop", state={"pending_obligations": [
+            {"kind": "cron", "cron_id": "c1", "label": "@hourly"}]})
         assert d.color == STATUS_COLOR_YELLOW
         assert d.badges[0].kind == "cron"
+        assert d.legacy_status == STATUS_BUSY_SLEEPING
 
     def test_obligations_stack_by_kind(self):
-        st = self._state(
-            "Stop",
-            pending_obligations=[
-                {"kind": "monitor", "tool_use_id": "a"},
-                {"kind": "monitor", "tool_use_id": "b"},
-                {"kind": "bg_task", "tool_use_id": "c"},
-            ],
-        )
-        d = compute_status_detail(
-            hook_state=st, event="Stop", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
+        d = _detail("Stop", state={"pending_obligations": [
+            {"kind": "monitor", "tool_use_id": "a"},
+            {"kind": "monitor", "tool_use_id": "b"},
+            {"kind": "bg_task", "tool_use_id": "c"},
+        ]})
         assert d.color == STATUS_COLOR_YELLOW
-        kinds = {b.kind: b.count for b in d.badges}
-        assert kinds == {"monitor": 2, "bg_task": 1}
+        assert {b.kind: b.count for b in d.badges} == {"monitor": 2, "bg_task": 1}
 
     def test_synthetic_monitor_count_from_pane(self):
         """A Monitor visible in the pane but not in obligations still shows up."""
-        st = self._state("Stop")
-        d = compute_status_detail(
-            hook_state=st, event="Stop", session=self._session(),
-            pane_content="", monitor_count=2, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_BUSY_SLEEPING,
-        )
+        d = _detail("Stop", monitors=2)
         assert d.color == STATUS_COLOR_YELLOW
-        assert d.badges[0].kind == "monitor"
-        assert d.badges[0].count == 2
+        assert (d.badges[0].kind, d.badges[0].count) == ("monitor", 2)
+
+    def test_a_child_with_only_a_cron_is_ready_to_report(self):
+        d = _detail("Stop", child=True, state={"pending_obligations": [{"kind": "cron"}]})
+        assert d.color == STATUS_COLOR_ORANGE
+
+    def test_a_child_with_background_work_is_armed(self):
+        d = _detail("Stop", child=True, monitors=1)
+        assert (d.color, d.legacy_status) == (STATUS_COLOR_YELLOW, STATUS_BUSY_SLEEPING)
 
     # ---- RED — needs input ----
     def test_stop_with_no_obligations_is_red_awaiting(self):
-        st = self._state("Stop")
-        d = compute_status_detail(
-            hook_state=st, event="Stop", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
+        d = _detail("Stop")
         assert d.color == STATUS_COLOR_RED
         assert d.badges[0].kind == "awaiting_input"
+        assert d.legacy_status == STATUS_WAITING_USER
 
     def test_interrupt_is_red(self):
-        st = self._state("PreToolUse", tool_name="Bash")
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=True,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
-        assert d.color == STATUS_COLOR_RED
+        d = _detail("PreToolUse", state={"tool_name": "Bash"}, interrupted=True)
+        assert (d.color, d.badges[0].kind, d.legacy_status) == (
+            STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER)
 
     def test_stop_failure_is_red_error(self):
-        st = self._state("StopFailure")
-        d = compute_status_detail(
-            hook_state=st, event="StopFailure", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_ERROR,
-        )
-        assert d.color == STATUS_COLOR_RED
-        assert d.badges[0].kind == "error"
+        d = _detail("StopFailure")
+        assert (d.color, d.badges[0].kind, d.legacy_status) == (STATUS_COLOR_RED, "error", STATUS_ERROR)
 
-    # ---- Priority resolution ----
+    def test_rejected_prompt_is_labelled(self):
+        d = _detail("UserPromptSubmitRejected")
+        assert (d.badges[0].kind, d.badges[0].label, d.legacy_status) == ("error", "rejected", STATUS_ERROR)
+
+    # ---- Priority ----
     def test_red_wins_over_yellow_when_interrupt_and_obligation(self):
         """Mid-tool agent with a cron registered AND interrupted → RED, not YELLOW."""
-        st = self._state(
-            "PreToolUse", tool_name="Bash",
-            pending_obligations=[{"kind": "cron"}],
-        )
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=True,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_USER,
-        )
+        d = _detail("PreToolUse", state={"tool_name": "Bash", "pending_obligations": [{"kind": "cron"}]},
+                    interrupted=True, monitors=1)
         assert d.color == STATUS_COLOR_RED
 
     def test_orange_wins_over_yellow(self):
         """Permission request while a cron is armed → ORANGE."""
-        st = self._state(
-            "PermissionRequest", tool_name="Bash",
-            pending_obligations=[{"kind": "cron"}],
-        )
-        d = compute_status_detail(
-            hook_state=st, event="PermissionRequest", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_WAITING_APPROVAL,
-        )
-        assert d.color == STATUS_COLOR_ORANGE
+        d = _detail("PermissionRequest", state={"tool_name": "Bash", "pending_obligations": [{"kind": "cron"}]},
+                    monitors=1)
+        assert (d.color, d.legacy_status) == (STATUS_COLOR_ORANGE, STATUS_WAITING_APPROVAL)
 
     def test_green_wins_over_yellow(self):
         """Acting agent with a cron armed → GREEN, badges show tool not cron."""
-        st = self._state(
-            "PreToolUse", tool_name="Read",
-            pending_obligations=[{"kind": "cron"}],
-        )
-        d = compute_status_detail(
-            hook_state=st, event="PreToolUse", session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=STATUS_RUNNING,
-        )
+        d = _detail("PreToolUse", state={"tool_name": "Read", "pending_obligations": [{"kind": "cron"}]})
         assert d.color == STATUS_COLOR_GREEN
         assert d.badges[0].kind == "tool"
+
+
+class TestRules:
+    """Each named rule: the context that triggers it, what it decides, and the phase."""
+
+    CASES = [
+        # (name, event, context, rule that wins, colour, lead badge, legacy)
+        ("acting event", "PostToolUse", {}, "base",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("session end at a shell", "SessionEnd", {"clean": "user@host proj %"}, "session_end",
+         None, None, STATUS_TERMINATED),
+        ("session end after /clear", "SessionEnd", {"clean": "❯ "}, "session_end",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("session end, monitors do not lift it", "SessionEnd", {"clean": "❯ ", "monitors": 2},
+         "session_end", STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("dead shell", "Stop", {"dead_shell": True, "monitors": 1}, "dead_shell",
+         None, None, STATUS_TERMINATED),
+        ("question", "PermissionRequest", {"state": {"tool_name": "AskUserQuestion"}}, "question",
+         STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+        ("question, monitors do not lift it", "PermissionRequest",
+         {"state": {"tool_name": "AskUserQuestion"}, "monitors": 1}, "question",
+         STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+        ("plan", "PermissionRequest", {"state": {"tool_name": "ExitPlanMode"}}, "base",
+         STATUS_COLOR_ORANGE, "plan_approval", STATUS_WAITING_APPROVAL),
+        ("answered permission", "PermissionRequest",
+         {"state": {"tool_name": "Bash"}, "permission_answered": True}, "permission_answered",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("answered question", "PermissionRequest",
+         {"state": {"tool_name": "AskUserQuestion"}, "permission_answered": True}, "permission_answered",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("sleep", "PreToolUse", {"sleep_seconds": 30}, "sleep",
+         STATUS_COLOR_GREEN, "blocked_sleep", STATUS_BUSY_SLEEPING),
+        ("interrupt", "PreToolUse", {"interrupted": True}, "interrupt",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("interrupt ends a sleep", "PreToolUse", {"sleep_seconds": 30, "interrupted": True}, "interrupt",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("interrupt, monitors do not lift it", "UserPromptSubmit", {"interrupted": True, "monitors": 1},
+         "interrupt", STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("an interrupt marker leaves a permission orange", "PermissionRequest", {"interrupted": True},
+         "base", STATUS_COLOR_ORANGE, "permission", STATUS_WAITING_APPROVAL),
+        ("an interrupted child needs the person, not a report", "Stop",
+         {"interrupted": True, "child": True}, "interrupt",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("an interrupted Stop, monitors do not lift it", "Stop", {"interrupted": True, "monitors": 1},
+         "interrupt", STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("turn ended without a Stop", "UserPromptSubmit", {"idle_confirmed": True}, "idle_confirmed",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("a child's turn ended without a Stop", "PreToolUse", {"idle_confirmed": True, "child": True},
+         "idle_confirmed", STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+        ("turn ended without a Stop, monitor armed", "UserPromptSubmit",
+         {"idle_confirmed": True, "monitors": 1}, "armed",
+         STATUS_COLOR_YELLOW, "monitor", STATUS_BUSY_SLEEPING),
+        ("sticky green", "Stop", {"running_age": 0.5}, "sticky_green",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("sticky green for a child", "Stop", {"running_age": 0.5, "child": True}, "sticky_green",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("an old burst is a real Stop", "Stop", {"running_age": 5.0}, "base",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        ("sticky green beats monitors", "Stop", {"running_age": 0.5, "monitors": 1}, "sticky_green",
+         STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        ("armed: shells", "Stop", {"shells": 2}, "armed",
+         STATUS_COLOR_YELLOW, "bg_task", STATUS_BUSY_SLEEPING),
+        ("armed: subagents", "Stop", {"subagents": 1}, "armed",
+         STATUS_COLOR_YELLOW, "subagent", STATUS_BUSY_SLEEPING),
+        ("armed: codex Interrupt event", "Interrupt", {"monitors": 1}, "armed",
+         STATUS_COLOR_YELLOW, "monitor", STATUS_BUSY_SLEEPING),
+        ("an error is not armed", "StopFailure", {"monitors": 1}, "base",
+         STATUS_COLOR_RED, "error", STATUS_ERROR),
+        ("overdue", "Stop",
+         {"state": {"pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": NOW - 600}]}},
+         "overdue", STATUS_COLOR_RED, "overdue", STATUS_WAITING_USER),
+        ("overdue child stays ready to report", "Stop",
+         {"child": True,
+          "state": {"pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": NOW - 600}]}},
+         "base", STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+        ("unknown event", "Notification", {}, "base",
+         STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+    ]
+
+    @pytest.mark.parametrize("name,event,ctx,rule,color,lead,legacy", CASES, ids=[c[0] for c in CASES])
+    def test_rule(self, name, event, ctx, rule, color, lead, legacy):
+        verdict, winner = _decide(event, **ctx)
+        assert winner == rule
+        assert verdict.color == color
+        assert verdict.lead == lead
+        assert verdict.legacy_status == legacy
+        detail = verdict.detail()
+        if color is None:
+            assert detail is None
+        else:
+            assert (detail.color, detail.legacy_status) == (color, legacy)
+
+    def test_rule_names_are_unique_and_ordered(self):
+        names = [name for name, _ in RULES]
+        assert len(names) == len(set(names))
+        assert names.index("interrupt") < names.index("idle_confirmed") < names.index("armed")
+
+    @pytest.mark.parametrize("color,lead,legacy", [
+        (None, None, STATUS_TERMINATED),
+        (STATUS_COLOR_GREEN, "tool", STATUS_RUNNING),
+        (STATUS_COLOR_GREEN, "generating", STATUS_RUNNING),
+        (STATUS_COLOR_GREEN, "blocked_ci", STATUS_RUNNING),
+        (STATUS_COLOR_GREEN, "blocked_sleep", STATUS_BUSY_SLEEPING),
+        (STATUS_COLOR_YELLOW, "monitor", STATUS_BUSY_SLEEPING),
+        (STATUS_COLOR_YELLOW, "cron", STATUS_BUSY_SLEEPING),
+        (STATUS_COLOR_ORANGE, "oversight", STATUS_WAITING_OVERSIGHT),
+        (STATUS_COLOR_ORANGE, "permission", STATUS_WAITING_APPROVAL),
+        (STATUS_COLOR_ORANGE, "plan_approval", STATUS_WAITING_APPROVAL),
+        (STATUS_COLOR_RED, "error", STATUS_ERROR),
+        (STATUS_COLOR_RED, "awaiting_input", STATUS_WAITING_USER),
+        (STATUS_COLOR_RED, "ask_question", STATUS_WAITING_USER),
+        (STATUS_COLOR_RED, "overdue", STATUS_WAITING_USER),
+    ])
+    def test_legacy_table(self, color, lead, legacy):
+        assert legacy_status_for(color, lead) == legacy
+
+    @pytest.mark.parametrize("name,event,ctx,rule,color,lead,legacy",
+                             [c for c in CASES if c[4] is not None], ids=[c[0] for c in CASES if c[4]])
+    def test_polling_synthesis_agrees_with_the_table(self, name, event, ctx, rule, color, lead, legacy):
+        """The enum and activity alone give back the verdict's colour."""
+        verdict, _ = _decide(event, **ctx)
+        synthesized = synthesize_status_detail_from_legacy(verdict.legacy_status, verdict.activity)
+        assert synthesized.color == color
+
+
+class TestPhaseLabel:
+    """The phase names the hook event and the rule that decided (daemon log)."""
+
+    def _phase(self, tmp_path, event, pane="", parent=None, **state):
+        state_dir = tmp_path / "sessions" / "agents"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "hook_state_a1.json").write_text(json.dumps(
+            {"event": event, "timestamp": NOW - 5, **state}))
+        tmux = MockTmux()
+        tmux.set_pane_content("agents", "w1", pane)
+        detector = HookStatusDetector("agents", tmux=tmux, state_dir=state_dir)
+        session = create_mock_session(name="a1", tmux_window="w1")
+        session.parent_session_id = parent
+        detector.detect_status(session, now=NOW)
+        return detector._last_detect_phase[session.id]
+
+    def test_the_event_alone(self, tmp_path):
+        assert self._phase(tmp_path, "PreToolUse", tool_name="Read") == "hook:PreToolUse"
+
+    def test_an_override_names_its_rule(self, tmp_path):
+        assert self._phase(tmp_path, "Stop", pane="❯ \n  ⏵⏵ bypass permissions on · 2 shells") \
+            == "hook:Stop+armed"
+        assert self._phase(tmp_path, "PreToolUse", tool_name="Bash",
+                           tool_input={"command": "sleep 60"}) == "hook:PreToolUse+sleep"
+        assert self._phase(tmp_path, "PreToolUse", tool_name="Bash",
+                           pane="⎿  Interrupted · What should Claude do instead?") \
+            == "hook:PreToolUse+interrupt"
+        assert self._phase(tmp_path, "PermissionRequest", tool_name="AskUserQuestion") \
+            == "hook:PermissionRequest+question"
+        assert self._phase(tmp_path, "Stop", pane="user@host proj %") == "hook:Stop+dead_shell"
+
+    def test_the_last_rule_to_decide_wins(self, tmp_path):
+        """A sleep that was interrupted: the interrupt decided, not the sleep."""
+        assert self._phase(tmp_path, "PreToolUse", tool_name="Bash",
+                           tool_input={"command": "sleep 60"},
+                           pane="⎿  Interrupted · What should Claude do instead?") \
+            == "hook:PreToolUse+interrupt"
 
 
 # =============================================================================
@@ -1133,12 +1213,9 @@ class TestBackgroundWork:
         s.parent_session_id = parent_session_id
         return s
 
-    def _detail(self, state, legacy=STATUS_BUSY_SLEEPING, **kw):
-        return compute_status_detail(
-            hook_state=state, event=state["event"], session=self._session(),
-            pane_content="", monitor_count=0, has_interrupt=False,
-            sleep_duration_seconds=None, legacy_status=legacy, **kw,
-        )
+    def _detail(self, state, background_shells=0, subagent_count=None):
+        return decide(TickContext(state, now=time.time(), shells=background_shells,
+                                  subagents=subagent_count))[0].detail()
 
     def test_shells_from_the_status_bar_are_a_bg_task_badge(self):
         d = self._detail({"event": "Stop", "timestamp": time.time()}, background_shells=2)
@@ -1549,7 +1626,6 @@ class TestForegroundSleepEnds:
     """A sleep is only "sleeping" while its PreToolUse stands, and not forever."""
 
     def _status(self, tmp_path, monkeypatch, event, command, age):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -1560,8 +1636,7 @@ class TestForegroundSleepEnds:
         }))
         mock_tmux = create_mock_tmux_with_content("agents", 1, "⏺ Bash(...)")
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
-        monkeypatch.setattr(hsd.time, "time", lambda: base)
-        return detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"))
+        return detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"), now=base)
 
     def test_a_finished_sleep_is_not_sleeping(self, tmp_path, monkeypatch):
         status, activity, _ = self._status(tmp_path, monkeypatch, "PostToolUse", "sleep 300", 1)
@@ -1579,7 +1654,6 @@ class TestForegroundSleepEnds:
             == STATUS_BUSY_SLEEPING
 
     def test_an_esc_during_a_sleep_ends_it(self, tmp_path, monkeypatch):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -1591,8 +1665,7 @@ class TestForegroundSleepEnds:
         pane = "⏺ Bash(sleep 300)\n  ⎿  Interrupted · What should Claude do instead?\n❯ \n"
         detector = HookStatusDetector("agents", tmux=create_mock_tmux_with_content("agents", 1, pane),
                                       state_dir=state_dir)
-        monkeypatch.setattr(hsd.time, "time", lambda: base)
-        status, activity, _ = detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"))
+        status, activity, _ = detector.detect_status(create_mock_session(tmux_window=1, name="test-agent"), now=base)
         assert status == STATUS_WAITING_USER
         assert "Sleeping" not in activity
 
@@ -1602,7 +1675,6 @@ class TestTurnEndedWithoutStop:
 
     def _detect(self, tmp_path, monkeypatch, pane, event="UserPromptSubmit", hook_age=3600.0,
                 ticks=(0.0, 20.0), tool_name=None, parent=None):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         base = 1_800_000_000.0
@@ -1615,8 +1687,7 @@ class TestTurnEndedWithoutStop:
         session.parent_session_id = parent
         results = []
         for t in ticks:
-            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
-            status, activity, _ = detector.detect_status(session)
+            status, activity, _ = detector.detect_status(session, now=base + t)
             results.append((status, activity, detector.get_status_detail("test-agent")))
         return results
 
@@ -1637,7 +1708,6 @@ class TestTurnEndedWithoutStop:
         assert [r[0] for r in results] == [STATUS_RUNNING] * 2
 
     def test_a_hook_after_the_pane_went_idle_restarts_the_wait(self, tmp_path, monkeypatch):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         base = 1_800_000_000.0
@@ -1646,17 +1716,13 @@ class TestTurnEndedWithoutStop:
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         detector._busy_marker_seen = True
         session = create_mock_session(tmux_window=1, name="test-agent")
-        monkeypatch.setattr(hsd.time, "time", lambda: base)
-        detector.detect_status(session)
+        detector.detect_status(session, now=base)
         # The turn is alive after all: a new hook lands while the pane read idle
         _write_hook_state(state_dir, "test-agent", "PostToolUse", timestamp=base + 10, tool_name="Read")
-        monkeypatch.setattr(hsd.time, "time", lambda: base + 20)
-        assert detector.detect_status(session)[0] == STATUS_RUNNING
-        monkeypatch.setattr(hsd.time, "time", lambda: base + 40)
-        assert detector.detect_status(session)[0] == STATUS_WAITING_USER
+        assert detector.detect_status(session, now=base + 20)[0] == STATUS_RUNNING
+        assert detector.detect_status(session, now=base + 40)[0] == STATUS_WAITING_USER
 
     def test_a_foreground_sleep_that_was_interrupted_settles_too(self, tmp_path, monkeypatch):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         base = 1_800_000_000.0
@@ -1670,15 +1736,13 @@ class TestTurnEndedWithoutStop:
         detector._busy_marker_seen = True
         session = create_mock_session(tmux_window=1, name="test-agent")
         for t in (0.0, 20.0):
-            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
-            status, activity, _ = detector.detect_status(session)
+            status, activity, _ = detector.detect_status(session, now=base + t)
         assert status == STATUS_WAITING_USER
         assert "Sleeping" not in activity
 
     def test_an_unproven_marker_is_not_trusted(self, tmp_path, monkeypatch):
         """No pane has shown "esc to interrupt" yet (a CLI that reworded it):
         a missing marker proves nothing, so hooks keep the say."""
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         base = 1_800_000_000.0
@@ -1689,20 +1753,22 @@ class TestTurnEndedWithoutStop:
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
         session = create_mock_session(tmux_window=1, name="test-agent")
         for t in (0.0, 60.0):
-            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
-            assert detector.detect_status(session)[0] == STATUS_RUNNING
+            assert detector.detect_status(session, now=base + t)[0] == STATUS_RUNNING
         # The marker shows once (this or any agent working): now it is proven
         panes["pane"] = _BUSY_PANE
-        detector.detect_status(session)
+        detector.detect_status(session, now=base + 60.0)
         panes["pane"] = _IDLE_PANE
         for t in (70.0, 90.0):
-            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
-            status = detector.detect_status(session)[0]
+            status = detector.detect_status(session, now=base + t)[0]
         assert status == STATUS_WAITING_USER
 
     def test_a_child_settles_to_waiting_oversight(self, tmp_path, monkeypatch):
+        """Like a child's Stop: ready for oversight, orange (was red, review item 25)."""
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, parent="parent-id")
         assert later[0] == STATUS_WAITING_OVERSIGHT
+        assert later[1] == "Waiting for oversight report (turn ended without a Stop)"
+        assert later[2].color == STATUS_COLOR_ORANGE
+        assert [b.kind for b in later[2].badges] == ["oversight"]
 
     def test_a_stop_is_unaffected(self, tmp_path, monkeypatch):
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, event="Stop")
@@ -1710,7 +1776,6 @@ class TestTurnEndedWithoutStop:
         assert "without a Stop" not in later[1]
 
     def test_backends_without_a_verified_marker_are_left_alone(self, tmp_path, monkeypatch):
-        from overcode import hook_status_detector as hsd
         from overcode.status_patterns import StatusPatterns
 
         state_dir = tmp_path / "sessions" / "agents"
@@ -1721,8 +1786,7 @@ class TestTurnEndedWithoutStop:
                                       patterns=StatusPatterns())  # pane_confirms_idle off
         session = create_mock_session(tmux_window=1, name="test-agent")
         for t in (0.0, 60.0):
-            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
-            status = detector.detect_status(session)[0]
+            status = detector.detect_status(session, now=base + t)[0]
         assert status == STATUS_RUNNING
 
 
@@ -1751,21 +1815,19 @@ class TestPaneShowsIdle:
 
 
 class TestOverdueWakeup:
-    def test_an_overdue_wakeup_alone_turns_red_overdue(self, monkeypatch):
-        from overcode import hook_status_detector as hsd
+    def test_an_overdue_wakeup_alone_turns_red_overdue(self):
         from overcode.hook_status_detector import _WAKEUP_OVERDUE_SECONDS
 
-        monkeypatch.setattr(hsd.time, "time", lambda: 1000.0 + _WAKEUP_OVERDUE_SECONDS + 1)
-        session = create_mock_session(name="a")
         state = {"event": "Stop", "timestamp": 900.0,
                  "pending_obligations": [{"kind": "schedule_wakeup", "eta_absolute": 1000.0}]}
-        detail = compute_status_detail(state, "Stop", session, "", 0, False, None, STATUS_WAITING_USER)
+        detail = decide(TickContext(state, now=1000.0 + _WAKEUP_OVERDUE_SECONDS + 1))[0].detail()
         assert detail.color == STATUS_COLOR_RED
         assert [b.kind for b in detail.badges] == ["overdue"]
+        assert detail.legacy_status == STATUS_WAITING_USER
         # Still within its slack: armed (yellow)
-        monkeypatch.setattr(hsd.time, "time", lambda: 1000.0)
-        detail = compute_status_detail(state, "Stop", session, "", 0, False, None, STATUS_WAITING_USER)
+        detail = decide(TickContext(state, now=1000.0))[0].detail()
         assert detail.color == STATUS_COLOR_YELLOW
+        assert detail.legacy_status == STATUS_BUSY_SLEEPING
 
     def test_a_wakeup_long_past_its_time_is_not_armed(self):
         from overcode.hook_status_detector import _WAKEUP_OVERDUE_SECONDS, _live_obligations
@@ -1778,7 +1840,6 @@ class TestOverdueWakeup:
 
 class TestSecondInterrupt:
     def test_a_new_marker_after_a_reprompt_counts_again(self, tmp_path, monkeypatch):
-        from overcode import hook_status_detector as hsd
 
         state_dir = tmp_path / "sessions" / "agents"
         base = 1_800_000_000.0
@@ -1791,8 +1852,7 @@ class TestSecondInterrupt:
                 f.write(json.dumps({"event": "PreToolUse", "timestamp": base + t}) + "\n")
 
         def check(t, count):
-            monkeypatch.setattr(hsd.time, "time", lambda: base + t)
-            return d._interrupt_still_current("test-agent", True, count)
+            return d._interrupt_still_current("test-agent", True, count, now=base + t)
 
         running_at(0)
         assert check(1, 1)          # first Esc

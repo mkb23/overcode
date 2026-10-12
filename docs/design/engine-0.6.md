@@ -112,8 +112,15 @@ keeps the current **episode** (colour, start time) and the previous one.
   wakeup 2 min past its time with nothing else pending.
 - **Green is checked too.** A hook "running" whose Claude pane has shown
   no "esc to interrupt" for 15 s, with no hook since, is a turn that ended
-  without a Stop: red. Claude's `idle_prompt` Notification settles it for
-  good as a Stop. Each agent's `last_hook_at` is published.
+  without a Stop, and reads like one: red, a child's orange (oversight),
+  yellow if background work is armed. Claude's `idle_prompt` Notification
+  settles it for good as a Stop. Each agent's `last_hook_at` is published.
+- **One rule table.** The hook detector gathers a tick (`TickContext`: hook
+  state, pane, one `now`, the counts) and runs named rules in order
+  (`hook_status_detector.RULES`); the last rule that changed the verdict
+  names the phase (`hook:<event>+<rule>`). The legacy status enum is
+  derived from the verdict's colour and lead badge (`legacy_status_for`),
+  so the enum and the colour cannot disagree.
 - **A frozen engine is shown.** Each ping carries the main loop's beat
   age; a view hearing an age past 30 s (or nothing for 15 s) dims the list
   and says so. A watchdog in the daemon signals the stuck loop, and exits
