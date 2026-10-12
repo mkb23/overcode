@@ -1,10 +1,11 @@
 """Tests for summary_columns module."""
 
 import pytest
+from dataclasses import fields, replace
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, SUMMARY_COLUMNS, COLUMNS_BY_ID, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
+from overcode.summary_columns import ALL, MED_PLUS, HIGH_PLUS, _tool_emojis, ColumnContext, FleetFlags, SUMMARY_COLUMNS, COLUMNS_BY_ID, render_status_symbol, render_effort, render_effort_plain, render_unvisited_alert, render_time_in_state, render_sleep_countdown, render_expand_icon, render_agent_name, render_uptime, render_running_time, render_stalled_time, render_sleep_time, render_active_pct, render_token_count, render_context_usage, render_cost, render_joules, render_budget, render_git_diff, render_median_work_time, render_subagent_count, render_bash_count, render_permission_mode, render_allowed_tools, render_enhanced_context, render_wrapper, render_wrapper_plain, render_human_count, render_robot_count, render_standing_orders, render_heartbeat, render_agent_value, render_status_plain, render_uptime_plain, render_time_plain, render_token_count_plain, render_cost_plain, render_git_diff_plain, render_work_plain, render_agents_plain, render_repo_name_plain, render_branch_plain, render_mode_plain, render_tools_plain, render_heartbeat_plain, render_orders_plain, render_value_plain, render_pr_number, render_subtree_cost, render_subtree_cost_plain, render_burn_rate, render_burn_rate_plain, burn_color_for_rate, build_cli_context, render_cli_stats
 from overcode.summary_groups import SUMMARY_GROUPS_BY_ID
 
 
@@ -87,7 +88,6 @@ def _make_ctx(**overrides) -> ColumnContext:
         emoji_free=False,
         summary_detail="full",
         show_cost="tokens",
-        any_has_budget=False,
         expand_icon="▼",
         is_list_mode=False,
         has_focus=False,
@@ -110,10 +110,16 @@ def _make_ctx(**overrides) -> ColumnContext:
         max_repo_width=10,
         max_branch_width=10,
         subtree_cost_usd=0.0,
-        any_has_subtree_cost=False,
     )
+    # Fleet flags may be given one by one (any_has_pr=True, ...)
+    flags = {k: overrides.pop(k) for k in list(overrides) if k in _FLEET_FIELDS}
+    if flags:
+        defaults["fleet"] = replace(overrides.pop("fleet", FleetFlags()), **flags)
     defaults.update(overrides)
     return ColumnContext(**defaults)
+
+
+_FLEET_FIELDS = {f.name for f in fields(FleetFlags)}
 
 
 # ===========================================================================
@@ -1354,8 +1360,8 @@ class TestBuildCliContext:
     def test_passes_budget_flag(self):
         session = _make_session()
         ctx = build_cli_context(session, session.stats, None, None, "running", 0, 0,
-                                any_has_budget=True)
-        assert ctx.any_has_budget is True
+                                fleet=FleetFlags(any_has_budget=True))
+        assert ctx.fleet.any_has_budget is True
 
     def test_sets_live_counts(self):
         session = _make_session()
@@ -1568,3 +1574,67 @@ class TestUniformColumns:
         from overcode.summary_columns import COLUMNS_BY_ID, resolve_column_visible
         host = COLUMNS_BY_ID["host"]
         assert resolve_column_visible(host, "full", {"host": True}, {"host": "shirka.local"}) is True
+
+
+# ===========================================================================
+# Fleet flags: one rule for the TUI and `overcode list`
+# ===========================================================================
+
+class TestComputeFleetFlags:
+
+    def _row(self, status="running", **kw):
+        from types import SimpleNamespace
+        from overcode.summary_columns import FleetRow
+        row_fields = {k: kw.pop(k) for k in ("pr_number", "subtree_cost_usd", "window_burn",
+                                              "has_status_detail") if k in kw}
+        session = SimpleNamespace(**{
+            "cost_budget_usd": 0.0, "oversight_policy": "wait", "oversight_timeout_seconds": 0.0,
+            "model": None, "effort": None, "provider": "web", "backend": "claude-code",
+            "cpu_percent": 0.0, "rss_bytes": 0, **kw})
+        return FleetRow(session=session, status=status, **row_fields)
+
+    def test_a_quiet_fleet_gates_everything_off(self):
+        from overcode.summary_columns import compute_fleet_flags
+        assert compute_fleet_flags([self._row(), self._row()]) == FleetFlags()
+        assert compute_fleet_flags([]) == FleetFlags()
+
+    def test_each_flag_from_one_row(self):
+        from types import SimpleNamespace
+        from overcode.summary_columns import compute_fleet_flags
+        burn = SimpleNamespace(tokens_per_hour=10.0, cost_per_hour=0.0)
+        cases = {
+            "any_has_budget": self._row(cost_budget_usd=5.0),
+            "any_has_oversight_timeout": self._row(oversight_policy="timeout",
+                                                   oversight_timeout_seconds=300),
+            "any_has_pr": self._row(pr_number=42),
+            "any_has_model": self._row(model="claude-opus-4"),
+            "any_has_effort": self._row(effort="high"),
+            "any_has_provider": self._row(provider="bedrock"),
+            "mixed_backends": self._row(backend="opencode"),
+            "any_has_cpu": self._row(cpu_percent=12.0),
+            "any_has_ram": self._row(rss_bytes=1024),
+            "any_is_sleeping": self._row(status="busy_sleeping"),
+            "any_has_status_detail": self._row(has_status_detail=True),
+            "any_has_subtree_cost": self._row(subtree_cost_usd=1.5),
+            "any_has_burn": self._row(window_burn=burn),
+        }
+        assert set(cases) == _FLEET_FIELDS
+        for name, row in cases.items():
+            flags = compute_fleet_flags([self._row(), row])
+            assert flags == FleetFlags(**{name: True}), name
+
+    def test_a_timeout_needs_the_timeout_policy(self):
+        from overcode.summary_columns import compute_fleet_flags
+        row = self._row(oversight_policy="wait", oversight_timeout_seconds=300)
+        assert not compute_fleet_flags([row]).any_has_oversight_timeout
+
+    def test_one_backend_is_not_mixed(self):
+        from overcode.summary_columns import compute_fleet_flags
+        rows = [self._row(backend="opencode"), self._row(backend="opencode")]
+        assert not compute_fleet_flags(rows).mixed_backends
+
+    def test_zero_burn_is_no_burn(self):
+        from types import SimpleNamespace
+        from overcode.summary_columns import compute_fleet_flags
+        burn = SimpleNamespace(tokens_per_hour=0.0, cost_per_hour=0.0)
+        assert not compute_fleet_flags([self._row(window_burn=burn)]).any_has_burn

@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 from datetime import datetime, timedelta
 
-from overcode.tui_logic import sort_sessions_alphabetical, sort_sessions_by_status, sort_sessions_by_value, sort_sessions_by_tree, sort_sessions, filter_visible_sessions, get_sort_mode_display_name, sort_sessions_by_column, sort_mode_for_column, sort_column_for_mode, sort_descending, calculate_mean_spin_from_history, compute_tree_metadata, compute_session_widget_diff, detect_display_changes, STATUS_ORDER_BY_ATTENTION, STATUS_ORDER_BY_VALUE
+from overcode.tui_logic import sort_sessions_alphabetical, sort_sessions_by_status, sort_sessions_by_value, sort_sessions_by_tree, sort_sessions, filter_visible_sessions, get_sort_mode_display_name, sort_sessions_by_column, sort_mode_for_column, sort_column_for_mode, sort_descending, calculate_mean_spin_from_history, compute_tree_metadata, compute_session_widget_diff, STATUS_ORDER_BY_ATTENTION, STATUS_ORDER_BY_VALUE
 
 
 def make_session(name: str, session_id: str = None, is_asleep: bool = False):
@@ -1130,56 +1130,6 @@ class TestComputeSessionWidgetDiff:
         to_add, to_remove = compute_session_widget_diff({"a", "b"}, [])
         assert to_add == set()
         assert to_remove == {"a", "b"}
-
-
-class TestDetectDisplayChanges:
-    """Tests for detect_display_changes()."""
-
-    def test_no_budget_no_oversight(self):
-        """Should return False, False, False when no budget/oversight/pr."""
-        sessions = [Mock(cost_budget_usd=0, oversight_policy="wait", oversight_timeout_seconds=0, pr_number=None)]
-        budget, oversight, pr = detect_display_changes(sessions, False, False)
-        assert budget is False
-        assert oversight is False
-        assert pr is False
-
-    def test_has_budget(self):
-        """Should detect cost budget."""
-        sessions = [Mock(cost_budget_usd=5.0, oversight_policy="wait", oversight_timeout_seconds=0, pr_number=None)]
-        budget, oversight, pr = detect_display_changes(sessions, False, False)
-        assert budget is True
-        assert oversight is False
-
-    def test_has_oversight(self):
-        """Should detect oversight timeout."""
-        sessions = [Mock(cost_budget_usd=0, oversight_policy="timeout", oversight_timeout_seconds=300, pr_number=None)]
-        budget, oversight, pr = detect_display_changes(sessions, False, False)
-        assert budget is False
-        assert oversight is True
-
-    def test_empty_sessions(self):
-        """Should return False, False, False for empty sessions."""
-        budget, oversight, pr = detect_display_changes([], False, False)
-        assert budget is False
-        assert oversight is False
-        assert pr is False
-
-    def test_has_pr(self):
-        """Should detect PR number."""
-        sessions = [Mock(cost_budget_usd=0, oversight_policy="wait", oversight_timeout_seconds=0, pr_number=42)]
-        budget, oversight, pr = detect_display_changes(sessions, False, False)
-        assert budget is False
-        assert oversight is False
-        assert pr is True
-
-    def test_no_pr_when_none(self):
-        """Should not detect PR when all are None."""
-        sessions = [
-            Mock(cost_budget_usd=0, oversight_policy="wait", oversight_timeout_seconds=0, pr_number=None),
-            Mock(cost_budget_usd=0, oversight_policy="wait", oversight_timeout_seconds=0, pr_number=None),
-        ]
-        _, _, pr = detect_display_changes(sessions, False, False)
-        assert pr is False
 
 
 # =============================================================================

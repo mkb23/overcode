@@ -24,7 +24,7 @@ from ..tui_helpers import (
     get_summary_content_text,
 )
 from ..summary_columns import (
-    COLUMNS_BY_ID, ColumnContext, SummaryColumn, SUMMARY_COLUMNS, column_at,
+    COLUMNS_BY_ID, ColumnContext, FleetFlags, FleetRow, SummaryColumn, SUMMARY_COLUMNS, column_at,
     cell_segments, cell_text, render_cell, resolve_column_visible, pad_and_join_cells,
 )
 
@@ -120,22 +120,13 @@ class SessionSummary(Static, can_focus=True):
         self.ai_summary_context: str = ""  # Context: wider context (~80 chars)
         self.emoji_free: bool = False  # ASCII fallbacks for emoji (#315)
         self.show_cost: str = "tokens"  # "tokens", "cost", "joules" — cycle with $
-        self.any_has_budget: bool = False  # True if any agent has a cost budget (#173)
+        # Which fleet-gated columns show: the app's one FleetFlags (set by
+        # the TUI, compute_fleet_flags); an equal value again is no change
+        self.fleet: FleetFlags = FleetFlags()
         self.subtree_cost_usd: float = 0.0  # Subtree cost from daemon
-        self.any_has_subtree_cost: bool = False  # True if any parent has subtree cost
         self.window_burn = None  # Per-session WindowBurnStats over timeline window (#174)
-        self.any_has_burn: bool = False  # True if any agent has non-zero burn data
-        self.any_has_oversight_timeout: bool = False  # True if any agent has oversight timeout
-        self.any_is_sleeping: bool = False  # True if any agent is busy_sleeping (#289)
-        self.any_has_status_detail: bool = False  # True if any agent has a populated StatusDetail (#TBD)
-        self.any_has_model: bool = False  # True if any agent has a model set
-        self.any_has_effort: bool = False  # True if any agent has an effort detected (#497)
         # Columns every row shows the same value in — hidden (set by TUI)
         self.uniform_columns: dict = {}
-        self.any_has_provider: bool = False  # True if any agent uses non-web provider
-        self.mixed_backends: bool = False  # True if the fleet spans >1 agent CLI
-        self.any_has_cpu: bool = False      # True if any agent has a non-zero CPU reading
-        self.any_has_ram: bool = False      # True if any agent has a non-zero RAM reading
         self.oversight_deadline: Optional[str] = None  # ISO deadline for this agent
         self.summarizer_enabled: bool = False  # Track if summarizer is enabled
         self.pane_content: List[str] = []  # Cached pane content
@@ -148,7 +139,6 @@ class SessionSummary(Static, can_focus=True):
         self.live_subagent_count: int = 0  # Live count from status bar
         self.file_subagent_count: int = 0  # Live count from file mtime (#256)
         self.pr_number: Optional[int] = session.pr_number  # Widget var — sticky, survives session replacement
-        self.any_has_pr: bool = False  # App-level flag, set by TUI
         # Needs a look: an input-needed stretch began after the last visit
         # (from the engine's input_needed_since / visited_at)
         self.is_unvisited_stalled: bool = False
@@ -424,6 +414,15 @@ class SessionSummary(Static, can_focus=True):
             self._overlay = tui_engine.session_with_view(self.session, self.engine)
         return self._overlay
 
+    def fleet_row(self) -> FleetRow:
+        """What the fleet flags read from this row."""
+        return FleetRow(
+            session=self.rendered_session(), status=self.detected_status,
+            pr_number=self.pr_number, subtree_cost_usd=self.subtree_cost_usd,
+            window_burn=self.window_burn,
+            has_status_detail=bool(self.engine.get("status_detail")),
+        )
+
     def watch_summary_detail(self, summary_detail: str) -> None:
         """Called when summary_detail changes"""
         self.refresh()
@@ -504,7 +503,7 @@ class SessionSummary(Static, can_focus=True):
             emoji_free=self.emoji_free,
             summary_detail=self.summary_detail,
             show_cost=self.show_cost,
-            any_has_budget=self.any_has_budget,
+            fleet=self.fleet,
             expand_icon="",
             is_list_mode=True,
             has_focus=self.has_focus,
@@ -533,34 +532,19 @@ class SessionSummary(Static, can_focus=True):
             max_name_width=name_width,
             max_repo_width=getattr(self.app, 'max_repo_width', 10),
             max_branch_width=getattr(self.app, 'max_branch_width', 10),
-            any_has_oversight_timeout=self.any_has_oversight_timeout,
             oversight_deadline=self.oversight_deadline,
-            any_is_sleeping=self.any_is_sleeping,
             sleep_wake_estimate=sleep_wake_estimate,
             status_detail=effective_detail,
-            any_has_status_detail=self.any_has_status_detail,
             # Subtree cost
             subtree_cost_usd=self.subtree_cost_usd,
-            any_has_subtree_cost=self.any_has_subtree_cost,
             # Burn rate (#174)
             window_burn=self.window_burn,
-            any_has_burn=self.any_has_burn,
             # PR number (widget var, not session)
             pr_number=self.pr_number,
-            any_has_pr=self.any_has_pr,
             # Model
             model=s.model or "",
-            any_has_model=self.any_has_model,
             # Reasoning effort (#497)
             effort=getattr(s, 'effort', None) or "",
-            any_has_effort=self.any_has_effort,
-            # Provider
-            any_has_provider=self.any_has_provider,
-            # Agent CLI backend
-            mixed_backends=self.mixed_backends,
-            # Resource usage (CPU / RAM)
-            any_has_cpu=self.any_has_cpu,
-            any_has_ram=self.any_has_ram,
             # Sister integration (#245)
             source_host=s.source_host,
             is_remote=s.is_remote,

@@ -111,45 +111,18 @@ def _gather_session_stats(sess, pane_content_raw: str) -> dict:
     }
 
 
-def _compute_cross_session_flags(sessions, daemon_state, use_daemon: bool) -> dict:
-    """Compute display flags across all sessions."""
-    any_has_oversight_timeout = False
-    any_has_pr = False
+def _subtree_costs(sessions, daemon_state, use_daemon: bool) -> dict:
+    """Subtree cost by session id: the daemon's, and a sister's forwarded one."""
     subtree_costs = {}
-
     if use_daemon:
-        any_has_oversight_timeout = any(
-            ds.oversight_timeout_seconds > 0
-            for ds in daemon_state.sessions
-        )
         for ds in daemon_state.sessions:
             if ds.subtree_cost_usd > 0:
                 subtree_costs[ds.session_id] = ds.subtree_cost_usd
-
-    # Also extract from remote sessions via forwarded daemon_state
     for s in sessions:
         rds = getattr(s, 'remote_daemon_state', None)
         if rds and rds.get('subtree_cost_usd', 0) > 0:
             subtree_costs[s.id] = rds['subtree_cost_usd']
-
-    if not use_daemon:
-        any_has_oversight_timeout = any(
-            getattr(s, 'oversight_timeout_seconds', 0) > 0
-            for s in sessions
-        )
-
-    any_has_subtree_cost = bool(subtree_costs)
-    any_has_pr = any(
-        getattr(s, 'pr_number', None) is not None
-        for s in sessions
-    )
-
-    return {
-        "any_has_oversight_timeout": any_has_oversight_timeout,
-        "any_has_pr": any_has_pr,
-        "subtree_costs": subtree_costs,
-        "any_has_subtree_cost": any_has_subtree_cost,
-    }
+    return subtree_costs
 
 
 def _reconcile_without_daemon(launcher, tmux_session: str) -> None:
@@ -558,7 +531,10 @@ def list_agents(
     from ..git_stats import effective_git_directory, get_git_diff_stats, get_git_untracked_count
     from ..tui_helpers import get_status_symbol
     from ..monitor_daemon_state import get_monitor_daemon_state
-    from ..summary_columns import build_cli_context, render_summary_cells, compute_column_widths, pad_and_join_cells, render_header_cells
+    from ..summary_columns import (
+        FleetRow, build_cli_context, compute_column_widths, compute_fleet_flags,
+        pad_and_join_cells, render_header_cells, render_summary_cells,
+    )
     from ..tui_logic import compute_tree_metadata, sort_sessions
     from rich.console import Console
 
@@ -612,13 +588,7 @@ def list_agents(
     sessions = sort_sessions(sessions, sort)
     tree_meta = compute_tree_metadata(sessions)
 
-    # Pre-compute: any agent with budget, column alignment widths
-    any_has_budget = any(s.cost_budget_usd > 0 for s in sessions)
-    any_has_provider = any(getattr(s, 'provider', 'web') not in ('web', None, '') for s in sessions)
-    from ..backends import session_backend_name
-    mixed_backends = len({session_backend_name(s) for s in sessions}) > 1
-    any_has_model = any(getattr(s, 'model', None) for s in sessions)
-    any_has_effort = any(getattr(s, 'effort', None) for s in sessions)
+    # Column alignment widths
     max_name_len = max((len(s.name) for s in sessions), default=10)
     name_width = min(max(max_name_len, 10), 20)
     max_repo_width = max((len(s.repo_name or "n/a") for s in sessions), default=5)
@@ -631,12 +601,7 @@ def list_agents(
     daemon_state = get_monitor_daemon_state(session)
     use_daemon = daemon_state is not None and not daemon_state.is_stale()
 
-    # Compute cross-session flags from daemon state
-    cross_flags = _compute_cross_session_flags(sessions, daemon_state, use_daemon)
-    any_has_oversight_timeout = cross_flags["any_has_oversight_timeout"]
-    any_has_pr = cross_flags["any_has_pr"]
-    subtree_costs = cross_flags["subtree_costs"]
-    any_has_subtree_cost = cross_flags["any_has_subtree_cost"]
+    subtree_costs = _subtree_costs(sessions, daemon_state, use_daemon)
 
     # Only create detector as fallback when daemon isn't running
     detector = None
@@ -701,9 +666,6 @@ def list_agents(
 
         session_data.append((sess, status, activity, claude_stats, git_diff, git_untracked))
 
-    # Compute cross-session flags
-    any_is_sleeping = any(st == "busy_sleeping" for _, st, _, _, _, _ in session_data)
-
     # Pull structured 2-column status detail off the detector when available
     # (#TBD). Detector may be None when daemon state alone supplies status.
     def _get_status_detail(sess):
@@ -717,8 +679,14 @@ def list_agents(
         except Exception:
             return None
 
-    any_has_status_detail = any(
-        _get_status_detail(sd[0]) is not None for sd in session_data
+    # Which fleet-gated columns show, by the same rule as the TUI
+    fleet = compute_fleet_flags(
+        FleetRow(
+            session=sess, status=status, pr_number=getattr(sess, 'pr_number', None),
+            subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
+            has_status_detail=_get_status_detail(sess) is not None,
+        )
+        for sess, status, *_ in session_data
     )
 
     # Heartbeat status legacy bridge (#TBD task 6)
@@ -747,18 +715,10 @@ def list_agents(
             claude_stats=claude_stats, git_diff_stats=git_diff,
             status=status, bg_bash_count=0, live_sub_count=0,
             git_untracked_count=git_untracked,
-            any_has_budget=any_has_budget, child_count=child_count,
-            any_is_sleeping=any_is_sleeping,
+            fleet=fleet, child_count=child_count,
             status_detail=_augmented_detail(sess, status),
-            any_has_status_detail=any_has_status_detail,
-            any_has_oversight_timeout=any_has_oversight_timeout,
             oversight_deadline=oversight_deadline,
             pr_number=getattr(sess, 'pr_number', None),
-            any_has_pr=any_has_pr,
-            any_has_model=any_has_model,
-            any_has_effort=any_has_effort,
-            any_has_provider=any_has_provider,
-            mixed_backends=mixed_backends,
             summary_detail=detail,
             has_sisters=has_sisters,
             local_hostname=local_hostname,
@@ -767,7 +727,6 @@ def list_agents(
             max_branch_width=max_branch_width,
             all_names_match_repos=all_names_match_repos,
             subtree_cost_usd=subtree_costs.get(sess.id, 0.0),
-            any_has_subtree_cost=any_has_subtree_cost,
         )
         ctx.status_color = f"bold {status_color}"
         ctx.show_cost = "joules" if joules else ("cost" if cost else "tokens")
@@ -1385,7 +1344,6 @@ def show(
             ai_context = daemon_session.activity_summary_context or ""
 
         # Build context and render via column system
-        any_has_budget = sess.cost_budget_usd > 0
         ctx = build_cli_context(
             session=sess,
             stats=sess.stats,
@@ -1396,7 +1354,6 @@ def show(
             live_sub_count=live_sub_count,
             git_untracked_count=git_untracked,
             auto_accept_mode=auto_accept,
-            any_has_budget=any_has_budget,
         )
 
         print(f"=== {name} ===")

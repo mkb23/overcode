@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from overcode.session_manager import Session, SessionStats
 from overcode.history_reader import AgentSessionStats
+from overcode.summary_columns import FleetFlags
 from overcode.tui_widgets.session_summary import (
     SessionSummary,
     _scraped_recap_from_stats,
@@ -93,11 +94,10 @@ def _make_bare_widget(**extra_attrs) -> SessionSummary:
     widget.live_subagent_count = 0
     widget.auto_accept_mode = False
     widget.pr_number = None
-    widget.any_has_pr = False
+    widget.fleet = FleetFlags()
     widget.uniform_columns = {}
     widget.is_unvisited_stalled = False
     widget.show_cost = "tokens"
-    widget.any_has_budget = False
     widget._status_changed_at = None
     widget.engine = {}
     widget.local_pane = False
@@ -410,9 +410,9 @@ class TestRowInputs:
 
     def test_the_same_value_again_keeps_it(self):
         # The 10 s session sync assigns every flag again
-        widget = self._built_widget(any_has_pr=False, job_count=0)
+        widget = self._built_widget(fleet=FleetFlags(), job_count=0)
         built = widget._built
-        widget.any_has_pr = False
+        widget.fleet = FleetFlags()
         widget.job_count = 0
         widget.session = widget.session
         assert widget._built is built

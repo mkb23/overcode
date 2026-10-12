@@ -46,7 +46,6 @@ from .status_detector_factory import StatusDetectorDispatcher
 from .status_constants import DEFAULT_CAPTURE_LINES
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
-from . import tui_engine
 from .tui_split import make_split
 from .tui_engine_link import (
     ENGINE_BANNER_GRACE_SECONDS,  # noqa: F401 (re-exported for tests)
@@ -73,13 +72,13 @@ from .summarizer_component import (
 from .sister_poller import SisterPoller
 from .usage_monitor import UsageMonitor
 from .worker_guard import single_flight, worker_cancelled
+from .summary_columns import FleetFlags, compute_fleet_flags
 from .tui_logic import (
     sort_sessions,
     filter_visible_sessions,
     compute_child_counts,
     compute_tree_metadata,
     compute_session_widget_diff,
-    detect_display_changes,
 )
 from .tui_widgets.daemon_status_bar import LocalBarState, read_local_state
 from .tui_widgets.status_timeline import read_history_data
@@ -384,6 +383,9 @@ class SupervisorTUI(
         # {column id: value} for columns every row shows the same value in —
         # hidden, with the value noted in the header row (uniform_columns)
         self.uniform_columns: dict = {}
+        # Which fleet-gated columns show (budget, PR, model, backend…), from
+        # every row; each row holds this one value (_update_fleet_flags)
+        self.fleet = FleetFlags()
         self._column_widths_dirty: bool = True  # Recompute on first render
         # Live overrides while the C-modal is open — header/width lookups use
         # these instead of the persisted prefs so toggling updates everything
@@ -954,24 +956,17 @@ class SupervisorTUI(
         self._repaint(list(self.query(SessionSummary)))
 
     def _update_fleet_flags(self) -> bool:
-        """The any_* column gates that depend on engine data; True if one flipped."""
+        """The fleet-gated columns, from the rows on show (compute_fleet_flags,
+        as ``overcode list`` does); True if a row's flags changed."""
         widgets = list(self.query(SessionSummary))
-        flags = {
-            "any_has_burn": any(
-                w.window_burn is not None
-                and (w.window_burn.tokens_per_hour > 0 or w.window_burn.cost_per_hour > 0)
-                for w in widgets
-            ),
-            "any_has_subtree_cost": any(w.subtree_cost_usd > 0 for w in widgets),
-            "any_is_sleeping": any(w.detected_status == "busy_sleeping" for w in widgets),
-            "any_has_status_detail": any(w.engine.get("status_detail") for w in widgets),
-        }
+        fleet = compute_fleet_flags(w.fleet_row() for w in widgets)
+        self.fleet = fleet
         flipped = False
         for widget in widgets:
-            for name, value in flags.items():
-                if getattr(widget, name) != value:
-                    setattr(widget, name, value)
-                    flipped = True
+            if widget.fleet != fleet:
+                flipped = True
+            # The same value again is no change to the row (__setattr__)
+            widget.fleet = fleet
         return flipped
 
     def _ring(self, agent: str, episode: dict) -> None:
@@ -1783,53 +1778,12 @@ class SupervisorTUI(
 
         container = self.query_one("#sessions-container", ScrollableContainer)
 
-        # Check if any session has a cost budget / oversight timeout / PR
-        any_has_budget, any_has_oversight_timeout, any_has_pr = detect_display_changes(
-            self.sessions, False, False
-        )
-
         # Subtree cost of a sister's agent comes with its forwarded state; a
         # local agent's with the engine's view (apply_engine)
         remote_subtree = {
             s.id: s.remote_daemon_state['subtree_cost_usd'] for s in self._remote_sessions
             if (getattr(s, 'remote_daemon_state', None) or {}).get('subtree_cost_usd', 0) > 0
         }
-        # Also check widget pr_number vars (sticky — survive session replacement)
-        if not any_has_pr:
-            any_has_pr = any(
-                getattr(w, 'pr_number', None) is not None
-                for w in self.query(SessionSummary)
-            )
-
-        # Each local agent as the engine reports it (model, effort, CPU/RAM)
-        views = self._engine_agents
-        shown = [tui_engine.session_with_view(s, views.get(s.id, {})) for s in self.sessions]
-        any_has_model = any(s.model for s in shown)
-        any_has_effort = any(getattr(s, 'effort', None) for s in shown)
-
-        # Check if any agent uses a non-web provider
-        any_has_provider = any(
-            getattr(s, 'provider', 'web') not in ('web', None, '')
-            for s in self.sessions
-        )
-
-        # Backend badge only earns a column once the fleet is mixed — a
-        # Claude-only dashboard looks exactly as it did before opencode.
-        from .backends import session_backend_name
-        mixed_backends = len({
-            session_backend_name(s) for s in self.sessions
-        }) > 1
-
-        # Check if any agent has a non-zero CPU / RAM reading
-        any_has_cpu = any(
-            (getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0
-            for s in shown
-        )
-        any_has_ram = any(
-            (getattr(s, 'rss_bytes', 0) or 0) > 0
-            for s in shown
-        )
-
         # Build the list of sessions to display using extracted logic
         display_sessions = filter_visible_sessions(
             active_sessions=self.sessions,
@@ -1867,13 +1821,9 @@ class SupervisorTUI(
             for widget in existing_widgets.values():
                 if widget.session.id in session_map:
                     new_session = session_map[widget.session.id]
-                    old_budget = widget.any_has_budget
                     # Check if anything display-relevant actually changed
-                    changed = (
-                        force_refresh
-                        or widget.session != new_session
-                        or old_budget != any_has_budget
-                    )
+                    # (the fleet flags are worked out below)
+                    changed = force_refresh or widget.session != new_session
                     widget.session = new_session
                     # Sync display modes
                     widget.emoji_free = self.emoji_free
@@ -1883,15 +1833,6 @@ class SupervisorTUI(
                     if "pr_number" not in widget.engine:
                         # Sync pr_number from session (propagates detection and clearing)
                         widget.pr_number = new_session.pr_number
-                    widget.any_has_budget = any_has_budget
-                    widget.any_has_oversight_timeout = any_has_oversight_timeout
-                    widget.any_has_pr = any_has_pr
-                    widget.any_has_model = any_has_model
-                    widget.any_has_effort = any_has_effort
-                    widget.any_has_provider = any_has_provider
-                    widget.mixed_backends = mixed_backends
-                    widget.any_has_cpu = any_has_cpu
-                    widget.any_has_ram = any_has_ram
                     widget.oversight_deadline = getattr(new_session, 'oversight_deadline', None)
                     # Update terminated visual state
                     if widget.session.status == "terminated":
@@ -1943,13 +1884,7 @@ class SupervisorTUI(
                 # Apply display modes
                 widget.emoji_free = self.emoji_free
                 widget.show_cost = self.show_cost
-                widget.any_has_budget = any_has_budget
-                widget.any_has_oversight_timeout = any_has_oversight_timeout
-                widget.any_has_pr = any_has_pr
-                widget.any_has_model = any_has_model
-                widget.any_has_effort = any_has_effort
-                widget.any_has_provider = any_has_provider
-                widget.mixed_backends = mixed_backends
+                widget.fleet = self.fleet  # until _update_fleet_flags below
                 widget.oversight_deadline = getattr(session, 'oversight_deadline', None)
                 # What the engine (or a sister) already says about it
                 if session.is_remote:

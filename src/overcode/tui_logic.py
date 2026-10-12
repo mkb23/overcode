@@ -664,33 +664,6 @@ def compute_session_widget_diff(
     return to_add, to_remove
 
 
-def detect_display_changes(
-    sessions: List,
-    any_has_budget: bool,
-    any_has_oversight: bool,
-) -> Tuple[bool, bool, bool]:
-    """Compute budget, oversight, and PR flag changes from sessions.
-
-    Pure function — no side effects, fully testable.
-
-    Args:
-        sessions: List of session objects
-        any_has_budget: Current value of any_has_budget flag
-        any_has_oversight: Current value of any_has_oversight flag
-
-    Returns:
-        Tuple of (new_any_has_budget, new_any_has_oversight, new_any_has_pr)
-    """
-    new_budget = any(getattr(s, 'cost_budget_usd', 0) > 0 for s in sessions)
-    new_oversight = any(
-        getattr(s, 'oversight_policy', 'wait') == 'timeout'
-        and getattr(s, 'oversight_timeout_seconds', 0) > 0
-        for s in sessions
-    )
-    new_pr = any(getattr(s, 'pr_number', None) is not None for s in sessions)
-    return new_budget, new_oversight, new_pr
-
-
 def windows_needing_resize(
     current_sizes: dict,
     windows: List[str],

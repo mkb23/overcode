@@ -17,9 +17,9 @@ between deltas (test_row_cache checks every column an hour apart).
 """
 
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Iterable, List, Optional, Tuple
 
 from .status_constants import (
     ALL_STATUSES,
@@ -148,6 +148,80 @@ HIGH_PLUS = {"high", "full"}
 
 
 # ---------------------------------------------------------------------------
+# FleetFlags: whether a column shows at all, from every row
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FleetFlags:
+    """Fleet-wide gates for columns that only earn their width once some
+    row has something to show (a budget, a PR, a second backend…).
+
+    One value for the whole table, from compute_fleet_flags(); the TUI and
+    ``overcode list`` both build it that way, so they agree. Frozen and
+    compared by value: assigning an equal one to a TUI row is no change.
+    """
+
+    any_has_budget: bool = False  # a cost budget (#173)
+    any_has_oversight_timeout: bool = False  # an oversight timeout policy
+    any_has_pr: bool = False  # an open PR
+    any_has_model: bool = False  # a model known
+    any_has_effort: bool = False  # a reasoning effort detected (#497)
+    any_has_provider: bool = False  # a non-web API provider
+    # More than one agent CLI. The column only appears once a fleet is
+    # mixed: a Claude-only user sees no change from opencode support landing.
+    mixed_backends: bool = False
+    any_has_cpu: bool = False  # a non-zero CPU reading
+    any_has_ram: bool = False  # a non-zero RAM reading
+    any_is_sleeping: bool = False  # busy_sleeping (#289)
+    # A populated status detail, so the DTL column stays when someone has a
+    # non-sleep badge
+    any_has_status_detail: bool = False
+    any_has_subtree_cost: bool = False  # a parent with subtree cost
+    any_has_burn: bool = False  # a non-zero burn rate (#174)
+
+
+@dataclass(frozen=True)
+class FleetRow:
+    """What the fleet flags read from one row."""
+
+    session: object  # as the row draws it (sessions.json with the engine's view)
+    status: str = ""  # the status the row shows
+    pr_number: Optional[int] = None
+    subtree_cost_usd: float = 0.0
+    window_burn: Optional[object] = None  # Optional[WindowBurnStats]
+    has_status_detail: bool = False
+
+
+def compute_fleet_flags(rows: Iterable[FleetRow]) -> FleetFlags:
+    """The fleet flags for the rows on show."""
+    from .backends import session_backend_name
+    rows = list(rows)
+    sessions = [r.session for r in rows]
+    return FleetFlags(
+        any_has_budget=any((getattr(s, 'cost_budget_usd', 0) or 0) > 0 for s in sessions),
+        any_has_oversight_timeout=any(
+            getattr(s, 'oversight_policy', 'wait') == 'timeout'
+            and (getattr(s, 'oversight_timeout_seconds', 0) or 0) > 0
+            for s in sessions
+        ),
+        any_has_pr=any(r.pr_number is not None for r in rows),
+        any_has_model=any(bool(getattr(s, 'model', None)) for s in sessions),
+        any_has_effort=any(bool(getattr(s, 'effort', None)) for s in sessions),
+        any_has_provider=any(getattr(s, 'provider', 'web') not in ('web', None, '') for s in sessions),
+        mixed_backends=len({session_backend_name(s) for s in sessions}) > 1,
+        any_has_cpu=any((getattr(s, 'cpu_percent', 0.0) or 0.0) > 0.0 for s in sessions),
+        any_has_ram=any((getattr(s, 'rss_bytes', 0) or 0) > 0 for s in sessions),
+        any_is_sleeping=any(r.status == "busy_sleeping" for r in rows),
+        any_has_status_detail=any(r.has_status_detail for r in rows),
+        any_has_subtree_cost=any(r.subtree_cost_usd > 0 for r in rows),
+        any_has_burn=any(
+            r.window_burn is not None
+            and (r.window_burn.tokens_per_hour > 0 or r.window_burn.cost_per_hour > 0)
+            for r in rows
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # ColumnContext: all pre-computed data a column needs
 # ---------------------------------------------------------------------------
 @dataclass
@@ -167,7 +241,6 @@ class ColumnContext:
     emoji_free: bool
     summary_detail: str
     show_cost: str  # "tokens", "cost", "joules"
-    any_has_budget: bool  # True if any agent has a cost budget (#173)
     expand_icon: str
     is_list_mode: bool
     has_focus: bool
@@ -205,49 +278,31 @@ class ColumnContext:
     # Running overcode jobs this agent launched (#463)
     job_count: int = 0
 
+    # Fleet-wide column gates, the same for every row
+    fleet: FleetFlags = field(default_factory=FleetFlags)
+
     # Oversight countdown
-    any_has_oversight_timeout: bool = False
     oversight_deadline: Optional[str] = None
 
     # Sleep countdown (#289)
-    any_is_sleeping: bool = False  # True if any agent is busy_sleeping
     sleep_wake_estimate: Optional[datetime] = None  # Estimated wake time
 
     # Two-column status model (#TBD). When populated, the ⏰ column renders
     # emoji-stacked badges from the hook reducer instead of just the sleep
     # countdown. None → legacy sleep countdown rendering.
     status_detail: Optional["StatusDetail"] = None  # noqa: F821 (forward ref)
-    # App-wide flag — True if any agent has a populated status_detail, used
-    # by the column's visibility predicate so the column stays present when
-    # someone has a non-sleep badge.
-    any_has_status_detail: bool = False
 
     # Subtree cost (parent + all descendants)
     subtree_cost_usd: float = 0.0
-    any_has_subtree_cost: bool = False
 
     # PR number (widget var, not session — survives session replacement)
     pr_number: Optional[int] = None
-    any_has_pr: bool = False
 
     # Model
     model: str = ""  # Model short name or full name
-    any_has_model: bool = False  # True if any agent has a model set
 
     # Reasoning effort (#497)
     effort: str = ""  # Verbatim from the backend ("high", "xhigh", "none", …)
-    any_has_effort: bool = False  # True if any agent has an effort detected
-
-    # Provider
-    any_has_provider: bool = False  # True if any agent uses non-web provider
-
-    # Agent CLI backend. The column only appears once a fleet is mixed —
-    # a Claude-only user should see no change from opencode support landing.
-    mixed_backends: bool = False
-
-    # Resource usage (set when at least one agent has a non-zero reading)
-    any_has_cpu: bool = False
-    any_has_ram: bool = False
 
     # Sister integration (#245)
     source_host: str = ""
@@ -265,7 +320,6 @@ class ColumnContext:
     # Window-scoped burn rate for this session (#174). None when the burn
     # column isn't enabled or the session has no recent token activity.
     window_burn: Optional[object] = None  # Optional[WindowBurnStats]
-    any_has_burn: bool = False  # True if any agent has a non-zero burn rate
 
     def e(self, char: str) -> str:
         """Return ASCII fallback if emoji_free mode is active (#315),
@@ -879,7 +933,7 @@ def _format_rss(rss_bytes: int) -> str:
 
 def render_cpu_pct(ctx: ColumnContext) -> ColumnOutput:
     """CPU % for the claude process tree. >100 = multi-core. Auto-hides
-    via visible=any_has_cpu."""
+    via visible=fleet.any_has_cpu."""
     cpu = getattr(ctx.session, 'cpu_percent', 0.0) or 0.0
     if cpu < 1.0:
         return [("     -", f"dim{ctx.bg}")]
@@ -1335,7 +1389,7 @@ def render_provider(ctx: ColumnContext) -> ColumnOutput:
 
 
 def render_provider_plain(ctx: ColumnContext) -> Optional[str]:
-    if not ctx.any_has_provider:
+    if not ctx.fleet.any_has_provider:
         return None
     provider = getattr(ctx.session, 'provider', 'web') or 'web'
     return provider
@@ -1372,7 +1426,7 @@ def render_backend(ctx: ColumnContext) -> ColumnOutput:
 def render_backend_plain(ctx: ColumnContext) -> Optional[str]:
     # Mirrors the widget gate: silent for a single-backend fleet. `overcode
     # show` prints the backend unconditionally via its own line instead.
-    if not ctx.mixed_backends:
+    if not ctx.fleet.mixed_backends:
         return None
     from .backends import session_backend_name
     return session_backend_name(ctx.session)
@@ -1578,7 +1632,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=lambda ctx: _age_seconds(ctx.status_changed_at),
                   sort_desc=True),
     SummaryColumn(id="sleep_countdown", ticks=True, group="identity", detail_levels=ALL, render=render_sleep_countdown,
-                  visible=lambda ctx: ctx.any_is_sleeping or ctx.any_has_status_detail,
+                  visible=lambda ctx: ctx.fleet.any_is_sleeping or ctx.fleet.any_has_status_detail,
                   header="DTL", name="Status Detail",
                   description="Status detail: current tool, subagents, sleep wake-up estimate",
                   hover=hover_status_detail),
@@ -1620,7 +1674,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_desc=True),
     SummaryColumn(id="pr_number", group="git", detail_levels=ALL, render=render_pr_number,
                   label="PR",
-                  visible=lambda ctx: ctx.any_has_pr, placeholder_width=8, header="PR", name="PR Number",
+                  visible=lambda ctx: ctx.fleet.any_has_pr, placeholder_width=8, header="PR", name="PR Number",
                   description="Open pull request for the agent's branch",
                   sort_key=lambda ctx: ctx.pr_number,
                   sort_desc=True),
@@ -1672,7 +1726,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_key=_if_stats(lambda ctx: ctx.session.stats.estimated_cost_usd),
                   sort_desc=True),
     SummaryColumn(id="budget", group="llm_usage", detail_levels=set(), render=render_budget,
-                  visible=lambda ctx: ctx.any_has_budget, placeholder_width=7,
+                  visible=lambda ctx: ctx.fleet.any_has_budget, placeholder_width=7,
                   header="BDG", name="Budget",
                   description="Cost budget set for this agent (B to edit)",
                   sort_key=lambda ctx: ctx.session.cost_budget_usd or None,
@@ -1680,7 +1734,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="subtree_cost", group="llm_usage", detail_levels=set(),
                   render=render_subtree_cost, label="Subtree",
                   render_plain=render_subtree_cost_plain,
-                  visible=lambda ctx: ctx.any_has_subtree_cost,
+                  visible=lambda ctx: ctx.fleet.any_has_subtree_cost,
                   placeholder_width=8, header="SUB$", name="Subtree Cost",
                   description="Cost of this agent plus all its children",
                   sort_key=lambda ctx: ctx.subtree_cost_usd or None,
@@ -1691,7 +1745,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
     SummaryColumn(id="burn_rate", group="llm_usage", detail_levels=HIGH_PLUS,
                   render=render_burn_rate, label="Burn",
                   render_plain=render_burn_rate_plain,
-                  visible=lambda ctx: ctx.any_has_burn,
+                  visible=lambda ctx: ctx.fleet.any_has_burn,
                   placeholder_width=9, header="BURN", name="Burn Rate",
                   description="Spend rate over the timeline window (units follow $)",
                   sort_key=_sort_burn_rate,
@@ -1705,14 +1759,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_desc=True),
     SummaryColumn(id="model", group="context", detail_levels=ALL, render=render_model,
                   label="Model", render_plain=render_model_plain,
-                  visible=lambda ctx: ctx.any_has_model,
+                  visible=lambda ctx: ctx.fleet.any_has_model,
                   placeholder_width=8, header="MDL", name="Model",
                   description="Model the agent is running",
                   sort_key=_sort_model,
                   hide_when_uniform=True),
     SummaryColumn(id="effort", group="context", detail_levels=MED_PLUS, render=render_effort,
                   label="Effort", render_plain=render_effort_plain,
-                  visible=lambda ctx: ctx.any_has_effort,
+                  visible=lambda ctx: ctx.fleet.any_has_effort,
                   placeholder_width=6, header="EFF", name="Effort",
                   description="Reasoning effort the model is running at (low, med, high, xhigh, max…)",
                   sort_key=_sort_effort,
@@ -1720,14 +1774,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   hide_when_uniform=True),
     SummaryColumn(id="provider", group="context", detail_levels=ALL, render=render_provider,
                   label="Provider", render_plain=render_provider_plain,
-                  visible=lambda ctx: ctx.any_has_provider,
+                  visible=lambda ctx: ctx.fleet.any_has_provider,
                   placeholder_width=3, header="PRV", name="Provider",
                   description="API provider (web or Bedrock)",
                   sort_key=lambda ctx: getattr(ctx.session, 'provider', 'web') or 'web',
                   hide_when_uniform=True),
     SummaryColumn(id="backend", group="context", detail_levels=ALL, render=render_backend,
                   label="Backend", render_plain=render_backend_plain,
-                  visible=lambda ctx: ctx.mixed_backends,
+                  visible=lambda ctx: ctx.fleet.mixed_backends,
                   placeholder_width=3, header="BKD", name="Agent Backend",
                   description="Agent CLI: cc Claude Code, oc opencode, cx codex, gk grok, hm hermes",
                   sort_key=_sort_backend,
@@ -1741,14 +1795,14 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   sort_desc=True),
     SummaryColumn(id="cpu_pct", group="performance", detail_levels=HIGH_PLUS, render=render_cpu_pct,
                   label="CPU",
-                  visible=lambda ctx: ctx.any_has_cpu,
+                  visible=lambda ctx: ctx.fleet.any_has_cpu,
                   placeholder_width=6, header="CPU", name="CPU %",
                   description="CPU used by the agent's process tree (over 100% = several cores)",
                   sort_key=lambda ctx: getattr(ctx.session, 'cpu_percent', 0.0) or 0.0,
                   sort_desc=True),
     SummaryColumn(id="ram", group="performance", detail_levels=HIGH_PLUS, render=render_ram,
                   label="RAM",
-                  visible=lambda ctx: ctx.any_has_ram,
+                  visible=lambda ctx: ctx.fleet.any_has_ram,
                   placeholder_width=6, header="RAM", name="Memory (RSS)",
                   description="Resident memory of the agent's process tree",
                   sort_key=lambda ctx: getattr(ctx.session, 'rss_bytes', 0) or 0,
@@ -1848,7 +1902,7 @@ SUMMARY_COLUMNS: List[SummaryColumn] = [
                   description="Heartbeat interval and next send time (⏸ paused)",
                   sort_key=_sort_heartbeat),
     SummaryColumn(id="oversight_countdown", ticks=True, group="supervision", detail_levels=ALL, render=render_oversight_countdown,
-                  visible=lambda ctx: ctx.any_has_oversight_timeout, placeholder_width=8,
+                  visible=lambda ctx: ctx.fleet.any_has_oversight_timeout, placeholder_width=8,
                   header="OVR", name="Oversight Countdown",
                   description="Time left before an oversight timeout fires",
                   sort_key=_sort_oversight),
@@ -1890,25 +1944,22 @@ def build_cli_context(
     status: str, bg_bash_count: int, live_sub_count: int,
     git_untracked_count: Optional[int] = None,
     auto_accept_mode: bool = False,
-    any_has_budget: bool = False, child_count: int = 0, any_is_sleeping: bool = False,
-    any_has_oversight_timeout: bool = False, oversight_deadline: Optional[str] = None,
-    pr_number: Optional[int] = None, any_has_pr: bool = False,
-    any_has_model: bool = False,
-    any_has_effort: bool = False,
-    any_has_provider: bool = False,
-    mixed_backends: bool = False,
-    any_has_cpu: bool = False, any_has_ram: bool = False,
+    fleet: Optional[FleetFlags] = None, child_count: int = 0,
+    oversight_deadline: Optional[str] = None,
+    pr_number: Optional[int] = None,
     emoji_free: bool = False, summary_detail: str = "full",
     has_sisters: bool = False, local_hostname: str = "",
     max_name_width: int = 16, max_repo_width: int = 10,
     max_branch_width: int = 10, all_names_match_repos: bool = False,
-    subtree_cost_usd: float = 0.0, any_has_subtree_cost: bool = False,
+    subtree_cost_usd: float = 0.0,
     status_detail: Optional[StatusDetail] = None,
-    any_has_status_detail: bool = False,
     window_burn: Optional[object] = None,
-    any_has_burn: bool = False,
 ) -> ColumnContext:
-    """Build a ColumnContext from CLI data (no TUI widget needed)."""
+    """Build a ColumnContext from CLI data (no TUI widget needed).
+
+    ``fleet`` is the table's compute_fleet_flags(); None leaves every
+    fleet-gated column off.
+    """
     status_symbol, _ = get_status_symbol(status, emoji_free=emoji_free)
     uptime = calculate_uptime(session.start_time) if session.start_time else "-"
     green_time, non_green_time, sleep_time = get_current_state_times(
@@ -1945,10 +1996,10 @@ def build_cli_context(
         status_symbol=status_symbol,
         status_color="bold",
         bg="",
+        fleet=fleet if fleet is not None else FleetFlags(),
         emoji_free=emoji_free,
         summary_detail=summary_detail,
         show_cost="cost",
-        any_has_budget=any_has_budget,
         expand_icon="",
         is_list_mode=False,
         has_focus=False,
@@ -1970,30 +2021,18 @@ def build_cli_context(
         max_name_width=max_name_width,
         max_repo_width=max_repo_width,
         max_branch_width=max_branch_width,
-        any_has_oversight_timeout=any_has_oversight_timeout,
         oversight_deadline=oversight_deadline,
-        any_is_sleeping=any_is_sleeping,
         sleep_wake_estimate=sleep_wake_estimate,
         status_detail=status_detail,
-        any_has_status_detail=any_has_status_detail,
         pr_number=pr_number,
-        any_has_pr=any_has_pr,
         model=getattr(session, 'model', '') or '',
-        any_has_model=any_has_model,
         effort=getattr(session, 'effort', '') or '',
-        any_has_effort=any_has_effort,
-        any_has_provider=any_has_provider,
-        mixed_backends=mixed_backends,
-        any_has_cpu=any_has_cpu,
-        any_has_ram=any_has_ram,
         source_host=getattr(session, 'source_host', ''),
         is_remote=getattr(session, 'is_remote', False),
         has_sisters=has_sisters,
         local_hostname=local_hostname,
         subtree_cost_usd=subtree_cost_usd,
-        any_has_subtree_cost=any_has_subtree_cost,
         window_burn=window_burn,
-        any_has_burn=any_has_burn,
     )
 
 

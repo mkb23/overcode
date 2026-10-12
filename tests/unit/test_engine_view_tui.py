@@ -116,7 +116,7 @@ class TestRendersWhatTheEnginePublishes:
             assert row.window_burn.cost_per_hour == 3.0
             assert row.background_bash_count == 2 and row.auto_accept_mode is True
             assert row.status_detail.badges[0].eta_seconds > 0
-            assert row.any_has_status_detail and row.any_has_burn
+            assert row.fleet.any_has_status_detail and row.fleet.any_has_burn
             plain = row.render().plain
             assert "🔴" in plain  # the status colour
             assert "Δ 4" in plain or "Δ4" in plain  # the git column
