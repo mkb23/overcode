@@ -258,3 +258,25 @@ move-only commits.
    - Item 36 (the harness), item 29 (`paths.py`), item 25 (the rule table), item 30 (shared backend code), item 34 (one clock).
 5. **Decompositions as move-only commits:**
    - Item 26 (monitor_daemon), item 27 (tui), item 28 (session_manager and launcher), item 31 (summary_columns).
+
+## Progress
+
+| Item | Status | Commit |
+|---|---|---|
+| 1 sessions.json can be lost | done: `json_store` (atomic replace, lock deadline, live backup, corrupt file kept aside) | 3d097a3 |
+| 2 sister API open to web pages | done: no CORS, control needs a key, bind guard on the live path | f0b5742 |
+| 3 failed save froze views | done: publish always, `state_file_error` shown | c028790 |
+| 4 PID file over the lock | done: the lock decides; stale PIDs never signalled | c96a994 |
+| 5 idle check vs reworded marker | done: trusted only once the marker has been seen | ccd8a32 |
+| 6 non-Claude wrong-session ids | done: shared ownership-aware lookup, `_stats_common` | (cherry-picked 61e5163) |
+| 7 polling: prose read as running | done: idle prompt first (P8b) | 62bc219 |
+| 8 polling: permission red | done: orange; hermes tip and answered-dialog false matches fixed | 62bc219 |
+| 9 TUI writes lifecycle | done: `list_sessions` read-only, daemon is the single writer, new rows within a tick | (cherry-picked 7da8982) |
+| 14 values that don't hold still | done: absolute badge `eta_at`, subtree cost over the fleet | (this batch) |
+| 15 snapshot applied twice | done | (this batch) |
+| 18 build and CI traps | done: CI gates, `test-unit`, safe `clean-sessions`, unit timeouts, `tui-eye` | 3d9d7a5, baa7e4b |
+
+Found while doing these: libtmux 0.55+ broke every tmux call on a fresh
+install (e31452a); ruff's defaults changed under CI (4d75f85); the scale
+tests' timing budgets needed a factor for CI runners (fc7598a); a socket
+test only failed on Linux (9bb2a07).
