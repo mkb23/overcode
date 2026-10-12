@@ -33,11 +33,9 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from .daemon_logging import BaseDaemonLogger
 from .daemon_utils import create_daemon_helpers
 from .backends import (
-    BackendCapability,
     capability_names,
     session_backend_name,
     session_capabilities,
-    session_supports,
 )
 from .episodes import EpisodeRecorder, append_episode, status_detail_view
 from .monitor_daemon_state import (
@@ -78,6 +76,7 @@ from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, 
 from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
+from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
@@ -458,6 +457,8 @@ class MonitorDaemon:
         # Transcript stats: tokens, cost, model, PR, session ids, and the
         # values views render beside the token columns
         self.stats_sync = StatsSync(session_manager=session_manager, log=log)
+        # The process table, once per tick, for CPU / RSS and the sandbox probe
+        self.process_probe = ProcessProbe()
 
         # The periodic syncs, each due when its interval has passed since it
         # last ran (never run: due on the first tick)
@@ -1553,103 +1554,27 @@ class MonitorDaemon:
         return self._pane_table
 
     def _sync_process_resources(self, sessions: list, now: datetime) -> None:
-        """Sample CPU and RSS for each agent's claude process tree.
+        """Sample CPU and RSS for each agent's claude process tree (every 5 s).
 
-        One batched `ps` call populates cpu_percent (sum of per-CPU %) and
-        rss_bytes (sum of resident set size) across the claude process and
-        every descendant. Tools spawned under a bash call (e.g. a runaway
-        `tsc --watch`) therefore show up on the parent agent's row.
+        One batched `ps` per tick (shared with the sandbox sync) feeds
+        ``ProcessProbe.sample_resources``; a failed `ps` samples nothing.
         """
         if not self.cadence.resources.due(now):
             return
-        from .doctor import (
-            find_agent_process, session_process_argv_markers,
-            session_process_basenames,
-        )
-        from .process_resources import (
-            snapshot_processes, build_children_index, aggregate_tree,
-        )
-
-        snapshot = snapshot_processes()
-        if not snapshot:
-            self.cadence.resources.mark(now)
-            return
-        # build_children_index walks the whole snapshot, so the argv_by_pid
-        # shape doctor expects is derived on the fly.
-        children = build_children_index(snapshot)
-        argv_by_pid = {pid: info.argv for pid, info in snapshot.items()}
-        panes = self._panes_at(now) or {}
-        for session in sessions:
-            if getattr(session, "is_remote", False):
-                continue
-            pane = pane_for_window(panes, session.tmux_window)
-            if pane is None:
-                continue
-            claude_pid, _ = find_agent_process(
-                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
-                session_process_argv_markers(session),
-            )
-            if claude_pid is None:
-                # Reset to 0 so a dead/missing agent doesn't pin a stale reading.
-                if session.cpu_percent or session.rss_bytes:
-                    self._pending.update_session(
-                        session.id, cpu_percent=0.0, rss_bytes=0,
-                    )
-                continue
-            cpu, rss = aggregate_tree(claude_pid, snapshot, children)
-            # Only stage when the value moved meaningfully — avoids a JSON
-            # write every 5s for an idle agent whose CPU is drifting by 0.1%.
-            # Everything staged lands in the tick's single write.
-            if (
-                abs(cpu - session.cpu_percent) >= 1.0
-                or abs(rss - session.rss_bytes) >= 1024 * 1024  # 1 MiB
-            ):
-                self._pending.update_session(
-                    session.id, cpu_percent=cpu, rss_bytes=rss,
-                )
+        table = self.process_probe.table(now)
+        if table is not None:
+            self.process_probe.sample_resources(
+                sessions, table, self._panes_at(now) or {}, self._pending)
         self.cadence.resources.mark(now)
 
     def _sync_sandbox_state(self, sessions: list, now: datetime) -> None:
         """Detect /sandbox toggle state from claude process listeners (#451)."""
         if not self.cadence.sandbox.due(now):
             return
-        from .doctor import (
-            _snapshot_process_table, _build_child_index, find_agent_process,
-            session_process_argv_markers, session_process_basenames,
-        )
-        from .sandbox_detect import detect_sandbox_states
-
-        rows = _snapshot_process_table()
-        if not rows:
-            self.cadence.sandbox.mark(now)
-            return
-        children, argv_by_pid = _build_child_index(rows)
-        panes = self._panes_at(now) or {}
-        # Gather all local claude PIDs with one lsof call (#451 optimization).
-        session_pids: dict = {}  # session.id -> claude_pid
-        for session in sessions:
-            if getattr(session, "is_remote", False):
-                continue
-            # The loopback-listener heuristic only means anything for
-            # backends that have a sandbox toggle.
-            if not session_supports(session, BackendCapability.SANDBOX_PROBE):
-                continue
-            pane = pane_for_window(panes, session.tmux_window)
-            if pane is None:
-                continue
-            claude_pid, _ = find_agent_process(
-                pane.pane_pid, children, argv_by_pid, session_process_basenames(session),
-                session_process_argv_markers(session),
-            )
-            if claude_pid is not None:
-                session_pids[session.id] = claude_pid
-        states = detect_sandbox_states(session_pids.values())
-        for session in sessions:
-            if session.id not in session_pids:
-                continue
-            detected = states.get(session_pids[session.id])
-            if detected != session.sandbox_enabled:
-                self._pending.update_session(session.id, sandbox_enabled=detected)
+        table = self.process_probe.table(now)
+        if table is not None:
+            self.process_probe.sample_sandbox(
+                sessions, table, self._panes_at(now) or {}, self._pending)
         self.cadence.sandbox.mark(now)
 
     def _dispatch_heartbeats(self, sessions: list) -> None:

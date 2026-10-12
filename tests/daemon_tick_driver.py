@@ -105,7 +105,7 @@ def _scenario_doubles(sessions, tmux, tick_of: Callable[[], int]) -> Iterator[No
     """Patch the seams the periodic syncs reach for, on whichever tree is loaded."""
     from unittest.mock import patch
 
-    from overcode import doctor, implementations, monitor_daemon, process_resources
+    from overcode import doctor, implementations, monitor_daemon, process_resources, sandbox_detect
 
     try:  # where the stats sync reads transcripts, on whichever tree
         from overcode import daemon_stats_sync as stats_module
@@ -135,6 +135,7 @@ def _scenario_doubles(sessions, tmux, tick_of: Callable[[], int]) -> Iterator[No
         patch.object(implementations, "RealTmux", lambda *a, **k: tmux),
         patch.object(process_resources, "snapshot_processes", snapshot_processes),
         patch.object(doctor, "_snapshot_process_table", lambda: []),
+        patch.object(sandbox_detect, "detect_sandbox_states", lambda pids: {}),
         patch.object(stats_module, "stats_reader_for_session", lambda s: reader),
         patch.object(monitor_daemon, "send_text_to_tmux_window", lambda *a, **k: True),
     ):

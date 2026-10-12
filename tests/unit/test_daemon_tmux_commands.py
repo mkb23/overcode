@@ -79,12 +79,12 @@ def _process_doubles(sessions, tmux, cpu_of):
             )
         return table
 
-    def process_table():
-        return [(pid, info.ppid, info.argv) for pid, info in snapshot_processes().items()]
+    def second_ps():
+        raise AssertionError("the sandbox probe reads the tick's one ps snapshot")
 
     return (
         patch("overcode.process_resources.snapshot_processes", snapshot_processes),
-        patch("overcode.doctor._snapshot_process_table", process_table),
+        patch("overcode.doctor._snapshot_process_table", second_ps),
         patch("overcode.sandbox_detect._run_lsof", lambda pids, timeout=3.0: ""),
     )
 
@@ -114,6 +114,23 @@ class TestPidMapSharedByTheSyncs:
             i = int(s.name[-2:])
             assert by_name[s.name].cpu_percent == 50.0 + i
             assert by_name[s.name].rss_bytes == (600 + i) << 20
+
+    def test_one_ps_snapshot_per_tick_feeds_both_syncs(self, root):
+        sm, sessions, tmux, detector, daemon = _fleet(root, 3)
+        p1, p2, p3 = _process_doubles(sessions, tmux, lambda s: (s.cpu_percent, s.rss_bytes))
+        calls = []
+        with p1 as snapshot, p2, p3, patch(
+            "overcode.process_resources.snapshot_processes",
+            lambda: calls.append(1) or snapshot(),
+        ):
+            daemon.cadence.resources.last = None
+            daemon.cadence.sandbox.last = None
+            daemon._sync_process_resources(sessions, START)
+            daemon._sync_sandbox_state(sessions, START)
+            assert len(calls) == 1
+            daemon.cadence.sandbox.last = None
+            daemon._sync_sandbox_state(sessions, START + timedelta(seconds=2))
+            assert len(calls) == 2  # the next tick takes its own
 
     def test_standalone_syncs_list_once_per_now(self, root):
         """Called on their own (the bench does), each sync costs at most one command;

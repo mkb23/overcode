@@ -486,11 +486,11 @@ class TestDaemonWithStatslessBackend:
         session = _make_session(backend=statsless_backend, is_remote=False)
         session.tmux_window = "agent-ab12"
 
+        from overcode.process_resources import ProcInfo
+
         monkeypatch.setattr(
-            "overcode.doctor._snapshot_process_table", lambda: {1: "row"}
-        )
-        monkeypatch.setattr(
-            "overcode.doctor._build_child_index", lambda rows: ({}, {})
+            "overcode.process_resources.snapshot_processes",
+            lambda: {1: ProcInfo(ppid=0, cpu_pct=0.0, rss_kb=1, argv="row")},
         )
         tmux = Mock()
         monkeypatch.setattr("overcode.implementations.RealTmux", lambda: tmux)
