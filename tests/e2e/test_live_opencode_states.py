@@ -48,8 +48,9 @@ MODEL = os.environ.get("OVERCODE_LIVE_OPENCODE_MODEL", "openai/gpt-4o-mini")
 
 
 def _requested() -> bool:
-    return "opencode" in {
-        b.strip() for b in os.environ.get("OVERCODE_LIVE_BACKENDS", "").split(",") if b.strip()
+    raw = os.environ.get("OVERCODE_LIVE_BACKENDS", "").strip()
+    return raw.lower() == "all" or "opencode" in {
+        b.strip() for b in raw.split(",") if b.strip()
     }
 
 
@@ -162,7 +163,15 @@ class Driver:
 
     def send(self, text, agent=AGENT):
         w = self.window(agent)
-        self.tmux("send-keys", "-t", f"{SESSION}:{w}", "-l", text)
+        # opencode's TUI drops typed input now and then while it redraws
+        # (startup, its update toast): type again until the box shows it
+        for _ in range(3):
+            self.tmux("send-keys", "-t", f"{SESSION}:{w}", "-l", text)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and text[:20] not in self.pane(agent):
+                time.sleep(0.2)
+            if text[:20] in self.pane(agent):
+                break
         time.sleep(0.15)
         self.tmux("send-keys", "-t", f"{SESSION}:{w}", "Enter")
 

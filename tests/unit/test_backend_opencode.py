@@ -188,7 +188,7 @@ class TestBuildCommand:
         with patch.dict(os.environ, env, clear=True):
             assert backend.env_prefix(
                 LaunchSpec(agent_teams=True, provider="bedrock")
-            ) == {}
+            ) == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
 
 
 class TestGestures:
@@ -347,14 +347,20 @@ class TestEnvPrefix:
         # where this overcode instance reads it.
         with patch.dict(os.environ, {"OVERCODE_STATE_DIR": "/tmp/state dir"}):
             assert backend.env_prefix(LaunchSpec()) == {
-                "OVERCODE_STATE_DIR": "'/tmp/state dir'"
+                "OPENCODE_DISABLE_AUTOUPDATE": "1",
+                "OVERCODE_STATE_DIR": "'/tmp/state dir'",
             }
 
-    def test_empty_without_a_state_dir_override(self, backend):
+    def test_only_autoupdate_off_without_a_state_dir_override(self, backend):
         env = dict(os.environ)
         env.pop("OVERCODE_STATE_DIR", None)
         with patch.dict(os.environ, env, clear=True):
-            assert backend.env_prefix(LaunchSpec()) == {}
+            assert backend.env_prefix(LaunchSpec()) == {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
+
+    def test_autoupdate_is_off(self, backend):
+        # opencode 1.18's "Update Available" modal eats every key sent to
+        # the agent; its background update has broken launches
+        assert backend.env_prefix(LaunchSpec())["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
 
     # Ancillary — true bypass-permissions. bypass gets OPENCODE_PERMISSION;
     # permissive and normal must not, since --auto (which both still get on

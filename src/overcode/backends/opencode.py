@@ -529,7 +529,12 @@ class OpencodeBackend:
         no file written, nothing to clean up, gone the moment the process
         that set it exits.
         """
-        env: Dict[str, str] = {}
+        # A new release makes opencode 1.18 open an "Update Available"
+        # modal a few seconds in, which eats every key sent to the agent
+        # (seen live Oct 12 2026, v1.19.0 out), and its background update
+        # has broken launches mid-fleet. Agents run the installed version;
+        # people update opencode themselves.
+        env: Dict[str, str] = {"OPENCODE_DISABLE_AUTOUPDATE": "1"}
         state_dir = os.environ.get("OVERCODE_STATE_DIR")
         if state_dir:
             env["OVERCODE_STATE_DIR"] = shlex.quote(state_dir)
