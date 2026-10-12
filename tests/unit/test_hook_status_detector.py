@@ -1588,6 +1588,7 @@ class TestTurnEndedWithoutStop:
                           tool_name=tool_name)
         mock_tmux = create_mock_tmux_with_content("agents", 1, pane)
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        detector._busy_marker_seen = True  # some agent has shown the marker
         session = create_mock_session(tmux_window=1, name="test-agent")
         session.parent_session_id = parent
         results = []
@@ -1621,6 +1622,7 @@ class TestTurnEndedWithoutStop:
         _write_hook_state(state_dir, "test-agent", "PreToolUse", timestamp=base - 5, tool_name="Read")
         mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        detector._busy_marker_seen = True
         session = create_mock_session(tmux_window=1, name="test-agent")
         monkeypatch.setattr(hsd.time, "time", lambda: base)
         detector.detect_status(session)
@@ -1643,12 +1645,38 @@ class TestTurnEndedWithoutStop:
         }))
         mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
         detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        detector._busy_marker_seen = True
         session = create_mock_session(tmux_window=1, name="test-agent")
         for t in (0.0, 20.0):
             monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
             status, activity, _ = detector.detect_status(session)
         assert status == STATUS_WAITING_USER
         assert "Sleeping" not in activity
+
+    def test_an_unproven_marker_is_not_trusted(self, tmp_path, monkeypatch):
+        """No pane has shown "esc to interrupt" yet (a CLI that reworded it):
+        a missing marker proves nothing, so hooks keep the say."""
+        from overcode import hook_status_detector as hsd
+
+        state_dir = tmp_path / "sessions" / "agents"
+        base = 1_800_000_000.0
+        _write_hook_state(state_dir, "test-agent", "UserPromptSubmit", timestamp=base - 3600)
+        panes = {"pane": _IDLE_PANE}
+        mock_tmux = create_mock_tmux_with_content("agents", 1, _IDLE_PANE)
+        mock_tmux.capture_pane = lambda *a, **k: panes["pane"]
+        detector = HookStatusDetector("agents", tmux=mock_tmux, state_dir=state_dir)
+        session = create_mock_session(tmux_window=1, name="test-agent")
+        for t in (0.0, 60.0):
+            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
+            assert detector.detect_status(session)[0] == STATUS_RUNNING
+        # The marker shows once (this or any agent working): now it is proven
+        panes["pane"] = _BUSY_PANE
+        detector.detect_status(session)
+        panes["pane"] = _IDLE_PANE
+        for t in (70.0, 90.0):
+            monkeypatch.setattr(hsd.time, "time", lambda t=t: base + t)
+            status = detector.detect_status(session)[0]
+        assert status == STATUS_WAITING_USER
 
     def test_a_child_settles_to_waiting_oversight(self, tmp_path, monkeypatch):
         _, later = self._detect(tmp_path, monkeypatch, _IDLE_PANE, parent="parent-id")

@@ -578,6 +578,10 @@ class HookStatusDetector:
         self._interrupt_counts: Dict[str, int] = {}
         # When each pane was first seen idle while hooks said running
         self._idle_seen_at: Dict[str, float] = {}
+        # Whether this backend's busy marker has shown on any pane since
+        # start. Until it has, a pane without it proves nothing: a CLI that
+        # reworded its marker would otherwise turn every working agent red.
+        self._busy_marker_seen = False
         # The timestamp of the hook state behind each session's last status
         self._last_hook_at: Dict[str, float] = {}
         # Last visible status-bar counts: (seen_at, monitors, shells) (#507)
@@ -954,10 +958,13 @@ class HookStatusDetector:
             return False
         idle = pane_shows_idle(pane_content, self._patterns)
         if idle is False:
+            self._busy_marker_seen = True
             self._idle_seen_at.pop(session_name, None)
             return False
         if idle is None:
             return False  # covered or unreadable: neither starts nor ends the wait
+        if not self._busy_marker_seen:
+            return False  # the marker is unproven on this CLI version: can't tell
         now = time.time()
         try:
             hook_at = float(hook_state.get("timestamp", 0))
