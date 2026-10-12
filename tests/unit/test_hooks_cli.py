@@ -323,6 +323,16 @@ class TestHookHandlerCommand:
         result = runner.invoke(app, ["hook-handler", "--help"])
         assert result.exit_code == 0
 
+    def test_backend_option_reaches_the_handler(self, monkeypatch):
+        # The `python -m overcode.cli` form a backend falls back to when no
+        # overcode binary is on PATH goes through typer, not the fast path
+        import overcode.hook_handler as hh
+        seen = []
+        monkeypatch.setattr(hh, "handle_hook_event", lambda backend=None: seen.append(backend))
+        assert runner.invoke(app, ["hook-handler", "--backend", "grok"]).exit_code == 0
+        assert runner.invoke(app, ["hook-handler"]).exit_code == 0
+        assert seen == ["grok", None]
+
 
 class TestHooksUninstallBackendHermes:
 

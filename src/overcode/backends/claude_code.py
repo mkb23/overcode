@@ -37,7 +37,9 @@ def _resolve_overcode_bin() -> str:
     return f"{sys.executable} -m overcode.cli"
 
 
-def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False) -> dict:
+def _build_launch_settings(
+    overcode_bin: str, include_punchy_perms: bool = False, backend: str = "claude-code",
+) -> dict:
     """Build the --settings JSON for overcode-launched agents.
 
     Includes all overcode hooks (with absolute-path commands) and
@@ -49,23 +51,15 @@ def _build_launch_settings(overcode_bin: str, include_punchy_perms: bool = False
     )
     from ..cli.perms import OVERCODE_SAFE_PERMS, OVERCODE_PUNCHY_PERMS
 
+    command = [{"type": "command", "command": f"{overcode_bin} hook-handler --backend {backend}"}]
     # Build hooks dict: event -> [matcher group]
     hooks: dict[str, list] = {}
     for event, _bare_command in OVERCODE_HOOKS:
-        hooks.setdefault(event, []).append({
-            "matcher": "",
-            "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
-        })
+        hooks.setdefault(event, []).append({"matcher": "", "hooks": command})
     # Conversation switches only (/clear, /resume), never startup (#500).
-    hooks["SessionStart"] = [{
-        "matcher": CLAUDE_SESSION_START_MATCHER,
-        "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
-    }]
+    hooks["SessionStart"] = [{"matcher": CLAUDE_SESSION_START_MATCHER, "hooks": command}]
     # A turn that ends with no Stop is settled when the prompt goes idle
-    hooks["Notification"] = [{
-        "matcher": CLAUDE_NOTIFICATION_MATCHER,
-        "hooks": [{"type": "command", "command": f"{overcode_bin} hook-handler"}],
-    }]
+    hooks["Notification"] = [{"matcher": CLAUDE_NOTIFICATION_MATCHER, "hooks": command}]
 
     perms = list(OVERCODE_SAFE_PERMS)
     if include_punchy_perms:
@@ -178,7 +172,7 @@ class ClaudeCodeBackend(AgentBackendBase):
         # agents don't depend on user-level settings.json (#435).
         overcode_bin = _resolve_overcode_bin()
         settings = _build_launch_settings(
-            overcode_bin, include_punchy_perms=spec.include_punchy_perms
+            overcode_bin, include_punchy_perms=spec.include_punchy_perms, backend=self.name,
         )
         # Skill profile (#499): personal skills outside the profile are hidden
         # for this session only; the profile's own skills load as a plugin.

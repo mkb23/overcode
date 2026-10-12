@@ -2451,7 +2451,7 @@ class TestBuildLaunchSettings:
         for event, entries in settings["hooks"].items():
             for entry in entries:
                 for hook in entry["hooks"]:
-                    assert hook["command"] == "/opt/custom/overcode hook-handler"
+                    assert hook["command"] == "/opt/custom/overcode hook-handler --backend claude-code"
 
     def test_safe_perms_only_by_default(self):
         from overcode.launcher import _build_launch_settings

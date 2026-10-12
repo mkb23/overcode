@@ -23,12 +23,12 @@ from overcode.backends import (
     supports,
 )
 from overcode.backends.codex import (
+    CODEX_HOOK_EVENTS,
     CodexBackend,
     CodexNotFoundError,
 )
 from overcode.doctor import VERDICT_MISSING_SETTINGS, VERDICT_OK
 from overcode.exceptions import AgentCliNotFoundError
-from overcode.hook_handler import CODEX_HOOK_EVENTS
 
 
 OVERCODE_BIN = "/usr/local/bin/overcode"
@@ -40,7 +40,7 @@ def _codex_hook_flags(overcode_bin: str = OVERCODE_BIN) -> list:
     now appends — golden tests freeze exact bytes, so this must not call
     ``backends.codex``'s own TOML-building helper to build its expectation.
     """
-    array = f'[{{hooks=[{{type="command",command="{overcode_bin} hook-handler"}}]}}]'
+    array = f'[{{hooks=[{{type="command",command="{overcode_bin} hook-handler --backend codex"}}]}}]'
     flags: list = []
     for event in CODEX_HOOK_EVENTS:
         flags.extend(["-c", f"hooks.{event}={array}"])
@@ -282,7 +282,7 @@ class TestHookInjection:
         # single shell command-line string, not Claude's `command: [str,...]`.
         cmd = backend.build_command(LaunchSpec())
         c_value = cmd[cmd.index("-c") + 1]
-        assert f'command="{OVERCODE_BIN} hook-handler"' in c_value
+        assert f'command="{OVERCODE_BIN} hook-handler --backend codex"' in c_value
         assert '"command": [' not in c_value
 
     def test_hook_injection_is_unconditional(self, backend):

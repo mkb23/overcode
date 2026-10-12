@@ -27,7 +27,6 @@ import sys
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
-from ..hook_handler import CODEX_HOOK_EVENTS
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
@@ -91,6 +90,25 @@ TESTED_CODEX_RANGE = (TESTED_CODEX_MIN, TESTED_CODEX_MAX)
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
+
+
+# Codex needs two events Claude does not register: SessionStart (codex has no
+# --session-id-shaped flag, design doc §2.2/§2.4, so this is where its first
+# session id arrives — Claude's id is read off every event instead, see
+# handle_hook_event) and Interrupt (codex's own Escape-to-interrupt signal,
+# see _HOOK_STATUS_MAP in hook_status_detector.py).
+# codex's PreCompact/PostCompact/SubagentStart/SubagentStop exist but have no
+# overcode-side meaning yet, so they are deliberately not registered.
+CODEX_HOOK_EVENTS: tuple[str, ...] = (
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PermissionRequest",
+    "Stop",
+    "Interrupt",
+    "SessionStart",
+    "SessionEnd",
+)
 
 
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
@@ -277,6 +295,7 @@ class CodexBackend(AgentBackendBase):
     # capture.
     process_basenames = ("codex",)
     not_found_error = CodexNotFoundError
+    hook_events = CODEX_HOOK_EVENTS
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK
@@ -346,8 +365,8 @@ class CodexBackend(AgentBackendBase):
         from ..config import get_backend_telemetry_enabled
         if get_backend_telemetry_enabled(self.name):
             overcode_bin = _resolve_overcode_bin()
-            hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler")
-            for hook_event in CODEX_HOOK_EVENTS:
+            hook_array = _codex_hook_toml_array(f"{overcode_bin} hook-handler --backend {self.name}")
+            for hook_event in self.hook_events:
                 cmd.extend(["-c", f"hooks.{hook_event}={hook_array}"])
             cmd.append("--dangerously-bypass-hook-trust")
 

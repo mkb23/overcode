@@ -20,6 +20,8 @@ from typing import (
     Type,
 )
 
+from .. import hook_dialects
+
 if TYPE_CHECKING:
     from ..stats_reader import StatsReader
     from ..status_patterns import StatusPatterns
@@ -137,6 +139,8 @@ class AgentBackend(Protocol):
     # See AgentBackendBase for the defaults of the members below.
     fork_prescribes_new_session_id: bool
     process_argv_markers: Sequence[str]
+    hook_events: Sequence[str]
+    hook_dialect: hook_dialects.HookDialect
 
     def build_command(self, spec: LaunchSpec) -> List[str]: ...
 
@@ -187,6 +191,8 @@ class AgentBackend(Protocol):
 
     def make_polling_detector(self, tmux_session: str, tmux=None, patterns=None): ...
 
+    def normalize_hook_payload(self, data: dict) -> Optional[dict]: ...
+
 
 class AgentBackendBase:
     """Defaults for the AgentBackend members most backends don't need.
@@ -228,6 +234,21 @@ class AgentBackendBase:
     confirm_prompt_delivery: bool = False
     prompt_as_argument: bool = False
     type_multiline_text: bool = False
+
+    # The hook events the backend registers ``overcode hook-handler
+    # --backend <name>`` for, where overcode chooses them per event (codex's
+    # -c overrides, grok's hooks file). Empty when the CLI's own plugin or
+    # settings decide (Claude Code's are OVERCODE_HOOKS in hook_handler).
+    hook_events: Sequence[str] = ()
+
+    # How the backend's hook payloads translate into Claude Code's
+    # vocabulary. Lives in hook_dialects (stdlib-only, for the hook path's
+    # import cost); hook_dialects.for_backend must agree with it.
+    hook_dialect: hook_dialects.HookDialect = hook_dialects.CLAUDE
+
+    def normalize_hook_payload(self, data: dict) -> Optional[dict]:
+        """A hook payload in Claude Code's vocabulary, or None to drop it."""
+        return self.hook_dialect.normalize(data)
 
     def prompt_ready_line(self, line: str) -> bool:
         """Is this (ANSI-stripped, whitespace-trimmed) pane line the live,

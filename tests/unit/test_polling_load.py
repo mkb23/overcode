@@ -230,7 +230,7 @@ class TestEntrypoint:
         import overcode.hook_handler as hh
 
         called = []
-        monkeypatch.setattr(hh, "handle_hook_event", lambda: called.append("hook"))
+        monkeypatch.setattr(hh, "handle_hook_event", lambda backend=None: called.append(backend))
         monkeypatch.setattr(sys, "argv", ["overcode", "hook-handler"])
 
         # If the CLI were imported/run it would try to dispatch "hook-handler"
@@ -239,7 +239,9 @@ class TestEntrypoint:
         monkeypatch.setattr(cli, "main", lambda: called.append("cli"))
 
         ep.main()
-        assert called == ["hook"]
+        monkeypatch.setattr(sys, "argv", ["overcode", "hook-handler", "--backend", "grok"])
+        ep.main()
+        assert called == [None, "grok"]
 
     def test_other_commands_reach_cli(self, monkeypatch):
         import overcode.entrypoint as ep
@@ -252,7 +254,7 @@ class TestEntrypoint:
         assert called == ["cli"]
 
     def test_hook_handler_with_extra_args_reaches_cli(self, monkeypatch):
-        """Only the bare `overcode hook-handler` form is fast-pathed."""
+        """Only `hook-handler [--backend <name>]` is fast-pathed."""
         import overcode.entrypoint as ep
         import overcode.cli as cli
 

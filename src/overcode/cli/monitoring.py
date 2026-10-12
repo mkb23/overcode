@@ -12,16 +12,21 @@ from ._shared import app, SessionOption, find_agent
 
 
 @app.command("hook-handler", hidden=True)
-def hook_handler_cmd():
-    """Handle Claude Code hook events (internal).
+def hook_handler_cmd(
+    backend: Annotated[
+        Optional[str],
+        typer.Option("--backend", help="Backend whose hook dialect the payload is in"),
+    ] = None,
+):
+    """Handle agent hook events (internal).
 
-    Called by Claude Code hooks, not by users directly.
+    Called by the agent CLI's hooks, not by users directly.
     Reads event JSON from stdin, writes state for status detection,
     and outputs enhanced context for UserPromptSubmit events.
     """
     from ..hook_handler import handle_hook_event
 
-    handle_hook_event()
+    handle_hook_event(backend)
 
 
 @app.command()

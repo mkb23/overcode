@@ -64,6 +64,8 @@ from typing import Iterable, Optional
 from unittest.mock import patch
 
 from overcode import hook_handler
+from overcode.backends.codex import CODEX_HOOK_EVENTS
+from overcode.backends.grok import GROK_HOOK_EVENTS, GROK_NOTIFICATION_MATCHERS
 from overcode.status_constants import (
     STATUS_COLOR_GREEN,
     STATUS_COLOR_ORANGE,
@@ -81,8 +83,8 @@ EPOCH = 1_800_000_000.0  # fake-clock origin; scenario times are offsets from it
 
 REGISTERED_EVENTS = frozenset(e for e, _ in hook_handler.OVERCODE_HOOKS)
 RESET_SOURCES = frozenset(hook_handler.CLAUDE_SESSION_START_MATCHER.split("|"))
-CODEX_EVENTS = frozenset(hook_handler.CODEX_HOOK_EVENTS)
-GROK_EVENTS = frozenset(hook_handler.GROK_HOOK_EVENTS)
+CODEX_EVENTS = frozenset(CODEX_HOOK_EVENTS)
+GROK_EVENTS = frozenset(GROK_HOOK_EVENTS)
 
 # Backends whose telemetry comes from a bundled opencode plugin
 PLUGIN_BACKENDS = ("opencode", "opencode2")
@@ -298,7 +300,7 @@ def _delivered(payload: dict, backend: str = "claude-code") -> bool:
         # grok matches its registrations on the PascalCase name
         event = "".join(w.capitalize() for w in payload["hookEventName"].split("_"))
         if event == "Notification":
-            return payload.get("notificationType") in hook_handler.GROK_NOTIFICATION_MATCHERS
+            return payload.get("notificationType") in GROK_NOTIFICATION_MATCHERS
         return event in GROK_EVENTS
     event = payload["hook_event_name"]
     if event == "SessionStart":
@@ -438,7 +440,7 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
                 elif step.hermes is not None:
                     _deliver_hermes(*step.hermes)
                 elif step.payload is not None and _delivered(step.payload, scenario.backend):
-                    _deliver(step.payload)
+                    _deliver(step.payload, scenario.backend)
                     tmux.hear(step.payload)
                 i += 1
             clock.now = EPOCH + t
@@ -452,10 +454,12 @@ def replay(scenario: Scenario, state_dir: Path, cadence: float = 0.25) -> list[S
     return samples
 
 
-def _deliver(payload: dict) -> None:
+def _deliver(payload: dict, backend: str) -> None:
+    """One payload through the handler, as the backend's hook command
+    (``hook-handler --backend <name>``) sends it."""
     with patch("sys.stdin", io.StringIO(json.dumps(payload))), \
             redirect_stdout(io.StringIO()):
-        hook_handler.handle_hook_event()
+        hook_handler.handle_hook_event(backend)
 
 
 def _deliver_hermes(hook: str, kwargs: dict) -> None:
@@ -466,7 +470,7 @@ def _deliver_hermes(hook: str, kwargs: dict) -> None:
         out = io.StringIO()
         with patch("sys.stdin", io.StringIO(json.dumps(payload, default=str))), \
                 redirect_stdout(out):
-            hook_handler.handle_hook_event()
+            hook_handler.handle_hook_event("hermes")
         return out.getvalue().strip() if wait_for_output else None
 
     with patch.object(hermes_plugin, "deliver", deliver):

@@ -1,15 +1,9 @@
-"""Unified hook handler for Claude Code hook events.
+"""Unified hook handler for every backend's hook events.
 
-A single command (`overcode hook-handler`) handles all hook events.
-It reads stdin JSON from Claude Code, writes state files for hook-based
+A single command (`overcode hook-handler --backend <name>`) handles all hook
+events. It reads stdin JSON from the agent CLI, translates it into Claude
+Code's vocabulary (``hook_dialects``), writes state files for hook-based
 status detection, and outputs enhanced context for UserPromptSubmit events.
-
-Hook registrations (all use the same command):
-    UserPromptSubmit  -> overcode hook-handler
-    PostToolUse       -> overcode hook-handler
-    Stop              -> overcode hook-handler
-    PermissionRequest -> overcode hook-handler
-    SessionEnd        -> overcode hook-handler
 """
 
 import json
@@ -23,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .paths import agent_file
+from . import hook_dialects
 
 try:
     import fcntl
@@ -337,24 +332,6 @@ OVERCODE_HOOKS: list[tuple[str, str]] = [
     ("SubagentStart", "overcode hook-handler"),
     ("SubagentStop", "overcode hook-handler"),
 ]
-
-# Codex needs two events Claude does not register: SessionStart (codex has no
-# --session-id-shaped flag, design doc §2.2/§2.4, so this is where its first
-# session id arrives — Claude's id is read off every event instead, see
-# handle_hook_event) and Interrupt (codex's own Escape-to-interrupt signal,
-# see _HOOK_STATUS_MAP in hook_status_detector.py).
-# codex's PreCompact/PostCompact/SubagentStart/SubagentStop exist but have no
-# overcode-side meaning yet, so they are deliberately not registered.
-CODEX_HOOK_EVENTS: tuple[str, ...] = (
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "PermissionRequest",
-    "Stop",
-    "Interrupt",
-    "SessionStart",
-    "SessionEnd",
-)
 
 # Retention window for the hook-state session-id history. Every backend that
 # sends a session id on its hook events gets one recorded (see
@@ -862,187 +839,6 @@ def write_hook_state(
     _write_state_file(state_path, state)
 
 
-# Dialect key aliases for a camelCase stdin (grok, Phase 4). codex's stdin
-# is already snake_case and Claude-shaped (design doc §2.3, Appendix A:
-# hook_event_name/session_id/turn_id/transcript_path/cwd/model/
-# permission_mode/prompt) so it needs no translation and takes the identity
-# path below. Kept as one normalization call site — rather than scattering
-# per-backend branches through the handler — so a future camelCase dialect
-# (or any other) only ever needs a new entry in this table.
-#
-# grok's own porting guide (~/.grok/docs/user-guide/10-hooks.md, "Porting
-# Claude Code stop hooks") is the source for the fields beyond the original
-# five: promptId/notificationType/subagentType key the turn-tracking and
-# subagent-skip rules _apply_grok_semantics implements below; the rest
-# (transcriptPath, workspaceRoot, stopHookActive, lastAssistantMessage,
-# backgroundTasks, sessionCrons, cancelledBy, cancelTrigger, reasonDetails,
-# errorDetails) are carried through mostly for parity/diagnostics. toolResult
-# is grok's name for Claude's tool_response — not just a casing difference —
-# so it gets its own explicit mapping rather than a mechanical camelCase->
-# snake_case rule.
-_CAMEL_CASE_KEY_ALIASES: dict[str, str] = {
-    "hookEventName": "hook_event_name",
-    "sessionId": "session_id",
-    "toolName": "tool_name",
-    "toolInput": "tool_input",
-    "toolUseId": "tool_use_id",
-    "permissionMode": "permission_mode",
-    "promptId": "prompt_id",
-    "notificationType": "notification_type",
-    "subagentType": "subagent_type",
-    "transcriptPath": "transcript_path",
-    "workspaceRoot": "workspace_root",
-    "stopHookActive": "stop_hook_active",
-    "lastAssistantMessage": "last_assistant_message",
-    "backgroundTasks": "background_tasks",
-    "sessionCrons": "session_crons",
-    "cancelledBy": "cancelled_by",
-    "cancelTrigger": "cancel_trigger",
-    "reasonDetails": "reason_details",
-    "errorDetails": "error_details",
-    "toolResult": "tool_response",
-}
-
-# grok registers hooks under its own event names (design doc §3.3/§5 Phase 4
-# brief). Structured the same way CODEX_HOOK_EVENTS is: the plain events
-# below are registered 1:1; Notification is registered twice, once per
-# matcher (see GrokBackend.prepare_launch), since overcode only cares about
-# two of grok's several notificationType values.
-GROK_HOOK_EVENTS: tuple[str, ...] = (
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "Stop",
-    "StopFailure",
-    "StopCancelled",
-    "SessionEnd",
-    "SessionStart",
-)
-GROK_NOTIFICATION_MATCHERS: tuple[str, ...] = ("permission_prompt", "idle_prompt")
-
-# grok's hookEventName *value* is snake_case too (e.g. "user_prompt_submit"),
-# unlike Claude/codex's PascalCase — a second dialect axis beyond key casing.
-# ~/.grok/docs/user-guide/10-hooks.md, "Hook Events" + "Cursor Hook
-# Compatibility" tables list these verbatim (env var section: GROK_HOOK_EVENT
-# examples pre_tool_use/session_start/post_tool_use/session_end/stop/
-# notification). Unmapped names pass through unchanged rather than raising —
-# a future grok event overcode doesn't know about degrades to an unrecognized
-# event string, not a crash.
-_GROK_EVENT_NAME_MAP: dict[str, str] = {
-    "user_prompt_submit": "UserPromptSubmit",
-    "pre_tool_use": "PreToolUse",
-    "post_tool_use": "PostToolUse",
-    "post_tool_use_failure": "PostToolUseFailure",
-    "permission_denied": "PermissionDenied",
-    "stop": "Stop",
-    "stop_failure": "StopFailure",
-    "stop_cancelled": "StopCancelled",
-    "notification": "Notification",
-    "session_start": "SessionStart",
-    "session_end": "SessionEnd",
-    "subagent_start": "SubagentStart",
-    "subagent_stop": "SubagentStop",
-    "pre_compact": "PreCompact",
-    "post_compact": "PostCompact",
-}
-
-# grok->Claude tool-name aliases, taken verbatim from 10-hooks.md's "Tool
-# Name Aliases" section (design doc §3.3's "full table is in the grok hooks
-# doc"). Applied to tool_name so obligation tracking and the ⏰ column's tool
-# badges see the same vocabulary regardless of backend. A name grok doesn't
-# alias (or an already-Claude-shaped name — grok's matcher keeps both) passes
-# through unchanged.
-_GROK_TOOL_NAME_ALIASES: dict[str, str] = {
-    "run_terminal_command": "Bash",
-    "read_file": "Read",
-    "search_replace": "Edit",
-    "grep": "Grep",
-    "list_dir": "Glob",
-    "web_search": "WebSearch",
-    "spawn_subagent": "Task",
-}
-
-
-def _apply_grok_semantics(data: dict) -> dict | None:
-    """grok-only event remapping/filtering, applied after key normalization.
-
-    Returns ``None`` to mean "drop this event entirely" — no state write, no
-    event-log append. Three things get dropped, per
-    ~/.grok/docs/user-guide/10-hooks.md's own busy/idle recipe:
-
-    * any event carrying ``subagentType`` — "a subagent's stop is not the
-      session's" (subagentType survives key-casing as subagent_type).
-    * the session-teardown ``Stop`` (``reason`` != ``"end_turn"``, e.g.
-      ``"shutdown"``/``"channel_closed"``) — that is SessionEnd's job; a
-      hook handler that doesn't filter this double-settles on every exit.
-    * a ``Notification`` whose ``notificationType`` isn't one of the two
-      matchers overcode registers (``permission_prompt``, ``idle_prompt``) —
-      no overcode-side meaning yet.
-
-    Two remaps happen for everything that survives:
-
-    * ``Notification(permission_prompt)`` -> ``PermissionRequest``,
-      ``Notification(idle_prompt)`` -> ``Stop`` (the idle backstop for turns
-      that report none of Stop/StopFailure/StopCancelled).
-    * ``StopCancelled`` -> ``Stop`` (interrupt case; the existing
-      ``interrupt_prompt_markers`` pane fallback in ``GROK_PATTERNS`` already
-      renders this correctly as waiting_user once the event reads "Stop").
-    """
-    if data.get("subagent_type"):
-        return None
-
-    data = dict(data)
-    tool_name = data.get("tool_name")
-    if tool_name in _GROK_TOOL_NAME_ALIASES:
-        data["tool_name"] = _GROK_TOOL_NAME_ALIASES[tool_name]
-
-    raw_event = data.get("hook_event_name")
-    event = _GROK_EVENT_NAME_MAP.get(raw_event, raw_event)
-
-    if event == "Notification":
-        notification_type = data.get("notification_type")
-        if notification_type == "permission_prompt":
-            event = "PermissionRequest"
-        elif notification_type == "idle_prompt":
-            # Through the same path as Claude's (_settle_idle_prompt): it
-            # settles only a turn still reading running, in this conversation,
-            # never a pending permission or another conversation's state
-            pass
-        else:
-            return None
-    elif event == "StopCancelled":
-        event = "Stop"
-    elif event == "Stop":
-        reason = data.get("reason")
-        if reason is not None and reason != "end_turn":
-            return None
-
-    data["hook_event_name"] = event
-    return data
-
-
-def _normalize_hook_payload(data: dict) -> dict:
-    """Normalize hook stdin into the snake_case vocabulary the rest of this
-    module reads (``hook_event_name``, ``session_id``, ``tool_name``, ...).
-
-    Claude Code and codex both send snake_case already, so this is a no-op
-    for both. A camelCase ``hookEventName`` key (confirmed for grok, Phase 4
-    of the design doc — not wired yet) marks the other dialect this repo
-    knows about; translated keys are added alongside the originals rather
-    than replacing them, so a field this table doesn't yet know about still
-    survives untouched.
-    """
-    if not isinstance(data, dict):
-        return data
-    if "hookEventName" not in data or "hook_event_name" in data:
-        return data
-    translated = dict(data)
-    for camel, snake in _CAMEL_CASE_KEY_ALIASES.items():
-        if camel in data and snake not in translated:
-            translated[snake] = data[camel]
-    return translated
-
-
 _RUNNING_EVENTS = frozenset({
     "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
 })
@@ -1075,12 +871,16 @@ def _settle_idle_prompt(data: dict, tmux_session: str, session_name: str) -> Non
     append_hook_event("Stop", tmux_session, session_name)
 
 
-def handle_hook_event() -> None:
+def handle_hook_event(backend: str | None = None) -> None:
     """Main entry point: read stdin JSON, write state file, output time-context if UserPromptSubmit.
 
-    Called by Claude Code for every hook event. Reads the hook event JSON
+    Called by the agent CLI for every hook event. Reads the hook event JSON
     from stdin, writes a state file for status detection, and for
     UserPromptSubmit events also outputs time-context to stdout.
+
+    ``backend`` (``hook-handler --backend <name>``) picks the payload's
+    dialect (``hook_dialects.for_backend``); without it the dialect is
+    guessed, for hook commands registered by an older overcode.
 
     Silent exit (code 0) if env vars missing or stdin is empty/invalid.
     """
@@ -1104,20 +904,14 @@ def handle_hook_event() -> None:
         logger.debug("Failed to parse hook stdin: %s", e)
         return
 
-    # The camelCase key alone (present before AND after normalization —
-    # _normalize_hook_payload adds translated keys rather than replacing
-    # originals) is the dialect signal for the grok-only semantics below.
-    is_grok_dialect = "hookEventName" in data
-
-    data = _normalize_hook_payload(data)
-
-    if is_grok_dialect:
-        data = _apply_grok_semantics(data)
-        if data is None:
-            # Dropped: a subagent's own event, the session-teardown Stop
-            # (reason != "end_turn" — SessionEnd's job), or an unregistered
-            # Notification type.
-            return
+    if not isinstance(data, dict):
+        return
+    dialect = hook_dialects.for_backend(backend, data)
+    data = dialect.normalize(data)
+    if data is None:
+        # The dialect dropped it (grok: a subagent's own event, the
+        # session-teardown Stop, an unregistered Notification type).
+        return
 
     event = data.get("hook_event_name")
     if not event:
@@ -1170,16 +964,17 @@ def handle_hook_event() -> None:
     # agent's first id) introduces a new one; see _sync_agent_session_id.
     session_id = data.get("session_id")
 
-    # Stale-turn protection (grok only): a StopCancelled/StopFailure report
-    # is dispatched off grok's own command loop and can arrive after the
+    # Stale-turn protection (dialects that track prompt turns: grok): a
+    # StopCancelled/StopFailure report is dispatched off grok's own command
+    # loop and can arrive after the
     # *next* turn's UserPromptSubmit already moved the session on. Compare
     # against the newest promptId this session has recorded and drop a
     # report for an older one rather than settling a session that is
     # already busy again. Events with no promptId (the idle_prompt backstop,
     # the session-end Stop) always settle unconditionally — that's the
     # session reporting on itself, not a turn.
-    prompt_id = data.get("prompt_id") if is_grok_dialect else None
-    stale_check = is_grok_dialect and event in ("Stop", "StopFailure") and prompt_id
+    prompt_id = data.get("prompt_id") if dialect.tracks_prompt_turns else None
+    stale_check = event in ("Stop", "StopFailure") and prompt_id
 
     # One locked cycle per event over this agent's hook state: read it once,
     # settle the session id against the session record, then write. The id in

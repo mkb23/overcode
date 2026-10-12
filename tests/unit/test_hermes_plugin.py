@@ -18,7 +18,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode import hermes_plugin as plugin
-from overcode.hook_handler import CODEX_HOOK_EVENTS, OVERCODE_HOOKS
+from overcode.backends.codex import CODEX_HOOK_EVENTS
+from overcode.hook_handler import OVERCODE_HOOKS
 from overcode.hook_status_detector import _HOOK_STATUS_MAP
 
 
@@ -165,9 +166,10 @@ class TestDelivery:
 
     def test_hook_command_from_env(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_HOOK_COMMAND", "/usr/bin/python3 -m overcode.cli")
-        assert plugin._hook_command() == ["/usr/bin/python3", "-m", "overcode.cli", "hook-handler"]
+        assert plugin._hook_command() == [
+            "/usr/bin/python3", "-m", "overcode.cli", "hook-handler", "--backend", "hermes"]
         monkeypatch.delenv("OVERCODE_HOOK_COMMAND")
-        assert plugin._hook_command() == ["overcode", "hook-handler"]
+        assert plugin._hook_command() == ["overcode", "hook-handler", "--backend", "hermes"]
 
     def test_pre_llm_call_returns_handler_stdout_as_context(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "hm")
@@ -179,7 +181,7 @@ class TestDelivery:
         assert out == {"context": "Current time: 13:17"}
         sent = json.loads(run.call_args.kwargs["input"])
         assert sent["hook_event_name"] == "UserPromptSubmit" and sent["session_id"] == SID
-        assert run.call_args.args[0] == ["overcode", "hook-handler"]
+        assert run.call_args.args[0] == ["overcode", "hook-handler", "--backend", "hermes"]
 
     def test_other_events_return_nothing(self, monkeypatch):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "hm")

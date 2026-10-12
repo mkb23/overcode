@@ -640,7 +640,7 @@ codex needs no plugin file and no project-directory write at all: every
 launch passes one `-c` config override per event plus a trust-bypass flag:
 
 ```
--c 'hooks.UserPromptSubmit=[{hooks=[{type="command",command="<overcode-bin> hook-handler"}]}]'
+-c 'hooks.UserPromptSubmit=[{hooks=[{type="command",command="<overcode-bin> hook-handler --backend codex"}]}]'
 -c 'hooks.PreToolUse=[...]'
 -c 'hooks.PostToolUse=[...]'
 -c 'hooks.PermissionRequest=[...]'
@@ -674,8 +674,8 @@ lacks `--dangerously-bypass-hook-trust` — see the doctor section below.
 
 **Hook cost.** Every backend fires `overcode hook-handler` on every tool
 call, so its startup time is paid fleet-wide, many times a second. The
-`overcode` console script (`overcode.entrypoint:main`) dispatches the bare
-`hook-handler` form straight to `hook_handler.handle_hook_event()` before
+`overcode` console script (`overcode.entrypoint:main`) dispatches
+`hook-handler [--backend <name>]` straight to `hook_handler.handle_hook_event()` before
 the typer CLI, rich, or libtmux are imported — roughly 20 ms per event
 instead of 80 ms. Any other invocation falls through to the full CLI.
 
@@ -683,9 +683,16 @@ instead of 80 ms. Any other invocation falls through to the full CLI.
 
 Codex's hook stdin is snake_case and Claude-shaped already
 (`hook_event_name`, `session_id`, `tool_name`, `permission_mode`, ...), so
-`overcode hook-handler` needs no dialect translation for it — see
-`hook_handler._normalize_hook_payload()`, the same call site Grok's
-camelCase dialect will extend later.
+`overcode hook-handler` needs no dialect translation for it: codex's
+`hook_dialect` is the default, Claude-shaped `hook_dialects.HookDialect`.
+
+**`--backend <name>`.** Every backend's registered hook command names its
+backend (`hook-handler --backend codex`), and `hook_handler` asks
+`hook_dialects.for_backend()` for that backend's dialect. A command
+registered by an older overcode carries no name; the dialect is then guessed
+from the payload (camelCase `hookEventName` means grok). `hook_dialects` is
+stdlib-only and keyed by name so the hook path never imports the backend
+registry; a unit test pins it to each backend's `hook_dialect`.
 
 | codex event | overcode hook event | Status |
 |---|---|---|
@@ -698,7 +705,7 @@ camelCase dialect will extend later.
 | `SessionEnd` | `SessionEnd` | terminated |
 
 Two events here have no Claude Code analogue and are registered only for
-codex (`hook_handler.CODEX_HOOK_EVENTS`, never added to `OVERCODE_HOOKS`,
+codex (`CodexBackend.hook_events`, never added to `OVERCODE_HOOKS`,
 which is what Claude's `--settings` injection reads — Claude never sends
 either one):
 
@@ -880,7 +887,7 @@ overcode never needs that long since none of these ever return a block
 decision):
 
 ```
-sh -c '[ -n "$OVERCODE_SESSION_NAME" ] || exit 0; exec <overcode-bin> hook-handler'
+sh -c '[ -n "$OVERCODE_SESSION_NAME" ] || exit 0; exec <overcode-bin> hook-handler --backend grok'
 ```
 
 ### Why global, not project-scoped
@@ -917,10 +924,10 @@ hooks file is missing or de-markered — see the doctor section below.
 grok's hook stdin is **camelCase** (`hookEventName`, `sessionId`,
 `promptId`, `toolName`, `toolInput`, `toolResult`, …) where Claude's/codex's
 is snake_case — confirmed live, exact JSON captured during Phase 0.
-`hook_handler._normalize_hook_payload()` translates keys (grok's `toolResult`
-maps to Claude's `tool_response` — a genuine rename, not just casing); a
-second pass, `_apply_grok_semantics()`, handles the parts that aren't just
-casing:
+grok's dialect (`hook_dialects.GrokHookDialect`) translates keys (grok's
+`toolResult` maps to Claude's `tool_response` — a genuine rename, not just
+casing); a second pass, `_apply_grok_semantics()`, handles the parts that
+aren't just casing:
 
 | grok event | overcode hook event | Status |
 |---|---|---|

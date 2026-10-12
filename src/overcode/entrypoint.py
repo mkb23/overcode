@@ -14,22 +14,20 @@ Everything else falls through to the full typer app unchanged.
 
 import sys
 
-# Subcommands that must not pay for the typer CLI import. Only ``hook-handler``
-# today; each entry maps to a zero-argument callable resolved lazily.
-_FAST_PATHS = {
-    "hook-handler": ("overcode.hook_handler", "handle_hook_event"),
-}
-
 
 def main() -> None:
-    """Dispatch ``overcode <cmd>``; fast-path hook events, else run the CLI."""
-    argv = sys.argv[1:]
-    if len(argv) == 1 and argv[0] in _FAST_PATHS:
-        module_name, func_name = _FAST_PATHS[argv[0]]
-        import importlib
+    """Dispatch ``overcode <cmd>``; fast-path hook events, else run the CLI.
 
-        getattr(importlib.import_module(module_name), func_name)()
-        return
+    Only ``hook-handler`` and ``hook-handler --backend <name>`` take the
+    fast path; any other shape (``--help``) goes to the typer CLI.
+    """
+    argv = sys.argv[1:]
+    if argv and argv[0] == "hook-handler":
+        if len(argv) == 1 or (len(argv) == 3 and argv[1] == "--backend"):
+            from .hook_handler import handle_hook_event
+
+            handle_hook_event(argv[2] if len(argv) == 3 else None)
+            return
 
     from .cli import main as cli_main
 

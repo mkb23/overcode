@@ -205,7 +205,7 @@ predates this reports nothing and is read as claude-code with everything on.
   `--dangerously-bypass-hook-trust` (snake_case stdin, close enough to
   Claude's own that little dialect translation is needed); grok fills it from
   a global, inert-outside-overcode `~/.grok/hooks/overcode.json` file
-  (camelCase stdin, translated by `hook_handler._normalize_hook_payload()`).
+  (camelCase stdin, translated by `hook_dialects.GrokHookDialect`).
   Any backend that can write those files gets the full `HookStatusDetector`
   experience for free.
 

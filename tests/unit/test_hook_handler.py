@@ -7,13 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
+from overcode import hook_dialects
+from overcode.backends.codex import CODEX_HOOK_EVENTS
+from overcode.hook_dialects import _translate_camel_case
 from overcode.hook_handler import (
-    CODEX_HOOK_EVENTS,
     OVERCODE_HOOKS,
     _get_hook_state_path,
     _get_hook_event_log_path,
     _apply_subagent_event,
-    _normalize_hook_payload,
     append_hook_event,
     write_hook_state,
     handle_hook_event,
@@ -797,13 +798,12 @@ class TestCodexHookEvents:
 
 
 class TestDialectNormalization:
-    """_normalize_hook_payload — one call site for every stdin dialect.
+    """hook_dialects — each backend's stdin dialect, picked by --backend.
 
     Codex's stdin is already snake_case/Claude-shaped (Appendix A of the
     design doc — hook_event_name/session_id/turn_id/transcript_path/cwd/
     model/permission_mode/prompt captured live), so it is a pure pass-
-    through today; the camelCase branch is exercised directly since grok
-    (Phase 4) isn't wired to a real stdin yet.
+    through; grok's camelCase keys are translated.
     """
 
     # Verbatim payload captured live in Phase 0 (design doc §2.3) —
@@ -823,15 +823,33 @@ class TestDialectNormalization:
     }
 
     def test_codex_payload_passes_through_unchanged(self):
-        assert _normalize_hook_payload(self.CODEX_USER_PROMPT_SUBMIT) == self.CODEX_USER_PROMPT_SUBMIT
+        dialect = hook_dialects.for_backend("codex", self.CODEX_USER_PROMPT_SUBMIT)
+        assert dialect.normalize(self.CODEX_USER_PROMPT_SUBMIT) == self.CODEX_USER_PROMPT_SUBMIT
 
     def test_claude_payload_passes_through_unchanged(self):
         payload = {"hook_event_name": "Stop", "session_id": "abc"}
-        assert _normalize_hook_payload(payload) == payload
+        for backend in ("claude-code", None):
+            assert hook_dialects.for_backend(backend, payload).normalize(payload) == payload
+
+    def test_unnamed_backend_is_guessed_from_key_casing(self):
+        # Hook commands registered before --backend existed
+        assert hook_dialects.for_backend(None, {"hookEventName": "stop"}) is hook_dialects.GROK
+        assert hook_dialects.for_backend(None, {"hook_event_name": "Stop"}) is hook_dialects.CLAUDE
+
+    def test_named_backend_wins_over_the_guess(self):
+        assert hook_dialects.for_backend("codex", {"hookEventName": "stop"}) is hook_dialects.CLAUDE
+        assert hook_dialects.for_backend("grok", {"hook_event_name": "Stop"}) is hook_dialects.GROK
+
+    def test_unknown_backend_is_claude_shaped(self):
+        assert hook_dialects.for_backend("nope", {}) is hook_dialects.CLAUDE
+
+    def test_every_backend_owns_the_dialect_the_hook_path_resolves(self):
+        from overcode.backends import get_backend, list_backends
+        for name in list_backends():
+            backend = get_backend(name)
+            assert hook_dialects.for_backend(name, {}) is backend.hook_dialect, name
 
     def test_camel_case_dialect_is_translated(self):
-        # Shape grok is documented to send (design doc §3.3) — not wired to
-        # a real backend yet, but the normalization mechanism is shared.
         payload = {
             "hookEventName": "user_prompt_submit",
             "sessionId": "01a043a2-...",
@@ -840,7 +858,7 @@ class TestDialectNormalization:
             "toolUseId": "call_1",
             "permissionMode": "default",
         }
-        normalized = _normalize_hook_payload(payload)
+        normalized = _translate_camel_case(payload)
         assert normalized["hook_event_name"] == "user_prompt_submit"
         assert normalized["session_id"] == "01a043a2-..."
         assert normalized["tool_name"] == "Bash"
@@ -850,8 +868,21 @@ class TestDialectNormalization:
         # Originals are kept alongside the translated keys, not replaced.
         assert normalized["hookEventName"] == "user_prompt_submit"
 
-    def test_non_dict_input_is_returned_as_is(self):
-        assert _normalize_hook_payload(None) is None  # type: ignore[arg-type]
+    def test_grok_backend_normalizes_its_payload(self):
+        from overcode.backends import get_backend
+        out = get_backend("grok").normalize_hook_payload(
+            {"hookEventName": "pre_tool_use", "toolName": "run_terminal_command"})
+        assert out["hook_event_name"] == "PreToolUse"
+        assert out["tool_name"] == "Bash"
+
+    def test_non_dict_stdin_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "test-agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps(["hookEventName"])
+            handle_hook_event()
+        assert not (tmp_path / "agents" / "hook_state_test-agent.json").exists()
 
     def test_existing_snake_case_key_wins_over_camel_case(self):
         # Defensive: if a payload somehow carries both, the explicit
@@ -860,7 +891,7 @@ class TestDialectNormalization:
             "hookEventName": "user_prompt_submit",
             "hook_event_name": "UserPromptSubmit",
         }
-        assert _normalize_hook_payload(payload)["hook_event_name"] == "UserPromptSubmit"
+        assert _translate_camel_case(payload)["hook_event_name"] == "UserPromptSubmit"
 
 
 class TestSessionStartRecordsSessionId:

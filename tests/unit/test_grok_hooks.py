@@ -24,19 +24,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from overcode.backends.grok import (
+    GROK_HOOK_EVENTS,
     GROK_HOOKS_MARKER,
+    GROK_NOTIFICATION_MATCHERS,
     build_hooks_file_content,
     ensure_hooks_installed,
     hooks_file_path,
     hooks_installed,
 )
-from overcode.hook_handler import (
-    GROK_HOOK_EVENTS,
-    GROK_NOTIFICATION_MATCHERS,
-    _apply_grok_semantics,
-    _normalize_hook_payload,
-    handle_hook_event,
-)
+from overcode.hook_dialects import _apply_grok_semantics, _translate_camel_case
+from overcode.hook_handler import handle_hook_event
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +66,7 @@ class TestHooksFileContent:
         content = build_hooks_file_content()
         cmd = content["hooks"]["Stop"][0]["hooks"][0]["command"]
         assert 'OVERCODE_SESSION_NAME' in cmd
-        assert "hook-handler" in cmd
+        assert "hook-handler --backend grok'" in cmd
 
     def test_no_blocking_stop_gate_timeout(self):
         # Grok defaults Stop/StopFailure/StopCancelled gates to 600s; the
@@ -214,7 +211,7 @@ class TestGrokEventSemantics:
     """_apply_grok_semantics after key normalization (design doc §3.3)."""
 
     def _normalized(self, payload):
-        return _normalize_hook_payload(dict(payload))
+        return _translate_camel_case(dict(payload))
 
     def test_user_prompt_submit_passes_through(self):
         result = _apply_grok_semantics(self._normalized(USER_PROMPT_SUBMIT))
@@ -334,7 +331,13 @@ class TestGrokEventSemantics:
 
 
 class TestHandleHookEventGrokIntegration:
-    """End-to-end through handle_hook_event() — stdin to hook_state file."""
+    """End-to-end through handle_hook_event() — stdin to hook_state file.
+
+    Without ``--backend``: a hook command registered by an older overcode,
+    whose dialect is guessed from the camelCase keys.
+    """
+
+    backend = None
 
     def _send(self, tmp_path, monkeypatch, payload):
         monkeypatch.setenv("OVERCODE_SESSION_NAME", "grok-agent")
@@ -342,7 +345,7 @@ class TestHandleHookEventGrokIntegration:
         monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.read.return_value = json.dumps(payload)
-            handle_hook_event()
+            handle_hook_event(self.backend)
 
     def _state(self, tmp_path):
         return json.loads((tmp_path / "agents" / "hook_state_grok-agent.json").read_text())
@@ -436,3 +439,30 @@ class TestHandleHookEventGrokIntegration:
         })
         # Claude/codex have no "shutdown"-reason filtering — this must settle.
         assert self._state(tmp_path)["event"] == "Stop"
+
+
+class TestHandleHookEventGrokNamed(TestHandleHookEventGrokIntegration):
+    """The same, with the ``--backend grok`` today's hooks file passes."""
+
+    backend = "grok"
+
+    def test_grok_dialect_never_leaks_into_claude_payloads(self, tmp_path, monkeypatch):
+        pytest.skip("a Claude payload never arrives with --backend grok")
+
+
+class TestNamedClaudeShapedBackends:
+    """``--backend`` naming a Claude-shaped backend never applies grok's rules."""
+
+    @pytest.mark.parametrize("backend", ["claude-code", "codex", "hermes", "overagent"])
+    def test_shutdown_stop_settles(self, backend, tmp_path, monkeypatch):
+        monkeypatch.setenv("OVERCODE_SESSION_NAME", "agent")
+        monkeypatch.setenv("OVERCODE_TMUX_SESSION", "agents")
+        monkeypatch.setenv("OVERCODE_STATE_DIR", str(tmp_path))
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.read.return_value = json.dumps({
+                "hook_event_name": "Stop", "session_id": "sid", "reason": "shutdown",
+                "prompt_id": "p-old",
+            })
+            handle_hook_event(backend)
+        state = json.loads((tmp_path / "agents" / "hook_state_agent.json").read_text())
+        assert state["event"] == "Stop"

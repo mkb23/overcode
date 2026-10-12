@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import AgentCliNotFoundError
-from ..hook_handler import GROK_HOOK_EVENTS, GROK_NOTIFICATION_MATCHERS
+from .. import hook_dialects
 from ..status_patterns import NEVER, NEVER_SUBSTRING, StatusPatterns
 from .base import (
     AgentBackendBase,
@@ -116,6 +116,24 @@ _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 EMPTY_INPUT_BOX_PATTERN = r"^│\s*❯\s*│$"
 
 
+# grok registers hooks under its own event names (design doc §3.3/§5 Phase 4
+# brief). Structured the same way codex.CODEX_HOOK_EVENTS is: the plain events
+# below are registered 1:1; Notification is registered twice, once per
+# matcher (see GrokBackend.prepare_launch), since overcode only cares about
+# two of grok's several notificationType values.
+GROK_HOOK_EVENTS: tuple[str, ...] = (
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "StopFailure",
+    "StopCancelled",
+    "SessionEnd",
+    "SessionStart",
+)
+GROK_NOTIFICATION_MATCHERS: tuple[str, ...] = ("permission_prompt", "idle_prompt")
+
+
 def parse_version(text: str) -> Optional[Tuple[int, int, int]]:
     """Extract a (major, minor, patch) tuple from `grok --version` output.
 
@@ -175,7 +193,7 @@ def hooks_file_path() -> Path:
 def _hook_command() -> str:
     """The inert-outside-overcode shell command every registration runs."""
     overcode_bin = _resolve_overcode_bin()
-    return f"sh -c '{_INERTNESS_GUARD}; exec {overcode_bin} hook-handler'"
+    return f"sh -c '{_INERTNESS_GUARD}; exec {overcode_bin} hook-handler --backend grok'"
 
 
 def _hook_entry(matcher: Optional[str] = None) -> dict:
@@ -456,6 +474,8 @@ class GrokBackend(AgentBackendBase):
     # basename directly, confirmed via `pgrep -fl grok` during Phase 0.
     process_basenames = ("grok",)
     not_found_error = GrokNotFoundError
+    hook_events = GROK_HOOK_EVENTS
+    hook_dialect = hook_dialects.GROK
     capabilities = (
         BackendCapability.RESUME
         | BackendCapability.FORK

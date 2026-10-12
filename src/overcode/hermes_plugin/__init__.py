@@ -91,7 +91,7 @@ def _hook_command() -> list:
         argv = shlex.split(raw)
     except ValueError:
         argv = [raw]
-    return argv + ["hook-handler"]
+    return argv + ["hook-handler", "--backend", "hermes"]
 
 
 def _alias_tool(name: Any) -> Optional[str]:
