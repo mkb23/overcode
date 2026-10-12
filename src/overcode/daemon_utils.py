@@ -11,7 +11,6 @@ from typing import Callable, Optional, Tuple
 from .pid_utils import (
     get_process_pid,
     is_process_running,
-    remove_pid_file,
     stop_process,
 )
 from .settings import DAEMON

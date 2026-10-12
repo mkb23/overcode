@@ -1,11 +1,41 @@
 name: Publish to PyPI
 
+# A release publishes only a commit that passed everything: a green Full
+# suite run on that exact commit (push it to `rc` first) and fresh passing
+# reports for the local e2e tiers (tests/e2e-reports). If the gate fails,
+# fix that, then re-run this workflow.
 on:
   release:
     types: [published]
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Full suite passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-suite.yml/runs?head_sha=${GITHUB_SHA}&status=success" --jq .total_count)
+          if [ "$runs" = "0" ]; then
+            echo "::error::No green Full suite run for ${GITHUB_SHA}. Push this commit to rc (git push origin ${GITHUB_SHA}:rc), wait for it to pass, then re-run this workflow."
+            exit 1
+          fi
+          echo "Full suite passed on ${GITHUB_SHA} (${runs} run(s))"
+      - name: Local e2e tiers have fresh passing reports
+        run: python scripts/e2e_reports.py check --ref "$GITHUB_SHA"
+
   build:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

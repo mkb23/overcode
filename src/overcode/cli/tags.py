@@ -39,7 +39,7 @@ def tag_add(
 
     new_tags = manager.add_tags(agent.id, tags)
     if not new_tags:
-        rprint(f"[yellow]No tags applied[/yellow]")
+        rprint("[yellow]No tags applied[/yellow]")
         return
     rprint(f"[green]✓ {name} tags: {', '.join(new_tags)}[/green]")
 

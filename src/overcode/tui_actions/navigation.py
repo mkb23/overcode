@@ -7,7 +7,7 @@ Handles moving between sessions in the list.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..tui_widgets import SessionSummary
+    pass
 
 
 class NavigationActionsMixin:

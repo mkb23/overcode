@@ -21,7 +21,6 @@ def wrappers_list():
     from pathlib import Path
 
     installed = list_available_wrappers()
-    bundled_stems = {Path(f).stem for f in BUNDLED_WRAPPERS}
 
     if not installed and not BUNDLED_WRAPPERS:
         rprint("[dim]No wrappers available[/dim]")
@@ -48,7 +47,7 @@ def wrappers_list():
     installed_names = {name for name, _ in installed}
     not_installed = [Path(f).stem for f in BUNDLED_WRAPPERS if Path(f).stem not in installed_names]
     if not_installed:
-        rprint(f"\n[bold]Available (auto-installs on first use):[/bold]")
+        rprint("\n[bold]Available (auto-installs on first use):[/bold]")
         for name in not_installed:
             rprint(f"  {name}")
 
@@ -108,4 +107,4 @@ def wrappers_reset(
         results = install_all_bundled()
         for fname, status in results:
             rprint(f"  [green]Restored[/green] {fname}")
-        rprint(f"\n[green]Done.[/green] All bundled wrappers reset.")
+        rprint("\n[green]Done.[/green] All bundled wrappers reset.")

@@ -58,7 +58,7 @@ import threading
 from array import array
 from collections import OrderedDict
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from .stat_gate import FileSignature, is_settled
 

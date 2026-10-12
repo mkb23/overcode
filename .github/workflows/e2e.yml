@@ -1,13 +1,12 @@
 name: E2E (containerized)
 
+# The containerized workflow and visual tiers: mock agents, no credentials.
+# The real-LLM tier spends tokens, so it runs on a Mac and is recorded
+# (make e2e-record TIER=container-real), not run here.
 on:
   pull_request:
   workflow_dispatch:
-    inputs:
-      real_llm:
-        description: "Also run the real-LLM smoke tier"
-        type: boolean
-        default: false
+  workflow_call:
 
 jobs:
   build-image:
@@ -65,31 +64,4 @@ jobs:
         if: always()
         with:
           name: e2e-visual-results
-          path: artifacts/e2e/
-
-  e2e-real-llm:
-    needs: build-image
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.real_llm)
-    runs-on: ubuntu-latest
-    environment: e2e-real
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: e2e-image
-          path: /tmp
-      - run: docker load -i /tmp/overcode-e2e.tar
-      - name: Run real-LLM smoke tier
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: ./scripts/e2e.sh --no-build --real -v --junitxml=/artifacts/junit-real.xml
-      - name: Hint on token expiry
-        if: failure()
-        run: |
-          echo "::warning::If failures are auth-related, the CLAUDE_CODE_OAUTH_TOKEN secret may have expired."
-          echo "::warning::Re-run 'claude setup-token' locally and update the repository secret."
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: e2e-real-results
           path: artifacts/e2e/

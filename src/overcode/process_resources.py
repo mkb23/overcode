@@ -14,7 +14,7 @@ resource columns.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import subprocess
 
 

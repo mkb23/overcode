@@ -97,3 +97,7 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+[tool.ruff.lint]
+# `l` is the standard name for lightness in HLS colour code (tui_theme)
+ignore = ["E741"]

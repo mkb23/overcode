@@ -301,7 +301,7 @@ def launch(
             if available:
                 rprint(f"[red]Error: Sister '{sister}' not found. Available: {', '.join(available)}[/red]")
             else:
-                rprint(f"[red]Error: No sisters configured. Add sisters to ~/.overcode/config.yaml[/red]")
+                rprint("[red]Error: No sisters configured. Add sisters to ~/.overcode/config.yaml[/red]")
             raise typer.Exit(code=1)
 
         remote_dir = directory if directory else "."
@@ -760,7 +760,10 @@ def list_agents(
     # the TUI does, and note the shared values under the table
     from ..summary_columns import COLUMNS_BY_ID, uniform_columns
     shared = uniform_columns(row_contexts)
-    col_filter = lambda col: detail in col.detail_levels and col.id not in shared
+
+    def col_filter(col):
+        return detail in col.detail_levels and col.id not in shared
+
     all_cells = [render_summary_cells(ctx, column_filter=col_filter) for ctx in row_contexts]
 
     # Auto-align columns across all rows, then append activity

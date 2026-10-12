@@ -1,0 +1,64 @@
+# The expensive end-to-end tiers: real agent CLIs, real credentials, real
+# tokens. They run on a developer's Mac, never in GitHub Actions.
+#
+#   make e2e-record TIER=live-backends   # run a tier, write <tier>.json here
+#   make e2e-status                      # how fresh each report is
+#
+# Commit the report it writes. The release gate (the Full suite workflow and
+# the PyPI publish job) runs `scripts/e2e_reports.py check`, which fails a
+# release unless every required tier passed recently and close enough to the
+# commit being released.
+
+[policy]
+# A report older than this does not count
+max_age_days = 14
+# Nor does one whose commit is this far behind: lines inserted plus deleted
+# under src/ between the report's commit and the release. Tests and docs
+# don't change what these tiers exercise, so they don't count.
+max_src_lines_changed = 5000
+
+[tiers.live-backends]
+description = "Each real agent CLI: launch, a turn, a permission prompt, restart, kill"
+command = [
+    "python", "-m", "pytest", "-m", "e2e", "-rsx", "-p", "no:cacheprovider",
+    "tests/e2e/test_live_backends.py",
+    "tests/e2e/test_live_opencode_states.py",
+    "tests/e2e/test_live_session_identity.py",
+    "--junitxml={junit}",
+]
+env = { OVERCODE_LIVE_BACKENDS = "all" }
+required = true
+# Skipped is not passed: these must each have run and passed. grok is left
+# out while its login needs a browser approval (grok login --device-auth).
+must_pass = [
+    "test_real_cli_round_trip[claude-code]",
+    "test_real_cli_round_trip[codex]",
+    "test_real_cli_round_trip[opencode]",
+    "test_real_cli_round_trip[opencode2]",
+    "test_real_cli_round_trip[hermes]",
+]
+
+[tiers.real-claude]
+description = "Real Claude Code: hook lifecycle, permissions, child and two-layer delegation"
+command = [
+    "python", "-m", "pytest", "-m", "e2e", "-rsx", "-p", "no:cacheprovider",
+    "tests/e2e/test_hook_status_detection.py",
+    "tests/e2e/test_child_delegation.py",
+    "tests/e2e/test_two_layer_delegation.py",
+    "--junitxml={junit}",
+]
+required = true
+must_pass = [
+    "test_hook_lifecycle_bypass_mode",
+    "test_permission_request_detection",
+    "test_child_agent_waiting_oversight",
+    "test_parent_delegates_to_children",
+    "test_two_layer_delegation",
+]
+
+[tiers.container-real]
+description = "The containerized real-LLM smoke tier (Docker, CLAUDE_CODE_OAUTH_TOKEN)"
+command = ["./scripts/e2e.sh", "--real", "-v", "--junitxml=/artifacts/junit-real.xml"]
+# e2e.sh mounts artifacts/e2e as /artifacts
+junit = "artifacts/e2e/junit-real.xml"
+required = false

@@ -1,15 +1,22 @@
-name: Nightly
+name: Full suite
 
-# The slower tiers, on a schedule. Never a merge gate: when something fails,
-# one issue labelled `nightly` is opened (or commented on, if one is already
-# open) naming the failing tiers and linking the run. Close the issue once
-# the tiers are green again.
+# Every tier that is free to run here: unit (with the coverage floor), lint,
+# scale, the mock backend matrix and the containerized e2e, plus the check
+# that the expensive local e2e tiers have fresh passing reports
+# (tests/e2e-reports, scripts/e2e_reports.py).
+#
+# Runs on the `rc` branch, which is pushed deliberately before a release; the
+# PyPI publish job requires a green run of this workflow on the commit it
+# releases. Also nightly on main: a nightly failure opens (or comments on)
+# one issue labelled `nightly` instead of gating anything.
 #
 # Timing budgets in tests/scale were calibrated on an M-series Mac; a hosted
-# runner is slower. A scale failure here is a prompt to look, not proof of a
+# runner is slower. A scale failure is a prompt to look, not proof of a
 # regression: compare with `python scripts/bench_backends.py` locally.
 
 on:
+  push:
+    branches: [rc]
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
@@ -30,9 +37,20 @@ jobs:
           node-version: "22"
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: pip install -e ".[dev]"
-      - run: pytest tests/unit -q -p no:cacheprovider
+      - name: Unit tests with coverage
+        run: pytest tests/unit -q -p no:cacheprovider --cov=src/overcode --cov-report=term:skip-covered --cov-fail-under=75
         env:
           NO_COLOR: "1"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check src
 
   scale:
     runs-on: ubuntu-latest
@@ -64,9 +82,26 @@ jobs:
         env:
           NO_COLOR: "1"
 
+  container-e2e:
+    uses: ./.github/workflows/e2e.yml
+
+  e2e-reports:
+    # Not on the nightly run: it is about releasing this commit, and a stale
+    # local report is not something a scheduled run can fix
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the check walks history back to each report's commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/e2e_reports.py check --ref "$GITHUB_SHA"
+
   report:
-    needs: [unit, scale, backend-matrix]
-    if: failure()
+    needs: [unit, lint, scale, backend-matrix, container-e2e]
+    if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       issues: write

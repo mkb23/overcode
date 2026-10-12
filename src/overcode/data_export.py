@@ -37,7 +37,6 @@ def export_to_parquet(
         ImportError: If pyarrow is not installed
     """
     try:
-        import pyarrow as pa
         import pyarrow.parquet as pq
     except ImportError:
         raise ImportError(

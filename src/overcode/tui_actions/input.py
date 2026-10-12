@@ -9,7 +9,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..tui_widgets import SessionSummary
+    pass
 
 
 def _send_keys_to_focused(tui, keys: str, *, enter: bool = False, label: str | None = None, auto_wake: bool = True) -> bool:

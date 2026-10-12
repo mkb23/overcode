@@ -1,6 +1,6 @@
 # Makefile for overcode development and testing
 
-.PHONY: help install test test-e2e test-unit clean lint format e2e e2e-real e2e-shell
+.PHONY: help install test test-e2e test-unit clean lint typecheck format coverage metrics e2e e2e-real e2e-shell e2e-record e2e-status
 
 help:
 	@echo "Overcode Development Commands"
@@ -19,11 +19,16 @@ help:
 	@echo "  make e2e            Containerized E2E: workflow + visual tiers (Docker)"
 	@echo "  make e2e-real       Containerized E2E: real-LLM smoke tier (needs CLAUDE_CODE_OAUTH_TOKEN)"
 	@echo "  make e2e-shell      Interactive shell inside the E2E container"
+	@echo "  make e2e-record TIER=<tier>  Run an expensive local e2e tier and write its report"
+	@echo "  make e2e-status     How fresh each e2e report is (tests/e2e-reports/tiers.toml)"
 	@echo ""
 	@echo "Code Quality:"
-	@echo "  make lint           Run type checking with mypy"
+	@echo "  make lint           Lint with ruff (the CI gate)"
+	@echo "  make typecheck      Type check with mypy (not yet clean)"
 	@echo "  make format         Format code with black"
 	@echo "  make format-check   Check if code needs formatting"
+	@echo "  make coverage       Unit suite under branch + thread coverage (htmlcov/)"
+	@echo "  make metrics        Complexity, dead code, lint and size summary (build/metrics/)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean              Remove build artifacts and caches"
@@ -51,7 +56,7 @@ test-live:
 	pytest -m e2e -rsx tests/e2e/test_live_backends.py
 
 test-unit:
-	pytest -v -m unit
+	pytest -q tests/unit -p no:cacheprovider
 
 test-quick:
 	@echo "Running E2E test directly (faster for development)..."
@@ -67,7 +72,20 @@ e2e-real:
 e2e-shell:
 	./scripts/e2e.sh --shell
 
+# The expensive tiers (real CLIs, credentials, tokens) run here, not in CI.
+# Record one, then commit tests/e2e-reports/<tier>.json: the release gate
+# reads it (scripts/e2e_reports.py check).
+e2e-record:
+	@test -n "$(TIER)" || (echo "usage: make e2e-record TIER=<tier>"; python scripts/e2e_reports.py status; exit 2)
+	python scripts/e2e_reports.py record $(TIER)
+
+e2e-status:
+	python scripts/e2e_reports.py status
+
 lint:
+	ruff check src
+
+typecheck:
 	mypy src/overcode
 
 format:

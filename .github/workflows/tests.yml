@@ -28,12 +28,13 @@ jobs:
       - name: Run unit tests with coverage
         env:
           NO_COLOR: "1"
+        # The floor ratchets up as coverage improves (docs/design/quality-review-2026-10.md)
         run: |
-          pytest tests/unit/ -v \
+          pytest tests/unit/ -q -p no:cacheprovider \
             --cov=src/overcode \
             --cov-report=xml \
-            --cov-report=term-missing \
-            --cov-fail-under=10
+            --cov-report=term:skip-covered \
+            --cov-fail-under=75
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -54,7 +55,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Check Python syntax
-        run: |
-          python -m py_compile src/overcode/*.py
-          echo "✓ All Python files have valid syntax"
+      - run: pip install ruff
+      - name: Lint
+        run: ruff check src

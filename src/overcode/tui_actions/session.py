@@ -14,7 +14,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Input
 
 if TYPE_CHECKING:
-    from ..tui_widgets import SessionSummary, CommandBar, PreviewPane
+    from ..tui_widgets import SessionSummary
     from ..session_manager import Session
 
 

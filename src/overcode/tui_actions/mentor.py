@@ -14,7 +14,6 @@ time out is "ignored". Both feed back into how often tips come.
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 from rich.text import Text
 
