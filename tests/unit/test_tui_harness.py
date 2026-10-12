@@ -21,9 +21,9 @@ class TestHarness:
         async with app.run_test() as pilot:
             await ready(pilot)
             assert app._periodic_timers == {}
-            assert app._engine_connected
+            assert app.engine_link.connected
             # Long past the grace, the watch still finds the engine there
-            app._engine_down_since -= 10 * ENGINE_BANNER_GRACE_SECONDS
+            app.engine_link.down_since -= 10 * ENGINE_BANNER_GRACE_SECONDS
             app.update_daemon_status()
             await pilot.pause()
             assert not app.query_one("#engine-banner").has_class("visible")

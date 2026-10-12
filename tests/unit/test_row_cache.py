@@ -130,7 +130,7 @@ def _row(app, name):
 
 
 async def _connected(pilot, app):
-    assert await _until(pilot, lambda: app._engine_connected
+    assert await _until(pilot, lambda: app.engine_link.connected
                         and len(app._engine_agents) == len(AGENTS))
     await pilot.pause()
 

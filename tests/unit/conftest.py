@@ -289,7 +289,7 @@ def make_tui(tui_state_dir, monkeypatch):
 
     from overcode.launcher import AgentLauncher
     from overcode.status_detector_factory import StatusDetectorDispatcher
-    import overcode.tui
+    import overcode.tui_engine_link
     from overcode.tui import SupervisorTUI
     from tests.tui_harness import FakeEngine
 
@@ -306,7 +306,7 @@ def make_tui(tui_state_dir, monkeypatch):
             monkeypatch.setattr(AgentLauncher, "list_sessions", lambda self: source())
         if engine != "socket":
             engine = engine if engine is not None else FakeEngine()
-            monkeypatch.setattr(overcode.tui, "EngineClient", engine.client_factory)
+            monkeypatch.setattr(overcode.tui_engine_link, "EngineClient", engine.client_factory)
         app = SupervisorTUI(tmux_session=tmux_session, timers=timers, **kwargs)
         # Recorded, never sent (its mode stays the real one's)
         app._notifier = MagicMock(mode=app._notifier.mode)

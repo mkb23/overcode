@@ -61,7 +61,7 @@ class FakeEngine:
         self.snapshot = Snapshot(seq=self.snapshot.seq + 1, agents=agents,
                                  fleet=dict(snapshot.fleet))
         if self.client is not None and self.client.connected:
-            self.client.app._apply_engine_snapshot(self.snapshot)
+            self.client.link.apply_snapshot(self.snapshot)
 
     def ring(self, agent: str, episode: dict) -> None:
         self.client.app._ring(agent, episode)
@@ -69,7 +69,7 @@ class FakeEngine:
     def drop(self) -> None:
         """The engine went away."""
         self.client.connected = False
-        self.client.app._set_engine_connected(False)
+        self.client.link.set_connected(False)
 
     def come_back(self) -> None:
         self.client._connect()
@@ -97,9 +97,10 @@ class FakeEngineClient:
 
     def __init__(self, engine: FakeEngine, on_change, on_bell, on_connection) -> None:
         self.engine = engine
-        # The callbacks are the app's bound methods: the client delivers
-        # straight to the app instead of posting messages for later
-        self.app = on_change.__self__
+        # The callbacks are the app's EngineLink's bound methods: the client
+        # delivers straight to the link instead of posting messages for later
+        self.link = on_change.__self__
+        self.app = self.link.app
         self.connected = False
         self.visible = False
         self.focus: Optional[str] = None
@@ -113,8 +114,8 @@ class FakeEngineClient:
 
     def _connect(self) -> None:
         self.connected = True
-        self.app._set_engine_connected(True)
-        self.app._apply_engine_snapshot(self.engine.snapshot)
+        self.link.set_connected(True)
+        self.link.apply_snapshot(self.engine.snapshot)
 
     def start(self) -> None:
         self._connect()

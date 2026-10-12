@@ -59,11 +59,10 @@ class DaemonPanel(Static):
             app = self.app
         except Exception:  # a bare widget (no running app)
             return None
-        if not getattr(app, "_engine_connected", False):
+        link = getattr(app, "engine_link", None)
+        if link is None or not link.connected:
             return None
-        client = getattr(app, "_engine_client", None)
-        stalled = client.stalled_for() if client is not None else None
-        return getattr(app, "_engine_fleet", None) or {}, stalled
+        return link.fleet or {}, link.stalled_for()
 
     def _refresh_logs(self) -> None:
         """Each second, while shown: the log (a stat until it grows) and what the engine lacks."""

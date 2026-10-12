@@ -92,7 +92,9 @@ def _bare_app(attended=True, in_tmux=True):
     app._heartbeat_enabled = False
     app.has_sisters = False
     app.diagnostics = False
-    app._engine_client = MagicMock()
+    from overcode.tui_engine_link import EngineLink
+    app.engine_link = EngineLink(app)
+    app.engine_link.client = MagicMock()
     app._prefs = MagicMock(status_change_logging=False)
     app._prefs.status_change_logging = False
     # Every worker the timers reach, as counters
@@ -192,7 +194,7 @@ class TestWatcher:
         assert not app._periodic_timers["attended_watch"].paused
         assert not app._periodic_timers["heartbeat_flush"].paused
         assert not app._periodic_timers["status_changes"].paused
-        app._engine_client.set_visible.assert_called_once_with(False)
+        app.engine_link.client.set_visible.assert_called_once_with(False)
 
     def test_reattach_resumes_everything_tells_the_engine_and_refreshes(self):
         app, clock = _bare_app(attended=False)
@@ -206,7 +208,7 @@ class TestWatcher:
         assert not any(
             t.paused for n, t in app._periodic_timers.items() if n in PAUSED_WHEN_UNATTENDED
         )
-        app._engine_client.set_visible.assert_called_once_with(True)
+        app.engine_link.client.set_visible.assert_called_once_with(True)
         assert signalled == ["agents"]
         # One full refresh: sessions, daemon bar, timeline, every row, jobs
         assert app.calls == {
@@ -225,7 +227,7 @@ class TestWatcher:
         app._set_attended(True)
         assert "_repaint_rows" not in app.calls
         assert all(t.transitions == [] for t in app._periodic_timers.values())
-        app._engine_client.set_visible.assert_not_called()
+        app.engine_link.client.set_visible.assert_not_called()
 
     def test_sisters_are_polled_on_return_when_configured(self):
         app, clock = _bare_app(attended=False)
@@ -236,7 +238,7 @@ class TestWatcher:
 
     def test_no_engine_subscription_yet_is_fine(self):
         app, _ = _bare_app()
-        app._engine_client = None
+        app.engine_link.client = None
         with patch("overcode.tui.signal_activity"):
             app._set_attended(False)
         assert app.attended is False
@@ -291,7 +293,7 @@ class TestWorkerInvocationsAcrossDetachAttach:
             app._apply_attended_poll(("agents", 1))
             assert app.attended is True
         assert app.calls["_repaint_rows"] == 1
-        assert [c.args for c in app._engine_client.set_visible.call_args_list] == [(False,), (True,)]
+        assert [c.args for c in app.engine_link.client.set_visible.call_args_list] == [(False,), (True,)]
 
 
 class TestAttendedWatchTick:
@@ -343,7 +345,7 @@ class TestOnKeyBackstop:
             app.on_key(MagicMock())
         assert app.attended is True
         assert not app._periodic_timers["focused_pane"].paused
-        app._engine_client.set_visible.assert_called_once_with(True)
+        app.engine_link.client.set_visible.assert_called_once_with(True)
 
 
 class TestPhaseOffsetsOfTheNewTimers:

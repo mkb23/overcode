@@ -35,7 +35,14 @@ from .status_constants import DEFAULT_CAPTURE_LINES
 from .settings import signal_activity, write_tui_heartbeat, get_event_loop_timing_path, get_status_changes_path, TUIPreferences  # Activity signaling to daemon
 from .monitor_daemon_state import get_monitor_daemon_state
 from . import tui_engine
-from .engine_socket import EngineClient
+from .tui_engine_link import (
+    ENGINE_BANNER_GRACE_SECONDS,  # noqa: F401 (re-exported for tests)
+    ENGINE_BANNER_TEXT,
+    EngineBellRang,
+    EngineConnectionChanged,
+    EngineLink,
+    EngineSnapshotReady,
+)
 from .monitor_daemon import (
     is_monitor_daemon_running,
 )
@@ -135,14 +142,6 @@ def session_row_key(sessions) -> tuple:
     )
 
 
-# A dropped or absent engine.sock is shown after this long (a normal start
-# connects well within it), and the daemon is (re)started at most this often
-# while the engine stays away.
-ENGINE_BANNER_GRACE_SECONDS = 1.5
-ENGINE_RESTART_EVERY_SECONDS = 10.0
-ENGINE_RETRY_AFTER_DROP_SECONDS = 1.5
-ENGINE_BANNER_TEXT = "  ⚠ engine not running — starting…  (showing the last known state)  "
-ENGINE_STALLED_TEXT = "  ⚠ engine frozen for {age} — statuses are not updating  (showing the last known state)  "
 # An agent that needs a look while it is the focused one (on screen in the
 # split's bottom pane) counts as visited after this long.
 BELL_SEEN_AFTER_SECONDS = 5.0
@@ -398,20 +397,9 @@ class SupervisorTUI(
         # Timers for auto-dismissing bell when the stalled agent is already focused
         self._bell_dismiss_timers: dict[str, object] = {}
         # The engine (docs/design/engine-0.6.md): this TUI subscribes to
-        # engine.sock and renders what it publishes. The client is started
-        # on mount; _engine_agents is the last snapshot's agents.
-        self._engine_client: Optional[EngineClient] = None
-        self._engine_connected: bool = False
-        self._engine_agents: dict = {}
-        self._engine_fleet: dict = {}
-        self._engine_down_since: float = time.monotonic()
-        self._engine_stalled = False
-        self._engine_start_attempt: float = float("-inf")
-        self._engine_focus: Optional[str] = None
-        self._engine_pending = None  # the latest snapshot, not yet applied
-        self._engine_apply_posted = False
-        # What the status bar was last built from (_apply_engine_to_status_bar)
-        self._status_bar_inputs: Optional[tuple] = None
+        # engine.sock and renders what it publishes (tui_engine_link). The
+        # client is started on mount.
+        self.engine_link = EngineLink(self)
         # Visits this TUI made that the engine may not have published yet
         self._visited_here: dict[str, float] = {}
         # The focused-pane capture in flight (one at a time, never queued),
@@ -660,7 +648,7 @@ class SupervisorTUI(
                         severity="warning", timeout=10)
 
         # Auto-start Monitor Daemon if not running
-        self._engine_start_attempt = time.monotonic()
+        self.engine_link.start_attempt = time.monotonic()
         self._ensure_monitor_daemon()
 
         # Clean up stale SSH proxy windows from previous TUI sessions
@@ -732,7 +720,7 @@ class SupervisorTUI(
         self.update_daemon_status()
         self.update_timeline()
         # Subscribe to the engine: every status, stat and bell arrives here
-        self._start_engine_client()
+        self.engine_link.start()
 
         # Event loop heartbeat probe — on by default (negligible per-tick
         # overhead), but disable via history_retention.event_loop_timing_enabled
@@ -872,8 +860,7 @@ class SupervisorTUI(
         Nothing here runs while the state is unchanged.
         """
         self.periodic.set_attended(attended)
-        if self._engine_client is not None:
-            self._engine_client.set_visible(attended)
+        self.engine_link.set_visible(attended)
         if attended:
             # The probe measured nothing while paused; a delta spanning the
             # pause would log as one enormous stall.
@@ -895,136 +882,25 @@ class SupervisorTUI(
 
     # ── The engine (docs/design/engine-0.6.md) ─────────────────────────
 
-    def _start_engine_client(self) -> None:
-        """Subscribe to engine.sock; the client reconnects by itself for good."""
-        if self._engine_client is not None:
-            return
-        client = EngineClient(
-            tui_engine.engine_socket_path(self.tmux_session),
-            on_change=self._on_engine_change,
-            on_bell=self._on_engine_bell,
-            on_connection=self._on_engine_connection,
-        )
-        self._engine_client = client
-        # Stated now, restated by the client on every (re)connect
-        client.set_visible(self.attended)
-        client.set_burn_window(self._burn_hours() or None)
-        self._report_focus(self._get_focused_widget())
-        client.set_focus(self._engine_focus)
-        client.start()
-
     def _burn_hours(self) -> float:
         """The burn window: the same baseline as the mean spin (0: none)."""
         return (getattr(self, "baseline_minutes", 0) or 0) / 60.0
 
-    def _report_burn_window(self) -> None:
-        """Ask the engine for the current window's burn; re-read what it has."""
-        if self._engine_client is not None:
-            self._engine_client.set_burn_window(self._burn_hours() or None)
-        self._apply_engine_views(force=True)
+    @property
+    def _engine_agents(self) -> dict:
+        """The engine's last snapshot's agents (engine_link.agents)."""
+        return self.engine_link.agents
 
-    def _report_focus(self, widget: Optional["SessionSummary"]) -> None:
-        """Tell the engine which local agent has focus; hand back the old row's pane."""
-        sid = widget.session.id if widget is not None and not widget.session.is_remote else None
-        if sid == self._engine_focus:
-            return
-        for w in self.query(SessionSummary):
-            if w.local_pane and w.session.id != sid:
-                w.end_local_pane()
-        self._engine_focus = sid
-        if self._engine_client is not None:
-            self._engine_client.set_focus(sid)
+    # The engine client's messages (tui_engine_link), on the main thread
 
-    class EngineEvent(events.Message):
-        """Something the engine client heard, for the main thread."""
+    def on_engine_snapshot_ready(self, message: EngineSnapshotReady) -> None:
+        self.engine_link.take_snapshot()
 
-        def __init__(self, kind: str, args: tuple) -> None:
-            super().__init__()
-            self.kind = kind
-            self.args = args
+    def on_engine_bell_rang(self, message: EngineBellRang) -> None:
+        self._ring(message.agent, message.episode)
 
-    # The client's callbacks run on its thread. They post a message rather
-    # than call_from_thread, which would block the client on the main
-    # thread (and deadlock an exit that joins the client). Snapshots
-    # coalesce: a burst of deltas is applied once, as the latest.
-
-    def _on_engine_change(self, snapshot) -> None:
-        self._engine_pending = snapshot
-        if not getattr(self, "_engine_apply_posted", False):
-            self._engine_apply_posted = True
-            self.post_message(self.EngineEvent("snapshot", ()))
-
-    def _on_engine_bell(self, agent: str, episode: dict) -> None:
-        self.post_message(self.EngineEvent("bell", (agent, episode)))
-
-    def _on_engine_connection(self, connected: bool) -> None:
-        self.post_message(self.EngineEvent("connection", (connected,)))
-
-    def on_supervisor_tui_engine_event(self, event: "SupervisorTUI.EngineEvent") -> None:
-        if event.kind == "snapshot":
-            self._engine_apply_posted = False
-            # Take it: a snapshot landing after the flag reset posts its own
-            # event, which must not find this one again and apply it twice
-            snapshot, self._engine_pending = self._engine_pending, None
-            if snapshot is not None:
-                self._apply_engine_snapshot(snapshot)
-        elif event.kind == "bell":
-            self._ring(*event.args)
-        elif event.kind == "connection":
-            self._set_engine_connected(*event.args)
-
-    def _apply_engine_snapshot(self, snapshot) -> None:
-        """Main thread: the engine's current snapshot (a full one or a delta applied)."""
-        self._mark_event("apply_engine_start")
-        if not self._engine_connected:
-            # A snapshot means a live connection, whatever order callbacks land in
-            self._set_engine_connected(True)
-        self._engine_agents = snapshot.agents
-        self._engine_fleet = snapshot.fleet
-        self._apply_engine_views()
-        self._mark_event("apply_engine_end")
-
-    def _apply_engine_views(self, force: bool = False) -> None:
-        """Give each local row its agent's view; repaint only the rows that changed.
-
-        ``force`` re-applies unchanged views too (the burn window moved).
-        Fleet-wide flags that decide whether a column shows are recomputed;
-        when one flips, or the aligned column widths move, every row
-        repaints, since every row's layout changed.
-        """
-        agents = self._engine_agents
-        hours = self._burn_hours()
-        changed = []
-        for widget in self.query(SessionSummary):
-            if widget.session.is_remote:
-                continue
-            view = agents.get(widget.session.id)
-            # `is` first: an agent the delta didn't touch keeps its dict
-            if view is None or ((view is widget.engine or view == widget.engine) and not force):
-                continue
-            old_status = widget.detected_status
-            if widget.apply_engine(view, hours, self._visited_here.get(widget.session.id)):
-                changed.append(widget)
-                if self._prefs.status_change_logging and old_status != widget.detected_status:
-                    self._log_status_change(
-                        widget.session.name, old_status, widget.detected_status,
-                        source="engine", focused=widget.session.id == self._engine_focus,
-                    )
-        self._apply_engine_to_status_bar()
-        if not changed:
-            return
-        # The agent on screen (the split's bottom pane) that needs a look:
-        # seen after a few seconds, as when it rings while focused
-        focused_id = self._selected_session_id()
-        for widget in changed:
-            sid = widget.session.id
-            if widget.is_unvisited_stalled and sid == focused_id and self.attended:
-                self._schedule_bell_dismiss(sid)
-        if self._update_fleet_flags():
-            changed = list(self.query(SessionSummary))
-        if not self.attended:
-            return  # nothing is drawn while detached; re-attaching repaints every row
-        self._repaint(changed)
+    def on_engine_connection_changed(self, message: EngineConnectionChanged) -> None:
+        self.engine_link.set_connected(message.connected)
 
     def _repaint(self, changed: list) -> None:
         """Re-align columns if ``changed`` moved them, then repaint.
@@ -1092,114 +968,6 @@ class SupervisorTUI(
                     flipped = True
         return flipped
 
-    def _apply_engine_to_status_bar(self) -> None:
-        """The daemon status bar's fleet fields and the aggregate burn, from the snapshot.
-
-        Rebuilt only when what it reads moved (the fleet fields, an agent's
-        bar fields or burn, which agents are local or asleep, the
-        connection): most deltas touch none of that.
-        """
-        try:
-            bar = self.query_one("#daemon-status", DaemonStatusBar)
-        except NoMatches:
-            return
-        local_ids = {s.id for s in self.sessions if not s.is_remote}
-        asleep = {s.id for s in self.sessions if s.is_asleep}
-        agents = {sid: v for sid, v in self._engine_agents.items()
-                  if not local_ids or sid in local_ids}
-        hours = self._burn_hours()
-        inputs = (tui_engine.status_bar_inputs(self._engine_fleet, agents, hours),
-                  asleep, self._engine_connected)
-        if inputs == self._status_bar_inputs:
-            return
-        self._status_bar_inputs = inputs
-        bar.monitor_state = tui_engine.monitor_state(self._engine_fleet, agents)
-        bar.presence_idle_since = self._engine_fleet.get("presence_idle_since")
-        bar.engine_connected = self._engine_connected
-        bar._asleep_session_ids = asleep
-        bar._burn_stats = tui_engine.fleet_burn(agents, hours)
-        if self.attended:
-            bar.refresh_if_changed()
-
-    def _set_engine_connected(self, connected: bool) -> None:
-        """Main thread: the subscription came up or went away."""
-        if connected == self._engine_connected:
-            return
-        if self._engine_stalled:
-            self._show_engine_stalled(None)  # back to the not-running banner text
-        self._engine_connected = connected
-        if connected:
-            self._show_engine_banner(False)
-        else:
-            self._engine_down_since = time.monotonic()
-            # Show the banner at once: the engine was there and went away
-            self._show_engine_banner(True)
-            self._start_engine()
-            # A daemon that is still shutting down holds its lock, so that
-            # start was a no-op: try again shortly, then every 10 s
-            self._engine_start_attempt = (
-                time.monotonic() - ENGINE_RESTART_EVERY_SECONDS + ENGINE_RETRY_AFTER_DROP_SECONDS
-            )
-        try:
-            bar = self.query_one("#daemon-status", DaemonStatusBar)
-            bar.engine_connected = connected
-            bar.refresh()
-        except NoMatches:
-            pass
-
-    def _engine_watch(self) -> None:
-        """Each second: a missing or frozen engine is shown; a missing one is started again now and then."""
-        if self._engine_connected:
-            client = self._engine_client
-            self._show_engine_stalled(client.stalled_for() if client is not None else None)
-            return
-        now = time.monotonic()
-        if now - self._engine_down_since >= ENGINE_BANNER_GRACE_SECONDS:
-            self._show_engine_banner(True)
-        if now - self._engine_start_attempt >= ENGINE_RESTART_EVERY_SECONDS:
-            self._start_engine()
-
-    def _start_engine(self) -> None:
-        """Start the monitor daemon (the engine) unless it is already starting."""
-        self._engine_start_attempt = time.monotonic()
-        self._ensure_monitor_daemon()
-
-    def _show_engine_stalled(self, age: Optional[float]) -> None:
-        """Connected but frozen (``age`` s, None: live): the banner says so and the list dims."""
-        stalled = age is not None
-        if not stalled and not self._engine_stalled:
-            return
-        self._engine_stalled = stalled
-        try:
-            banner = self.query_one("#engine-banner", Static)
-        except NoMatches:
-            return
-        if stalled:
-            banner.update(ENGINE_STALLED_TEXT.format(age=format_duration(age)))
-        else:
-            banner.update(ENGINE_BANNER_TEXT)
-        self._show_engine_banner(stalled)
-        try:
-            bar = self.query_one("#daemon-status", DaemonStatusBar)
-        except NoMatches:
-            return
-        bar.engine_stalled_for = age
-        bar.refresh()
-
-    def _show_engine_banner(self, show: bool) -> None:
-        """The "engine not running" banner; the agent list dims while it shows."""
-        try:
-            banner = self.query_one("#engine-banner", Static)
-            container = self.query_one("#sessions-container", ScrollableContainer)
-        except NoMatches:
-            return
-        if show:
-            banner.add_class("visible")
-            container.add_class("engine-stale")
-        else:
-            banner.remove_class("visible")
-            container.remove_class("engine-stale")
-
     def _ring(self, agent: str, episode: dict) -> None:
         """Main thread: the engine rang the bell for ``agent`` (an input-needed episode began).
 
@@ -1241,8 +1009,8 @@ class SupervisorTUI(
         self._visited_here[session_id] = time.time()
         self._bell_dismiss_timers.pop(session_id, None)
         widget = next((w for w in self.query(SessionSummary) if w.session.id == session_id), None)
-        if widget is not None and not widget.session.is_remote and self._engine_client is not None:
-            self._engine_client.visit(session_id)
+        if widget is not None and not widget.session.is_remote:
+            self.engine_link.visit(session_id)
         if widget is not None and widget.is_unvisited_stalled:
             widget.is_unvisited_stalled = False
             widget.refresh()
@@ -1286,11 +1054,16 @@ class SupervisorTUI(
                 focused.focus()
 
     class FocusedCapture(events.Message):
-        """The capture thread's result, for the main thread."""
+        """The capture thread's result, for the main thread (see _capture_focused)."""
 
-        def __init__(self, args: tuple) -> None:
+        def __init__(self, session_id: Optional[str], content: Optional[str], fresh: dict,
+                     local: Optional[list], local_key: Optional[tuple]) -> None:
             super().__init__()
-            self.args = args
+            self.session_id = session_id
+            self.content = content
+            self.fresh = fresh
+            self.local = local
+            self.local_key = local_key
 
     def _request_focused_capture(self, session_id: Optional[str], window: Optional[str]) -> None:
         """Main thread: hand one capture to the capture thread (started on first use).
@@ -1322,7 +1095,7 @@ class SupervisorTUI(
                 continue
             # A message, not call_from_thread: the thread never blocks on
             # the main thread (and so never deadlocks an exit that joins it)
-            if not self.post_message(self.FocusedCapture(args)):
+            if not self.post_message(self.FocusedCapture(*args)):
                 self._focused_capture_in_flight = False
 
     def _capture_focused(self, session_id: Optional[str], window: Optional[str]) -> tuple:
@@ -1341,7 +1114,8 @@ class SupervisorTUI(
 
     def on_supervisor_tui_focused_capture(self, event: "SupervisorTUI.FocusedCapture") -> None:
         try:
-            self._apply_focused_capture(*event.args)
+            self._apply_focused_capture(event.session_id, event.content, event.fresh,
+                                        event.local, event.local_key)
         finally:
             self._focused_capture_in_flight = False
 
@@ -1404,7 +1178,7 @@ class SupervisorTUI(
 
     def update_daemon_status(self) -> None:
         """Each second: the engine watch, and the status bar's own local checks."""
-        self._engine_watch()
+        self.engine_link.watch()
         self._fetch_daemon_status_async()
 
     @work(thread=True, group="daemon_status")
@@ -1459,7 +1233,7 @@ class SupervisorTUI(
     def _apply_daemon_status(self, daemon_bar: "DaemonStatusBar") -> None:
         """Main thread: repaint the status bar (no I/O)."""
         daemon_bar._usage_snapshot = self._usage_monitor.snapshot
-        daemon_bar.engine_connected = self._engine_connected
+        daemon_bar.engine_connected = self.engine_link.connected
         daemon_bar.refresh_if_changed()
 
     def update_timeline(self) -> None:
@@ -2068,7 +1842,7 @@ class SupervisorTUI(
                 source="focus_switch", focused=True,
             )
         widget.focus()
-        self._report_focus(widget)
+        self.engine_link.report_focus(widget)
         if self.preview_visible:
             self._update_preview()
         # Only sync tmux on explicit user navigation, not programmatic restores.
@@ -4788,8 +4562,7 @@ class SupervisorTUI(
         except Exception:
             pass
         self._stop_capture_thread()
-        if self._engine_client is not None:
-            self._engine_client.stop()
+        self.engine_link.stop()
         # Clean up SSH proxy windows
         self._cleanup_ssh_proxies()
         # Stop the summarizer (release API client resources)

@@ -85,7 +85,7 @@ def _row(app, name):
 
 
 async def _connected(pilot, app):
-    assert await _until(pilot, lambda: app._engine_connected and len(app._engine_agents) == 3)
+    assert await _until(pilot, lambda: app.engine_link.connected and len(app._engine_agents) == 3)
     await pilot.pause(0.1)
 
 
@@ -174,10 +174,10 @@ class TestRendersWhatTheEnginePublishes:
         engine.publish(_snapshot())
         async with app.run_test(size=(200, 40)) as pilot:
             await _connected(pilot, app)
-            seq = app._engine_client.state.snapshot.seq
+            seq = app.engine_link.client.state.snapshot.seq
             engine.publish(_snapshot())  # nothing changed: no delta at all
             await pilot.pause(0.3)
-            assert app._engine_client.state.snapshot.seq == seq
+            assert app.engine_link.client.state.snapshot.seq == seq
 
 
 @pytest.mark.asyncio
@@ -302,7 +302,7 @@ class TestEngineAbsent:
             await pilot.pause()
             assert not banner.has_class("visible")
             # Past it, the next watch tick shows the banner
-            app._engine_down_since -= ENGINE_BANNER_GRACE_SECONDS
+            app.engine_link.down_since -= ENGINE_BANNER_GRACE_SECONDS
             app.update_daemon_status()
             await pilot.pause()
             assert banner.has_class("visible")
@@ -357,7 +357,7 @@ class TestEngineAbsent:
             assert container.has_class("engine-stale")
             assert "frozen" in str(banner.render())
             assert app.query_one("#daemon-status").engine_stalled_for is not None
-            assert app._engine_connected  # frozen, not gone: the daemon's watchdog acts
+            assert app.engine_link.connected  # frozen, not gone: the daemon's watchdog acts
             # The loop beats again: the banner goes
             monkeypatch.setattr(engine_socket, "STALL_SECONDS", 1e9)
             assert await _until(pilot, _ticked(app.update_daemon_status,
