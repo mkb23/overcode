@@ -53,7 +53,6 @@ from .settings import (
     get_monitor_daemon_pid_path,
     get_monitor_daemon_state_path,
     get_agent_history_path,
-    get_activity_signal_path,
     get_supervisor_stats_path,
 )
 from .config import get_monitor_daemon_config
@@ -78,6 +77,7 @@ from .daemon_housekeeping import Housekeeping
 from .daemon_process_probe import ProcessProbe
 from .daemon_stats_sync import StatsSync
 from .engine_recorders import RecorderStore
+from .engine_wake import WakeLoop
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -110,12 +110,6 @@ INTERVAL_SLOW = DAEMON.interval_slow    # When all agents need user input
 INTERVAL_IDLE = DAEMON.interval_idle    # When no agents at all
 INTERVAL_UNATTENDED = DAEMON.interval_unattended  # Nobody watching (see attendance)
 
-# Wake scan (docs/design/engine-0.6.md): between ticks the daemon stats each
-# agent's hook state file this often and re-detects only agents whose file
-# changed, so a hook-driven status change is published within about this
-# long instead of waiting for the next tick.
-WAKE_SCAN_ATTENDED_SECONDS = 0.25
-WAKE_SCAN_UNATTENDED_SECONDS = 2.0
 # Watchdog: the main loop beats engine.sock every tick and sleep step. Once
 # the beat is engine_socket.STALL_SECONDS old the socket thread logs the
 # main thread's stack and signals it (SIGUSR1 ends a sleep the kernel never
@@ -123,15 +117,6 @@ WAKE_SCAN_UNATTENDED_SECONDS = 2.0
 # 26 hours). Still stuck this long, the daemon exits so the TUI starts a
 # fresh one rather than serving frozen status.
 WATCHDOG_EXIT_SECONDS = 300.0
-# A Stop that lands within the hook detector's sticky-green window of the
-# turn's last activity is read as still working until the window passes
-# (#448). Nothing is written when it passes, so the wake scan re-detects an
-# agent once, this long after its hook file last changed: the Stop shows
-# when the window ends, not at the next full tick.
-def _sticky_recheck_seconds() -> float:
-    from .hook_status_detector import _RECENT_ACTIVITY_WINDOW_SECONDS
-
-    return _RECENT_ACTIVITY_WINDOW_SECONDS + 0.1
 # Token/cost/energy columns: synced this often while someone is watching,
 # and at the old 60 s cadence (budgets, history) while nobody is.
 STATS_SYNC_ATTENDED_SECONDS = 5
@@ -140,9 +125,6 @@ STATS_SYNC_UNATTENDED_SECONDS = 60
 GIT_SYNC_SECONDS = 15
 # Burn over the windows views asked for, while attended.
 BURN_SYNC_SECONDS = 5
-# Between full ticks the state file is rewritten at most this often; views
-# on engine.sock get every change as it happens.
-QUICK_TICK_STATE_SAVE_SECONDS = 1.0
 # The state file is rewritten when what it publishes changed, and otherwise
 # this often, so readers that judge liveness by its last_loop_time (is_stale:
 # the expected gap plus 30 s) never see a quiet daemon as dead.
@@ -168,27 +150,6 @@ def _is_budget_exceeded(session, stats) -> bool:
         budget = session.cost_budget_usd
         return isinstance(budget, (int, float)) and budget > 0 and stats.estimated_cost_usd >= budget
     except (AttributeError, TypeError):
-        return False
-
-
-def check_activity_signal(session: str = None) -> bool:
-    """Check for and consume the activity signal from TUI.
-
-    Args:
-        session: tmux session name (default: from config)
-    """
-    if session is None:
-        session = DAEMON.default_tmux_session
-    signal_path = get_activity_signal_path(session)
-    # Atomic: just try to unlink, don't check exists() first (TOCTOU race)
-    try:
-        signal_path.unlink()
-        return True
-    except FileNotFoundError:
-        # Signal doesn't exist - that's fine
-        return False
-    except OSError:
-        # Other error (permissions, etc) - signal may exist but can't consume
         return False
 
 
@@ -387,11 +348,6 @@ class MonitorDaemon:
         # The recorded colour per agent (#507): episodes, bells, visits,
         # persisted in engine_state.json beside the state file
         self.recorder_store = RecorderStore(state_path.parent, log, self._unobserved_gap_seconds)
-        # Wake scan: each agent's hook state file signature, by agent name
-        self._hook_signatures: Dict[str, Tuple[int, int]] = {}
-        # Wake scan: agents to re-detect once the sticky-green window has
-        # passed (agent name -> monotonic deadline); see _hook_changes
-        self._rechecks: Dict[str, float] = {}
         # The state file: monotonic time of its last write, and the engine
         # snapshot it holds (None: not written yet); see _state_file_due
         self._last_state_save = 0.0
@@ -499,6 +455,8 @@ class MonitorDaemon:
 
         # Shutdown flag
         self._shutdown = False
+        # The sleep between ticks: watchdog beats, the wake scan, quick ticks
+        self.wake = WakeLoop(self)
 
         # Heartbeat tracking (#171)
         self._heartbeat_triggered_sessions: set = set()  # Session IDs that received heartbeat this loop
@@ -919,54 +877,6 @@ class MonitorDaemon:
             return self._interval_unattended
         return INTERVAL_FAST
 
-    def _interruptible_sleep(self, total_seconds: int) -> None:
-        """Sleep with activity signal checking.
-
-        The signal (a TUI keypress, or a TUI re-attaching) ends the sleep
-        and puts the next loop on the fast interval, so an unattended
-        daemon is back within a second of the user's return; a bare
-        ``tmux attach`` with no TUI is seen by the next tick's listing.
-        """
-        # Time is counted in slept seconds (not the wall clock), so the loop
-        # is exact under a patched sleep and never oversleeps its interval.
-        elapsed = 0.0
-        last_scan = 0.0
-        while not self._shutdown:
-            remaining = total_seconds - elapsed
-            if remaining <= 1e-9:
-                return
-            attended = self.state.interval_mode != "unattended"
-            # Attended: wake every scan interval. Unattended: wake each
-            # second for the activity signal (a returning person is seen
-            # within a second), scan hooks every WAKE_SCAN_UNATTENDED_SECONDS.
-            step = min(WAKE_SCAN_ATTENDED_SECONDS if attended else 1.0, remaining)
-            time.sleep(step)
-            elapsed += step
-            self._beat()
-
-            engine = self._engine
-            if not attended and engine is not None and engine.attended:
-                # A view on engine.sock is being looked at again: back to
-                # the attended cadences now, not at the end of the long sleep
-                self.log.info("A view became visible → waking up")
-                return
-            if check_activity_signal(self.tmux_session):
-                self.log.info("User activity detected → waking up")
-                self.state.current_interval = INTERVAL_FAST
-                self.state.interval_mode = "attended"
-                self.state.save(self.state_path)
-                return
-            # Hook-driven changes publish now, not at the next tick
-            if not attended and elapsed - last_scan < WAKE_SCAN_UNATTENDED_SECONDS:
-                continue
-            last_scan = elapsed
-            changed = self._hook_changes()
-            if changed:
-                try:
-                    self._quick_tick(changed, datetime.now())
-                except Exception as e:  # the full tick will retry
-                    self.log.warn(f"quick tick failed: {e}")
-
     def _enforce_oversight_timeouts(self, sessions: list) -> None:
         """Enforce oversight timeouts for waiting_oversight sessions."""
         now = datetime.now()
@@ -1070,47 +980,6 @@ class MonitorDaemon:
         if previous:
             self.log.info("State file saved again")
 
-    # -- engine: wake scan ----------------------------------------------------
-
-    def _hook_changes(self) -> set:
-        """Names of agents whose hook state file changed since the last scan.
-
-        One stat per live agent; an agent seen for the first time is
-        recorded, not reported (the next full tick covers it). An agent
-        whose file changed is reported once more when the detector's
-        sticky-green window has passed (_sticky_recheck_seconds).
-        """
-        changed = set()
-        directory = self.state_path.parent
-        seen = set()
-        rechecks = self._rechecks
-        now = time.monotonic()
-        for state in self.state.sessions:
-            name = state.name
-            if not name:
-                continue
-            seen.add(name)
-            try:
-                st = os.stat(directory / f"hook_state_{name}.json")
-                sig = (st.st_mtime_ns, st.st_size)
-            except OSError:
-                sig = None
-            previous = self._hook_signatures.get(name, sig)
-            self._hook_signatures[name] = sig
-            if sig != previous:
-                changed.add(name)
-                if self._hook_event(directory, name) == "Stop":
-                    rechecks[name] = now + _sticky_recheck_seconds()
-                else:
-                    rechecks.pop(name, None)
-            elif name in rechecks and now >= rechecks[name]:
-                changed.add(name)
-                del rechecks[name]
-        for name in [n for n in self._hook_signatures if n not in seen]:
-            del self._hook_signatures[name]
-            rechecks.pop(name, None)
-        return changed
-
     def _refresh_detection_mode(self) -> None:
         """Re-read the fleet default detection mode.
 
@@ -1125,46 +994,6 @@ class MonitorDaemon:
         if self.detector.mode != current_mode:
             self.detector.mode = current_mode
             self.log.info(f"Fleet detection mode changed to: {current_mode}")
-
-    @staticmethod
-    def _hook_event(directory, name: str) -> Optional[str]:
-        """The event a changed hook state file holds (one small read, on change only)."""
-        import json
-
-        try:
-            with open(directory / f"hook_state_{name}.json") as f:
-                event = json.load(f).get("event")
-        except (OSError, ValueError, AttributeError):
-            return None
-        return event if isinstance(event, str) else None
-
-    def _quick_tick(self, names: set, now: datetime) -> None:
-        """Re-detect only ``names`` and publish, between full ticks."""
-        if self.detector.mode != "hooks":
-            self._refresh_detection_mode()
-        index = self._session_index()
-        changed = [s for s in index.by_id.values()
-                   if s.tmux_session == self.tmux_session and s.name in names]
-        if not changed:
-            return
-        try:
-            self.recorder_store.apply_visits(self._engine)
-            states, _ = self._detect_and_enrich(changed, now, index)
-            fresh = {s.session_id: s for s in states}
-            merged = [fresh.pop(s.session_id, s) for s in self.state.sessions]
-            merged += list(fresh.values())
-            # Over the whole fleet: _detect_and_enrich saw only the changed
-            # agents, so a parent re-detected without its children got 0
-            self._compute_subtree_costs(merged)
-            save = time.monotonic() - self._last_state_save >= QUICK_TICK_STATE_SAVE_SECONDS
-            self._publish_state(merged, save=save)
-            # Hook-driven transitions land here: persist what they recorded
-            # (a closed episode, a bell) now, not at the next full tick, so a
-            # restart in between neither replays nor re-rings them. Only
-            # when something changed (RecorderStore.save checks).
-            self.recorder_store.save()
-        finally:
-            self._flush_pending_writes()
 
     def _attach_git_and_burn(self, session, state: SessionDaemonState) -> None:
         from .tui_helpers import effective_git_directory
@@ -1991,7 +1820,7 @@ class MonitorDaemon:
                 self._beat()
                 now = datetime.now()
                 self._run_tick(now)
-                self._interruptible_sleep(self.state.current_interval)
+                self.wake.sleep(self.state.current_interval)
         except Exception as e:
             self.log.error(f"Monitor daemon error: {e}\n{traceback.format_exc()}")
             raise

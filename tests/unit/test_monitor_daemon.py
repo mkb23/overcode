@@ -70,13 +70,13 @@ class TestCheckActivitySignal:
 
     def test_returns_true_when_signal_exists(self, tmp_path, monkeypatch):
         """Should return True and delete file when signal exists."""
-        from overcode.monitor_daemon import check_activity_signal
+        from overcode.engine_wake import check_activity_signal
 
         signal_file = tmp_path / "activity_signal"
         signal_file.touch()
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_activity_signal_path',
+            'overcode.engine_wake.get_activity_signal_path',
             lambda session: signal_file
         )
 
@@ -87,13 +87,13 @@ class TestCheckActivitySignal:
 
     def test_returns_false_when_no_signal(self, tmp_path, monkeypatch):
         """Should return False when signal file doesn't exist."""
-        from overcode.monitor_daemon import check_activity_signal
+        from overcode.engine_wake import check_activity_signal
 
         signal_file = tmp_path / "activity_signal"
         # Don't create the file
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_activity_signal_path',
+            'overcode.engine_wake.get_activity_signal_path',
             lambda session: signal_file
         )
 
@@ -103,7 +103,7 @@ class TestCheckActivitySignal:
 
     def test_returns_false_on_permission_error(self, tmp_path, monkeypatch):
         """Should return False on permission errors."""
-        from overcode.monitor_daemon import check_activity_signal
+        from overcode.engine_wake import check_activity_signal
 
         signal_file = tmp_path / "activity_signal"
         signal_file.touch()  # Create the file
@@ -117,7 +117,7 @@ class TestCheckActivitySignal:
             return original_unlink(self, missing_ok=missing_ok)
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.get_activity_signal_path',
+            'overcode.engine_wake.get_activity_signal_path',
             lambda session: signal_file
         )
         monkeypatch.setattr(Path, 'unlink', mock_unlink)
@@ -928,7 +928,7 @@ class TestCheckAndSendHeartbeats:
 
 
 class TestInterruptibleSleep:
-    """Test _interruptible_sleep method."""
+    """Test the sleep between ticks (WakeLoop.sleep)."""
 
     def _make_daemon(self, tmp_path, monkeypatch):
         """Helper to create a minimal MonitorDaemon for testing."""
@@ -959,7 +959,7 @@ class TestInterruptibleSleep:
         daemon._shutdown = True
 
         with patch('overcode.monitor_daemon.time.sleep') as mock_sleep:
-            daemon._interruptible_sleep(60)
+            daemon.wake.sleep(60)
 
         # Should not sleep at all since shutdown was already set
         mock_sleep.assert_not_called()
@@ -976,12 +976,12 @@ class TestInterruptibleSleep:
             return True
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.check_activity_signal',
+            'overcode.engine_wake.check_activity_signal',
             mock_check_signal
         )
 
         with patch('overcode.monitor_daemon.time.sleep'):
-            daemon._interruptible_sleep(60)
+            daemon.wake.sleep(60)
 
         # Should have checked activity signal and returned early
         assert call_count[0] >= 1
@@ -991,7 +991,7 @@ class TestInterruptibleSleep:
         daemon = self._make_daemon(tmp_path, monkeypatch)
 
         monkeypatch.setattr(
-            'overcode.monitor_daemon.check_activity_signal',
+            'overcode.engine_wake.check_activity_signal',
             lambda session: False
         )
 
@@ -1001,7 +1001,7 @@ class TestInterruptibleSleep:
             sleep_calls.append(seconds)
 
         with patch('overcode.monitor_daemon.time.sleep', side_effect=track_sleep):
-            daemon._interruptible_sleep(30)
+            daemon.wake.sleep(30)
 
         # Should have slept in 1-second chunks totaling 30s
         assert sum(sleep_calls) == 30

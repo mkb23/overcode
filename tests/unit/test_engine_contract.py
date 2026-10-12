@@ -11,13 +11,13 @@ pytestmark = pytest.mark.unit
 
 
 def test_hook_driven_status_reaches_views_within_half_a_second_attended():
-    from overcode.monitor_daemon import WAKE_SCAN_ATTENDED_SECONDS
+    from overcode.engine_wake import WAKE_SCAN_ATTENDED_SECONDS
 
     assert WAKE_SCAN_ATTENDED_SECONDS <= 0.5
 
 
 def test_hook_driven_status_is_recorded_within_two_seconds_unattended():
-    from overcode.monitor_daemon import WAKE_SCAN_UNATTENDED_SECONDS
+    from overcode.engine_wake import WAKE_SCAN_UNATTENDED_SECONDS
 
     assert WAKE_SCAN_UNATTENDED_SECONDS <= 2.0
 
@@ -41,7 +41,7 @@ def test_burn_window_reuse_stays_inside_its_five_to_thirty_second_contract():
 
 
 def test_quick_ticks_save_the_state_file_at_least_once_a_second():
-    from overcode.monitor_daemon import QUICK_TICK_STATE_SAVE_SECONDS
+    from overcode.engine_wake import QUICK_TICK_STATE_SAVE_SECONDS
 
     assert QUICK_TICK_STATE_SAVE_SECONDS <= 1.0
 

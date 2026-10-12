@@ -16,7 +16,7 @@ import pytest
 
 from tests.scale.budget import budget
 
-from overcode.monitor_daemon import WAKE_SCAN_ATTENDED_SECONDS, WAKE_SCAN_UNATTENDED_SECONDS
+from overcode.engine_wake import WAKE_SCAN_ATTENDED_SECONDS, WAKE_SCAN_UNATTENDED_SECONDS
 from overcode.monitor_daemon_state import MonitorDaemonState, SessionDaemonState
 
 pytestmark = [pytest.mark.scale]
@@ -34,14 +34,14 @@ def daemon(tmp_path):
                         for i in range(AGENTS)]
     for i in range(AGENTS):
         (tmp_path / f"hook_state_agent{i}.json").write_text('{"event": "Stop"}')
-    d._hook_changes()  # first sight
+    d.wake.changes()  # first sight
     return d
 
 
 def _scan_ms(daemon, runs=200):
     start = time.perf_counter()
     for _ in range(runs):
-        assert daemon._hook_changes() == set()
+        assert daemon.wake.changes() == set()
     return (time.perf_counter() - start) / runs * 1000
 
 

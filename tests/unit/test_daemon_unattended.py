@@ -264,9 +264,9 @@ class TestPublishedMode:
         slept = []
         with (
             patch("overcode.monitor_daemon.time.sleep", slept.append),
-            patch("overcode.monitor_daemon.check_activity_signal", return_value=True),
+            patch("overcode.engine_wake.check_activity_signal", return_value=True),
         ):
-            daemon._interruptible_sleep(INTERVAL_UNATTENDED)
+            daemon.wake.sleep(INTERVAL_UNATTENDED)
         assert slept == [1]  # one chunk, then awake
         assert (daemon.state.current_interval, daemon.state.interval_mode) == (
             INTERVAL_FAST,

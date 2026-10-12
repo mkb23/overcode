@@ -249,13 +249,13 @@ class TestSlowTick:
 
 class TestWakeOnVisibleView:
     def test_an_unattended_sleep_ends_when_a_view_becomes_visible(self, tmp_path):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
         from overcode.monitor_daemon import MonitorDaemon
 
         d = MonitorDaemon.for_test(tmp_path, log=MagicMock())
         d.state = MonitorDaemonState(pid=1, interval_mode="unattended")
         d._engine = SimpleNamespace(attended=False, beat=lambda: None)
-        d._hook_changes = lambda: set()
+        d.wake.changes = lambda: set()
         slept = []
 
         def sleep(seconds):
@@ -263,7 +263,7 @@ class TestWakeOnVisibleView:
             if len(slept) == 3:
                 d._engine.attended = True
 
-        with patch.object(monitor_daemon.time, "sleep", sleep), \
-                patch.object(monitor_daemon, "check_activity_signal", return_value=False):
-            d._interruptible_sleep(60)
+        with patch.object(engine_wake.time, "sleep", sleep), \
+                patch.object(engine_wake, "check_activity_signal", return_value=False):
+            d.wake.sleep(60)
         assert len(slept) == 3

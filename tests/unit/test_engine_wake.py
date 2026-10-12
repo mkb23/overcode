@@ -38,7 +38,7 @@ class TestHookChanges:
         d = _daemon(tmp_path)
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
         _touch(tmp_path, "a", "{}")
-        assert d._hook_changes() == set()
+        assert d.wake.changes() == set()
 
     def test_a_rewritten_hook_file_is_reported_once(self, tmp_path):
         d = _daemon(tmp_path)
@@ -46,27 +46,27 @@ class TestHookChanges:
                             SessionDaemonState(session_id="s2", name="b")]
         _touch(tmp_path, "a", "{}")
         _touch(tmp_path, "b", "{}")
-        d._hook_changes()
+        d.wake.changes()
         _touch(tmp_path, "a", '{"event": "Stop"}')
-        assert d._hook_changes() == {"a"}
-        assert d._hook_changes() == set()
+        assert d.wake.changes() == {"a"}
+        assert d.wake.changes() == set()
 
     def test_a_hook_file_appearing_or_vanishing_counts(self, tmp_path):
         d = _daemon(tmp_path)
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
-        d._hook_changes()  # no file yet
+        d.wake.changes()  # no file yet
         _touch(tmp_path, "a", "{}")
-        assert d._hook_changes() == {"a"}
+        assert d.wake.changes() == {"a"}
         os.unlink(tmp_path / "hook_state_a.json")
-        assert d._hook_changes() == {"a"}
+        assert d.wake.changes() == {"a"}
 
     def test_departed_agents_are_forgotten(self, tmp_path):
         d = _daemon(tmp_path)
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
-        d._hook_changes()
+        d.wake.changes()
         d.state.sessions = []
-        d._hook_changes()
-        assert d._hook_signatures == {}
+        d.wake.changes()
+        assert d.wake.scan.signatures == {}
 
 
 class TestStickyRecheck:
@@ -76,29 +76,29 @@ class TestStickyRecheck:
     the next full tick."""
 
     def test_a_changed_agent_is_reported_again_when_the_window_passes(self, tmp_path):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
 
         d = _daemon(tmp_path)
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
         _touch(tmp_path, "a", "{}")
         clock = [100.0]
-        with patch.object(monitor_daemon.time, "monotonic", lambda: clock[0]):
-            d._hook_changes()
+        with patch.object(engine_wake.time, "monotonic", lambda: clock[0]):
+            d.wake.changes()
             _touch(tmp_path, "a", '{"event": "Stop"}')
-            assert d._hook_changes() == {"a"}
+            assert d.wake.changes() == {"a"}
             clock[0] += 0.5
-            assert d._hook_changes() == set()  # still inside the window
-            clock[0] += monitor_daemon._sticky_recheck_seconds()
-            assert d._hook_changes() == {"a"}  # once, at the window's end
+            assert d.wake.changes() == set()  # still inside the window
+            clock[0] += engine_wake.sticky_recheck_seconds()
+            assert d.wake.changes() == {"a"}  # once, at the window's end
             clock[0] += 5
-            assert d._hook_changes() == set()
+            assert d.wake.changes() == set()
 
     def test_the_recheck_follows_the_detectors_window(self):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
         from overcode.hook_status_detector import _RECENT_ACTIVITY_WINDOW_SECONDS
 
-        assert monitor_daemon._sticky_recheck_seconds() > _RECENT_ACTIVITY_WINDOW_SECONDS
-        assert monitor_daemon._sticky_recheck_seconds() <= _RECENT_ACTIVITY_WINDOW_SECONDS + 0.5
+        assert engine_wake.sticky_recheck_seconds() > _RECENT_ACTIVITY_WINDOW_SECONDS
+        assert engine_wake.sticky_recheck_seconds() <= _RECENT_ACTIVITY_WINDOW_SECONDS + 0.5
 
     def test_a_quick_tick_rereads_the_detection_mode(self, tmp_path):
         """An "auto" fleet's first hook event is read as one at once, not
@@ -107,12 +107,12 @@ class TestStickyRecheck:
         calls = []
         d._refresh_detection_mode = lambda: calls.append(1)
         d._session_index = lambda: SimpleNamespace(by_id={})
-        d._quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"a"}, datetime.now())
         assert calls == [1]
         # Once the fleet is on hooks, a quick tick does not re-read it (the
         # full tick still does, for a mode the user changes by hand)
         d.detector.mode = "hooks"
-        d._quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"a"}, datetime.now())
         assert calls == [1]
 
     def test_the_resolved_mode_is_published_in_the_fleet(self, tmp_path):
@@ -127,18 +127,18 @@ class TestStickyRecheck:
 
     def test_only_a_stop_is_rechecked(self, tmp_path):
         """The sticky window only holds a Stop; other events need no second look."""
-        from overcode import monitor_daemon
+        from overcode import engine_wake
 
         d = _daemon(tmp_path)
         d.state.sessions = [SessionDaemonState(session_id="s1", name="a")]
         _touch(tmp_path, "a", "{}")
         clock = [100.0]
-        with patch.object(monitor_daemon.time, "monotonic", lambda: clock[0]):
-            d._hook_changes()
+        with patch.object(engine_wake.time, "monotonic", lambda: clock[0]):
+            d.wake.changes()
             _touch(tmp_path, "a", '{"event": "PostToolUse", "tool_name": "Read"}')
-            assert d._hook_changes() == {"a"}
+            assert d.wake.changes() == {"a"}
             clock[0] += 5
-            assert d._hook_changes() == set()
+            assert d.wake.changes() == set()
 
 
 class TestQuickTick:
@@ -159,7 +159,7 @@ class TestQuickTick:
         d._flush_pending_writes = MagicMock()
         published = []
         d._publish_state = lambda states, save=True: published.append((states, save))
-        d._quick_tick({"b"}, datetime.now())
+        d.wake.quick_tick({"b"}, datetime.now())
         assert detected == ["b"]
         states, save = published[0]
         assert [(s.name, s.current_status) for s in states] == [("a", "running"), ("b", "waiting_user")]
@@ -182,7 +182,7 @@ class TestQuickTick:
         d._flush_pending_writes = MagicMock()
         published = []
         d._publish_state = lambda states, save=True: published.append(states)
-        d._quick_tick({"parent"}, datetime.now())
+        d.wake.quick_tick({"parent"}, datetime.now())
         parent = next(s for s in published[0] if s.name == "parent")
         assert parent.subtree_cost_usd == 3.5
 
@@ -198,52 +198,52 @@ class TestQuickTick:
         saves = []
         d._publish_state = lambda states, save=True: saves.append(save)
         d._last_state_save = time.monotonic()
-        d._quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"a"}, datetime.now())
         d._last_state_save = time.monotonic() - 5
-        d._quick_tick({"a"}, datetime.now())
+        d.wake.quick_tick({"a"}, datetime.now())
         assert saves == [False, True]
 
     def test_the_sleep_runs_quick_ticks_and_keeps_its_length(self, tmp_path):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
 
         d = _daemon(tmp_path)
         d.state.interval_mode = "attended"
         changes = iter([set(), {"a"}] + [set()] * 100)
-        d._hook_changes = lambda: next(changes)
-        d._quick_tick = MagicMock()
+        d.wake.changes = lambda: next(changes)
+        d.wake.quick_tick = MagicMock()
         slept = []
-        with patch.object(monitor_daemon.time, "sleep", slept.append), \
-                patch.object(monitor_daemon, "check_activity_signal", return_value=False):
-            d._interruptible_sleep(2)
+        with patch.object(engine_wake.time, "sleep", slept.append), \
+                patch.object(engine_wake, "check_activity_signal", return_value=False):
+            d.wake.sleep(2)
         assert sum(slept) == pytest.approx(2)
-        assert set(slept) == {monitor_daemon.WAKE_SCAN_ATTENDED_SECONDS}
-        d._quick_tick.assert_called_once()
+        assert set(slept) == {engine_wake.WAKE_SCAN_ATTENDED_SECONDS}
+        d.wake.quick_tick.assert_called_once()
 
     def test_unattended_scans_every_two_seconds_but_listens_every_second(self, tmp_path):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
 
         d = _daemon(tmp_path)
         d.state.interval_mode = "unattended"
         scans = []
-        d._hook_changes = lambda: scans.append(1) or set()
+        d.wake.changes = lambda: scans.append(1) or set()
         slept = []
-        with patch.object(monitor_daemon.time, "sleep", slept.append), \
-                patch.object(monitor_daemon, "check_activity_signal", return_value=False):
-            d._interruptible_sleep(10)
+        with patch.object(engine_wake.time, "sleep", slept.append), \
+                patch.object(engine_wake, "check_activity_signal", return_value=False):
+            d.wake.sleep(10)
         assert slept == [1.0] * 10
         assert len(scans) == 5
 
     def test_a_failed_quick_tick_never_ends_the_sleep_early(self, tmp_path):
-        from overcode import monitor_daemon
+        from overcode import engine_wake
 
         d = _daemon(tmp_path)
         d.state.interval_mode = "attended"
-        d._hook_changes = lambda: {"a"}
-        d._quick_tick = MagicMock(side_effect=RuntimeError("boom"))
+        d.wake.changes = lambda: {"a"}
+        d.wake.quick_tick = MagicMock(side_effect=RuntimeError("boom"))
         slept = []
-        with patch.object(monitor_daemon.time, "sleep", slept.append), \
-                patch.object(monitor_daemon, "check_activity_signal", return_value=False):
-            d._interruptible_sleep(1)
+        with patch.object(engine_wake.time, "sleep", slept.append), \
+                patch.object(engine_wake, "check_activity_signal", return_value=False):
+            d.wake.sleep(1)
         assert sum(slept) == pytest.approx(1)
 
 
@@ -413,8 +413,8 @@ class TestWatchdog:
         d = self._armed(tmp_path)
         d._engine = MagicMock(attended=False)
         d.state.interval_mode = "attended"
-        d._hook_changes = lambda: set()
+        d.wake.changes = lambda: set()
         with patch("overcode.monitor_daemon.time.sleep"), \
-                patch("overcode.monitor_daemon.check_activity_signal", return_value=False):
-            d._interruptible_sleep(1)
+                patch("overcode.engine_wake.check_activity_signal", return_value=False):
+            d.wake.sleep(1)
         assert d._engine.beat.call_count == 4  # 1 s in 0.25 s steps
