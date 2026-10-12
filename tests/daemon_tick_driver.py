@@ -106,6 +106,11 @@ def _scenario_doubles(sessions, tmux, tick_of: Callable[[], int]) -> Iterator[No
     from unittest.mock import patch
 
     from overcode import doctor, implementations, monitor_daemon, process_resources
+
+    try:  # where the stats sync reads transcripts, on whichever tree
+        from overcode import daemon_stats_sync as stats_module
+    except ImportError:
+        stats_module = monitor_daemon
     from overcode.process_resources import ProcInfo
 
     def snapshot_processes():
@@ -130,7 +135,7 @@ def _scenario_doubles(sessions, tmux, tick_of: Callable[[], int]) -> Iterator[No
         patch.object(implementations, "RealTmux", lambda *a, **k: tmux),
         patch.object(process_resources, "snapshot_processes", snapshot_processes),
         patch.object(doctor, "_snapshot_process_table", lambda: []),
-        patch.object(monitor_daemon, "stats_reader_for_session", lambda s: reader),
+        patch.object(stats_module, "stats_reader_for_session", lambda s: reader),
         patch.object(monitor_daemon, "send_text_to_tmux_window", lambda *a, **k: True),
     ):
         yield

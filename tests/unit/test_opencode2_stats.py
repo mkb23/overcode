@@ -453,7 +453,7 @@ class TestDaemonAgentPersonaSync:
         if reader is None:
             reader = Opencode2StatsReader()
         monkeypatch.setattr(
-            "overcode.monitor_daemon.stats_reader_for_session",
+            "overcode.daemon_stats_sync.stats_reader_for_session",
             lambda s: reader,
         )
         daemon.sync_agent_stats(session)

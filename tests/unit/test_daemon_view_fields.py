@@ -116,8 +116,8 @@ class TestStatsView:
         from overcode.monitor_daemon import MonitorDaemon
 
         d = MonitorDaemon.for_test(tmp_path)
-        d._note_stats_view(SimpleNamespace(id="s1"), None)
-        assert d._stats_views["s1"] == {"stats_available": False}
+        d.stats_sync.note_stats_view(SimpleNamespace(id="s1"), None)
+        assert d.stats_sync.stats_views["s1"] == {"stats_available": False}
 
     def test_transcript_values_are_kept_for_the_state(self, tmp_path):
         from overcode.history_reader import AgentSessionStats
@@ -129,8 +129,8 @@ class TestStatsView:
             cache_creation_tokens=0, cache_read_tokens=0, work_times=[10.0, 30.0, 20.0],
             current_context_tokens=1000, live_subagent_count=2, model="claude-sonnet-4-5",
         )
-        d._note_stats_view(SimpleNamespace(id="s1"), stats)
-        assert d._stats_views["s1"] == {
+        d.stats_sync.note_stats_view(SimpleNamespace(id="s1"), stats)
+        assert d.stats_sync.stats_views["s1"] == {
             "stats_available": True,
             "work_median_seconds": 20.0,
             "context_window": stats.max_context_tokens,
@@ -140,7 +140,7 @@ class TestStatsView:
 
     def test_a_tick_publishes_the_stats_view(self, env):
         daemon, detector, sessions, clock = _fleet(env, n=1)
-        daemon._stats_views[sessions[0].id] = {"stats_available": True, "work_median_seconds": 42.0,
+        daemon.stats_sync.stats_views[sessions[0].id] = {"stats_available": True, "work_median_seconds": 42.0,
                                                 "context_window": 200000, "file_subagent_count": 1}
         with clock.installed():
             run_ticks(daemon, detector, clock, 1)
@@ -188,11 +188,11 @@ class TestPaneView:
 
         d = MonitorDaemon.for_test(tmp_path)
         d._time_bases = {"gone": ([0, 0, 0], 1.0)}
-        d._stats_views = {"gone": {}}
+        d.stats_sync.stats_views["gone"] = {}
         d._pane_views = {"gone": ("", {})}
         d._pane_tracker, d._capture_gate = MagicMock(), MagicMock()
         d._cleanup_stale([])
-        assert not (d._time_bases or d._stats_views or d._pane_views)
+        assert not (d._time_bases or d.stats_sync.stats_views or d._pane_views)
 
 
 class TestAttentionFields:

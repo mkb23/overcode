@@ -35,15 +35,11 @@ from .daemon_utils import create_daemon_helpers
 from .backends import (
     BackendCapability,
     capability_names,
-    get_backend,
     session_backend_name,
     session_capabilities,
     session_supports,
 )
-from .claude_pid import is_session_id_owned_by_others
-from .energy import estimate_energy_joules
 from .episodes import EpisodeRecorder, append_episode, status_detail_view
-from .stats_reader import AgentSessionStats, stats_reader_for_session
 from .monitor_daemon_state import (
     MonitorDaemonState,
     SessionDaemonState,
@@ -79,10 +75,10 @@ from .pane_capture_gate import PaneCaptureGate, PaneChangeTracker
 from .status_patterns import extract_pr_number
 from .status_detector_factory import StatusDetectorDispatcher
 from .status_history import STATUS_HISTORY_KEEPALIVE_SECONDS, log_agent_status, status_row_due
-from .pricing import calculate_cost_estimate
 from . import daemon_presence
 from .daemon_cadence import Cadence, DaemonCadences
 from .daemon_housekeeping import Housekeeping
+from .daemon_stats_sync import StatsSync
 from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
     MACOS_APIS_AVAILABLE,
     NullPresence,
@@ -92,7 +88,6 @@ from .daemon_presence import (  # noqa: F401 - TUI_ATTENDED_FRESHNESS: tests
 from .monitor_daemon_core import (
     UNOBSERVED_GAP_SECONDS,
     calculate_time_accumulation,
-    calculate_total_tokens,
     calculate_median,
     elapsed_seconds,
     parse_datetime_safe,
@@ -442,11 +437,11 @@ class MonitorDaemon:
 
         # What views render beside the status, per session id (0.6.0: the
         # TUI computes none of it). Time accounting as of the last status
-        # change: ([green, non_green, sleep], epoch). The transcript-derived
-        # values of the last stats sync. The pane-derived counts, with the
-        # pane text they were extracted from (unchanged text, no re-parse).
+        # change: ([green, non_green, sleep], epoch). The pane-derived
+        # counts, with the pane text they were extracted from (unchanged
+        # text, no re-parse). The transcript-derived values of the last
+        # stats sync are stats_sync.stats_views.
         self._time_bases: Dict[str, Tuple[list, float]] = {}
-        self._stats_views: Dict[str, dict] = {}
         self._pane_views: Dict[str, Tuple[str, dict]] = {}
         # Git diff/untracked by directory and burn by session id, from the
         # attended-only syncs (see _sync_git, _sync_burn)
@@ -458,11 +453,11 @@ class MonitorDaemon:
         # _flush_pending_writes. Reads inside the tick go through
         # self._pending.view(session) so they see the staged values.
         self._pending: PendingUpdates = PendingUpdates()
-        # Last pr-link PR number seen per session id (see _sync_pr)
-        self._transcript_prs: Dict[str, int] = {}
 
         self._last_hook_phases: Dict[str, str] = {}  # session_id → last logged phase
-        self._last_commands: Dict[str, str] = {}  # session_id → last user prompt
+        # Transcript stats: tokens, cost, model, PR, session ids, and the
+        # values views render beside the token columns
+        self.stats_sync = StatsSync(session_manager=session_manager, log=log)
 
         # The periodic syncs, each due when its interval has passed since it
         # last ran (never run: due on the first tick)
@@ -684,7 +679,7 @@ class MonitorDaemon:
             oversight_timeout_seconds=getattr(session, 'oversight_timeout_seconds', 0.0) or 0.0,
             oversight_deadline=getattr(session, 'oversight_deadline', None),
             # Last user command (from history sync)
-            last_command=self._last_commands.get(session_id),
+            last_command=self.stats_sync.last_commands.get(session_id),
             pr_number=session.pr_number,
             # Skills (#252)
             available_skills=session.available_skills,
@@ -698,7 +693,7 @@ class MonitorDaemon:
             rss_bytes=session.rss_bytes,
             time_base=list(base[0]) if base else None,
             time_base_at=base[1] if base else None,
-            **self._stats_views.get(session_id, {}),
+            **self.stats_sync.stats_views.get(session_id, {}),
         )
 
     def check_and_send_heartbeats(self, sessions: list) -> set:
@@ -870,298 +865,12 @@ class MonitorDaemon:
             )
 
     def sync_session_id(self, session) -> None:
-        """Detect and bind Claude session IDs (#116, #373).
-
-        For newly launched agents, the launcher prescribes --session-id at
-        launch and immediately binds it. This method handles two scenarios:
-
-        1. Post-/clear detection: after /clear, Claude restarts with a new
-           sessionId that appears in history.jsonl.
-        2. Unmatched prescribed IDs: when Claude Code doesn't honor
-           --session-id (e.g. after restart), the actual sessionIds need
-           to be discovered from history.jsonl.
-
-        Uses an ownership guard to prevent cross-contamination when multiple
-        agents share the same working directory — a sessionId already owned
-        by another agent is never stolen.
-
-        Runs every 10 seconds.
-        """
-        if not session.start_directory:
-            return
-
-        reader = stats_reader_for_session(session)
-        try:
-            session_start = datetime.fromisoformat(session.start_time)
-
-            # Fast path: discover the most recent sessionId for this directory.
-            # Handles post-/clear detection.
-            # Every tmux session's agents: one in another session can be
-            # working in the same directory. A reader's directory fallback
-            # skips their conversations; the check below is the backstop.
-            all_sessions = self.session_manager.list_sessions()
-            current_id = reader.get_current_session_id(
-                session, session_start, all_sessions=all_sessions
-            )
-            if current_id:
-                if not is_session_id_owned_by_others(current_id, session.id, all_sessions):
-                    self.session_manager.add_agent_session_id(session.id, current_id)
-                    self.session_manager.set_active_agent_session_id(session.id, current_id)
-
-            # Slow path: if the agent has owned session IDs but they produced
-            # zero tokens in the last stats sync, scan history.jsonl for ALL
-            # unowned sessionIds in this directory and adopt them.  This
-            # recovers from --session-id not being honored by Claude Code.
-            owned_ids = session.agent_session_ids or []
-            stats = session.stats
-            has_zero_tokens = (
-                owned_ids
-                and stats.input_tokens == 0
-                and stats.output_tokens == 0
-                and stats.last_stats_update is not None  # at least one sync happened
-            )
-            if has_zero_tokens:
-                self._discover_all_session_ids(session, session_start, reader)
-        except (ValueError, TypeError):
-            pass
-
-    def _discover_all_session_ids(
-        self, session, session_start: datetime, reader=None
-    ) -> None:
-        """Adopt unowned agent session ids the backend can see on disk.
-
-        When the prescribed --session-id wasn't honored by Claude Code,
-        the agent's actual sessionIds are unknown.  The reader scans for
-        ids matching this agent's directory+timestamp that no other agent
-        owns; this method persists what it finds.
-        """
-        reader = reader or stats_reader_for_session(session)
-        all_sessions = self.session_manager.list_sessions()
-
-        discovered = reader.discover_session_ids(session, session_start, all_sessions)
-
-        for sid in discovered.ids:
-            self.session_manager.add_agent_session_id(session.id, sid)
-            self.log.info(f"[{session.name}] Discovered unowned sessionId: {sid[:8]}...")
-
-        if discovered.latest:
-            self.session_manager.set_active_agent_session_id(
-                session.id, discovered.latest
-            )
-
-    def _sync_model(self, session, detected: Optional[str]) -> None:
-        """Follow a model change seen in the transcript (e.g. /model).
-
-        Only a change counts: after `restart --model`, the resumed
-        transcript still ends on the old model until the agent replies,
-        and must not undo the new choice (#505).
-        """
-        if detected and detected != session.transcript_model:
-            self._pending.update_session(
-                session.id, model=detected, transcript_model=detected
-            )
-
-    def _sync_pr(self, session, pr_number: Optional[int]) -> None:
-        """Take the PR from the transcript's pr-link records (#489).
-
-        That is the number Claude Code's status line shows, and it is
-        there even when no PR URL is on screen. Applied only when it
-        changes, so a branch switch that cleared the PR is not undone.
-        """
-        if pr_number is None:
-            return
-        if self._transcript_prs.get(session.id) != pr_number:
-            self._transcript_prs[session.id] = pr_number
-            if pr_number != session.pr_number:
-                self._pending.update_session(
-                    session.id, pr_number=pr_number, pr_branch=session.branch
-                )
-
-    def _apply_container_stats(self, session, stats: AgentSessionStats) -> None:
-        """Persist stats read from inside a container agent's filesystem."""
-        detected_model = stats.model
-        detected_provider = stats.provider
-        self._note_stats_view(session, stats)
-
-        # Update model/provider if detected
-        self._sync_model(session, detected_model)
-        if detected_provider and detected_provider != session.provider:
-            self._pending.update_session(session.id, provider=detected_provider)
-        if stats.effort and stats.effort != session.effort:
-            self._pending.update_session(session.id, effort=stats.effort)
-
-        # Cost estimate
-        from .settings import get_user_config, get_model_pricing
-        config = get_user_config()
-        mp = get_model_pricing(
-            detected_model or session.model, config,
-            provider=detected_provider or session.provider,
-        )
-        cost = calculate_cost_estimate(
-            stats.input_tokens, stats.output_tokens,
-            stats.cache_creation_tokens, stats.cache_read_tokens,
-            price_input=mp.input, price_output=mp.output,
-            price_cache_write=mp.cache_write, price_cache_read=mp.cache_read,
-        )
-
-        now = datetime.now()
-        total_tokens = calculate_total_tokens(
-            stats.input_tokens, stats.output_tokens,
-            stats.cache_creation_tokens, stats.cache_read_tokens,
-        )
-        self._pending.update_stats(
-            session.id,
-            total_tokens=total_tokens,
-            input_tokens=stats.input_tokens,
-            output_tokens=stats.output_tokens,
-            cache_creation_tokens=stats.cache_creation_tokens,
-            cache_read_tokens=stats.cache_read_tokens,
-            estimated_cost_usd=round(cost, 4),
-            estimated_energy_j=round(estimate_energy_joules(
-                detected_model or session.model, stats.input_tokens, stats.output_tokens,
-                stats.cache_creation_tokens, stats.cache_read_tokens,
-            ), 1),
-            current_context_tokens=stats.current_context_tokens,
-            last_stats_update=now.isoformat(),
-        )
+        """Detect and bind the agent's session ids (``StatsSync.sync_session_id``)."""
+        self.stats_sync.sync_session_id(session)
 
     def sync_agent_stats(self, session) -> None:
-        """Sync token/interaction stats from the backend's transcripts.
-
-        Backends without readable transcripts get a NullStatsReader, which
-        answers "unknown" for everything — nothing is written, so their
-        columns render placeholders instead of zeros.
-        """
-        reader = stats_reader_for_session(session)
-        try:
-            # Container agents: read stats via docker exec
-            if session.wrapper:
-                container_stats = reader.get_container_stats(session)
-                if container_stats is not None:
-                    self._apply_container_stats(session, container_stats)
-                    return
-
-            # Session ID detection also runs here for the first sync
-            self.sync_session_id(session)
-
-            stats = reader.get_stats(session)
-            self._note_stats_view(session, stats)
-            if stats is None:
-                return
-
-            now = datetime.now()
-            total_tokens = calculate_total_tokens(
-                stats.input_tokens,
-                stats.output_tokens,
-                stats.cache_creation_tokens,
-                stats.cache_read_tokens,
-            )
-
-            # Update session-level model and provider from history files.
-            # Provider is detected from the assistant message ID prefix
-            # ("msg_bdrk_" = bedrock, "msg_" = web), which stays correct
-            # across /clear (fixing cases where a bedrock agent switches
-            # to Claude Max and vice versa).
-            self._sync_model(session, stats.model)
-            self._sync_pr(session, stats.pr_number)
-            if stats.provider and stats.provider != session.provider:
-                self._pending.update_session(session.id, provider=stats.provider)
-            if stats.effort and stats.effort != session.effort:
-                self._pending.update_session(session.id, effort=stats.effort)
-
-            # Cache last command for daemon state publishing
-            if stats.last_command:
-                self._last_commands[session.id] = stats.last_command
-
-            # Estimate cost using per-model pricing (falls back to global config)
-            from .settings import get_user_config, get_model_pricing
-            config = get_user_config()
-            mp = get_model_pricing(
-                stats.model or session.model, config,
-                provider=stats.provider or session.provider,
-            )
-            cost_estimate = calculate_cost_estimate(
-                stats.input_tokens,
-                stats.output_tokens,
-                stats.cache_creation_tokens,
-                stats.cache_read_tokens,
-                price_input=mp.input,
-                price_output=mp.output,
-                price_cache_write=mp.cache_write,
-                price_cache_read=mp.cache_read,
-            )
-
-            # Some backends record what the provider actually charged (opencode
-            # keeps a per-session `cost`). That beats a pricing-table estimate,
-            # so it wins when present; a zero/absent figure falls back above.
-            stored_cost_reader = getattr(reader, "get_stored_cost", None)
-            if stored_cost_reader is not None:
-                stored_cost = stored_cost_reader(session)
-                if stored_cost:
-                    cost_estimate = stored_cost
-
-            # The stats object's fallback recovers the persona the agent is
-            # actually running. For backends that honor launch-time --agent,
-            # only fill an empty persona — never clobber the launcher's
-            # choice. For backends without AGENT_INJECTION (opencode2, codex),
-            # a stored persona was never applied to the CLI, so the detected
-            # persona is the truth and replaces it.
-            detected_agent = getattr(stats, "agent", None)
-            if detected_agent:
-                honors_launch_agent = bool(
-                    get_backend(session_backend_name(session)).capabilities
-                    & BackendCapability.AGENT_INJECTION
-                )
-                if honors_launch_agent:
-                    if not getattr(session, "agent_persona", None):
-                        self._pending.update_session(
-                            session.id, agent_persona=detected_agent
-                        )
-                else:
-                    self._pending.update_session(
-                        session.id, agent_persona=detected_agent
-                    )
-
-            self._pending.update_stats(
-                session.id,
-                interaction_count=stats.interaction_count,
-                total_tokens=total_tokens,
-                input_tokens=stats.input_tokens,
-                output_tokens=stats.output_tokens,
-                cache_creation_tokens=stats.cache_creation_tokens,
-                cache_read_tokens=stats.cache_read_tokens,
-                estimated_cost_usd=round(cost_estimate, 4),
-                estimated_energy_j=round(estimate_energy_joules(
-                    stats.model or session.model, stats.input_tokens, stats.output_tokens,
-                    stats.cache_creation_tokens, stats.cache_read_tokens,
-                ), 1),
-                current_context_tokens=stats.current_context_tokens,
-                last_stats_update=now.isoformat(),
-            )
-        except Exception as e:
-            self.log.warn(f"Failed to sync stats for {session.name}: {e}")
-
-    # Pre-backend name, kept until the Phase 6 rename sweep.
-
-    def _note_stats_view(self, session, stats: Optional[AgentSessionStats]) -> None:
-        """Keep the transcript-derived values views render, from one sync.
-
-        ``stats`` None means the backend's reader reports nothing (its
-        columns render a dash), not a failed read: failures raise and leave
-        the previous values in place.
-        """
-        if stats is None:
-            self._stats_views[session.id] = {"stats_available": False}
-            return
-        def number(value, default):
-            return value if isinstance(value, (int, float)) else default
-
-        self._stats_views[session.id] = {
-            "stats_available": True,
-            "work_median_seconds": round(number(stats.median_work_time, 0.0), 1),
-            "context_window": number(stats.max_context_tokens, None),
-            "file_subagent_count": number(stats.live_subagent_count, 0),
-        }
+        """Stage the agent's transcript stats in this tick's writes (``StatsSync``)."""
+        self.stats_sync.sync_agent_stats(session, self._pending)
 
     def _pane_view(self, session, pane_content: str) -> dict:
         """The pane-derived counts views render, from the text detection read.
@@ -2051,7 +1760,7 @@ class MonitorDaemon:
 
                 # Extract PR number from pane content, unless the
                 # transcript names the PR (#489)
-                if pane_content and session.id not in self._transcript_prs:
+                if pane_content and session.id not in self.stats_sync.transcript_prs:
                     pr = extract_pr_number(pane_content)
                     if pr is not None and pr != session.pr_number:
                         pending.update_session(session.id, pr_number=pr, pr_branch=session.branch)
@@ -2355,7 +2064,7 @@ class MonitorDaemon:
         for stale_id in set(self._last_logged) - current_session_ids:
             del self._last_logged[stale_id]
             self._last_keepalive.pop(stale_id, None)
-        for per_session in (self._time_bases, self._stats_views, self._pane_views):
+        for per_session in (self._time_bases, self.stats_sync.stats_views, self._pane_views):
             for stale_id in set(per_session) - current_session_ids:
                 del per_session[stale_id]
         self._pane_tracker.forget(current_session_ids)

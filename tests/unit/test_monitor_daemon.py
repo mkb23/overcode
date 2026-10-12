@@ -552,15 +552,15 @@ class TestSyncClaudeCodeStats:
         daemon = self._make_daemon(tmp_path, monkeypatch)
         session = Mock(id="sess-1", model="claude-opus-5", transcript_model=None)
 
-        daemon._sync_model(session, "claude-opus-5")  # first sighting
+        daemon.stats_sync.sync_model(session, "claude-opus-5", daemon._pending)  # first sighting
         assert daemon._pending.fields["sess-1"]["transcript_model"] == "claude-opus-5"
 
         daemon._pending.fields.clear()
         session.model, session.transcript_model = "claude-sonnet-5", "claude-opus-5"
-        daemon._sync_model(session, "claude-opus-5")  # restart --model, no reply yet
+        daemon.stats_sync.sync_model(session, "claude-opus-5", daemon._pending)  # restart --model, no reply yet
         assert "sess-1" not in daemon._pending.fields
 
-        daemon._sync_model(session, "claude-fable-5-1")  # /model in the agent
+        daemon.stats_sync.sync_model(session, "claude-fable-5-1", daemon._pending)  # /model in the agent
         assert daemon._pending.fields["sess-1"]["model"] == "claude-fable-5-1"
 
 
@@ -570,15 +570,15 @@ class TestSyncClaudeCodeStats:
         daemon = self._make_daemon(tmp_path, monkeypatch)
         session = Mock(id="sess-1", pr_number=None, branch="feat")
 
-        daemon._sync_pr(session, None)
+        daemon.stats_sync.sync_pr(session, None, daemon._pending)
         assert "sess-1" not in daemon._pending.fields
 
-        daemon._sync_pr(session, 489)
+        daemon.stats_sync.sync_pr(session, 489, daemon._pending)
         assert daemon._pending.fields["sess-1"] == {"pr_number": 489, "pr_branch": "feat"}
 
         daemon._pending.fields.clear()
         session.pr_number, session.branch = None, "other"  # cleared by a branch switch
-        daemon._sync_pr(session, 489)
+        daemon.stats_sync.sync_pr(session, 489, daemon._pending)
         assert "sess-1" not in daemon._pending.fields
 
 
