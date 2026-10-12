@@ -27,6 +27,8 @@ def _make_bare_daemon_panel(**extra_attrs):
     widget.log_lines = []
     widget.monitor_state = None
     widget._log_file_pos = 0
+    widget.detection_mode = None
+    widget._last_rendered = None
     # Apply overrides
     for k, v in extra_attrs.items():
         setattr(widget, k, v)
@@ -293,3 +295,72 @@ class TestDaemonPanelControlsHint:
         assert "stop" in plain
         assert "restart" in plain
         assert "mode" in plain
+
+
+# ===========================================================================
+# follow_log — a stat until the log grows (quality review item 23)
+# ===========================================================================
+
+
+class TestFollowLog:
+
+    def test_unchanged_size_reads_nothing(self, tmp_path):
+        from overcode import daemon_logging
+        from overcode.daemon_logging import follow_log
+
+        log = tmp_path / "x.log"
+        log.write_text("a\nb\n")
+        lines, pos = follow_log(log, [], 0)
+        assert lines == ["a", "b"] and pos == log.stat().st_size
+        with patch("builtins.open", side_effect=AssertionError("read")), \
+                patch.object(daemon_logging, "tail_file_lines",
+                             side_effect=AssertionError("tail")):
+            assert follow_log(log, lines, pos) == (None, pos)
+
+    def test_appended_lines_and_rotation(self, tmp_path):
+        from overcode.daemon_logging import follow_log
+
+        log = tmp_path / "x.log"
+        log.write_text("a\n")
+        lines, pos = follow_log(log, [], 0)
+        with open(log, "a") as f:
+            f.write("b\nc\n")
+        lines, pos = follow_log(log, lines, pos, max_lines=2)
+        assert lines == ["b", "c"] and pos == log.stat().st_size
+        log.write_text("z\n")  # rotated: smaller than our offset
+        assert follow_log(log, lines, pos) == (["z"], 2)
+        assert follow_log(tmp_path / "missing.log", lines, 7) == (None, 7)
+
+
+# ===========================================================================
+# render from the engine's fleet
+# ===========================================================================
+
+
+class TestDaemonPanelRenderFromEngine:
+
+    def test_engine_fleet_and_liveness(self):
+        widget = _make_bare_daemon_panel()
+        fleet = {"status": "active", "current_interval": 2, "interval_mode": "unattended",
+                 "total_supervisions": 3, "detection_mode": "hooks"}
+        with patch.object(type(widget), "_engine", lambda self: (fleet, None)):
+            plain = widget.render().plain
+        assert "active" in plain and "@2s" in plain and "(unattended)" in plain
+        assert "steers:3" in plain and "detect:hooks(fleet)" in plain
+        assert "frozen" not in plain and "loop #" not in plain
+        with patch.object(type(widget), "_engine", lambda self: (fleet, 42.0)):
+            assert "frozen 42s" in widget.render().plain
+
+    def test_detection_mode_from_the_worker_when_not_published(self):
+        widget = _make_bare_daemon_panel(detection_mode="polling")
+        with patch.object(type(widget), "_engine", lambda self: ({"status": "idle"}, None)):
+            assert "detect:polling(fleet)" in widget.render().plain
+
+    def test_refresh_if_changed(self):
+        widget = _make_bare_daemon_panel()
+        widget.refresh = MagicMock()
+        widget.render()
+        assert widget.refresh_if_changed() is False
+        widget.log_lines = ["new line"]
+        assert widget.refresh_if_changed() is True
+        widget.refresh.assert_called_once()

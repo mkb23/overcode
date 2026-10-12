@@ -13,7 +13,7 @@ from textual.widgets import Static
 from textual import work
 from rich.text import Text
 
-from ..daemon_logging import tail_file_lines
+from ..daemon_logging import follow_log
 from ..settings import get_tui_log_path
 
 
@@ -68,31 +68,11 @@ class TuiLogPanel(Static):
 
     @work(thread=True, exclusive=True, group="tui_logs")
     def _fetch_logs_async(self) -> None:
-        """Read TUI log off the main thread."""
-        log_file = get_tui_log_path(self.tmux_session)
-
-        new_log_lines = None
-        new_file_pos = self._log_file_pos
-
-        if log_file.exists():
-            try:
-                # Re-tail from scratch on first read or after rotation shrinks
-                # the file below our saved offset; bounded so a huge log never
-                # gets slurped whole.
-                if not self.log_lines or log_file.stat().st_size < self._log_file_pos:
-                    new_log_lines, new_file_pos = tail_file_lines(log_file, max_lines=100)
-                else:
-                    with open(log_file, 'r') as f:
-                        f.seek(self._log_file_pos)
-                        new_content = f.read()
-                        new_file_pos = f.tell()
-
-                        if new_content:
-                            new_lines = new_content.strip().split('\n')
-                            new_log_lines = (self.log_lines + new_lines)[-100:]
-            except (OSError, IOError, ValueError):
-                pass
-
+        """Read TUI log off the main thread (a stat until it grows)."""
+        new_log_lines, new_file_pos = follow_log(
+            get_tui_log_path(self.tmux_session), self.log_lines, self._log_file_pos)
+        if new_log_lines is None and new_file_pos == self._log_file_pos:
+            return  # unchanged: nothing to apply or repaint
         self.app.call_from_thread(
             self._apply_logs, new_log_lines, new_file_pos
         )

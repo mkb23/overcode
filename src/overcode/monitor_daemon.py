@@ -1626,6 +1626,7 @@ class MonitorDaemon:
         """
         from .settings import resolve_detection_mode
         current_mode = resolve_detection_mode(self.tmux_session)
+        self.state.detection_mode = current_mode
         if self.detector.mode != current_mode:
             self.detector.mode = current_mode
             self.log.info(f"Fleet detection mode changed to: {current_mode}")

@@ -533,3 +533,73 @@ class TestStatusBarRebuildsOnlyOnItsInputs:
             assert bar.refresh_if_changed() is False
             bar.orphan_job_count = 2
             assert bar.refresh_if_changed() is True
+
+
+@pytest.mark.asyncio
+class TestDaemonPanelReadsTheEngine:
+    """Quality review item 23: the `d` panel parses no file each second while
+    hidden or while the engine is connected, and resolves nothing on the
+    main thread."""
+
+    @staticmethod
+    def _spies():
+        import threading
+
+        calls = {"state": 0, "mode": [], "log": 0}
+
+        def state(*a, **kw):
+            calls["state"] += 1
+            return None
+
+        def mode(*a, **kw):
+            calls["mode"].append(threading.current_thread() is threading.main_thread())
+            return "polling"
+
+        from overcode.daemon_logging import follow_log
+
+        def log(*a, **kw):
+            calls["log"] += 1
+            return follow_log(*a, **kw)
+
+        return calls, [
+            patch("overcode.tui_widgets.daemon_panel.get_monitor_daemon_state", state),
+            patch("overcode.settings.resolve_detection_mode", mode),
+            patch("overcode.tui_widgets.daemon_panel.follow_log", log),
+        ]
+
+    async def _run(self, app, engine, fleet_extra, shown, seconds=2.6):
+        from contextlib import ExitStack
+
+        snap = _snapshot()
+        snap.fleet.update(fleet_extra)
+        engine.publish(snap)
+        calls, patches = self._spies()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            async with app.run_test(size=(220, 50)) as pilot:
+                await _connected(pilot, app)
+                panel = app.query_one("#daemon-panel")
+                panel.display = shown
+                await pilot.pause(seconds)
+                text = panel.render().plain
+        return calls, text
+
+    async def test_hidden_does_nothing(self, app, engine):
+        calls, _ = await self._run(app, engine, {}, shown=False)
+        assert calls == {"state": 0, "mode": [], "log": 0}
+
+    async def test_shown_and_connected_reads_the_fleet(self, app, engine):
+        calls, text = await self._run(
+            app, engine, {"detection_mode": "hooks", "total_supervisions": 4}, shown=True)
+        assert calls["state"] == 0 and calls["mode"] == []
+        assert calls["log"] >= 2  # the log is still followed each second (a stat)
+        assert "active" in text and "@2s" in text and "steers:4" in text
+        assert "detect:hooks(fleet)" in text
+
+    async def test_an_older_engine_without_the_mode_resolves_it_off_the_main_thread(
+            self, app, engine):
+        calls, text = await self._run(app, engine, {}, shown=True)
+        assert calls["state"] == 0
+        assert calls["mode"] and not any(calls["mode"])
+        assert "detect:polling(fleet)" in text

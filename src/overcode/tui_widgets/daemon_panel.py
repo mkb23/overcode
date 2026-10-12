@@ -13,18 +13,27 @@ from textual.widgets import Static
 from textual import work
 from rich.text import Text
 
-from ..daemon_logging import tail_file_lines
+from ..daemon_logging import follow_log
 from ..monitor_daemon_state import MonitorDaemonState, get_monitor_daemon_state
 from ..settings import get_session_dir
 from ..tui_helpers import (
     format_interval,
     format_ago,
+    format_duration,
     get_daemon_status_style,
 )
 
 
 class DaemonPanel(Static):
-    """Inline panel showing monitor daemon status and log tail."""
+    """Inline panel showing monitor daemon status and log tail.
+
+    While the TUI is connected to the engine, the status line is the
+    engine's fleet snapshot (status, interval, steers, the detection mode)
+    and its liveness is the engine client's (EngineClient.stalled_for):
+    nothing is parsed. Only with no engine is the daemon's state file read,
+    to say when it last ran. The 1 s refresh does nothing while hidden, and
+    the log is a stat until it grows.
+    """
 
     LOG_LINES_TO_SHOW = 16
 
@@ -32,70 +41,105 @@ class DaemonPanel(Static):
         super().__init__(*args, **kwargs)
         self.tmux_session = tmux_session
         self.log_lines: list[str] = []
+        # The state file, read only while the engine is not connected
         self.monitor_state: Optional[MonitorDaemonState] = None
+        # The fleet default detection mode, resolved in the worker when the
+        # engine does not publish it
+        self.detection_mode: Optional[str] = None
         self._log_file_pos = 0
+        self._last_rendered: Optional[Text] = None
 
     def on_mount(self) -> None:
         """Start log tailing when mounted."""
         self.set_interval(1.0, self._refresh_logs)
         self._refresh_logs()
 
+    def _engine(self) -> Optional[tuple]:
+        """(fleet, stalled_for) while the app is connected to the engine, else None."""
+        try:
+            app = self.app
+        except Exception:  # a bare widget (no running app)
+            return None
+        if not getattr(app, "_engine_connected", False):
+            return None
+        client = getattr(app, "_engine_client", None)
+        stalled = client.stalled_for() if client is not None else None
+        return getattr(app, "_engine_fleet", None) or {}, stalled
+
     def _refresh_logs(self) -> None:
-        """Kick off background log refresh (if visible)."""
+        """Each second, while shown: the log (a stat until it grows) and what the engine lacks."""
         if not self.display:
             return
-        self._fetch_logs_async()
-
-    @work(thread=True, exclusive=True, group="daemon_logs")
-    def _fetch_logs_async(self) -> None:
-        """Read daemon state and logs off the main thread."""
-        monitor_state = get_monitor_daemon_state(self.tmux_session)
-
-        session_dir = get_session_dir(self.tmux_session)
-        log_file = session_dir / "monitor_daemon.log"
-
-        new_log_lines = None
-        new_file_pos = self._log_file_pos
-
-        if log_file.exists():
-            try:
-                # Re-tail from scratch on first read or after rotation shrinks
-                # the file below our saved offset; bounded so a huge log never
-                # gets slurped whole.
-                if not self.log_lines or log_file.stat().st_size < self._log_file_pos:
-                    new_log_lines, new_file_pos = tail_file_lines(log_file, max_lines=100)
-                else:
-                    with open(log_file, 'r') as f:
-                        f.seek(self._log_file_pos)
-                        new_content = f.read()
-                        new_file_pos = f.tell()
-
-                        if new_content:
-                            new_lines = new_content.strip().split('\n')
-                            new_log_lines = (self.log_lines + new_lines)[-100:]
-            except (OSError, IOError, ValueError):
-                pass
-
-        self.app.call_from_thread(
-            self._apply_logs, monitor_state, new_log_lines, new_file_pos
+        engine = self._engine()
+        fleet = engine[0] if engine is not None else {}
+        self._fetch_logs_async(
+            read_state=engine is None,
+            resolve_mode=not fleet.get("detection_mode"),
         )
 
-    def _apply_logs(self, monitor_state, new_log_lines, new_file_pos) -> None:
-        """Apply fetched log data on main thread."""
+    @work(thread=True, exclusive=True, group="daemon_logs")
+    def _fetch_logs_async(self, read_state: bool = True, resolve_mode: bool = True) -> None:
+        """Worker: the log's new lines; the state file and detection mode only if asked."""
+        monitor_state = get_monitor_daemon_state(self.tmux_session) if read_state else None
+        mode = None
+        if resolve_mode:
+            from ..settings import resolve_detection_mode
+            mode = resolve_detection_mode(self.tmux_session)
+
+        log_file = get_session_dir(self.tmux_session) / "monitor_daemon.log"
+        new_log_lines, new_file_pos = follow_log(log_file, self.log_lines, self._log_file_pos)
+
+        self.app.call_from_thread(
+            self._apply_logs, monitor_state, new_log_lines, new_file_pos, mode
+        )
+
+    def _apply_logs(self, monitor_state, new_log_lines, new_file_pos, mode=None) -> None:
+        """Apply fetched log data on main thread; repaint only if it draws differently."""
         self.monitor_state = monitor_state
         self._log_file_pos = new_file_pos
         if new_log_lines is not None:
             self.log_lines = new_log_lines
+        if mode is not None:
+            self.detection_mode = mode
+        self.refresh_if_changed()
+
+    def refresh_if_changed(self) -> bool:
+        if self._last_rendered is not None and self._render_panel() == self._last_rendered:
+            return False
         self.refresh()
+        return True
 
     def render(self) -> Text:
         """Render the daemon panel."""
+        content = self._render_panel()
+        self._last_rendered = content
+        return content
+
+    def _render_panel(self) -> Text:
         content = Text()
 
         # Header
         content.append("Monitor Daemon", style="bold")
 
-        if self.monitor_state and not self.monitor_state.is_stale():
+        engine = self._engine()
+        fleet = engine[0] if engine is not None else {}
+        if engine is not None:
+            stalled_for = engine[1]
+            status = fleet.get("status") or "active"
+            symbol, style = get_daemon_status_style(status)
+            content.append("  ")
+            content.append(f"{symbol} {status}", style=style)
+            if stalled_for is not None:
+                content.append(f"  ⚠ frozen {format_duration(stalled_for)}", style="bold red")
+            interval = fleet.get("current_interval")
+            if isinstance(interval, (int, float)):
+                content.append(f"  @{format_interval(interval)}", style="dim")
+            if fleet.get("interval_mode") == "unattended":
+                content.append(" (unattended)", style="dim")
+            steers = fleet.get("total_supervisions") or 0
+            if steers > 0:
+                content.append(f"  steers:{steers}", style="magenta")
+        elif self.monitor_state and not self.monitor_state.is_stale():
             state = self.monitor_state
             symbol, style = get_daemon_status_style(state.status)
 
@@ -123,12 +167,13 @@ class DaemonPanel(Static):
                 except ValueError:
                     pass
 
-        # Fleet default detection mode (per-agent overrides win over this)
-        from ..settings import resolve_detection_mode
-        mode = resolve_detection_mode(self.tmux_session)
-        mode_style = "green" if mode == "hooks" else "yellow"
-        content.append("  ")
-        content.append(f"detect:{mode}(fleet)", style=mode_style)
+        # Fleet default detection mode (per-agent overrides win over this):
+        # the engine's, else resolved by the worker
+        mode = fleet.get("detection_mode") or self.detection_mode
+        if mode:
+            mode_style = "green" if mode == "hooks" else "yellow"
+            content.append("  ")
+            content.append(f"detect:{mode}(fleet)", style=mode_style)
 
         # Controls
         content.append("  ", style="dim")

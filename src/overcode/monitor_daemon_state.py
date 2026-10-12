@@ -316,6 +316,11 @@ class MonitorDaemonState:
     # Untracked tmux windows (#344)
     untracked_window_count: int = 0
 
+    # The fleet default detection mode as the daemon resolved it this tick
+    # ("hooks" or "polling"; per-agent overrides win over it). Published so
+    # views show it without resolving it themselves.
+    detection_mode: Optional[str] = None
+
     # Why the last state-file save failed (None: it succeeded). The views
     # still get every update over engine.sock; this says the file, which
     # the CLI and a restarted view read, is falling behind.

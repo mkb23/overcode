@@ -125,6 +125,16 @@ class TestStickyRecheck:
         d._quick_tick({"a"}, datetime.now())
         assert calls == [1]
 
+    def test_the_resolved_mode_is_published_in_the_fleet(self, tmp_path):
+        """Views (the `d` panel) show the fleet mode without resolving it."""
+        from overcode.monitor_daemon import MonitorDaemon
+
+        d = _daemon(tmp_path)
+        with patch("overcode.settings.resolve_detection_mode", lambda session: "hooks"):
+            MonitorDaemon._refresh_detection_mode(d)
+        assert d.detector.mode == "hooks"
+        assert d.state.to_engine_snapshot().fleet["detection_mode"] == "hooks"
+
     def test_only_a_stop_is_rechecked(self, tmp_path):
         """The sticky window only holds a Stop; other events need no second look."""
         from overcode import monitor_daemon

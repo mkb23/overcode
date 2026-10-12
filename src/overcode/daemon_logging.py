@@ -7,7 +7,7 @@ monitor_daemon and supervisor_daemon.
 
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from rich.console import Console
 from rich.text import Text
@@ -56,6 +56,38 @@ def tail_file_lines(
     text = data.decode("utf-8", errors="replace")
     lines = [l.rstrip() for l in text.splitlines()][-max_lines:]
     return lines, size
+
+
+def follow_log(
+    log_file: Path, lines: List[str], pos: int, max_lines: int = 100
+) -> tuple[Optional[List[str]], int]:
+    """A log panel's next view of ``log_file``: (its last lines, or None if unchanged; offset).
+
+    ``lines`` and ``pos`` are what the panel holds and the byte offset it
+    read up to. While the file's size holds still this is one stat and
+    nothing is read. A first read, or a file that shrank below ``pos``
+    (rotated), re-tails from scratch, bounded (tail_file_lines); otherwise
+    only the bytes appended since ``pos`` are read.
+    """
+    try:
+        size = log_file.stat().st_size
+    except OSError:
+        return None, pos
+    if size == pos:
+        return None, pos
+    if not lines or size < pos:
+        return tail_file_lines(log_file, max_lines=max_lines)
+    try:
+        with open(log_file, "rb") as f:
+            f.seek(pos)
+            data = f.read()
+    except OSError:
+        return None, pos
+    new_pos = pos + len(data)
+    text = data.decode("utf-8", errors="replace").strip()
+    if not text:
+        return None, new_pos
+    return (lines + [l.rstrip() for l in text.splitlines()])[-max_lines:], new_pos
 
 
 class BaseDaemonLogger:
